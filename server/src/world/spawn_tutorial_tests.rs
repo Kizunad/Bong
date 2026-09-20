@@ -13,6 +13,7 @@ fn registry_with_meridian_primer() -> ItemRegistry {
     templates.insert(
         MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
         ItemTemplate {
+            quick_use: false,
             id: MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
             display_name: "《经脉浅述·残卷》".to_string(),
             category: ItemCategory::Scroll,

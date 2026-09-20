@@ -9,7 +9,6 @@ import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.cultivation.voidaction.VoidActionScreen;
 import com.bong.client.forge.ForgeScreen;
 import com.bong.client.identity.IdentityPanelScreen;
-import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.insight.InsightOfferScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.lingtian.LingtianActionScreen;
@@ -67,19 +66,6 @@ public final class ScreenTransitionRegistry {
             ScreenTransition.Easing.EASE_OUT_QUAD,
             TransitionConfig.OverlayStyle.FOG,
             false
-        ));
-        register(CultivationScreen.class, new TransitionConfig(
-            CultivationScreen.class,
-            ScreenTransition.Type.FADE,
-            600,
-            ScreenTransition.Type.FADE,
-            600,
-            ScreenTransition.Easing.EASE_OUT_CUBIC,
-            TransitionConfig.OverlayStyle.VIGNETTE,
-            false
-        ));
-        register(ItemInspectScreen.class, TransitionConfig.of(
-            ItemInspectScreen.class, ScreenTransition.Type.SLIDE_RIGHT, 200, ScreenTransition.Type.SLIDE_LEFT, 200
         ));
         register(GameMenuScreen.class, TransitionConfig.of(
             GameMenuScreen.class, ScreenTransition.Type.FADE, 150, ScreenTransition.Type.FADE, 150

@@ -1,7 +1,7 @@
 //! plan-HUD-v1 §10.4 / §11.4 server-side emit for `quickslot_config` payload。
 //!
-//! 监听 `Changed<QuickSlotBindings>`，覆盖三种触发：玩家拖物品到 F 槽、
-//! cast 完成 / 中断后冷却写入、`set_cooldown` 调用。
+//! 监听快捷链接或库存变化：绑定、消耗、移动和丢弃后回推权威配置。
+//! 已耗尽或不再允许快捷使用的实例会解除链接，冷却继续按槽位保留。
 //! 触发时把完整 `QuickSlotConfigV1`（含 instance→template 反查 +
 //! cooldown_until_ms 折算）推给该 client。
 //!
@@ -15,14 +15,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Changed, Client, Entity, Query, Res, Username, With};
+use valence::prelude::{Changed, Client, Entity, Or, Query, Res, Username, With};
 
 use crate::combat::components::QuickSlotBindings;
 use crate::combat::CombatClock;
-use crate::inventory::{
-    ItemRegistry, PlayerInventory, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
-    DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
-};
+use crate::inventory::{ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -32,7 +29,10 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 const TICK_MS: u64 = 50;
 
-type QuickSlotEmitFilter = (With<Client>, Changed<QuickSlotBindings>);
+type QuickSlotEmitFilter = (
+    With<Client>,
+    Or<(Changed<QuickSlotBindings>, Changed<PlayerInventory>)>,
+);
 
 pub fn emit_quickslot_config_payloads(
     clock: Res<CombatClock>,
@@ -42,7 +42,7 @@ pub fn emit_quickslot_config_payloads(
             Entity,
             &mut Client,
             &Username,
-            &QuickSlotBindings,
+            &mut QuickSlotBindings,
             &PlayerInventory,
         ),
         QuickSlotEmitFilter,
@@ -51,9 +51,19 @@ pub fn emit_quickslot_config_payloads(
     let now_ms = current_unix_millis();
     let now_tick = clock.tick;
 
-    for (entity, mut client, username, bindings, inventory) in &mut clients {
+    for (entity, mut client, username, mut bindings, inventory) in &mut clients {
+        for slot in 0..QuickSlotBindings::SLOT_COUNT as u8 {
+            if bindings.get(slot).is_some_and(|id| {
+                crate::inventory::inventory_item_by_instance_borrow(inventory, id)
+                    .filter(|item| item.stack_count > 0)
+                    .and_then(|item| item_registry.get(&item.template_id))
+                    .is_none_or(|template| !template.is_quick_use_eligible())
+            }) {
+                bindings.set(slot, None);
+            }
+        }
         let config = build_quickslot_config(
-            Some(bindings),
+            Some(&bindings),
             Some(inventory),
             &item_registry,
             now_tick,
@@ -81,19 +91,19 @@ pub(crate) fn build_quickslot_config(
         let entry = bindings.and_then(|bindings| {
             bindings.get(i as u8).and_then(|instance_id| {
                 let inventory = inventory?;
-                let template_id = lookup_template_id(inventory, instance_id)?;
-                let template = item_registry.get(&template_id);
+                let item =
+                    crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id)?;
+                let template = item_registry.get(&item.template_id)?;
+                if !template.is_quick_use_eligible() || item.stack_count == 0 {
+                    return None;
+                }
                 Some(QuickSlotEntryV1 {
-                    display_name: template
-                        .map(|template| template.display_name.clone())
-                        .unwrap_or_else(|| template_id.clone()),
-                    cast_duration_ms: template
-                        .map(|template| template.cast_duration_ms)
-                        .unwrap_or(TEMPLATE_DEFAULT_CAST_MS),
-                    cooldown_ms: template
-                        .map(|template| template.cooldown_ms)
-                        .unwrap_or(TEMPLATE_DEFAULT_COOLDOWN_MS),
-                    item_id: template_id,
+                    instance_id,
+                    stack_count: item.stack_count,
+                    display_name: item.display_name.clone(),
+                    cast_duration_ms: template.cast_duration_ms,
+                    cooldown_ms: template.cooldown_ms,
+                    item_id: item.template_id.clone(),
                     // 契约：Item 槽 icon_texture 恒空串，client 按 item_id 走
                     // ItemIconRegistry 富解析；填路径会绕过它（见模块注释）。
                     icon_texture: String::new(),
@@ -111,6 +121,15 @@ pub(crate) fn build_quickslot_config(
         });
     }
     QuickSlotConfigV1 {
+        eligible_item_ids: {
+            let mut ids: Vec<_> = item_registry
+                .iter_templates()
+                .filter(|template| template.is_quick_use_eligible())
+                .map(|template| template.id.clone())
+                .collect();
+            ids.sort();
+            ids
+        },
         slots,
         cooldown_until_ms,
         ack_request_id,
@@ -143,31 +162,6 @@ pub(crate) fn send_quickslot_config_to_client(
 
 pub(crate) fn current_unix_millis_for_quickslot() -> u64 {
     current_unix_millis()
-}
-
-fn lookup_template_id(inv: &PlayerInventory, instance_id: u64) -> Option<String> {
-    for c in &inv.containers {
-        if let Some(p) = c
-            .items
-            .iter()
-            .find(|p| p.instance.instance_id == instance_id)
-        {
-            return Some(p.instance.template_id.clone());
-        }
-    }
-    if let Some(item) = inv
-        .equipped
-        .values()
-        .flat_map(|s| s.iter_all())
-        .find(|item| item.instance_id == instance_id)
-    {
-        return Some(item.template_id.clone());
-    }
-    inv.hotbar
-        .iter()
-        .flatten()
-        .find(|item| item.instance_id == instance_id)
-        .map(|item| item.template_id.clone())
 }
 
 fn current_unix_millis() -> u64 {

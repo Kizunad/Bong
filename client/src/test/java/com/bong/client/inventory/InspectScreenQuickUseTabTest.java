@@ -21,26 +21,10 @@ class InspectScreenQuickUseTabTest {
     }
 
     @Test
-    void inspectScreenRemovesQuickUseTabAndKeepsCraftEntry() {
-        List<String> tabs = InspectScreen.tabNamesForTests();
-
-        assertEquals(
-            List.of("装备", "修仙", "技艺", "功法", "手搓"),
-            tabs,
-            "expected tabs to be [装备, 修仙, 技艺, 功法, 手搓] because 快捷使用入口已移除, actual " + tabs
-        );
-        assertFalse(
-            tabs.contains("快捷使用"),
-            "expected no 快捷使用 tab because 快捷使用保留在 F1-F9 竖条/HUD, actual " + tabs
-        );
-        assertEquals(
-            4,
-            tabs.indexOf("手搓"),
-            "expected 手搓 to stay at index 4 because TAB_CRAFT was renumbered from 5 to 4, actual " + tabs
-        );
+    void craftEntryStillOpensDedicatedScreen() {
         assertTrue(
-            InspectScreen.opensCraftScreenForTabForTests(4),
-            "expected tab index 4 to open CraftScreen because 手搓 tab is now an entry into the standalone screen"
+            InspectScreen.opensCraftScreenForTabForTests(3),
+            "合并修习后，手搓入口仍应打开制作界面"
         );
     }
 

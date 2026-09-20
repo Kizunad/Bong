@@ -14,7 +14,6 @@ cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA_SCREEN	VAN
 forge/ForgeScreen.java	ForgeScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; identity panel
 insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
-inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
 inventory/LootContainerScreen.java	LootContainerScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 lingtian/LingtianActionScreen.java	LingtianActionScreen	BASE_OWO	CODE	true	Code-built FlowLayout
@@ -27,5 +26,4 @@ scroll/ScrollReadScreen.java	ScrollReadScreen	BASE_OWO	CODE	true	Code-built Flow
 social/SparringInviteScreen.java	SparringInviteScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
 social/TradeOfferScreen.java	TradeOfferScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
-ui/CultivationScreen.java	CultivationScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 ui/DynamicXmlScreen.java	DynamicXmlScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory

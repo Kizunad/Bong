@@ -12,6 +12,7 @@ public final class BongHudRenderer {
 
     public BongHudRenderer(HudRenderBackend backend) {
         this.backend = Objects.requireNonNull(backend, "backend");
+        com.bong.client.ui.window.UiWindowRuntime.hudBackend(backend);
     }
 
     public void render(DrawContext context, float tickDelta) {

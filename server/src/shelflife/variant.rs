@@ -323,6 +323,7 @@ mod tests {
 
     fn dead_template(id: &str) -> crate::inventory::ItemTemplate {
         crate::inventory::ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: format!("死·{}", id),
             category: ItemCategory::Misc,
@@ -365,6 +366,7 @@ mod tests {
         map.insert(
             "rotten_bone_coin".to_string(),
             crate::inventory::ItemTemplate {
+                quick_use: false,
                 id: "rotten_bone_coin".to_string(),
                 display_name: "腐骨币".to_string(),
                 category: ItemCategory::BoneCoin,
@@ -397,6 +399,7 @@ mod tests {
         map.insert(
             "food.spirit_wine.chen_cu".to_string(),
             crate::inventory::ItemTemplate {
+                quick_use: false,
                 id: "food.spirit_wine.chen_cu".to_string(),
                 display_name: "陈醋".to_string(),
                 category: ItemCategory::Food,

@@ -5,7 +5,7 @@
     "v",
     "type",
     "slot",
-    "item_id",
+    "instance_id",
     "request_id"
   ],
   "properties": {
@@ -22,14 +22,15 @@
       "maximum": 1,
       "type": "integer"
     },
-    "item_id": {
+    "instance_id": {
       "anyOf": [
         {
           "type": "null"
         },
         {
-          "minLength": 1,
-          "type": "string"
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
         }
       ]
     },
@@ -39,5 +40,5 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "f9c07865c948bad930dc6f188c0820e074b68cb9b65f3e6d24ebd9bd3bd6d8ce"
+  "x-bong-typebox-source-sha256": "dc03d92cefbbc75211bd1b088d4217b3023f3a70e055f741dbd0a2f0937272f6"
 }

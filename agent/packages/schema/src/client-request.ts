@@ -401,7 +401,7 @@ export const QuickSlotBindRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("quick_slot_bind"),
     slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
-    item_id: Type.Union([Type.Null(), Type.String({ minLength: 1 })]),
+    instance_id: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
     request_id: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },
@@ -448,6 +448,21 @@ export const SkillBarBindRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type SkillBarBindRequestV1 = Static<typeof SkillBarBindRequestV1>;
+
+export const TechniqueBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("technique_bind"),
+    skill_id: Type.String({ minLength: 1 }),
+    target: Type.Union([
+      Type.Object({ kind: Type.Literal("combat"), slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }) }, { additionalProperties: false }),
+      Type.Object({ kind: Type.Literal("dash") }, { additionalProperties: false }),
+    ]),
+    expected_binding: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type TechniqueBindRequestV1 = Static<typeof TechniqueBindRequestV1>;
 
 export const SkillConfigIntentRequestV1 = Type.Object(
   {
@@ -1166,6 +1181,7 @@ export const ClientRequestV1 = Type.Union([
   QuickSlotBindRequestV1,
   SkillBarCastRequestV1,
   SkillBarBindRequestV1,
+  TechniqueBindRequestV1,
   SkillConfigIntentRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,

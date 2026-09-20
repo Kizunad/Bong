@@ -20,7 +20,7 @@ class InspectScreenSkillMilestoneTest {
 
         assertEquals(
             "Lv.4 · 你摘得百草渐熟，今已识八分。",
-            InspectScreen.formatSkillMilestoneLine(milestone)
+            com.bong.client.practice.SkillExperienceView.formatSkillMilestoneLine(milestone)
         );
     }
 
@@ -36,7 +36,7 @@ class InspectScreenSkillMilestoneTest {
 
         assertEquals(
             "Lv.2 · t700 · 累计 500 XP",
-            InspectScreen.formatSkillMilestoneLine(milestone)
+            com.bong.client.practice.SkillExperienceView.formatSkillMilestoneLine(milestone)
         );
     }
 }

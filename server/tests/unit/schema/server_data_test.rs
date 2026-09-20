@@ -51,6 +51,7 @@ fn hud_payload_wire_type_matches_label() {
                 outcome: CastOutcomeV1::None,
             }),
             ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+                eligible_item_ids: vec![],
                 slots: vec![None; bong_server::combat::components::QuickSlotBindings::SLOT_COUNT],
                 cooldown_until_ms: vec![
                 0;
@@ -60,6 +61,7 @@ fn hud_payload_wire_type_matches_label() {
                 bind_accepted: None,
             }),
             ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+                dash_skill_id: "movement.dash".into(),
                 slots: vec![None; bong_server::combat::components::SkillBarBindings::SLOT_COUNT],
                 cooldown_until_ms:
                     vec![0; bong_server::combat::components::SkillBarBindings::SLOT_COUNT],

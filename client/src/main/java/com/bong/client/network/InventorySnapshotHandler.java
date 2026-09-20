@@ -296,7 +296,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         return hotbarItems;
     }
 
-    static InventoryItem parseInventoryItem(JsonObject itemObject) {
+    public static InventoryItem parseInventoryItem(JsonObject itemObject) {
         Long instanceId = readRequiredLong(itemObject, "instance_id");
         String itemId = readRequiredString(itemObject, "item_id");
         String displayName = readRequiredString(itemObject, "display_name");

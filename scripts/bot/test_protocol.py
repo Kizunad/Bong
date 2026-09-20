@@ -2466,6 +2466,8 @@ def _server_data_quickslot_config_bytes() -> bytes:
         + _pb_varint(3, 1500)
         + _pb_varint(4, 3000)
         + _pb_string(5, "bong-client:textures/gui/items/pill.png")
+        + _pb_varint(6, 4294967338)
+        + _pb_varint(7, 2)
     )
     bound_slot = _pb_message(1, entry)
     empty_slot = b""
@@ -2484,6 +2486,7 @@ def _server_data_quickslot_config_bytes() -> bytes:
         + packed_cooldowns
         + _pb_string(3, "gap10-bind-1")
         + _pb_varint(4, 1)
+        + _pb_string(5, "guyuan_pill")
     )
     return _pb_message(35, payload)
 
@@ -2508,6 +2511,9 @@ def _server_data_techniques_snapshot_bytes() -> bytes:
         + _pb_varint(12, 16)
         + _pb_varint(13, 30)
         + _pb_fixed32(14, 3.0)
+        + _pb_string(15, "attack")
+        + _pb_string(16, "skill")
+        + _pb_string(17, "bong-client:textures/gui/items/sword_cleave.png")
     )
     return _pb_message(37, _pb_message(1, entry))
 
@@ -2575,6 +2581,9 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         # （item_id/display_name/cast_duration_ms/cooldown_ms/icon_texture），旧测试
         # 只断言 item_id + cast_duration_ms——解码器丢弃字段 2/4/5 或返回默认值也能
         # 通过。逐字段 pin 全部 5 个可观测槽元数据。
+        self.assertEqual(bound["instance_id"], 4294967338)
+        self.assertEqual(bound["stack_count"], 2)
+        self.assertEqual(decoded["eligible_item_ids"], ["guyuan_pill"])
         self.assertEqual(bound["item_id"], "guyuan_pill")
         self.assertEqual(bound["display_name"], "固元丹")
         self.assertEqual(bound["cast_duration_ms"], 1500)
@@ -2617,6 +2626,9 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         self.assertEqual(entry["qi_cost"], 2.5)
         self.assertEqual(entry["stamina_cost"], 8.0)
         self.assertEqual(entry["range"], 3.0)
+        self.assertEqual(entry["category"], "attack")
+        self.assertEqual(entry["input_kind"], "skill")
+        self.assertEqual(entry["icon_texture"], "bong-client:textures/gui/items/sword_cleave.png")
 
     def test_proto_skill_config_snapshot_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_skill_config_snapshot_bytes())
@@ -11207,10 +11219,12 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             + _pb_len_field(1, _pb_len_field(1, _pb_len_field(1, item)))
             + _pb_len_field(1, _pb_len_field(1, _pb_len_field(2, skill)))
             + _pb_len_field(2, _pb_raw_varint(0) + _pb_raw_varint(42))
+            + _pb_len_field(3, b"movement.dash")
         )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(36, config))
 
         self.assertEqual(decoded["type"], "skillbar_config")
+        self.assertEqual(decoded["dash_skill_id"], "movement.dash", "闪避选择必须保留服务端权威值")
         self.assertIsNone(decoded["slots"][0], "OptionalSkillBarEntry 无 entry 应解为 None")
         self.assertEqual(decoded["slots"][1]["kind"], "item")
         self.assertEqual(decoded["slots"][1]["template_id"], "iron_sword")

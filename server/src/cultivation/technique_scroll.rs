@@ -259,6 +259,7 @@ mod tests {
 
     fn template(id: &str, skill_id: &str) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: "涡流残卷".to_string(),
             category: ItemCategory::Scroll,

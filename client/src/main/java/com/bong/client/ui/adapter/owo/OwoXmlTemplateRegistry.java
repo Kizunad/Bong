@@ -27,18 +27,31 @@ public final class OwoXmlTemplateRegistry {
     public static final Identifier IDENTITY_PANEL = new Identifier("bong", "identity-panel");
     public static final Identifier ZHENFA_LAYOUT = new Identifier("bong", "zhenfa-layout");
     public static final Identifier MAIN_MENU = new Identifier("bong", "main-menu");
+    public static final Identifier ITEM_INSPECT = new Identifier("bong", "item-inspect");
 
-    private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.of(
-        "craft", CRAFT,
-        "craft-compact", CRAFT_COMPACT,
-        "terminate", TERMINATE,
-        "coffin-menu", COFFIN_MENU,
-        "repair", REPAIR,
-        "death", DEATH,
-        "forge-carrier", FORGE_CARRIER,
-        "identity-panel", IDENTITY_PANEL,
-        "zhenfa-layout", ZHENFA_LAYOUT,
-        "main-menu", MAIN_MENU
+    private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.ofEntries(
+        Map.entry("craft", CRAFT),
+        Map.entry("craft-compact", CRAFT_COMPACT),
+        Map.entry("terminate", TERMINATE),
+        Map.entry("coffin-menu", COFFIN_MENU),
+        Map.entry("repair", REPAIR),
+        Map.entry("death", DEATH),
+        Map.entry("forge-carrier", FORGE_CARRIER),
+        Map.entry("identity-panel", IDENTITY_PANEL),
+        Map.entry("zhenfa-layout", ZHENFA_LAYOUT),
+        Map.entry("main-menu", MAIN_MENU),
+        Map.entry("item-inspect", ITEM_INSPECT),
+        Map.entry("window-frame", new Identifier("bong", "window-frame")),
+        Map.entry("inventory-container", new Identifier("bong", "inventory-container")),
+        Map.entry("inventory-equipment", new Identifier("bong", "inventory-equipment")),
+        Map.entry("inventory-shortcuts", new Identifier("bong", "inventory-shortcuts")),
+        Map.entry("workspace-controls", new Identifier("bong", "workspace-controls")),
+        Map.entry("hud-widget", new Identifier("bong", "hud-widget")),
+        Map.entry("skill-config", new Identifier("bong", "skill-config")),
+        Map.entry("practice-catalog", new Identifier("bong", "practice-catalog")),
+        Map.entry("practice-detail", new Identifier("bong", "practice-detail")),
+        Map.entry("model-preview", new Identifier("bong", "model-preview")),
+        Map.entry("body-inspect", new Identifier("bong", "body-inspect"))
     );
     private static final OwoXmlTemplateRegistry PRODUCTION = new OwoXmlTemplateRegistry(
         UIModelLoader::get,

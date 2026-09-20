@@ -3,11 +3,13 @@
   "type": "quickslot_config",
   "slots": [
     {
-      "item_id": "kai_mai_pill",
-      "display_name": "开脉丹",
+      "item_id": "huiyuan_pill",
+      "display_name": "回元丹",
       "cast_duration_ms": 1500,
       "cooldown_ms": 1500,
-      "icon_texture": ""
+      "icon_texture": "",
+      "instance_id": 42,
+      "stack_count": 2
     },
     null
   ],
@@ -16,5 +18,8 @@
     0
   ],
   "ack_request_id": "bind-42",
-  "bind_accepted": true
+  "bind_accepted": true,
+  "eligible_item_ids": [
+    "huiyuan_pill"
+  ]
 }

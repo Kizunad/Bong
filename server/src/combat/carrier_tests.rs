@@ -6,6 +6,7 @@ use valence::prelude::{App, Events, Position, Update};
 
 fn template(id: &str, name: &str, max_stack_count: u32) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: name.to_string(),
         category: ItemCategory::Misc,

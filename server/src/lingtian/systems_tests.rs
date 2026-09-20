@@ -1218,6 +1218,7 @@ use crate::inventory::{ItemCategory, ItemEffect};
 
 fn herb_template(id: &str, display: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.into(),
         display_name: display.into(),
         category: ItemCategory::Herb,
@@ -1249,6 +1250,7 @@ fn herb_template(id: &str, display: &str) -> ItemTemplate {
 
 fn seed_template(id: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.into(),
         display_name: id.into(),
         category: ItemCategory::Misc,

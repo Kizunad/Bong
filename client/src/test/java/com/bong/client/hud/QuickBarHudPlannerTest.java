@@ -47,7 +47,7 @@ class QuickBarHudPlannerTest {
     @Test
     void castHighlightsOnlyItsSourceRowAndCooldownStaysAboveTheIcon() {
         QuickSlotConfig quick = QuickSlotConfig.empty()
-            .withSlot(0, new QuickSlotEntry("earth_crumb", "土块", 1000, 1000, ""))
+            .withSlot(0, new QuickSlotEntry(42L, 1, "earth_crumb", "土块", 1000, 1000, ""))
             .withCooldownUntil(0, 2_000L);
         SkillBarConfig skills = SkillBarConfig.empty().withSlot(0,
             SkillBarEntry.skill("zhenmai.harden", "护脉", 1000, 1000, ""));

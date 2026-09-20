@@ -135,6 +135,9 @@ fn s2c_techniques_snapshot_preserves_legacy_f32_qi_cost() {
 
     let payload = ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 {
         entries: vec![TechniqueEntryV1 {
+            category: "attack".into(),
+            input_kind: "skill".into(),
+            icon_texture: String::new(),
             id: "sword.cleave".to_string(),
             display_name: "劈".to_string(),
             grade: "common".to_string(),
@@ -2165,6 +2168,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             outcome: CastOutcomeV1::None,
         })),
         fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+            eligible_item_ids: vec![],
             slots: vec![None; bong_server::combat::components::QuickSlotBindings::SLOT_COUNT],
             cooldown_until_ms: vec![
                 0;
@@ -2174,6 +2178,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             bind_accepted: None,
         })),
         fix!(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+            dash_skill_id: "movement.dash".into(),
             slots: vec![None; bong_server::combat::components::SkillBarBindings::SLOT_COUNT],
             cooldown_until_ms: vec![
                 0;
@@ -3288,16 +3293,8 @@ fn s2c_all_proto_variants_encode_without_panic() {
 
 // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
 
-/// Returns a minimum-viable fixture for every `ClientRequestV1` variant (102 total).
-///
-/// The same exhaustiveness strategy as `s2c_all_fixtures()` applies:
-///   - No compile-time list exhaustiveness, but `c2s_fixture_count_matches_variant_count()`
-///     cross-checks list length against a manually maintained variant set.
-///   - `AgentUiResponse` is the only C2S JSON-bypass variant (is_c2s_json_bypass=true).
-///
-/// MUTATION GUARDS (see `c2s_all_proto_variants_encode_without_panic`):
-///   - Delete a proto arm → fixture hits `unreachable!()` → test panics → RED.
-///   - Add a new C2S variant without fixture → count assertion → RED.
+/// Representative C2S fixtures exercise real encoding; the production match enforces exhaustiveness.
+/// AgentUiResponse is the JSON-only bypass and must reject proto encoding.
 fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequestV1, bool)> {
     use bong_server::cultivation::components::MeridianId;
     use bong_server::cultivation::forging::ForgeAxis;
@@ -3664,7 +3661,7 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
         build(ClientRequestV1::QuickSlotBind {
             v: 1,
             slot: 0,
-            item_id: Some("herb_a".to_string()),
+            instance_id: Some(42),
             request_id: "quick-bind-1".to_string(),
         }),
         build(ClientRequestV1::SkillBarCast {
@@ -3683,6 +3680,12 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             v: 1,
             skill_id: "fireball".to_string(),
             config: Default::default(),
+        }),
+        build(ClientRequestV1::TechniqueBind {
+            v: 1,
+            skill_id: "movement.dash".to_string(),
+            target: bong_server::schema::client_request::TechniqueBindTargetV1::Dash,
+            expected_binding: "skill:movement.dash".to_string(),
         }),
         build(ClientRequestV1::CombatReincarnate { v: 1 }),
         build(ClientRequestV1::CombatTerminate { v: 1 }),
@@ -3828,22 +3831,25 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
     ]
 }
 
-/// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (101 total).
-
+/// Verifies that the C2S proto fixture set remains one-per-variant (104 total).
+///
+/// `BlockPickerGive` is intentionally outside this set: it is a dev-only local request
+/// whose proto conversion arm is explicitly unreachable, not an agent-wire payload.
 #[test]
 fn c2s_fixture_count_matches_variant_count() {
     use bong_server::schema::client_request::ClientRequestV1;
     use std::collections::HashSet;
     use std::mem::{discriminant, Discriminant};
+
     let fixtures = c2s_all_fixtures();
-    // The authoritative count is 102 (101 proto + 1 AgentUiResponse bypass).
-    let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
-    let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
+    let bypass_count = fixtures.iter().filter(|(_, bypass)| *bypass).count();
+    let proto_count = fixtures.iter().filter(|(_, bypass)| !*bypass).count();
+
     assert_eq!(
         fixtures.len(),
-        103,
-        "C2S fixture list has {} entries but ClientRequestV1 has 103 variants. \
-             Add a fixture for every new variant in c2s_all_fixtures().",
+        104,
+        "C2S fixture list has {} entries but the proto fixture contract has 104. \
+             Add a fixture for every new proto-backed variant in c2s_all_fixtures().",
         fixtures.len()
     );
     assert_eq!(
@@ -3852,33 +3858,73 @@ fn c2s_fixture_count_matches_variant_count() {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
     );
     assert_eq!(
-        proto_count, 102,
-        "Expected 102 proto-encodable C2S variants, got {proto_count}."
+        proto_count, 103,
+        "Expected 103 proto-encodable C2S variants, got {proto_count}."
     );
 
-    // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
-    // on `mem::discriminant` since ClientRequestV1 has no payload_type() discriminant enum).
-    // `discriminant` yields one key per enum variant regardless of field values, so duplicate
-    // variants collapse. This closes the "swap escape" the length+count checks alone miss —
-    // e.g. deleting variant A's fixture and duplicating variant B's keeps len==99 but drops
-    // the DISTINCT-variant count to 98, reding this assertion. Without it, variant A would
-    // silently lose its proto-encode coverage while the counts still look correct.
-    let distinct: HashSet<Discriminant<ClientRequestV1>> =
-        fixtures.iter().map(|(v, _)| discriminant(v)).collect();
+    // `ClientRequestV1` has no payload_type() discriminant enum, so use the Rust enum
+    // discriminant to catch replacing a missing fixture with a duplicate of another variant.
+    let distinct: HashSet<Discriminant<ClientRequestV1>> = fixtures
+        .iter()
+        .map(|(variant, _)| discriminant(variant))
+        .collect();
     assert_eq!(
         distinct.len(),
-        103,
-        "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 103. \
-             A variant's fixture was likely deleted and another duplicated — every variant must \
-             have its OWN fixture or the proto guard silently skips it.",
+        104,
+        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 104. \
+             A variant's fixture was likely deleted and another duplicated.",
         distinct.len()
     );
 }
 
-/// Exhaustive proto encoding guard for all 102 `ClientRequestV1` variants.
+/// 比较后替换必须跨 protobuf 保留目标和旧绑定，空槽 0 不能丢失 oneof。
+#[test]
+fn c2s_technique_bind_preserves_target_and_expected_binding() {
+    use bong_server::schema::client_request::{ClientRequestV1, TechniqueBindTargetV1};
+    use prost::Message;
+
+    for (target, expected_target) in [
+        (
+            TechniqueBindTargetV1::Combat { slot: 0 },
+            bong::technique_bind::Target::CombatSlot(0),
+        ),
+        (
+            TechniqueBindTargetV1::Dash,
+            bong::technique_bind::Target::Dash(true),
+        ),
+    ] {
+        let request = ClientRequestV1::TechniqueBind {
+            v: 1,
+            skill_id: "movement.dash".into(),
+            target,
+            expected_binding: "skill:old".into(),
+        };
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some((&request).into()),
+        };
+        let decoded =
+            bong::ClientRequestEnvelope::decode(envelope.encode_to_vec().as_slice()).unwrap();
+        let Some(bong::client_request_envelope::Payload::TechniqueBind(binding)) = decoded.payload
+        else {
+            panic!("替换请求必须保持 TechniqueBind payload");
+        };
+        assert_eq!(binding.skill_id, "movement.dash");
+        assert_eq!(
+            binding.expected_binding, "skill:old",
+            "旧绑定不能在传输中丢失"
+        );
+        assert_eq!(
+            binding.target,
+            Some(expected_target),
+            "战斗槽 0 和闪避必须可区分"
+        );
+    }
+}
+
+/// Proto encoding guard for the representative `ClientRequestV1` fixtures.
 ///
 /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.
-/// For the 101 proto-encodable variants: encode → decode → assert payload present.
+/// Proto-encodable variants: encode → decode → assert payload present.
 /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
 ///
 /// MUTATION GUARDS:
@@ -3894,8 +3940,6 @@ fn c2s_all_proto_variants_encode_without_panic() {
     use prost::Message;
 
     let fixtures = c2s_all_fixtures();
-    let mut proto_count = 0usize;
-    let mut bypass_count = 0usize;
 
     for (variant, is_bypass) in fixtures {
         let variant_dbg = format!("{variant:?}").chars().take(60).collect::<String>();
@@ -3912,7 +3956,6 @@ fn c2s_all_proto_variants_encode_without_panic() {
                      Verify that the AgentUiResponse arm in From<&ClientRequestV1> still calls \
                      unreachable!()."
             );
-            bypass_count += 1;
         } else {
             // Proto-encodable: encode → decode → assert payload present.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3939,16 +3982,6 @@ fn c2s_all_proto_variants_encode_without_panic() {
                 decoded.payload.is_some(),
                 "C2S variant ({variant_dbg}) decoded to an envelope with no payload."
             );
-            proto_count += 1;
         }
     }
-
-    assert_eq!(
-        proto_count, 102,
-        "Expected 102 proto-encodable C2S variants, got {proto_count}."
-    );
-    assert_eq!(
-        bypass_count, 1,
-        "Expected 1 C2S bypass variant, got {bypass_count}."
-    );
 }

@@ -6,6 +6,9 @@
     "cooldown_until_ms"
   ],
   "properties": {
+    "dash_skill_id": {
+      "type": "string"
+    },
     "slots": {
       "minItems": 2,
       "maxItems": 2,
@@ -106,5 +109,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "d5357e179738a20a35307301576bc2d3b3a668aceb14b887bb26896020ee2e3c"
+  "x-bong-typebox-source-sha256": "befc6b1a43d40bccb4ebd0561e0ac25c336d354f64c1b4d1e31d1f8924178a43"
 }

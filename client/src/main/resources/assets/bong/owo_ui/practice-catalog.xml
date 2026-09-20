@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components><template name="content" /></components>
+    <templates>
+        <template name="content">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                <children>
+                    <flow-layout id="practice-body" direction="vertical">
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                    </flow-layout>
+                </children>
+            </flow-layout>
+        </template>
+    </templates>
+</owo-ui>

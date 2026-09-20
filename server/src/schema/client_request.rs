@@ -463,12 +463,12 @@ pub enum ClientRequestV1 {
         slot: u8,
     },
     /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
-    /// `item_id` 为 None 表示清空槽位。
+    /// `instance_id` 为 None 表示清空使用链接。
     QuickSlotBind {
         v: u8,
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
-        item_id: Option<String>,
+        instance_id: Option<u64>,
         #[serde(default)]
         request_id: String,
     },
@@ -486,6 +486,13 @@ pub enum ClientRequestV1 {
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
         binding: Option<SkillBarBindingV1>,
+    },
+    /// 修习详情绑定：比较玩家确认过的旧绑定，拒绝覆盖途中发生的变化。
+    TechniqueBind {
+        v: u8,
+        skill_id: String,
+        target: TechniqueBindTargetV1,
+        expected_binding: String,
     },
     /// plan-hotbar-modify-v2 §2.3：保存某个招式的配置 JSON object。
     SkillConfigIntent {
@@ -816,6 +823,7 @@ impl ClientRequestV1 {
             Self::QuickSlotBind { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::SkillBarCast { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::SkillBarBind { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::TechniqueBind { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::SkillConfigIntent { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CombatReincarnate { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CombatTerminate { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
@@ -946,6 +954,16 @@ where
 pub enum AnqiCarrierSlotV1 {
     MainHand,
     OffHand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum TechniqueBindTargetV1 {
+    Combat {
+        #[serde(deserialize_with = "deserialize_slot_index")]
+        slot: u8,
+    },
+    Dash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

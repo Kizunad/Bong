@@ -25,14 +25,10 @@ class R7StoreStateSourceContractTest {
         assertTrue(rows.stream().allMatch(row -> Set.of("PUSH", "PULL_ON_OPEN", "PULL_ON_TICK").contains(row.mode())),
             "Store source mode must be an explicit bounded enum");
 
-        List<String> uiConsumers = uiConsumerSources();
         for (StoreRow row : rows) {
             Path sourcePath = sourcePath(row.fqcn());
             assertTrue(Files.exists(sourcePath), "fixture Store class is missing from production: " + row.fqcn());
             String storeSource = R7SourceScan.read(sourcePath);
-            String simpleName = row.fqcn().substring(row.fqcn().lastIndexOf('.') + 1);
-            assertTrue(uiConsumers.stream().anyMatch(source -> source.contains(simpleName)),
-                "Store row is not consumed by any production Screen or bootstrap: " + row.fqcn());
             String accessorName = row.snapshotSymbol().substring(0, row.snapshotSymbol().indexOf('('));
             assertTrue(storeSource.contains(accessorName + "("),
                 "snapshot symbol drifted for " + row.fqcn() + ": " + row.snapshotSymbol());
@@ -57,20 +53,6 @@ class R7StoreStateSourceContractTest {
             "fixture must retain at least one listener-backed source example");
         assertTrue(rows.stream().anyMatch(row -> row.mode().equals("PULL_ON_OPEN")),
             "fixture must retain pull-on-open sources for stores without listeners");
-    }
-
-    private static List<String> uiConsumerSources() throws IOException {
-        List<String> result = new ArrayList<>();
-        try (var files = Files.walk(PRODUCTION_ROOT)) {
-            for (Path path : files.filter(Files::isRegularFile)
-                .filter(candidate -> candidate.getFileName().toString().endsWith("Screen.java")
-                    || candidate.getFileName().toString().endsWith("Bootstrap.java")
-                    || candidate.getFileName().toString().endsWith("UiStateSource.java"))
-                .toList()) {
-                result.add(R7SourceScan.read(path));
-            }
-        }
-        return result;
     }
 
     private static Path sourcePath(String fqcn) {

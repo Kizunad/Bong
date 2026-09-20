@@ -590,6 +590,7 @@ mod tests {
         (
             template_id.to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: template_id.to_string(),
                 display_name: template_id.to_string(),
                 category: ItemCategory::Misc,

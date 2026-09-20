@@ -55,6 +55,7 @@ final class UiPreviewSession {
         totalTicks++;
         phaseTicks++;
         try {
+            if (openedScene != null) openedScene.tick();
             step(client);
         } catch (RuntimeException | IOException failure) {
             recordFailureAndStop(client, cleanupAfterFailure(client, failure));
@@ -80,13 +81,14 @@ final class UiPreviewSession {
             && client.getFramebuffer() != null
             && client.getWindow().getFramebufferWidth() > 0
             && client.getOverlay() == null
+            && UiPreviewScenes.require(currentShot().sceneId()).clientReady(client)
             && templatesLoaded();
         if (ready && phaseTicks >= 5) {
             advance(Phase.CONFIGURE_VIEWPORT);
             return;
         }
         if (phaseTicks > config.waitClientTicks()) {
-            throw new IllegalStateException("等待 Minecraft client 初始化超时");
+            throw new IllegalStateException("等待 Minecraft client 初始化超时；" + screenState(client));
         }
     }
 
@@ -134,7 +136,7 @@ final class UiPreviewSession {
     private void openScreen(MinecraftClient client) {
         UiPreviewShot shot = currentShot();
         openedScene = UiPreviewScenes.require(shot.sceneId());
-        openedScene.installFixture();
+        openedScene.installFixture(config);
         openedScreen = openedScene.createScreen();
         client.setScreen(openedScreen);
         advance(Phase.WAIT_SCREEN);
@@ -157,12 +159,19 @@ final class UiPreviewSession {
                     "布局模板错误: expected=" + currentShot().expectedTemplateId()
                         + ", actual=" + actualTemplate);
             }
+            openedScene.prepareScreenshot(openedScreen, currentShot());
             advance(Phase.SETTLE);
             return;
         }
         if (phaseTicks > config.resizeTimeoutTicks()) {
-            throw new IllegalStateException("等待 UI Screen 打开超时");
+            throw new IllegalStateException("等待 UI Screen 打开超时；" + screenState(client));
         }
+    }
+
+    private static String screenState(MinecraftClient client) {
+        Screen pending = ScreenTransitionController.pendingScreen();
+        return "current=" + (client.currentScreen == null ? "null" : client.currentScreen.getClass().getName())
+            + ", pending=" + (pending == null ? "null" : pending.getClass().getName());
     }
 
     private void settle() {

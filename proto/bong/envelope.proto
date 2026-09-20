@@ -356,6 +356,7 @@ message ClientRequestEnvelope {
     ScrollReadClosed            scroll_read_closed            = 101;
     // plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
     RemainsLoot                 remains_loot                  = 102;
+    TechniqueBind               technique_bind                = 103;
   }
 }
 
@@ -1618,6 +1619,8 @@ message QuickSlotEntry {
   uint32 cast_duration_ms = 3;
   uint32 cooldown_ms      = 4;
   string icon_texture     = 5;
+  uint64 instance_id      = 6;
+  uint32 stack_count      = 7;
 }
 
 // QuickSlotConfigV1.slots 是 Vec<Option<QuickSlotEntryV1>>，
@@ -1632,6 +1635,7 @@ message QuickSlotConfig {
   repeated uint64 cooldown_until_ms     = 2; // 固定 9 个 cooldown 截止时间
   optional string ack_request_id        = 3;
   optional bool bind_accepted           = 4;
+  repeated string eligible_item_ids     = 5;
 }
 
 // 与 Rust SkillBarEntryV1 精确对应 — tagged union (Item / Skill)。
@@ -1665,6 +1669,7 @@ message OptionalSkillBarEntry {
 
 // 与 Rust SkillBarConfigV1 精确对应。
 message SkillBarConfig {
+  string dash_skill_id = 3;
   repeated OptionalSkillBarEntry slots = 1; // 固定 9 槽
   repeated uint64 cooldown_until_ms    = 2;
 }
@@ -1677,6 +1682,9 @@ message TechniqueRequiredMeridian {
 
 // 与 Rust TechniqueEntryV1 精确对应。
 message TechniqueEntry {
+  string category = 15;
+  string input_kind = 16;
+  string icon_texture = 17;
   string                          id                  = 1;
   string                          display_name        = 2;
   string                          grade               = 3;
@@ -2050,8 +2058,9 @@ message UseQuickSlot {
 // 与 Rust ClientRequestV1::QuickSlotBind 精确对应。
 message QuickSlotBind {
   uint32          slot    = 1; // Rust u8 (0..=8)
-  optional string item_id = 2;
+  reserved 2;
   string request_id       = 3;
+  optional uint64 instance_id = 4;
 }
 
 // 与 Rust ClientRequestV1::SkillBarCast 精确对应。
@@ -2080,6 +2089,15 @@ message SkillBarBinding {
 message SkillBarBind {
   uint32                  slot    = 1; // Rust u8 (0..=8)
   optional SkillBarBinding binding = 2;
+}
+
+message TechniqueBind {
+  string skill_id = 1;
+  oneof target {
+    uint32 combat_slot = 2;
+    bool dash = 3;
+  }
+  string expected_binding = 4;
 }
 
 // 与 Rust ClientRequestV1::SkillConfigIntent 精确对应。

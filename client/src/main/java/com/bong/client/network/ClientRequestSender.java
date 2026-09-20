@@ -333,17 +333,17 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSelfAntidote(instanceId));
     }
 
-    public static boolean sendQuickSlotBind(int slot, String itemId) {
-        return sendQuickSlotBindTracked(slot, itemId) != null;
+    public static boolean sendQuickSlotBind(int slot, Long instanceId) {
+        return sendQuickSlotBindTracked(slot, instanceId) != null;
     }
 
     /** 返回本地 transport 接受的唯一 request_id；拒绝时返回 null。 */
-    public static String sendQuickSlotBindTracked(int slot, String itemId) {
+    public static String sendQuickSlotBindTracked(int slot, Long instanceId) {
         String requestId = Objects.requireNonNull(requestIdSupplier.get(), "requestId");
         if (requestId.isBlank()) {
             throw new IllegalStateException("quick-slot requestId must not be blank");
         }
-        return tryDispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId, requestId))
+        return tryDispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, instanceId, requestId))
             ? requestId
             : null;
     }
@@ -362,6 +362,10 @@ public final class ClientRequestSender {
 
     public static void sendSkillBarBindSkill(int slot, String skillId) {
         dispatch(ClientRequestProtocol.encodeSkillBarBindSkill(slot, skillId));
+    }
+
+    public static void sendTechniqueBind(boolean dash, int slot, String skillId, String expectedBinding) {
+        dispatch(ClientRequestProtocol.encodeTechniqueBind(dash, slot, skillId, expectedBinding));
     }
 
     public static void sendSkillBarBindItem(int slot, String templateId) {

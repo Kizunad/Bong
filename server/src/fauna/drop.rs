@@ -649,6 +649,7 @@ mod tests {
 
     fn template(id: &str) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category: if id.starts_with("bone_coin") {

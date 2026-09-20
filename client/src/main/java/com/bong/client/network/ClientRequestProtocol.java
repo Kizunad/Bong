@@ -1118,19 +1118,19 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    /** itemId == null → 清空槽位。 */
-    public static String encodeQuickSlotBind(int slot, String itemId) {
-        return encodeQuickSlotBind(slot, itemId, "untracked");
+    /** instanceId == null → 清空使用链接。 */
+    public static String encodeQuickSlotBind(int slot, Long instanceId) {
+        return encodeQuickSlotBind(slot, instanceId, "untracked");
     }
 
-    /** itemId == null → 清空槽位；requestId 用于匹配服务端权威接受/拒绝。 */
-    public static String encodeQuickSlotBind(int slot, String itemId, String requestId) {
+    /** requestId 用于匹配服务端权威接受/拒绝。 */
+    public static String encodeQuickSlotBind(int slot, Long instanceId, String requestId) {
         JsonObject obj = envelope("quick_slot_bind");
         obj.addProperty("slot", slot);
-        if (itemId == null || itemId.isEmpty()) {
-            obj.add("item_id", com.google.gson.JsonNull.INSTANCE);
+        if (instanceId == null) {
+            obj.add("instance_id", com.google.gson.JsonNull.INSTANCE);
         } else {
-            obj.addProperty("item_id", itemId);
+            obj.addProperty("instance_id", instanceId);
         }
         obj.addProperty("request_id", Objects.requireNonNull(requestId, "requestId"));
         return obj.toString();
@@ -1153,6 +1153,19 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("skill_bar_bind");
         obj.addProperty("slot", slot);
         obj.add("binding", com.google.gson.JsonNull.INSTANCE);
+        return obj.toString();
+    }
+
+    public static String encodeTechniqueBind(boolean dash, int slot, String skillId, String expectedBinding) {
+        if (!dash && !com.bong.client.combat.SkillBarConfig.isAvailable(slot)) throw new IllegalArgumentException("slot unavailable");
+        if (skillId == null || skillId.isBlank() || expectedBinding == null) throw new IllegalArgumentException("invalid binding");
+        JsonObject obj = envelope("technique_bind");
+        obj.addProperty("skill_id", skillId);
+        obj.addProperty("expected_binding", expectedBinding);
+        JsonObject target = new JsonObject();
+        target.addProperty("kind", dash ? "dash" : "combat");
+        if (!dash) target.addProperty("slot", slot);
+        obj.add("target", target);
         return obj.toString();
     }
 

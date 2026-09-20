@@ -1,0 +1,89 @@
+{
+  "output_dir": "inventory-window-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "inventory-windows-minimum",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-windows-odd",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-windows-wide",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-windows-scroll",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-windows-resize",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-loadout-minimum",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-loadout-odd",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "inventory-container"
+    },
+    {
+      "name": "inventory-loadout-wide",
+      "scene_id": "inventory-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "inventory-container"
+    }
+  ]
+}

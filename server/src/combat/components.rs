@@ -535,6 +535,8 @@ pub enum SkillSlot {
 /// 与该 skill 当前绑在哪个槽、绑了几个槽都无关，天然消除上述两条攻击面。
 #[derive(Debug, Clone, Component, Default)]
 pub struct SkillBarBindings {
+    /// None 使用初始闪避；未习得时服务端拥有门仍然拒绝执行。
+    pub dash_skill_id: Option<String>,
     pub slots: [SkillSlot; Self::SLOT_COUNT],
     /// key = skill_id（如 `"dugu.eclipse"`），value = cooldown_until_tick。
     /// 没有 entry 视为无冷却（就绪）。
@@ -542,6 +544,11 @@ pub struct SkillBarBindings {
 }
 
 impl SkillBarBindings {
+    pub fn dash_skill_id(&self) -> &str {
+        self.dash_skill_id
+            .as_deref()
+            .unwrap_or(crate::movement::dash_proficiency::DASH_TECHNIQUE_ID)
+    }
     /// 当前默认两格；后续由身体条件（如手部数量）和功法扩展。
     pub const SLOT_COUNT: usize = crate::schema::inventory::HOTBAR_SLOT_COUNT;
 

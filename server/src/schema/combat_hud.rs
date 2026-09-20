@@ -111,6 +111,7 @@ pub struct CastSyncV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotConfigV1 {
+    pub eligible_item_ids: Vec<String>,
     pub slots: Vec<Option<QuickSlotEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
@@ -125,6 +126,8 @@ pub struct QuickSlotConfigV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotEntryV1 {
+    pub instance_id: u64,
+    pub stack_count: u32,
     pub item_id: String,
     pub display_name: String,
     pub cast_duration_ms: u32,
@@ -136,6 +139,8 @@ pub struct QuickSlotEntryV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillBarConfigV1 {
+    #[serde(default)]
+    pub dash_skill_id: String,
     pub slots: Vec<Option<SkillBarEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
@@ -169,6 +174,12 @@ pub struct TechniquesSnapshotV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TechniqueEntryV1 {
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub input_kind: String,
+    #[serde(default)]
+    pub icon_texture: String,
     pub id: String,
     pub display_name: String,
     pub grade: String,
@@ -589,10 +600,13 @@ mod tests {
     #[test]
     fn quickslot_config_roundtrip_preserves_content() {
         let original = QuickSlotConfigV1 {
+            eligible_item_ids: vec!["huiyuan_pill".into()],
             slots: vec![
                 Some(QuickSlotEntryV1 {
-                    item_id: "kai_mai_pill".to_string(),
-                    display_name: "开脉丹".to_string(),
+                    instance_id: 42,
+                    stack_count: 2,
+                    item_id: "huiyuan_pill".to_string(),
+                    display_name: "回元丹".to_string(),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     icon_texture: String::new(),
@@ -618,6 +632,7 @@ mod tests {
     #[test]
     fn skillbar_config_roundtrip_preserves_item_skill_and_empty_slots() {
         let original = SkillBarConfigV1 {
+            dash_skill_id: "movement.dash".into(),
             slots: vec![
                 Some(SkillBarEntryV1::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
@@ -652,6 +667,9 @@ mod tests {
     fn techniques_snapshot_roundtrip_preserves_detail_fields() {
         let original = TechniquesSnapshotV1 {
             entries: vec![TechniqueEntryV1 {
+                category: "attack".into(),
+                input_kind: "skill".into(),
+                icon_texture: String::new(),
                 id: "burst_meridian.beng_quan".to_string(),
                 display_name: "崩拳".to_string(),
                 grade: "yellow".to_string(),

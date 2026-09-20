@@ -15994,6 +15994,7 @@
       "required": [
         "v",
         "type",
+        "eligible_item_ids",
         "slots",
         "cooldown_until_ms"
       ],
@@ -16006,6 +16007,14 @@
           "const": "quickslot_config",
           "type": "string"
         },
+        "eligible_item_ids": {
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "slots": {
           "minItems": 2,
           "maxItems": 2,
@@ -16016,6 +16025,8 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
+                  "instance_id",
+                  "stack_count",
                   "item_id",
                   "display_name",
                   "cast_duration_ms",
@@ -16023,6 +16034,15 @@
                   "icon_texture"
                 ],
                 "properties": {
+                  "instance_id": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "stack_count": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
                   "item_id": {
                     "minLength": 1,
                     "type": "string"
@@ -16087,6 +16107,9 @@
         },
         "type": {
           "const": "skillbar_config",
+          "type": "string"
+        },
+        "dash_skill_id": {
           "type": "string"
         },
         "slots": {
@@ -16229,6 +16252,15 @@
               "range"
             ],
             "properties": {
+              "category": {
+                "type": "string"
+              },
+              "input_kind": {
+                "type": "string"
+              },
+              "icon_texture": {
+                "type": "string"
+              },
               "id": {
                 "minLength": 1,
                 "type": "string"
@@ -20421,5 +20453,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "4b9abd66ca289c4485c40d34d0fcf96607a598fecafab879e300c530b8e047b7"
+  "x-bong-typebox-source-sha256": "962014cbc94d37293db80785a90202d2cc2a50ef54eeafa11cb904de2e5d7dce"
 }

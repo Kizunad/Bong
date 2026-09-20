@@ -70,6 +70,15 @@ class SkillBarKeyRouterTest {
     }
 
     @Test
+    void dashSlotDoesNotCreateGenericCastState() {
+        SkillBarStore.replace(SkillBarConfig.empty().withSlot(0, SkillBarEntry.skill(
+            com.bong.client.movement.DashSkill.ID, "闪避", 0, 2000, "")));
+        assertEquals(SkillBarKeyRouter.RouteResult.CAST_SENT, SkillBarKeyRouter.route(0, 0, sent::add));
+        assertEquals(List.of(0), sent);
+        assertTrue(!CastStateStore.snapshot().isCasting(), "身法由 movement 驱动，不能留下通用施法中的假状态");
+    }
+
+    @Test
     void emptySlotPassesThroughNativeHotbar() {
         assertEquals(SkillBarKeyRouter.RouteResult.PASS_THROUGH,
             SkillBarKeyRouter.route(0, 1000L, sent::add));

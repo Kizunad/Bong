@@ -33,6 +33,8 @@ export type CombatHudStateV1 = Static<typeof CombatHudStateV1>;
 
 export const QuickSlotEntryV1 = Type.Object(
   {
+    instance_id: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    stack_count: Type.Integer({ minimum: 1 }),
     item_id: Type.String({ minLength: 1 }),
     display_name: Type.String({ minLength: 1 }),
     cast_duration_ms: Type.Integer({ minimum: 0, maximum: 0xffff_ffff }),
@@ -45,6 +47,7 @@ export type QuickSlotEntryV1 = Static<typeof QuickSlotEntryV1>;
 
 export const QuickSlotConfigV1 = Type.Object(
   {
+    eligible_item_ids: Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
     slots: Type.Array(Type.Union([QuickSlotEntryV1, Type.Null()]), {
       minItems: HOTBAR_SLOT_COUNT,
       maxItems: HOTBAR_SLOT_COUNT,
@@ -94,6 +97,7 @@ export type SkillBarEntryV1 = Static<typeof SkillBarEntryV1>;
 
 export const SkillBarConfigV1 = Type.Object(
   {
+    dash_skill_id: Type.Optional(Type.String()),
     slots: Type.Array(Type.Union([SkillBarEntryV1, Type.Null()]), {
       minItems: HOTBAR_SLOT_COUNT,
       maxItems: HOTBAR_SLOT_COUNT,
@@ -118,6 +122,9 @@ export type TechniqueRequiredMeridianV1 = Static<typeof TechniqueRequiredMeridia
 
 export const TechniqueEntryV1 = Type.Object(
   {
+    category: Type.Optional(Type.String()),
+    input_kind: Type.Optional(Type.String()),
+    icon_texture: Type.Optional(Type.String()),
     id: Type.String({ minLength: 1 }),
     display_name: Type.String({ minLength: 1 }),
     grade: Type.String({ minLength: 1 }),
