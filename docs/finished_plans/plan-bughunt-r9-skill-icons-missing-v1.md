@@ -9,7 +9,7 @@
 - 当前 `server/src/cultivation/known_techniques.rs` 注册 48 个技能定义，43 个 distinct 图标路径；磁盘存在 15 个，缺失 28 个。
 - runtime 辅助链路（`known_techniques` + `dugu_v2`/`woliu_v2`/`tuike_v2` visual payload 中的技能图标路径）合计 53 个 distinct 图标路径；磁盘存在 20 个，缺失 33 个。
 - r9 skeleton 中的 “tuike 3 缺失” 在当前 `origin/main` 已不成立：server 现在下发 `bong-client:textures/gui/items/skill_scroll_tuike_{don,shed,transfer_taint}.png`，这 3 个文件均已存在。
-- r9 skeleton 中“绑定后直接渲染 missing_texture”的危害在当前 `origin/main` 已被客户端生产路径缓解：`BongHudOrchestrator` 传 `HudTextureProbe::exists`，`LoadoutIconLayer.resolveExistingSkillTexture` 只返回真实存在的贴图，否则 `QuickBarHudPlanner` 走文字标签兜底。
+- r9 skeleton 中“绑定后直接渲染 missing_texture”的危害在当前 `origin/main` 已被客户端生产路径缓解：`BongHudOrchestrator` 传 `TextureProbe::exists`，`LoadoutIconLayer.resolveExistingSkillTexture` 只返回真实存在的贴图，否则 `QuickBarHudPlanner` 走文字标签兜底。
 
 ## 当前存在的技能栏图标
 
