@@ -45,10 +45,13 @@
 
 ### 2026-09-20 验证记录
 
-- 根目录运行 `bash scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`（后两项同样使用 build-token）：全部通过。完整测试累计 12,578 项通过、6 项忽略，包含应用启动及外部集成目标。
+合入主线 `0b6aff68b` 后完成以下复验；modelScript 全量结果来自合并前，本次主线未改动该目录。
+
+- 根目录运行 `bash scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`（后两项同样使用 build-token）：全部通过。完整测试累计 12,579 项通过、6 项忽略，包含应用启动及外部集成目标。
 - 物种契约覆盖真实生成、属性聚合、经脉损伤与断脉门控、真元事务回滚、统一伤害回执、同群仇恨、地面与飞行碰撞，以及 BigBrain 自主施法。马群测试同时验证中立和受击后集结；鹫必须实际爬升后才能俯冲。
-- Java 17 下 `bash scripts/build-token.sh gradle test build` 通过；JUnit 5,130 项通过，GameTest 3 项通过。
+- Java 17 下 `bash scripts/build-token.sh gradle test build` 通过；JUnit 5,078 项通过，GameTest 3 项通过。
+- Agent workspace 的 `npm run build` 与 schema、tiandao 两包的 `npm test` 通过，分别为 913 项与 872 项测试。
 - `python3 -m unittest discover -s modelScript/tests -p "test_*.py"`：861 项通过。生物导出与资源打包定向测试：8 项通过。
-- 包内 15 套形态、153 条动画及相关音效和图标共 58 个文件与 client 源资源逐字节一致；ZIP、sidecar、manifest 和服务端的 SHA-1/大小一致。
+- 包内 15 套形态、153 条动画及相关音效和图标共 58 个文件与 client 源资源逐字节一致；ZIP、sidecar、manifest 和服务端的 SHA-1/大小一致。合并后资源包 SHA-1 为 `fb367e756839b36a9f492039072b6e7e04ee34bd`，大小为 74,243,905 字节，资源打包 5 项测试复验通过。
 
 以上为代码与资源契约验证，未代替 Minecraft 内对模型比例、动作衔接和战斗手感的人工验收。鹅仍只有资源与预览；缝合兽核心/碎体和马负载动作已可播放，尚无对应的服务端状态事件。
