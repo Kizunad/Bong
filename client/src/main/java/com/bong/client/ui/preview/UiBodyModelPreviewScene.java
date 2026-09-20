@@ -58,7 +58,9 @@ final class UiBodyModelPreviewScene implements UiPreviewScene {
     @Override public void prepareScreenshot(Screen screen, UiPreviewShot shot) {
         name=shot.name(); frameTick=0; body=null;
         var manager=UiWindowRuntime.manager();
-        for(var state:manager.snapshot()) manager.close(state.key());
+        UiPreviewCleanup.run(manager.snapshot().stream()
+            .map(state -> (Runnable) () -> manager.close(state.key()))
+            .toArray(Runnable[]::new));
         var builder=MeridianBody.builder().realm("Induce").lifespanPreview(24,120,96,5,1,false);
         for(var ch:MeridianChannel.values()) builder.channel(new ChannelState(ch,10,8,
             ch==MeridianChannel.HT ? ChannelState.DamageLevel.SEVERED : ChannelState.DamageLevel.INTACT,

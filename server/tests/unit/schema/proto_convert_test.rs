@@ -3831,6 +3831,52 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
     ]
 }
 
+/// Verifies that the C2S proto fixture set remains one-per-variant (104 total).
+///
+/// `BlockPickerGive` is intentionally outside this set: it is a dev-only local request
+/// whose proto conversion arm is explicitly unreachable, not an agent-wire payload.
+#[test]
+fn c2s_fixture_count_matches_variant_count() {
+    use bong_server::schema::client_request::ClientRequestV1;
+    use std::collections::HashSet;
+    use std::mem::{discriminant, Discriminant};
+
+    let fixtures = c2s_all_fixtures();
+    let bypass_count = fixtures.iter().filter(|(_, bypass)| *bypass).count();
+    let proto_count = fixtures.iter().filter(|(_, bypass)| !*bypass).count();
+
+    assert_eq!(
+        fixtures.len(),
+        104,
+        "C2S fixture list has {} entries but the proto fixture contract has 104. \
+             Add a fixture for every new proto-backed variant in c2s_all_fixtures().",
+        fixtures.len()
+    );
+    assert_eq!(
+        bypass_count, 1,
+        "Expected exactly 1 C2S JSON-bypass variant (AgentUiResponse), got {bypass_count}. \
+             If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
+    );
+    assert_eq!(
+        proto_count, 103,
+        "Expected 103 proto-encodable C2S variants, got {proto_count}."
+    );
+
+    // `ClientRequestV1` has no payload_type() discriminant enum, so use the Rust enum
+    // discriminant to catch replacing a missing fixture with a duplicate of another variant.
+    let distinct: HashSet<Discriminant<ClientRequestV1>> = fixtures
+        .iter()
+        .map(|(variant, _)| discriminant(variant))
+        .collect();
+    assert_eq!(
+        distinct.len(),
+        104,
+        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 104. \
+             A variant's fixture was likely deleted and another duplicated.",
+        distinct.len()
+    );
+}
+
 /// 比较后替换必须跨 protobuf 保留目标和旧绑定，空槽 0 不能丢失 oneof。
 #[test]
 fn c2s_technique_bind_preserves_target_and_expected_binding() {

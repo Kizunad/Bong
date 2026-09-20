@@ -93,6 +93,7 @@ public final class ItemModelPreviewComponent extends BaseComponent {
             buffers.draw();
         } finally {
             matrices.pop();
+            RenderSystem.disableDepthTest();
             DiffuseLighting.enableGuiDepthLighting();
         }
     }

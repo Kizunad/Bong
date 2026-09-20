@@ -20,7 +20,7 @@
  "gen_bamboo_jian.py": {
   "exit": 0,
   "outputs": {
-   "BambooJian.bbmodel": "fc861dc6a5ad266abb619240d4e9859d98a43b740ef5975c790a41478ff86180"
+   "BambooJian.bbmodel": "a669d5799bb8708852ce76704bb81704fb15442fb4bc34d77a0e60b7e41a1033"
   }
  },
  "gen_beast_spine_sword.py": {
@@ -300,7 +300,7 @@
  "gen_jian_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "JianPlayerAnim.bbmodel": "cf4fbbbb845b777820aab31850e2116fa852b3b84205f5246da7813bdd274ab8"
+   "JianPlayerAnim.bbmodel": "9e9dd92558156ffdf64cd188780d0a21f48dff56cbc179b2cbbe51d643b8f11c"
   }
  },
  "gen_jin_zhong_dan.py": {
@@ -326,9 +326,13 @@
  "gen_linen_armor.py": {
   "exit": 0,
   "outputs": {
+   "armor/linen/LinenBoots.bbmodel": "f1659be25ed1f533ad5e8f26bcb56cc00e857e58355ba6c0957fb36d2b8923fe",
    "armor/linen/LinenChestplate.bbmodel": "4211da047383d04a18eacb813cfaf445bb510bcce65f041c3fb00a047e3e0aa0",
+   "armor/linen/LinenHelmet.bbmodel": "0aeb0f8cac9493c0364e8576a6606c5686494e38ab3277e88fa501b77cb4985b",
    "armor/linen/LinenLeggings.bbmodel": "e3ae39e2140847c339c4348f048dd9f34ad0b6cb3a19525a49c53218834f9057",
+   "armor/linen/textures/linen_boots/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
    "armor/linen/textures/linen_chestplate/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
+   "armor/linen/textures/linen_helmet/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
    "armor/linen/textures/linen_leggings/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d"
   }
  },
@@ -383,10 +387,18 @@
  "gen_mutated_bone_armor.py": {
   "exit": 0,
   "outputs": {
+   "armor/mutated_bone/MutatedBoneBoots.bbmodel": "b81ce18897e67938d38e84dafd08c708e4b18e120f570b7c578079cbbbe70f85",
+   "armor/mutated_bone/MutatedBoneBootsOnPlayer.bbmodel": "8c35e92840bea0b421f3304a05d211a0d653acbad2a485377a3327ae589498f0",
    "armor/mutated_bone/MutatedBoneChestplate.bbmodel": "cc9642d3579d193be77078dbae5bb6aceae1d8c259d62492b6d4c47acf329bc4",
    "armor/mutated_bone/MutatedBoneChestplateOnPlayer.bbmodel": "256f53deb348b3ccb08474f895ba9ad66eda70f9d0b4a6e2d25060b1310a2cd6",
+   "armor/mutated_bone/MutatedBoneHelmet.bbmodel": "5bd05545b89637813db4d3da2fbc2e9c8d105eacfa84cf6851ab0ccd36140440",
+   "armor/mutated_bone/MutatedBoneHelmetOnPlayer.bbmodel": "8ae8184dfd60935ac35b75b51ac9c0b1614f07c49a11c1efbce88818ae22f9cf",
    "armor/mutated_bone/MutatedBoneLeggings.bbmodel": "71b2b967470cc78ae6da3b6ae8a1336c30be04ae7fd548d2a951df648a81b11c",
-   "armor/mutated_bone/MutatedBoneLeggingsOnPlayer.bbmodel": "697282b98f4b5426407aa45b4b3ce879ed58e5c77013adaa2f872a8cbd8c5b19"
+   "armor/mutated_bone/MutatedBoneLeggingsOnPlayer.bbmodel": "697282b98f4b5426407aa45b4b3ce879ed58e5c77013adaa2f872a8cbd8c5b19",
+   "armor/mutated_bone/textures/mutated_bone_boots/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_chestplate/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_helmet/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_leggings/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042"
   }
  },
  "gen_remnant_scroll.py": {
@@ -422,6 +434,19 @@
   "exit": 0,
   "outputs": {
    "ShouXinCao.bbmodel": "5f2a1d2a99fe690f9ea606e29d38f452002a2a966715c60b5344436f7fcfd604"
+  }
+ },
+ "gen_spirit_cloth_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/spirit_cloth/SpiritClothBoots.bbmodel": "e10c824fe9524e3752900e0d5fd527903c5b4d56459be89d872b0e1073cd5f41",
+   "armor/spirit_cloth/SpiritClothChestplate.bbmodel": "663f8f9ad568f5760edbb9cfefd8fce4dec6fa83c63cf4054ad6a1d46a5abd87",
+   "armor/spirit_cloth/SpiritClothHelmet.bbmodel": "4a172052d4a349af579a8c55b8966d7189ec4e06fe98dad1513600ce5085018e",
+   "armor/spirit_cloth/SpiritClothLeggings.bbmodel": "dac0b1fe882a4eeb3035214afd84915498fb9edc325a10ca64d0ad0bfaa2e829",
+   "armor/spirit_cloth/textures/spirit_cloth_boots/0.png": "01cb76e1f15dc4bfb2fbd3ef9008ff268e23a9475497475d0a72ade8b0e89061",
+   "armor/spirit_cloth/textures/spirit_cloth_chestplate/0.png": "01cb76e1f15dc4bfb2fbd3ef9008ff268e23a9475497475d0a72ade8b0e89061",
+   "armor/spirit_cloth/textures/spirit_cloth_helmet/0.png": "01cb76e1f15dc4bfb2fbd3ef9008ff268e23a9475497475d0a72ade8b0e89061",
+   "armor/spirit_cloth/textures/spirit_cloth_leggings/0.png": "01cb76e1f15dc4bfb2fbd3ef9008ff268e23a9475497475d0a72ade8b0e89061"
   }
  },
  "gen_stone_coffin.py": {
