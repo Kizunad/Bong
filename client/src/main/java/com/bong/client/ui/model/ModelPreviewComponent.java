@@ -120,28 +120,45 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
 
     /**
      * Restores every global render state even when an earlier restoration step fails.
-     * This stays nested instead of using UiPreviewCleanup because draw() runs every frame
-     * and a varargs cleanup call would allocate on the render hot path.
+     * The semantics match UiPreviewCleanup, but draw() calls this every frame, so varargs
+     * cleanup would allocate on the render hot path; keep the sequence local instead.
      */
     private static void restoreRenderState(OwoUIDrawContext context, float[] shaderColor,
                                            boolean depth, boolean blending) {
+        Throwable primary = null;
         try {
             context.disableScissor();
-        } finally {
-            try {
-                DiffuseLighting.enableGuiDepthLighting();
-            } finally {
-                try {
-                    RenderSystem.setShaderColor(shaderColor[0], shaderColor[1], shaderColor[2], shaderColor[3]);
-                } finally {
-                    try {
-                        if (depth) RenderSystem.enableDepthTest(); else RenderSystem.disableDepthTest();
-                    } finally {
-                        if (blending) RenderSystem.enableBlend(); else RenderSystem.disableBlend();
-                    }
-                }
-            }
+        } catch (RuntimeException | Error failure) {
+            primary = failure;
         }
+        try {
+            DiffuseLighting.enableGuiDepthLighting();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        try {
+            RenderSystem.setShaderColor(shaderColor[0], shaderColor[1], shaderColor[2], shaderColor[3]);
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        try {
+            if (depth) RenderSystem.enableDepthTest(); else RenderSystem.disableDepthTest();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        try {
+            if (blending) RenderSystem.enableBlend(); else RenderSystem.disableBlend();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+    }
+
+    private static Throwable accumulate(Throwable primary, Throwable failure) {
+        if (primary == null) return failure;
+        if (failure != primary) primary.addSuppressed(failure);
+        return primary;
     }
 
     protected void prepareCamera(Box bounds) {}
