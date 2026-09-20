@@ -38,4 +38,19 @@ class FaunaPreviewCommandTest {
         assertEquals(List.of("only"), previews, "未达到上限时不能淘汰现有预览");
         assertEquals(List.of(), discarded, "未达到上限时不得调用 discard");
     }
+
+    @Test
+    void disconnect_cleanup_discards_every_preview_before_clearing_the_list() {
+        List<String> previews = new ArrayList<>(List.of("first", "second", "third"));
+        List<String> discarded = new ArrayList<>();
+
+        FaunaPreviewCommand.discardAndClear(previews, discarded::add);
+
+        assertEquals(
+            List.of("first", "second", "third"),
+            discarded,
+            "断线清理必须让此前的每个预览实体都进入 discard 状态，不能只丢 bookkeeping 引用"
+        );
+        assertEquals(List.of(), previews, "断线清理完成后不得保留已 discard 预览的引用");
+    }
 }

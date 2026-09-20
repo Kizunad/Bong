@@ -81,9 +81,14 @@ public final class FaunaPreviewCommand {
     }
 
     public static void clearOnDisconnect() {
-        PREVIEWS.clear();
+        discardAndClear(PREVIEWS, FaunaEntity::discard);
         selected = null;
         nextId = -300_000;
+    }
+
+    static <T> void discardAndClear(List<T> previews, Consumer<? super T> discard) {
+        previews.forEach(discard);
+        previews.clear();
     }
 
     static <T> void evictOldestIfAtCapacity(
