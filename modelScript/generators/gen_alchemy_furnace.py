@@ -32,7 +32,6 @@ from palette_alchemy_furnace import (
 
 _WS = workspace.Workspace.discover(start=Path(__file__))
 OUT_DIR = _WS.models
-RENDER_OUT = _WS.out
 
 MATS = {
     "stone_void": STONE_VOID,
@@ -733,7 +732,6 @@ def main():
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    RENDER_OUT.mkdir(parents=True, exist_ok=True)
 
     rig = build_furnace_rig(args.part if args.part != "all" else None)
     bb_json = rig.bbmodel("AlchemyFurnace")
