@@ -1,0 +1,49 @@
+{
+  "id": "dainu_lion",
+  "display_name": "呆怒狮",
+  "is_humanoid": false,
+  "parts": [
+    { "id": "head", "damage_mul": 1.5, "contam_mul": 1.2, "bleed_mul": 1.2, "consequence": { "kind": "sensory" } },
+    { "id": "chest", "damage_mul": 1.0, "contam_mul": 1.0, "bleed_mul": 1.0, "consequence": { "kind": "core" } },
+    { "id": "leg_l", "damage_mul": 0.7, "contam_mul": 0.8, "bleed_mul": 0.8, "consequence": { "kind": "locomotion" } },
+    { "id": "leg_r", "damage_mul": 0.7, "contam_mul": 0.8, "bleed_mul": 0.8, "consequence": { "kind": "locomotion" } }
+  ],
+  "hit_geometry": {
+    "mode": "part_boxes",
+    "boxes": [
+      { "part_id": "head", "offset": [0.0, 1.3, 0.85], "half_extents": [0.45, 0.45, 0.4], "priority": 2 },
+      { "part_id": "chest", "offset": [0.0, 0.95, -0.1], "half_extents": [0.5, 0.4, 0.75], "priority": 0 },
+      { "part_id": "leg_l", "offset": [-0.35, 0.35, 0.0], "half_extents": [0.18, 0.35, 0.8], "priority": 1 },
+      { "part_id": "leg_r", "offset": [0.35, 0.35, 0.0], "half_extents": [0.18, 0.35, 0.8], "priority": 1 }
+    ]
+  },
+  "equip_slots": [],
+  "meridian_profile": {
+    "channels": [
+      { "id": "lion_stride", "family": "regular", "body_part": "leg_l" },
+      { "id": "lion_breath", "family": "regular", "body_part": "chest" },
+      { "id": "lion_jaw", "family": "regular", "body_part": "head" },
+      { "id": "lion_spine", "family": "extraordinary", "body_part": "chest" },
+      { "id": "lion_hind", "family": "regular", "body_part": "leg_r" },
+      { "id": "lion_core", "family": "extraordinary", "body_part": "chest" }
+    ],
+    "topology_edges": [
+      { "from": "lion_stride", "to": "lion_breath" },
+      { "from": "lion_breath", "to": "lion_jaw" },
+      { "from": "lion_breath", "to": "lion_spine" },
+      { "from": "lion_spine", "to": "lion_hind" },
+      { "from": "lion_spine", "to": "lion_core" }
+    ],
+    "realm_requirements": [
+      { "total": 1 }, { "total": 2 }, { "total": 3 },
+      { "total": 4, "regular_min": 3, "extraordinary_min": 1 },
+      { "total": 5 }, { "total": 6 }
+    ],
+    "dugu_injection": [
+      { "body_part": "head", "channel": "lion_jaw" },
+      { "body_part": "chest", "channel": "lion_breath" },
+      { "body_part": "leg_l", "channel": "lion_stride" },
+      { "body_part": "leg_r", "channel": "lion_hind" }
+    ]
+  }
+}

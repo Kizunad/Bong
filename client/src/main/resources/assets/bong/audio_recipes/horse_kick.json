@@ -1,0 +1,5 @@
+{
+  "id": "horse_kick",
+  "layers": [{ "sound": "minecraft:entity.horse.angry", "volume": 0.6, "pitch": 1.2, "delay_ticks": 0 }],
+  "priority": 78, "attenuation": "world_3d", "category": "HOSTILE", "bus": "COMBAT"
+}

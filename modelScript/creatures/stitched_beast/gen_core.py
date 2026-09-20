@@ -28,7 +28,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
-OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"
+OUT_DIR = HERE.parents[1] / "models" / "stitched_beast"
 OUT = OUT_DIR / "StitchedBeastCore.bbmodel"
 
 # 末法调色：没有一个鲜亮色。唯一的暖色是黏液那点病态黄绿，且它是"淌出来的"不是"长出来的"。

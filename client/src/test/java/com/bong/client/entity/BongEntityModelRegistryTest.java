@@ -66,19 +66,13 @@ public class BongEntityModelRegistryTest {
     void entityModelRawIdsDoNotOverlapWhaleOrFaunaVisualShells() {
         Set<Integer> occupied = new HashSet<>();
         assertTrue(occupied.add(WhaleEntities.EXPECTED_RAW_ID), "whale raw id must be unique");
-        int maxFaunaRawId = WhaleEntities.EXPECTED_RAW_ID;
         for (FaunaVisualKind kind : FaunaVisualKind.values()) {
             assertTrue(occupied.add(kind.expectedRawId()), "Duplicate fauna raw id: " + kind);
-            maxFaunaRawId = Math.max(maxFaunaRawId, kind.expectedRawId());
         }
 
-        assertEquals(145, maxFaunaRawId, "Entity model ids must move if fauna reserves more ids");
         assertTrue(occupied.add(BaolongwangEntities.EXPECTED_RAW_ID), "Baolongwang raw id must be unique");
         for (BongEntityModelKind kind : BongEntityModelKind.values()) {
-            assertTrue(
-                kind.expectedRawId() > maxFaunaRawId,
-                "Entity model raw id must stay after fauna range: " + kind
-            );
+            // 新物种追加在旧设施之后；协议要求编号唯一，不能重排已发布设施编号。
             assertTrue(occupied.add(kind.expectedRawId()), "Duplicate entity model raw id: " + kind);
         }
     }

@@ -87,6 +87,7 @@ public class BongNetworkHandlerTest {
         "BongPunchCombo.clearOnDisconnect",
         "MutationVisualState.reset",
         "SpiderDisguiseHandler.clearOnDisconnect",
+        "com.bong.client.fauna.FaunaPreviewCommand.clearOnDisconnect",
         "RatQiTierHandler.clearOnDisconnect",
         "DaoZhanDisguiseHandler.clearOnDisconnect",
         "com.bong.client.era.EraAmbianceState.reset",

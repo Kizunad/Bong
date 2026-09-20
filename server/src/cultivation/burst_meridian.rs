@@ -963,7 +963,7 @@ fn check_definition_meridian_gate(
         severed,
         dependencies,
     )
-    .map_err(|blocked| CastRejectReason::MeridianSevered(Some(blocked)))
+    .map_err(|blocked| CastRejectReason::MeridianSevered(blocked.to_meridian_id()))
 }
 
 fn check_single_meridian_gate(

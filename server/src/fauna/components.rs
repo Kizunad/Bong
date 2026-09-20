@@ -7,6 +7,9 @@ use valence::prelude::{bevy_ecs, Component};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BeastKind {
+    DainuLion,
+    FuyuVulture,
+    Horse,
     // 醒灵级
     Rat,
     // 引气级
@@ -35,6 +38,9 @@ pub enum BeastKind {
 impl BeastKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::DainuLion => "dainu_lion",
+            Self::FuyuVulture => "fuyu_vulture",
+            Self::Horse => "horse",
             Self::Rat => "rat",
             Self::Spider => "spider",
             Self::GreenSpider => "green_spider",
@@ -56,6 +62,9 @@ impl BeastKind {
 
     pub const fn health_max(self) -> f32 {
         match self {
+            Self::DainuLion => 180.0,
+            Self::FuyuVulture => 18.0,
+            Self::Horse => 45.0,
             Self::Rat => 8.0,
             Self::Spider => 25.0,
             Self::GreenSpider => 30.0,
@@ -77,6 +86,8 @@ impl BeastKind {
 
     pub const fn realm_tier(self) -> u8 {
         match self {
+            Self::DainuLion => 2,
+            Self::FuyuVulture | Self::Horse => 0,
             Self::Rat => 0,
             Self::Spider | Self::GreenSpider | Self::JungleScorpion | Self::CockadeSnake => 1,
             Self::BlueSpider | Self::IceScorpion | Self::MandrakeSnake => 2,
@@ -89,7 +100,10 @@ impl BeastKind {
     pub const fn is_terrestrial(self) -> bool {
         matches!(
             self,
-            Self::Rat
+            Self::DainuLion
+                | Self::FuyuVulture
+                | Self::Horse
+                | Self::Rat
                 | Self::Spider
                 | Self::GreenSpider
                 | Self::JungleScorpion
@@ -104,6 +118,9 @@ impl BeastKind {
     }
 
     pub const ALL_TERRESTRIAL: &'static [BeastKind] = &[
+        Self::DainuLion,
+        Self::FuyuVulture,
+        Self::Horse,
         Self::Rat,
         Self::Spider,
         Self::GreenSpider,

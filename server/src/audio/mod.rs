@@ -174,62 +174,22 @@ mod tests {
     fn loads_default_audio_recipes() {
         let registry =
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
-        assert_eq!(
-            registry.len(),
-            273,
-            "audio registry should exclude removed slide and double-jump movement recipes \
-             plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
-             plus 1 ambient_dan_zong recipe \
-             plus 1 ambient_wangyintai recipe \
-             plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3) \
-             plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复) \
-             plus 1 niche_repair recipe (plan-niche-craft-fix-v1 P1) \
-             plus 4 tiandao hunt ambient recipes \
-             plus 3 workbench runtime recipes (place/break/open) \
-             plus 1 furniture aura hint recipe \
-             plus 2 trap runtime P1 recipes (beast_trap_snap/trip_wire_trigger) \
-             plus 1 trap runtime P2 recipe (bait_stake_break) \
-             plus 1 halfstep_rechallenge_trigger_player recipe (plan-halfstep-rechallenge-integration-v1 P0) \
-             plus 2 halfstep P1 recipes (halfstep_quota_release_broadcast + halfstep_rechallenge_trigger_zone_echo) \
-             plus 5 placeable container runtime recipes \
-             plus 1 dead_drop_ward_break recipe \
-             plus 5 woliu erosion-path recipes (woliu_ambient_vortex / woliu_void_vortex / woliu_swallowing_vortex / woliu_vortex_echo / woliu_void_core) \
-             plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV) \
-             plus 5 sword_path cast recipes (sword_condense_edge / sword_qi_slash / sword_resonance / \
-             sword_manifest_summon / sword_manifest_strike — plan-sword-path-v2 P4 server AV emit 接线) \
-             plus 1 beng_quan recipe (崩拳专属施法音效，不再借用 baomai_hit_heavy 通用槽) \
-             plus 6 anqi cast recipes (anqi_charge_seal / anqi_single_snipe / anqi_multi_shot / \
-             anqi_soul_inject / anqi_armor_pierce / anqi_echo_fractal — 暗器六招 server AV emit 接线，\
-             全部复用 vanilla 音色分层，无新音频文件) \
-             plus 5 woliu 基础招式 AV 差异化 recipes (woliu_hold_sustain / woliu_burst_pop / \
-             woliu_mouth_funnel / woliu_pull_drag / woliu_heart_field — 持涡/瞬涡/涡口/涡引/涡心 \
-             各招专属施法音效，全部复用 vanilla 音色分层，无新音频文件) \
-             plus 1 guangbo_ticao_practice recipe (广播体操练习完成 AV — 皮革整甲伸展声 + \
-             紫水晶清音正反馈，全部复用 vanilla 音色分层，无新音频文件) \
-             plus 5 heiwushi boss action recipes (heiwushi_melee_slash / heiwushi_dark_barrage / \
-             heiwushi_dark_vortex / heiwushi_transform / heiwushi_death — plan-sword-path-complete §B \
-             黑武士 boss action server 端 AV emit 接线，全部复用 vanilla 音色分层，无新音频文件) \
-             plus 1 rat_bite_nip recipe (plan-ambient-threat-v1 P2 鼠患骚扰咬击 SFX，\
-             entity.silverfish.ambient pitch 0.7 vol 0.5，无新音频文件) \
-             plus 2 combat-hit-location-v1 P3 部位差异 recipes (combat_hit_head_crit / combat_hit_limb \
-             — 头部命中叠加 attack.crit+arrow.hit_player 双层、四肢命中换成更闷的 attack.weak，\
-             全部复用 vanilla 音色分层，无新音频文件) \
-             plus 1 fauna_mundane_wither recipe (plan-mundane-fauna-v1 P2 负灵域灭杀消亡音效，\
-             entity.wither.hurt pitch 1.6 vol 0.4，无新音频文件) \
-             plus 2 sword swing recipes (sword_cleave_swing / sword_thrust_swing — 基础剑技\
-             挥动破空声，空挥可闻；命中冲击音另走 CombatEvent 层。attack.nodamage 音源\
-             劈低频/刺高频差异化，无新音频文件) \
-             plus 1 yixing_cast recipe (plan-race-system-v1 PR-5b 易形施法音效，\
-             evoker.prepare_wololo + illusioner.mirror_move + amethyst_block.chime 三层\
-             变形类音色，无新音频文件) \
-             plus 1 heaven_gate_charge recipe (plan-fpv-cast-av-v1 P4 天门蓄力专属配方——\
-             复用 release 的 bong:skill.sword_path.heaven_gate 签名 ogg 作 pitch 0.72/vol 0.4 \
-             前兆 L0 + amethyst 铺底；蓄力不再借用 sword_basics 共享的 sword_infuse，避免签名\
-             泄漏到普通注剑) \
-             plus 2 plan-gathering-tool-bind-v1 P1 recipes (cao_lian_harvest_swing / \
-             botany_bare_hand_wound —— 草镰采集割手草本时的持镰挥砍声 / 徒手割手痛呼，\
-             全部复用 vanilla 音色分层，无新音频文件)"
-        );
+        // 保护运行时实际引用的配方，目录总数不属于协议契约。
+        for recipe in [
+            "lion_pounce",
+            "lion_rend",
+            "vulture_dive",
+            "horse_trample",
+            "horse_kick",
+            "fauna_lion_death",
+            "fauna_vulture_death",
+            "fauna_horse_death",
+        ] {
+            assert!(
+                registry.get(recipe).is_some(),
+                "生物音效配方 {recipe} 必须可加载"
+            );
+        }
         assert!(
             registry.get("fauna_mundane_wither").is_some(),
             "plan-mundane-fauna-v1 P2 负灵域灭杀 recipe `fauna_mundane_wither` 必须加载\

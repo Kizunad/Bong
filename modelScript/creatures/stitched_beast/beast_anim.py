@@ -115,7 +115,7 @@ import locomotion as LM  # noqa: E402
 from bbmodel_maker.rig.anim_rig import (Pose, Rig, build_tracks, euler, euler_of,  # noqa: E402
                       write_bbmodel, write_geckolib)
 
-OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"
+OUT_DIR = GB.OUT_DIR
 
 # ---------------------------------------------------------------- 常数
 ZETA = 0.25       # 生物组织的阻尼比。肌肉黏弹性主导，活体实测 0.2–0.3（观察值）
@@ -661,7 +661,7 @@ def export(seed: int, *, quiet: bool = False) -> tuple[Path, Path]:
             print(f"  {name:<22} {length:>5.2f}s {'循环' if loop else '单次'}  "
                   f"{len(tracks):>3} 骨  {kf:>5} 关键帧")
     out_a = OUT_DIR / f"BeastAnim_{seed}.bbmodel"
-    out_g = HERE / f"stitched_beast_{seed}.animation.json"
+    out_g = OUT_DIR / f"stitched_beast_{seed}.animation.json"
     write_bbmodel(be.model, out_a, f"BeastAnim_{seed}", entries)
     write_geckolib(out_g, "bong", f"stitched_beast_{seed}", entries)
     return out_a, out_g

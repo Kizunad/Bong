@@ -65,10 +65,14 @@ fn test_command_app_for_settings(
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
-    let technique_registry = crate::cultivation::known_techniques::TechniqueRegistry::load_default(
-        &crate::body_plan::RaceRegistry::default(),
-    )
-    .expect("checked-in technique catalog must load for command test app");
+    let assets = crate::body_plan::resolve_assets_root().join("assets/body_plans");
+    let plans = crate::body_plan::BodyPlanRegistry::load_dir(assets.join("plans"))
+        .expect("checked-in body plans must load for command test app");
+    let races = crate::body_plan::RaceRegistry::load_file(assets.join("races.json"), &plans)
+        .expect("checked-in races must load for command test app");
+    let technique_registry =
+        crate::cultivation::known_techniques::TechniqueRegistry::load_default(&races)
+            .expect("checked-in technique catalog must load for command test app");
     app.insert_resource(technique_registry);
     register_for_environment(&mut app, dev_mode_enabled, test_env);
     crate::identity::command::register(&mut app);
