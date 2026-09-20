@@ -11,6 +11,16 @@ import io.wispforest.owo.ui.container.ScrollContainer;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.inspect.SkillConfigContent;
+import com.bong.client.combat.inspect.SkillConfigWindows;
+import com.bong.client.combat.inspect.TechniqueClientIntentSink;
+import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.practice.*;
+import com.bong.client.ui.model.ModelPreviewContent;
+import com.bong.client.cultivation.BodyModelContent;
+import com.bong.client.cultivation.CultivationClientIntentSink;
+import com.bong.client.inventory.component.BodyInspectComponent;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.HudRenderCommand;
@@ -62,6 +72,15 @@ public final class UiWindowRuntime {
     private static InventoryLoadoutWindows loadout;
     private static HudWidgetWindows hud;
     private static HudRenderBackend hudBackend = HudRenderBackend.NOOP;
+    private static final SkillConfigWindows SKILL_CONFIGS = new SkillConfigWindows(MANAGER,
+        TechniquesListPanel::snapshot, () -> CastStateStore.snapshot().isCasting(), new TechniqueClientIntentSink());
+    public static final UiWindowDefinition MODEL_PREVIEW = new UiWindowDefinition(
+        "model-preview", "model-preview", 320, 180, Set.of(UiWindowDefinition.Capability.WINDOW));
+    public static final UiWindowDefinition PHYSICAL_BODY = new UiWindowDefinition(
+        "physical-body", "body-inspect", 320, 180, Set.of(UiWindowDefinition.Capability.WINDOW));
+    public static final UiWindowDefinition MERIDIANS = new UiWindowDefinition(
+        "meridians", "body-inspect", 320, 180, Set.of(UiWindowDefinition.Capability.WINDOW));
+    private static PracticeCatalogContent practice;
 
     private UiWindowRuntime() {}
 
@@ -70,14 +89,27 @@ public final class UiWindowRuntime {
         loadPreferences();
         ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
             @Override public Identifier getFabricId() { return new Identifier("bong", "workspace-backgrounds"); }
-            @Override public void reload(ResourceManager resources) { backgrounds.reload(); }
+            @Override public void reload(ResourceManager resources) {
+                backgrounds.reload();
+                VIEWS.values().forEach(view -> { if (view.modelPreview != null) view.modelPreview.invalidate(); });
+                VIEWS.values().forEach(view -> { if (view.bodyModel != null) view.bodyModel.invalidate(); });
+            }
         });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             synchronizeContext(client);
+            enforceModelPreviewAccess();
             if (!(client.currentScreen instanceof InspectScreen) || !client.isWindowFocused()) cancelInput();
             ITEMS.refresh();
             CONTAINERS.refresh();
             if (loadout != null) loadout.refresh();
+            SKILL_CONFIGS.refresh();
+            if (practice != null) practice.refresh();
+            for (var view : List.copyOf(VIEWS.values())) {
+                if (view.practiceDetail != null) view.practiceDetail.refresh();
+                if (view.practiceBinding != null) view.practiceBinding.refresh();
+                if (view.practiceCompare != null) view.practiceCompare.refresh();
+            }
+            VIEWS.values().forEach(view -> { if (view.bodyModel != null) view.bodyModel.refresh(); });
             MANAGER.tick(System.currentTimeMillis());
         });
         initialized = true;
@@ -131,7 +163,7 @@ public final class UiWindowRuntime {
         hud = new HudWidgetWindows(MANAGER, preferences);
         controls = new WorkspaceControls(MANAGER, backgrounds, preferences, UiWindowRuntime::savePreferences,
             hud, UiWindowRuntime::openHud, UiWindowRuntime::showHud, UiWindowRuntime::resetLayout,
-            UiWindowRuntime::remember);
+            UiWindowRuntime::remember, UiWindowRuntime::openModelPreview, UiWindowRuntime::canUseModelPreview);
     }
 
     private static void savePreferences() {
@@ -156,6 +188,7 @@ public final class UiWindowRuntime {
         preferences.motion(false);
         CONTAINERS.reset();
         loadout = null;
+        practice = null;
         backgrounds.select("cosmos");
         createControls();
     }
@@ -177,6 +210,7 @@ public final class UiWindowRuntime {
             MANAGER.reset();
             CONTAINERS.reset();
             loadout = null;
+            practice = null;
             if (hud != null) hud.resetSession();
         }
         MANAGER.resizeViewport(Math.max(1, client.getWindow().getScaledWidth()),
@@ -247,8 +281,140 @@ public final class UiWindowRuntime {
         focusedKey = state.key();
     }
 
+    public static void openSkillConfig(TechniquesListPanel.Technique technique) {
+        if (technique == null) return;
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        int width = MinecraftClient.getInstance().getWindow().getScaledWidth();
+        int height = MinecraftClient.getInstance().getWindow().getScaledHeight();
+        int offset = MANAGER.snapshot().size() * 16;
+        var preference = preferences.window(SkillConfigWindows.DEFINITION.windowType());
+        var key = MANAGER.key(SkillConfigWindows.DEFINITION.windowType(), technique.id());
+        boolean existing = MANAGER.contains(key);
+        var state = SKILL_CONFIGS.open(technique.id(), preference == null
+            ? new UiWindowManager.Rect(Math.max(0, (width - 260) / 2 + offset),
+                Math.max(28, (height - 260) / 2 + offset), 260, 260) : preference.bounds());
+        if (state != null && !existing && preference != null) MANAGER.pin(key, preference.pinned());
+        if (state != null) focusedKey = state.key();
+    }
+
+    public static PracticeCatalogContent practice() {
+        if (practice == null) practice = new PracticeCatalogContent(UiWindowRuntime::openPracticeDetail);
+        return practice;
+    }
+
+    public static void openPractice() {
+        openPracticeWindow(PracticeWindows.CATALOG, "player", 410, 350);
+    }
+
+    public static void searchPractice(String query) {
+        openPractice();
+        practice().query(query);
+    }
+
+    public static void openPracticeDetail(String identity) {
+        if (PracticeCatalog.entries(TechniquesListPanel.snapshot(), com.bong.client.skill.SkillSetStore.snapshot())
+                .stream().noneMatch(entry -> entry.key().equals(identity))) return;
+        openPracticeWindow(PracticeWindows.DETAIL, identity, 290, 370);
+    }
+
+    public static void openPracticeBinding(String techniqueId) {
+        if (TechniquesListPanel.snapshot().stream().noneMatch(entry -> entry.id().equals(techniqueId))) return;
+        openPracticeWindow(PracticeWindows.BINDING, techniqueId, 300, 320);
+    }
+
+    public static void openPracticeCompare(String left, String right) {
+        openPracticeWindow(PracticeWindows.COMPARE, left + "|" + right, 430, 350);
+    }
+
+    private static void openPracticeWindow(UiWindowDefinition definition, String identity, int width, int height) {
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        cancelInput();
+        var key = MANAGER.key(definition.windowType(), identity);
+        boolean existing = MANAGER.contains(key);
+        var preference = preferences.window(key.windowType());
+        int offset = (int) MANAGER.snapshot().stream().filter(state -> state.definition().equals(definition)).count() * 16;
+        var state = MANAGER.openOrFocus(definition, key, preference == null
+            ? new UiWindowManager.Rect(definition.equals(PracticeWindows.CATALOG) ? 20 : 100 + offset,
+                24 + offset, width, height) : preference.bounds());
+        if (!existing && preference != null) MANAGER.pin(key, preference.pinned());
+        focusedKey = state.key();
+    }
+
+    public static void openMeridian(com.bong.client.inventory.model.MeridianChannel channel) {
+        openBody(BodyInspectComponent.Layer.MERIDIAN);
+        var model = body(BodyInspectComponent.Layer.MERIDIAN);
+        model.setSelectedChannel(channel);
+        model.setTechniqueMeridianHighlights(List.of(channel));
+    }
+
+    public static void openModelPreview() {
+        var client = MinecraftClient.getInstance();
+        if (!canUseModelPreview()) return;
+        synchronizeContext(client);
+        loadPreferences();
+        var key = MANAGER.key(MODEL_PREVIEW.windowType(), "player");
+        boolean existing = MANAGER.contains(key);
+        var preference = preferences.window(key.windowType());
+        int width = client.getWindow().getScaledWidth();
+        int height = client.getWindow().getScaledHeight();
+        var state = MANAGER.openOrFocus(MODEL_PREVIEW, key,
+            preference == null ? new UiWindowManager.Rect(Math.max(8, (width - 620) / 2),
+                Math.max(8, (height - 410) / 2), Math.min(620, width - 16), Math.min(410, height - 44)) : preference.bounds());
+        if (!existing && preference != null) MANAGER.pin(key, preference.pinned());
+        focusedKey = state.key();
+    }
+
+    /** 自身内观属于普通游戏功能，与 OP 的全模型目录无关。 */
+    public static void openBody(BodyInspectComponent.Layer layer) {
+        var client = MinecraftClient.getInstance();
+        synchronizeContext(client);
+        loadPreferences();
+        var definition = layer == BodyInspectComponent.Layer.PHYSICAL ? PHYSICAL_BODY : MERIDIANS;
+        var key = MANAGER.key(definition.windowType(), "player");
+        boolean existing = MANAGER.contains(key);
+        var preference = preferences.window(key.windowType());
+        int w = client.getWindow().getScaledWidth(), h = client.getWindow().getScaledHeight();
+        var state = MANAGER.openOrFocus(definition, key, preference == null
+            ? new UiWindowManager.Rect(Math.max(8, (w-640)/2), Math.max(8, (h-410)/2), Math.min(640,w-16), Math.min(410,h-44))
+            : preference.bounds());
+        if (!existing && preference != null) MANAGER.pin(key, preference.pinned());
+        focusedKey = state.key();
+    }
+
+    public static BodyInspectComponent body(BodyInspectComponent.Layer layer) {
+        var definition = layer == BodyInspectComponent.Layer.PHYSICAL ? PHYSICAL_BODY : MERIDIANS;
+        for (var state : MANAGER.snapshot()) if (state.definition().equals(definition)) return view(state).bodyModel.body();
+        return null;
+    }
+
+    public static BodyInspectComponent bodyAt(double x, double y) {
+        if (controls != null && controls.hit(x, y)) return null;
+        var state = windowAt(x, y);
+        if (state == null) return null;
+        var content = view(state).bodyModel;
+        if (content == null) return null;
+        var body = content.body();
+        return x >= body.x() && x < body.x()+body.width() && y >= body.y() && y < body.y()+body.height() ? body : null;
+    }
+
+    public static boolean canUseModelPreview() {
+        var client = MinecraftClient.getInstance();
+        return client.player != null && client.world != null && client.getNetworkHandler() != null
+            && com.bong.client.ui.model.ModelPreviewAccess.allowed(client.getNetworkHandler().getCommandDispatcher().getRoot());
+    }
+
+    private static void enforceModelPreviewAccess() {
+        if (canUseModelPreview()) return;
+        for (var state : MANAGER.snapshot()) {
+            if (state.definition().equals(MODEL_PREVIEW)) MANAGER.close(state.key());
+        }
+    }
+
     public static void renderWorkspace(DrawContext context, int mouseX, int mouseY, float delta) {
         loadPreferences();
+        enforceModelPreviewAccess();
         captureHudCommands(com.bong.client.BongHud.workspaceCommands());
         var window = MinecraftClient.getInstance().getWindow();
         controls.layout(window.getScaledWidth(), window.getScaledHeight(),
@@ -287,6 +453,7 @@ public final class UiWindowRuntime {
     private static void render(DrawContext context, int mouseX, int mouseY, float delta,
                                Set<UiWindowManager.WindowKey> visible) {
         synchronizeContext(MinecraftClient.getInstance());
+        enforceModelPreviewAccess();
         var top = visible == null && !controls.hit(mouseX, mouseY) ? windowAt(mouseX, mouseY) : null;
         long now = System.nanoTime();
         int windowDepth = 1000;
@@ -304,6 +471,9 @@ public final class UiWindowRuntime {
                 || displayed.height() < state.definition().minimumHeight();
             var layout = shrinking ? state.bounds() : displayed;
             view.adapter.layout(layout);
+            if (view.modelPreview != null) view.modelPreview.layout(view.adapter.content().width(), view.adapter.content().height());
+            if (view.bodyModel != null) view.bodyModel.layout(view.adapter.content().width(), view.adapter.content().height());
+            if (view.practice != null) view.practice.layout(view.adapter.content().width(), view.adapter.content().height());
             boolean hovered = state == top;
             context.getMatrices().push();
             try {
@@ -330,6 +500,19 @@ public final class UiWindowRuntime {
         if (widget != null) return widget.title();
         if (key.windowType().equals(InventoryLoadoutWindows.EQUIPMENT.windowType())) return "装备";
         if (key.windowType().equals(InventoryLoadoutWindows.SHORTCUTS.windowType())) return "快捷槽";
+        if (key.windowType().equals(PracticeWindows.CATALOG.windowType())) return "修习";
+        if (key.windowType().equals(PracticeWindows.BINDING.windowType())) return "快捷绑定";
+        if (key.windowType().equals(PracticeWindows.COMPARE.windowType())) return "闪避对比";
+        if (key.windowType().equals(PracticeWindows.DETAIL.windowType())) return PracticeCatalog.entries(
+            TechniquesListPanel.snapshot(), com.bong.client.skill.SkillSetStore.snapshot()).stream()
+            .filter(entry -> entry.key().equals(key.identity())).map(PracticeCatalog.Entry::name).findFirst().orElse("修习详情");
+        if (key.windowType().equals(MODEL_PREVIEW.windowType())) return "模型预览";
+        if (key.windowType().equals(PHYSICAL_BODY.windowType())) return "体表 · 内观";
+        if (key.windowType().equals(MERIDIANS.windowType())) return "经脉 · 修炼";
+        if (key.windowType().equals(SkillConfigWindows.DEFINITION.windowType())) {
+            return TechniquesListPanel.snapshot().stream().filter(tech -> tech.id().equals(key.identity()))
+                .map(tech -> tech.displayName() + " · 配置").findFirst().orElse("功法配置");
+        }
         if (key.windowType().equals(InventoryContainerWindows.DEFINITION.windowType())) {
             var def = CONTAINERS.definition(key.identity());
             return def == null ? "" : def.name();
@@ -370,17 +553,78 @@ public final class UiWindowRuntime {
                 view.loadout = loadout();
                 view.loadout.attach(state.definition(), adapter.content());
                 view.adapter.title(windowTitle(state.key()));
+            } else if (state.definition().equals(SkillConfigWindows.DEFINITION)) {
+                var config = com.bong.client.combat.SkillConfigStore.configFor(state.key().identity());
+                if (config == null) config = com.bong.client.combat.inspect.SkillConfigSchemaRegistry.defaultConfig(state.key().identity());
+                var content = new SkillConfigContent(
+                    com.bong.client.combat.inspect.SkillConfigSchemaRegistry.schemaFor(state.key().identity()).orElseThrow(),
+                    config,
+                    draft -> SKILL_CONFIGS.save(state, draft));
+                view.adapter.title(windowTitle(state.key()));
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "config-body")
+                    .child(content.component());
+            } else if (state.definition().equals(PracticeWindows.CATALOG)) {
+                view.practice = practice();
+                view.adapter.title("修习");
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "practice-body")
+                    .child(view.practice.component());
+            } else if (state.definition().equals(PracticeWindows.DETAIL)) {
+                view.practiceDetail = new PracticeDetailContent(state.key().identity(), UiWindowRuntime::searchPractice,
+                    UiWindowRuntime::openMeridian, UiWindowRuntime::openPracticeBinding, UiWindowRuntime::openSkillConfig);
+                view.adapter.title(windowTitle(state.key()));
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "practice-body")
+                    .child(view.practiceDetail.component());
+            } else if (state.definition().equals(PracticeWindows.BINDING)) {
+                view.practiceBinding = new PracticeBindingContent(state, UiWindowRuntime::openPracticeCompare);
+                view.adapter.title("快捷绑定");
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "practice-body")
+                    .child(view.practiceBinding.component());
+            } else if (state.definition().equals(PracticeWindows.COMPARE)) {
+                view.practiceCompare = new PracticeCompareContent(state.key().identity());
+                view.adapter.title("闪避对比");
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "practice-body")
+                    .child(view.practiceCompare.component());
+            } else if (state.definition().equals(MODEL_PREVIEW)) {
+                view.modelPreview = new ModelPreviewContent();
+                view.adapter.title("模型预览");
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "model-preview-body")
+                    .child(view.modelPreview.component());
+            } else if (state.definition().equals(PHYSICAL_BODY) || state.definition().equals(MERIDIANS)) {
+                view.bodyModel = new BodyModelContent(state, state.definition().equals(PHYSICAL_BODY)
+                    ? BodyInspectComponent.Layer.PHYSICAL : BodyInspectComponent.Layer.MERIDIAN, new CultivationClientIntentSink());
+                view.adapter.title(windowTitle(state.key()));
+                view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "body-inspect-content")
+                    .child(view.bodyModel.component());
             }
             VIEWS.put(state.key(), view);
             View ownedView = view;
             state.scope().addCleanup(() -> {
                 VIEWS.remove(state.key());
                 if (ownedView.loadout != null) ownedView.loadout.detach(state.definition(), adapter.content());
+                if (ownedView.practice != null) {
+                    var body = adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "practice-body");
+                    if (body != null) body.removeChild(ownedView.practice.component());
+                    if (practice == ownedView.practice) practice = null;
+                }
+                if (ownedView.modelPreview != null) {
+                    ownedView.modelPreview.close();
+                    adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "model-preview-body")
+                        .removeChild(ownedView.modelPreview.component());
+                }
+                if (ownedView.bodyModel != null) {
+                    ownedView.bodyModel.close();
+                    adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "body-inspect-content")
+                        .removeChild(ownedView.bodyModel.component());
+                }
                 adapter.close();
                 if (state.key().equals(focusedKey)) focusedKey = null;
             });
         }
         InventoryItem item = ITEMS.item(state.key());
+        if (view.practice != null) view.practice.refresh();
+        if (view.practiceDetail != null) view.practiceDetail.refresh();
+        if (view.practiceBinding != null) view.practiceBinding.refresh();
+        if (view.practiceCompare != null) view.practiceCompare.refresh();
         if (view.container != null) {
             view.container.bind(CONTAINERS, state.key().identity());
             view.adapter.title(windowTitle(state.key()));
@@ -493,6 +737,13 @@ public final class UiWindowRuntime {
             UiWindowManager.Rect bounds;
             if (definition.equals(InventoryLoadoutWindows.EQUIPMENT)) bounds = new UiWindowManager.Rect(12, 30, 190, 256);
             else if (definition.equals(InventoryLoadoutWindows.SHORTCUTS)) bounds = new UiWindowManager.Rect(212, 30, 180, 194);
+            else if (definition.equals(PracticeWindows.CATALOG)) bounds = new UiWindowManager.Rect(20, 24, 410, 350);
+            else if (definition.equals(PracticeWindows.DETAIL)) bounds = new UiWindowManager.Rect(100, 24, 290, 370);
+            else if (definition.equals(PracticeWindows.BINDING)) bounds = new UiWindowManager.Rect(120, 36, 300, 320);
+            else if (definition.equals(PracticeWindows.COMPARE)) bounds = new UiWindowManager.Rect(60, 24, 430, 350);
+            else if (definition.equals(SkillConfigWindows.DEFINITION)) bounds = new UiWindowManager.Rect(48, 48, 260, 260);
+            else if (definition.equals(MODEL_PREVIEW)) bounds = new UiWindowManager.Rect(8, 8,
+                Math.min(620, window.getScaledWidth() - 16), Math.min(410, window.getScaledHeight() - 44));
             else if (definition.equals(InventoryContainerWindows.DEFINITION)) {
                 var def = CONTAINERS.definition(state.key().identity());
                 if (def == null) continue;
@@ -579,6 +830,7 @@ public final class UiWindowRuntime {
         var states = MANAGER.snapshot();
         for (int index = states.size() - 1; index >= 0; index--) {
             var state = states.get(index);
+            if (state.definition().equals(MODEL_PREVIEW) && !canUseModelPreview()) continue;
             var view = VIEWS.get(state.key());
             var bounds = view == null ? state.bounds() : view.displayed;
             if (!state.minimized() && bounds.contains(x, y)) return state;
@@ -587,6 +839,10 @@ public final class UiWindowRuntime {
     }
 
     public static void previewMotion(boolean enabled) { preferences.motion(enabled); }
+
+    public static io.wispforest.owo.ui.container.FlowLayout windowContentForPreview(UiWindowManager.WindowKey key) {
+        return VIEWS.get(key).adapter.content();
+    }
 
     public static boolean previewBackground(String id) { return backgrounds.select(id); }
 
@@ -603,6 +859,12 @@ public final class UiWindowRuntime {
         private InventoryItem item;
         private InventoryContainerContent container;
         private InventoryLoadoutWindows loadout;
+        private PracticeCatalogContent practice;
+        private PracticeDetailContent practiceDetail;
+        private PracticeBindingContent practiceBinding;
+        private PracticeCompareContent practiceCompare;
+        private ModelPreviewContent modelPreview;
+        private BodyModelContent bodyModel;
         private final WindowMotion motion;
         private UiWindowManager.Rect displayed;
         private View(OwoXmlWindowContentAdapter adapter, UiWindowManager.Rect initial) {

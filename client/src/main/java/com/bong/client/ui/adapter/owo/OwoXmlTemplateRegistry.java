@@ -46,7 +46,12 @@ public final class OwoXmlTemplateRegistry {
         Map.entry("inventory-equipment", new Identifier("bong", "inventory-equipment")),
         Map.entry("inventory-shortcuts", new Identifier("bong", "inventory-shortcuts")),
         Map.entry("workspace-controls", new Identifier("bong", "workspace-controls")),
-        Map.entry("hud-widget", new Identifier("bong", "hud-widget"))
+        Map.entry("hud-widget", new Identifier("bong", "hud-widget")),
+        Map.entry("skill-config", new Identifier("bong", "skill-config")),
+        Map.entry("practice-catalog", new Identifier("bong", "practice-catalog")),
+        Map.entry("practice-detail", new Identifier("bong", "practice-detail")),
+        Map.entry("model-preview", new Identifier("bong", "model-preview")),
+        Map.entry("body-inspect", new Identifier("bong", "body-inspect"))
     );
     private static final OwoXmlTemplateRegistry PRODUCTION = new OwoXmlTemplateRegistry(
         UIModelLoader::get,

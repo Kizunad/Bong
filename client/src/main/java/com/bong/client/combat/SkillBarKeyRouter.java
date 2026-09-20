@@ -53,6 +53,12 @@ public final class SkillBarKeyRouter {
         }
         if (config.isOnCooldown(slot, nowMs)) return RouteResult.COOLDOWN_BLOCKED;
 
+        if (entry.id().equals(com.bong.client.movement.DashSkill.ID)) {
+            SkillBarStore.clearSelectedSlot();
+            castSender.accept(slot);
+            return RouteResult.CAST_SENT;
+        }
+
         CastState current = CastStateStore.snapshot();
         if (current.isCasting()) {
             if (current.slot() == slot) return RouteResult.SAME_CAST_IGNORED;
@@ -77,6 +83,11 @@ public final class SkillBarKeyRouter {
     }
 
     private static void sendCastWithCrosshairTarget(int slot) {
+        var entry = SkillBarStore.snapshot().slot(slot);
+        if (entry != null && entry.id().equals(com.bong.client.movement.DashSkill.ID)) {
+            com.bong.client.movement.MovementKeybindings.performDash();
+            return;
+        }
         ClientRequestSender.sendSkillBarCast(slot, crosshairEntityTarget());
     }
 

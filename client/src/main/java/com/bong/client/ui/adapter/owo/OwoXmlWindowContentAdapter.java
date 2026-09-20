@@ -180,7 +180,10 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
         applyBounds();
     }
 
-    public boolean textFocused() { return sizeExpanded && (widthInput.isFocused() || heightInput.isFocused()); }
+    public boolean textFocused() {
+        var handler = adapter.rootComponent.focusHandler();
+        return handler != null && handler.focused() instanceof TextBoxComponent;
+    }
 
     private void setSizeExpanded(boolean expanded) {
         if (sizeExpanded == expanded) return;
@@ -236,7 +239,8 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
             return true;
         }
         if (textFocused()) {
-            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+            if (sizeExpanded && (widthInput.isFocused() || heightInput.isFocused())
+                && (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER)) {
                 submitSize();
                 return true;
             }

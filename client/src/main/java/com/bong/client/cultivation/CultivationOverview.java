@@ -1,65 +1,17 @@
-package com.bong.client.ui;
+package com.bong.client.cultivation;
 
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.util.RealmLabel;
-import io.wispforest.owo.ui.base.BaseOwoScreen;
-import io.wispforest.owo.ui.component.Components;
-import io.wispforest.owo.ui.container.Containers;
-import io.wispforest.owo.ui.container.FlowLayout;
-import io.wispforest.owo.ui.core.HorizontalAlignment;
-import io.wispforest.owo.ui.core.Insets;
-import io.wispforest.owo.ui.core.OwoUIAdapter;
-import io.wispforest.owo.ui.core.Sizing;
-import io.wispforest.owo.ui.core.Surface;
-import io.wispforest.owo.ui.core.VerticalAlignment;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
-    static final Text TITLE = Text.literal("修仙面板");
-
-    private static final int PANEL_PADDING = 10;
+/** 修炼概览的纯快照投影；由模型窗口实时读取，不持有打开时的旧快照。 */
+public final class CultivationOverview {
     private static final int BAR_SEGMENTS = 10;
     private static final int KARMA_METER_SLOTS = 12;
-
-    private final PlayerStateViewModel playerState;
-
-    public CultivationScreen(PlayerStateViewModel playerState) {
-        super(TITLE);
-        this.playerState = playerState == null ? PlayerStateViewModel.empty() : playerState;
-    }
-
-    @Override
-    protected OwoUIAdapter<FlowLayout> createAdapter() {
-        return OwoUIAdapter.create(this, Containers::verticalFlow);
-    }
-
-    @Override
-    protected void build(FlowLayout rootComponent) {
-        rootComponent.surface(Surface.VANILLA_TRANSLUCENT);
-        rootComponent.horizontalAlignment(HorizontalAlignment.CENTER);
-        rootComponent.verticalAlignment(VerticalAlignment.CENTER);
-
-        FlowLayout panel = Containers.verticalFlow(Sizing.content(), Sizing.content());
-        panel.surface(Surface.DARK_PANEL);
-        panel.padding(Insets.of(PANEL_PADDING));
-        panel.child(Components.label(TITLE));
-
-        for (String line : describe(playerState).lines()) {
-            panel.child(Components.label(Text.literal(line)));
-        }
-
-        rootComponent.child(panel);
-    }
-
-    PlayerStateViewModel playerState() {
-        return playerState;
-    }
-
-    static RenderContent describe(PlayerStateViewModel playerState) {
+    private CultivationOverview() {}
+    public static RenderContent describe(PlayerStateViewModel playerState) {
         PlayerStateViewModel safePlayerState = playerState == null ? PlayerStateViewModel.empty() : playerState;
         if (safePlayerState.isEmpty()) {
             return new RenderContent(true, List.of(
@@ -179,9 +131,10 @@ public final class CultivationScreen extends BaseOwoScreen<FlowLayout> {
         return Math.max(min, Math.min(max, value));
     }
 
-    static record RenderContent(boolean placeholder, List<String> lines) {
-        RenderContent {
+    public record RenderContent(boolean placeholder, List<String> lines) {
+        public RenderContent {
             lines = List.copyOf(lines);
         }
     }
+
 }

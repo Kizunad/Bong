@@ -11,7 +11,6 @@ import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.state.UiOpenState;
-import com.bong.client.ui.CultivationScreen;
 import com.bong.client.ui.UiOpenScreens;
 import net.minecraft.client.gui.screen.DeathScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
@@ -64,10 +63,6 @@ class ScreenHudVisibilityTest {
         assertEquals(
             ScreenHudVisibility.CAST_BAR_ONLY,
             ScreenHudVisibility.forScreen(new InspectScreen(InventoryModel.empty()))
-        );
-        assertEquals(
-            ScreenHudVisibility.CAST_BAR_ONLY,
-            ScreenHudVisibility.forScreen(new CultivationScreen(PlayerStateViewModel.empty()))
         );
         assertEquals(ScreenHudVisibility.CAST_BAR_ONLY, ScreenHudVisibility.forScreen(dynamicXmlScreen));
         InsightOfferViewModel offer = insightOffer();

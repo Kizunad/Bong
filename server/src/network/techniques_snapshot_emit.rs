@@ -65,6 +65,9 @@ fn build_techniques_snapshot(
                     return None;
                 };
                 Some(TechniqueEntryV1 {
+                    category: definition.category_label().to_string(),
+                    input_kind: definition.input_kind().to_string(),
+                    icon_texture: definition.icon_texture.clone(),
                     id: definition.id.to_string(),
                     display_name: definition.display_name.to_string(),
                     grade: definition.grade.to_string(),

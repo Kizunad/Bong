@@ -26,6 +26,11 @@ public final class ScreenTransitionController {
         if (client == null || applyingDirectly) {
             return false;
         }
+        // Quick Play 不经过主菜单；登录界面若延迟挂载，原版会在 player 为空时处理游戏输入。
+        if (client.world == null || client.player == null) {
+            clearOnDisconnect();
+            return false;
+        }
         Screen oldScreen = client.currentScreen;
         if (clearActiveTransitionIfSameScreen(oldScreen, nextScreen)) {
             // Re-applying the same Screen instance would make vanilla call removed() and

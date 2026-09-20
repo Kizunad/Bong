@@ -50,9 +50,17 @@ public final class MovementKeybindings {
             dashTapped
         );
         if (action != null && DashSkill.learned()) {
-            ClientRequestSender.sendMovementAction(action, dashYawDegrees(client));
+            performDash();
         }
     }
+
+    public static void performDash() {
+        var client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) return;
+        ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.DASH, dashYawDegrees(client));
+    }
+
+    public static String dashKeyLabel() { return dashKey == null ? "V" : dashKey.getBoundKeyLocalizedText().getString(); }
 
     static double dashYawDegrees(MinecraftClient client) {
         double playerYaw = client.player.getYaw();

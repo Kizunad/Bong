@@ -25,6 +25,5 @@ scroll/ScrollReadScreen.java	ScrollReadScreen	OWO	CODE	SCREEN_SCOPE
 social/SparringInviteScreen.java	SparringInviteScreen	VANILLA	VANILLA	SCREEN_SCOPE
 social/TradeOfferScreen.java	TradeOfferScreen	VANILLA	VANILLA	SCREEN_SCOPE
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA	VANILLA	SCREEN_SCOPE
-ui/CultivationScreen.java	CultivationScreen	OWO	CODE	SCREEN_SCOPE
 ui/DynamicXmlScreen.java	DynamicXmlScreen	OWO	XML_MODEL	SCREEN_SCOPE
 cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA	VANILLA	SCREEN_SCOPE
