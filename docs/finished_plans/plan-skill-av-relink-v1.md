@@ -31,7 +31,7 @@
 
 ## P0 — 技能栏图标重链
 
-**现状证据**：`known_techniques.rs` 绝大多数 `icon_texture` 写 `bong:textures/gui/skill/<name>.png`，该路径磁盘只有 15 张；而 `bong-client:textures/gui/items/skill_scroll_*.png` 已有 39 张覆盖同批招式。client `SkillIconIds.java` 本就统一按 `skill_scroll_<safeId>.png` 约定解析，`LoadoutIconLayer` 走 `TextureProbe::exists` 兜底成文字标签——所以当前技能栏大面积无图标。
+**现状证据**：`known_techniques.rs` 绝大多数 `icon_texture` 写 `bong:textures/gui/skill/<name>.png`，该路径磁盘只有 15 张；而 `bong-client:textures/gui/items/skill_scroll_*.png` 已有 39 张覆盖同批招式。client `SkillIconIds.java` 本就统一按 `skill_scroll_<safeId>.png` 约定解析，`LoadoutIconLayer` 走 `HudTextureProbe::exists` 兜底成文字标签——所以当前技能栏大面积无图标。
 
 **交付物**：
 
@@ -76,7 +76,7 @@
 
 ## P2 — 真缺图标补齐
 
-- r9 追加的 dugu runtime 5 张走 `/gen-image item` 批量生成（`scripts/images/gen.py`）。**消费方澄清**：这 5 张**不是**`TECHNIQUE_DEFINITIONS` 条目，消费链是 `dugu_v2` runtime visual payload（server 下发招式提示图标路径 → client `TextureProbe::exists` 探测后由事件 UI 加载），因此不落入 P3 的 technique 快照覆盖。处置：命名仍按 P0 约定收编——生成为 `bong-client:textures/gui/items/skill_scroll_dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`，同步把 `dugu_v2` payload 中旧引用路径（`bong:textures/gui/skill/dugu_*.png`）重链到新命名（不给旧命名空间留新增量）；并在本批为这 5 条 runtime 引用路径**单独加存在性 pin 测试**（server 侧断言 payload 引用路径 == 磁盘真实资产），保证生成后有真实加载路径、不再漂移。生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
+- r9 追加的 dugu runtime 5 张走 `/gen-image item` 批量生成（`scripts/images/gen.py`）。**消费方澄清**：这 5 张**不是** `TECHNIQUE_DEFINITIONS` 条目，消费链是 `dugu_v2` runtime visual payload（server 下发招式提示图标路径 → client `HudTextureProbe::exists` 探测后由事件 UI 加载），因此不落入 P3 的 technique 快照覆盖。处置：命名仍按 P0 约定收编——生成为 `bong-client:textures/gui/items/skill_scroll_dugu_{eclipse,penetrate,reverse,self_cure,shroud}.png`，同步把 `dugu_v2` payload 中旧引用路径（`bong:textures/gui/skill/dugu_*.png`）重链到新命名（不给旧命名空间留新增量）；并在本批为这 5 条 runtime 引用路径**单独加存在性 pin 测试**（server 侧断言 payload 引用路径 == 磁盘真实资产），保证生成后有真实加载路径、不再漂移。生成后程序化全量扫透明度揪假透明（--transparent ~10% 白底失败率）。
 - P0 映射逐条核对后若仍有缺口（如 `morph_yixing` 磁盘完全无文件），一并入本批生成，同样按 `skill_scroll_*` 约定命名。
 - 图标资产变更同步 `resourcepack.rs` + committed manifest 的 sha1/size（否则 Build resource pack CI 红）。
 
@@ -115,7 +115,7 @@
 2. 例外清单（既有专属图不重链，逐条锁进 P3 例外映射表）：woliu 基础六式 + `body.guangbo_ticao` 留 `bong:textures/gui/skill/`；zhenmai 五式留 `bong-client:textures/gui/skill/`；`morph.yixing` 全仓无资产、现值悬空，归 P2 `/gen-image` 生成后按约定收编（client 侧 allowlist 棘轮同步记录）。
 3. 拒绝备选路线（把 39 张复制/重命名到 `bong:textures/gui/skill/`）：徒增资产搬运与双份文件漂移风险，且与 `SkillIconIds` 既有 client 端解析约定相逆。
 
-**落点**：`server/src/cultivation/known_techniques.rs` 模块注释（约定 + 例外清单正文）；client `TextureProbe.java`（`Identifier.tryParse` 对 `bong-client:` 原生解析）、`LoadoutIconLayer.java` `resolveExistingSkillTexture`（服务端下发路径优先 + `skill_scroll_<safe_id>` 候选兜底）、`SkillIconIds.java`（`scrollTexturePath` 同一约定的 client 端拼法）。
+**落点**：`server/src/cultivation/known_techniques.rs` 模块注释（约定 + 例外清单正文）；client `HudTextureProbe.java`（`Identifier.tryParse` 对 `bong-client:` 原生解析）、`LoadoutIconLayer.java` `resolveExistingSkillTexture`（服务端下发路径优先 + `skill_scroll_<safe_id>` 候选兜底）、`SkillIconIds.java`（`scrollTexturePath` 同一约定的 client 端拼法）。
 
 #### #2 `stance_*` 触发源核实 —— PR-2（P1 实施）设计收口时决议，本 PR 不预判
 
