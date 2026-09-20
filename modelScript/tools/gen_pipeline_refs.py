@@ -274,7 +274,7 @@ def main() -> None:
     parser.add_argument(
         "--type",
         choices=["item", "standalone", "creature"],
-        default="standalone",
+        default="item",
         help="目标类型: item (人身佩戴装备/武器), standalone (独立放置设施/方块/炉子无模特), creature (生物)",
     )
     parser.add_argument("--ref", type=Path, help="图生图的参考图路径（若不提供则自动在输出目录寻找前序产物）")
