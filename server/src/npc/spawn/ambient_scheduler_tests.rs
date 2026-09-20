@@ -3330,6 +3330,50 @@ fn pack_members_share_origin_and_multiple_players_respect_remaining_budget() {
     );
 }
 
+fn pack_spawn_count_for_spirit_qi(spirit_qi: f64) -> usize {
+    let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
+        |_| ThreatBudget {
+            max_alive: 5,
+            spawn_interval_ticks: 250,
+            pack_size_range: (1, 1),
+        },
+        test_pool_fn,
+        true,
+        5,
+    );
+    app.world_mut().resource_mut::<ZoneRegistry>().zones[0].spirit_qi = spirit_qi;
+    app.world_mut().resource_mut::<GameTick>().0 = 200;
+    app.world_mut()
+        .resource_mut::<AmbientSchedulerConfig<TestFaunaMarker>>()
+        .pack_size = Some(|_, _| 1);
+    app.update();
+
+    let mut query = app
+        .world_mut()
+        .query_filtered::<(), With<TestFaunaMarker>>();
+    query.iter(app.world()).count()
+}
+
+#[test]
+fn pack_spawn_uses_dead_and_negative_zone_budget_multipliers() {
+    let normal = pack_spawn_count_for_spirit_qi(0.5);
+    let dead = pack_spawn_count_for_spirit_qi(0.0);
+    let negative = pack_spawn_count_for_spirit_qi(-0.3);
+
+    assert_eq!(
+        normal, 0,
+        "normal zone keeps the 250-tick group interval, so tick 200 must not spawn"
+    );
+    assert_eq!(
+        dead, 1,
+        "dead zone must apply its shortened group interval and spawn at tick 200"
+    );
+    assert_eq!(
+        negative, 1,
+        "negative zone must apply its shortened group interval and spawn at tick 200"
+    );
+}
+
 #[test]
 fn same_zone_multiple_players_do_not_exceed_max_alive_in_single_tick() {
     // §Verify blocker③(并发预算越界)：danger=1 → max_alive=2。zone 内已有 1 个活体，

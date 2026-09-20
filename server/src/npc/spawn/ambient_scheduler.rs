@@ -1363,7 +1363,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         // （`on_residue_ash=false`，ambient 调度核只关心危险度地理，不关心灰烬地表微观判定）。
         let zone_kind = movement_zone_kind(Some(zone), false);
         let outcome = if config.pack_size.is_some() {
-            let budget = (config.budget_fn)(zone.danger_level);
+            let budget = dead_zone_threat_budget((config.budget_fn)(zone.danger_level), zone_kind);
             if !should_run_interval(now, budget.spawn_interval_ticks) {
                 AmbientCheckOutcome::Throttled
             } else if alive_count >= budget.max_alive {
