@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+use bong_server::body_plan::race_registry::DEFAULT_RACES_PATH;
 use bong_server::body_plan::*;
 use bong_server::combat::components::*;
 use bong_server::combat::events::*;
@@ -40,6 +41,27 @@ fn checked_in_technique_registry() -> &'static TechniqueRegistry {
     })
 }
 
+fn checked_in_race_registry() -> &'static RaceRegistry {
+    static REGISTRY: OnceLock<RaceRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans = BodyPlanRegistry::load_dir(root.join("assets/body_plans/plans"))
+            .expect("checked-in body plans must load");
+        RaceRegistry::load_file(root.join(DEFAULT_RACES_PATH), &plans)
+            .expect("checked-in race registry must load")
+    })
+}
+
+fn is_production_species_channel(definition: &TechniqueDefinition, channel: &str) -> bool {
+    let RaceGateOwned::Species { species } = &definition.required_race else {
+        return false;
+    };
+    let channel = MeridianChannelId::new(channel);
+    species
+        .iter()
+        .any(|race| checked_in_race_registry().has_channel(race, &channel))
+}
+
 fn ni_mai_hu_ti_particle_id() -> &'static str {
     skill_vfx_wiring::wiring_for(NI_MAI_HU_TI_SKILL_ID)
         .expect("ni_mai_hu_ti particle must be in the public VFX wiring table")
@@ -58,7 +80,13 @@ fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -
         for definition in registry.iter() {
             for required in &definition.required_meridians {
                 let Some(id) = parse_meridian_id(&required.channel) else {
-                    continue;
+                    if is_production_species_channel(definition, &required.channel) {
+                        continue;
+                    }
+                    panic!(
+                        "checked-in technique {} has an unparseable non-species meridian channel {}",
+                        definition.id, required.channel
+                    );
                 };
                 let meridian = meridians.get_mut(id);
                 meridian.opened = true;
@@ -81,6 +109,12 @@ fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -
             PracticeLog::default(),
         ))
         .id()
+}
+
+#[test]
+fn spawn_caster_skips_species_channels_from_production_profiles() {
+    let mut app = app();
+    let _ = spawn_caster(&mut app, Realm::Condense, 0.0, DVec3::ZERO);
 }
 
 fn spawn_target(app: &mut App, position: DVec3) -> Entity {
