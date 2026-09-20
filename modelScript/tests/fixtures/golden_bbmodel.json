@@ -1,4 +1,10 @@
 {
+ "gen_alchemy_furnace.py": {
+  "exit": 0,
+  "outputs": {
+   "AlchemyFurnace.bbmodel": "5694f7846da6c038d05cb3b8ea48d25ccef101a38c4f09f8b53ca8416ace4885"
+  }
+ },
  "gen_anti_spirit_pressure_pill.py": {
   "exit": 0,
   "outputs": {
