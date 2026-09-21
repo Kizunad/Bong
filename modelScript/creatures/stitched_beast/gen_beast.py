@@ -34,7 +34,7 @@ import heads as HD  # noqa: E402
 import limbs as LB  # noqa: E402
 from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
-OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"
+OUT_DIR = GC.OUT_DIR
 
 MATS = dict(GC.MATS)
 MATS.update(LB.LIMB_MATS)

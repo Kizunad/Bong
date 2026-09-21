@@ -46,7 +46,7 @@ from bbmodel_maker.rig.anim_rig import write_bbmodel, write_geckolib  # noqa: E4
 LOBES = FR.default_lobes()
 MODEL = GF.OUT
 OUT_ANIM = GF.OUT_DIR / "StitchedBeastShardRig.bbmodel"
-OUT_GECKO = HERE / "stitched_beast_shard.animation.json"
+OUT_GECKO = GF.OUT_DIR / "stitched_beast_shard.animation.json"
 
 GEOM = FR.geom(LOBES)
 SPAN = GEOM.span                              # 锚段间距 —— 这块肉的"体长"

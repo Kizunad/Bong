@@ -423,7 +423,7 @@ mod tests {
             target,
             meridian_states: vec![
                 MeridianReadEntry {
-                    id: MeridianId::Lung,
+                    id: MeridianId::Lung.channel_id(),
                     integrity_bracket: IntegrityBracket::MicroTear,
                     has_circuit: true,
                     is_dead_armor: false,

@@ -19,7 +19,7 @@ use crate::combat::baomai_v4::scar_circuit::ActiveScarCircuits;
 use crate::combat::baomai_v4::scar_history::ScarHistory;
 use crate::combat::events::{AttackSource, CombatEvent};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{MeridianId, MeridianSystem};
+use crate::cultivation::components::{MeridianChannelId, MeridianSystem};
 use crate::npc::spawn::NpcMarker;
 
 // ── 组件 ──
@@ -47,7 +47,7 @@ pub struct CrackReadingResult {
 /// 单条经脉裂读条目。
 #[derive(Debug, Clone, Serialize)]
 pub struct MeridianReadEntry {
-    pub id: MeridianId,
+    pub id: MeridianChannelId,
     /// 浅读：对玩家目标四档，对 NPC 三档（映射为 PlayerBracket 后在序列化层区分）。
     pub integrity_bracket: IntegrityBracket,
     /// 深读才有意义。NPC 目标始终 false。
@@ -158,18 +158,8 @@ pub fn build_reading_result(
     let mut entries = Vec::with_capacity(20);
 
     for meridian in meridians.iter() {
-        // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本模块
-        // 与 `CircuitKind::involves` / `dead_armor::meridian_to_body_part` /
-        // `MeridianReadEntry.id`（client 渲染 payload）三处消费点仍是 legacy
-        // `MeridianId`（消费点改造留待后续 P1 子阶段）——humanoid 20 条经脉均可逆
-        // 映射回 `MeridianId`。
-        let legacy_id = meridian.id.to_meridian_id().unwrap_or_else(|| {
-            panic!(
-                "[bong][combat][baomai_v4] channel id {} has no legacy MeridianId mapping — \
-                 crack reading cannot represent non-humanoid channels yet",
-                meridian.id
-            )
-        });
+        // 读数保留真实兽脉；人形专用伤疤环与死脉甲只有匹配旧经脉时才参与。
+        let legacy_id = meridian.id.to_meridian_id();
 
         let bracket = if is_npc {
             npc_bracket_to_player(bracket_for_npc(meridian.integrity))
@@ -178,22 +168,26 @@ pub fn build_reading_result(
         };
 
         let has_circuit = if is_deep && !is_npc {
-            circuits.is_some_and(|c| c.circuits.iter().any(|kind| kind.involves(legacy_id)))
+            legacy_id.is_some_and(|id| {
+                circuits.is_some_and(|c| c.circuits.iter().any(|kind| kind.involves(id)))
+            })
         } else {
             false
         };
 
         let is_dead_armor = if is_deep && !is_npc {
-            armor.is_some_and(|a| {
-                crate::combat::baomai_v4::dead_armor::meridian_to_body_part(legacy_id)
-                    .is_some_and(|bp| a.is_immune(bp))
+            legacy_id.is_some_and(|id| {
+                armor.is_some_and(|a| {
+                    crate::combat::baomai_v4::dead_armor::meridian_to_body_part(id)
+                        .is_some_and(|bp| a.is_immune(bp))
+                })
             })
         } else {
             false
         };
 
         entries.push(MeridianReadEntry {
-            id: legacy_id,
+            id: meridian.id.clone(),
             integrity_bracket: bracket,
             has_circuit,
             is_dead_armor,
@@ -235,7 +229,11 @@ pub fn to_client_payload(result: &CrackReadingResult, current_tick: u64) -> Crac
         .meridian_states
         .iter()
         .map(|e| CrackReadingPayloadEntry {
-            meridian: format!("{:?}", e.id),
+            meridian: e
+                .id
+                .to_meridian_id()
+                .map(|id| format!("{id:?}"))
+                .unwrap_or_else(|| e.id.to_string()),
             bracket: format!("{:?}", e.integrity_bracket),
             has_circuit: e.has_circuit,
             is_dead_armor: e.is_dead_armor,

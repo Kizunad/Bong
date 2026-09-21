@@ -154,7 +154,7 @@ class SkillIconSnapshotAssetTest {
                     + "）——P0 决议只认 bong / bong-client 两个资源根");
             assertNotNull(Identifier.tryParse(iconTexture),
                 "technique `" + skillId + "` 的 icon_texture `" + iconTexture
-                    + "` 无法被 Identifier.tryParse 解析——HudTextureProbe/BongHud 端会静默丢弃");
+                    + "` 无法被 Identifier.tryParse 解析——TextureProbe/BongHud 端会静默丢弃");
             assertTrue(iconTexture.endsWith(".png"),
                 "technique `" + skillId + "` 的图标 `" + iconTexture + "` 不是 .png 资产");
         }
@@ -211,7 +211,7 @@ class SkillIconSnapshotAssetTest {
      * 槽位模型 → {@link LoadoutIconLayer}{@code .resolveExistingSkillTexture} /
      * {@link QuickBarHudPlanner}——全程复用生产代码路径，不另写替代解析逻辑。
      *
-     * <p>存在性谓词以 main resources 文件检查顶替需 MC 运行时的 {@code HudTextureProbe::exists}
+     * <p>存在性谓词以 main resources 文件检查顶替需 MC 运行时的 {@code TextureProbe::exists}
      * （{@code LoadoutIconLayer} 文档声明的注入缝；两者查的是同一份生产资产，且不受
      * test resources 假资产干扰）。
      * Skill 条目断言最终命中服务端下发的真实纹理路径；Item 条目断言空串（server 发射

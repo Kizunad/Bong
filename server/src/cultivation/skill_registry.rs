@@ -138,6 +138,7 @@ pub fn init_meridian_dependencies() -> SkillMeridianDependencies {
     crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
     crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
     crate::body_plan::morph::declare_meridian_dependencies(&mut deps);
+    crate::fauna::wildlife::skills::declare_dependencies(&mut deps);
     deps
 }
 
@@ -159,6 +160,7 @@ pub fn init_registry() -> SkillRegistry {
     crate::sword_path::skill_register::register_skills(&mut registry);
     crate::npc::npc_skill::register_npc_skills(&mut registry);
     crate::body_plan::morph::register_skills(&mut registry);
+    crate::fauna::wildlife::skills::register_skills(&mut registry);
     registry
 }
 
@@ -284,7 +286,7 @@ mod tests {
         let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH),
-            &crate::body_plan::RaceRegistry::default(),
+            &crate::body_plan::RaceRegistry::load_for_tests(),
         )
         .expect("checked-in technique catalog must load");
         let deps = build_production_deps();
@@ -316,11 +318,11 @@ mod tests {
                 .required_meridians
                 .iter()
                 .map(|required| {
-                    crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
-                        .expect("loaded technique metadata must contain known meridian channels")
+                    crate::cultivation::technique_scroll::technique_channel(&required.channel)
                 })
                 .collect();
-            let declared_meridians: HashSet<_> = deps.lookup(skill_id).iter().copied().collect();
+            let declared_meridians: HashSet<_> =
+                deps.channel_dependencies(skill_id).into_iter().collect();
             if metadata_meridians != declared_meridians {
                 misaligned.push(format!(
                     "{}: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
