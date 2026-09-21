@@ -56,7 +56,7 @@ from bbmodel_maker.rig.anim_rig import (Pose, Rig, build_tracks, euler_of, smoot
 
 MODEL = G.OUT
 OUT_ANIM = G.OUT_DIR / "StitchedBeastCoreRig.bbmodel"
-OUT_GECKO = HERE / "stitched_beast_core.animation.json"
+OUT_GECKO = G.OUT_DIR / "stitched_beast_core.animation.json"
 
 # ---- 蠕动参数（全部有物理来源，不是手调的观感值）----
 LOBE_SPAN = 21.0          # core_fore 与 core_hind 的 z 间距，即"体长"基准

@@ -180,7 +180,14 @@ fn check_required_meridians(
 ) -> Result<(), ScrollReadOutcome> {
     for required in &definition.required_meridians {
         let Some(channel) = parse_meridian_id(&required.channel) else {
-            return Err(ScrollReadOutcome::InvalidScroll);
+            // 非人形 channel 已由 catalog 对物种构型校验；学习也走同一个开放经脉门。
+            crate::cultivation::meridian::severed::check_skill_channels(
+                std::slice::from_ref(required),
+                meridians,
+                severed,
+            )
+            .map_err(|_| ScrollReadOutcome::InvalidScroll)?;
+            continue;
         };
         if severed.is_some_and(|severed| severed.is_severed(channel)) {
             return Err(ScrollReadOutcome::MeridianSevered { channel });
@@ -232,6 +239,13 @@ pub fn parse_meridian_id(raw: &str) -> Option<MeridianId> {
         "YangWei" => Some(MeridianId::YangWei),
         _ => None,
     }
+}
+
+/// 历史 TOML 名称转为标准 channel；新兽脉直接使用其配置 ID。
+pub fn technique_channel(raw: &str) -> crate::cultivation::components::MeridianChannelId {
+    parse_meridian_id(raw)
+        .map(|id| id.channel_id())
+        .unwrap_or_else(|| raw.into())
 }
 
 #[cfg(test)]

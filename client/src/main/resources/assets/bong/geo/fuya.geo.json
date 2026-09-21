@@ -6,162 +6,83 @@
         "identifier": "geometry.bong.fuya",
         "texture_width": 64,
         "texture_height": 64,
-        "visible_bounds_width": 2.6,
-        "visible_bounds_height": 3.6,
-        "visible_bounds_offset": [
-          0,
-          1.1,
-          0
-        ]
+        "visible_bounds_width": 2,
+        "visible_bounds_height": 3,
+        "visible_bounds_offset": [0,1.5,0]
       },
       "bones": [
         {
           "name": "Body",
-          "pivot": [
-            0,
-            0,
-            0
-          ],
+          "pivot": [0,13,0],
           "cubes": [
             {
-              "origin": [
-                -4,
-                7,
-                -2
-              ],
-              "size": [
-                8,
-                12,
-                4
-              ],
-              "uv": [
-                0,
-                0
-              ],
-              "inflate": 0.01
+              "origin": [-4,7,-2],
+              "size": [8,12,4],
+              "inflate": 0.01,
+              "uv": [0,0]
             }
           ]
         },
         {
           "name": "Head",
-          "pivot": [
-            0,
-            0,
-            0
-          ],
+          "parent": "Body",
+          "pivot": [0,19,0],
           "cubes": [
             {
-              "origin": [
-                -3,
-                19,
-                -3
-              ],
-              "size": [
-                6,
-                6,
-                6
-              ],
-              "uv": [
-                0,
-                26
-              ],
-              "inflate": 0.01
+              "origin": [-3,19,-3],
+              "size": [6,6,6],
+              "inflate": 0.01,
+              "uv": [0,26]
             }
-          ],
-          "parent": "Body"
+          ]
         },
         {
           "name": "CollapseCore",
-          "pivot": [
-            0,
-            0,
-            0
-          ],
+          "parent": "Body",
+          "pivot": [0,14,0],
           "cubes": [
             {
-              "origin": [
-                -3,
-                11,
-                -3
-              ],
-              "size": [
-                6,
-                6,
-                6
-              ],
-              "uv": [
-                28,
-                0
-              ],
-              "inflate": 0.08
+              "origin": [-3,11,-3],
+              "size": [6,6,6],
+              "inflate": 0.08,
+              "uv": [28,0]
             }
-          ],
-          "parent": "Body"
+          ]
         },
         {
           "name": "Tendrils",
-          "pivot": [
-            0,
-            0,
-            0
-          ],
+          "parent": "Body",
+          "pivot": [0,0,0]
+        },
+        {
+          "name": "Tendrils_L",
+          "parent": "Tendrils",
+          "pivot": [-5.5,19.5,0.5],
           "cubes": [
             {
-              "origin": [
-                -7,
-                9,
-                -1
-              ],
-              "size": [
-                3,
-                11,
-                3
-              ],
-              "uv": [
-                42,
-                0
-              ],
+              "origin": [-7,9,-1],
+              "size": [3,11,3],
               "inflate": 0.01,
-              "rotation": [
-                0,
-                0,
-                -10
-              ],
-              "pivot": [
-                -5,
-                14,
-                0
-              ]
-            },
-            {
-              "origin": [
-                4,
-                9,
-                -1
-              ],
-              "size": [
-                3,
-                11,
-                3
-              ],
-              "uv": [
-                42,
-                0
-              ],
-              "inflate": 0.01,
-              "rotation": [
-                0,
-                0,
-                10
-              ],
-              "pivot": [
-                5,
-                14,
-                0
-              ]
+              "pivot": [-5,14,0],
+              "rotation": [0,0,-10],
+              "uv": [42,0]
             }
-          ],
-          "parent": "Body"
+          ]
+        },
+        {
+          "name": "Tendrils_R",
+          "parent": "Tendrils",
+          "pivot": [5.5,19.5,0.5],
+          "cubes": [
+            {
+              "origin": [4,9,-1],
+              "size": [3,11,3],
+              "inflate": 0.01,
+              "pivot": [5,14,0],
+              "rotation": [0,0,10],
+              "uv": [42,0]
+            }
+          ]
         }
       ]
     }

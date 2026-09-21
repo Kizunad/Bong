@@ -1,0 +1,12 @@
+# 灵布衫靴（spirit_cloth_boots）Round 2 人工点名清单。
+# 依据是 server 物品描述「布面软靴，便于入定」；前后方向必须由鞋头/后跟读出。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+sole_layers = { elements = ["sole_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 14, SIDE_R = 10, BACK = 14, SIDE_L = 10, "3/4" = 12 }, mirror = true }
+toe_vamp_heel = { elements = ["toe_", "vamp_", "heel_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 18, SIDE_R = 12, BACK = 10, SIDE_L = 12, "3/4" = 14 }, mirror = true }
+shaft = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = { FRONT = 18, SIDE_R = 12, BACK = 18, SIDE_L = 12, "3/4" = 14, TOP = 8 }, mirror = true }
+ankle_wrap = { elements = ["ankle_", "tie_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 8, SIDE_R = 8, BACK = 8, SIDE_L = 8, "3/4" = 8 }, mirror = true }

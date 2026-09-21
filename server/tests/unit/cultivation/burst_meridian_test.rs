@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+use bong_server::body_plan::race_registry::DEFAULT_RACES_PATH;
 use bong_server::body_plan::*;
 use bong_server::combat::components::*;
 use bong_server::combat::events::*;
@@ -28,9 +29,37 @@ fn checked_in_technique_registry() -> &'static TechniqueRegistry {
     static REGISTRY: OnceLock<TechniqueRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_TECHNIQUES_PATH);
-        TechniqueRegistry::load_from_path(path, &RaceRegistry::default())
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans = bong_server::body_plan::BodyPlanRegistry::load_dir(
+            root.join("assets/body_plans/plans"),
+        )
+        .unwrap();
+        let races =
+            RaceRegistry::load_file(root.join("assets/body_plans/races.json"), &plans).unwrap();
+        TechniqueRegistry::load_from_path(path, &races)
             .expect("checked-in technique catalog must load")
     })
+}
+
+fn checked_in_race_registry() -> &'static RaceRegistry {
+    static REGISTRY: OnceLock<RaceRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans = BodyPlanRegistry::load_dir(root.join("assets/body_plans/plans"))
+            .expect("checked-in body plans must load");
+        RaceRegistry::load_file(root.join(DEFAULT_RACES_PATH), &plans)
+            .expect("checked-in race registry must load")
+    })
+}
+
+fn is_production_species_channel(definition: &TechniqueDefinition, channel: &str) -> bool {
+    let RaceGateOwned::Species { species } = &definition.required_race else {
+        return false;
+    };
+    let channel = MeridianChannelId::new(channel);
+    species
+        .iter()
+        .any(|race| checked_in_race_registry().has_channel(race, &channel))
 }
 
 fn ni_mai_hu_ti_particle_id() -> &'static str {
@@ -50,8 +79,15 @@ fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -
     if let Some(registry) = app.world().get_resource::<TechniqueRegistry>() {
         for definition in registry.iter() {
             for required in &definition.required_meridians {
-                let id = parse_meridian_id(&required.channel)
-                    .expect("checked-in technique meridian must parse");
+                let Some(id) = parse_meridian_id(&required.channel) else {
+                    if is_production_species_channel(definition, &required.channel) {
+                        continue;
+                    }
+                    panic!(
+                        "checked-in technique {} has an unparseable non-species meridian channel {}",
+                        definition.id, required.channel
+                    );
+                };
                 let meridian = meridians.get_mut(id);
                 meridian.opened = true;
                 meridian.integrity = 1.0;
@@ -73,6 +109,12 @@ fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -
             PracticeLog::default(),
         ))
         .id()
+}
+
+#[test]
+fn spawn_caster_skips_species_channels_from_production_profiles() {
+    let mut app = app();
+    let _ = spawn_caster(&mut app, Realm::Condense, 0.0, DVec3::ZERO);
 }
 
 fn spawn_target(app: &mut App, position: DVec3) -> Entity {

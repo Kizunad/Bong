@@ -38,7 +38,8 @@
 import time
 
 from bot.bot import BotAssertionError  # noqa: F401
-from bot.scenarios._inventory_helpers import wait_inventory_contains
+from bot.scenarios._combat_helpers import last_event_time
+from bot.scenarios._inventory_helpers import require_item, wait_inventory_contains
 
 DESCRIPTION = "bong:client_request 越界字段值(slot/count/v/变体) 被 schema+版本门禁干净拒绝"
 MODULES = ["network"]
@@ -108,10 +109,10 @@ _PROGRESS_BASELINE_FLOOR = 0.25
 _BARRIER_SLOT = 1
 
 
-def _bind_slot_with_item(bot, slot: int, label: str) -> None:
-    """quick_slot_bind 绑定 item_id 到槽位并等 ack。
+def _bind_slot_with_item(bot, slot: int, instance_id: int, label: str) -> None:
+    """quick_slot_bind 绑定真实 item 实例到槽位并等 ack。
 
-    与 ``_assert_slot_boundary_accepted`` 相对：那里用 item_id=None **清空**槽位作
+    与 ``_assert_slot_boundary_accepted`` 相对：那里用 instance_id=None **清空**槽位作
     正向边界探针；这里用真实物品**填满**槽位，让后续越界 use_quick_slot 探针打在
     非空、可用、会触发施法的状态上（review finding 2 的探测前提）。
     """
@@ -122,7 +123,7 @@ def _bind_slot_with_item(bot, slot: int, label: str) -> None:
             "v": 1,
             "type": "quick_slot_bind",
             "slot": slot,
-            "instance_id": 42,
+            "instance_id": instance_id,
             "request_id": request_id,
         }
     )
@@ -134,19 +135,27 @@ def _bind_slot_with_item(bot, slot: int, label: str) -> None:
         and e.data["payload"].get("bind_accepted") is True,
         timeout=10.0,
         description=(
-            f"{label}：quick_slot_bind 绑定 {_PILL_TEMPLATE} 到 slot={slot}"
-            f"（ack_request_id={request_id} 回显 + bind_accepted）"
+            f"{label}：quick_slot_bind 绑定 instance_id={instance_id}"
+            f"（slot={slot}，ack_request_id={request_id} 回显 + bind_accepted）"
         ),
     )
 
 
 def _bind_pill_to_slots(bot) -> None:
     """give 回元丹并填满当前开放的两格，捕获错误回落到可用槽的请求。"""
+    give_anchor = last_event_time(bot)
     bot.cmd(f"give {_PILL_TEMPLATE} {_PILL_GIVE_COUNT}")
     bot.expect_chat(f"[dev] gave {_PILL_TEMPLATE} x{_PILL_GIVE_COUNT}", timeout=10.0)
-    wait_inventory_contains(bot, _PILL_TEMPLATE, timeout=10.0)
+    snapshot = wait_inventory_contains(
+        bot, _PILL_TEMPLATE, timeout=10.0, after_t=give_anchor
+    )
+    pill = require_item(snapshot, _PILL_TEMPLATE)
+    assert pill["item"]["stack_count"] == _PILL_GIVE_COUNT, (
+        "越界场景需要 give 后同一 instance 的两枚回元丹"
+    )
+    instance_id = int(pill["item"]["instance_id"])
     for slot in _BOUND_SLOTS:
-        _bind_slot_with_item(bot, slot, f"绑定回元丹 slot={slot}")
+        _bind_slot_with_item(bot, slot, instance_id, f"绑定回元丹 slot={slot}")
 
 # 契约边界内**合法** count 值（deserialize_block_picker_count 契约 1..=64）。
 # block_picker_give 的 [dev] 聊天回应证明 serde 接受了该 count（fixture Survival 得到
@@ -271,7 +280,7 @@ def _harvest_processing_barrier(bot, label: str) -> float:
     请求随后才被接受并突变 session（central-review 1993 #1）。quick_slot_bind 在
     handler 执行时回推 quickslot_config ack（ack_request_id 回显 + bind_accepted）；
     server 按连接串行处理请求，sentinel 的 ack 到达 ⇒ 排在它前面的包（含 garbage）
-    已处理完毕。绑定 item_id=None（清空 slot 1；QuickSlotBindings 是独立组件，不改
+    已处理完毕。绑定 instance_id=None（清空 slot 1；QuickSlotBindings 是独立组件，不改
     背包指纹）。返回 ack 事件时刻作为 post-processing 水位。
     """
     request_id = f"rng-barrier-{label}"

@@ -834,3 +834,88 @@ range = 0.0
 icon_texture = "bong-client:textures/gui/items/skill_scroll_morph_yixing.png"
 category = "buff"
 dispatch = "metadata_backed"
+
+[[techniques]]
+id = "lion.pounce"
+display_name = "伏身扑击"
+grade = "common"
+description = "伏低身体后向锁定方向扑出，扑空后需要重新调整。"
+required_realm = "Condense"
+required_meridians = [{ channel = "lion_stride", min_health = 0.5 }]
+required_race = { kind = "species", species = ["dainu_lion"] }
+qi_cost = 0.0
+stamina_cost = 24.0
+cast_ticks = 12
+cooldown_ticks = 100
+range = 9.0
+icon_texture = "bong:textures/gui/skill/fauna/lion_pounce.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "lion.rend"
+display_name = "贴身撕咬"
+grade = "common"
+description = "扑击得手后撕咬近身目标。"
+required_realm = "Condense"
+required_meridians = [{ channel = "lion_jaw", min_health = 0.5 }]
+required_race = { kind = "species", species = ["dainu_lion"] }
+qi_cost = 0.0
+stamina_cost = 16.0
+cast_ticks = 7
+cooldown_ticks = 24
+range = 3.0
+icon_texture = "bong:textures/gui/skill/fauna/lion_rend.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "vulture.dive"
+display_name = "掠身啄击"
+grade = "common"
+description = "从侧上方俯冲啄击，掠过后拉升脱离。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "vulture_wing", min_health = 0.6 }]
+required_race = { kind = "species", species = ["fuyu_vulture"] }
+qi_cost = 0.0
+stamina_cost = 18.0
+cast_ticks = 10
+cooldown_ticks = 100
+range = 16.0
+icon_texture = "bong:textures/gui/skill/fauna/vulture_dive.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "horse.trample"
+display_name = "群奔践踏"
+grade = "common"
+description = "沿集结时确定的通道冲锋，冲过敌人后重新集结。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "horse_stride", min_health = 0.6 }]
+required_race = { kind = "species", species = ["horse"] }
+qi_cost = 0.0
+stamina_cost = 30.0
+cast_ticks = 16
+cooldown_ticks = 160
+range = 14.0
+icon_texture = "bong:textures/gui/skill/fauna/horse_trample.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "horse.kick"
+display_name = "扬蹄后踢"
+grade = "common"
+description = "朝身后近敌踢出双蹄，给撤离腾出距离。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "horse_stride", min_health = 0.4 }]
+required_race = { kind = "species", species = ["horse"] }
+qi_cost = 0.0
+stamina_cost = 12.0
+cast_ticks = 8
+cooldown_ticks = 55
+range = 2.6
+icon_texture = "bong:textures/gui/skill/fauna/horse_kick.png"
+category = "attack"
+dispatch = "metadata_backed"

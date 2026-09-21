@@ -16,6 +16,56 @@ pip install -r modelScript/requirements.txt
 
 项目根的 `bbmodel.toml` 告诉库「根在哪、产出往哪写、命名空间叫什么」。
 
+## 生物资源接入 client
+
+`exporters/export_creature_assets.py` 将最终 Rig 的几何、内嵌 PNG、绑定动画一起导出，
+校验整批骨引用/尺寸/循环入口/图集后才安装到 `client/src/main/resources/assets/bong/`。
+`modelScript/out/client-creatures/sources.json` 记录实际源文件、SHA-256、骨/方块数和动作时长。
+
+```bash
+# 生成作者稿；呆怒狮直接读 models/handmade/DainuLionRig.bbmodel，不重新生成手改稿。
+python3 modelScript/exporters/export_creature_assets.py --prepare
+# 无浏览器导出：使用本仓 Bedrock codec，只接受 cuboid + 线性数值关键帧。
+python3 modelScript/exporters/export_creature_assets.py --export --offline --install
+# 单独更新一种：--creature mimic_spider（参数可重复）。
+# 有 Chromium 时可去掉 --offline，使用 bbmodel-maker 的官方 Blockbench codec。
+python3 modelScript/exporters/review_creature_assets.py
+bash scripts/build-resourcepack.sh
+```
+
+资源包重建后须同步 `server/src/network/resourcepack.rs` 的 manifest SHA-1 和 size。
+资源 zip 不入库；`client/resourcepack/manifest.json` 与 client 的 geo/animations/PNG 入库。
+
+| 作者流水线 | client 资源名 | 动画/形态 |
+|---|---|---|
+| stitched_beast（seed 7） | hybrid_beast / hybrid_beast_core / hybrid_beast_shard | 本体 22、核心 26、碎体 12；切换时连同几何和纹理一起切 |
+| mimic_spider | ash_spider | 9 条；沿用协议 ID 127，伪装消息驱动方块 → 暴起 → 折叠 |
+| dainu_lion handmade Rig | dainu_lion | 9 条，保留手改层级和贴图 |
+| kekeda_goose | kekeda_goose | 9 条；下蛋/排泄动作不在客户端生成真实掉落 |
+| fuyu_vulture（mid / jin） | fuyu_vulture / fuyu_vulture_flight | 收翼 9 条、展翼 5 条；unfold 后转飞行姿，land 后转地面姿 |
+| horse（medium / rust） | horse | 28 条（含负载变体），速度驱动 walk/trot/canter/gallop |
+| legacy_fauna | void_distorted / daoxiang / zhinian / tsy_sentinel / fuya / skull_fiend | 将旧静态几何导入 sources/*.bbmodel，拆左右肢体、设关节，生成 idle/walk/hurt/death |
+
+其余已有 fauna 的循环 walk/run/fly 也由速度驱动；一次性动作继续通过 `play_entity_anim`
+桥触发。客户端按包内动画清单拒绝未知名称，并使用实际动画长度安排预览。
+已有 ID 126–168 保持顺序，狮/鹫/鹅/马在 deferred 阶段追加为 169–172。狮、鹫、马已接入
+服务端自然生成、BigBrain 和物种技能，配置与调试命令见 `server/assets/fauna/README.md`；
+鹅仍为可预览资产。缝合兽核心/碎体切换支持动作消息，但当前服务端没有发出这些分裂动作。
+马的负载变体以及下蛋等动作可预览，尚无对应的服务端状态信号。
+
+进入游戏后用 `/fauna-preview spawn <物种>` 生成客户端预览（负 entity ID），然后
+`/fauna-preview play <动作>`；Tab 列出包括其它形态在内的完整动作名。
+`/fauna-preview disguise` 切换当前拟态蜘蛛的伪装，`/fauna-preview clear` 清除预览。
+例如：`/fauna-preview play animation.bong.hybrid_beast_core.core_split`。
+
+`review/index.html` 汇总六视角同取景对照和动作 GIF。它是离线复核材料，不能替代
+Minecraft 实机验收；缺少人写 manifest 时会明确注明，不能据此宣称外观通过。
+导出器的差分自证只保护骨引用、非负尺寸和贴图完整性。Round 2 须人看图确认后才进入终轮。
+
+测试调整：旧蜘蛛的“换贴图就是方块”路径断言已由真实消息 → 每实体方块/暴起状态的测试
+替代；只允许噬元鼠移动的断言及 controller 方法名字节码断言，由实际动作选择、循环和
+GeckoLib 资源加载/骨绑定测试替代。
+
 ```
 modelScript/
 ├── generators/   gen_*.py —— 一个脚本一件资产，程序化建模

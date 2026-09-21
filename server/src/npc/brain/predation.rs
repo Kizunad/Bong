@@ -450,31 +450,19 @@ mod tests {
     }
 
     #[test]
-    fn beast_preys_on_mundane_full_tier_but_not_rat_beast() {
-        // "妖兽猎凡兽=全档"（plan 设计原则表明文），且陆生非鼠妖兽才算数。
+    fn carnivorous_beasts_prey_on_mundane_but_rats_and_horses_do_not() {
+        // 肉食妖兽可猎凡兽全档；噬元鼠与草食马不进入捕食者关系。
         for beast in BeastKind::ALL_TERRESTRIAL {
-            if *beast == BeastKind::Rat {
-                continue;
-            }
             for prey_kind in MundaneFaunaKind::ALL {
-                assert!(
+                assert_eq!(
                     preys_on(
                         FaunaPredatorId::Beast(*beast),
                         FaunaPreyId::Mundane(prey_kind)
                     ),
-                    "陆生妖兽 {beast:?} 应能猎凡兽全档，{prey_kind:?} 未命中"
+                    !matches!(beast, BeastKind::Rat | BeastKind::Horse),
+                    "{beast:?} 对 {prey_kind:?} 的捕食关系应遵循食性"
                 );
             }
-        }
-        // 鼠本身不是"妖兽猎凡兽"意义上的 predator（鼠患天敌来自凡兽层，不反过来）。
-        for prey_kind in MundaneFaunaKind::ALL {
-            assert!(
-                !preys_on(
-                    FaunaPredatorId::Beast(BeastKind::Rat),
-                    FaunaPreyId::Mundane(prey_kind)
-                ),
-                "鼠不应捕食凡兽 {prey_kind:?}"
-            );
         }
     }
 

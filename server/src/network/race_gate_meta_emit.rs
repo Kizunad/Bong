@@ -6,8 +6,8 @@
 //!
 //! 两表都只装 **非 `Any`** 条目——`Any` 是默认，client 缺省即 `Any`（省流量）：
 //! - `item_wearer_race`：从 [`ItemRegistry`] 全模板取 `wearer_race != Any`。
-//! - `technique_required_race`：从 49 条 [`TechniqueRegistry`] 定义取
-//!   `required_race != Any`（当前 28 条 Humanoid + 21 条 Any → 表恰 28 条）。
+//! - `technique_required_race`：从 [`TechniqueRegistry`] 取 `required_race != Any`，
+//!   同时保留人形门与特定物种门。
 //!
 //! 内容与玩家身份无关（静态），因此易形 / RaceChange **不需重发**——client 用
 //! `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。故下发时机只需
@@ -101,33 +101,31 @@ mod tests {
     use super::*;
     use crate::body_plan::RaceGateOwned;
 
-    /// TechniqueRegistry 当前构成：28 条 Humanoid + 21 条 Any（共 49）。
-    /// 表恰含 28 条非-Any 条目（Any 不进表），且全部 kind == "humanoid"。
     #[test]
-    fn technique_table_holds_exactly_28_non_any_entries() {
+    fn technique_table_preserves_humanoid_and_species_gates() {
         let registry = ItemRegistry::from_map(std::collections::HashMap::new());
-        let meta = build_race_gate_meta(&registry, &TechniqueRegistry::load_for_tests());
-
+        let techniques = TechniqueRegistry::load_for_tests();
+        let meta = build_race_gate_meta(&registry, &techniques);
         assert_eq!(
             meta.technique_required_race.len(),
-            28,
-            "49 条功法定义中 28 条 Humanoid 应进表，21 条 Any 不进表；\
-             实际非-Any 条目数={}",
-            meta.technique_required_race.len()
+            techniques
+                .iter()
+                .filter(|def| !matches!(def.required_race, RaceGateOwned::Any))
+                .count()
         );
         for entry in &meta.technique_required_race {
-            assert_eq!(
-                entry.gate.kind, "humanoid",
-                "technique {} 的门应为 humanoid（当前 49 条无 species 档），实际 {:?}",
-                entry.id, entry.gate.kind
-            );
-            assert!(
-                entry.gate.species.is_empty(),
-                "humanoid 门不得携带 species 名单，technique {} 携带了 {:?}",
-                entry.id,
-                entry.gate.species
-            );
+            let expected =
+                RaceGateWireV1::from_owned(&techniques.get(&entry.id).unwrap().required_race);
+            assert_eq!(entry.gate.kind, expected.kind);
+            assert_eq!(entry.gate.species, expected.species);
         }
+        let lion = meta
+            .technique_required_race
+            .iter()
+            .find(|entry| entry.id == "lion.pounce")
+            .unwrap();
+        assert_eq!(lion.gate.kind, "species");
+        assert_eq!(lion.gate.species, vec!["dainu_lion"]);
     }
 
     /// Any 档功法（如 flying_sword 类神识/真元驱动）绝不进表——client 缺省即放行。

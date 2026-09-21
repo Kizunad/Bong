@@ -193,7 +193,7 @@ fn explosion_inventory_with_stack(template_id: &str, count: u32) -> PlayerInvent
 fn load_test_technique_registry() -> TechniqueRegistry {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/cultivation/techniques.toml");
-    TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::default())
+    TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::load_for_tests())
         .expect("checked-in technique catalog must load")
 }
 
@@ -416,7 +416,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_severed_via_required() {
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, Some(&severed), None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -432,7 +432,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_low_integrity_via_requir
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -445,7 +445,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_via_deps_table_severed()
     deps.declare("test.skill", vec![MeridianId::Heart]);
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &[], &ms, Some(&severed), Some(&deps)),
-        Err(MeridianId::Heart)
+        Err(MeridianId::Heart.channel_id())
     );
 }
 
@@ -459,7 +459,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_required(
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -470,7 +470,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_deps_tabl
     deps.declare("test.skill", vec![MeridianId::Stomach]);
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)),
-        Err(MeridianId::Stomach)
+        Err(MeridianId::Stomach.channel_id())
     );
 }
 
@@ -1427,7 +1427,7 @@ mod external_ingress_tests {
     fn load_test_technique_registry() -> TechniqueRegistry {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("assets/cultivation/techniques.toml");
-        TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::default())
+        TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::load_for_tests())
             .expect("checked-in technique catalog must load")
     }
 
@@ -8594,6 +8594,203 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn quick_slot_bind_ack_waits_for_instance_link_write_to_commit() {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("bong-quick-bind-busy-{unique}"));
+            let db_path = root.join("bong.db");
+            crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-busy-test")
+                .expect("test sqlite should bootstrap");
+            let locked = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            locked
+                .execute_batch("BEGIN IMMEDIATE")
+                .expect("test should hold a SQLite writer lock");
+
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(
+                crate::inventory::load_item_registry().expect("item registry loads"),
+            );
+            app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
+            app.init_resource::<QuickSlotPrefsWriteQueue>();
+            app.add_systems(
+                Update,
+                flush_quick_slot_prefs_writes.after(handle_client_request_payloads),
+            );
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+                .id();
+
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "busy-bind");
+            let started = std::time::Instant::now();
+            app.update();
+            let elapsed = started.elapsed();
+            flush_all_client_packets(&mut app);
+
+            assert!(
+                elapsed < std::time::Duration::from_secs(1),
+                "SQLite BUSY must not block the ECS request frame; elapsed={elapsed:?}"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<QuickSlotBindings>(entity)
+                    .expect("quick-slot component should remain present")
+                    .get(1),
+                None,
+                "runtime binding must wait until the instance link is durable"
+            );
+            assert!(
+                !collect_quickslot_configs(&mut helper).iter().any(|config| {
+                    config.ack_request_id.as_deref() == Some("busy-bind")
+                        && config.bind_accepted == Some(true)
+                }),
+                "BUSY must not emit bind_accepted=true before durable commit"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<QuickSlotPrefsWriteQueue>()
+                    .pending
+                    .len(),
+                1,
+                "a busy durable write should be retained for a later frame"
+            );
+
+            locked
+                .execute_batch("ROLLBACK")
+                .expect("test writer lock should release");
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert_eq!(
+                app.world()
+                    .resource::<QuickSlotPrefsWriteQueue>()
+                    .pending
+                    .len(),
+                0,
+                "queued prefs should flush after the SQLite writer lock releases"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<QuickSlotBindings>(entity)
+                    .expect("quick-slot component should remain present")
+                    .get(1),
+                Some(88),
+                "runtime binding should commit with the durable write"
+            );
+            assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
+                config.ack_request_id.as_deref() == Some("busy-bind")
+                    && config.bind_accepted == Some(true)
+            }));
+            let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            let prefs_json: String = connection
+                .query_row(
+                    "SELECT prefs_json FROM player_ui_prefs WHERE username = 'Azure'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("queued bind should eventually persist UI prefs");
+            let prefs: serde_json::Value =
+                serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
+            assert_eq!(prefs["quick_slots"][1], 88);
+            drop(connection);
+            drop(locked);
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn quick_slot_bind_queued_instance_links_preserve_request_order() {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("bong-quick-bind-queue-{unique}"));
+            let db_path = root.join("bong.db");
+            crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-queue-test")
+                .expect("test sqlite should bootstrap");
+            let locked = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            locked
+                .execute_batch("BEGIN IMMEDIATE")
+                .expect("test should hold a SQLite writer lock");
+
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(
+                crate::inventory::load_item_registry().expect("item registry loads"),
+            );
+            app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
+            app.init_resource::<QuickSlotPrefsWriteQueue>();
+            app.add_systems(
+                Update,
+                flush_quick_slot_prefs_writes.after(handle_client_request_payloads),
+            );
+            let mut inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
+            inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+                .id();
+
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "queued-first");
+            app.update();
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(89), "queued-second");
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert_eq!(
+                app.world()
+                    .resource::<QuickSlotPrefsWriteQueue>()
+                    .pending
+                    .len(),
+                2,
+                "same-player instance links must remain ordered while the writer is locked"
+            );
+
+            locked
+                .execute_batch("ROLLBACK")
+                .expect("test writer lock should release");
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            assert_eq!(
+                app.world()
+                    .get::<QuickSlotBindings>(entity)
+                    .expect("quick-slot component should remain present")
+                    .get(1),
+                Some(89),
+                "the later durable request should win after FIFO queue flush"
+            );
+            let configs = collect_quickslot_configs(&mut helper);
+            for request_id in ["queued-first", "queued-second"] {
+                assert!(
+                    configs.iter().any(|config| {
+                        config.ack_request_id.as_deref() == Some(request_id)
+                            && config.bind_accepted == Some(true)
+                    }),
+                    "queued request {request_id} should receive an ACK after its durable write"
+                );
+            }
+
+            let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            let prefs_json: String = connection
+                .query_row(
+                    "SELECT prefs_json FROM player_ui_prefs WHERE username = 'Azure'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("queued requests should eventually persist UI prefs");
+            let prefs: serde_json::Value =
+                serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
+            assert_eq!(prefs["quick_slots"][1], 89);
+            drop(connection);
+            drop(locked);
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
         fn quick_slot_bind_persists_instance_link_for_reload() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -11873,7 +12070,7 @@ dispatch = "direct_generic"
             std::fs::write(&path, source).expect("temporary technique catalog must be writable");
             let registry = TechniqueRegistry::load_from_path(
                 &path,
-                &crate::body_plan::RaceRegistry::default(),
+                &crate::body_plan::RaceRegistry::load_for_tests(),
             )
             .expect("public loader must accept the direct-generic test fixture");
             let _ = std::fs::remove_file(path);

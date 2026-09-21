@@ -62,8 +62,10 @@ wait_for_path() {
     return 1
 }
 
-server_binary="${CARGO_TARGET_DIR:-$ROOT/server/target}/debug/bong-server"
+server_binary="${BONG_SHUTDOWN_PROBE_BIN:-${CARGO_TARGET_DIR:-$ROOT/server/target}/debug/bong-server}"
 [ -x "$server_binary" ] || fail "shutdown-order fixture requires built binary at $server_binary"
+stale_source="$(find "$ROOT/server/assets" "$ROOT/server/src" -type f -newer "$server_binary" -print -quit)"
+[ -z "$stale_source" ] || fail "shutdown-order probe binary is older than server/assets or server/src; likely a stale build cache (first newer path: $stale_source; binary: $server_binary)"
 unlock_path="$TEST_ROOT/data/craft/recipe_unlocks.json"
 ready_path="$TEST_ROOT/probe.ready"
 stderr_path="$TEST_ROOT/probe.stderr"

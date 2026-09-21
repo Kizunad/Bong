@@ -1,0 +1,12 @@
+# 灵布衫胸甲（spirit_cloth_chestplate）Round 2 人工点名清单。
+# 依据是 server 物品描述「轻便灵布衫，修炼时不碍气」；没有冒充外部参考图。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+tunic = { elements = ["tunic_", "side_panel_", "shoulder_yoke_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 35, SIDE_R = 20, BACK = 35, SIDE_L = 20, "3/4" = 24 } }
+cross_sash = { elements = ["sash_", "neck_fold"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 22, SIDE_R = 10, "3/4" = 16 } }
+sleeves = { elements = ["sleeve_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 18, SIDE_R = 14, BACK = 18, SIDE_L = 14, "3/4" = 16 }, mirror = true }
+waist_wrap = { elements = ["waist_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 12, SIDE_R = 8, BACK = 12, SIDE_L = 8 } }

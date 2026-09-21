@@ -160,14 +160,17 @@ pub fn health_regen_boost_multiplier(status_effects: &StatusEffects) -> f32 {
         .clamp(1.0, MAX_HEALTH_REGEN_BOOST_MULTIPLIER)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn attribute_aggregate_tick(
     mut q: Query<(
         &StatusEffects,
         &mut DerivedAttrs,
         Option<&BodyRefiningMarker>,
+        Option<&crate::fauna::wildlife::config::WildlifeAttributes>,
+        Option<&crate::fauna::wildlife::skills::WildlifeCast>,
     )>,
 ) {
-    for (status_effects, mut attrs, body_refining) in &mut q {
+    for (status_effects, mut attrs, body_refining, wildlife, wildlife_cast) in &mut q {
         attrs.attack_power = 1.0;
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
@@ -247,6 +250,13 @@ pub fn attribute_aggregate_tick(
 
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
+        if let Some(base) = wildlife {
+            attrs.attack_power *= base.attack;
+            attrs.defense_power *= base.damage_taken;
+            if let Some(cast) = wildlife_cast {
+                attrs.attack_power *= cast.skill.damage_multiplier();
+            }
+        }
 
         // plan-armor-v1 §4.2：体修 defense_power 基础加成。
         // 1.0 / 1.3 ≈ 0.77，约 23% 基础伤害减免，与护甲 kind_mitigation 独立相乘。
@@ -319,6 +329,7 @@ type StaminaStatusActorItem<'a> = (
     Option<&'a CurrentDimension>,
     Option<&'a LifeRecord>,
     Option<&'a mut Cultivation>,
+    Option<&'a crate::fauna::wildlife::config::WildlifeAttributes>,
 );
 
 pub fn combat_pill_stamina_status_tick(
@@ -342,8 +353,12 @@ pub fn combat_pill_stamina_status_tick(
         current_dimension,
         life_record,
         cultivation,
+        wildlife,
     ) in &mut actors
     {
+        let base_max = wildlife
+            .map(|attributes| attributes.stamina)
+            .unwrap_or(DEFAULT_STAMINA_MAX_FOR_STATUS);
         let has_relevant_status = status_effects.active.iter().any(|effect| {
             matches!(
                 effect.kind,
@@ -353,8 +368,8 @@ pub fn combat_pill_stamina_status_tick(
             ) && effect.remaining_ticks > 0
         });
         if !has_relevant_status {
-            if (stamina.max - DEFAULT_STAMINA_MAX_FOR_STATUS).abs() > f32::EPSILON {
-                stamina.max = DEFAULT_STAMINA_MAX_FOR_STATUS;
+            if (stamina.max - base_max).abs() > f32::EPSILON {
+                stamina.max = base_max;
                 stamina.current = stamina.current.clamp(0.0, stamina.max);
             }
             if (stamina.recover_per_sec - DEFAULT_STAMINA_RECOVER_FOR_STATUS).abs() > f32::EPSILON {
@@ -381,8 +396,7 @@ pub fn combat_pill_stamina_status_tick(
             .fold(0.0_f32, |acc, effect| {
                 acc.max(effect.magnitude.clamp(0.0, 0.95))
             });
-        let effective_max =
-            (DEFAULT_STAMINA_MAX_FOR_STATUS * (1.0 + max_bonus) * (1.0 - crash_penalty)).max(1.0);
+        let effective_max = (base_max * (1.0 + max_bonus) * (1.0 - crash_penalty)).max(1.0);
         stamina.max = effective_max;
         stamina.current = stamina.current.clamp(0.0, stamina.max);
 

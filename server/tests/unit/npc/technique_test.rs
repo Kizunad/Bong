@@ -21,7 +21,14 @@ fn registry() -> &'static TechniqueRegistry {
     REGISTRY.get_or_init(|| {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(bong_server::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH);
-        TechniqueRegistry::load_from_path(path, &RaceRegistry::default())
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans = bong_server::body_plan::BodyPlanRegistry::load_dir(
+            root.join("assets/body_plans/plans"),
+        )
+        .unwrap();
+        let races =
+            RaceRegistry::load_file(root.join("assets/body_plans/races.json"), &plans).unwrap();
+        TechniqueRegistry::load_from_path(path, &races)
             .expect("checked-in technique catalog must load")
     })
 }

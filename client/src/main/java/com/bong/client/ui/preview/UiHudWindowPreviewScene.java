@@ -159,8 +159,10 @@ final class UiHudWindowPreviewScene implements UiPreviewScene {
     }
 
     @Override public void cleanup() {
-        UiWindowRuntime.manager().reset();
-        UiWindowRuntime.endPreview();
-        SessionScopedStoreRegistry.clearAllOnDisconnect();
+        UiPreviewCleanup.run(
+            () -> UiWindowRuntime.manager().reset(),
+            () -> UiWindowRuntime.endPreview(),
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect()
+        );
     }
 }

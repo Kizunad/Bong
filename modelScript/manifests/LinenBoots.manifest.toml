@@ -1,0 +1,21 @@
+# 麻布软靴（linen_boots）Round 2 人工点名清单。
+#
+# 这件没有外部正交参考图；形制依据是生成器内写明的低鞋底、分层鞋面、鞋筒、踝部
+# 双道麻绳与外侧骨环。左右脚挂在独立 LEFT_FOOT/RIGHT_FOOT mount，点名器核对成对
+# 结构，不把两只鞋误合成一只中线靴。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 低鞋底必须在四个水平轴面留下可辨的分层边缘。
+sole_layers = { elements = ["sole_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 20, SIDE_R = 12, BACK = 20, SIDE_L = 12 }, mirror = true }
+# 脚背主片、鞋头折片和两道鞋面系带构成脚的前向轮廓。
+vamp_and_laces = { elements = ["vamp_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 20, SIDE_R = 12, BACK = 8, SIDE_L = 12 }, mirror = true }
+# 鞋筒四面开盒并随脚骨运动，不能只剩鞋底。
+shaft = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 20, SIDE_R = 12, BACK = 20, SIDE_L = 12, TOP = 8 }, mirror = true }
+# 踝部是分片麻绳带，不允许被做成一只穿过脚面的实心环。
+ankle_bands = { elements = ["ankle_band_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 12, SIDE_R = 8, BACK = 12, SIDE_L = 8 }, mirror = true }
+# 外侧骨环是固定件的单独识别点，左右各一只。
+side_bone_knots = { names = ["side_knot_left", "side_knot_right"], must_show_in = ["SIDE_R", "SIDE_L"], min_px = { SIDE_R = 4, SIDE_L = 4 }, mirror = true }

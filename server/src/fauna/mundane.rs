@@ -379,7 +379,7 @@ pub fn mundane_pool_fn(
 // 无法直接扩展给跨层用，§8.1 #2 定案）。
 // ---------------------------------------------------------------------------
 
-/// 捕食者身份——横跨凡兽（`MundaneFaunaKind`，狼/狐）与妖兽（`BeastKind`，全档陆生非鼠）
+/// 捕食者身份——横跨凡兽（`MundaneFaunaKind`，狼/狐）与妖兽（`BeastKind`，陆生肉食物种）
 /// 两个类目，`preys_on` 借这层包装统一处理两套键空间。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaunaPredatorId {
@@ -398,7 +398,7 @@ pub enum FaunaPreyId {
 /// 跨层捕食关系总账。边清单（对应 plan 设计原则表 ASCII 图）：
 /// - 狼(T2.5) ──猎──→ T0∪T1 凡兽（不含狐/狼自身）+ 噬元鼠
 /// - 狐(T2)   ──猎──→ T0 凡兽（鸡/兔/蛙）+ 噬元鼠
-/// - 妖兽（陆生、非鼠）──猎──→ 凡兽全档（"凡兽=妖兽的口粮"，plan 原文明确"全档"非按
+/// - 妖兽（陆生、非鼠、非草食马）──猎──→ 凡兽全档（"凡兽=妖兽的口粮"，plan 原文明确"全档"非按
 ///   tier 子集）——**此边当前无需运行时门控**：`territory.rs` 的既有
 ///   `consider_hunt_candidate` 对非 `NpcArchetype::Beast` 目标（凡兽走 `Mundane` 档）
 ///   本就无差别放行（只对 Beast-vs-Beast 目标才查 `is_prey_of`），凡兽自 P0 起就带
@@ -423,7 +423,8 @@ pub fn preys_on(predator: FaunaPredatorId, prey: FaunaPreyId) -> bool {
         // T0（鸡/兔/蛙）从不作为 predator：既不匹配上面两支，也不匹配下面的 Beast 分支，
         // 落到 `_ => false`。
         (FaunaPredatorId::Beast(predator_kind), FaunaPreyId::Mundane(_)) => {
-            predator_kind.is_terrestrial() && predator_kind != BeastKind::Rat
+            predator_kind.is_terrestrial()
+                && !matches!(predator_kind, BeastKind::Rat | BeastKind::Horse)
         }
         _ => false,
     }

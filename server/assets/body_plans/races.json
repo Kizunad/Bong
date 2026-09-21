@@ -1,6 +1,24 @@
 {
   "races": [
     {
+      "id": "dainu_lion",
+      "display_name": "呆怒狮",
+      "body_plan_id": "dainu_lion",
+      "beast_kinds": ["dainu_lion"]
+    },
+    {
+      "id": "fuyu_vulture",
+      "display_name": "腐羽鹫",
+      "body_plan_id": "fuyu_vulture",
+      "beast_kinds": ["fuyu_vulture"]
+    },
+    {
+      "id": "horse",
+      "display_name": "马",
+      "body_plan_id": "horse",
+      "beast_kinds": ["horse"]
+    },
+    {
       "id": "human",
       "display_name": "人族",
       "body_plan_id": "humanoid",

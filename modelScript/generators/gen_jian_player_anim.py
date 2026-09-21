@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JianPlayerAnim.bbmodel —— 玩家 + 双锏 + 内嵌 Blockbench 动画，在 Blockbench 里直接播。
+"""JianPlayerAnim.bbmodel —— 玩家 + 双剑 + 内嵌 Blockbench 动画，在 Blockbench 里直接播。
 
 和 gen_jian_player.py 的分工：那个出静态握姿对比模型（你手改过的那份，本脚本不碰）；
 这个把 emotecraft v3 动画烘成 Blockbench animation，供 Animate 模式播放/手调。
@@ -15,7 +15,7 @@
       ├ head_roll → head_yaw → head_pitch
       ├ torso_roll → torso_yaw → torso_pitch → torso_bend
       ├ arm_right_roll → …_yaw → …_pitch → arm_right_bend
-      │                                        └ jian_right_roll → jian_right_pitch → 锏
+      │                                        └ jian_right_roll → jian_right_pitch → 竹剑
       ├ arm_left_…（同上）
       ├ leg_right_roll → …_yaw → …_pitch → leg_right_bend
       └ leg_left_…（同上）
@@ -113,7 +113,7 @@ def euler_zyx_deg(M):
     return [math.degrees(alpha), math.degrees(beta), math.degrees(gamma)]
 
 
-# ── 几何：玩家分段 cube + 锏 ──────────────────────────────────────────────
+# ── 几何：玩家分段 cube + 竹剑 ──────────────────────────────────────────────
 def split_cubes(name: str):
     """把一个 part 的 cuboid 按 bend 中心切上下两段，返回 [(段名, from, to, uv, 是否下段)]。"""
     spec = P.PARTS[name]
@@ -202,7 +202,7 @@ def build_geometry():
     for part_name, side in (("rightArm", "right"), ("leftArm", "left")):
         top, bend_group = add_part(part_name)
         hand = H.HAND_REST[side]
-        # 锏：几何搬自 BambooJian，平移到"握把中心落在手心"，UV 移进图集下半
+        # 竹剑：几何搬自 BambooJian，平移到"握把中心落在手心"，UV 移进图集下半
         off = np.array(hand, float) - H.GRIP_ANCHOR
         jian_ids = []
         for e in src["elements"]:
@@ -216,10 +216,10 @@ def build_geometry():
                 fd["uv"] = [u1, v1 + H.WEAPON_V_OFF, u2, v2 + H.WEAPON_V_OFF]
             elements.append(e)
             jian_ids.append(e["uuid"])
-        # 锏沿小臂延长线，必须与 render_player_pose.jian_tris 的假设一致——那边显式把锏
+        # 竹剑沿小臂延长线，必须与 render_player_pose.jian_tris 的假设一致——那边显式把剑
         # 对齐到 bend 之后的小臂方向，架势参数（两尖汇聚、眼→尖下斜线）就是按这个搜的。
         #
-        # 这里的 180° 不能省：锏的局部 +Y 是「柄尾→锏尖」，而手臂 cuboid 是从 pivot 向
+        # 这里的 180° 不能省：竹剑的局部 +Y 是「柄尾→剑尖」，而手臂 cuboid 是从 pivot 向
         # 【下】(-Y) 长的。腕角归零意味着锏尖指向小臂的反方向（朝肘上方），必须绕 X 翻
         # 180° 才与小臂同向。静态 group.rotation 走标准右手系（不吃动画通道的 Bedrock
         # 取反），所以直接写 180。
@@ -227,7 +227,7 @@ def build_geometry():
         roll_g = group(f"jian_{side}_roll", hand, [pitch_g], (0.0, 0.0, 0.0), color=1)
         gmap[f"jian_{side}_pitch"] = pitch_g["uuid"]
         gmap[f"jian_{side}_roll"] = roll_g["uuid"]
-        # 锏挂在小臂（bend 段）之下：肘一弯，锏跟着走
+        # 竹剑挂在小臂（bend 段）之下：肘一弯，竹剑跟着走
         (bend_group or top)["children"].append(roll_g)
         arms.append(top)
 
@@ -261,7 +261,7 @@ def convert_animation(json_path: Path, gmap: dict):
     name, emote, table = P.anim_pose_table(json_path)
     animators = {}
     # 纯下半身动画（lower_*）按分身契约不写手臂，Blockbench 里播它们时手臂会停在零姿态、
-    # 锏垂下去，看着像"握法变了"。游戏里的真实效果是 LOWER_BODY 步态 + UPPER_BODY 架势
+    # 竹剑垂下去，看着像"握法变了"。游戏里的真实效果是 LOWER_BODY 步态 + UPPER_BODY 架势
     # 两层叠加，所以这里补一份恒定的架势上半身轨道——【只补预览，emotecraft 源文件不动】，
     # 分身契约不破。
     has_upper = any(part in UPPER_PARTS for _t, pose in table for part in pose)

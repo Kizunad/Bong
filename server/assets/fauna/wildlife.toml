@@ -1,0 +1,36 @@
+# 境界、生命与基础肉身属性。招式的消耗/经脉/距离/冷却在 cultivation/techniques.toml。
+[[creatures]]
+kind = "dainu_lion"
+mass = 220.0
+speed = 1.15
+retreat_health = 0.20
+engage_skill = "lion.pounce"
+followup_skill = "lion.rend"
+realms = [
+  { realm = "Condense", health = 180.0, attack = 14.0, damage_taken = 0.85, stamina = 100.0 },
+  { realm = "Solidify", health = 420.0, attack = 25.0, damage_taken = 0.70, stamina = 130.0 },
+]
+
+[[creatures]]
+kind = "fuyu_vulture"
+mass = 12.0
+speed = 1.40
+retreat_health = 0.35
+engage_skill = "vulture.dive"
+followup_skill = "vulture.dive"
+realms = [
+  { realm = "Awaken", health = 18.0, attack = 4.0, damage_taken = 1.0, stamina = 65.0 },
+  { realm = "Induce", health = 35.0, attack = 7.0, damage_taken = 0.95, stamina = 85.0 },
+]
+
+[[creatures]]
+kind = "horse"
+mass = 430.0
+speed = 1.35
+retreat_health = 0.25
+engage_skill = "horse.trample"
+followup_skill = "horse.kick"
+realms = [
+  { realm = "Awaken", health = 45.0, attack = 7.0, damage_taken = 0.95, stamina = 110.0 },
+  { realm = "Induce", health = 85.0, attack = 11.0, damage_taken = 0.85, stamina = 140.0 },
+]

@@ -358,6 +358,8 @@ pub fn dehydrate_far_npcs_system(
             Without<Despawned>,
             Without<ScenarioNpc>,
             Without<DyingElderBlackboard>,
+            // Ambient 生物由调度器按距离守恒回收；不能再脱水成丢失物种/技能的通用 Beast。
+            Without<crate::fauna::wildlife::spawn::WildlifeMarker>,
         ),
     >,
     severed: Query<Option<&MeridianSeveredPermanent>, With<NpcMarker>>,

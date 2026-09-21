@@ -1,0 +1,11 @@
+{
+  "id": "lion_pounce",
+  "layers": [
+    { "sound": "minecraft:entity.ravager.roar", "volume": 0.65, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.player.attack.sweep", "volume": 0.5, "pitch": 0.7, "delay_ticks": 12 }
+  ],
+  "priority": 78,
+  "attenuation": "world_3d",
+  "category": "HOSTILE",
+  "bus": "COMBAT"
+}

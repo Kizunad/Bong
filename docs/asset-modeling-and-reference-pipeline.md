@@ -74,6 +74,10 @@ python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step icon
 # 物品会自动提示装备在纯灰色模特玩家身上
 python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step three_view --type item
 
+# `--type` 还支持 standalone（独立放置的设施/方块/炉子，不带灰色模特）与 creature（生物）。
+# 未显式传入时默认是 item；独立放置的炼丹炉应显式声明 standalone：
+python3 modelScript/tools/gen_pipeline_refs.py alchemy_furnace --step three_view --type standalone
+
 # 步骤 4: 生成 MC 爆炸分解图 (基于三视图的图生图，带结构与文字标注)
 python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step exploded
 ```

@@ -8,7 +8,11 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Res};
 
-use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianId, MeridianSystem};
+#[cfg(test)]
+use super::components::MeridianId;
+use super::components::{
+    CrackCause, Cultivation, MeridianChannelId, MeridianCrack, MeridianSystem,
+};
 use super::tick::CultivationClock;
 
 pub const OVERLOAD_RATIO: f64 = 1.5;
@@ -103,30 +107,19 @@ pub fn apply_meridian_crack_to_system(
     severity: f64,
     cause: CrackCause,
     created_at: u64,
-) -> Option<MeridianId> {
+) -> Option<MeridianChannelId> {
     if !severity.is_finite() || severity <= 0.0 {
         return None;
     }
     let severity = severity.clamp(0.0, 1.0);
-    // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
-    // 仍是 legacy `Option<MeridianId>`（调用方尚未迁移，见函数签名）——humanoid 20 条
-    // 经脉均可逆映射回 `MeridianId`。
+    // 保留构型自己的 channel；无已开经脉时退回该构型首脉（人形仍为肺经）。
     let target_id = meridians
         .iter()
         .filter(|meridian| meridian.opened)
         .max_by_key(|meridian| meridian.opened_at)
-        .map(|meridian| {
-            meridian.id.to_meridian_id().unwrap_or_else(|| {
-                panic!(
-                    "[bong][cultivation][overload] channel id {} has no legacy MeridianId \
-                     mapping — apply_meridian_crack_to_system cannot represent non-humanoid \
-                     channels yet",
-                    meridian.id
-                )
-            })
-        })
-        .unwrap_or(MeridianId::Lung);
-    let target = meridians.get_mut(target_id);
+        .or_else(|| meridians.iter().next())
+        .map(|meridian| meridian.id.clone())?;
+    let target = meridians.get_mut(target_id.clone());
     target.cracks.push(MeridianCrack {
         severity,
         healing_progress: 0.0,
@@ -207,7 +200,7 @@ mod tests {
 
         let hit = apply_meridian_crack_to_system(&mut meridians, 0.25, CrackCause::Backfire, 77);
 
-        assert_eq!(hit, Some(MeridianId::Heart));
+        assert_eq!(hit, Some(MeridianId::Heart.channel_id()));
         let heart = meridians.get(MeridianId::Heart);
         assert_eq!(heart.cracks.len(), 1);
         assert_eq!(heart.cracks[0].cause, CrackCause::Backfire);
@@ -221,7 +214,7 @@ mod tests {
 
         let hit = apply_meridian_crack_to_system(&mut meridians, 0.1, CrackCause::Backfire, 3);
 
-        assert_eq!(hit, Some(MeridianId::Lung));
+        assert_eq!(hit, Some(MeridianId::Lung.channel_id()));
         assert_eq!(meridians.get(MeridianId::Lung).cracks.len(), 1);
     }
 

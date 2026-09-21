@@ -14,7 +14,7 @@
 
 ## 现状证据（P0 验证基线：2026-08-03，Rust enum/matrix inventory 基于 `663fc4391ca24d8c4586a9625723ee280d329fff`）
 
-- 当前权威枚举是 `server/src/schema/client_request.rs:35-728` 的 `ClientRequestV1`，共有 **104** 个变体；原 skeleton 的“113 个”是 2026-07-27 侦察快照，不能继续作为实现计数。P1 的全量穷尽门以 Rust 枚举实际变体集为准，新增变体未声明即编译失败。
+- 当前权威枚举是 `server/src/schema/client_request.rs:35-728` 的 `ClientRequestV1`，共有 **105** 个变体；原 skeleton 的“113 个”是 2026-07-27 侦察快照，不能继续作为实现计数。P1 的全量穷尽门以 Rust 枚举实际变体集为准，新增变体未声明即编译失败。
 - `ClientRequestV1` 的 enum-level serde wire contract 固定为 `#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]`：三个选项各恰好一次，任何 `content`、`untagged`、enum-level `rename` 或其他未验证选项都必须由 checker fail-closed；field-level serde 属性不改变该 enum-level contract。
 - `server/src/network/client_request_handler.rs:522-2960` 的 `handle_client_request_payloads` 仍以单个大 `match` 解码、验版本并派发全部请求；空间、所有权和状态校验分散在下游 helper/system，派发前没有统一、可审计的 mutation barrier。
 - 已有门禁证明领域半径不能拍成一个全局数值：`craft/workbench.rs:59` 为 3 格，`mineral/probe.rs:13` 为 6 格，`supply_coffin/authority.rs:12-13` 为 4.5/6.5 格，`coffin/mod.rs:101,1288-1307` 为 6 格且主世界限定，`client_request_handler.rs:468-469,14632-14748` 的气色检视/NPC 为 6 格。- 维度感知 zone API 已存在：`world/zone.rs:303-345` 的 `find_zone(dim, pos)` / `find_zone_mut_by_pos(dim, pos)`；缺陷来自调用方硬编码或根本不携带 `CurrentDimension`，不是再造第二套 zone registry。

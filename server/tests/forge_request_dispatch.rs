@@ -68,7 +68,15 @@ fn forge_dispatch_app() -> App {
                 "{}/assets/cultivation/techniques.toml",
                 env!("CARGO_MANIFEST_DIR")
             ),
-            &RaceRegistry::default(),
+            &RaceRegistry::load_file(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/assets/body_plans/races.json"),
+                &bong_server::body_plan::BodyPlanRegistry::load_dir(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/assets/body_plans/plans"
+                ))
+                .unwrap(),
+            )
+            .unwrap(),
         )
         .expect("the checked-in technique catalog must be readable"),
     );

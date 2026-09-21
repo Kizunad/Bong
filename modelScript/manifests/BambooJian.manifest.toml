@@ -1,0 +1,10 @@
+# 竹剑特征清单；唯一形制依据是 server/assets/items/weapons.toml 的 name/description。
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[features]
+bamboo_blade = { elements = ["blade_segment_", "node_", "tip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 180, SIDE_R = 45, "3/4" = 210 } }
+simple_guard = { elements = ["guard_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 80, SIDE_R = 10, "3/4" = 45 } }
+plain_grip = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 70, SIDE_R = 28, "3/4" = 85 } }
+bamboo_root = { elements = ["pommel_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 24, SIDE_R = 18, "3/4" = 30 } }

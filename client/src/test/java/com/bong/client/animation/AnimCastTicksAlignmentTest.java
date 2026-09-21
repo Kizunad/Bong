@@ -161,9 +161,10 @@ class AnimCastTicksAlignmentTest {
         return m;
     }
 
-    /** NPC mob 施放、无 PlayAnim 通道的招（快照有、映射无的唯一合法集合）。 */
+    /** NPC 招式不走玩家 PlayAnim；兽技通过 PlayEntityAnim 驱动 GeckoLib 动画。 */
     private static final Set<String> NPC_SKILLS =
-        Set.of("npc.heal_basic", "npc.buff_speed", "npc.buff_defense");
+        Set.of("npc.heal_basic", "npc.buff_speed", "npc.buff_defense",
+            "lion.pounce", "lion.rend", "vulture.dive", "horse.trample", "horse.kick");
 
     /**
      * 持续维持型例外：循环 + StopAnim 停止路径是**正当设计**（按住/维持期间循环），
@@ -620,7 +621,7 @@ class AnimCastTicksAlignmentTest {
 
     // ---- 用例 ----
 
-    /** 快照覆盖：映射表每招在快照有 cast_ticks；快照多出的键只能是 npc 三招。 */
+    /** 快照覆盖：玩家映射表每招有 cast_ticks；未映射的键只能是声明的 NPC 招式。 */
     @Test
     void snapshotCoversEveryMappedSkillAndOnlyNpcSkillsAreUnmapped() throws IOException {
         Map<String, Integer> snapshot = loadSnapshot();
@@ -632,8 +633,8 @@ class AnimCastTicksAlignmentTest {
         Set<String> unmapped = new HashSet<>(snapshot.keySet());
         unmapped.removeAll(SKILL_ANIM.keySet());
         assertEquals(NPC_SKILLS, unmapped,
-            "快照有而映射表无的招必须恰为 npc 三招（NPC mob 无 PlayAnim 通道，"
-                + "plan §8.1 #2）——出现其他条目说明 server 新增招未入对拍映射表");
+            "快照有而玩家映射表无的招必须是声明的 NPC 招式；"
+                + "兽技走 PlayEntityAnim，其他新增玩家招式仍须进入对拍映射表");
     }
 
     /** 主契约：非 allowlist / 非例外的招全部满足精度标准 #2 三套断言。 */

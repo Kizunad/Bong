@@ -179,35 +179,46 @@ pub(crate) fn check_player_skill_meridian_gate(
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
     deps_table: Option<&SkillMeridianDependencies>,
-) -> Result<(), MeridianId> {
-    // 1. SkillMeridianDependencies 表：opened + SEVERED 检查
+) -> Result<(), MeridianChannelId> {
+    check_skill_channels(required_meridians, meridians, severed)?;
+    // 静态依赖也使用开放 channel，避免配置经脉表与技能声明出现门控分歧。
     if let Some(table) = deps_table {
-        for &dep in table.lookup(skill_id) {
-            // SEVERED 先检（永久断绝优先于 opened 报告）
-            check_meridian_dependencies(&[dep], severed)?;
-            // opened 检：未打通即拒绝（对齐 NPC meridian_deps_satisfied）
-            if !meridians.get(dep).opened {
+        for dep in table.channel_dependencies(skill_id) {
+            if severed
+                .is_some_and(|state| state.is_severed(dep.clone()) || state.is_dead(dep.clone()))
+                || !meridians
+                    .iter()
+                    .any(|state| state.id == dep && state.opened)
+            {
                 return Err(dep);
             }
         }
     }
-    // 2. TechniqueDefinition.required_meridians：opened + SEVERED + integrity 检查
-    for req in required_meridians {
-        let Some(id) = crate::cultivation::technique_scroll::parse_meridian_id(&req.channel) else {
-            // 未知 channel 名 → 保守拒绝，防止依赖声明漏洞
-            tracing::warn!(
-                "[bong][cultivation][severed] check_player_skill_meridian_gate: \
-                 unknown required_meridian channel '{}' for skill '{}'; rejecting",
-                req.channel,
-                skill_id,
-            );
-            return Err(MeridianId::Lung); // 哨兵值，channel 已在 warn 里标出
-        };
-        // SEVERED 先检（永久断绝优先于 opened/integrity 报告）
-        check_meridian_dependencies(&[id], severed)?;
-        // opened + integrity 联检：未打通或 integrity 不足均拒绝
-        if !meridians.get(id).opened || meridians.get(id).integrity < f64::from(req.min_health) {
-            return Err(id);
+    Ok(())
+}
+
+/// 玩家/NPC 共用的开放经脉门：缺脉、闭脉、伤脉与永久断脉均不可施放。
+pub fn check_skill_channels(
+    required: &[crate::cultivation::known_techniques::TechniqueRequiredMeridian],
+    meridians: &MeridianSystem,
+    severed: Option<&MeridianSeveredPermanent>,
+) -> Result<(), MeridianChannelId> {
+    for requirement in required {
+        let channel = crate::cultivation::technique_scroll::technique_channel(&requirement.channel);
+        let valid = meridians
+            .iter()
+            .find(|meridian| meridian.id == channel)
+            .is_some_and(|meridian| {
+                meridian.opened
+                    && meridian.integrity.is_finite()
+                    && meridian.integrity >= f64::from(requirement.min_health)
+            });
+        if !valid
+            || severed.is_some_and(|state| {
+                state.is_severed(channel.clone()) || state.is_dead(channel.clone())
+            })
+        {
+            return Err(channel);
         }
     }
     Ok(())
@@ -334,12 +345,12 @@ pub fn severed_source_from_crack(cause: CrackCause) -> SeveredSource {
 /// event**（不需要先落 crack），detection system 看到 SEVERED component 已 set 就跳过。
 pub fn meridian_severed_detection_tick(
     clock: Res<CultivationClock>,
-    targets: Query<(Entity, &MeridianSystem, &MeridianSeveredPermanent)>,
+    mut targets: Query<(Entity, &mut MeridianSystem, &mut MeridianSeveredPermanent)>,
     mut severed_events: EventWriter<MeridianSeveredEvent>,
 ) {
     let now = clock.tick;
-    for (entity, meridians, permanent) in targets.iter() {
-        for m in meridians.iter() {
+    for (entity, mut meridians, mut permanent) in &mut targets {
+        for m in meridians.iter_mut() {
             if m.integrity > f64::EPSILON {
                 continue;
             }
@@ -351,20 +362,17 @@ pub fn meridian_severed_detection_tick(
                 // 或被显式 close_meridian 调用过；那种情况由调用方决定是否 emit）
                 continue;
             };
-            // `MeridianSeveredEvent.meridian_id` 仍是 `MeridianId`（该 event 走 network
-            // 广播，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的 channel id
-            // 均可逆映射回 `MeridianId`。plan-race-system-v1 P1 对抗审查 M3/M4：非
-            // humanoid channel（P1 起 `npc_meridian_system_for_realm` 已可对非 humanoid
-            // `BodyPlan` 生成真实非 20-条经脉的 `MeridianSystem`）没有对应 `MeridianId`
-            // 是合法运行时状态，不是数据完整性 bug——安全跳过（debug 日志）而非 panic，
-            // 等该 event 换轨承载 `MeridianChannelId` 后再补发。
+            // wire 事件暂保留人形枚举；非人形经脉在此完成同样的永久登记。
             let Some(meridian_id) = m.id.to_meridian_id() else {
-                tracing::debug!(
-                    "[bong][cultivation][severed] skipping MeridianSeveredEvent for \
-                     non-humanoid channel {} (entity {entity:?}) — event wire not yet \
-                     channel-id-aware",
-                    m.id
+                // 旧 wire 枚举暂只广播人形经脉；兽脉仍必须完成权威登记与闭脉，
+                // 不能仅跳过事件而让技能在之后的修复 tick 中重新可用。
+                permanent.insert(
+                    m.id.clone(),
+                    severed_source_from_crack(latest_crack.cause),
+                    now,
                 );
+                m.opened = false;
+                m.integrity = 0.0;
                 continue;
             };
             severed_events.send(MeridianSeveredEvent {
@@ -423,14 +431,32 @@ pub fn apply_severed_event_system(
 #[derive(Debug, Default, Resource)]
 pub struct SkillMeridianDependencies {
     table: HashMap<&'static str, Vec<MeridianId>>,
+    channels: HashMap<&'static str, Vec<MeridianChannelId>>,
 }
 
 impl SkillMeridianDependencies {
+    /// 非人形技能使用开放的 channel ID，旧人形 resolver 保留原签名。
+    pub fn declare_channels(&mut self, skill_id: &'static str, deps: Vec<MeridianChannelId>) {
+        assert!(
+            !self.is_declared(skill_id),
+            "duplicate dependency: {skill_id}"
+        );
+        self.channels.insert(skill_id, deps);
+    }
+
+    pub fn channel_dependencies(&self, skill_id: &str) -> Vec<MeridianChannelId> {
+        self.channels.get(skill_id).cloned().unwrap_or_else(|| {
+            self.lookup(skill_id)
+                .iter()
+                .map(|id| id.channel_id())
+                .collect()
+        })
+    }
     /// 声明某个 resolver 对经脉的依赖。重复声明意味着两个初始化路径在争夺同一
     /// 技能的门控真源，必须在启动期直接失败，不能悄悄覆盖先前声明。
     pub fn declare(&mut self, skill_id: &'static str, deps: Vec<MeridianId>) {
         assert!(
-            !self.table.contains_key(skill_id),
+            !self.is_declared(skill_id),
             "duplicate meridian dependency declaration for skill: {skill_id}"
         );
         self.table.insert(skill_id, deps);
@@ -444,10 +470,10 @@ impl SkillMeridianDependencies {
     }
 
     pub fn declared_skills(&self) -> impl Iterator<Item = &&'static str> {
-        self.table.keys()
+        self.table.keys().chain(self.channels.keys())
     }
 
     pub fn is_declared(&self, skill_id: &str) -> bool {
-        self.table.contains_key(skill_id)
+        self.table.contains_key(skill_id) || self.channels.contains_key(skill_id)
     }
 }

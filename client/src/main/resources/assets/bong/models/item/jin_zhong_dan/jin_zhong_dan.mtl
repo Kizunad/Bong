@@ -1,0 +1,10 @@
+# jin_zhong_dan materials -- source bbmodel atlas
+
+newmtl jin_zhong_dan_atlas
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/jin_zhong_dan/atlas

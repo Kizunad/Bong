@@ -58,6 +58,21 @@ public final class ArmorModelRegistry {
         register("armor_straw_chestplate", EquipSlotType.CHEST, "straw_chestplate");
         register("armor_straw_leggings", EquipSlotType.LEGS, "straw_leggings");
         register("armor_straw_boots", EquipSlotType.FEET, "straw_boots");
+
+        register("armor_linen_helmet", EquipSlotType.HEAD, "linen_helmet");
+        register("armor_linen_chestplate", EquipSlotType.CHEST, "linen_chestplate");
+        register("armor_linen_leggings", EquipSlotType.LEGS, "linen_leggings");
+        register("armor_linen_boots", EquipSlotType.FEET, "linen_boots");
+
+        register("armor_mutated_bone_helmet", EquipSlotType.HEAD, "mutated_bone_helmet");
+        register("armor_mutated_bone_chestplate", EquipSlotType.CHEST, "mutated_bone_chestplate");
+        register("armor_mutated_bone_leggings", EquipSlotType.LEGS, "mutated_bone_leggings");
+        register("armor_mutated_bone_boots", EquipSlotType.FEET, "mutated_bone_boots");
+
+        register("armor_spirit_cloth_helmet", EquipSlotType.HEAD, "spirit_cloth_helmet");
+        register("armor_spirit_cloth_chestplate", EquipSlotType.CHEST, "spirit_cloth_chestplate");
+        register("armor_spirit_cloth_leggings", EquipSlotType.LEGS, "spirit_cloth_leggings");
+        register("armor_spirit_cloth_boots", EquipSlotType.FEET, "spirit_cloth_boots");
     }
 
     private static void register(String templateId, EquipSlotType slot, String modelKey) {

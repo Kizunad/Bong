@@ -1,0 +1,142 @@
+{
+  "parent": "sml:builtin/obj",
+  "model": "bong:models/item/beast_spine_sword/beast_spine_sword.obj",
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [
+        -80,
+        90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        1.5
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [
+        -80,
+        -90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        1.5
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "firstperson_righthand": {
+      "rotation": [
+        -80,
+        90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        -4.0
+      ],
+      "scale": [
+        0.76,
+        0.76,
+        0.76
+      ]
+    },
+    "firstperson_lefthand": {
+      "rotation": [
+        -80,
+        -90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        -4.0
+      ],
+      "scale": [
+        0.76,
+        0.76,
+        0.76
+      ]
+    },
+    "ground": {
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        0.45,
+        0.45,
+        0.45
+      ],
+      "translation": [
+        0.0,
+        -2.725,
+        0.0
+      ]
+    },
+    "gui": {
+      "rotation": [
+        0,
+        0,
+        45
+      ],
+      "scale": [
+        0.78,
+        0.78,
+        0.78
+      ],
+      "translation": [
+        5.791,
+        -5.791,
+        0.0
+      ]
+    },
+    "fixed": {
+      "rotation": [
+        0,
+        180,
+        0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "translation": [
+        0.0,
+        -10.5,
+        0.0
+      ]
+    },
+    "head": {
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "translation": [
+        0.0,
+        1.5,
+        0.0
+      ]
+    }
+  }
+}

@@ -17,10 +17,6 @@ import java.util.Objects;
 public final class FaunaEntity extends Entity implements GeoEntity {
     /** 速度衰减系数：位置包间隙靠它维持 walk/run 不闪回 idle。 */
     private static final float SPEED_DECAY = 0.72f;
-    /** 超过此速度（blocks/tick）播 walk。取值极小——任何真实位移都算「在走」。 */
-    private static final float WALK_SPEED_THRESHOLD = 0.012f;
-    /** 超过此速度播 run。约对应奔跑步速；低于则退回 walk。 */
-    private static final float RUN_SPEED_THRESHOLD = 0.14f;
     /** 低于此瞬时位移不更新移动朝向（避免站定时被抖动噪声乱转）。 */
     private static final float FACING_MIN_STEP = 0.004f;
     /** 移动朝向每 tick 最多转多少度（平滑转身，不瞬移）。 */
@@ -33,7 +29,10 @@ public final class FaunaEntity extends Entity implements GeoEntity {
      * 一次性招式动画状态机（黑武士 boss 出招）。由服务端 {@code play_entity_anim} 经
      * {@code VfxEventRouter} → {@code FaunaActionBridge} → {@link #triggerAction} 驱动。
      */
-    private final FaunaActionAnimation action = new FaunaActionAnimation();
+    private final FaunaPlayback playback;
+    private int renderedRevision = -1;
+    private double previousHp = Double.NaN;
+    private Boolean previewDisguise;
 
     /**
      * 客户端水平移动速度信号（blocks/tick），驱动 idle↔walk↔run 切换。
@@ -61,6 +60,7 @@ public final class FaunaEntity extends Entity implements GeoEntity {
     public FaunaEntity(EntityType<? extends FaunaEntity> type, World world, FaunaVisualKind visualKind) {
         super(type, world);
         this.visualKind = Objects.requireNonNull(visualKind, "visualKind");
+        playback = new FaunaPlayback(visualKind);
     }
 
     public FaunaVisualKind visualKind() {
@@ -68,24 +68,24 @@ public final class FaunaEntity extends Entity implements GeoEntity {
     }
 
     /**
-     * 触发一次性招式动画（由网络层在主线程调用）。{@code durationTicks} tick 后自动回 idle。
+     * 触发真实存在的动作（由网络层在主线程调用），到期后回到当前形态的待机/移动。
      *
      * @param animName      GeckoLib 动画名（如 {@code animation.bong.heiwushi.dark_barrage}）
      * @param durationTicks 动画占用时长（tick）
-     * @return {@code true} 成功进入招式态；{@code false} 无效输入被拒（透传 {@link FaunaActionAnimation#trigger}）。
+     * @return 动作存在且时长有效时返回 true；未知动作保持当前播放状态。
      */
     public boolean triggerAction(String animName, int durationTicks) {
-        return action.trigger(animName, durationTicks);
+        return playback.trigger(animName, durationTicks);
     }
 
     /** 当前招式动画名（无招式时为 null）；供 inspection / 测试。 */
     public String actionAnim() {
-        return action.currentAnim();
+        return playback.actionName();
     }
 
     /** 招式动画剩余 tick；供 inspection / 测试。 */
     public int actionTicks() {
-        return action.remainingTicks();
+        return playback.remainingTicks();
     }
 
     @Override
@@ -96,8 +96,24 @@ public final class FaunaEntity extends Entity implements GeoEntity {
     @Override
     public void tick() {
         super.tick();
-        // 一次性招式动画倒计时：归零后 action.currentAnim() 转 null，controller 回 idle。
-        action.tick();
+        // 动作结束后按当前形态与速度继续播放。
+        playback.tick();
+        if (previewDisguise == null) playback.syncSpiderDisguise(getId());
+        else playback.spiderDisguise(previewDisguise, true);
+        var metadata = com.bong.client.npc.NpcMetadataStore.get(getId());
+        if (metadata != null) {
+            double hp = metadata.hpRatio();
+            if (!Double.isNaN(previousHp) && hp < previousHp) {
+                if (hp <= 0) {
+                    var death = playback.profile().find("death");
+                    if (death == null) death = playback.profile().find("die");
+                    if (death != null) playback.trigger(death.name(), Integer.MAX_VALUE);
+                } else if (playback.actionName() == null) {
+                    playback.play("hurt");
+                }
+            }
+            previousHp = hp;
+        }
         updateHorizontalSpeed();
     }
 
@@ -122,6 +138,7 @@ public final class FaunaEntity extends Entity implements GeoEntity {
         }
         lastTickX = x;
         lastTickZ = z;
+        if (!hasLastTick) movementYaw = getYaw();
         hasLastTick = true;
     }
 
@@ -132,36 +149,33 @@ public final class FaunaEntity extends Entity implements GeoEntity {
 
     /** 客户端按位移算出的移动朝向（MC yaw，度）；供渲染层面朝移动方向。 */
     public float movementYaw() {
-        return movementYaw;
+        return hasLastTick ? movementYaw : getYaw();
+    }
+
+    public FaunaPlayback playback() {
+        return playback;
+    }
+
+    public void togglePreviewDisguise() {
+        if (getId() < 0) previewDisguise = !Boolean.TRUE.equals(previewDisguise);
     }
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        // 按物种派生 idle 动画名：专属模型物种（animPath!=null）加载的是各自动画文件，其中没有
-        // 通用 animation.fauna.idle → 若硬编码会解析不到 → 实体定格 T-Pose。见 FaunaVisualKind.idleAnimationName()。
-        RawAnimation idle = RawAnimation.begin().thenLoop(visualKind.idleAnimationName());
-        // walk/run 仅对声明了对应动画的物种生效（null=没有该动画，退回上一档），
-        // 否则对没有 walk 的物种 setAnimation 一个缺失 key 会让 GeckoLib 解析失败 → T-Pose。
-        String walkName = visualKind.walkAnimationName();
-        String runName = visualKind.runAnimationName();
-        RawAnimation walk = walkName == null ? null : RawAnimation.begin().thenLoop(walkName);
-        RawAnimation run = runName == null ? null : RawAnimation.begin().thenLoop(runName);
         controllers.add(new AnimationController<>(this, "main", 5, state -> {
-            // 优先级：一次性招式 > run > walk > idle。
-            // 重建 RawAnimation 每帧都相等（同名循环/播放），GeckoLib 不会重启动画。
-            String current = action.currentAnim();
-            if (current != null) {
-                state.getController().setAnimation(RawAnimation.begin().thenPlay(current));
-                return PlayState.CONTINUE;
+            var controller = state.getController();
+            if (renderedRevision != playback.revision()) {
+                // 连续两次同名攻击也必须重播；形态切换不能沿用旧骨架的动画队列。
+                controller.forceAnimationReset();
+                renderedRevision = playback.revision();
             }
-            float speed = horizontalSpeed;
-            if (run != null && speed >= RUN_SPEED_THRESHOLD) {
-                state.getController().setAnimation(run);
-            } else if (walk != null && speed >= WALK_SPEED_THRESHOLD) {
-                state.getController().setAnimation(walk);
-            } else {
-                state.getController().setAnimation(idle);
-            }
+            var clip = playback.current(horizontalSpeed);
+            boolean burst = FaunaAnimations.shortName(clip.name()).equals("ambush_burst");
+            controller.transitionLength(burst ? 0 : 5);
+            if (playback.blockDisguise()) return PlayState.STOP;
+            controller.setAnimation(clip.loop()
+                ? RawAnimation.begin().thenLoop(clip.name())
+                : RawAnimation.begin().thenPlayAndHold(clip.name()));
             return PlayState.CONTINUE;
         }));
     }

@@ -29,9 +29,15 @@ pub const HEIWUSHI_ENTITY_KIND: EntityKind = EntityKind::new(145);
 /// 客户端 BongEntityModelKind 把延寿棺四档并入同一注册循环（146..=163），
 /// Baolongwang 独立 bootstrap 在其之后注册得 164，故协议号紧随四档之后。
 pub const BAOLONGWANG_ENTITY_KIND: EntityKind = EntityKind::new(164);
+pub const DAINU_LION_ENTITY_KIND: EntityKind = EntityKind::new(169);
+pub const FUYU_VULTURE_ENTITY_KIND: EntityKind = EntityKind::new(170);
+pub const HORSE_ENTITY_KIND: EntityKind = EntityKind::new(172);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub enum FaunaVisualKind {
+    DainuLion,
+    FuyuVulture,
+    Horse,
     DevourRat,
     AshSpider,
     GreenSpider,
@@ -57,6 +63,9 @@ pub enum FaunaVisualKind {
 impl FaunaVisualKind {
     pub const fn event_color(self) -> &'static str {
         match self {
+            Self::DainuLion => "#C7954B",
+            Self::FuyuVulture => "#857466",
+            Self::Horse => "#A86F45",
             Self::DevourRat => "#FF4444",
             Self::AshSpider => "#B8D0C8",
             Self::GreenSpider => "#44CC66",
@@ -83,6 +92,9 @@ impl FaunaVisualKind {
 
 pub const fn entity_kind_for_beast(kind: BeastKind) -> EntityKind {
     match kind {
+        BeastKind::DainuLion => DAINU_LION_ENTITY_KIND,
+        BeastKind::FuyuVulture => FUYU_VULTURE_ENTITY_KIND,
+        BeastKind::Horse => HORSE_ENTITY_KIND,
         BeastKind::Rat => DEVOUR_RAT_ENTITY_KIND,
         BeastKind::Spider => ASH_SPIDER_ENTITY_KIND,
         BeastKind::GreenSpider => GREEN_SPIDER_ENTITY_KIND,
@@ -104,6 +116,9 @@ pub const fn entity_kind_for_beast(kind: BeastKind) -> EntityKind {
 
 pub const fn visual_kind_for_beast(kind: BeastKind) -> Option<FaunaVisualKind> {
     match kind {
+        BeastKind::DainuLion => Some(FaunaVisualKind::DainuLion),
+        BeastKind::FuyuVulture => Some(FaunaVisualKind::FuyuVulture),
+        BeastKind::Horse => Some(FaunaVisualKind::Horse),
         BeastKind::Rat => Some(FaunaVisualKind::DevourRat),
         BeastKind::Spider => Some(FaunaVisualKind::AshSpider),
         BeastKind::GreenSpider => Some(FaunaVisualKind::GreenSpider),

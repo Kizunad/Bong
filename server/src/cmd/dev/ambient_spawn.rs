@@ -20,13 +20,54 @@ use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AmbientSpawnCmd {
-    OnceMundane { x: f64, z: f64 },
-    OnceThreat { x: f64, z: f64 },
+    OnceMundane {
+        x: f64,
+        z: f64,
+    },
+    OnceThreat {
+        x: f64,
+        z: f64,
+    },
+    OnceWildlife {
+        kind: crate::fauna::components::BeastKind,
+        x: f64,
+        z: f64,
+    },
 }
 
 impl Command for AmbientSpawnCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
         let once = graph.root().literal("ambient_spawn").literal("once").id();
+
+        use crate::fauna::components::BeastKind;
+        type Parser = fn(&mut valence::command::parsers::ParseInput) -> AmbientSpawnCmd;
+        let kinds: [(&str, Parser); 3] = [
+            ("dainu_lion", |input| AmbientSpawnCmd::OnceWildlife {
+                kind: BeastKind::DainuLion,
+                x: f64::parse_arg(input).unwrap(),
+                z: f64::parse_arg(input).unwrap(),
+            }),
+            ("fuyu_vulture", |input| AmbientSpawnCmd::OnceWildlife {
+                kind: BeastKind::FuyuVulture,
+                x: f64::parse_arg(input).unwrap(),
+                z: f64::parse_arg(input).unwrap(),
+            }),
+            ("horse", |input| AmbientSpawnCmd::OnceWildlife {
+                kind: BeastKind::Horse,
+                x: f64::parse_arg(input).unwrap(),
+                z: f64::parse_arg(input).unwrap(),
+            }),
+        ];
+        for (name, parser) in kinds {
+            graph
+                .at(once)
+                .literal(name)
+                .argument("x")
+                .with_parser::<f64>()
+                .argument("z")
+                .with_parser::<f64>()
+                .with_executable(parser);
+        }
 
         graph
             .at(once)
@@ -103,6 +144,9 @@ fn handle_ambient_spawn(
         let (kind, x, z) = match event.result {
             AmbientSpawnCmd::OnceMundane { x, z } => (AmbientDevSpawnKind::Mundane, x, z),
             AmbientSpawnCmd::OnceThreat { x, z } => (AmbientDevSpawnKind::Threat, x, z),
+            AmbientSpawnCmd::OnceWildlife { kind, x, z } => {
+                (AmbientDevSpawnKind::Wildlife(kind), x, z)
+            }
         };
         if !x.is_finite() || !z.is_finite() {
             client.send_chat_message("[dev] ambient_spawn rejected: x/z must be finite");
@@ -260,8 +304,8 @@ mod tests {
                 .iter()
                 .map(|(name, _)| name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["mundane", "threat"],
-            "both deterministic ambient kinds must be sibling literals under the same once node"
+            vec!["dainu_lion", "fuyu_vulture", "horse", "mundane", "threat"],
+            "ambient kinds must be sibling literals under the same once node"
         );
 
         for (kind, kind_node) in kinds {

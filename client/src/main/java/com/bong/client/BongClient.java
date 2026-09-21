@@ -27,6 +27,7 @@ import com.bong.client.fauna.FaunaRenderBootstrap;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
+import com.bong.client.itemmodel.BongItemModelChannel;
 import com.bong.client.scroll.ScrollReadScreenBootstrap;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.iris.IrisBootstrap;
@@ -142,6 +143,8 @@ public class BongClient implements ClientModInitializer {
         BongEntityRenderBootstrap.register();
         BaolongwangRenderBootstrap.register();
         BongEntityRenderBootstrap.registerDeferred();
+        FaunaRenderBootstrap.registerDeferred();
+        com.bong.client.fauna.FaunaPreviewCommand.register();
         WhaleDebugCommand.register();
         SpiritNicheRevealBootstrap.register();
         com.bong.client.mineral.MineralSenseBootstrap.register();
@@ -150,6 +153,7 @@ public class BongClient implements ClientModInitializer {
         ExtractInteractionBootstrap.register();
         SearchCancelInteractionBootstrap.register();
         SpiritTreasureScreenBootstrap.register();
+        BongItemModelChannel.register();
         WeaponRenderBootstrap.register();
         ArmorRenderBootstrap.register();
         // plan-tarkov-backpack-v1 P4 — 穿戴背包件（破草包）上身渲染（TPV），紧跟 Armor 注册。

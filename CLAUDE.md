@@ -246,6 +246,32 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 **所以：假定总有人在看。** 一次性的探针脚本、临时的调试命令、agent 之间的私聊，全都按会被人读来写。
 
+## 先读注释，再解析结构
+
+上一节要求「假定总有人在看」。它的另一半是：**本仓确实把决策写给人看了，
+所以在对任何代码下判断之前，先读紧挨着目标的那几行散文。**
+
+「为什么是这样」「这个例外是有意的」「清理它需要什么前置条件」——
+这些几乎从不在数据结构里，而在它旁边的注释、docstring 和行内尾注里。
+只解析字段、不读旁边的话，会**稳定地**产出假发现：看到一条与众不同的 entry
+就当它是 bug，看到一处不对称就当它是漏改。
+
+两次实证，同一天：
+
+- `BongWeaponModelRegistry.java:140-145` 的 `pickaxe_iron` 是唯一带 Bong OBJ 的工具 entry，
+  看着像个该修的异常。**往下三行 `:146-149` 就写着政策**：
+  「镐/斧/锄直接白嫖 vanilla 模型（`bongObjModelPath=null` → 宿主 item 即模型，不走 SML 劫持）」。
+  它不是异常，是唯一还没跟上政策的那条。
+- 用脚本比对 `assets/minecraft/` 下 15 个 vanilla override 与 registry entry，
+  报出 5 处「不一致」，逐条回源核**全是误报**：4 条是宿主共享（registry 里就写着
+  `// 借 iron_sword.obj`），第 5 条 `flint` 在 `:214-215` 写明了它是孤儿 override，
+  连「删 override + 同步资源包 sha1」这两个清理前置条件都记了。
+
+**判据：任何「这里看起来不对」的结论，落笔前先把目标上下各看二十行注释。**
+本仓的例外几乎都被就地记过账 —— 注释不是装饰，是索引。
+同理适用于 docstring（`gen_hide_armor.py` 把自己前几轮踩的坑写在函数说明里）
+和 javadoc（`ArmorPartModel.java:20` 声明了运行时唯一模型事实来源是谁）。
+
 ## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
 唯一权威 `docs/worldview.md`（独立维护库见 [末法Cantu](https://github.com/Kizunad/MofaCantu)，其中 `notes/悬案与留白.md` 记录了正典自身已知的错引与数值冲突）。下面是**最常被违反**的几条，违反 = review 直接打回：

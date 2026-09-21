@@ -3877,7 +3877,6 @@ fn c2s_technique_bind_preserves_target_and_expected_binding() {
         );
     }
 }
-
 /// Proto encoding guard for the representative `ClientRequestV1` fixtures.
 ///
 /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.

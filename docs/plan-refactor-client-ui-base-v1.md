@@ -752,7 +752,6 @@ Store / server snapshot
 - 删除旧“两处伤势增加两个 rect”的实现镜像断言，改为验证贴图可从客户端资源读取、位置跟随部位，以及恢复后不残留伤势图。既有锚点几何回归继续保留。Java 17 `gradle test build --offline --console=plain` 通过（5,053 JUnit、3 GameTest），日志 `/tmp/bong-wound-hud-client.log`。
 - `UiHudWindowPreviewScene` 提供五伤并存夹具，只在显式 UI 预览中安装。Windows 原生 640×480、1366×768 和完好恢复共三张截图 `status=passed, completed=3`；受伤／恢复的画面差分落在对应伤势位置。证据目录 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-145113/`。给用户看的参考接触表与原生截图接触表位于本地 `local_images/mini-body-wounds/`，不作为已通过人工外观验收的证据。
 - 已同步新 jar、安全重启当前测试服并启动 Windows 原生客户端，`HandsPreview` 已连入，收到了人体布局、伤口及状态快照。当前角色伤口快照为 0，正常会话不注入演示伤势。运行日志仍有既有 proto bridge 解析与旧 UI prefs 读取告警，未纳入本批修复，不能据此宣称全栈日志无告警。
-
 ### P6 — 受控界面、HUD 与 Bootstrap 收口
 
 - **P6a ⬜**：Insight/AgentUi/DynamicXml 受控窗口；Death/Terminate/MainMenu 系统界面；`ScreenOpenPolicy`、`ScreenTransitionController`、`ScreenHudVisibility` 与剩余 bootstrap。普通窗口并存、scope 与 HUD 固定以 §4.9 为准；被动社交邀请仍以权威 `combat_active` 判定，缺快照 fail closed；系统终端按现有优先级抢占。

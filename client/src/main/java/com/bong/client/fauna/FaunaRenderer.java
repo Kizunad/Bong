@@ -1,10 +1,29 @@
 package com.bong.client.fauna;
 
 import net.minecraft.client.render.entity.EntityRendererFactory;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.OverlayTexture;
+import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.block.Blocks;
 import net.minecraft.client.util.math.MatrixStack;
 import software.bernie.geckolib.renderer.GeoEntityRenderer;
 
 public final class FaunaRenderer extends GeoEntityRenderer<FaunaEntity> {
+    @Override
+    public void render(FaunaEntity entity, float yaw, float tickDelta, MatrixStack matrices,
+                       VertexConsumerProvider vertices, int light) {
+        if (entity.playback().blockDisguise()) {
+            // 固定一格的实方块；不把方块贴图套在展开的蜘蛛腿上，也不跟随移动 yaw 转动。
+            matrices.push();
+            matrices.translate(-0.5, 0, -0.5);
+            MinecraftClient.getInstance().getBlockRenderManager().renderBlockAsEntity(
+                Blocks.BASALT.getDefaultState(), matrices, vertices, light, OverlayTexture.DEFAULT_UV);
+            matrices.pop();
+            return;
+        }
+        super.render(entity, yaw, tickDelta, matrices, vertices, light);
+    }
+
     public FaunaRenderer(EntityRendererFactory.Context ctx, FaunaVisualKind visualKind) {
         super(ctx, new FaunaModel());
         this.withScale(visualKind.renderScale());

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JianPlayer.bbmodel —— 把竹节双锏摆进 vanilla 玩家模型手里，产出可在 Blockbench
+"""JianPlayer.bbmodel —— 把两把竹剑摆进 vanilla 玩家模型手里，产出可在 Blockbench
 直接打开的合成模型，用来对比"武器和玩家一样大吗 / 握着是什么样"。
 
 结构（outliner，握姿走嵌套 group，Blockbench 里可直接拖着调）：
@@ -10,19 +10,19 @@
           ├ arm_right（cube）
           └ jian_right_roll         ← 腕 外层：绕手心的 Z
               └ jian_right_pitch    ← 腕 内层：绕手心的 X
-                  └ 锏的 cube（几何搬自 BambooJian，含自身 45° 八角柱旋转）
+                  └ 竹剑的 cube（几何搬自 BambooJian，含自身 45° 八角柱旋转）
     arm_left_* / jian_left_*  同理
 
-锏挂在手臂 group 之下——在 Blockbench 里转手臂，锏跟着走，不会再变成"贴在
+竹剑挂在手臂 group 之下——在 Blockbench 里转手臂，竹剑跟着走，不会再变成"贴在
 手臂外面的挂件"。每层 group 只转一个轴：两轴写在同一 group 会踩欧拉顺序歧义
 （Blockbench 与渲染器的组合顺序未必一致），拆成嵌套单轴就没有解释空间。层级
 从内到外：element 自身 45°(Y) → 腕 pitch(X) → 腕 roll(Z) → 肩 pitch(X) →
 肩 roll(Z)，与 render_jian_in_hand.place() 的 M_arm @ M_wrist 同序，两条路径
 出的姿态可以逐像素对拍。
 
-贴图是 128² 合成图集：上半 = 玩家皮肤（vanilla 64² box-uv 布局），下半 = 锏贴图
+贴图是 128² 合成图集：上半 = 玩家皮肤（vanilla 64² box-uv 布局），下半 = 竹剑贴图
 （UV 整体 +64）。武器几何与 UV 直接搬自 modelScript/models/BambooJianSingle.bbmodel，
-不重新推导——那份才是单一真相源，改了锏只要重跑本脚本。
+不重新推导——那份才是单一真相源，改了竹剑只要重跑本脚本。
 
 用法:
     python3 modelScript/generators/gen_jian_player.py                  # 垂持站立
@@ -327,10 +327,10 @@ def main():
     out_bb.write_text(json.dumps(model, ensure_ascii=False, indent=1))
     n_player = len(H.PLAYER_CUBES)
     print(f"JianPlayer（姿态：{label}）:")
-    print(f"  elements: {len(model['elements'])}  (玩家 {n_player} + 双锏 "
+    print(f"  elements: {len(model['elements'])}  (玩家 {n_player} + 双剑 "
           f"{len(model['elements']) - n_player})")
-    print("  层级    : 肩(roll→pitch) → 手臂 + 腕(roll→pitch) → 锏")
-    print(f"  贴图    : {ATLAS}² 图集（上半玩家皮肤 / 下半锏，UV +{V_OFF}）")
+    print("  层级    : 肩(roll→pitch) → 手臂 + 腕(roll→pitch) → 竹剑")
+    print(f"  贴图    : {ATLAS}² 图集（上半玩家皮肤 / 下半竹剑，UV +{V_OFF}）")
     print(f"  → bbmodel: {_rel(out_bb)} ({out_bb.stat().st_size} B)")
     if not args.no_render:
         p = render(out_bb, size=args.size)

@@ -32,6 +32,9 @@ pub const HUMAN_RACE_ID: &str = "human";
 /// `ALL_TERRESTRIAL` 排除了 Boss/化虚级——故在此本地维护一份用于 races.json 的
 /// `beast_kinds` 字符串校验，`parse_beast_kind` 是唯一消费点）。
 const ALL_BEAST_KINDS: &[BeastKind] = &[
+    BeastKind::DainuLion,
+    BeastKind::FuyuVulture,
+    BeastKind::Horse,
     BeastKind::Rat,
     BeastKind::Spider,
     BeastKind::GreenSpider,
@@ -159,6 +162,7 @@ pub struct RaceRegistry {
     beast_kind_owner: HashMap<String, RaceId>,
     morph_pairs: HashMap<(RaceId, RaceId), MorphPairDef>,
     meridian_mappings: HashMap<(RaceId, RaceId), MeridianMappingDef>,
+    channels_by_race: HashMap<RaceId, HashSet<MeridianChannelId>>,
 }
 
 impl Resource for RaceRegistry {}
@@ -194,6 +198,20 @@ impl From<std::io::Error> for RaceLoadError {
 }
 
 impl RaceRegistry {
+    /// 配置加载期按真实身体构型核验技能依赖，拒绝拼错或跨物种的 channel。
+    pub fn has_channel(&self, race: &RaceId, channel: &MeridianChannelId) -> bool {
+        self.channels_by_race
+            .get(race)
+            .is_some_and(|channels| channels.contains(channel))
+    }
+
+    #[cfg(test)]
+    pub fn load_for_tests() -> Self {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans =
+            BodyPlanRegistry::load_dir(root.join("assets/body_plans/plans")).expect("测试身体构型");
+        Self::load_file(root.join(DEFAULT_RACES_PATH), &plans).expect("测试种族注册表")
+    }
     pub fn len(&self) -> usize {
         self.by_id.len()
     }
@@ -456,11 +474,29 @@ impl RaceRegistry {
             meridian_mappings.insert(key, mapping);
         }
 
+        let channels_by_race = by_id
+            .iter()
+            .map(|(id, race)| {
+                let channels = body_plans
+                    .get(&race.body_plan_id)
+                    .and_then(|plan| plan.meridian_profile.as_ref())
+                    .map(|profile| {
+                        profile
+                            .channels
+                            .iter()
+                            .map(|channel| channel.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (id.clone(), channels)
+            })
+            .collect();
         Ok(Self {
             by_id,
             beast_kind_owner,
             morph_pairs,
             meridian_mappings,
+            channels_by_race,
         })
     }
 

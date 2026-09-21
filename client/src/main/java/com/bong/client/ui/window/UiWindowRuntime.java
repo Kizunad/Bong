@@ -352,7 +352,6 @@ public final class UiWindowRuntime {
         focusedKey = state.key();
         view(state);
     }
-
     public static void searchPractice(String query) {
         openPractice();
         practice().query(query);
@@ -874,7 +873,6 @@ public final class UiWindowRuntime {
         }
         return false;
     }
-
     public static void focusContainerAt(double x, double y) {
         var state = windowAt(x, y);
         if (state == null || containerGridAt(x, y) == null) return;

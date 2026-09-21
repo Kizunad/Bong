@@ -78,7 +78,11 @@ public class FaunaRenderBootstrapTest {
             "geo/zhinian.geo.json",
             "geo/tsy_sentinel.geo.json",
             "geo/fuya.geo.json",
-            "geo/skull_fiend.geo.json"
+            "geo/skull_fiend.geo.json",
+            "geo/dainu_lion.geo.json",
+            "geo/fuyu_vulture.geo.json",
+            "geo/kekeda_goose.geo.json",
+            "geo/horse.geo.json"
         );
         assertEquals(
             expected,
@@ -151,9 +155,8 @@ public class FaunaRenderBootstrapTest {
 
     @Test
     void idleAnimationNameDerivesFromAnimPath() {
-        // 通用 fauna 模型（animPath==null）→ animation.fauna.idle（在 fauna.animation.json 内）
-        assertEquals("animation.fauna.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
-            "通用 fauna 物种应回退 animation.fauna.idle");
+        assertEquals("animation.bong.ash_spider.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
+            "拟态蜘蛛应使用独立流水线的 idle");
         // 噬元鼠改走专属模型（devour_rat.geo.json + devour_rat.animation.json，含 idle/walk/run/peck/claw/pounce），
         // idle 应取 animation.bong.devour_rat.idle 而非通用回退。
         assertEquals("animation.bong.devour_rat.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
@@ -195,32 +198,19 @@ public class FaunaRenderBootstrapTest {
     //     walk/run 是死资产从不触发）。噬元鼠接入三态，其余物种维持 null（idle-only）───
 
     @Test
-    void walkRunAnimationNamesOnlyForDevourRat() {
-        // 噬元鼠接入 walk/run，名字与专属动画文件的 key 对齐。
-        assertEquals("animation.bong.devour_rat.walk", FaunaVisualKind.DEVOUR_RAT.walkAnimationName(),
-            "噬元鼠 walk 名应对齐 animation.bong.devour_rat.walk");
-        assertEquals("animation.bong.devour_rat.run", FaunaVisualKind.DEVOUR_RAT.runAnimationName(),
-            "噬元鼠 run 名应对齐 animation.bong.devour_rat.run");
-        // 其它物种暂未接入移动动画：controller 读到 null 会退回 idle，绝不能返回一个
-        // 动画文件里不存在的 key（否则 GeckoLib 解析失败 → T-Pose）。
+    void availableLocomotionClipsDriveMovementAndLoop() {
         for (FaunaVisualKind kind : FaunaVisualKind.values()) {
-            if (kind == FaunaVisualKind.DEVOUR_RAT) {
-                continue;
+            for (var profile : FaunaAnimations.profiles(kind)) {
+                FaunaPlayback playback = new FaunaPlayback(kind);
+                playback.trigger(profile.idle().name(), 1);
+                playback.tick();
+                assertEquals(profile.idle(), playback.current(0));
+                var moving = profile.run() != null ? profile.run()
+                    : profile.walk() != null ? profile.walk() : profile.idle();
+                assertEquals(moving, playback.current(0.3f), kind + " 应选择存在的移动动作");
+                assertTrue(moving.loop(), kind + " 移动动作必须循环");
             }
-            assertEquals(null, kind.walkAnimationName(), kind + " 尚未接入 walk，应返回 null");
-            assertEquals(null, kind.runAnimationName(), kind + " 尚未接入 run，应返回 null");
-        }
-    }
-
-    @Test
-    void facesMovementDirectionOnlyForDevourRat() {
-        assertTrue(FaunaVisualKind.DEVOUR_RAT.facesMovementDirection(),
-            "噬元鼠是 marker（不下发 yaw），须用客户端自算移动朝向");
-        for (FaunaVisualKind kind : FaunaVisualKind.values()) {
-            if (kind == FaunaVisualKind.DEVOUR_RAT) {
-                continue;
-            }
-            assertTrue(!kind.facesMovementDirection(), kind + " 未接入客户端移动朝向");
+            assertEquals(kind.walkAnimationName() != null, kind.facesMovementDirection());
         }
     }
 
@@ -254,65 +244,6 @@ public class FaunaRenderBootstrapTest {
                 "噬元鼠动画文件缺少移动动画 \"" + name + "\"——移动时会定格 T-Pose。文件含: "
                     + (animations == null ? "<none>" : animations.keySet()));
         }
-    }
-
-    @Test
-    void faunaEntityDerivesIdleFromVisualKindAndDropsHardcodedFaunaIdle() {
-        // 字节码核验 controller 接线（无法 bootstrap GeckoLib 运行时）：
-        // ① FaunaEntity 必须调用 FaunaVisualKind.idleAnimationName()（按物种取 idle）；
-        // ② FaunaEntity 不得再硬编码字面量 "animation.fauna.idle"（已下沉到 FaunaVisualKind）。
-        // 二者同时成立才能保证专属模型物种不再 T-Pose；任一回退都撞红。
-        Set<String> ldcStrings = new HashSet<>();
-        Set<String> invokedMethods = new HashSet<>();
-        try (InputStream input = FaunaEntity.class.getResourceAsStream("FaunaEntity.class")) {
-            if (input == null) {
-                throw new AssertionError("expected FaunaEntity.class resource for idle-wiring bytecode test");
-            }
-            new ClassReader(input).accept(new ClassVisitor(Opcodes.ASM9) {
-                @Override
-                public MethodVisitor visitMethod(
-                    int access,
-                    String name,
-                    String descriptor,
-                    String signature,
-                    String[] exceptions
-                ) {
-                    return new MethodVisitor(Opcodes.ASM9) {
-                        @Override
-                        public void visitLdcInsn(Object value) {
-                            if (value instanceof String s) {
-                                ldcStrings.add(s);
-                            }
-                        }
-
-                        @Override
-                        public void visitMethodInsn(
-                            int opcode,
-                            String owner,
-                            String methodName,
-                            String methodDescriptor,
-                            boolean isInterface
-                        ) {
-                            invokedMethods.add(methodName);
-                        }
-                    };
-                }
-            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        } catch (IOException error) {
-            throw new AssertionError("expected to read FaunaEntity.class for idle-wiring test", error);
-        }
-
-        assertTrue(
-            invokedMethods.contains("idleAnimationName"),
-            "expected FaunaEntity.registerControllers to call FaunaVisualKind.idleAnimationName() so each "
-                + "species loops its OWN idle（否则专属模型物种定格 T-Pose），actual invoked methods: " + invokedMethods
-        );
-        assertFalse(
-            ldcStrings.contains("animation.fauna.idle"),
-            "expected FaunaEntity to NOT hardcode \"animation.fauna.idle\"（已下沉到 FaunaVisualKind."
-                + "idleAnimationName）；若该字面量重现说明 controller 又写死了通用 idle → 专属物种 T-Pose，"
-                + "actual LDC strings: " + ldcStrings
-        );
     }
 
     private static List<Integer> canHitInstructionOpcodes() {

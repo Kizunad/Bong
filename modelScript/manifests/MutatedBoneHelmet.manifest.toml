@@ -1,0 +1,18 @@
+# 异变骨甲头盔（mutated_bone_helmet）Round 2 人工点名清单。
+#
+# 形制依据是贴头分段颅盖、眉骨中脊、连续侧护耳与后脑骨脊；点名器只核对可见
+# 契约，不替人工判断「像不像一件头盔」。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 颅盖必须是贴头的分段轮廓，不能退化为一张宽平顶板。
+crown_bridge = { elements = ["crown_", "rear_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 20, SIDE_R = 20, BACK = 20, SIDE_L = 20, TOP = 30 } }
+# 左右眉骨与额中 keel 构成面向 -z 的硬材料识别层。
+brow_keel = { elements = ["brow_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L"], min_px = { FRONT = 20, SIDE_R = 8, SIDE_L = 8 } }
+# 护耳从太阳穴连续落到 y≈24.3，且不能在前后角另造悬空腿。
+ear_guards = { elements = ["ear_guard_", "jaw_tip_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 12, SIDE_R = 18, BACK = 12, SIDE_L = 18 }, mirror = true }
+# 后脊与耳侧固定件要让硬骨片读成绑在头上的甲，而不是漂浮组件。
+fasteners = { elements = ["ear_binding_", "ear_spur_", "rear_lash"], must_show_in = ["SIDE_R", "BACK", "SIDE_L"], min_px = { SIDE_R = 8, BACK = 8, SIDE_L = 8 }, mirror = true }

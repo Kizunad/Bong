@@ -26,6 +26,7 @@ class BuildResourcepackTest(unittest.TestCase):
             self._write(assets / "bong" / "models" / "item" / "bone_dagger" / "bone_dagger.OBJ", b"obj")
             self._write(assets / "bong" / "models" / "item" / "bone_dagger" / "bone_dagger.MTL", b"mtl")
             self._write(assets / "bong" / "textures" / "entity" / "rat.PNG", b"entity")
+            self._write(assets / "bong" / "textures" / "gui" / "skill" / "fauna" / "lion_pounce.png", b"fauna-skill")
             self._write(assets / "bong" / "particles" / "ash.json", b'{"particle_effect":{}}')
             self._write(assets / "bong" / "textures" / "particle" / "ash.png", b"vfx")
             self._write(assets / "bong-client" / "textures" / "hud" / "effects" / "bleeding.png", b"hud")
@@ -85,7 +86,7 @@ class BuildResourcepackTest(unittest.TestCase):
             counts = {entry["id"]: entry["file_count"] for entry in manifest["packs"]}
             self.assertEqual(1, counts["mineral"], f"expected one mineral fixture, actual {counts['mineral']}")
             self.assertEqual(4, counts["entity-model"], f"expected geo/obj/mtl/entity texture fixtures, actual {counts['entity-model']}")
-            self.assertEqual(3, counts["vfx"], f"expected particle json/texture/hud effect fixtures, actual {counts['vfx']}")
+            self.assertEqual(4, counts["vfx"], f"expected particle json/texture/hud effect and fauna skill fixtures, actual {counts['vfx']}")
             self.assertEqual(4, counts["audio"], f"expected audio recipe + atmosphere ogg + signature sound ogg + sounds.json registry fixtures, actual {counts['audio']}")
 
             audio_paths = next(entry["paths"] for entry in manifest["packs"] if entry["id"] == "audio")
@@ -109,6 +110,7 @@ class BuildResourcepackTest(unittest.TestCase):
             self.assertIn("assets/bong/models/item/bone_dagger/bone_dagger.OBJ", names, "expected uppercase .OBJ accepted because model assets include OBJ runtime resources")
             self.assertIn("assets/bong/models/item/bone_dagger/bone_dagger.MTL", names, "expected uppercase .MTL accepted because OBJ materials must travel with models")
             self.assertIn("assets/bong/textures/entity/rat.PNG", names, "expected uppercase .PNG accepted because image suffix matching is case-insensitive")
+            self.assertIn("assets/bong/textures/gui/skill/fauna/lion_pounce.png", names, "兽技图标必须随资源包分发，不能只在本地 client classpath 可见")
             self.assertIn("assets/bong/particles/ash.json", names, "expected particle json in zip because P0 includes VFX definitions")
             self.assertIn("assets/bong/textures/particle/ash.png", names, "expected particle texture in zip because P0 includes VFX textures")
             self.assertIn("assets/bong-client/textures/hud/effects/bleeding.png", names, "expected HUD effect texture in zip because status-effect VFX assets are included")
