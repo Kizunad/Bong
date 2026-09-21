@@ -64,6 +64,9 @@ pub const COMMAND_NAMES: &[&str] = &[
 
 #[cfg(test)]
 pub const COMMAND_TREE_PATHS: &[&str] = &[
+    "ambient_spawn once dainu_lion <x:double> <z:double>",
+    "ambient_spawn once fuyu_vulture <x:double> <z:double>",
+    "ambient_spawn once horse <x:double> <z:double>",
     "ambient_spawn once mundane <x:double> <z:double>",
     "ambient_spawn once threat <x:double> <z:double>",
     // plan-tribulation-balance-v1 P0：渡劫平衡监控看板

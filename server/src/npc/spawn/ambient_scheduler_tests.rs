@@ -3267,6 +3267,121 @@ fn does_not_spawn_beyond_budget_saturation() {
 }
 
 #[test]
+fn pack_members_share_origin_and_multiple_players_respect_remaining_budget() {
+    #[derive(Component)]
+    struct PackOrigin(DVec3);
+
+    fn pack_pool(
+        commands: &mut Commands,
+        layer: Entity,
+        zone: &Zone,
+        position: DVec3,
+        origin: DVec3,
+        season: Season,
+    ) -> Option<Entity> {
+        let entity = test_pool_fn(commands, layer, zone, position, origin, season)?;
+        commands.entity(entity).insert(PackOrigin(origin));
+        Some(entity)
+    }
+
+    let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
+        |_| ThreatBudget {
+            max_alive: 5,
+            spawn_interval_ticks: 600,
+            pack_size_range: (3, 3),
+        },
+        pack_pool,
+        true,
+        1,
+    );
+    app.world_mut()
+        .resource_mut::<AmbientSchedulerConfig<TestFaunaMarker>>()
+        .pack_size = Some(|_, _| 3);
+    app.world_mut().spawn((
+        ClientMarker,
+        Position::new([0.0, 80.0, 0.0]),
+        CurrentDimension(DimensionKind::Overworld),
+    ));
+    app.world_mut().spawn((
+        Position::new([8.0, 67.0, 8.0]),
+        TestFaunaMarker::new(0, "test_zone".to_string()),
+    ));
+    app.update();
+
+    let mut spawned = app.world_mut().query::<(&Position, &PackOrigin)>();
+    let members: Vec<_> = spawned.iter(app.world()).collect();
+    assert_eq!(members.len(), 4, "两名玩家触发的群体刷新共用剩余 4 个预算");
+    let origin = members[0].1;
+    assert!(
+        members
+            .iter()
+            .all(|(_, member_origin)| member_origin.0 == origin.0),
+        "相同候选批次的成员必须共用原点，不能随独立落点改变选种与群归属"
+    );
+    assert!(
+        members
+            .iter()
+            .any(|(position, _)| position.get().x != origin.0.x),
+        "群体成员应有独立落点"
+    );
+    assert!(
+        members.iter().all(|(position, _)| position.get().y == 67.0),
+        "每个成员都必须落到真实地面"
+    );
+}
+
+fn pack_spawn_count_for_zone(spirit_qi: f64, realm_collapse: bool) -> usize {
+    let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
+        |_| ThreatBudget {
+            max_alive: 5,
+            spawn_interval_ticks: 250,
+            pack_size_range: (1, 1),
+        },
+        test_pool_fn,
+        true,
+        4,
+    );
+    let zone = &mut app.world_mut().resource_mut::<ZoneRegistry>().zones[0];
+    zone.spirit_qi = spirit_qi;
+    if realm_collapse {
+        zone.active_events
+            .push(crate::world::calamity::EVENT_REALM_COLLAPSE.to_string());
+    }
+    // 600 is a multiple of the dead (150) and negative (200) scaled intervals,
+    // but not the normal 250-tick interval, so all three cases share one tick.
+    app.world_mut().resource_mut::<GameTick>().0 = 600;
+    app.world_mut()
+        .resource_mut::<AmbientSchedulerConfig<TestFaunaMarker>>()
+        .pack_size = Some(|_, _| 1);
+    app.update();
+
+    let mut query = app
+        .world_mut()
+        .query_filtered::<(), With<TestFaunaMarker>>();
+    query.iter(app.world()).count()
+}
+
+#[test]
+fn pack_spawn_uses_dead_and_negative_zone_budget_multipliers() {
+    let normal = pack_spawn_count_for_zone(0.5, false);
+    let dead = pack_spawn_count_for_zone(0.5, true);
+    let negative = pack_spawn_count_for_zone(-0.3, false);
+
+    assert_eq!(
+        normal, 0,
+        "normal zone keeps the 250-tick group interval, so tick 600 must not spawn"
+    );
+    assert_eq!(
+        dead, 1,
+        "dead zone must apply its shortened group interval and spawn at tick 200"
+    );
+    assert_eq!(
+        negative, 1,
+        "negative zone must apply its shortened group interval and spawn at tick 200"
+    );
+}
+
+#[test]
 fn same_zone_multiple_players_do_not_exceed_max_alive_in_single_tick() {
     // §Verify blocker③(并发预算越界)：danger=1 → max_alive=2。zone 内已有 1 个活体，
     // 两名玩家同处一 zone 各自独立判定预算——修复前二者都读到同一份 tick 前快照

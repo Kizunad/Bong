@@ -1,0 +1,47 @@
+{
+  "id": "horse",
+  "display_name": "马",
+  "is_humanoid": false,
+  "parts": [
+    { "id": "head", "damage_mul": 1.4, "contam_mul": 1.1, "bleed_mul": 1.0, "consequence": { "kind": "sensory" } },
+    { "id": "chest", "damage_mul": 1.0, "contam_mul": 1.0, "bleed_mul": 1.0, "consequence": { "kind": "core" } },
+    { "id": "leg_l", "damage_mul": 0.8, "contam_mul": 0.8, "bleed_mul": 0.8, "consequence": { "kind": "locomotion" } },
+    { "id": "leg_r", "damage_mul": 0.8, "contam_mul": 0.8, "bleed_mul": 0.8, "consequence": { "kind": "locomotion" } }
+  ],
+  "hit_geometry": {
+    "mode": "part_boxes",
+    "boxes": [
+      { "part_id": "head", "offset": [0.0, 1.6, 0.8], "half_extents": [0.25, 0.45, 0.4], "priority": 2 },
+      { "part_id": "chest", "offset": [0.0, 1.15, -0.1], "half_extents": [0.45, 0.4, 0.75], "priority": 0 },
+      { "part_id": "leg_l", "offset": [-0.3, 0.45, 0.0], "half_extents": [0.15, 0.45, 0.7], "priority": 1 },
+      { "part_id": "leg_r", "offset": [0.3, 0.45, 0.0], "half_extents": [0.15, 0.45, 0.7], "priority": 1 }
+    ]
+  },
+  "equip_slots": [],
+  "meridian_profile": {
+    "channels": [
+      { "id": "horse_stride", "family": "regular", "body_part": "leg_l" },
+      { "id": "horse_hind", "family": "regular", "body_part": "leg_r" },
+      { "id": "horse_breath", "family": "regular", "body_part": "chest" },
+      { "id": "horse_spine", "family": "extraordinary", "body_part": "chest" },
+      { "id": "horse_blood", "family": "regular", "body_part": "chest" },
+      { "id": "horse_core", "family": "extraordinary", "body_part": "chest" }
+    ],
+    "topology_edges": [
+      { "from": "horse_stride", "to": "horse_hind" },
+      { "from": "horse_stride", "to": "horse_breath" },
+      { "from": "horse_breath", "to": "horse_spine" },
+      { "from": "horse_breath", "to": "horse_blood" },
+      { "from": "horse_blood", "to": "horse_core" }
+    ],
+    "realm_requirements": [
+      { "total": 1 }, { "total": 2 }, { "total": 3 },
+      { "total": 4 }, { "total": 5 }, { "total": 6 }
+    ],
+    "dugu_injection": [
+      { "body_part": "leg_l", "channel": "horse_stride" },
+      { "body_part": "leg_r", "channel": "horse_hind" },
+      { "body_part": "chest", "channel": "horse_breath" }
+    ]
+  }
+}

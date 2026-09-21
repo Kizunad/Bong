@@ -47,6 +47,7 @@ INCLUDE_PREFIXES=(
   "bong/textures/particle"
   "bong-client/textures/hud/effects"
   "bong-client/textures/gui/skill"
+  "bong/textures/gui/skill"
   "bong/atmosphere"
   "bong/audio_recipes"
   "bong/sounds"
@@ -129,7 +130,7 @@ manifest_out = Path(sys.argv[7])
 subpacks = [
     ("mineral", ["minecraft/blockstates", "minecraft/models", "minecraft/textures/block", "minecraft/atlases", "bong/blockstates", "bong/textures/block"]),
     ("entity-model", ["bong/geo", "bong/animations", "bong/models", "bong/textures/entity", "bong/textures/item", "bong/textures/armor"]),
-    ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill"]),
+    ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill", "bong/textures/gui/skill"]),
     ("audio", ["bong/atmosphere", "bong/audio_recipes", "bong/sounds", "bong/sounds.json"]),
 ]
 

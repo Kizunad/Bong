@@ -170,6 +170,8 @@ pub fn spawn_particle(
 
 pub const fn attack_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
     match kind {
+        // 这三种生物在技能起手点发专属音效，避免命中时重复播。
+        BeastKind::DainuLion | BeastKind::FuyuVulture | BeastKind::Horse => None,
         BeastKind::Spider | BeastKind::GreenSpider | BeastKind::BlueSpider => {
             Some("fauna_ash_spider_attack")
         }
@@ -186,6 +188,9 @@ pub const fn attack_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
 
 pub const fn death_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
     match kind {
+        BeastKind::DainuLion => Some("fauna_lion_death"),
+        BeastKind::FuyuVulture => Some("fauna_vulture_death"),
+        BeastKind::Horse => Some("fauna_horse_death"),
         BeastKind::Rat => Some("fauna_rat_death"),
         BeastKind::Spider | BeastKind::GreenSpider | BeastKind::BlueSpider => {
             Some("fauna_ash_spider_death")
@@ -203,6 +208,7 @@ pub const fn death_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
 
 pub const fn ambient_recipe_for_visual(visual: FaunaVisualKind) -> Option<&'static str> {
     match visual {
+        FaunaVisualKind::DainuLion | FaunaVisualKind::FuyuVulture | FaunaVisualKind::Horse => None,
         FaunaVisualKind::AshSpider | FaunaVisualKind::GreenSpider | FaunaVisualKind::BlueSpider => {
             Some("fauna_ash_spider_ambient")
         }

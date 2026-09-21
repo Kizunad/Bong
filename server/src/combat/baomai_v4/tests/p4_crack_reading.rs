@@ -237,7 +237,7 @@ fn crack_reading_shows_integrity_brackets() {
         result
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 
@@ -375,7 +375,7 @@ fn crack_reading_deep_shows_circuits() {
         result_deep
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 
@@ -431,7 +431,7 @@ fn crack_reading_deep_shows_dead_armor() {
         result_deep
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 
@@ -563,7 +563,7 @@ fn crack_reading_no_exact_values() {
         result
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 
@@ -588,7 +588,7 @@ fn crack_reading_no_exact_values() {
         result2
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 
@@ -609,7 +609,7 @@ fn crack_reading_no_exact_values() {
         result_npc
             .meridian_states
             .iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id.channel_id())
             .unwrap_or_else(|| panic!("should have entry for {:?}", id))
     };
 

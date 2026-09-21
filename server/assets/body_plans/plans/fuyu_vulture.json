@@ -1,0 +1,48 @@
+{
+  "id": "fuyu_vulture",
+  "display_name": "腐羽鹫",
+  "is_humanoid": false,
+  "parts": [
+    { "id": "head", "damage_mul": 1.5, "contam_mul": 1.0, "bleed_mul": 1.0, "consequence": { "kind": "sensory" } },
+    { "id": "chest", "damage_mul": 1.0, "contam_mul": 1.0, "bleed_mul": 1.0, "consequence": { "kind": "core" } },
+    { "id": "arm_l", "damage_mul": 0.7, "contam_mul": 0.8, "bleed_mul": 0.7, "consequence": { "kind": "locomotion" } },
+    { "id": "arm_r", "damage_mul": 0.7, "contam_mul": 0.8, "bleed_mul": 0.7, "consequence": { "kind": "locomotion" } }
+  ],
+  "hit_geometry": {
+    "mode": "part_boxes",
+    "boxes": [
+      { "part_id": "head", "offset": [0.0, 1.05, 0.32], "half_extents": [0.2, 0.28, 0.25], "priority": 2 },
+      { "part_id": "chest", "offset": [0.0, 0.6, 0.0], "half_extents": [0.35, 0.4, 0.45], "priority": 0 },
+      { "part_id": "arm_l", "offset": [-0.38, 0.65, 0.0], "half_extents": [0.16, 0.25, 0.5], "priority": 1 },
+      { "part_id": "arm_r", "offset": [0.38, 0.65, 0.0], "half_extents": [0.16, 0.25, 0.5], "priority": 1 }
+    ]
+  },
+  "equip_slots": [],
+  "meridian_profile": {
+    "channels": [
+      { "id": "vulture_wing", "family": "regular", "body_part": "arm_l" },
+      { "id": "vulture_beak", "family": "regular", "body_part": "head" },
+      { "id": "vulture_breath", "family": "regular", "body_part": "chest" },
+      { "id": "vulture_balance", "family": "extraordinary", "body_part": "arm_r" },
+      { "id": "vulture_blood", "family": "regular", "body_part": "chest" },
+      { "id": "vulture_core", "family": "extraordinary", "body_part": "chest" }
+    ],
+    "topology_edges": [
+      { "from": "vulture_wing", "to": "vulture_beak" },
+      { "from": "vulture_wing", "to": "vulture_breath" },
+      { "from": "vulture_breath", "to": "vulture_balance" },
+      { "from": "vulture_breath", "to": "vulture_blood" },
+      { "from": "vulture_blood", "to": "vulture_core" }
+    ],
+    "realm_requirements": [
+      { "total": 1 }, { "total": 2 }, { "total": 3 },
+      { "total": 4 }, { "total": 5 }, { "total": 6 }
+    ],
+    "dugu_injection": [
+      { "body_part": "head", "channel": "vulture_beak" },
+      { "body_part": "arm_l", "channel": "vulture_wing" },
+      { "body_part": "arm_r", "channel": "vulture_balance" },
+      { "body_part": "chest", "channel": "vulture_breath" }
+    ]
+  }
+}

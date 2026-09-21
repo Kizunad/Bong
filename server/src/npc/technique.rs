@@ -24,7 +24,7 @@ use crate::cultivation::known_techniques::{
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
-use crate::cultivation::technique_scroll::{parse_meridian_id, realm_rank};
+use crate::cultivation::technique_scroll::realm_rank;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcBlackboard;
 
@@ -152,17 +152,12 @@ fn meridian_deps_satisfied(
             return false;
         }
     }
-    // 2. 检查 TechniqueDefinition.required_meridians 中的依赖
-    for required in &definition.required_meridians {
-        let Some(channel) = parse_meridian_id(&required.channel) else {
-            return false;
-        };
-        let m = meridian_sys.get(channel);
-        if !m.opened || m.integrity < f64::from(required.min_health) {
-            return false;
-        }
-    }
-    true
+    crate::cultivation::meridian::severed::check_skill_channels(
+        &definition.required_meridians,
+        meridian_sys,
+        None,
+    )
+    .is_ok()
 }
 
 /// 根据 archetype / realm / 经脉拓扑分配 NPC 功法（spawn 时调用）。
@@ -503,6 +498,15 @@ pub fn select_technique(
         // 实时检查依赖经脉的 opened 状态：dugu 毒会关脉（opened=false）但不写入
         // MeridianSeveredPermanent，所以上面的 SEVERED 检查不足以拦截这类情况。
         if let Some(sys) = meridian_sys {
+            if crate::cultivation::meridian::severed::check_skill_channels(
+                &def.required_meridians,
+                sys,
+                severed,
+            )
+            .is_err()
+            {
+                continue;
+            }
             if deps.iter().any(|dep_id| !sys.get(*dep_id).opened) {
                 continue;
             }

@@ -127,6 +127,7 @@ pub(super) fn lifecycle_state_label(state: &LifecycleState) -> &'static str {
 pub(super) fn movement_mode_label(mode: &MovementMode) -> &'static str {
     match mode {
         MovementMode::GroundNav => "ground_nav",
+        MovementMode::Wildlife => "wildlife",
         MovementMode::Sprinting(_) => "sprinting",
         MovementMode::Override(crate::npc::movement::ActiveOverride::Dash(_)) => "override_dash",
         MovementMode::Override(crate::npc::movement::ActiveOverride::Knockback(_)) => {
