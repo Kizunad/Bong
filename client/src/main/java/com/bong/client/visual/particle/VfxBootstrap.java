@@ -136,6 +136,12 @@ public final class VfxBootstrap {
         registry.register(PseudoVeinVisualPlayer.DISSIPATING,    pseudoVein);
         registry.register(PseudoVeinVisualPlayer.AFTERMATH,      pseudoVein);
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
+        // plan-beast-skill-vfx：五个兽类主动招式各自走独立 event_id，复用既有五种粒子原语。
+        // 漏注册任一路由会让 server 的粒子事件静默丢失。
+        BeastSkillVfxPlayer beastSkill = new BeastSkillVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : BeastSkillVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, beastSkill);
+        }
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         // plan-fauna-mimic-spider-v1 P1 — 拟态蛛暴起径向粒子 burst
         registry.register(SpiderAmbushVfxPlayer.EVENT_ID,        new SpiderAmbushVfxPlayer());

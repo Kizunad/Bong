@@ -469,6 +469,28 @@ public class VfxRegistryTest {
         );
     }
 
+    @Test
+    void beastSkillRoutesAreRegisteredWithDedicatedPlayer() {
+        VfxBootstrap.registerDefaults();
+        for (Identifier eventId : BeastSkillVfxPlayer.EVENT_IDS) {
+            Optional<VfxPlayer> player = VfxRegistry.instance().lookup(eventId);
+            assertTrue(player.isPresent(),
+                "bootstrap should register beast skill particle event " + eventId);
+            assertTrue(player.get() instanceof BeastSkillVfxPlayer,
+                "beast skill event " + eventId + " must route to BeastSkillVfxPlayer; got "
+                    + player.get().getClass().getName());
+        }
+    }
+
+    @Test
+    void beastSkillEventIdsMatchServerWildlifeSkills() {
+        assertEquals("bong:fauna_lion_pounce", BeastSkillVfxPlayer.LION_POUNCE.toString());
+        assertEquals("bong:fauna_lion_rend", BeastSkillVfxPlayer.LION_REND.toString());
+        assertEquals("bong:fauna_vulture_dive", BeastSkillVfxPlayer.VULTURE_DIVE.toString());
+        assertEquals("bong:fauna_horse_trample", BeastSkillVfxPlayer.HORSE_TRAMPLE.toString());
+        assertEquals("bong:fauna_horse_kick", BeastSkillVfxPlayer.HORSE_KICK.toString());
+    }
+
     private static void assertTiandaoHuntRoute(Identifier eventId) {
         Optional<VfxPlayer> player = VfxRegistry.instance().lookup(eventId);
         assertTrue(player.isPresent(), "bootstrap should register tiandao hunt VFX " + eventId);
