@@ -242,6 +242,7 @@ pub(crate) fn dispatch_production_request<
                 &skill_scroll.cultivations,
                 alchemy.zones.as_deref_mut(),
                 alchemy.attrition_qi_transfers.as_deref_mut(),
+                alchemy.qi_ledger.as_deref_mut(),
                 alchemy.attrition_applied_events.as_deref_mut(),
                 alchemy.tsy_lifecycle.as_deref(),
             );

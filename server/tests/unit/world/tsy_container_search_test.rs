@@ -11,7 +11,8 @@ use bong_server::inventory::{
 use bong_server::network::audio_event_emit::PlaySoundRecipeRequest;
 use bong_server::network::qi_attrition_emit::AttritionAppliedEvent;
 use bong_server::network::vfx_event_emit::VfxEventRequest;
-use bong_server::qi_physics::ledger::QiTransfer;
+use bong_server::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use bong_server::qi_physics::ledger::{QiAccountId, QiTransfer, WorldQiAccount};
 use bong_server::world::loot_pool::{LootEntry, LootPool, LootPoolRegistry};
 use bong_server::world::tsy_container::{ContainerKind, KeyKind, LootContainer, SearchProgress};
 use bong_server::world::tsy_container_search::*;
@@ -669,6 +670,71 @@ fn apply_search_attrition_emits_qi_attrition_vfx_event() {
         emitted[0].amount_lost
     );
     assert_eq!(emitted[0].world_pos, [12.0, 70.0, -4.0]);
+}
+
+#[test]
+fn apply_search_attrition_records_overflow_in_world_qi_account() {
+    let mut app = App::new();
+    app.add_event::<SearchCompleted>();
+    app.add_event::<QiTransfer>();
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 1.0;
+    let zone_name = zones.zones[0].name.clone();
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, apply_search_attrition);
+
+    let mut inv = make_inv();
+    let item = spirit_item("tsy_overflow_relic", 9002, 1.0, 100);
+    let item_qi_before = item.spirit_quality * item.stack_count.max(1) as f64;
+    inv.containers[0].items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance: item.clone(),
+    });
+    let player = app
+        .world_mut()
+        .spawn((inv, Position::new([12.0, 70.0, -4.0])))
+        .id();
+
+    app.world_mut().send_event(SearchCompleted {
+        player,
+        container: Entity::from_raw(78),
+        family_id: "overflow_stash".to_string(),
+        loot: vec![item],
+    });
+    app.update();
+
+    let inv = app
+        .world()
+        .get::<PlayerInventory>(player)
+        .expect("player inventory should remain attached");
+    let item_after = &inv.containers[0].items[0].instance;
+    let item_lost =
+        item_qi_before - item_after.spirit_quality * item_after.stack_count.max(1) as f64;
+    assert!(
+        item_lost > 0.0,
+        "full-zone ContainerSearch should still apply attrition before routing overflow; item_lost={item_lost:.6}"
+    );
+
+    let ledger = app.world().resource::<WorldQiAccount>();
+    let overflow_account = QiAccountId::overflow(format!("attrition_overflow:{zone_name}"));
+    assert!(
+        (ledger.balance(&overflow_account) - item_lost).abs() < 1e-6,
+        "production ContainerSearch must credit real overflow balance: item_lost={item_lost:.6} ledger={:.6}",
+        ledger.balance(&overflow_account)
+    );
+    let zone_account = QiAccountId::zone(zone_name.clone());
+    assert!(
+        (ledger.balance(&zone_account) - QI_ZONE_UNIT_CAPACITY).abs() < 1e-6,
+        "full-zone ContainerSearch must mirror the unchanged zone cap: ledger={:.6}",
+        ledger.balance(&zone_account)
+    );
+    assert_eq!(
+        ledger.balance(&QiAccountId::container("item:9002")),
+        0.0,
+        "external item source account must not remain after production attrition"
+    );
 }
 
 // ——— plan-onboarding-loop-v1 P0: SurfaceStashPlayerLimit 测试 ———

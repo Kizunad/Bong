@@ -27,8 +27,12 @@ use crate::qi_physics::constants::{
     QI_ATTRITION_SPIRIT_SOURCE_MULTIPLIER, QI_ATTRITION_SPIRIT_SOURCE_THRESHOLD,
     QI_ATTRITION_TSY_MULTIPLIER, QI_EPSILON, QI_ZONE_UNIT_CAPACITY,
 };
-use crate::qi_physics::ledger::{AttritionOpKind, QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::ledger::{
+    transfer_external_qi_to_ledger, AttritionOpKind, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiAccount,
+};
 use crate::qi_physics::release::qi_release_to_zone;
+use crate::qi_physics::QiPhysicsError;
 use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::Zone;
 
@@ -133,6 +137,8 @@ pub enum AttritionSkipReason {
     Exempt,
     DeadTsy,
     MissingZone,
+    MissingWorldQiAccount,
+    LedgerTransferFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,14 +156,15 @@ pub fn dead_tsy_family_id(zone: &Zone, lifecycle: Option<&TsyZoneStateRegistry>)
 
 // ── release_attrition_to_zone ─────────────────────────────────────────────────
 
-/// 薄 helper：将磨损逸散量归还 zone，emit `AttritionTax` 审计转账。
+/// 薄 helper：将磨损逸散量归还 zone，并 emit `AttritionTax` 转账。
 ///
-/// 复用 `qi_release_to_zone` 的 cap/overflow 数值逻辑，但**丢弃**其 `ReleaseToZone` transfer，
-/// 用 `AttritionTax { op_kind }` 重建，以符合 plan 契约。
+/// 复用 `qi_release_to_zone` 的 cap/overflow 数值逻辑，但**不使用**其 `ReleaseToZone`
+/// transfer；改用 `AttritionTax { op_kind }` 重建。真实余额由带 ledger 的内部路径提交，
+/// `QiTransfer` event 只作为同一笔 ledger transfer 的审计副本。
 ///
 /// # 守恒
 /// - accepted → zone.spirit_qi 增加（`zone_after / QI_ZONE_UNIT_CAPACITY`）
-/// - overflow → `QiTransfer(from, overflow_account, overflow, AttritionTax)` 留审计
+/// - accepted / overflow → `WorldQiAccount` 真实入账，并分别保留 `AttritionTax` 审计
 /// - 合计 accepted + overflow == amount，无凭空消失
 pub fn release_attrition_to_zone(
     zone: &mut Zone,
@@ -166,59 +173,109 @@ pub fn release_attrition_to_zone(
     op_kind: AttritionOpKind,
     qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
+    if let Err(error) =
+        release_attrition_to_zone_with_ledger(zone, amount, from_id, op_kind, None, qi_transfers)
+    {
+        tracing::warn!(
+            "[bong][attrition] release_attrition_to_zone failed zone={} amount={amount}: {error:?}",
+            zone.name
+        );
+    }
+}
+
+#[derive(Debug)]
+enum AttritionReleaseError {
+    MissingWorldQiAccount,
+    Ledger(QiPhysicsError),
+}
+
+fn release_attrition_to_zone_with_ledger(
+    zone: &mut Zone,
+    amount: f64,
+    from_id: QiAccountId,
+    op_kind: AttritionOpKind,
+    qi_ledger: Option<&mut WorldQiAccount>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) -> Result<(), AttritionReleaseError> {
     if amount < QI_EPSILON {
-        return;
+        return Ok(());
     }
 
     let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
     let zone_cap = QI_ZONE_UNIT_CAPACITY;
     let to_id = QiAccountId::zone(zone.name.clone());
 
-    match qi_release_to_zone(
+    let outcome = qi_release_to_zone(
         amount,
         from_id.clone(),
         to_id.clone(),
         zone_current,
         zone_cap,
-    ) {
-        Ok(outcome) => {
-            // 更新 zone.spirit_qi（口径：zone_after / QI_ZONE_UNIT_CAPACITY，与 npc_skill.rs 同）
-            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    )
+    .map_err(AttritionReleaseError::Ledger)?;
 
-            // emit AttritionTax 审计轨迹（丢弃 qi_release_to_zone 产出的 ReleaseToZone transfer）
-            if let Some(events) = qi_transfers {
-                if outcome.accepted > QI_EPSILON {
-                    if let Ok(t) = QiTransfer::new(
-                        from_id.clone(),
-                        to_id,
-                        outcome.accepted,
-                        QiTransferReason::AttritionTax { op_kind },
-                    ) {
-                        events.send(t);
-                    }
-                }
-                // overflow 仍守恒：归入 overflow 账户（与 npc_skill.rs:70-82 同口径）
-                if outcome.overflow > QI_EPSILON {
-                    let overflow_id =
-                        QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
-                    if let Ok(t) = QiTransfer::new(
-                        from_id,
-                        overflow_id,
-                        outcome.overflow,
-                        QiTransferReason::AttritionTax { op_kind },
-                    ) {
-                        events.send(t);
-                    }
-                }
+    // A full/near-full zone needs a real sink.  Refuse to mutate the zone or emit an
+    // audit-only event when the caller omitted the ledger, so the item cannot be
+    // debited while the overflow disappears between ticks.
+    if qi_ledger.is_none() && outcome.overflow > QI_EPSILON {
+        return Err(AttritionReleaseError::MissingWorldQiAccount);
+    }
+
+    let reason = QiTransferReason::AttritionTax { op_kind };
+    let mut committed_transfers = Vec::with_capacity(2);
+    if let Some(qi_ledger) = qi_ledger {
+        // Zone.spirit_qi is the field authority.  Stage the mirror and both transfers
+        // before committing either field so a ledger error cannot leave a partial split.
+        let mut staged_ledger = qi_ledger.clone();
+        staged_ledger
+            .set_balance(to_id.clone(), zone_current.max(0.0))
+            .map_err(AttritionReleaseError::Ledger)?;
+        if outcome.accepted > QI_EPSILON {
+            if let Some(transfer) = transfer_external_qi_to_ledger(
+                &mut staged_ledger,
+                from_id.clone(),
+                to_id,
+                outcome.accepted,
+                reason,
+            )
+            .map_err(AttritionReleaseError::Ledger)?
+            {
+                committed_transfers.push(transfer);
             }
         }
-        Err(err) => {
-            tracing::warn!(
-                "[bong][attrition] release_attrition_to_zone failed zone={} amount={amount}: {err:?}",
-                zone.name
-            );
+        if outcome.overflow > QI_EPSILON {
+            let overflow_id = QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
+            if let Some(transfer) = transfer_external_qi_to_ledger(
+                &mut staged_ledger,
+                from_id,
+                overflow_id,
+                outcome.overflow,
+                reason,
+            )
+            .map_err(AttritionReleaseError::Ledger)?
+            {
+                committed_transfers.push(transfer);
+            }
+        }
+        *qi_ledger = staged_ledger;
+    } else if outcome.accepted > QI_EPSILON {
+        // Legacy/unit callers without a ledger may still exercise the non-overflow
+        // field path; there is no missing sink in this branch.
+        committed_transfers.push(
+            QiTransfer::new(from_id, to_id, outcome.accepted, reason)
+                .map_err(AttritionReleaseError::Ledger)?,
+        );
+    }
+
+    // 更新 zone.spirit_qi（口径：zone_after / QI_ZONE_UNIT_CAPACITY，与 npc_skill.rs 同）
+    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+
+    if let Some(events) = qi_transfers {
+        for transfer in committed_transfers {
+            events.send(transfer);
         }
     }
+    Ok(())
 }
 
 // ── apply_attrition ───────────────────────────────────────────────────────────
@@ -250,6 +307,19 @@ pub fn apply_attrition_checked(
     op_kind: AttritionOpKind,
     zone: Option<&mut Zone>,
     qi_transfers: Option<&mut Events<QiTransfer>>,
+    tsy_lifecycle: Option<&TsyZoneStateRegistry>,
+) -> AttritionApplyOutcome {
+    apply_attrition_checked_with_ledger(item, op_kind, zone, qi_transfers, None, tsy_lifecycle)
+}
+
+/// 带真实账本的磨损入口。生产调用方必须传入 `WorldQiAccount`，否则发生 overflow 时
+/// 以 `MissingWorldQiAccount` fail-closed，绝不扣 item 后只留下无法兑现的事件。
+pub fn apply_attrition_checked_with_ledger(
+    item: &mut ItemInstance,
+    op_kind: AttritionOpKind,
+    zone: Option<&mut Zone>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    qi_ledger: Option<&mut WorldQiAccount>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
 ) -> AttritionApplyOutcome {
     if is_attrition_exempt(item) {
@@ -288,11 +358,31 @@ pub fn apply_attrition_checked(
 
     // 扣 item（按比例降 spirit_quality，保持 [0,1] 范围）
     let new_quality = (item.spirit_quality * (1.0 - rate)).clamp(0.0, 1.0);
-    item.spirit_quality = new_quality;
 
     // 守恒归还 zone
     let from_id = QiAccountId::container(format!("item:{}", item.instance_id));
-    release_attrition_to_zone(zone, attrition_abs, from_id, op_kind, qi_transfers);
+    if let Err(error) = release_attrition_to_zone_with_ledger(
+        zone,
+        attrition_abs,
+        from_id,
+        op_kind,
+        qi_ledger,
+        qi_transfers,
+    ) {
+        let reason = match error {
+            AttritionReleaseError::MissingWorldQiAccount => {
+                AttritionSkipReason::MissingWorldQiAccount
+            }
+            AttritionReleaseError::Ledger(_) => AttritionSkipReason::LedgerTransferFailed,
+        };
+        tracing::warn!(
+            "[bong][attrition] skipped item={} op_kind={op_kind:?} because release failed: {reason:?}",
+            item.instance_id
+        );
+        return AttritionApplyOutcome::Skipped(reason);
+    }
+
+    item.spirit_quality = new_quality;
 
     AttritionApplyOutcome::Applied
 }
@@ -320,7 +410,9 @@ mod tests {
         QI_ATTRITION_SPIRIT_SOURCE_MULTIPLIER, QI_ATTRITION_SPIRIT_SOURCE_THRESHOLD,
         QI_ATTRITION_TSY_MULTIPLIER, QI_EPSILON, QI_ZONE_UNIT_CAPACITY,
     };
-    use crate::qi_physics::ledger::{AttritionOpKind, QiAccountKind, QiTransfer, QiTransferReason};
+    use crate::qi_physics::ledger::{
+        AttritionOpKind, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount,
+    };
     use crate::world::dimension::DimensionKind;
     use crate::world::tsy::DimensionAnchor;
     use crate::world::tsy_lifecycle::{TsyLifecycle, TsyZoneState};
@@ -1213,16 +1305,20 @@ mod tests {
 
         let mut app = App::new();
         app.add_event::<QiTransfer>();
+        let mut ledger = WorldQiAccount::default();
 
         // 应用磨损
         {
             let mut events_res = app.world_mut().resource_mut::<Events<QiTransfer>>();
-            apply_attrition(
+            let outcome = apply_attrition_checked_with_ledger(
                 &mut item,
                 AttritionOpKind::Pickup,
                 Some(&mut zone),
                 Some(&mut events_res),
+                Some(&mut ledger),
+                None,
             );
+            assert_eq!(outcome, AttritionApplyOutcome::Applied);
         }
 
         let zone_qi_after = zone.spirit_qi;
@@ -1281,6 +1377,121 @@ mod tests {
         assert!(
             (accepted_sum - zone_delta).abs() < 1e-6,
             "accepted_sum={accepted_sum:.6} 应等于 zone_delta={zone_delta:.6}（两者均为 zone 实际增量）"
+        );
+
+        let zone_account = QiAccountId::zone(zone.name.clone());
+        let overflow_account = QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
+        let source_account = QiAccountId::container(format!("item:{}", item.instance_id));
+        assert!(
+            (ledger.balance(&zone_account) - zone_qi_after * QI_ZONE_UNIT_CAPACITY).abs() < 1e-6,
+            "zone field 与 WorldQiAccount 镜像必须一致：field={:.6} ledger={:.6}",
+            zone_qi_after * QI_ZONE_UNIT_CAPACITY,
+            ledger.balance(&zone_account)
+        );
+        assert!(
+            (ledger.balance(&overflow_account) - overflow_sum).abs() < 1e-6,
+            "overflow 必须真实入账：ledger={:.6} event={overflow_sum:.6}",
+            ledger.balance(&overflow_account)
+        );
+        assert_eq!(
+            ledger.balance(&source_account),
+            0.0,
+            "item 临时源账户不能跨 tick 残留"
+        );
+    }
+
+    #[test]
+    fn p1_overflow_without_world_account_fails_closed_before_item_debit() {
+        let mut zone = make_zone("full_zone_without_ledger", 1.0);
+        let mut item = make_item(401, 1.0, 100);
+        let item_before = item.spirit_quality;
+        let zone_before = zone.spirit_qi;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let outcome = {
+            let mut events_res = app.world_mut().resource_mut::<Events<QiTransfer>>();
+            apply_attrition_checked(
+                &mut item,
+                AttritionOpKind::Pickup,
+                Some(&mut zone),
+                Some(&mut events_res),
+                None,
+            )
+        };
+
+        assert_eq!(
+            outcome,
+            AttritionApplyOutcome::Skipped(AttritionSkipReason::MissingWorldQiAccount),
+            "满 zone 缺少真实账本时必须 fail-closed，而不是只发 overflow event"
+        );
+        assert_eq!(
+            item.spirit_quality, item_before,
+            "缺少 WorldQiAccount 时不能先扣 item 真元"
+        );
+        assert_eq!(
+            zone.spirit_qi, zone_before,
+            "缺少 overflow sink 时 zone 也不能部分提交"
+        );
+        let events_res = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events_res.get_reader();
+        assert!(
+            reader.read(events_res).next().is_none(),
+            "fail-closed 时不能留下无法兑现的 AttritionTax event"
+        );
+    }
+
+    #[test]
+    fn p1_repeated_overflow_accumulates_in_real_account() {
+        let mut zone = make_zone("repeated_overflow", 1.0);
+        let mut first = make_item(402, 1.0, 100);
+        let mut second = make_item(403, 1.0, 100);
+        let mut ledger = WorldQiAccount::default();
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+
+        {
+            let mut events_res = app.world_mut().resource_mut::<Events<QiTransfer>>();
+            assert_eq!(
+                apply_attrition_checked_with_ledger(
+                    &mut first,
+                    AttritionOpKind::Pickup,
+                    Some(&mut zone),
+                    Some(&mut events_res),
+                    Some(&mut ledger),
+                    None,
+                ),
+                AttritionApplyOutcome::Applied
+            );
+            assert_eq!(
+                apply_attrition_checked_with_ledger(
+                    &mut second,
+                    AttritionOpKind::Pickup,
+                    Some(&mut zone),
+                    Some(&mut events_res),
+                    Some(&mut ledger),
+                    None,
+                ),
+                AttritionApplyOutcome::Applied
+            );
+        }
+
+        let overflow_account = QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
+        let expected = 2.0 * QI_ATTRITION_BASE_RATE * QI_ATTRITION_SPIRIT_SOURCE_MULTIPLIER * 100.0;
+        assert!(
+            (ledger.balance(&overflow_account) - expected).abs() < 1e-6,
+            "重复 overflow 必须累加而不是覆盖：expected={expected:.6} actual={:.6}",
+            ledger.balance(&overflow_account)
+        );
+        assert_eq!(
+            ledger.balance(&QiAccountId::container("item:402")),
+            0.0,
+            "第一笔 item 源账户不能残留"
+        );
+        assert_eq!(
+            ledger.balance(&QiAccountId::container("item:403")),
+            0.0,
+            "第二笔 item 源账户不能残留"
         );
     }
 

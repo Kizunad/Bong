@@ -29,9 +29,9 @@ pub mod zone_inflow;
 use valence::prelude::App;
 
 pub use attrition::{
-    apply_attrition, apply_attrition_checked, dead_tsy_family_id, env_multiplier,
-    is_attrition_exempt, release_attrition_to_zone, AttritionApplyOutcome, AttritionConfig,
-    AttritionSkipReason,
+    apply_attrition, apply_attrition_checked, apply_attrition_checked_with_ledger,
+    dead_tsy_family_id, env_multiplier, is_attrition_exempt, release_attrition_to_zone,
+    AttritionApplyOutcome, AttritionConfig, AttritionSkipReason,
 };
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
 pub use collision::{
