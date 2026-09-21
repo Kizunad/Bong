@@ -116,6 +116,7 @@ public final class StatusEffectTimeline {
         }
 
         private long remaining(long nowMs) {
+            if (effect.indefinite()) return StatusEffectStore.INDEFINITE_REMAINING_MS;
             return Math.max(0, effect.remainingMs() - Math.max(0, nowMs - receivedAt));
         }
 

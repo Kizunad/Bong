@@ -1,5 +1,6 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.StatusEffectIcons;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.StatusEffectTimeline;
 import com.bong.client.combat.store.StatusEffectTimeline.Item;
@@ -7,32 +8,14 @@ import com.bong.client.combat.store.StatusEffectTimeline.Phase;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /** Centered status emblems, with serial arrivals and unframed contamination trails. */
 public final class StatusEffectHudPlanner {
     public static final int SLOT_SIZE = 30;
     public static final int SLOT_GAP = 6;
     public static final int TOP_MARGIN = 10;
-    public static final String ICON_BASE = "bong-client:textures/hud/effects/";
-    private static final Set<String> ICON_IDS = Set.of(
-        "bleeding", "stunned", "immobilized", "vortexcasting", "parryrecovery", "staggered",
-        "disoriented", "voidcoreactive", "damagereduction", "breakthroughboost",
-        "antispiritpressurepill", "qiregenboost", "insightflash", "woundheal", "body_part_resist",
-        "speedboost", "staminarecovboost", "health_regen_boost", "mirror_concealment",
-        "swordparrying", "shieldblocking", "spirit_treasure_perception", "cultivationacceleration",
-        "extraordinarymeridianacceleration", "slowed", "damageamp", "humility",
-        "insighthallucination", "frailty", "qicappermminus", "contaminationboost", "body_part_weaken",
-        "staminacrash", "qidrainforstamina", "legstrain", "qi_regen_paused",
-        "mirror_exposed", "resonancelocked", "qiregenslowed", "damagevulnerability", "alchemy_buff", "exhausted"
-    );
 
     private StatusEffectHudPlanner() {}
-
-    static String iconPathFor(String id) {
-        String key = id == null ? "" : id.split(":", 2)[0];
-        return ICON_IDS.contains(key) ? ICON_BASE + key + ".png" : null;
-    }
 
     public static List<HudRenderCommand> buildCommands(
         int width, int height, long nowMs, HudTextHelper.WidthMeasurer measurer
@@ -112,7 +95,7 @@ public final class StatusEffectHudPlanner {
             tint(0xFFFFFFFF, alpha)));
         out.add(HudRenderCommand.svg(HudRenderLayer.STATUS_EFFECTS, "rim", x, y, size, size,
             tint(item.effect().sourceColor() | 0xFF000000, alpha * .85)));
-        String icon = iconPathFor(item.effect().id());
+        String icon = StatusEffectIcons.textureFor(item.effect().id());
         int inset = Math.max(2, size / 7);
         if (icon != null) {
             out.add(HudRenderCommand.texture(HudRenderLayer.STATUS_EFFECTS, icon,
@@ -125,7 +108,7 @@ public final class StatusEffectHudPlanner {
         drawInvasion(out, item.effect().id(), x, y, size, nowMs, alpha);
         if (!settled) return;
         int barWidth = (int) Math.round((size - 8) * item.remainingFraction());
-        if (barWidth > 0) {
+        if (barWidth > 0 && !item.effect().indefinite()) {
             out.add(HudRenderCommand.rect(HudRenderLayer.STATUS_EFFECTS, x + 4, y + size - 3,
                 barWidth, 1, tint(0xFFD1D8C5, alpha)));
         }
