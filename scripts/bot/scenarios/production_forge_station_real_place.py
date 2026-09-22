@@ -248,8 +248,12 @@ def run(env) -> None:
             f"起炉前应恰好持有 fan_tie x4，实际={fan_tie_before_start['item']['stack_count']}"
         )
         from bot.scenarios._craft_helpers import stage_material
-        stage_material(bot, BLUEPRINT_ID, "fan_tie", station_pos)
-        stage_material(bot, BLUEPRINT_ID, "mineral_za_gang", station_pos)
+        staged = stage_material(
+            bot, BLUEPRINT_ID, "fan_tie", station_pos, snapshot=snapshot
+        )
+        stage_material(
+            bot, BLUEPRINT_ID, "mineral_za_gang", station_pos, snapshot=staged
+        )
 
         anchor = last_event_time(bot)
         _forge_start_session(
@@ -275,7 +279,7 @@ def run(env) -> None:
             timeout=45.0,
             description=f"起炉受理应一并推 forge_blueprint_book（含已学 {BLUEPRINT_ID}）",
         )
-        bot.wait_for(
+        snapshot = bot.wait_for(
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
@@ -286,7 +290,7 @@ def run(env) -> None:
                 "起炉受理原子扣料后 fan_tie/mineral_za_gang 应从背包彻底消失"
                 "（4 fan_tie + 1 za_gang 全额扣光）"
             ),
-        )
+        ).data["payload"]
 
         # ── Billet → Tempering ───────────────────────────────────────────
         anchor = last_event_time(bot)
@@ -376,7 +380,7 @@ def run(env) -> None:
         wait_inventory_contains(bot, IRON_SCROLL_ID)
         anchor = last_event_time(bot)
         _forge_learn_blueprint(bot, IRON_BLUEPRINT_ID)
-        bot.wait_for(
+        snapshot = bot.wait_for(
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
@@ -387,7 +391,7 @@ def run(env) -> None:
 
         anchor = last_event_time(bot)
         bot.cmd("give fan_tie 3")
-        bot.wait_for(
+        snapshot = bot.wait_for(
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
@@ -397,10 +401,16 @@ def run(env) -> None:
             == 3,
             timeout=45.0,
             description="give fan_tie 3 后应出现 stack_count=3 的 inventory_snapshot",
-        )
+        ).data["payload"]
 
         anchor = last_event_time(bot)
-        stage_material(bot, IRON_BLUEPRINT_ID, "fan_tie", station_pos)
+        stage_material(
+            bot,
+            IRON_BLUEPRINT_ID,
+            "fan_tie",
+            station_pos,
+            snapshot=snapshot,
+        )
         anchor = last_event_time(bot)
         _forge_start_session(bot, station_pos, IRON_BLUEPRINT_ID, [("fan_tie", 3)])
         iron_session_payload = _wait_forge_payload_after(

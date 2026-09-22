@@ -240,7 +240,13 @@ def run(env) -> None:
 
         anchor = last_event_time(bot)
         from bot.scenarios._craft_helpers import stage_material
-        stage_material(bot, BLUEPRINT_ID, MATERIAL_ITEM_ID, station_pos)
+        stage_material(
+            bot,
+            BLUEPRINT_ID,
+            MATERIAL_ITEM_ID,
+            station_pos,
+            snapshot=material_snapshot,
+        )
         _forge_start_session(bot, station_pos, BLUEPRINT_ID, [(MATERIAL, 3)])
         session_payload = _wait_forge_payload_after(
             bot,

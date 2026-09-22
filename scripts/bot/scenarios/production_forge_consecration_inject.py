@@ -29,6 +29,7 @@ from bot.scenarios._inventory_helpers import (
     latest_inventory_snapshot,
     require_item,
     wait_inventory_contains,
+    wait_inventory_revision_after,
 )
 
 DESCRIPTION = "放砧→学图谱→起炉→淬炼×15→铭文×2→开光注真元：clamp + 累积读回 + 三负例"
@@ -127,20 +128,45 @@ def _wait_forge_payload_after(bot, anchor, payload_type, predicate, timeout, des
 def run(env) -> None:
     with env.new_bot("FoCj") as bot:
         wait_for_ready(bot)
+        initial = latest_inventory_snapshot(bot)
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=30.0)
 
         # ── 备料：玄铁砧×1 + sui_tie×3 + 铭文残卷×2 + 图谱残卷×1 ──────────
+        cleared = wait_inventory_revision_after(bot, initial["revision"])
+        anvil_give_anchor = last_event_time(bot)
         bot.cmd(f"give {ANVIL_ID} 1")
-        wait_inventory_contains(bot, ANVIL_ID)
+        anvil_snapshot = wait_inventory_contains(
+            bot,
+            ANVIL_ID,
+            after_t=anvil_give_anchor,
+            after_revision=cleared["revision"],
+        )
+        sui_tie_give_anchor = last_event_time(bot)
         bot.cmd(f"give {SUI_TIE_ID} 3")
-        wait_inventory_contains(bot, SUI_TIE_ITEM_ID)
+        sui_snapshot = wait_inventory_contains(
+            bot,
+            SUI_TIE_ITEM_ID,
+            after_t=sui_tie_give_anchor,
+            after_revision=anvil_snapshot["revision"],
+        )
+        inscription_give_anchor = last_event_time(bot)
         bot.cmd(f"give {INSCRIPTION_SCROLL_ID} 2")
-        wait_inventory_contains(bot, INSCRIPTION_SCROLL_ID)
+        inscription_snapshot = wait_inventory_contains(
+            bot,
+            INSCRIPTION_SCROLL_ID,
+            after_t=inscription_give_anchor,
+            after_revision=sui_snapshot["revision"],
+        )
+        blueprint_give_anchor = last_event_time(bot)
         bot.cmd(f"give {BLUEPRINT_SCROLL_ID} 1")
-        wait_inventory_contains(bot, BLUEPRINT_SCROLL_ID)
+        snapshot = wait_inventory_contains(
+            bot,
+            BLUEPRINT_SCROLL_ID,
+            after_t=blueprint_give_anchor,
+            after_revision=inscription_snapshot["revision"],
+        )
 
-        snapshot = latest_inventory_snapshot(bot)
         anvil = require_item(snapshot, ANVIL_ID)
         sui_tie = require_item(snapshot, SUI_TIE_ITEM_ID)
         assert int(sui_tie["item"]["stack_count"]) == 3, (
@@ -193,14 +219,14 @@ def run(env) -> None:
         # ── 学图谱 → 残卷消耗 ────────────────────────────────────────────
         anchor = last_event_time(bot)
         _forge_learn_blueprint(bot, BLUEPRINT_ID)
-        bot.wait_for(
+        material_snapshot = bot.wait_for(
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
             and find_item(e.data["payload"], BLUEPRINT_SCROLL_ID) is None,
             timeout=45.0,
             description=f"forge_learn_blueprint({BLUEPRINT_ID}) 后残卷应从背包消耗",
-        )
+        ).data["payload"]
         # 学后即起炉有同帧竞态：fresh bot 无 LearnedBlueprints 组件，handler 走
         # commands 延迟插入，同帧到达的 start_session 在权威系统读到的仍是「未学」
         # → debug 级静默拒绝 + 仅 chat 回执「尚未习得图谱」（release 日志不可见，
@@ -211,7 +237,13 @@ def run(env) -> None:
         # ── 起炉受理：sui_tie×3 原子扣料 → billet ────────────────────────
         anchor = last_event_time(bot)
         from bot.scenarios._craft_helpers import stage_material
-        stage_material(bot, BLUEPRINT_ID, SUI_TIE_ITEM_ID, station_pos)
+        stage_material(
+            bot,
+            BLUEPRINT_ID,
+            SUI_TIE_ITEM_ID,
+            station_pos,
+            snapshot=material_snapshot,
+        )
         _forge_start_session(bot, station_pos, BLUEPRINT_ID, [(SUI_TIE_ID, 3)])
         session_payload = _wait_forge_payload_after(
             bot,
