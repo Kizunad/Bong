@@ -2,13 +2,24 @@
 
 from bot.scenarios._inventory_helpers import (
     find_item,
-    latest_inventory_snapshot,
     wait_inventory_revision_after_matching,
 )
 
 
-def stage_material(bot, recipe_id: str, item_id: str, station_pos=None) -> dict:
-    snapshot = latest_inventory_snapshot(bot)
+def stage_material(
+    bot,
+    recipe_id: str,
+    item_id: str,
+    station_pos=None,
+    *,
+    snapshot: dict,
+) -> dict:
+    """Use one caller-anchored snapshot for both source selection and expected_revision.
+
+    The caller must obtain ``snapshot`` after the give/resync watermark it is testing.
+    Reading the latest event here would allow an older in-flight inventory snapshot to
+    disagree with the snapshot used to choose the instance.
+    """
     source = find_item(snapshot, item_id)
     assert source is not None, f"背包缺少待放入的材料 {item_id}"
     instance_id = source["item"]["instance_id"]
