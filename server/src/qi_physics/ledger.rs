@@ -658,9 +658,7 @@ impl WorldQiAccount {
             transfers: Vec::new(),
         };
         let result = operation(&mut transaction);
-        if result.is_err() {
-            return result;
-        }
+        result.as_ref()?;
 
         let changes = std::mem::take(&mut transaction.changes);
         let transfers = std::mem::take(&mut transaction.transfers);
