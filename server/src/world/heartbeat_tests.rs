@@ -197,6 +197,72 @@ fn pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi() {
 }
 
 #[test]
+fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
+    let mut heartbeat = WorldHeartbeat::default();
+    let mut zones = ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+    };
+    let mut active_events = ActiveEventsResource::default();
+    let mut qi_ledger = WorldQiAccount::default();
+    let physical_total_before = qi_ledger.total()
+        + zones
+            .zones
+            .iter()
+            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+            .sum::<f64>();
+    let omen = WorldEventOmen {
+        kind: OmenKind::PseudoVeinForming,
+        zone_name: "waste".to_string(),
+        target_player: None,
+        origin: DVec3::new(10.0, 65.0, 10.0),
+        intensity: 0.6,
+        scheduled_at_tick: 0,
+        fires_at_tick: 0,
+        expires_at_tick: 200,
+    };
+
+    assert!(
+        spawn_pseudo_vein_from_omen(
+            &mut heartbeat,
+            &mut zones,
+            &mut active_events,
+            &mut qi_ledger,
+            &omen,
+            Season::Summer,
+            200,
+        )
+        .is_none(),
+        "an unfunded pending pool must reject the heartbeat pseudo-vein spawn"
+    );
+
+    assert_eq!(
+        heartbeat.active_pseudo_vein_count(),
+        0,
+        "a rejected spawn must not publish lifecycle state"
+    );
+    assert!(
+        zones.find_zone_by_name("pseudo_vein_heartbeat_0").is_none(),
+        "a rejected spawn must remove its zero-balance runtime zone"
+    );
+    assert_eq!(
+        qi_ledger.balance(&pending_inflow_account()),
+        0.0,
+        "a rejected spawn must not debit or fabricate a pending-pool balance"
+    );
+    let physical_total_after = qi_ledger.total()
+        + zones
+            .zones
+            .iter()
+            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+            .sum::<f64>();
+    assert_eq!(
+        physical_total_after, physical_total_before,
+        "an unfunded spawn must preserve the real ledger plus zone qi total"
+    );
+}
+
+#[test]
 fn pseudo_vein_anchor_ignores_tsy_blueprint_zones() {
     let heartbeat = WorldHeartbeat::default();
     let zones = ZoneRegistry {
