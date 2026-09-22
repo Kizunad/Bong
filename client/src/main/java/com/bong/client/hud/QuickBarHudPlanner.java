@@ -70,7 +70,7 @@ public final class QuickBarHudPlanner {
 
     /**
      * @param skillTextureExists 战斗栏技能图标的贴图存在性谓词；非 null 时缺图回退到文字标签
-     *                           （消除紫黑 missing-texture）；null 走旧行为。生产传 {@code HudTextureProbe::exists}。
+     *                           （消除紫黑 missing-texture）；null 走旧行为。生产传 {@code TextureProbe::exists}。
      */
     public static List<HudRenderCommand> buildCommands(
         QuickSlotConfig quickSlots,

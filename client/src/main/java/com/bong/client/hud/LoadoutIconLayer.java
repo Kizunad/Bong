@@ -29,7 +29,7 @@ public final class LoadoutIconLayer {
     /**
      * 存在性感知版：只在贴图真存在时才画图标，否则返回空 → 调用方走文字标签兜底（不画紫黑 missing-texture）。
      *
-     * @param textureExists 贴图存在性谓词（生产用 {@code HudTextureProbe::exists}，测试可注入桩）
+     * @param textureExists 贴图存在性谓词（生产用 {@code TextureProbe::exists}，测试可注入桩）
      */
     public static List<HudRenderCommand> buildSkillIconCommands(
         SkillBarEntry entry,

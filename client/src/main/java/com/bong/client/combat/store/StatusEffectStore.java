@@ -11,6 +11,9 @@ import java.util.List;
  * The HUD timeline preserves arrival order; inspect groups by {@link Effect#kind()}.
  */
 public final class StatusEffectStore {
+    /** 服务端 remaining_ms 的持续状态标记；仅由后续权威快照解除。 */
+    public static final long INDEFINITE_REMAINING_MS = Long.MAX_VALUE;
+
     public enum Kind {
         DOT("dot"),
         CONTROL("control"),
@@ -51,6 +54,10 @@ public final class StatusEffectStore {
             stacks = Math.max(0, stacks);
             remainingMs = Math.max(0L, remainingMs);
             dispelDifficulty = Math.max(0, Math.min(5, dispelDifficulty));
+        }
+
+        public boolean indefinite() {
+            return remainingMs == INDEFINITE_REMAINING_MS;
         }
     }
 

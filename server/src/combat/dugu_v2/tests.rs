@@ -2989,7 +2989,7 @@ fn every_dugu_v2_visual_icon_texture_points_at_real_client_asset() {
         assert!(
             disk.is_file(),
             "dugu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
-             server payload 会下发悬空引用，client HudTextureProbe 探测必失败",
+             server payload 会下发悬空引用，client TextureProbe 探测必失败",
             disk.display()
         );
     }
