@@ -657,8 +657,7 @@ impl WorldQiAccount {
             changes: BTreeMap::new(),
             transfers: Vec::new(),
         };
-        let result = operation(&mut transaction);
-        result.as_ref()?;
+        let value = operation(&mut transaction)?;
 
         let changes = std::mem::take(&mut transaction.changes);
         let transfers = std::mem::take(&mut transaction.transfers);
@@ -675,7 +674,7 @@ impl WorldQiAccount {
             }
         }
         self.transfers.extend(transfers);
-        result
+        Ok(value)
     }
 
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {
