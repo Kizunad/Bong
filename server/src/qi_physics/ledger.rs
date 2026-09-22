@@ -532,7 +532,154 @@ fn checked_source_debit(before: f64, amount: f64) -> Result<f64, QiPhysicsError>
     Ok(after)
 }
 
+/// `WorldQiAccount` 的轻量原子事务。
+///
+/// 事务只保存本次触及账户的 overlay 和本次新增的审计项；既有 `transfers` 历史不参与
+/// 暂存，避免高频路径按完整审计向量的长度做深拷贝。事务闭合成功后一次性提交，闭合
+/// 失败则丢弃 overlay，调用方看不到部分余额或审计记录。
+pub(crate) struct WorldQiAccountTransaction<'a> {
+    base_balances: &'a BTreeMap<QiAccountId, f64>,
+    changes: BTreeMap<QiAccountId, Option<f64>>,
+    transfers: Vec<QiTransfer>,
+}
+
+impl WorldQiAccountTransaction<'_> {
+    fn balance(&self, account: &QiAccountId) -> f64 {
+        match self.changes.get(account) {
+            Some(Some(balance)) => *balance,
+            Some(None) => 0.0,
+            None => self.base_balances.get(account).copied().unwrap_or(0.0),
+        }
+    }
+
+    fn has_account(&self, account: &QiAccountId) -> bool {
+        match self.changes.get(account) {
+            Some(balance) => balance.is_some(),
+            None => self.base_balances.contains_key(account),
+        }
+    }
+
+    pub(crate) fn set_balance(
+        &mut self,
+        account: QiAccountId,
+        amount: f64,
+    ) -> Result<(), QiPhysicsError> {
+        let amount = finite_non_negative(amount, "balance")?;
+        self.changes.insert(account, Some(amount));
+        Ok(())
+    }
+
+    fn remove_balance(&mut self, account: &QiAccountId) {
+        self.changes.insert(account.clone(), None);
+    }
+
+    fn transfer(&mut self, transfer: QiTransfer) -> Result<(), QiPhysicsError> {
+        reject_audit_only_qi_reason(transfer.reason)?;
+
+        let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
+        if transfer.from == transfer.to {
+            return Err(QiPhysicsError::SameAccountTransfer {
+                account: transfer.from.to_string(),
+            });
+        }
+        let available = self.balance(&transfer.from);
+        if amount > available {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: transfer.from.to_string(),
+                available,
+                requested: amount,
+            });
+        }
+
+        let to_balance = self.balance(&transfer.to);
+        let to_after = checked_destination_credit(to_balance, amount)?;
+        let from_after = checked_source_debit(available, amount)?;
+
+        self.set_balance(transfer.from.clone(), from_after)?;
+        self.set_balance(transfer.to.clone(), to_after)?;
+        self.transfers.push(transfer);
+        Ok(())
+    }
+
+    pub(crate) fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "transfer.amount")?;
+        reject_audit_only_qi_reason(reason)?;
+        if amount == 0.0 {
+            return Ok(None);
+        }
+        let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
+        if transfer.from == transfer.to {
+            return Err(QiPhysicsError::SameAccountTransfer {
+                account: from.to_string(),
+            });
+        }
+
+        // 外部 source 只在事务 overlay 里临时镜像；事务成功提交时恢复原状，原先不存在
+        // 的 source 则以删除标记结束，不会污染长期账本。
+        checked_destination_credit(self.balance(&transfer.to), amount)?;
+        let source_existed = self.has_account(&from);
+        let source_before = self.balance(&from);
+        let source_shadow = finite_non_negative(source_before + amount, "source_shadow_balance")?;
+        if source_shadow == source_before {
+            return Err(QiPhysicsError::UnrepresentableChange {
+                field: "source_shadow_balance",
+                before: source_before,
+                amount,
+            });
+        }
+        self.set_balance(from.clone(), source_shadow)?;
+
+        let result = self.transfer(transfer.clone());
+        if source_existed {
+            self.set_balance(from, source_before)?;
+        } else {
+            self.remove_balance(&from);
+        }
+
+        result.map(|()| Some(transfer))
+    }
+}
+
 impl WorldQiAccount {
+    /// 在不复制既有审计历史的前提下执行失败原子的账本操作。
+    pub(crate) fn with_transaction<T>(
+        &mut self,
+        operation: impl FnOnce(&mut WorldQiAccountTransaction<'_>) -> Result<T, QiPhysicsError>,
+    ) -> Result<T, QiPhysicsError> {
+        let mut transaction = WorldQiAccountTransaction {
+            base_balances: &self.balances,
+            changes: BTreeMap::new(),
+            transfers: Vec::new(),
+        };
+        let result = operation(&mut transaction);
+        if result.is_err() {
+            return result;
+        }
+
+        let changes = std::mem::take(&mut transaction.changes);
+        let transfers = std::mem::take(&mut transaction.transfers);
+        drop(transaction);
+
+        for (account, balance) in changes {
+            match balance {
+                Some(balance) => {
+                    self.balances.insert(account, balance);
+                }
+                None => {
+                    self.balances.remove(&account);
+                }
+            }
+        }
+        self.transfers.extend(transfers);
+        result
+    }
+
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {
         let amount = finite_non_negative(amount, "balance")?;
         self.balances.insert(account, amount);
@@ -633,41 +780,9 @@ pub fn transfer_external_qi_to_ledger(
     amount: f64,
     reason: QiTransferReason,
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    let amount = finite_non_negative(amount, "transfer.amount")?;
-    reject_audit_only_qi_reason(reason)?;
-    if amount == 0.0 {
-        return Ok(None);
-    }
-    let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
-    if transfer.from == transfer.to {
-        return Err(QiPhysicsError::SameAccountTransfer {
-            account: from.to_string(),
-        });
-    }
-
-    // 外部 source 会临时镜像入账本；预检必须在写入该影子余额前拒绝不可表示的 sink credit。
-    checked_destination_credit(account.balance(&transfer.to), amount)?;
-    let source_existed = account.has_account(&from);
-    let source_before = account.balance(&from);
-    let source_shadow = finite_non_negative(source_before + amount, "source_shadow_balance")?;
-    if source_shadow == source_before {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "source_shadow_balance",
-            before: source_before,
-            amount,
-        });
-    }
-    account.set_balance(from.clone(), source_shadow)?;
-
-    let result = account.transfer(transfer.clone());
-    if source_existed {
-        // source_before 已经通过 set_balance 验证过；这里恢复不应失败。
-        account.set_balance(from.clone(), source_before)?;
-    } else {
-        account.remove_balance(&from);
-    }
-
-    result.map(|()| Some(transfer))
+    account.with_transaction(|transaction| {
+        transaction.transfer_external_qi_to_ledger(from, to, amount, reason)
+    })
 }
 
 /// Atomically debit a stable ledger owner and credit the external signed Zone owner.

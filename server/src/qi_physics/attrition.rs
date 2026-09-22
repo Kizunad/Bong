@@ -28,8 +28,7 @@ use crate::qi_physics::constants::{
     QI_ATTRITION_TSY_MULTIPLIER, QI_EPSILON, QI_ZONE_UNIT_CAPACITY,
 };
 use crate::qi_physics::ledger::{
-    transfer_external_qi_to_ledger, AttritionOpKind, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiAccount,
+    AttritionOpKind, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::qi_physics::QiPhysicsError;
@@ -235,40 +234,38 @@ fn release_attrition_to_zone_with_ledger(
     let reason = QiTransferReason::AttritionTax { op_kind };
     let mut committed_transfers = Vec::with_capacity(2);
     if let Some(qi_ledger) = qi_ledger {
-        // Zone.spirit_qi is the field authority.  Stage the mirror and both transfers
-        // before committing either field so a ledger error cannot leave a partial split.
-        let mut staged_ledger = qi_ledger.clone();
-        staged_ledger
-            .set_balance(to_id.clone(), zone_current.max(0.0))
+        // Zone.spirit_qi is the field authority.  Stage only the touched balances and both
+        // transfers before committing either field so a ledger error cannot leave a partial
+        // split, without cloning the ledger's unbounded audit history.
+        committed_transfers = qi_ledger
+            .with_transaction(|transaction| {
+                transaction.set_balance(to_id.clone(), zone_current)?;
+                let mut transfers = Vec::with_capacity(2);
+                if outcome.accepted > QI_EPSILON {
+                    if let Some(transfer) = transaction.transfer_external_qi_to_ledger(
+                        from_id.clone(),
+                        to_id.clone(),
+                        outcome.accepted,
+                        reason,
+                    )? {
+                        transfers.push(transfer);
+                    }
+                }
+                if outcome.overflow > QI_EPSILON {
+                    let overflow_id =
+                        QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
+                    if let Some(transfer) = transaction.transfer_external_qi_to_ledger(
+                        from_id,
+                        overflow_id,
+                        outcome.overflow,
+                        reason,
+                    )? {
+                        transfers.push(transfer);
+                    }
+                }
+                Ok(transfers)
+            })
             .map_err(AttritionReleaseError::Ledger)?;
-        if outcome.accepted > QI_EPSILON {
-            if let Some(transfer) = transfer_external_qi_to_ledger(
-                &mut staged_ledger,
-                from_id.clone(),
-                to_id,
-                outcome.accepted,
-                reason,
-            )
-            .map_err(AttritionReleaseError::Ledger)?
-            {
-                committed_transfers.push(transfer);
-            }
-        }
-        if outcome.overflow > QI_EPSILON {
-            let overflow_id = QiAccountId::overflow(format!("attrition_overflow:{}", zone.name));
-            if let Some(transfer) = transfer_external_qi_to_ledger(
-                &mut staged_ledger,
-                from_id,
-                overflow_id,
-                outcome.overflow,
-                reason,
-            )
-            .map_err(AttritionReleaseError::Ledger)?
-            {
-                committed_transfers.push(transfer);
-            }
-        }
-        *qi_ledger = staged_ledger;
     } else if outcome.accepted > QI_EPSILON {
         // Legacy/unit callers without a ledger may still exercise the non-overflow
         // field path; there is no missing sink in this branch.
@@ -1495,11 +1492,7 @@ mod tests {
             !ledger.has_account(&zone_account),
             "负灵域拒绝时不能创建错误的非负 zone ledger mirror"
         );
-        assert_eq!(
-            ledger.total(),
-            0.0,
-            "负灵域拒绝时账本不能产生部分余额"
-        );
+        assert_eq!(ledger.total(), 0.0, "负灵域拒绝时账本不能产生部分余额");
         let events_res = app.world().resource::<Events<QiTransfer>>();
         let mut reader = events_res.get_reader();
         assert!(
