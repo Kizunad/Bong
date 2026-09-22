@@ -100,12 +100,14 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 - `119e07379`（2026-09-22）：promotion，将 bughunt skeleton 提升为 active plan。
 - `b57a9b299`（2026-09-22）：修复 attrition overflow 真实账本落账并补齐契约测试。
+- `1537aad6e`（2026-09-22）：合并最新 `origin/main`；未触及 attrition 修复文件，带入的 server 变更完成合并后复验。
 
 ### 测试结果
 
 - `scripts/build-token.sh cargo fmt --check`：`PIPESTATUS[0]=0`。
 - `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：`PIPESTATUS[0]=0`。
 - `scripts/build-token.sh cargo test`：`PIPESTATUS[0]=0`；主库 `10360 passed / 0 failed / 1 ignored`，其它 test target 与 doctest 均 `0 failed`。
+- 合并 `1537aad6e` 后重跑三条 server 门禁：fmt/clippy/test 的 `PIPESTATUS[0]` 均为 `0`；主库 `10361 passed / 0 failed / 1 ignored`，其它 test target 与 doctest 均 `0 failed`。
 - 定向验证：`tsy_container_search_unit` 29 passed；attrition 相关 lib 测试 48 passed。
 - 新增契约测试：`p1_cap_overflow_conservation`、`p1_overflow_without_world_account_fails_closed_before_item_debit`、`p1_repeated_overflow_accumulates_in_real_account`、`apply_search_attrition_records_overflow_in_world_qi_account`。
 
@@ -113,7 +115,7 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 - server：四条磨损入口均传入 `WorldQiAccount`；`QiTransfer` 仍只作为同一笔真实 transfer 的审计副本，未新增 EventReader 消费者。
 - agent/client：本 bughunt 未触及，暂无跨仓库变更。
-- 无上下文 validator 因 harness 故障未能取得结论；本 PR 不将该 validator 写作 PASS。两次独立只读 validator session 均在限定等待内无状态、无输出，已关闭。
+- 无上下文 validator 因 harness 故障未能取得结论；本 PR 不将该 validator 写作 PASS。三次独立只读 validator session（两次绑定 `b57a9b299`、一次绑定 `1537aad6e`）均在限定等待内无状态、无输出，已关闭。
 
 ### 遗留 / 后续
 
