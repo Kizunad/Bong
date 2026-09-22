@@ -142,6 +142,7 @@ mod tests {
             );
         }
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),

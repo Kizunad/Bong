@@ -86,7 +86,7 @@ impl MineralFeedbackEvent {
     }
 
     /// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉时背包持有量不足以覆盖声明的投料。
-    /// `deficits` = (display_name_zh, have, need) 列表，由 `consume_forge_materials_atomic`
+    /// `deficits` = (display_name_zh, have, need) 列表，由锻造暂存区盘点
     /// 的 `Err` 分支经 MineralRegistry 转译成中文名后传入（玩家可读，不漏内部 id）。
     pub fn forge_materials_insufficient(player: Entity, deficits: &[(String, u32, u32)]) -> Self {
         let detail = deficits

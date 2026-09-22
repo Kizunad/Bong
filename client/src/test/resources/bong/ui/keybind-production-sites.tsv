@@ -11,7 +11,6 @@ void_action.open_screen	cultivation/voidaction/VoidActionScreenBootstrap.java	op
 dying_elder.give_dan	dying_elder/DyingElderInteractionKeybindings.java	giveDanKey	key.bong-client.dying_elder_give_dan	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1
 dying_elder.refuse	dying_elder/DyingElderInteractionKeybindings.java	refuseKey	key.bong-client.dying_elder_refuse	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1
 dying_elder.delay	dying_elder/DyingElderInteractionKeybindings.java	delayKey	key.bong-client.dying_elder_delay	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1
-forge.open_screen	forge/ForgeScreenBootstrap.java	openScreenKey	key.bong-client.open_forge_screen	KEYSYM	UNKNOWN	category.bong-client.controls	1
 hud.immersive_toggle	hud/HudImmersionControls.java	toggleKey	key.bong-client.hud_immersive_toggle	KEYSYM	UNKNOWN	category.bong-client	1
 identity.open_panel	identity/IdentityPanelScreenBootstrap.java	openScreenKey	key.bong-client.open_identity_panel	KEYSYM	DEFAULT_KEY=O	category.bong-client.controls	1
 interaction.unified_g	input/InteractionKeybindings.java	interactKey	key.bong-client.interact	KEYSYM	G	category.bong-client.controls	1

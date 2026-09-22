@@ -796,6 +796,9 @@ pub fn weapon_two_handed(kind: crate::combat::weapon::WeaponKind) -> bool {
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PlayerInventory {
     pub revision: InventoryRevision,
+    /// 已从背包移出的制作或锻造材料，普通物品消耗入口不可访问。
+    #[serde(default, alias = "craft_preparation")]
+    pub material_preparation: crate::craft::preparation::MaterialPreparation,
     pub containers: Vec<ContainerState>,
     pub equipped: HashMap<String, SlotContents>,
     pub hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT],
@@ -851,6 +854,7 @@ pub fn clear_player_inventory(
             }
         }
         ClearScope::PackAndHotbar => {
+            inventory.material_preparation = Default::default();
             // `clearinv all`: clear every carried container plus hotbar, but keep equipment.
             for container in &mut inventory.containers {
                 container.items.clear();
@@ -858,6 +862,7 @@ pub fn clear_player_inventory(
             inventory.hotbar = Default::default();
         }
         ClearScope::All => {
+            inventory.material_preparation = Default::default();
             for container in &mut inventory.containers {
                 container.items.clear();
             }
@@ -1022,6 +1027,12 @@ pub fn apply_termination_drop_on_terminate(
             .unwrap_or_default();
 
         let mut drained = Vec::new();
+        drained.extend(
+            std::mem::take(&mut inventory.material_preparation)
+                .materials
+                .into_iter()
+                .map(|entry| ("material_preparation".to_string(), 0, 0, entry.item)),
+        );
         for container in &mut inventory.containers {
             let container_id = container.id.clone();
             for placed in container.items.drain(..) {
@@ -1556,6 +1567,7 @@ pub fn instantiate_inventory_from_loadout(
     }
 
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers,
@@ -4333,140 +4345,11 @@ pub fn consume_item_instance_once(
 /// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉原子扣料的缺料清单条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForgeMaterialDeficit {
-    /// 材料名——与调用方传入 `consume_forge_materials_atomic` 的 material 字符串一致
+    /// 材料名——与锻造暂存区按 `material_key` 归并的名称一致
     /// （矿物 canonical name，如 `"fan_tie"`，或非矿物锻造用料 template_id，如 `"ling_mu_gun"`）。
     pub material: String,
     pub have: u32,
     pub need: u32,
-}
-
-/// 一件 item 是否算作某 forge 材料——按 `mineral_id == Some(material)`（矿物）或
-/// `template_id == material`（非矿物锻造用料，如 spirit wood 系）匹配，二者任一命中即可。
-fn item_matches_forge_material(item: &ItemInstance, material: &str) -> bool {
-    item.mineral_id.as_deref() == Some(material) || item.template_id == material
-}
-
-/// 服务端按 forge 材料名统计玩家 inventory 内某材料的总数（containers + hotbar；
-/// 不含 equipped —— 装备中的东西不该被当材料吃掉，与 `count_template_in_inventory` 同规则）。
-fn count_forge_material_in_inventory(inventory: &PlayerInventory, material: &str) -> u32 {
-    let from_containers: u32 = inventory
-        .containers
-        .iter()
-        .flat_map(|c: &ContainerState| c.items.iter())
-        .filter(|p| item_matches_forge_material(&p.instance, material))
-        .map(|p| p.instance.stack_count)
-        .sum();
-    let from_hotbar: u32 = inventory
-        .hotbar
-        .iter()
-        .filter_map(|s| s.as_ref())
-        .filter(|i: &&ItemInstance| item_matches_forge_material(i, material))
-        .map(|i| i.stack_count)
-        .sum();
-    from_containers + from_hotbar
-}
-
-/// plan-forge-session-entry-wiring-v1 §4.1#4（CRUX）—— 起炉原子扣料。
-///
-/// 与最终受理判定同层调用（`handle_start_forge_requests` 建会话前）：先对全部
-/// `(material, count)` 做只读盘点，任一材料背包持有量不足 → **整体零改动**，返回
-/// `Err(缺料清单)`（调用方据此拒绝起炉、不建会话、发 reject 回执）；全部足量才真正
-/// 扣除（containers 优先，hotbar 兜底，与 `consume_materials_from_inventory` 同扣除
-/// 顺序），扣除后 `bump_revision` 一次。
-///
-/// 这同时封堵了「引擎只记账 `committed_materials`、从不核验玩家是否真持有 `req.materials`
-/// 声明」的 anti-cheat 漏洞——任何拒绝路径（含 Waste billet，调用方在那之前就已
-/// `continue`，根本不会调用本函数）都不吞料。
-pub fn consume_forge_materials_atomic(
-    inventory: &mut PlayerInventory,
-    materials: &[(String, u32)],
-) -> Result<(), Vec<ForgeMaterialDeficit>> {
-    // 同一材料在 materials 中可能出现多次（调用方一般已 dedupe，但这里独立防御）。
-    let mut needed: Vec<(String, u32)> = Vec::new();
-    for (material, count) in materials {
-        if let Some(entry) = needed.iter_mut().find(|(m, _)| m == material) {
-            entry.1 += count;
-        } else {
-            needed.push((material.clone(), *count));
-        }
-    }
-
-    // 阶段一：只读盘点，任一不足则整体不改动。
-    let mut deficits = Vec::new();
-    for (material, need) in &needed {
-        let have = count_forge_material_in_inventory(inventory, material);
-        if have < *need {
-            deficits.push(ForgeMaterialDeficit {
-                material: material.clone(),
-                have,
-                need: *need,
-            });
-        }
-    }
-    if !deficits.is_empty() {
-        return Err(deficits);
-    }
-
-    // 阶段二：全部足量，真正扣除。
-    let mut consumed_any = false;
-    for (material, need) in &needed {
-        let mut remaining = *need;
-        if remaining == 0 {
-            continue;
-        }
-        'containers: for container in inventory.containers.iter_mut() {
-            let mut i = 0;
-            while i < container.items.len() {
-                if item_matches_forge_material(&container.items[i].instance, material) {
-                    let take = remaining.min(container.items[i].instance.stack_count);
-                    container.items[i].instance.stack_count -= take;
-                    remaining -= take;
-                    consumed_any |= take > 0;
-                    if container.items[i].instance.stack_count == 0 {
-                        container.items.remove(i);
-                        continue;
-                    }
-                }
-                i += 1;
-                if remaining == 0 {
-                    break 'containers;
-                }
-            }
-        }
-        if remaining > 0 {
-            for slot in inventory.hotbar.iter_mut() {
-                if remaining == 0 {
-                    break;
-                }
-                let drop_slot = if let Some(item) = slot.as_mut() {
-                    if item_matches_forge_material(item, material) {
-                        let take = remaining.min(item.stack_count);
-                        item.stack_count -= take;
-                        remaining -= take;
-                        consumed_any |= take > 0;
-                        item.stack_count == 0
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                if drop_slot {
-                    *slot = None;
-                }
-            }
-        }
-        debug_assert_eq!(
-            remaining, 0,
-            "consume_forge_materials_atomic: 缺料盘点已通过但 `{material}` 实扣仍缺 {remaining}\
-             （count_forge_material_in_inventory 与实扣逻辑的匹配规则失步）"
-        );
-    }
-
-    if consumed_any {
-        bump_revision(inventory);
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4643,6 +4526,13 @@ pub fn apply_death_drop_to_inventory(
         .collect::<HashSet<_>>();
 
     let mut candidate_ids = Vec::new();
+    candidate_ids.extend(
+        inventory
+            .material_preparation
+            .materials
+            .iter()
+            .map(|entry| entry.item.instance_id),
+    );
     for container in &inventory.containers {
         for placed in &container.items {
             candidate_ids.push(placed.instance.instance_id);
@@ -4674,6 +4564,19 @@ pub fn apply_death_drop_to_inventory(
     let selected: HashSet<u64> = selected_ids.into_iter().collect();
 
     let mut dropped = Vec::new();
+    inventory.material_preparation.materials.retain(|entry| {
+        if !selected.contains(&entry.item.instance_id) {
+            return true;
+        }
+        dropped.push(DroppedItemRecord {
+            container_id: "material_preparation".into(),
+            row: 0,
+            col: 0,
+            instance: entry.item.clone(),
+        });
+        false
+    });
+    inventory.material_preparation.clear_empty_recipe();
     for container in &mut inventory.containers {
         let container_id = container.id.clone();
         let mut kept = Vec::with_capacity(container.items.len());
@@ -4760,6 +4663,12 @@ pub fn transfer_all_inventory_contents(
     registry: &ItemRegistry,
 ) -> FullInventoryTransferOutcome {
     let mut items = Vec::new();
+    items.extend(
+        std::mem::take(&mut from.material_preparation)
+            .materials
+            .into_iter()
+            .map(|entry| entry.item),
+    );
     for container in &mut from.containers {
         items.extend(container.items.drain(..).map(|placed| placed.instance));
     }
@@ -4846,12 +4755,19 @@ pub(crate) fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, it
 }
 
 pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
-    let container_weight = inventory
-        .containers
+    let prepared_weight = inventory
+        .material_preparation
+        .materials
         .iter()
-        .flat_map(|container| container.items.iter())
-        .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
+        .map(|entry| entry.item.weight * f64::from(entry.item.stack_count))
         .sum::<f64>();
+    let container_weight = prepared_weight
+        + inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
+            .sum::<f64>();
     // plan-layered-equip-v1 P3 公式7：遍历每槽 worn 全件 + held（含手持武器、含背包件自重）。
     let equipped_weight = inventory
         .equipped
@@ -5653,7 +5569,7 @@ fn displaced_at_target(
 
 /// Validate that {item} would fit at {location} given the current state of the
 /// inventory (assumes both swap participants have been detached).
-fn validate_attach_fits(
+pub(crate) fn validate_attach_fits(
     inventory: &PlayerInventory,
     item: &ItemInstance,
     location: &crate::schema::inventory::InventoryLocationV1,
@@ -6300,7 +6216,7 @@ fn detach_instance(inventory: &mut PlayerInventory, instance_id: u64) {
     }
 }
 
-fn attach_at_location(
+pub(crate) fn attach_at_location(
     inventory: &mut PlayerInventory,
     item: ItemInstance,
     location: &crate::schema::inventory::InventoryLocationV1,

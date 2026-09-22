@@ -460,6 +460,7 @@ mod server_data_tests {
 
     fn sample_inventory_snapshot() -> InventorySnapshotV1 {
         InventorySnapshotV1 {
+            material_preparation: Default::default(),
             revision: 12,
             containers: vec![
                 ContainerSnapshotV1 {

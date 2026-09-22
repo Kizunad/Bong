@@ -82,6 +82,48 @@ pub fn send_station_snapshot_to_player(
     send_server_data_payload(client, bytes.as_slice());
 }
 
+/// 工位右键授权回执。先同步会话和图谱，最后打开窗口；空工位必须清掉旧会话。
+pub fn send_forge_open_to_player(
+    client: &mut Client,
+    station: &WeaponForgeStation,
+    owner_name: &str,
+    session: Option<&ForgeSession>,
+    learned: &LearnedBlueprints,
+    registry: &BlueprintRegistry,
+) {
+    let session_data = match session {
+        Some(session) => {
+            let blueprint = registry.get(&session.blueprint);
+            build_session_data(
+                session,
+                blueprint.map_or("", |value| value.name.as_str()),
+                blueprint,
+            )
+        }
+        None => ForgeSessionDataV1 {
+            session_id: 0,
+            blueprint_id: String::new(),
+            blueprint_name: String::new(),
+            active: false,
+            current_step: ForgeStepV1::Done,
+            step_index: 0,
+            achieved_tier: 0,
+            step_state: ForgeStepStateDataV1::None,
+        },
+    };
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeSession(Box::new(session_data)));
+    if let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) {
+        send_server_data_payload(client, &bytes);
+    }
+    send_blueprint_book_to_player(client, learned, registry);
+    let mut data = build_station_data(station, owner_name);
+    data.open_screen = true;
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeStation(Box::new(data)));
+    if let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) {
+        send_server_data_payload(client, &bytes);
+    }
+}
+
 /// P2 — 单独推 session 快照（不附带 station/blueprint book），供淬炼击键 / 铭文 / 开光
 /// 等单步交互事件后回推实时进度，避免每次交互都重发完整三件套。
 pub fn send_session_snapshot_to_player(
@@ -297,6 +339,7 @@ fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponF
         integrity: station.integrity,
         owner_name: owner_name.to_string(),
         has_session: station.session.is_some(),
+        open_screen: false,
         // plan-forge-session-entry-wiring-v1 §4.1#3 — 正常放砧路径 pos 恒 Some
         // （station::handle_place_station_request 经 `WeaponForgeStation::placed` 构造）；
         // 无 pos 只可能出现在测试 fixture，defensive 落 (0,0,0)。
@@ -395,6 +438,35 @@ fn build_blueprint_book(
                 display_name: bp.name.clone(),
                 tier_cap: bp.tier_cap,
                 step_count: bp.steps.len() as u32,
+                output_item: bp
+                    .outcomes
+                    .perfect
+                    .as_ref()
+                    .or(bp.outcomes.good.as_ref())
+                    .map(|value| value.weapon.clone())
+                    .unwrap_or_default(),
+                steps: bp
+                    .steps
+                    .iter()
+                    .map(|step| forge_step_to_v1(ForgeStep::from_kind(step.kind())))
+                    .collect(),
+                required_materials: bp
+                    .steps
+                    .iter()
+                    .find_map(|step| match step {
+                        StepSpec::Billet { profile } => Some(
+                            profile
+                                .required
+                                .iter()
+                                .map(|item| crate::schema::forge::ForgeMaterialRequirementV1 {
+                                    material: item.material.clone(),
+                                    count: item.count,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect();

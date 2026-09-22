@@ -14,7 +14,7 @@
       "gui_scale": 2,
       "expected_logical_width": 320,
       "expected_logical_height": 240,
-      "expected_template_id": "craft-compact"
+      "expected_template_id": "craft-window"
     },
     {
       "name": "craft-odd",
@@ -24,7 +24,7 @@
       "gui_scale": 2,
       "expected_logical_width": 401,
       "expected_logical_height": 241,
-      "expected_template_id": "craft-compact"
+      "expected_template_id": "craft-window"
     },
     {
       "name": "craft-wide",
@@ -34,7 +34,7 @@
       "gui_scale": 2,
       "expected_logical_width": 683,
       "expected_logical_height": 384,
-      "expected_template_id": "craft"
+      "expected_template_id": "craft-window"
     },
     {
       "name": "terminate-minimum",

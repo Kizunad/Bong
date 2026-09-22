@@ -2,6 +2,7 @@ package com.bong.client.input;
 
 import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.craft.WorkbenchInteractIntentHandler;
+import com.bong.client.forge.ForgeStationInteractIntentHandler;
 import com.bong.client.inventory.DeadDropInteractIntentHandler;
 import com.bong.client.inventory.DroppedItemPickupIntentHandler;
 import com.bong.client.inventory.RemainsLootIntentHandler;
@@ -23,6 +24,7 @@ public final class DefaultInteractionHandlers {
         router.register(new StorageCrateInteractIntentHandler());
         router.register(new DeadDropInteractIntentHandler());
         router.register(new WorkbenchInteractIntentHandler());
+        router.register(new ForgeStationInteractIntentHandler());
         router.register(new CoffinEnterIntentHandler());
         router.register(new TradeOfferIntentHandler());
         router.register(new DroppedItemPickupIntentHandler());

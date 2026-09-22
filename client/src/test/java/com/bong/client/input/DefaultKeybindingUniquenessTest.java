@@ -39,8 +39,6 @@ class DefaultKeybindingUniquenessTest {
         CLIENT_SOURCES.resolve("identity/IdentityPanelScreenBootstrap.java");
     private static final Path VOID_ACTION_BOOTSTRAP =
         CLIENT_SOURCES.resolve("cultivation/voidaction/VoidActionScreenBootstrap.java");
-    private static final Path FORGE_BOOTSTRAP =
-        CLIENT_SOURCES.resolve("forge/ForgeScreenBootstrap.java");
     private static final Path EXTRACT_BOOTSTRAP =
         CLIENT_SOURCES.resolve("tsy/ExtractInteractionBootstrap.java");
     private static final Path KEYBIND_REGISTRY =
@@ -119,8 +117,6 @@ class DefaultKeybindingUniquenessTest {
         );
         assertHasDefault(bindings,
             "cultivation/voidaction/VoidActionScreenBootstrap.java:void_action.open_screen", "UNKNOWN");
-        assertHasDefault(bindings,
-            "forge/ForgeScreenBootstrap.java:forge.open_screen", "UNKNOWN");
 
         String identity = codeOnly(read(IDENTITY_BOOTSTRAP));
         assertTrue(identity.contains("client.setScreen(create());"),
@@ -133,9 +129,6 @@ class DefaultKeybindingUniquenessTest {
             "撤离取消必须只在 extracting 状态消费 U 的 wasPressed 队列");
         assertTrue(extract.contains("ClientRequestSender.sendCancelExtract();"),
             "U 的唯一默认 owner 必须仍发送取消撤离请求");
-        assertTrue(compact(codeOnly(read(FORGE_BOOTSTRAP)))
-                .contains("InputUtil.UNKNOWN_KEY.getCode()"),
-            "Forge 必须默认 UNKNOWN，不能在撤离期间抢占 U");
     }
 
     @Test

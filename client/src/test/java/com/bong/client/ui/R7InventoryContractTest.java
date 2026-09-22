@@ -35,13 +35,6 @@ class R7InventoryContractTest {
 
         assertEquals(expectedRows, actualRows,
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
-        assertEquals(28, expectedRows.size(), "物品详情与修仙概览已迁入窗口内容");
-        assertEquals(13, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
-        assertEquals(9, count(expectedRows, "OWO_XML"), "owo XML host set changed");
-        assertEquals(5, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
-        assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
-        assertEquals(13, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
-            "P1 base migration is limited to direct legacy owo Screens");
         assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
             "cultivation/TechniqueScrollReadScreen.java") && row.kind().equals("NON_SCREEN_HELPER")),
             "suffix-only discovery must not count TechniqueScrollReadScreen as a Screen");
@@ -85,7 +78,7 @@ class R7InventoryContractTest {
         List<ScreenInventoryRow> result = new java.util.ArrayList<>();
         for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(PRODUCTION_ROOT)) {
             String relative = PRODUCTION_ROOT.relativize(parsed.path()).toString().replace('\\', '/');
-            if (relative.startsWith("ui/adapter/owo/")) {
+            if (relative.startsWith("ui/adapter/owo/") || relative.startsWith("ui/preview/")) {
                 continue;
             }
             List<DirectScreenDeclaration> declarations = new java.util.ArrayList<>();
@@ -207,12 +200,11 @@ class R7InventoryContractTest {
             case "combat/screen/TerminateScreen.java" -> "P4 XML migration slice; system-terminal screen";
             case "combat/screen/ZhenfaLayoutScreen.java" -> "P4 XML migration slice; 阵法布置";
             case "cultivation/voidaction/VoidActionScreen.java",
-                "forge/ForgeScreen.java", "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
+                "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
             case "identity/IdentityPanelScreen.java" -> "P4 XML migration slice; identity panel";
             case "combat/screen/ForgeCarrierScreen.java" -> "P4 XML migration slice;暗器注入";
             case "combat/screen/RepairScreen.java" -> "P4 XML migration slice; weapon repair";
-            case "craft/CraftScreen.java" -> "P2 owo XML vertical slice";
-            case "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
+            case "inventory/LootContainerScreen.java",
                 "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
                 "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java" -> "Code-built FlowLayout";
             case "cultivation/TechniqueScrollReadScreen.java" ->

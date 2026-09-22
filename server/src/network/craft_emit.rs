@@ -417,13 +417,9 @@ pub fn apply_craft_cancel_intents(
         let Ok((mut inventory, existing)) = casters.get_mut(intent.caster) else {
             continue;
         };
-        let Some(session) = existing else {
-            tracing::debug!(
-                "[bong][craft] cancel intent on caster {:?} without session — noop",
-                intent.caster
-            );
+        if inventory.material_preparation.station_pos.is_some() {
             continue;
-        };
+        }
         if !processed_cancel_casters.insert(intent.caster) {
             tracing::debug!(
                 "[bong][craft] duplicate cancel intent on caster {:?} in same frame — noop",
@@ -431,6 +427,48 @@ pub fn apply_craft_cancel_intents(
             );
             continue;
         }
+        let Some(session) = existing else {
+            let mut staged = inventory.clone();
+            let ground = refund_ground_context(player_contexts.get(intent.caster).ok());
+            let drops = crate::craft::preparation::return_materials(
+                &mut staged,
+                &item_registry,
+                None,
+                ground.pos,
+                ground.dimension,
+            )
+            .expect("返还全部暂存材料无需指定实例");
+            if !drops.is_empty() && dropped_loot.is_none() {
+                continue;
+            }
+            if let Some(persistence) = persistence.as_deref() {
+                let Ok(username) = names.get(intent.caster) else {
+                    continue;
+                };
+                if let Err(error) = save_player_craft_checkpoint(
+                    persistence,
+                    username.0.as_str(),
+                    Some(&staged),
+                    None,
+                    None,
+                    None,
+                    &drops,
+                ) {
+                    tracing::error!("[bong][craft] preparation return persistence failed: {error}");
+                    continue;
+                }
+            }
+            *inventory = staged;
+            if let Some(dropped) = dropped_loot.as_deref_mut() {
+                dropped
+                    .entries
+                    .extend(drops.into_iter().map(|entry| (entry.instance_id, entry)));
+            }
+            commands
+                .entity(intent.caster)
+                .insert(CraftSessionStateDirty);
+            continue;
+        };
         let Some(recipe) = registry.get(&session.recipe_id) else {
             tracing::warn!(
                 "[bong][craft] cancel intent recipe `{}` missing — preserving session",
@@ -454,6 +492,24 @@ pub fn apply_craft_cancel_intents(
         let mut staged_allocator = allocator.clone();
         let mut staged_dropped_loot = dropped_loot.as_deref().cloned();
         let ground_target = refund_ground_context(player_contexts.get(intent.caster).ok());
+        let prepared_drops = crate::craft::preparation::return_materials(
+            &mut staged_inventory,
+            &item_registry,
+            None,
+            ground_target.pos,
+            ground_target.dimension,
+        )
+        .expect("返还全部暂存材料无需指定实例");
+        if !prepared_drops.is_empty() && staged_dropped_loot.is_none() {
+            continue;
+        }
+        if let Some(dropped) = staged_dropped_loot.as_mut() {
+            dropped.entries.extend(
+                prepared_drops
+                    .into_iter()
+                    .map(|entry| (entry.instance_id, entry)),
+            );
+        }
         let refund_summary = grant_refund_manifest_to_inventory_or_ground(
             &mut staged_inventory,
             &item_registry,

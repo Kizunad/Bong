@@ -1832,6 +1832,7 @@ fn inventory_with_huiyuan_pills(pills: &[(u64, u32)]) -> PlayerInventory {
         hotbar,
         bone_coins: 0,
         max_weight: 100.0,
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
     }
 }

@@ -26,6 +26,7 @@ fn make_test_inventory_with_one_item() -> PlayerInventory {
         lingering_owner_qi: None,
     };
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(7),
         containers: vec![
@@ -368,26 +369,6 @@ fn item_effect_new_consumable_variants_reject_invalid_json_shape() {
             !error.to_string().is_empty(),
             "expected serde error for invalid new item effect JSON, json={json}"
         );
-    }
-}
-
-fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
-    PlayerInventory {
-        triggered_treasures: Vec::new(),
-        revision: InventoryRevision(0),
-        containers: vec![ContainerState {
-            quick_access: false,
-            id: MAIN_PACK_CONTAINER_ID.to_string(),
-            name: "主背包".to_string(),
-            rows,
-            cols,
-            items: Vec::new(),
-            owner_instance_id: None,
-        }],
-        equipped: HashMap::new(),
-        hotbar: Default::default(),
-        bone_coins: 0,
-        max_weight: 99.0,
     }
 }
 
@@ -3491,258 +3472,6 @@ fn consume_item_instance_once_removes_last_stack_and_bumps_revision() {
     assert!(inv.containers[0].items.is_empty());
 }
 
-// ── plan-forge-session-entry-wiring-v1 §4.1#4 — consume_forge_materials_atomic ──
-
-fn mineral_item(instance_id: u64, mineral_id: &str, stack_count: u32) -> ItemInstance {
-    let mut item = make_test_item_instance(instance_id, &format!("mineral_{mineral_id}"));
-    item.mineral_id = Some(mineral_id.to_string());
-    item.stack_count = stack_count;
-    item
-}
-
-fn item_material_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
-    let mut item = make_test_item_instance(instance_id, template_id);
-    item.stack_count = stack_count;
-    item
-}
-
-#[test]
-fn consume_forge_materials_atomic_happy_path_deducts_by_mineral_id_and_bumps_revision() {
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 5),
-    });
-
-    let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
-
-    assert!(
-        out.is_ok(),
-        "期望持有 5 扣 4 成功，实际 Err={:?}",
-        out.err()
-    );
-    assert_eq!(
-        inv.containers[0].items[0].instance.stack_count, 1,
-        "扣除 4 后 fan_tie 栈应剩 1"
-    );
-    assert_eq!(
-        inv.revision,
-        InventoryRevision(1),
-        "扣料应 bump_revision 恰好一次"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_matches_by_template_id_for_non_mineral_materials() {
-    // ling_mu_gun 是 blueprint::is_allowed_item_material 白名单里的非矿物锻造用料，
-    // 匹配键是 template_id 而非 mineral_id（对应物品本身没有 mineral_id）。
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: item_material_item(1, "ling_mu_gun", 2),
-    });
-
-    let out = consume_forge_materials_atomic(&mut inv, &[("ling_mu_gun".to_string(), 2)]);
-
-    assert!(out.is_ok(), "期望按 template_id 精确匹配并扣光");
-    assert!(
-        inv.containers[0].items.is_empty(),
-        "扣光后栈应被移除，而非留 0 计数条目"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_spans_multiple_stacks_containers_then_hotbar() {
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 2),
-    });
-    inv.hotbar[0] = Some(mineral_item(2, "fan_tie", 3));
-
-    let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
-
-    assert!(out.is_ok(), "跨 container+hotbar 累加应足量 2+3=5 >= 4");
-    assert!(
-        inv.containers[0].items.is_empty(),
-        "container 栈应先被吃光（container 优先于 hotbar）"
-    );
-    assert_eq!(
-        inv.hotbar[0].as_ref().map(|i| i.stack_count),
-        Some(1),
-        "hotbar 兜底吃剩余 2 个，应剩 3-2=1"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_insufficient_leaves_inventory_untouched() {
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 2),
-    });
-    let before_json = serde_json::to_string(&inv).unwrap();
-
-    let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)])
-        .expect_err("持有 2 < 需求 4 应该拒绝");
-
-    assert_eq!(
-        err,
-        vec![ForgeMaterialDeficit {
-            material: "fan_tie".to_string(),
-            have: 2,
-            need: 4,
-        }]
-    );
-    assert_eq!(
-        serde_json::to_string(&inv).unwrap(),
-        before_json,
-        "拒绝路径必须整体零改动（含 revision 不变），不能吞料"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_partial_shortage_leaves_sufficient_material_untouched_too() {
-    // 原子性核心断言：即便第一个材料 fan_tie 足量，只要第二个材料 za_gang 不足，
-    // 整批（含已足量的 fan_tie）都不得被扣——否则引擎下一拍拒绝时吞掉 fan_tie。
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 4),
-    });
-    inv.containers[0].items.push(PlacedItemState {
-        row: 1,
-        col: 0,
-        instance: mineral_item(2, "za_gang", 0),
-    });
-    let before_json = serde_json::to_string(&inv).unwrap();
-
-    let err = consume_forge_materials_atomic(
-        &mut inv,
-        &[("fan_tie".to_string(), 4), ("za_gang".to_string(), 1)],
-    )
-    .expect_err("za_gang 持有 0 < 需求 1 应该整体拒绝");
-
-    assert_eq!(
-        err,
-        vec![ForgeMaterialDeficit {
-            material: "za_gang".to_string(),
-            have: 0,
-            need: 1,
-        }]
-    );
-    assert_eq!(
-        serde_json::to_string(&inv).unwrap(),
-        before_json,
-        "fan_tie 已足量也不得被单独扣除——必须与 za_gang 同批要么全扣要么全不扣"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_ignores_equipped_items() {
-    // equipped 槽里的东西不该被当材料吃掉：即使 held 位塞了一把 mineral_id=fan_tie
-    // 的道具，也不计入持有量、更不会被扣除。
-    let mut inv = empty_inventory(5, 7);
-    inv.equipped.insert(
-        EQUIP_SLOT_MAIN_HAND.to_string(),
-        SlotContents::held_single(mineral_item(9, "fan_tie", 5)),
-    );
-
-    let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 1)])
-        .expect_err("equipped 持有量不算数，应视为 have=0 拒绝");
-
-    assert_eq!(
-        err,
-        vec![ForgeMaterialDeficit {
-            material: "fan_tie".to_string(),
-            have: 0,
-            need: 1,
-        }]
-    );
-    assert_eq!(
-        inv.equipped[EQUIP_SLOT_MAIN_HAND]
-            .held
-            .as_ref()
-            .unwrap()
-            .stack_count,
-        5,
-        "equipped 物品不应被扣除"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_zero_count_is_noop() {
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 5),
-    });
-
-    let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 0)]);
-
-    assert!(out.is_ok(), "count=0 不应被判定为缺料");
-    assert_eq!(inv.containers[0].items[0].instance.stack_count, 5);
-    assert_eq!(
-        inv.revision,
-        InventoryRevision(0),
-        "count=0 不产生任何实际扣除，不应 bump_revision"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_empty_materials_is_noop() {
-    let mut inv = empty_inventory(5, 7);
-    let before_json = serde_json::to_string(&inv).unwrap();
-
-    let out = consume_forge_materials_atomic(&mut inv, &[]);
-
-    assert!(out.is_ok(), "空 materials 列表应视为 vacuously 满足");
-    assert_eq!(serde_json::to_string(&inv).unwrap(), before_json);
-}
-
-#[test]
-fn consume_forge_materials_atomic_dedupes_repeated_material_entries() {
-    // materials 里同一材料出现两次（例如 client 端未合并），应按总量核对+扣除。
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 5),
-    });
-
-    let out = consume_forge_materials_atomic(
-        &mut inv,
-        &[("fan_tie".to_string(), 2), ("fan_tie".to_string(), 3)],
-    );
-
-    assert!(out.is_ok(), "2+3=5 应与持有量 5 恰好相抵");
-    assert!(
-        inv.containers[0].items.is_empty(),
-        "去重累加后总需求=5，应扣光整栈"
-    );
-}
-
-#[test]
-fn consume_forge_materials_atomic_exact_have_equals_need_boundary() {
-    let mut inv = empty_inventory(5, 7);
-    inv.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: mineral_item(1, "fan_tie", 3),
-    });
-
-    let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 3)]);
-
-    assert!(out.is_ok(), "have==need 边界应视为足量而非不足");
-    assert!(inv.containers[0].items.is_empty());
-}
-
 #[test]
 fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
     let mut left = make_test_inventory_with_one_item();
@@ -5561,6 +5290,7 @@ fn make_test_item_instance(instance_id: u64, template_id: &str) -> ItemInstance 
 
 fn make_empty_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: Vec::new(),
@@ -7838,6 +7568,7 @@ fn make_backpack_registry_and_inventory() -> (ItemRegistry, PlayerInventory) {
         ("chest_bag".to_string(), cs_template),
     ]));
     let inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
@@ -11827,6 +11558,7 @@ mod morph_release_equip_gate {
             None => Vec::new(),
         };
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers,
@@ -12037,6 +11769,7 @@ mod morph_release_equip_gate {
             None => Vec::new(),
         };
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers,
@@ -12166,6 +11899,7 @@ mod morph_release_equip_gate {
             },
         );
         let mut inventory = PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![

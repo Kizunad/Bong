@@ -401,6 +401,7 @@ fn make_coffin_item_registry() -> ItemRegistry {
 /// 构造一个含 main_pack（4×4 格，宽松容量）的空背包组件。
 fn empty_player_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
@@ -772,6 +773,7 @@ fn grant_reclaim_drops_to_full_inventory_returns_false_and_does_not_panic() {
 
     // 构造一个只有 1 格的背包，然后填满它（stack 上限 64）。
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
@@ -913,6 +915,7 @@ fn ecs_coffin_reclaim_full_inventory_sends_chat_message_and_removes_coffin() {
     let item_registry = make_coffin_item_registry();
     let mut allocator = InventoryInstanceIdAllocator::default();
     let mut full_inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {

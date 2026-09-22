@@ -858,6 +858,7 @@ mod tests {
 
     fn inventory_with_jie_gu_rui(instance_id: u64) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(5),
             containers: vec![ContainerState {

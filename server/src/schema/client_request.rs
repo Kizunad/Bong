@@ -658,6 +658,10 @@ pub enum ClientRequestV1 {
         blueprint_id: String,
     },
     /// plan §1.2 — 玩家手持砧类物品，客户端拦截右键放砧方块。
+    ForgeStationOpen {
+        v: u8,
+        station_pos: (i32, i32, i32),
+    },
     ForgeStationPlace {
         v: u8,
         x: i32,
@@ -681,6 +685,15 @@ pub enum ClientRequestV1 {
     /// plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session，70% 材料返还，qi 不退。
     CraftCancel {
         v: u8,
+    },
+    /// 将具体实例移入或取回制作材料区。revision 拒绝重复和过期拖放。
+    MaterialMove {
+        v: u8,
+        recipe_id: String,
+        instance_id: Option<u64>,
+        station_pos: Option<(i32, i32, i32)>,
+        returning: bool,
+        expected_revision: u64,
     },
     /// plan-dying-elder-v1 P1 — 玩家向垂死大能交付一颗回元丹。
     ///
@@ -881,7 +894,8 @@ impl ClientRequestV1 {
             Self::ForgeBlueprintTurnPage { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeLearnBlueprint { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeStationPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::CraftStart { .. } => RequestGate::Spec(GateSpec {
+            Self::ForgeStationOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CraftStart { .. } | Self::MaterialMove { .. } => RequestGate::Spec(GateSpec {
                 target: GateTarget::None,
                 distance: DistanceRule::None,
                 dimension: DimensionRule::Same,

@@ -58,6 +58,7 @@ fn make_inventory_with_hoe(kind: HoeKind, durability: f64) -> PlayerInventory {
         crate::inventory::SlotContents::held_single(make_hoe_instance(kind, durability)),
     );
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![],
@@ -464,6 +465,7 @@ fn till_rejected_when_not_holding_hoe() {
     let player = spawn_test_player(
         &mut app,
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![],
@@ -538,6 +540,7 @@ fn equipped_main_hand_hoe_returns_none_for_non_hoe() {
         }),
     );
     let inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![],
@@ -1010,6 +1013,7 @@ fn make_inventory_with_seed(template_id: &str, stack: u32) -> PlayerInventory {
         owner_instance_id: None,
     };
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![container],
@@ -1354,6 +1358,7 @@ fn empty_inventory_8x8() -> PlayerInventory {
         owner_instance_id: None,
     };
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![main_pack],

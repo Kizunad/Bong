@@ -31,6 +31,17 @@ import com.bong.client.ui.adapter.owo.WindowMotion;
 import com.bong.client.ui.adapter.owo.WorkspaceBackgrounds;
 import com.bong.client.ui.adapter.owo.WorkspaceControls;
 import com.bong.client.ui.state.StoreUiStateSource;
+import com.bong.client.craft.CraftContext;
+import com.bong.client.craft.CraftWindows;
+import com.bong.client.craft.CraftWindowContent;
+import com.bong.client.craft.CraftUiStateSource;
+import com.bong.client.craft.CraftClientIntentSink;
+import com.bong.client.craft.CraftScreenBootstrap;
+import com.bong.client.forge.ForgeWindows;
+import com.bong.client.forge.ForgeViewModel;
+import com.bong.client.forge.ForgeWindowContent;
+import com.bong.client.forge.ForgeClientIntentSink;
+import com.bong.client.forge.ForgeScreenBootstrap;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
@@ -59,6 +70,11 @@ public final class UiWindowRuntime {
     private static final InventoryContainerWindows CONTAINERS = new InventoryContainerWindows(
         MANAGER, StoreUiStateSource.pullOnOpen(InventoryStateStore::snapshot));
     private static final Map<UiWindowManager.WindowKey, View> VIEWS = new LinkedHashMap<>();
+    private static final CraftWindows CRAFT = new CraftWindows(MANAGER, CraftUiStateSource.production(),
+        CraftClientIntentSink.production(), task -> MinecraftClient.getInstance().execute(task), CraftScreenBootstrap::available);
+    private static final ForgeWindows FORGE = new ForgeWindows(MANAGER,
+        StoreUiStateSource.pullOnOpen(ForgeViewModel::snapshot), new ForgeClientIntentSink(),
+        ForgeScreenBootstrap::available, System::currentTimeMillis);
     private static boolean initialized;
     private static Object connection;
     private static Object world;
@@ -103,8 +119,13 @@ public final class UiWindowRuntime {
             CONTAINERS.refresh();
             if (loadout != null) loadout.refresh();
             SKILL_CONFIGS.refresh();
+            FORGE.refresh();
+            FORGE.tickInjection(client.currentScreen instanceof InspectScreen && client.isWindowFocused()
+                && focusedKey != null && focusedKey.windowType().equals(ForgeWindows.DEFINITION.windowType()));
             if (practice != null) practice.refresh();
             for (var view : List.copyOf(VIEWS.values())) {
+                if (view.craft != null) view.craft.tick();
+                if (view.forge != null) view.forge.tick();
                 if (view.practiceDetail != null) view.practiceDetail.refresh();
                 if (view.practiceBinding != null) view.practiceBinding.refresh();
                 if (view.practiceCompare != null) view.practiceCompare.refresh();
@@ -307,6 +328,31 @@ public final class UiWindowRuntime {
         openPracticeWindow(PracticeWindows.CATALOG, "player", 410, 350);
     }
 
+    public static void openCraft(CraftContext context) {
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        cancelInput();
+        var key = MANAGER.key(CraftWindows.DEFINITION.windowType(), "player");
+        boolean existing = MANAGER.contains(key);
+        var preference = preferences.window(key.windowType());
+        var state = CRAFT.open(context, preference == null
+            ? new UiWindowManager.Rect(30, 24, 650, 390) : preference.bounds());
+        if (!existing && preference != null) MANAGER.pin(key, preference.pinned());
+        focusedKey = state.key();
+        view(state);
+    }
+
+    public static void openForge(net.minecraft.util.math.BlockPos position) {
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        cancelInput();
+        var preference = preferences.window(ForgeWindows.DEFINITION.windowType());
+        var state = FORGE.open(position, preference == null
+            ? new UiWindowManager.Rect(40, 28, 640, 390) : preference.bounds());
+        focusedKey = state.key();
+        view(state);
+    }
+
     public static void searchPractice(String query) {
         openPractice();
         practice().query(query);
@@ -474,6 +520,8 @@ public final class UiWindowRuntime {
             if (view.modelPreview != null) view.modelPreview.layout(view.adapter.content().width(), view.adapter.content().height());
             if (view.bodyModel != null) view.bodyModel.layout(view.adapter.content().width(), view.adapter.content().height());
             if (view.practice != null) view.practice.layout(view.adapter.content().width(), view.adapter.content().height());
+            if (view.craft != null) view.craft.layout(view.adapter.content().width(), view.adapter.content().height());
+            if (view.forge != null) view.forge.layout(view.adapter.content().width(), view.adapter.content().height());
             boolean hovered = state == top;
             context.getMatrices().push();
             try {
@@ -496,6 +544,8 @@ public final class UiWindowRuntime {
     }
 
     private static String windowTitle(UiWindowManager.WindowKey key) {
+        if (key.windowType().equals(ForgeWindows.DEFINITION.windowType())) return "锻造";
+        if (key.windowType().equals(CraftWindows.DEFINITION.windowType())) return CRAFT.context().title();
         var widget = HudWidgetWindows.widget(key);
         if (widget != null) return widget.title();
         if (key.windowType().equals(InventoryLoadoutWindows.EQUIPMENT.windowType())) return "装备";
@@ -547,7 +597,14 @@ public final class UiWindowRuntime {
                     } finally { context.disableScissor(); }
                 });
             } else if (state.definition().equals(InventoryContainerWindows.DEFINITION)) {
-                view.container = new InventoryContainerContent(adapter.content());
+                view.container = new InventoryContainerContent(adapter.content(), () -> {
+                    var inventory = InventoryStateStore.snapshot();
+                    if (inventory.preparationStation() != null && !inventory.preparedMaterials().isEmpty()) {
+                        new ForgeClientIntentSink().dispatch(new com.bong.client.forge.ForgeIntent.Material(
+                            inventory.preparationStation(), inventory.preparationRecipeId(), null, true,
+                            InventoryStateStore.revision()));
+                    }
+                });
             } else if (state.definition().equals(InventoryLoadoutWindows.EQUIPMENT)
                 || state.definition().equals(InventoryLoadoutWindows.SHORTCUTS)) {
                 view.loadout = loadout();
@@ -563,6 +620,15 @@ public final class UiWindowRuntime {
                 view.adapter.title(windowTitle(state.key()));
                 view.adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "config-body")
                     .child(content.component());
+            } else if (state.definition().equals(ForgeWindows.DEFINITION)) {
+                view.forge = new ForgeWindowContent(adapter.content(), FORGE, state,
+                    ForgeScreenBootstrap::openCarrier);
+                adapter.closeAction(() -> FORGE.close(state));
+                adapter.title("锻造");
+            } else if (state.definition().equals(CraftWindows.DEFINITION)) {
+                view.craft = new CraftWindowContent(adapter.content().childById(
+                    io.wispforest.owo.ui.container.FlowLayout.class, "craft-body"), CRAFT);
+                adapter.closeAction(() -> CRAFT.close(state));
             } else if (state.definition().equals(PracticeWindows.CATALOG)) {
                 view.practice = practice();
                 view.adapter.title("修习");
@@ -616,11 +682,13 @@ public final class UiWindowRuntime {
                     adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "body-inspect-content")
                         .removeChild(ownedView.bodyModel.component());
                 }
+                if (ownedView.forge != null) ownedView.forge.close();
                 adapter.close();
                 if (state.key().equals(focusedKey)) focusedKey = null;
             });
         }
         InventoryItem item = ITEMS.item(state.key());
+        if (view.craft != null) view.adapter.title(CRAFT.context().title());
         if (view.practice != null) view.practice.refresh();
         if (view.practiceDetail != null) view.practiceDetail.refresh();
         if (view.practiceBinding != null) view.practiceBinding.refresh();
@@ -654,6 +722,7 @@ public final class UiWindowRuntime {
         view.displayed = state.bounds();
         view.motion.target(state.bounds(), System.nanoTime(), false);
         var previous = VIEWS.get(focusedKey);
+        if (previous != view) FORGE.endInjection();
         if (previous != null && previous != view) previous.adapter.cancelInput();
         focusedKey = state.key();
         capturedButton = button;
@@ -678,6 +747,7 @@ public final class UiWindowRuntime {
     }
 
     public static boolean mouseUp(double x, double y, int button) {
+        if (button == 0) FORGE.endInjection();
         if (controlsCaptured) {
             controlsCaptured = false;
             controls.mouseUp(x, y, button);
@@ -710,6 +780,7 @@ public final class UiWindowRuntime {
     public static boolean keyPressed(int key, int scan, int mods) {
         if (key == GLFW.GLFW_KEY_ESCAPE && controls != null && controls.escape()) return true;
         var view = VIEWS.get(focusedKey);
+        if (view != null && view.forge != null && !view.adapter.textFocused() && view.forge.keyPressed(key)) return true;
         return view != null && view.adapter.keyPressed(key, scan, mods);
     }
 
@@ -738,6 +809,7 @@ public final class UiWindowRuntime {
             if (definition.equals(InventoryLoadoutWindows.EQUIPMENT)) bounds = new UiWindowManager.Rect(12, 30, 190, 256);
             else if (definition.equals(InventoryLoadoutWindows.SHORTCUTS)) bounds = new UiWindowManager.Rect(212, 30, 180, 194);
             else if (definition.equals(PracticeWindows.CATALOG)) bounds = new UiWindowManager.Rect(20, 24, 410, 350);
+            else if (definition.equals(CraftWindows.DEFINITION)) bounds = new UiWindowManager.Rect(30, 24, 650, 390);
             else if (definition.equals(PracticeWindows.DETAIL)) bounds = new UiWindowManager.Rect(100, 24, 290, 370);
             else if (definition.equals(PracticeWindows.BINDING)) bounds = new UiWindowManager.Rect(120, 36, 300, 320);
             else if (definition.equals(PracticeWindows.COMPARE)) bounds = new UiWindowManager.Rect(60, 24, 430, 350);
@@ -765,6 +837,7 @@ public final class UiWindowRuntime {
     }
 
     public static void cancelInput() {
+        FORGE.endInjection();
         var view = VIEWS.get(focusedKey);
         MANAGER.cancelCapture();
         controlsCaptured = false;
@@ -783,6 +856,23 @@ public final class UiWindowRuntime {
         var view = VIEWS.get(state.key());
         return view != null && view.container.gridAt(x, y)
             ? CONTAINERS.grid(state.key().identity()) : null;
+    }
+
+    public static boolean dropWorkstationMaterial(double x, double y, InventoryItem item) {
+        if (controls != null && controls.hit(x, y)) return false;
+        var state = windowAt(x, y);
+        if (state == null || item == null || item.isEmpty()) return false;
+        var view = VIEWS.get(state.key());
+        if (view == null) return false;
+        if (view.craft != null && view.craft.acceptsDrop(x, y, item.itemId())) {
+            view.craft.drop(item.instanceId());
+            return true;
+        }
+        if (view.forge != null && view.forge.acceptsDrop(x, y, item)) {
+            view.forge.drop(item);
+            return true;
+        }
+        return false;
     }
 
     public static void focusContainerAt(double x, double y) {
@@ -860,6 +950,8 @@ public final class UiWindowRuntime {
         private InventoryContainerContent container;
         private InventoryLoadoutWindows loadout;
         private PracticeCatalogContent practice;
+        private CraftWindowContent craft;
+        private ForgeWindowContent forge;
         private PracticeDetailContent practiceDetail;
         private PracticeBindingContent practiceBinding;
         private PracticeCompareContent practiceCompare;

@@ -28,6 +28,7 @@
 
 pub mod data;
 pub mod events;
+pub mod preparation;
 pub mod recipe;
 pub mod reclaim;
 pub mod registry;
@@ -161,6 +162,7 @@ pub fn register(app: &mut App) {
     app.add_event::<RecipeUnlockedEvent>();
     // P2 client → server intents（被 `network/craft_emit::{apply_craft_start_intents, apply_craft_cancel_intents}` 消费）
     app.add_event::<CraftStartIntent>();
+    app.add_event::<events::MaterialMoveIntent>();
     app.add_event::<CraftCancelIntent>();
     workbench::register(app);
     // P3 三渠道解锁 intent —— 由各 source plan emit，被

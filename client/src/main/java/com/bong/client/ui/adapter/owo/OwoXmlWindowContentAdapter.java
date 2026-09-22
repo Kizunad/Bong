@@ -99,6 +99,9 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
                 pin.tooltip(Text.literal(state.pinned() ? "取消 HUD 固定" : "固定到 HUD"));
                 preferencesChanged.run();
             });
+            if (state.definition().supports(com.bong.client.ui.window.UiWindowDefinition.Capability.STATION)) {
+                actions.removeChild(pin);
+            }
             adapter.rootComponent.childById(ButtonComponent.class, "window-size-toggle")
                 .renderer((context, button, delta) -> renderControlIcon(context, button, RESIZE_ICON, 0xFF454D46))
                 .onPress(button -> setSizeExpanded(!sizeExpanded));

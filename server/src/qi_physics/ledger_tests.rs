@@ -1667,6 +1667,7 @@ fn snapshot(total: f64) -> WorldQiSnapshot {
 
 fn inventory_with_item(spirit_quality: f64, stack_count: u32) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -2058,6 +2059,7 @@ fn qi_item(instance_id: u64, spirit_quality: f64, stack_count: u32) -> ItemInsta
 
 fn bare_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: Vec::new(),

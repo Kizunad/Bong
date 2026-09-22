@@ -203,6 +203,7 @@ class CraftScreenControllerTest {
     private static CraftScreenViewModel model(long revision, CraftScreenViewModel.Change change) {
         return new CraftScreenViewModel(
             revision,
+            0L,
             change,
             List.of(),
             InventoryModel.empty(),

@@ -54,6 +54,7 @@ fn make_inventory(items: &[(&str, u32)]) -> PlayerInventory {
         })
         .collect();
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -87,6 +88,20 @@ fn simple_recipe(id: &str) -> CraftRecipe {
         }],
         station: None,
     }
+}
+
+fn prepared_inventory(recipe_id: &str, items: &[(&str, u32)]) -> PlayerInventory {
+    let mut inventory = make_inventory(items);
+    let recipe = simple_recipe(recipe_id);
+    let ids: Vec<_> = inventory.containers[0]
+        .items
+        .iter()
+        .map(|entry| entry.instance.instance_id)
+        .collect();
+    for id in ids {
+        bong_server::craft::preparation::stage_material(&mut inventory, &recipe, id).unwrap();
+    }
+    inventory
 }
 
 fn ok_deps_for_player<'a>(
@@ -222,9 +237,123 @@ fn consume_materials_returns_err_on_underflow() {
 // ============= start_craft =============
 
 #[test]
+fn unplaced_stock_cannot_start_or_spend_qi() {
+    let (registry, unlock, mut cult, color, mut ledger) = make_world();
+    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let before = serde_json::to_value(&inventory).unwrap();
+    let result = start_craft(
+        StartCraftRequest {
+            caster: caster_entity(),
+            player_id: "offline:Alice",
+            recipe_id: &RecipeId::new("a"),
+            current_tick: 0,
+            quantity: 1,
+        },
+        ok_deps_for_player(
+            &registry,
+            &unlock,
+            &mut inventory,
+            &mut cult,
+            &color,
+            &mut ledger,
+            None,
+        ),
+    );
+    assert!(
+        matches!(result, Err(StartCraftError::MissingMaterials(_))),
+        "背包有材料不等于制作区已备料"
+    );
+    assert_eq!(serde_json::to_value(&inventory).unwrap(), before);
+    assert_eq!(cult.qi_current, 50.0);
+    assert!(ledger.transfers().is_empty());
+}
+
+#[test]
+fn preparation_roundtrip_returns_exact_instance_and_counts_carried_weight() {
+    use bong_server::craft::preparation::{return_materials, stage_material};
+    use bong_server::inventory::{calculate_current_weight, ItemRegistry};
+    let mut inventory = make_inventory(&[("herb_a", 5)]);
+    inventory.containers[0].items[0].instance.durability = 0.43;
+    inventory.containers[0].items[0].instance.forge_quality = Some(0.72);
+    let original = inventory.containers[0].items[0].clone();
+    let weight = calculate_current_weight(&inventory);
+    stage_material(
+        &mut inventory,
+        &simple_recipe("a"),
+        original.instance.instance_id,
+    )
+    .unwrap();
+    assert!(
+        inventory.containers[0].items.is_empty(),
+        "移入必须真实离开背包"
+    );
+    assert_eq!(
+        calculate_current_weight(&inventory),
+        weight,
+        "材料区不免除携带负重"
+    );
+    assert!(
+        stage_material(
+            &mut inventory,
+            &simple_recipe("a"),
+            original.instance.instance_id
+        )
+        .is_err(),
+        "重复移入不可复制物品"
+    );
+    let json = serde_json::to_string(&inventory).unwrap();
+    let mut loaded: PlayerInventory = serde_json::from_str(&json).unwrap();
+    let drops = return_materials(
+        &mut loaded,
+        &ItemRegistry::from_map(HashMap::new()),
+        None,
+        [0.0, 64.0, 0.0],
+        Default::default(),
+    )
+    .unwrap();
+    assert!(drops.is_empty());
+    assert_eq!(
+        loaded.containers[0].items,
+        vec![original],
+        "重载后应返还原位置、实例和属性"
+    );
+    assert!(loaded.material_preparation.materials.is_empty());
+}
+
+#[test]
+fn returning_to_full_inventory_drops_original_instance_without_loss() {
+    use bong_server::craft::preparation::{return_materials, stage_material};
+    use bong_server::inventory::ItemRegistry;
+    let mut inventory = make_inventory(&[("herb_a", 5)]);
+    inventory.containers[0].rows = 1;
+    let original = inventory.containers[0].items[0].instance.clone();
+    stage_material(&mut inventory, &simple_recipe("a"), original.instance_id).unwrap();
+    let mut obstacle = make_inventory(&[("iron_needle", 1)]).containers[0]
+        .items
+        .remove(0);
+    obstacle.instance.instance_id = 20;
+    inventory.containers[0].items.push(obstacle);
+    let drops = return_materials(
+        &mut inventory,
+        &ItemRegistry::from_map(HashMap::new()),
+        None,
+        [1.0, 65.0, 2.0],
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(drops.len(), 1);
+    assert_eq!(
+        drops[0].item, original,
+        "满包兜底不得按模板重新生成或损耗物品"
+    );
+    assert_eq!(drops[0].world_pos, [1.0, 65.0, 2.0]);
+    assert!(inventory.material_preparation.materials.is_empty());
+}
+
+#[test]
 fn start_craft_happy_path_writes_ledger_and_session() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let caster = caster_entity();
 
     let result = start_craft(
@@ -254,8 +383,8 @@ fn start_craft_happy_path_writes_ledger_and_session() {
     assert_eq!(result.session.qi_paid, 5.0);
 
     // 材料扣减
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 3);
-    assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 3);
+    assert_eq!(inv.material_preparation.count("a", "iron_needle"), 2);
 
     // qi 守恒：cultivation 扣 5，ledger 待分配池余额 +5
     assert_eq!(
@@ -276,7 +405,7 @@ fn start_craft_happy_path_writes_ledger_and_session() {
 #[test]
 fn start_craft_batch_reserves_all_materials_and_qi_upfront() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 8), ("iron_needle", 10)]);
     let result = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -300,8 +429,8 @@ fn start_craft_batch_reserves_all_materials_and_qi_upfront() {
     assert_eq!(result.session.quantity_total, 3);
     assert_eq!(result.session.completed_count, 0);
     assert_eq!(result.session.qi_paid, 15.0);
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 2);
-    assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 2);
+    assert_eq!(inv.material_preparation.count("a", "iron_needle"), 1);
     assert_eq!(cult.qi_current, 35.0);
     assert_eq!(ledger.balance(&pending_inflow_account()), 15.0);
 }
@@ -309,7 +438,7 @@ fn start_craft_batch_reserves_all_materials_and_qi_upfront() {
 #[test]
 fn start_craft_rejects_quantity_above_limit_before_cost_checks() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 8), ("iron_needle", 10)]);
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -337,14 +466,14 @@ fn start_craft_rejects_quantity_above_limit_before_cost_checks() {
             max: MAX_CRAFT_QUANTITY,
         }
     );
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 8);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 8);
     assert_eq!(cult.qi_current, 50.0);
 }
 
 #[test]
 fn start_craft_rejects_unknown_recipe() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("missing", &[("herb_a", 5), ("iron_needle", 5)]);
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -371,7 +500,7 @@ fn start_craft_rejects_unknown_recipe() {
 fn start_craft_rejects_locked_recipe() {
     let (registry, _unlock, mut cult, color, mut ledger) = make_world();
     let unlock = RecipeUnlockState::new(); // 空 unlock state
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -393,13 +522,13 @@ fn start_craft_rejects_locked_recipe() {
     .unwrap_err();
     assert!(matches!(err, StartCraftError::NotUnlocked(_)));
     // 失败时无副作用：材料仍在
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 5);
 }
 
 #[test]
 fn start_craft_rejects_when_session_already_exists() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let existing = CraftSession {
         recipe_id: RecipeId::new("a"),
         started_at_tick: 0,
@@ -437,7 +566,7 @@ fn start_craft_rejects_when_session_already_exists() {
 #[test]
 fn start_craft_rejects_missing_materials_with_full_deficit_list() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 1)]); // need 2 + iron_needle 3
+    let mut inv = prepared_inventory("a", &[("herb_a", 1)]); // need 2 + iron_needle 3
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -473,7 +602,7 @@ fn start_craft_rejects_missing_materials_with_full_deficit_list() {
         other => panic!("expected MissingMaterials, got {other:?}"),
     }
     // 失败时不扣材料
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 1);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 1);
 }
 
 #[test]
@@ -484,7 +613,7 @@ fn start_craft_rejects_insufficient_qi() {
         qi_max: 80.0,
         ..Default::default()
     };
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -512,7 +641,7 @@ fn start_craft_rejects_insufficient_qi() {
         }
     ));
     // 失败时不扣材料
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 5);
 }
 
 #[test]
@@ -532,7 +661,7 @@ fn start_craft_rejects_realm_too_low() {
     };
     let color = QiColor::default();
     let mut ledger = WorldQiAccount::default();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
 
     let err = start_craft(
         StartCraftRequest {
@@ -580,7 +709,7 @@ fn start_craft_rejects_qi_color_mismatch() {
         ..Default::default()
     };
     let mut ledger = WorldQiAccount::default();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let err = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -624,7 +753,7 @@ fn start_craft_zero_qi_recipe_skips_ledger_transfer() {
     };
     let color = QiColor::default();
     let mut ledger = WorldQiAccount::default();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let result = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -898,7 +1027,7 @@ fn finalize_craft_returns_output_manifest() {
 fn start_craft_ledger_amount_matches_session_qi_paid() {
     // 守恒律观察值断言 — qi_paid 必须等同 ledger transfer amount
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
 
     let result = start_craft(
         StartCraftRequest {
@@ -964,7 +1093,7 @@ fn start_craft_unlock_via_insight_then_run() {
     };
     let color = QiColor::default();
     let mut ledger = WorldQiAccount::default();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let success = start_craft(
         StartCraftRequest {
             caster: caster_entity(),
@@ -992,7 +1121,7 @@ fn start_craft_unlock_via_insight_then_run() {
 #[test]
 fn start_craft_moves_external_player_qi_without_leaving_player_mirror() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let qi_before = cult.qi_current;
     let ledger_before = ledger.total();
     let pending_before = ledger.balance(&pending_inflow_account());
@@ -1047,7 +1176,7 @@ fn start_craft_moves_external_player_qi_without_leaving_player_mirror() {
 #[test]
 fn start_craft_conserves_external_player_qi_plus_ledger_total() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let observed_before = cult.qi_current + ledger.total();
 
     start_craft(
@@ -1090,7 +1219,7 @@ fn start_craft_works_without_player_ledger_sync() {
     };
     let color = QiColor::default();
     let mut ledger = WorldQiAccount::default();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
 
     start_craft(
         StartCraftRequest {
@@ -1126,7 +1255,7 @@ fn start_craft_works_without_player_ledger_sync() {
 #[test]
 fn start_craft_preserves_preexisting_player_ledger_balance() {
     let (registry, unlock, mut cult, color, mut ledger) = make_world();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
     let player_account = QiAccountId::player("offline:Alice");
     ledger.set_balance(player_account.clone(), 7.0).unwrap();
     let observed_before = cult.qi_current + ledger.total();
@@ -1189,7 +1318,7 @@ fn start_craft_ledger_failure_keeps_external_qi_and_materials_unchanged() {
     ledger
         .set_balance(pending_inflow_account(), f64::MAX)
         .unwrap();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("a", &[("herb_a", 5), ("iron_needle", 5)]);
 
     let err = start_craft(
         StartCraftRequest {
@@ -1222,8 +1351,8 @@ fn start_craft_ledger_failure_keeps_external_qi_and_materials_unchanged() {
         "pending 溢出拒绝后目标余额必须保持原值"
     );
     assert!(!ledger.has_account(&QiAccountId::player("offline:Alice")));
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 5);
+    assert_eq!(inv.material_preparation.count("a", "herb_a"), 5);
+    assert_eq!(inv.material_preparation.count("a", "iron_needle"), 5);
     assert!(ledger.transfers().is_empty());
 }
 
@@ -1239,7 +1368,7 @@ fn start_craft_rejects_empty_source_recipe_before_material_discovery() {
     registry.register(recipe).unwrap();
 
     let unlock = RecipeUnlockState::new();
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("default_unlocked", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,
@@ -1272,7 +1401,10 @@ fn start_craft_rejects_empty_source_recipe_before_material_discovery() {
         "期望 NotUnlocked（空源配方需先经材料发现解锁），实际={err:?}"
     );
     // reject 不应扣材料
-    assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    assert_eq!(
+        inv.material_preparation.count("default_unlocked", "herb_a"),
+        5
+    );
 }
 
 #[test]
@@ -1287,7 +1419,7 @@ fn start_craft_allows_empty_source_recipe_after_material_unlock() {
     let mut unlock = RecipeUnlockState::new();
     // 模拟 apply_material_discovery_unlock 已把该配方解锁
     unlock.unlock("offline:Alice", RecipeId::new("default_unlocked"));
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("default_unlocked", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,
@@ -1330,7 +1462,7 @@ fn start_craft_handcraft_passes_without_nearby_workbench() {
 
     let mut unlock = RecipeUnlockState::new();
     unlock.unlock("offline:Alice", RecipeId::new("handcraft"));
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("handcraft", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,
@@ -1372,8 +1504,8 @@ fn start_craft_rejects_skill_level_below_loaded_requirement_without_side_effects
     recipe.requirements.skill_lv_min = Some(2);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-    let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+    let mut inventory = prepared_inventory("skill_gate", &[("herb_a", 5), ("iron_needle", 5)]);
+    let before_inventory = inventory.material_preparation.count("skill_gate", "herb_a");
     let mut skills = SkillSet::default();
     skills.skills.insert(
         bong_server::skill::components::SkillId::Herbalism,
@@ -1409,7 +1541,7 @@ fn start_craft_rejects_skill_level_below_loaded_requirement_without_side_effects
         }
     );
     assert_eq!(
-        count_template_in_inventory(&inventory, "herb_a"),
+        inventory.material_preparation.count("skill_gate", "herb_a"),
         before_inventory,
         "skill rejection must not consume materials"
     );
@@ -1426,7 +1558,8 @@ fn start_craft_accepts_loaded_skill_requirement_at_boundary() {
     recipe.requirements.skill_lv_min = Some(2);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate_boundary"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inventory =
+        prepared_inventory("skill_gate_boundary", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut skills = SkillSet::default();
     skills.skills.insert(
         bong_server::skill::components::SkillId::Herbalism,
@@ -1466,7 +1599,8 @@ fn start_craft_uses_highest_non_herbalism_skill() {
     recipe.requirements.skill_lv_min = Some(2);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate_any_skill"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inventory =
+        prepared_inventory("skill_gate_any_skill", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut skills = SkillSet::default();
     skills.skills.insert(
         bong_server::skill::components::SkillId::Alchemy,
@@ -1507,7 +1641,7 @@ fn start_craft_applies_realm_skill_cap_before_comparison() {
     recipe.requirements.skill_lv_min = Some(4);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate_cap"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inventory = prepared_inventory("skill_gate_cap", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut skills = SkillSet::default();
     skills.skills.insert(
         bong_server::skill::components::SkillId::Alchemy,
@@ -1553,8 +1687,11 @@ fn start_craft_missing_skill_set_treats_level_as_zero_without_side_effects() {
     recipe.requirements.skill_lv_min = Some(1);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate_no_set"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-    let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+    let mut inventory =
+        prepared_inventory("skill_gate_no_set", &[("herb_a", 5), ("iron_needle", 5)]);
+    let before_inventory = inventory
+        .material_preparation
+        .count("skill_gate_no_set", "herb_a");
 
     let err = start_craft(
         StartCraftRequest {
@@ -1584,7 +1721,9 @@ fn start_craft_missing_skill_set_treats_level_as_zero_without_side_effects() {
         "missing SkillSet must fail closed with current=0"
     );
     assert_eq!(
-        count_template_in_inventory(&inventory, "herb_a"),
+        inventory
+            .material_preparation
+            .count("skill_gate_no_set", "herb_a"),
         before_inventory,
         "missing-skill rejection must not consume materials"
     );
@@ -1606,8 +1745,11 @@ fn start_craft_empty_skill_set_treats_level_as_zero_without_side_effects() {
     recipe.requirements.skill_lv_min = Some(1);
     registry.register(recipe).unwrap();
     unlock.unlock("offline:Alice", RecipeId::new("skill_gate_empty"));
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-    let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+    let mut inventory =
+        prepared_inventory("skill_gate_empty", &[("herb_a", 5), ("iron_needle", 5)]);
+    let before_inventory = inventory
+        .material_preparation
+        .count("skill_gate_empty", "herb_a");
     let skills = SkillSet::default();
 
     let err = start_craft(
@@ -1638,7 +1780,9 @@ fn start_craft_empty_skill_set_treats_level_as_zero_without_side_effects() {
         "empty SkillSet must fail closed with current=0"
     );
     assert_eq!(
-        count_template_in_inventory(&inventory, "herb_a"),
+        inventory
+            .material_preparation
+            .count("skill_gate_empty", "herb_a"),
         before_inventory,
         "empty-skill rejection must not consume materials"
     );
@@ -1664,7 +1808,10 @@ fn start_craft_skill_set_below_requirement_reports_effective_level() {
         "offline:Alice",
         RecipeId::new("skill_gate_below_requirement"),
     );
-    let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inventory = prepared_inventory(
+        "skill_gate_below_requirement",
+        &[("herb_a", 5), ("iron_needle", 5)],
+    );
     let mut skills = SkillSet::default();
     skills.skills.insert(
         bong_server::skill::components::SkillId::Forging,
@@ -1718,7 +1865,7 @@ fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
 
     let mut unlock = RecipeUnlockState::new();
     unlock.unlock("offline:Alice", RecipeId::new("wb_tool"));
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("wb_tool", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,
@@ -1755,7 +1902,7 @@ fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
         "workbench recipe must fail with StationOutOfRange when no workbench is nearby"
     );
     assert_eq!(
-        count_template_in_inventory(&inv, "herb_a"),
+        inv.material_preparation.count("wb_tool", "herb_a"),
         5,
         "materials must not be consumed on StationOutOfRange rejection"
     );
@@ -1771,7 +1918,7 @@ fn start_craft_workbench_recipe_passes_with_nearby_workbench() {
 
     let mut unlock = RecipeUnlockState::new();
     unlock.unlock("offline:Alice", RecipeId::new("wb_tool2"));
-    let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+    let mut inv = prepared_inventory("wb_tool2", &[("herb_a", 5), ("iron_needle", 5)]);
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,

@@ -1043,6 +1043,17 @@ public final class ClientRequestProtocol {
      * @param blueprintId 起炉所用图谱 id
      * @param materials   投料清单（material id → count），可为空列表
      */
+    public static String encodeForgeStationOpen(BlockPos pos) {
+        if (pos == null) throw new IllegalArgumentException("station position is required");
+        JsonObject obj = envelope("forge_station_open");
+        JsonArray position = new JsonArray();
+        position.add(pos.getX());
+        position.add(pos.getY());
+        position.add(pos.getZ());
+        obj.add("station_pos", position);
+        return obj.toString();
+    }
+
     public static String encodeForgeStartSession(BlockPos stationPos, String blueprintId, List<ForgeMaterial> materials) {
         if (stationPos == null) {
             throw new IllegalArgumentException("stationPos must not be null");
@@ -1085,6 +1096,12 @@ public final class ClientRequestProtocol {
     public static String encodeForgeBlueprintTurnPage(int delta) {
         JsonObject obj = envelope("forge_blueprint_turn_page");
         obj.addProperty("delta", delta);
+        return obj.toString();
+    }
+
+    public static String encodeForgeStepAdvance(long sessionId) {
+        JsonObject obj = envelope("forge_step_advance");
+        obj.addProperty("session_id", sessionId);
         return obj.toString();
     }
 
@@ -1396,6 +1413,32 @@ public final class ClientRequestProtocol {
     /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 session（70% 材料返还，qi 不退）。 */
     public static String encodeCraftCancel() {
         return envelope("craft_cancel").toString();
+    }
+
+    public static String encodeMaterialMove(String recipeId, long instanceId, boolean returning, long revision) {
+        return encodeMaterialMove(recipeId, null, instanceId, returning, revision);
+    }
+
+    public static String encodeMaterialMove(String recipeId, net.minecraft.util.math.BlockPos station,
+                                            Long instanceId, boolean returning, long revision) {
+        if (recipeId == null || recipeId.isBlank() || (instanceId != null && instanceId <= 0)
+            || (!returning && instanceId == null) || revision < 0) {
+            throw new IllegalArgumentException("invalid material move request");
+        }
+        JsonObject obj = envelope("material_move");
+        obj.addProperty("recipe_id", recipeId);
+        obj.addProperty("instance_id", instanceId);
+        if (station == null) obj.add("station_pos", com.google.gson.JsonNull.INSTANCE);
+        else {
+            JsonArray pos = new JsonArray();
+            pos.add(station.getX());
+            pos.add(station.getY());
+            pos.add(station.getZ());
+            obj.add("station_pos", pos);
+        }
+        obj.addProperty("returning", returning);
+        obj.addProperty("expected_revision", revision);
+        return obj.toString();
     }
 
     /** 通用请求编码（combat UI 系列使用）。payload 可为 {@code null}。 */

@@ -193,6 +193,12 @@ fn collect_instance_ids(inv: &PlayerInventory) -> Vec<u64> {
     for item in inv.hotbar.iter().flatten() {
         ids.push(item.instance_id);
     }
+    ids.extend(
+        inv.material_preparation
+            .materials
+            .iter()
+            .map(|entry| entry.item.instance_id),
+    );
     ids
 }
 
@@ -248,6 +254,7 @@ mod tests {
             lingering_owner_qi: None,
         });
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
@@ -260,6 +267,7 @@ mod tests {
 
     fn empty_inv() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {

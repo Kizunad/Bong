@@ -777,6 +777,21 @@ public final class ProtoServerDataBridge {
                 root.add("hotbar", unwrappedHotbar);
             }
             // plan-wire-format-bridge-v1 P1／RC2 warn：InventoryItemView.forge_color
+            if (root.has("material_preparation")) {
+                JsonObject preparation = root.getAsJsonObject("material_preparation");
+                if (preparation.has("station_pos") && preparation.get("station_pos").isJsonObject()) {
+                    var position = preparation.getAsJsonObject("station_pos");
+                    var array = new JsonArray();
+                    for (String axis : new String[]{"x", "y", "z"}) array.add(position.has(axis) ? position.get(axis).getAsInt() : 0);
+                    preparation.add("station_pos", array);
+                }
+                if (preparation.has("materials")) {
+                    for (JsonElement material : preparation.getAsJsonArray("materials")) {
+                        if (material.isJsonObject()) stripForgeColorFromItem(material.getAsJsonObject());
+                    }
+                }
+            }
+            // 普通库存物品使用同一颜色规范。
             // (optional ColorKind) 在 placed_items[].item / equipped.*_worn[] /
             // equipped.*_held / hotbar[] 四处都可能出现，proto3 JSON 打成
             // "COLOR_KIND_SHARP" 全名；ItemTooltipPanel.forgeColorLabel() 只认 Rust

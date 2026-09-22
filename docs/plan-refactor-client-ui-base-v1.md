@@ -33,9 +33,9 @@
 | `ui/CultivationScreen.java` | `CultivationScreenBootstrap` / `UiOpenScreens` 的 `player_overview` | 玩家概览 WINDOW；与经脉窗口共享状态读取，不强行合并不同内容；P5b |
 | `identity/IdentityPanelScreen.java` | `IdentityPanelScreenBootstrap`、identity Store | 身份 WINDOW；P5b |
 | `cultivation/voidaction/VoidActionScreen.java` | `VoidActionScreenBootstrap`、`VoidActionStore` | 化虚行动 WINDOW；P5b |
-| `craft/CraftScreen.java` | Inspect 手搓入口 / `CraftScreenBootstrap`；`CraftScreenController` | 手搓 WINDOW；复用已迁移 controller/intent；P5c |
-| `craft/WorkbenchScreen.java` | `WorkbenchScreenBootstrap`；同样消费 `CraftStore` | 工作台制作 WINDOW；保留工位上下文，不能伪造第二个 Craft 会话；P5c |
-| `forge/ForgeScreen.java` | `ForgeScreenBootstrap`；station/session/blueprint/outcome Store | 锻造 WINDOW；分步操作、计时和材料入口一起迁移；P5c |
+| `craft/CraftWindowContent.java` / `CraftWindows.java` | Inspect 制作入口 / `CraftScreenBootstrap`；`CraftScreenController` | 单一制作 WINDOW；替代旧 `CraftScreen`；P5c 制作子批次已实现，原生布局与联网验证通过，待外观验收 |
+| `craft/CraftContext.java` / `WorkbenchScreenBootstrap` | `workbench_open` 的 entity_id 与 position；同一 `CraftWindows` | 与手搓共用窗口；保留工位上下文，忙碌时不切换；替代旧 `WorkbenchScreen`；P5c |
+| `forge/ForgeWindows.java` / `ForgeWindowContent.java` | 准星命中 ForgeStation 后按统一交互键请求，经服务端授权打开；station/session/blueprint/outcome Store | 锻造工位窗口；复用窗口管理器，不提供 HUD 固定或独立全局快捷键入口；P5c |
 | `alchemy/AlchemyScreen.java` | 炼丹炉交互 → `AlchemyScreenBootstrap`；controller/炉坐标 | 炼丹 WINDOW；有效炉/会话约束不变；P5d |
 | `combat/screen/RepairScreen.java` | Inspect 装备菜单 → `RepairScreenFactory` | 养护 WINDOW；保留物品 identity 与现有请求契约；P5d |
 | `combat/screen/ForgeCarrierScreen.java` | `ForgeCarrierScreenBootstrap` / Forge 分支 | 暗器注入 WINDOW；P5d |
@@ -638,7 +638,7 @@ Store / server snapshot
 |---|---|---|
 | P5a ⏳ | `InventoryContainerWindows` / `InventoryContainerContent` 管理容器；`InventoryLoadoutWindows` 管理装备、quick-use/SkillBar；`InspectScreen` 保留工作台入口和既有领域操作 | 背包→装备/快捷槽的真实 identity 请求；拖动时容器消失；浮窗置顶与挡住的槽位不命中；缩放不拉伸物品/人体 |
 | P5b ⏳ | 修仙、技艺、功法、身份、化虚、玩家概览窗口；吸收 `SkillConfigPanelManager`；ViewModel + 窄 intent；共享经脉/技能状态 | 搜索/选择/滚动在最小化恢复后保留；施法/经脉/种族/config 限制仍生效；配置关闭与迟到更新不串对象 |
-| P5c ⬜ | `CraftScreen`、`WorkbenchScreen`、`ForgeScreen` 的 XML 内容和真实入口；移除 `removed()` 与制作取消的耦合 | 制作进行时最小化并回到游戏仍按服务器计时；明确关闭才按原约定取消；切工位不沿用旧 session；同一 CraftStore 不产生两个可操作会话 |
+| P5c ⏳ | 随身/工位制作已接入 `CraftWindows`，材料由服务端暂存；锻造已接入 `ForgeWindows`、`ForgeWindowContent`、`forge-window.xml`，两个领域的旧独立 Screen 已移除 | 制作明确关闭时返还或取消；锻造开炉前关闭返还准备材料，开炉后关闭保留炉次，交互真实工位恢复；锻造不能固定 HUD；工位开窗授权、低分辨率滚动与联网验收见下方子批次记录，待外观验收 |
 | P5d ⬜ | Alchemy、Repair、ForgeCarrier、ZhenfaLayout、Lingtian 窗口；Processing 内容适配与接线依赖登记 | 有效工位/物品/材料约束，终态收取/取消/拒绝仍走原 intent；未接线加工无假按钮，无预览冒充生产 |
 | P5e ⬜ | Loot、NPC 三页、TradeOffer、SparringInvite、ScrollRead、SpiritTreasure、Coffin 操作窗口及入口 | session/offer/token 过期与替换；跨窗物品选择；阅读最小化不结算，关闭只结算当前 token；被动邀请不抢普通输入 |
 
@@ -687,6 +687,71 @@ Store / server snapshot
 - 对齐最终验证：Java 17 `scripts/build-token.sh gradle test build` 通过，5,083 条 JUnit、3 条 GameTest，退出码 0；日志 `/tmp/bong-body-parts-final-gate.log`。Windows 原生 `body-model-alignment-parts-20260915` 为 `status=passed, completed=16`，包含实际模型捕获、旋转／滚轮、聚焦／停稳、空池、体表、详情、最小尺寸、叠放、最小化恢复、HUD 固定及六个相机方向；未出现本批模型渲染错误。此前只通过普通模型单元测试不等同于带动画库的原生接线通过，该失败已由原生验收捕获并修正。
 - 对齐 Round 2 产物：`local_images/workspace/body-model-alignment/{before-after.png,six-views.png,window-states.png,entrance.gif,evidence.json}`。前后对照使用相同视口与选定窗口内容；六视角按实际相机轴向标注，俯仰方向为 ±85°；GIF 使用 20 张原生连续帧。截图源和摘要见 manifest，尚待用户外观验收，不将自动几何检查称为美术验收。
 - 本批仍待外观人工验收，不将整个 P5b 或 R7 标为完成；未 commit、push 或开 PR。技艺、身份、化虚与 P5c/P5d/P5e 仍按阶段表推进。
+
+#### P5c 手搓与制作台窗口子批次（2026-09-17）
+
+- `CraftWindows` 持有唯一窗口和 `CraftScreenController`；C 键、Inspect 手搓标签和权威 `workbench_open` 都走 `UiWindowRuntime.openCraft`。`CraftContext.Workbench` 保留协议实体 ID 与坐标，客户端按既有距离规则和实体存在性禁用失效工位。普通入口不会覆盖系统 Screen。
+- 最小化、固定 HUD、离开 Inspect 不结束 scope；窗口 × 才发送 `CraftIntent.Cancel`，连接重置只清理订阅。请求等待期间或服务端仍报告 active 时不切换入口/工位；取消后的立即重开保留等待，避免新开始与旧取消交叉。通用入口 gate 可能只回 `event_alert`，请求等待最多 5 秒后允许重试；超时不清除权威 active 会话，也不伪造成功。没有新增 wire 字段或服务端多工位会话。
+- `CraftWindowContent` 复用配方、材料和产物组件，XML 内容装入现有统一窗口外壳。列表独立滚动，材料/产物根据宽度并排或纵向滚动；两行操作区和现有工作台按钮风格替代原版按钮。制作进度更新不重建材料/产物，保留滚动位置；布局还原接入现有底栏动作。
+- 清理旧 `CraftScreen` / `WorkbenchScreen`、两份旧 XML 和专用测试 listener。删除固定屏幕尺寸/模板阈值/标题/重复过滤排列的实现镜像测试；保留材料、技艺、协议、反馈测试，以 `CraftWindowsTest` 和迁移后的线程边界测试保护窗口业务生命周期。`screen-inventory.tsv`、`screen-adapters.tsv`、`ui-xml-migration.tsv` 同步移除旧 Screen。
+- 验证：权限更新后，Java 17 `scripts/build-token.sh gradle test build --offline --console=plain` 完整通过，5,052 项 JUnit、3 项 Fabric GameTest，0 失败/跳过，退出码 0；日志 `/tmp/bong-craft-gradle-gate.log`。此前受限环境的独立编译和 186 项定向 JUnit 只作为中间证据，以本次标准构建为准。
+- Windows 原生验证：`UiPreviewScenes.CraftScene` 经真实 Fabric/owo 运行 minimum/odd/wide 三种尺寸，`status=passed, completed=3`。除窗口与关键控件完整边界外，还通过实际滚轮验证材料/产物滚动，同一窗口从宽屏缩到最小再还原，以及最小化恢复后保留窗口身份和 scope。最终截图和结果位于 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-113858/`。预览检查结束后客户端正常退出，Windows 实例 jar 已同步；本次使用本地夹具，不冒充服务器联网制作验收，外观仍待人工确认。
+- 本批未 commit、push 或开 PR。锻造仍为 P5c 下一批，P5b 及 R7 其余验收状态不变，不归档计划。
+
+#### P5c 用户追加：制作材料暂存与紧凑布局（2026-09-17，实现与验证完成，待外观验收）
+
+- “手搓”入口改名“制作”，随身制作不使用“制作台”作为界面标题；配方可产出制作台物品，须明确标识为产物。
+- `CraftPreparation` 归属 `PlayerInventory`，`CraftMaterial` 按实例和库存 revision 移入／取回；存档保留实例属性与原位置。关闭未开始的窗口全额返还，原位或背包放不下时原实例落地，库存与掉落先持久化再发布。开始制作只消耗暂存区，既有开工取消 70% 返料和真元 ledger 规则不变。
+- 暂存材料纳入负重、普通死亡／秘境掉落、终结、库存转移与保鲜，断线持久化后可重开取回。Rust、TypeBox、protobuf、Java 和 bot 同步。
+- `CraftMaterialGrid` 改为配方驱动的可滚动材料行；移除固定九格和一键填充。配方与材料优先、产物折叠、底部保留数量／取回／制作操作。
+- 材料数量回执原地更新已有行，保留滚动位置；长名称行内裁剪，悬停显示完整内容。整叠移入，右键取回一叠，也可使用“取回材料”全部返还。重连后工位失效时仍能看到、取回暂存材料，但不能开工。
+- 必要回归：服务端验证未放料不可开工、原实例及属性跨存档返还、满包原实例落地、重复请求不复制物品、持久化失败不发布变更；客户端验证 protobuf 暂存快照保留实例属性、背包有料不直接开工、关闭未开工窗口请求返还且等待权威确认。
+- 本地门禁：`scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；完整 `cargo test` 共 12,566 通过、0 失败、6 忽略（含文档测试），日志 `/tmp/bong-craft-staging-server-tests.log`。Java 17 `scripts/build-token.sh gradle test build --offline --console=plain` 通过，5,054 项 JUnit、3 项 GameTest，日志 `/tmp/bong-craft-staging-client-final.log`。Schema 913 项、bot 协议 569 项通过，schema build/check 与 106 变体 C2S gate matrix 对拍通过。
+- 联网验收：新 `production_craft_preparation_return` 以及既有 `production_handcraft_stone_knife`、`production_craft_cancel_full_inventory_refund`、`production_craft_disconnect_resume` 全部通过，日志 `/tmp/bong-craft-staging-e2e.log`。首轮测试账号缺少 OP、在准备材料前即被拒；按本地测试账号显式授权后重新运行，未修改生产权限门。
+- Windows 原生：三种 framebuffer（640×480、801×481、1366×768，GUI scale 2）`status=passed, completed=3`，覆盖操作区边界、材料滚动、缩放、最小化恢复。截图位于 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-135121/`，jar 已同步；自动布局验证不替代用户外观验收。本批未提交。
+
+#### P5c 锻造工位窗口（2026-09-17）
+
+- `ForgeStationInteractIntentHandler` 接入统一交互键（默认 G），准星命中真实 ForgeStation 模型或其所在方块时发送 `forge_station_open`；`ForgeScreenBootstrap` 只处理授权回执。Forge 域检查主世界、逐轴 3 格、owner／公共工位、活动炉次 caster 与完整度。回执先发送真实或空 session 和图谱书，最后发送 `forge_station.open_screen=true`；普通状态刷新不抢界面。
+- `ForgeWindows` 持有一个工位窗口，以 `ForgeViewModel` 读取不可变状态、`ForgeIntent` / `ForgeClientIntentSink` 派发操作。`STATION` 能力允许拖动、最小化、resize，但禁止 HUD 固定，标题栏不显示锁图标；移除 `ForgeScreen`、旧全局按键入口及 `ForgeProgressHudPlanner`。
+- 图谱翻页、拖入投料、开炉、淬炼 J/K/L、拖入铭文、按住注入与推进／结算都在工作台内。`ForgeWorkbenchComponent` 复用 `ModelPreviewComponent` 和 `ItemInspectModel`，读取图谱 `output_item` 显示真实装备模型；取景按模型几何计算，旋转开关、拖拽、滚轮和复位沿用预览基底。宽窗左右分栏，窄窗按模型、图谱、工序上下滚动。
+- 服务端 `MaterialPreparation` / `material_move` 统一制作与锻造的实例托管、持久化、负重、保鲜及死亡处理；`station_pos` 区分领域与工位。投料立即移出背包，开炉前原样取回，明确关闭时返还；成功开炉原子消费暂存并返还余料，之后关闭保留炉次。背包提供“取回未开炉材料”，工位已消失或重登后也能恢复准备材料。断线清理不发返还请求。
+- `forge_blueprint_book` 下发 `output_item`、实际 `steps` 和 `required_materials`，前端不另抄配方。制坯、淬炼、铭文、开光分别显示热光／火星／铭文槽／真元流动；`perfect/good/flawed/waste/explode` 分别显示结果、音效及色调，品阶与品质分列。每次操作等待权威回执，失焦／最小化／松开鼠标／断线停止持续注入。
+- 收到本炉 outcome 后将对应 session 标记为完成，恢复投料操作；制坯失败直接返回 outcome 而没有创建 session 时也显示本次结果。旧炉次结果不能结束新炉次。内容通过一次替换完整滚动节点更新，避免中途清空节点导致滚动位置归零。
+- `/scene test_forge_station_1` 仅在 `BONG_TEST_ENV` 且有 OP 权限时使用，安全空位放置二阶 `WeaponForgeStation` 和真实 ANVIL，解锁铁剑／青锋剑测试图谱；用 `/give fan_tie 3` 准备铁剑投料。`/scene clear` 只清理自己的空闲测试砧，活动炉次拒绝清理或切换场景。
+- 必要测试：`ForgeWindowsTest` 覆盖材料聚合、权威等待、失效库存、窗口能力、停止注入和结果状态转换；服务端 `forge_request_dispatch` 覆盖开窗权限、距离、维度和空工位先清旧会话。移除旧输入 helper、Forge HUD 和 U 键迁移的退役测试，以及重复冻结 Screen 数量的实现镜像断言；保留真实协议、注册清单集合与按键冲突检查。
+- 原生布局：`UiForgeWindowPreviewScene` 通过生产窗口框架与内容验证 minimum／odd／wide、淬炼与开光共 5 个场景，`status=passed, completed=5`。滚轮检查等待 5 tick 后验证实际位移；首轮在同一帧读取动画位移导致失败，已修正验收时序。证据：`D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-160946/`。该场景使用显式测试状态，不冒充服务器联网或美术验收。
+- 模型舞台改版完整门禁（2026-09-17）：Java 17 `gradle test build --offline` 通过 5,036 条 JUnit 与 3 条 GameTest；Rust `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 与 `cargo build` 通过，85 个测试套件共 12,561 passed、6 ignored、0 failed；schema 构建、生成与 913 条测试通过，bot 协议 569 条测试通过，C2S 矩阵 107 个请求一致。日志分别为 `/tmp/bong-forge-java-final.log`、`/tmp/bong-forge-clippy-final.log`、`/tmp/bong-forge-rust-test.log`、`/tmp/bong-forge-rust-build.log`、`/tmp/bong-forge-schema-test.log`、`/tmp/bong-forge-bot-final.log`。
+- 最新 Windows 原生 `item-windows-check-20260917-175435` 为 `status=passed / completed=12`：minimum／odd／wide、四道工序、五类结果；真实 Screen 输入验证停止旋转、拖拽、缩放与正文滚动，并核验模型资源已加载。修复窄窗模型拦截滚动条边缘滚轮的问题，结果面板优先于下一炉准备信息显示。上述 5 场景仅作旧版对照；本版截图位于 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-175435/`，最终 jar 已同步 Windows。
+- 独立测试服联网验证：`production_scene_forge_station`、`production_forge_station_real_place`、`forge_inscription_scroll`、`production_forge_consecration_inject` 全部通过，覆盖暂存原实例返还、开炉后不可取回、活动测试砧清理拒绝、再次打开恢复炉次、结算、铭文和开光。场景首轮因机器人传送确认期间单次移动被忽略而失败，改为等待库存初始化、`/top` 权威位置及逐帧落地后通过；未放宽生产安全放置或权限门。证据：`/tmp/bong-forge-e2e-20260917/redesign-scenarios-final.log` 中其余三项及 `scene-final.log` 的最终场景结果。
+- 共用材料暂存的制作回归：`production_handcraft_stone_knife`、`production_craft_preparation_return`、`production_craft_disconnect_resume`、`production_craft_cancel_full_inventory_refund` 全部通过，覆盖跨连接保管、原位返还、完成入包、重复取消只返还一次与满包落地拾回；日志 `/tmp/bong-forge-e2e-20260917/craft-regression.log`。
+- 旧 `consume_forge_materials_atomic` 和其 10 条背包扣料测试已退役：不再存在生产调用，重复数量、空输入、单栈边界是旧算法镜像；以暂存不足零修改、跨工位隔离、原实例返还、开炉后不可取回和既有起炉权限回归保护现契约。
+- Round 2 接触表 `local_images/forge-workbench/round-2-contact.png` 含旧表单与新舞台同宽屏取景、小分辨率、四工序和五类结果；`local_images/forge-workbench/final-review/index.html` 可逐张放大查看最新 12 个场景。背景原稿留在 `local_images/forge-workbench/`，游戏资源为 `textures/gui/forge/workbench.png`。自动验证不替代外观验收，待用户审阅后再做视觉终轮，本批尚未提交，不归档整个 P5c 或 R7。
+- 恢复范围：未开炉材料随玩家库存持久化；已开炉的“关闭再恢复”指本次服务器运行中的窗口重开。`ForgeSessions` 与工位实体尚无跨服务器重启持久化，本批不宣称支持重启后恢复炉次。
+
+#### P5c 用户追加：锻造改用统一交互键（2026-09-18）
+
+- 用户要求取消锻造右键入口，改用既有环境交互键（默认 G，可改键）。`DefaultInteractionHandlers` 注册 `ForgeStationInteractIntentHandler`，准星命中工位模型或其所在方块后发送 `forge_station_open`；普通铁砧没有真实 ForgeStation 模型时不参与候选，派发前复查目标身份与距离。窗口仍由服务端授权回执打开。
+- 移除 `ForgeScreenBootstrap.register()` 的实体右键回调及 mixin 中铁砧右键开窗分支；场景与窗口提示改为交互键。服务端锻造权限、材料托管和炉次逻辑不变。
+- 最新验证（2026-09-18，权限恢复后）：Java 17 `gradle test build --offline --no-daemon --console=plain` 完整通过，5,036 条 JUnit、3 条 GameTest，0 失败；`cargo build --offline` 通过。日志为 `/tmp/bong-forge-interact-gradle.log`、`/tmp/bong-forge-interact-server-build.log`。此前直接编译与 17 条定向测试只作历史证据，原沙箱阻塞已解除。
+- `production_scene_forge_station` 在本地平地服复验通过，覆盖开窗授权、暂存原实例返还、开炉后不可取回、活动炉次清理保护、重开恢复与完成结算。首轮发现测试将 `/top` 一律当成地表定位，而无 raster 时该命令仅上移 24 格；测试改为先 `/spawn`，再有限逐层下降，由生产 scene 的真实地面校验确认放置位置，未放宽权限或安全放置条件。证据：`/tmp/bong-forge-interact-e2e-grounded.log`（1 passed）。
+- 新 jar 已同步 Windows 原生实例，SHA-256 `97dd13525a9352b1c6d668ba1168bc5487759af4ebe91cd429e495be230565f9` 与构建产物一致；Java 17 原生客户端 `HandsPreview` 已连接 `127.0.0.1:25565`，服务器使用当前工作区重建的二进制。程序仍有 Redis 超时及 proto bridge 解析警告，本轮没有将其视为全链无警告。原生按键自动化尚未获得 G 开窗／右键不打开的可核验结果；bot 场景仅验证协议与服务端流程，不冒充物理按键验收。
+
+#### 实机状态提示修正（2026-09-17）
+
+- `BuffBarPanel` 仍使用旧类别字符，把所有 DoT 都显示为“毒”；改为与 `StatusEffectHudPlanner` 共用 `StatusEffectIcons` 的专属 PNG，未知图标使用效果名首字降级。
+- `status_snapshot_emit` 读取 `Wounds.inflicted_by` 对应攻击者：蜘蛛造成的流血显示蜘蛛来源，缺少可解析来源时显示“伤口”，取消通用“战场丹药”兜底。已有 `source_pill` 优先查物品注册表显示丹药名称。
+- `remaining_ms` 将超过客户端整数范围的领域持续效果收敛到 `Long.MAX_VALUE`；客户端时间线保留持续状态，详情不输出巨量分钟数，HUD 不画虚假的倒计时条。没有改动伤害、止血或丹药结算。
+- 测试调整：删除两个对旧类别字符／色块逐枚举断言的实现镜像测试；保留时长格式边界测试并迁到共享格式函数，补真实 JSON→状态 Store→背包提示和持续状态解除的回归。服务端通过真实发送系统验证蜘蛛／玩家来源、无来源回退和持续／有限时长。
+- 验证：Java 17 `gradle test build --offline --console=plain` 通过（5,053 JUnit、3 GameTest）；服务端 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、25 项 `network::status_snapshot_emit` 测试及 18 项 `wire_s2c_contract_pin` 通过。日志前缀 `/tmp/bong-status-tooltip-`。修复已随下述人体伤势图更新到 Windows 原生实例与本地服务器，未提交。
+
+#### 人体 HUD 伤势图补齐（2026-09-17，初版已部署，待外观验收）
+
+- `MiniBodyHudPlanner.appendWoundIcons` 用独立透明 PNG 替代伤势色块，覆盖 `BRUISE / ABRASION / LACERATION / FRACTURE / SEVERED`；完好部位不输出伤势图。沿用 `BodyPlanLayout` 的 HUD 部位锚点与既有 `WoundsStore → WoundLayerBinding → PhysicalBodyStore` 数据链，不改伤势结算。
+- 五张资源位于 `client/src/main/resources/assets/bong-client/textures/gui/hud/wounds/`，分别使用淤斑、擦痕、裂纹、断骨和断链标识。由 `gpt-image-2` 通过 cliproxy 生成，请求显式传入 `background=transparent`；等比裁切、缩小为 128×128 RGBA，不通过黑白底抠图重算透明度。人体底图保持原样。
+- 删除旧“两处伤势增加两个 rect”的实现镜像断言，改为验证贴图可从客户端资源读取、位置跟随部位，以及恢复后不残留伤势图。既有锚点几何回归继续保留。Java 17 `gradle test build --offline --console=plain` 通过（5,053 JUnit、3 GameTest），日志 `/tmp/bong-wound-hud-client.log`。
+- `UiHudWindowPreviewScene` 提供五伤并存夹具，只在显式 UI 预览中安装。Windows 原生 640×480、1366×768 和完好恢复共三张截图 `status=passed, completed=3`；受伤／恢复的画面差分落在对应伤势位置。证据目录 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-145113/`。给用户看的参考接触表与原生截图接触表位于本地 `local_images/mini-body-wounds/`，不作为已通过人工外观验收的证据。
+- 已同步新 jar、安全重启当前测试服并启动 Windows 原生客户端，`HandsPreview` 已连入，收到了人体布局、伤口及状态快照。当前角色伤口快照为 0，正常会话不注入演示伤势。运行日志仍有既有 proto bridge 解析与旧 UI prefs 读取告警，未纳入本批修复，不能据此宣称全栈日志无告警。
 
 ### P6 — 受控界面、HUD 与 Bootstrap 收口
 
@@ -893,6 +958,28 @@ P0R-P3 和已有 SVG/XML 切片是历史已完成批次，不重开。后续按�
 前一实施 PR 的最终 HEAD 通过受影响门禁、review、必要 e2e 并合入后推进下一批。P4 不再要求先将所有独立 Screen XML 化才允许 P5；各窗在所属批次直接迁移到目标结构。新 HEAD 按实际变更重验并绑定证据，不能引用旧 SHA 冒充当前通过。P4a 当前已开始实施，剩余验收见 P4a 工作记录。
 
 ### 10.3 每个 PR 的闭环门
+
+#### 2026-09-18 已实现内容分批交付
+
+用户要求将当前累计实现分批提交，按下表建立串联 PR；后一批以之前的分支为 base，只审本批增量，按顺序合入。窗口控制的实际 runtime 接线在库存/HUD 提交内，因此合为第二批，避免交付只有定义却没有入口的中间版本。
+
+| 批次 | 分支 | 交付内容 |
+|---|---|---|
+| 1 | `pr/r7-01-window-foundation`（[#2290](https://github.com/Kizunad/Bong/pull/2290)） | 窗口基础、双击物品详情、原版模型与资源包校验 |
+| 2 | `pr/r7-02-window-controls`（[#2291](https://github.com/Kizunad/Bong/pull/2291)） | 完整工作台、窗口控制、库存/装备/HUD、快捷使用链接 |
+| 3 | `pr/r7-03-body-practice`（[#2292](https://github.com/Kizunad/Bong/pull/2292)） | 模型预览、体表/经脉、修习检索与绑定 |
+| 4 | `pr/r7-04-status-wounds`（[#2293](https://github.com/Kizunad/Bong/pull/2293)） | 人体伤势 PNG、状态来源与持续时间 |
+| 5 | `pr/r7-05-craft-forge`（[#2294](https://github.com/Kizunad/Bong/pull/2294)） | 制作/锻造窗口、材料暂存、G 键工位交互 |
+
+集成版本 `3e5857e2e` 的 Rust `cargo fmt --check`、`cargo clippy --all-targets --offline -- -D warnings`、完整 `cargo test --offline` 通过，85 个测试目标共 12,561 passed、6 ignored、0 failed。日志为 `/tmp/bong-r7-final-clippy.log`、`/tmp/bong-r7-final-server-tests.log`；分批时另验各中间版本，不把最终集成结果视为所有中间版本的通过证据。
+
+分批本地验证：五批 Java 17 完整 `gradle test build` 分别通过 5,119／5,099／5,075／5,074／5,037 条 JUnit，各含 3 条 GameTest；第二、三批 Rust fmt、Clippy、完整测试分别为 12,559／12,562 passed、6 ignored；第四批 fmt、Clippy 与状态发送 25 条、资源包 16 条定向测试通过。涉及协议的第二、三、五批完成 schema 构建、生成新鲜度与 912／913／913 条 schema 测试，bot 协议各 569 条，C2S 矩阵分别对齐 104／105／107 个实际请求。CI 和 Kody 结论以每个 PR 当前 HEAD 为准，创建 PR 不代表已通过审查或合并。
+
+重新生成完整资源包后，SHA-1 为 `4d3995d598d56015eaa88eac9bd3c82239308751`、大小为 72,978,818 字节，和提交的 manifest、服务端默认值一致。分批引入的后续 GUI 图片不属于资源包打包路径；它们由客户端 mod 提供。本地设计原稿、生成日志和无关死亡背景不提交。
+
+P5c 与整个 R7 仍在进行中；这里记录交付边界，不归档计划。原生 G 开窗与右键不打开仍缺可靠自动化实机证据，已开炉炉次暂不支持跨服务器重启持久化，视觉内容不虚报完成第三轮人工验收。
+
+#### 通用闭环要求
 
 1. 在独立 worktree/branch 实施，不修改脏 main checkout，不越界改 R2/R6/server owner 文件；semantic wire amendment 未合入前，R7 只做 declared/test-only projection，不接新 production traffic。
 2. `git fetch origin` 后紧邻 `git merge origin/main`；merge 触及受影响文件即重跑该阶段全部测试。

@@ -35,6 +35,8 @@ public record UiWindowDefinition(
 
     public enum Capability {
         WINDOW,
+        /** 工位窗口可以管理布局，但不能固定到 HUD。 */
+        STATION,
         OFFER,
         SYSTEM
     }

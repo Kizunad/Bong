@@ -271,6 +271,7 @@ fn inv_snapshot_with_pack(
         ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryWeightV1,
     };
     bong_server::schema::inventory::InventorySnapshotV1 {
+        material_preparation: Default::default(),
         revision: 1,
         containers: vec![
             ContainerSnapshotV1 {
@@ -1924,6 +1925,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
         })),
         fix!(ServerDataPayloadV1::InventorySnapshot(Box::new(
             bong_server::schema::inventory::InventorySnapshotV1 {
+                material_preparation: Default::default(),
                 revision: 1,
                 containers: vec![],
                 placed_items: vec![],
@@ -2472,6 +2474,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
                 integrity: 1.0,
                 owner_name: String::new(),
                 has_session: false,
+                open_screen: false,
                 station_pos_x: 0,
                 station_pos_y: 64,
                 station_pos_z: 0,
@@ -3783,12 +3786,24 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             item_instance_id: 1,
             station_tier: 1,
         }),
+        build(ClientRequestV1::ForgeStationOpen {
+            v: 1,
+            station_pos: (0, 64, 0),
+        }),
         build(ClientRequestV1::CraftStart {
             v: 1,
             recipe_id: "craft.example".to_string(),
             quantity: 1,
         }),
         build(ClientRequestV1::CraftCancel { v: 1 }),
+        build(ClientRequestV1::MaterialMove {
+            v: 1,
+            recipe_id: "craft.example".to_string(),
+            instance_id: Some(1),
+            station_pos: None,
+            returning: false,
+            expected_revision: 1,
+        }),
         build(ClientRequestV1::ExternalContainerMove {
             v: 1,
             session_id: 1,
@@ -3831,7 +3846,7 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
     ]
 }
 
-/// Verifies that the C2S proto fixture set remains one-per-variant (104 total).
+/// Verifies that the C2S proto fixture set remains one-per-variant (106 total).
 ///
 /// `BlockPickerGive` is intentionally outside this set: it is a dev-only local request
 /// whose proto conversion arm is explicitly unreachable, not an agent-wire payload.
@@ -3847,8 +3862,8 @@ fn c2s_fixture_count_matches_variant_count() {
 
     assert_eq!(
         fixtures.len(),
-        104,
-        "C2S fixture list has {} entries but the proto fixture contract has 104. \
+        106,
+        "C2S fixture list has {} entries but the proto fixture contract has 106. \
              Add a fixture for every new proto-backed variant in c2s_all_fixtures().",
         fixtures.len()
     );
@@ -3858,8 +3873,8 @@ fn c2s_fixture_count_matches_variant_count() {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
     );
     assert_eq!(
-        proto_count, 103,
-        "Expected 103 proto-encodable C2S variants, got {proto_count}."
+        proto_count, 105,
+        "Expected 105 proto-encodable C2S variants, got {proto_count}."
     );
 
     // `ClientRequestV1` has no payload_type() discriminant enum, so use the Rust enum
@@ -3870,8 +3885,8 @@ fn c2s_fixture_count_matches_variant_count() {
         .collect();
     assert_eq!(
         distinct.len(),
-        104,
-        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 104. \
+        106,
+        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 106. \
              A variant's fixture was likely deleted and another duplicated.",
         distinct.len()
     );

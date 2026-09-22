@@ -7,7 +7,6 @@ import com.bong.client.combat.screen.RepairScreen;
 import com.bong.client.combat.screen.TerminateScreen;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.cultivation.voidaction.VoidActionScreen;
-import com.bong.client.forge.ForgeScreen;
 import com.bong.client.identity.IdentityPanelScreen;
 import com.bong.client.insight.InsightOfferScreen;
 import com.bong.client.inventory.InspectScreen;
@@ -53,9 +52,6 @@ public final class ScreenTransitionRegistry {
         ));
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
-        ));
-        register(ForgeScreen.class, TransitionConfig.of(
-            ForgeScreen.class, ScreenTransition.Type.SCALE_UP, 400, ScreenTransition.Type.SCALE_DOWN, 400
         ));
         register(AlchemyScreen.class, new TransitionConfig(
             AlchemyScreen.class,

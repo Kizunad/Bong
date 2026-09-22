@@ -82,6 +82,7 @@ fn inventory_with_skin(template_id: &str, spirit_quality: f64) -> PlayerInventor
         SlotContents::worn_single(skin_item(1001, template_id, spirit_quality)),
     );
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: Vec::new(),
@@ -701,6 +702,7 @@ fn sync_inventory_missing_preserves_empty_stack_until_naked_window_expires() {
         .world_mut()
         .spawn((
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: Vec::new(),

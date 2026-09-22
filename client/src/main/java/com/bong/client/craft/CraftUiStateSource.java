@@ -106,6 +106,7 @@ public final class CraftUiStateSource implements UiStateSource<CraftScreenViewMo
     private CraftScreenViewModel read(CraftScreenViewModel.Change change, long currentRevision) {
         return new CraftScreenViewModel(
             currentRevision,
+            InventoryStateStore.revision(),
             change,
             recipes.snapshot(),
             inventory.snapshot(),

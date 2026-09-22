@@ -340,6 +340,11 @@ export type ContainerSnapshotV1 = Static<typeof ContainerSnapshotV1>;
 
 export const InventorySnapshotV1 = Type.Object(
   {
+    material_preparation: Type.Optional(Type.Object({
+      recipe_id: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+      station_pos: Type.Union([Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]), Type.Null()]),
+      materials: Type.Array(InventoryItemViewV1),
+    }, { additionalProperties: false })),
     revision: RevisionV1,
     // plan-tarkov-backpack-v1 P2（schema 漂移修复）：原固定 3 件无法表达运行时动态的
     // `pack_<instance_id>` 套包容器（穿戴背包件即新增一个 pack 容器）。放宽到 minItems:1

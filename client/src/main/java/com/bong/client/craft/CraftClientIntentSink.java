@@ -25,6 +25,12 @@ public final class CraftClientIntentSink implements UiIntentSink<CraftIntent> {
             public void cancel() {
                 ClientRequestSender.sendCraftCancel();
             }
+
+            @Override
+            public void material(CraftIntent.Material material) {
+                ClientRequestSender.sendMaterialMove(material.recipeId(), material.instanceId(),
+                    material.returning(), material.revision());
+            }
         });
     }
 
@@ -45,7 +51,8 @@ public final class CraftClientIntentSink implements UiIntentSink<CraftIntent> {
                 transport.start(recipeId, start.quantity());
                 return UiIntentResult.accepted();
             }
-            transport.cancel();
+            if (intent instanceof CraftIntent.Material material) transport.material(material);
+            else transport.cancel();
             return UiIntentResult.accepted();
         } catch (RuntimeException failure) {
             String detail = normalize(failure.getMessage());
@@ -66,5 +73,7 @@ public final class CraftClientIntentSink implements UiIntentSink<CraftIntent> {
         void start(String recipeId, int quantity);
 
         void cancel();
+
+        void material(CraftIntent.Material material);
     }
 }

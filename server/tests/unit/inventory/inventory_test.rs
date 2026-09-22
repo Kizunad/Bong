@@ -52,6 +52,7 @@ fn registry_from_templates(templates: Vec<ItemTemplate>) -> ItemRegistry {
 
 fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
@@ -361,6 +362,7 @@ fn filtered_pack_inventory_fixture() -> (ItemRegistry, PlayerInventory, String, 
     let rejecting_pack_id = container_id_for_worn_pack(rejecting_pack_item.instance_id);
     let accepting_pack_id = container_id_for_worn_pack(accepting_pack_item.instance_id);
     let inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![
@@ -1014,6 +1016,7 @@ fn make_test_inventory_with_one_item() -> PlayerInventory {
         lingering_owner_qi: None,
     };
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(7),
         containers: vec![

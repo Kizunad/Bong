@@ -25,7 +25,10 @@
           "id",
           "display_name",
           "tier_cap",
-          "step_count"
+          "step_count",
+          "output_item",
+          "steps",
+          "required_materials"
         ],
         "properties": {
           "id": {
@@ -42,6 +45,57 @@
           "step_count": {
             "minimum": 0,
             "type": "integer"
+          },
+          "output_item": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "description": "plan §1.3 四步进程",
+              "anyOf": [
+                {
+                  "const": "billet",
+                  "type": "string"
+                },
+                {
+                  "const": "tempering",
+                  "type": "string"
+                },
+                {
+                  "const": "inscription",
+                  "type": "string"
+                },
+                {
+                  "const": "consecration",
+                  "type": "string"
+                },
+                {
+                  "const": "done",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required_materials": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "material",
+                "count"
+              ],
+              "properties": {
+                "material": {
+                  "type": "string"
+                },
+                "count": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         }
       }
@@ -51,5 +105,5 @@
       "type": "integer"
     }
   },
-  "x-bong-typebox-source-sha256": "4778a15281c2caa53ac1011e1e8695a8d37a1ae8809a8746d69a807a3b58c4ef"
+  "x-bong-typebox-source-sha256": "0fc89992ae76535b36f3dff903fe566358fa80f33a864d19d0c68b49c1237a62"
 }

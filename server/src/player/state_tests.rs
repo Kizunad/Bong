@@ -76,6 +76,7 @@ fn iron_sword_instance(instance_id: u64, durability: f64) -> ItemInstance {
 
 fn empty_weapon_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(41),
         containers: vec![ContainerState {
@@ -528,6 +529,7 @@ fn orphan_detection_runs_after_backfill_no_false_positive() {
     // 先回填、再孤儿检测——回填后判定为合法（前缀路径与 owner 路径一致），不应误判孤儿。
     let pack_id = crate::inventory::container_id_for_worn_pack(77);
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: crate::inventory::InventoryRevision(1),
         containers: vec![
@@ -592,6 +594,7 @@ fn orphan_test_inventory(
     hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT],
 ) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: crate::inventory::InventoryRevision(1),
         containers,
@@ -2179,6 +2182,7 @@ fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
     }))
     .expect("prefs should decode");
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: crate::inventory::InventoryRevision(0),
         containers: vec![crate::inventory::ContainerState {

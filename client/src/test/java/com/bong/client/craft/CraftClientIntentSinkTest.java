@@ -58,6 +58,11 @@ class CraftClientIntentSinkTest {
             public void cancel() {
                 throw new IllegalStateException();
             }
+
+            @Override
+            public void material(CraftIntent.Material material) {
+                throw new IllegalStateException("channel unavailable");
+            }
         });
 
         UiIntentResult start = sink.dispatch(new CraftIntent.Start("rough_handle", 1));
@@ -79,6 +84,11 @@ class CraftClientIntentSinkTest {
             @Override
             public void cancel() {
                 calls.add("cancel");
+            }
+
+            @Override
+            public void material(CraftIntent.Material material) {
+                calls.add("material:" + material.instanceId());
             }
         };
     }

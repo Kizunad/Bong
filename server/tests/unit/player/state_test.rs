@@ -82,6 +82,7 @@ fn iron_sword_instance(instance_id: u64, durability: f64) -> ItemInstance {
 
 fn empty_weapon_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(41),
         containers: vec![ContainerState {

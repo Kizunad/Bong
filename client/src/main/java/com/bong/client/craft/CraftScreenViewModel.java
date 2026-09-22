@@ -10,6 +10,7 @@ import java.util.Optional;
 /** 手搓屏幕唯一可读的不可变状态投影。 */
 public record CraftScreenViewModel(
     long revision,
+    long inventoryRevision,
     Change change,
     List<CraftRecipe> recipes,
     InventoryModel inventory,

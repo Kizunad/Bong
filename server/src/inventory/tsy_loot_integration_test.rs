@@ -69,6 +69,7 @@ mod tests {
             })
             .collect();
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -255,6 +256,7 @@ mod tests {
         let registry = app.world().resource::<ItemRegistry>();
         let mut allocator = InventoryInstanceIdAllocator::default();
         let mut inventory = PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
