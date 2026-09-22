@@ -138,6 +138,7 @@ pub enum AttritionSkipReason {
     DeadTsy,
     MissingZone,
     MissingWorldQiAccount,
+    NegativeZoneLedgerUnsupported,
     LedgerTransferFailed,
 }
 
@@ -186,6 +187,7 @@ pub fn release_attrition_to_zone(
 #[derive(Debug)]
 enum AttritionReleaseError {
     MissingWorldQiAccount,
+    NegativeZoneLedgerUnsupported,
     Ledger(QiPhysicsError),
 }
 
@@ -204,6 +206,15 @@ fn release_attrition_to_zone_with_ledger(
     let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
     let zone_cap = QI_ZONE_UNIT_CAPACITY;
     let to_id = QiAccountId::zone(zone.name.clone());
+
+    // `WorldQiAccount` balances are structurally non-negative, while a negative
+    // spirit field is a valid signed zone state.  Do not flatten that state to a
+    // zero ledger mirror and continue: the next accepted transfer would then be
+    // calculated from the wrong baseline.  The ledger-backed production path
+    // therefore fails closed until a signed-zone ledger account exists.
+    if qi_ledger.is_some() && zone_current < 0.0 {
+        return Err(AttritionReleaseError::NegativeZoneLedgerUnsupported);
+    }
 
     let outcome = qi_release_to_zone(
         amount,
@@ -372,6 +383,9 @@ pub fn apply_attrition_checked_with_ledger(
         let reason = match error {
             AttritionReleaseError::MissingWorldQiAccount => {
                 AttritionSkipReason::MissingWorldQiAccount
+            }
+            AttritionReleaseError::NegativeZoneLedgerUnsupported => {
+                AttritionSkipReason::NegativeZoneLedgerUnsupported
             }
             AttritionReleaseError::Ledger(_) => AttritionSkipReason::LedgerTransferFailed,
         };
@@ -1438,6 +1452,59 @@ mod tests {
         assert!(
             reader.read(events_res).next().is_none(),
             "fail-closed 时不能留下无法兑现的 AttritionTax event"
+        );
+    }
+
+    #[test]
+    fn p1_negative_zone_with_ledger_fails_closed_without_mirror_drift() {
+        let mut zone = make_zone("negative_field", -0.5);
+        let mut item = make_item(404, 1.0, 100);
+        let item_before = item.spirit_quality;
+        let zone_before = zone.spirit_qi;
+        let zone_account = QiAccountId::zone(zone.name.clone());
+        let mut ledger = WorldQiAccount::default();
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let outcome = {
+            let mut events_res = app.world_mut().resource_mut::<Events<QiTransfer>>();
+            apply_attrition_checked_with_ledger(
+                &mut item,
+                AttritionOpKind::Pickup,
+                Some(&mut zone),
+                Some(&mut events_res),
+                Some(&mut ledger),
+                None,
+            )
+        };
+
+        assert_eq!(
+            outcome,
+            AttritionApplyOutcome::Skipped(AttritionSkipReason::NegativeZoneLedgerUnsupported),
+            "负灵域没有可表示负余额的账本镜像时必须显式拒绝，不能把基线静默截成 0"
+        );
+        assert_eq!(
+            item.spirit_quality, item_before,
+            "负灵域账本镜像不可表示时不能先扣 item 真元"
+        );
+        assert_eq!(
+            zone.spirit_qi, zone_before,
+            "负灵域账本镜像不可表示时 zone field 不能部分提交"
+        );
+        assert!(
+            !ledger.has_account(&zone_account),
+            "负灵域拒绝时不能创建错误的非负 zone ledger mirror"
+        );
+        assert_eq!(
+            ledger.total(),
+            0.0,
+            "负灵域拒绝时账本不能产生部分余额"
+        );
+        let events_res = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events_res.get_reader();
+        assert!(
+            reader.read(events_res).next().is_none(),
+            "负灵域拒绝时不能留下与账本不匹配的 AttritionTax event"
         );
     }
 
