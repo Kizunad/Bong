@@ -52,25 +52,25 @@
 
 第二轮反方结论：继续通过，但修复计划必须收窄账本语义。`AttritionTax` 不应改成 audit-only；裸 `WorldQiAccount::transfer(from=container:item:<id>)` 会因源账户没有余额失败，必须使用临时影子源余额。accepted 部分不能在已写 `zone.spirit_qi` 后再盲目加 ledger，必须采用 field-authority 镜像范式，先同步 zone ledger before，再 transfer，最后从 ledger balance 写回 field。overflow 不应改成“不扣 item”，因为历史玩法就是 inventory 操作扣 1-5% 天道税；满仓不是免税条件。
 
-## Skeleton Fix Plan
+## Skeleton Fix Plan — ✅ 2026-09-22
 
-- [ ] 改造 attrition 落账 API：`release_attrition_to_zone` 或其上层返回结构必须携带 `accepted`、`overflow`、`from_id`、`zone_account`，并允许生产调用点传入 `WorldQiAccount`。
-- [ ] 不新增 `QiTransfer EventReader`。`QiTransfer` 继续是审计/外部可视化事件，真实余额由 helper 或调用点同步 apply。
-- [ ] 对 `AttritionTax` 使用真实 `WorldQiAccount::transfer`，不要加入 audit-only 拦截名单。
-- [ ] 使用源影子余额范式：对 `container:item:<instance_id>` 临时 `set_balance(from, accepted + overflow)`，完成 transfer 后源账户余额必须归零，不跨 tick 留存。
-- [ ] 使用 zone field-authority 镜像范式：在 accepted transfer 前，把 `zone:<name>` 账本镜像同步到变更前的 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`；transfer 后以 ledger balance 写回 `zone.spirit_qi`。参考 `server/src/world/heartbeat.rs:2131-2159` 和 `server/src/world/pseudo_vein_runtime.rs:487-502`。
-- [ ] overflow 继续落到 `QiAccountId::overflow("attrition_overflow:<zone>")`，不要改投 `pending_inflow_account`，避免丢失局部性并被 heartbeat 滴灌到其它 zone。
-- [ ] 如果 `WorldQiAccount` 缺失且本次会产生 overflow，必须 fail-closed：不要扣 item 后只发 event。生产路径应保证 ledger resource 存在。
-- [ ] 保留 `Events<QiTransfer>` 兼容，但 event 应来自同一笔 ledger transfer 的 clone；不要 `transfer()` 后再 `push_transfer_audit()` 造成审计重复。
+- [x] 改造 attrition 落账 API：`release_attrition_to_zone` 或其上层返回结构必须携带 `accepted`、`overflow`、`from_id`、`zone_account`，并允许生产调用点传入 `WorldQiAccount`。✅ 2026-09-22
+- [x] 不新增 `QiTransfer EventReader`。`QiTransfer` 继续是审计/外部可视化事件，真实余额由 helper 或调用点同步 apply。✅ 2026-09-22
+- [x] 对 `AttritionTax` 使用真实 `WorldQiAccount::transfer`，不要加入 audit-only 拦截名单。✅ 2026-09-22
+- [x] 使用源影子余额范式：对 `container:item:<instance_id>` 临时 `set_balance(from, accepted + overflow)`，完成 transfer 后源账户余额必须归零，不跨 tick 留存。✅ 2026-09-22
+- [x] 使用 zone field-authority 镜像范式：在 accepted transfer 前，把 `zone:<name>` 账本镜像同步到变更前的 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`；transfer 后以 ledger balance 写回 `zone.spirit_qi`。参考 `server/src/world/heartbeat.rs:2131-2159` 和 `server/src/world/pseudo_vein_runtime.rs:487-502`。✅ 2026-09-22
+- [x] overflow 继续落到 `QiAccountId::overflow("attrition_overflow:<zone>")`，不要改投 `pending_inflow_account`，避免丢失局部性并被 heartbeat 滴灌到其它 zone。✅ 2026-09-22
+- [x] 如果 `WorldQiAccount` 缺失且本次会产生 overflow，必须 fail-closed：不要扣 item 后只发 event。生产路径应保证 ledger resource 存在。✅ 2026-09-22
+- [x] 保留 `Events<QiTransfer>` 兼容，但 event 应来自同一笔 ledger transfer 的 clone；不要 `transfer()` 后再 `push_transfer_audit()` 造成审计重复。✅ 2026-09-22
 
-## 验收测试计划
+## 验收测试计划 — ✅ 2026-09-22
 
-- [ ] helper 单测：`zone.spirit_qi=1.0` 时，attrition 后 `overflow:attrition_overflow:<zone>` balance 等于 item lost，zone 不变，source item ledger balance 为 0。
-- [ ] near-full 单测：`zone.spirit_qi=0.99` 且 attrition 大于 room 时，断言 zone 到 1.0，`zone:<name>` ledger mirror 到 cap，overflow balance 等于 `item_lost - accepted`。
-- [ ] 生产路径单测至少覆盖 Pickup 或 ContainerSearch，证明真实入口不是只在 helper 里绿。
-- [ ] repeated attrition 单测：同一 zone 多次 overflow 累加，不覆盖旧 balance。
-- [ ] 缺 `WorldQiAccount` 边界：会 overflow 时不扣 item、不只发 event；不会 overflow 且可全额写 zone 时行为明确并有测试锁定。
-- [ ] 审计兼容：`QiTransfer` event 合计仍等于 item lost，但测试主断言必须查具体 `WorldQiAccount` 账户余额，而不是只看 event 合计。
+- [x] helper 单测：`zone.spirit_qi=1.0` 时，attrition 后 `overflow:attrition_overflow:<zone>` balance 等于 item lost，zone 不变，source item ledger balance 为 0。✅ 2026-09-22
+- [x] near-full 单测：`zone.spirit_qi=0.99` 且 attrition 大于 room 时，断言 zone 到 1.0，`zone:<name>` ledger mirror 到 cap，overflow balance 等于 `item_lost - accepted`。✅ 2026-09-22
+- [x] 生产路径单测至少覆盖 Pickup 或 ContainerSearch，证明真实入口不是只在 helper 里绿。✅ 2026-09-22
+- [x] repeated attrition 单测：同一 zone 多次 overflow 累加，不覆盖旧 balance。✅ 2026-09-22
+- [x] 缺 `WorldQiAccount` 边界：会 overflow 时不扣 item、不只发 event；不会 overflow 且可全额写 zone 时行为明确并有测试锁定。✅ 2026-09-22
+- [x] 审计兼容：`QiTransfer` event 合计仍等于 item lost，但测试主断言必须查具体 `WorldQiAccount` 账户余额，而不是只看 event 合计。✅ 2026-09-22
 
 建议 server 验证命令：
 
@@ -86,3 +86,38 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 - 源账户失败风险：`WorldQiAccount::transfer` 会检查 from 余额；`container:item:<id>` 必须临时引燃源余额，否则 transfer 会失败。
 - 行为风险：把满仓 overflow 改成“不扣 item”会改变历史玩法意图，使满仓区域变成免税搬运区，不建议。
 - 架构风险：新增 `QiTransfer EventReader` 会违反当前 `test_coverage_guards` 对 `QiTransfer` 的设计语义。
+
+## Finish Evidence
+
+### 落地清单
+
+- `server/src/qi_physics/attrition.rs`：新增带 `WorldQiAccount` 的磨损落账路径；accepted 与 overflow 由真实 ledger transfer 提交，zone field 与 ledger 镜像同步，缺 overflow sink 时 fail-closed。
+- `server/src/network/client_request_handler.rs`、`server/src/network/client_request/inventory.rs`、`server/src/network/client_request/production.rs`：SlotMove、Pickup、AlchemyLoad 接入真实账本并保持 staged pickup 提交。
+- `server/src/world/tsy_container_search.rs`：ContainerSearch 接入真实账本。
+- `server/tests/unit/world/tsy_container_search_test.rs`：补生产 ContainerSearch 满仓 overflow 余额回归。
+
+### 关键 commit
+
+- `119e07379`（2026-09-22）：promotion，将 bughunt skeleton 提升为 active plan。
+- `b57a9b299`（2026-09-22）：修复 attrition overflow 真实账本落账并补齐契约测试。
+- `1537aad6e`（2026-09-22）：合并最新 `origin/main`；未触及 attrition 修复文件，带入的 server 变更完成合并后复验。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo fmt --check`：`PIPESTATUS[0]=0`。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：`PIPESTATUS[0]=0`。
+- `scripts/build-token.sh cargo test`：`PIPESTATUS[0]=0`；主库 `10360 passed / 0 failed / 1 ignored`，其它 test target 与 doctest 均 `0 failed`。
+- 合并 `1537aad6e` 后重跑三条 server 门禁：fmt/clippy/test 的 `PIPESTATUS[0]` 均为 `0`；主库 `10361 passed / 0 failed / 1 ignored`，其它 test target 与 doctest 均 `0 failed`。
+- 定向验证：`tsy_container_search_unit` 29 passed；attrition 相关 lib 测试 48 passed。
+- 新增契约测试：`p1_cap_overflow_conservation`、`p1_overflow_without_world_account_fails_closed_before_item_debit`、`p1_repeated_overflow_accumulates_in_real_account`、`apply_search_attrition_records_overflow_in_world_qi_account`。
+
+### 跨仓库核验
+
+- server：四条磨损入口均传入 `WorldQiAccount`；`QiTransfer` 仍只作为同一笔真实 transfer 的审计副本，未新增 EventReader 消费者。
+- agent/client：本 bughunt 未触及，暂无跨仓库变更。
+- 无上下文 validator 因 harness 故障未能取得结论；本 PR 不将该 validator 写作 PASS。三次独立只读 validator session（两次绑定 `b57a9b299`、一次绑定 `1537aad6e`）均在限定等待内无状态、无输出，已关闭。
+
+### 遗留 / 后续
+
+- 保留无账本的公开兼容 helper；发生 overflow 时 fail-closed，生产注册由 `qi_physics::register` 初始化账本资源。
+- validator harness 的等待事件故障不在本 bughunt 范围，需由调度主干另行修复。

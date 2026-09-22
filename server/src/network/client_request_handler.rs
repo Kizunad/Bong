@@ -128,9 +128,9 @@ use crate::player::state::{
     canonical_player_id, is_sqlite_busy_error, save_player_inventory_and_delete_dropped_loot,
     try_update_player_ui_prefs, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
-use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
+use crate::qi_physics::attrition::{apply_attrition_checked_with_ledger, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
-use crate::qi_physics::ledger::AttritionOpKind;
+use crate::qi_physics::ledger::{AttritionOpKind, WorldQiAccount};
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
@@ -572,6 +572,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     /// plan-qi-handling-attrition-v1 P0/P1：AttritionTax 审计转账事件队列。
     pub attrition_qi_transfers: Option<ResMut<'w, Events<crate::qi_physics::ledger::QiTransfer>>>,
+    /// AttritionTax 的真实余额账本；事件只保留同一笔 transfer 的审计副本。
+    pub qi_ledger: Option<ResMut<'w, WorldQiAccount>>,
     /// plan-qi-handling-attrition-v1 P2：定向客户端粒子反馈事件队列。
     pub attrition_applied_events: Option<ResMut<'w, Events<AttritionAppliedEvent>>>,
     /// plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉事件 (M1 修复：接通 narration/hallucination)
@@ -2148,6 +2150,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.dimensions,
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    alchemy_params.qi_ledger.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
@@ -4116,6 +4119,7 @@ pub(crate) fn handle_inventory_move(
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    qi_ledger: Option<&mut WorldQiAccount>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
     // plan-tarkov-backpack-v1 P0（交付物 #4 红线）— worn 背包件穿/卸时 rebuild 容器，
@@ -4259,11 +4263,12 @@ pub(crate) fn handle_inventory_move(
                         {
                             if !target_container_exempt && !is_attrition_exempt(item) {
                                 let before_abs_qi = item_abs_qi_for_attrition(item);
-                                apply_attrition_checked(
+                                apply_attrition_checked_with_ledger(
                                     item,
                                     AttritionOpKind::SlotMove,
                                     Some(zone),
                                     qi_transfers,
+                                    qi_ledger,
                                     tsy_lifecycle,
                                 );
                                 emit_attrition_applied_if_lost(
@@ -4753,6 +4758,7 @@ pub(crate) fn handle_pickup_dropped_item(
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    qi_ledger: Option<&mut WorldQiAccount>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
     persistence: Option<&PlayerStatePersistence>,
@@ -4771,6 +4777,7 @@ pub(crate) fn handle_pickup_dropped_item(
     let mut staged_inventory = inventory.clone();
     let mut staged_dropped_loot = dropped_loot_registry.clone();
     let mut staged_zones = zones.as_deref().cloned();
+    let mut staged_qi_ledger = qi_ledger.as_deref().cloned();
     let mut staged_qi_transfers = Events::default();
     let mut staged_attrition_events = Events::default();
     match pickup_dropped_loot_instance(
@@ -4802,11 +4809,12 @@ pub(crate) fn handle_pickup_dropped_item(
                         {
                             if !target_container_exempt && !is_attrition_exempt(item) {
                                 let before_abs_qi = item_abs_qi_for_attrition(item);
-                                apply_attrition_checked(
+                                apply_attrition_checked_with_ledger(
                                     item,
                                     AttritionOpKind::Pickup,
                                     Some(zone),
                                     Some(&mut staged_qi_transfers),
+                                    staged_qi_ledger.as_mut(),
                                     tsy_lifecycle,
                                 );
                                 emit_attrition_applied_if_lost(
@@ -4853,6 +4861,9 @@ pub(crate) fn handle_pickup_dropped_item(
             *dropped_loot_registry = staged_dropped_loot;
             if let (Some(zones), Some(staged_zones)) = (zones, staged_zones) {
                 *zones = staged_zones;
+            }
+            if let (Some(qi_ledger), Some(staged_qi_ledger)) = (qi_ledger, staged_qi_ledger) {
+                *qi_ledger = staged_qi_ledger;
             }
             if let Some(qi_transfers) = qi_transfers {
                 qi_transfers.extend(staged_qi_transfers.drain());
@@ -5353,6 +5364,7 @@ pub(crate) fn handle_alchemy_feed_slot(
     cultivations: &Query<&Cultivation>,
     mut zones: Option<&mut ZoneRegistry>,
     mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    mut qi_ledger: Option<&mut WorldQiAccount>,
     mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
 ) {
@@ -5444,7 +5456,7 @@ pub(crate) fn handle_alchemy_feed_slot(
                     {
                         if let Some(zone) = zones.find_zone_mut(&zone_name) {
                             let before_abs_qi = item_abs_qi_for_attrition(item);
-                            apply_attrition_checked(
+                            apply_attrition_checked_with_ledger(
                                 item,
                                 AttritionOpKind::AlchemyLoad,
                                 Some(zone),
@@ -5452,6 +5464,7 @@ pub(crate) fn handle_alchemy_feed_slot(
                                     Some(events) => Some(&mut **events),
                                     None => None,
                                 },
+                                qi_ledger.as_deref_mut(),
                                 tsy_lifecycle,
                             );
                             emit_attrition_applied_if_lost(
