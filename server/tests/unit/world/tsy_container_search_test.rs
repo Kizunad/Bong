@@ -13,6 +13,8 @@ use bong_server::network::qi_attrition_emit::AttritionAppliedEvent;
 use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use bong_server::qi_physics::ledger::{QiAccountId, QiTransfer, WorldQiAccount};
+use bong_server::qi_physics::{assert_conservation, WorldQiSnapshot};
+use bong_server::schema::common::SPIRIT_QI_TOTAL;
 use bong_server::world::loot_pool::{LootEntry, LootPool, LootPoolRegistry};
 use bong_server::world::tsy_container::{ContainerKind, KeyKind, LootContainer, SearchProgress};
 use bong_server::world::tsy_container_search::*;
@@ -681,12 +683,26 @@ fn apply_search_attrition_records_overflow_in_world_qi_account() {
     zones.zones[0].spirit_qi = 1.0;
     let zone_name = zones.zones[0].name.clone();
     app.insert_resource(zones);
-    app.insert_resource(WorldQiAccount::default());
+    let zone_account = QiAccountId::zone(zone_name.clone());
+    let mut ledger = WorldQiAccount::default();
+    ledger
+        .set_balance(zone_account.clone(), QI_ZONE_UNIT_CAPACITY)
+        .expect("the signed zone field's non-negative mirror must seed successfully");
+    app.insert_resource(ledger);
     app.add_systems(Update, apply_search_attrition);
 
     let mut inv = make_inv();
     let item = spirit_item("tsy_overflow_relic", 9002, 1.0, 100);
     let item_qi_before = item.spirit_quality * item.stack_count.max(1) as f64;
+    let before = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: 0.0,
+        container_qi: item_qi_before,
+        ledger_qi: app.world().resource::<WorldQiAccount>().total(),
+        era_decay_accum: 0.0,
+        budget_initial_total: SPIRIT_QI_TOTAL,
+        budget_current_total: SPIRIT_QI_TOTAL,
+    };
     inv.containers[0].items.push(PlacedItemState {
         row: 0,
         col: 0,
@@ -724,7 +740,6 @@ fn apply_search_attrition_records_overflow_in_world_qi_account() {
         "production ContainerSearch must credit real overflow balance: item_lost={item_lost:.6} ledger={:.6}",
         ledger.balance(&overflow_account)
     );
-    let zone_account = QiAccountId::zone(zone_name.clone());
     assert!(
         (ledger.balance(&zone_account) - QI_ZONE_UNIT_CAPACITY).abs() < 1e-6,
         "full-zone ContainerSearch must mirror the unchanged zone cap: ledger={:.6}",
@@ -735,6 +750,21 @@ fn apply_search_attrition_records_overflow_in_world_qi_account() {
         0.0,
         "external item source account must not remain after production attrition"
     );
+
+    let after = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: 0.0,
+        container_qi: item_after.spirit_quality * item_after.stack_count.max(1) as f64,
+        ledger_qi: ledger.total(),
+        era_decay_accum: 0.0,
+        budget_initial_total: SPIRIT_QI_TOTAL,
+        budget_current_total: SPIRIT_QI_TOTAL,
+    };
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!(
+            "ContainerSearch 的 item→zone/overflow 账本转移必须守恒 SPIRIT_QI_TOTAL：before={before:?}, after={after:?}, error={error:?}"
+        )
+    });
 }
 
 // ——— plan-onboarding-loop-v1 P0: SurfaceStashPlayerLimit 测试 ———
