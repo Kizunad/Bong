@@ -76,6 +76,86 @@ type TerminatedPlayerQueryItem<'a> = (
     Option<&'a LifeRecord>,
 );
 
+pub(crate) struct QiMaxShrinkReleaseContext<'a> {
+    pub(crate) entity: Entity,
+    pub(crate) position: Option<&'a Position>,
+    pub(crate) current_dimension: Option<&'a CurrentDimension>,
+    pub(crate) life_record: Option<&'a LifeRecord>,
+    pub(crate) zones: Option<&'a mut ZoneRegistry>,
+    pub(crate) ledger: Option<&'a mut WorldQiAccount>,
+    pub(crate) qi_transfers: Option<&'a mut Events<QiTransfer>>,
+    pub(crate) source: &'static str,
+}
+
+impl QiMaxShrinkReleaseContext<'_> {
+    pub(crate) fn shrink_qi_max(&mut self, cultivation: &mut Cultivation, new_qi_max: f64) -> bool {
+        let excess = (cultivation.qi_current - new_qi_max).max(0.0);
+        if excess > 0.0 && !self.release_excess(cultivation, excess) {
+            return false;
+        }
+
+        cultivation.qi_max = new_qi_max;
+        true
+    }
+
+    fn release_excess(&mut self, cultivation: &mut Cultivation, amount: f64) -> bool {
+        let Some(ledger) = self.ledger.as_deref_mut() else {
+            tracing::warn!(
+                entity = ?self.entity,
+                source = self.source,
+                "[bong][cultivation] qi-cap shrink skipped because WorldQiAccount is unavailable"
+            );
+            return false;
+        };
+        let Some(qi_transfers) = self.qi_transfers.as_deref_mut() else {
+            tracing::warn!(
+                entity = ?self.entity,
+                source = self.source,
+                "[bong][cultivation] qi-cap shrink skipped because QiTransfer events are unavailable"
+            );
+            return false;
+        };
+
+        match release_qi_amount_to_zone(
+            cultivation,
+            amount,
+            self.position,
+            self.current_dimension,
+            self.life_record,
+            self.zones.as_deref_mut(),
+            ledger,
+            Some(qi_transfers),
+            self.source,
+        ) {
+            Ok(outcome)
+                if (outcome.source_debited - amount).abs()
+                    <= crate::qi_physics::constants::QI_EPSILON =>
+            {
+                true
+            }
+            Ok(outcome) => {
+                tracing::warn!(
+                    entity = ?self.entity,
+                    source = self.source,
+                    requested = amount,
+                    debited = outcome.source_debited,
+                    "[bong][cultivation] qi-cap shrink skipped because qi release was incomplete"
+                );
+                false
+            }
+            Err(error) => {
+                tracing::warn!(
+                    entity = ?self.entity,
+                    source = self.source,
+                    ?error,
+                    "[bong][cultivation] qi-cap shrink failed closed"
+                );
+                false
+            }
+        }
+    }
+}
+
 fn release_cultivation_qi_to_zone(
     cultivation: &mut Cultivation,
     position: Option<&Position>,

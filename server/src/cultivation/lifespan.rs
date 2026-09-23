@@ -15,10 +15,12 @@ use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
     player_username_from_character_id, PlayerState, PlayerStatePersistence,
 };
+use crate::qi_physics::ledger::{QiTransfer, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
 use crate::schema::death_lifecycle::{
     AgingEventKindV1, AgingEventV1, LifespanEventKindV1, LifespanEventV1,
 };
+use crate::world::dimension::CurrentDimension;
 use crate::world::season::{query_season, Season};
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -528,6 +530,9 @@ pub fn process_lifespan_extension_intents(
     player_persistence: Option<Res<PlayerStatePersistence>>,
     mut intents: EventReader<LifespanExtensionIntent>,
     mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut actors: Query<(
         &mut LifespanComponent,
         &mut LifespanExtensionLedger,
@@ -535,14 +540,24 @@ pub fn process_lifespan_extension_intents(
         Option<&mut PlayerState>,
         Option<&mut LifeRecord>,
         Option<&Lifecycle>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
 ) {
     let persistence = persistence.as_deref();
     let player_persistence = player_persistence.as_deref();
 
     for intent in intents.read() {
-        let Ok((mut lifespan, mut ledger, cultivation, player_state, mut life_record, lifecycle)) =
-            actors.get_mut(intent.entity)
+        let Ok((
+            mut lifespan,
+            mut ledger,
+            cultivation,
+            player_state,
+            mut life_record,
+            lifecycle,
+            position,
+            current_dimension,
+        )) = actors.get_mut(intent.entity)
         else {
             continue;
         };
@@ -568,10 +583,21 @@ pub fn process_lifespan_extension_intents(
             continue;
         };
 
+        let mut qi_release = super::death_hooks::QiMaxShrinkReleaseContext {
+            entity: intent.entity,
+            position,
+            current_dimension,
+            life_record: life_record.as_deref(),
+            zones: zones.as_deref_mut(),
+            ledger: qi_ledger.as_deref_mut(),
+            qi_transfers: qi_transfers.as_deref_mut(),
+            source: contract.source(),
+        };
         apply_extension_cost(
             contract.cost(applied_years, accumulated_before, lifespan.cap_by_realm),
             cultivation,
             player_state,
+            &mut qi_release,
         );
 
         let event = LifespanEventRecord {
@@ -733,12 +759,13 @@ fn apply_extension_cost(
     cost: ExtensionCost,
     cultivation: Option<valence::prelude::Mut<'_, Cultivation>>,
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
+    qi_release: &mut super::death_hooks::QiMaxShrinkReleaseContext<'_>,
 ) {
     if let Some(mut cultivation) = cultivation {
         if cost.qi_cap_delta < 0.0 {
             let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
-            cultivation.qi_max = (cultivation.qi_max * factor).max(1.0);
-            cultivation.qi_current = cultivation.qi_current.min(cultivation.qi_max);
+            let new_qi_max = (cultivation.qi_max * factor).max(1.0);
+            qi_release.shrink_qi_max(&mut cultivation, new_qi_max);
         }
     }
     if let Some(mut player_state) = player_state {
@@ -933,7 +960,14 @@ mod tests {
     use rusqlite::{params, Connection};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Events, Position, Update};
+
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiAccountId, QiTransfer};
+    use crate::qi_physics::QiTransferReason;
+    use crate::schema::common::SPIRIT_QI_TOTAL;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let unique_suffix = SystemTime::now()
@@ -1334,7 +1368,12 @@ mod tests {
     fn lifespan_extension_pill_cost_increases_with_accumulated_extension() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1 });
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, process_lifespan_extension_intents);
 
         let mut lifespan = LifespanComponent::new(LifespanCapTable::INDUCE);
@@ -1349,12 +1388,14 @@ mod tests {
                 },
                 Cultivation {
                     realm: Realm::Induce,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
                     ..Default::default()
                 },
                 PlayerState::default(),
                 LifeRecord::new("offline:Azure"),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
 
@@ -1369,14 +1410,94 @@ mod tests {
 
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         let pressure = lifespan_extension_cost_pressure(100.0, LifespanCapTable::INDUCE);
-        let expected_qi_max =
-            100.0 * (1.0 - 10.0 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR * pressure);
+        let expected_qi_max = SPIRIT_QI_TOTAL
+            * (1.0 - 10.0 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR * pressure);
         assert!((cultivation.qi_max - expected_qi_max).abs() < 1e-9);
         assert!(
             cultivation.qi_max < 90.0,
             "prior extension ledger should make the second pill harsher than the first"
         );
         assert_eq!(cultivation.qi_current, cultivation.qi_max);
+
+        let zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("the player's zone should receive released excess qi");
+        let released = SPIRIT_QI_TOTAL - expected_qi_max;
+        assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = transfers.get_reader();
+        let emitted: Vec<_> = reader.read(transfers).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].from, QiAccountId::player("offline:Azure"));
+        assert_eq!(emitted[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert!((emitted[0].amount - released).abs() < 1e-9);
+        assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
+
+        let observed_total = cultivation.qi_current
+            + zone.spirit_qi * QI_ZONE_UNIT_CAPACITY
+            + app.world().resource::<WorldQiAccount>().total();
+        assert!((observed_total - SPIRIT_QI_TOTAL).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lifespan_extension_missing_life_record_keeps_qi_shrink_fail_closed() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1 });
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, process_lifespan_extension_intents);
+
+        let mut lifespan = LifespanComponent::new(LifespanCapTable::INDUCE);
+        lifespan.years_lived = 120.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                lifespan,
+                LifespanExtensionLedger {
+                    accumulated_years: 100.0,
+                    enlightenment_used: false,
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                PlayerState::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<LifespanExtensionIntent>>()
+            .send(LifespanExtensionIntent {
+                entity,
+                requested_years: 10,
+                source: "life_extension_pill".to_string(),
+            });
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+        assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi,
+            0.0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+        assert_eq!(app.world().resource::<WorldQiAccount>().total(), 0.0);
     }
 
     #[test]
