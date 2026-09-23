@@ -1444,8 +1444,7 @@ mod tests {
         assert_conservation(&before, &after, 0.0)
             .expect("共享 overflow 两会话先后打断必须保持世界真元守恒");
         assert_eq!(
-            after.budget_initial_total,
-            SPIRIT_QI_TOTAL,
+            after.budget_initial_total, SPIRIT_QI_TOTAL,
             "shared overflow refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
         );
     }
