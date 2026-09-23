@@ -14,7 +14,9 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::ItemInstance;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{QiAccountId, WorldQiAccount};
+use crate::qi_physics::ledger::{
+    assert_conservation, summarize_world_qi, QiAccountId, WorldQiAccount, WorldQiSnapshot,
+};
 use crate::qi_physics::QiTransferReason;
 use crate::schema::common::SPIRIT_QI_TOTAL;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
@@ -24,6 +26,18 @@ use valence::prelude::{
     ident, App, BlockPos, DVec3, Entity, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
 };
 use valence::testing::create_mock_client;
+
+fn summarize_qi_state_for_test(
+    cultivation: &Cultivation,
+    zones: &ZoneRegistry,
+    ledger: &WorldQiAccount,
+) -> WorldQiSnapshot {
+    let mut world = bevy_ecs::world::World::new();
+    world.spawn(cultivation.clone());
+    world.insert_resource(zones.clone());
+    world.insert_resource(ledger.clone());
+    summarize_world_qi(&mut world)
+}
 
 #[test]
 fn combat_pill_buff_status_payload_preserves_hud_fields() {
@@ -78,6 +92,8 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
     let position = Position::new([8.0, 66.0, 8.0]);
     let dimension = CurrentDimension(DimensionKind::Overworld);
     let life_record = LifeRecord::new("offline:duan-xu-san");
+    let before = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
     let mut release = QiMaxShrinkReleaseContext {
         entity: Entity::from_raw(501),
         position: Some(&position),
@@ -110,9 +126,8 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
     assert!((emitted[0].amount - released).abs() < 1e-9);
     assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
 
-    let observed_total =
-        cultivation.qi_current + zone.spirit_qi * QI_ZONE_UNIT_CAPACITY + ledger.total();
-    assert!((observed_total - SPIRIT_QI_TOTAL).abs() < 1e-9);
+    let after = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_conservation(&before, &after, 0.0).expect("断续散缩减真元上限后应将差额完整释放到 zone");
 }
 
 #[test]

@@ -15,6 +15,8 @@ use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
     player_username_from_character_id, PlayerState, PlayerStatePersistence,
 };
+#[cfg(test)]
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
 use crate::qi_physics::ledger::{QiTransfer, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
 use crate::schema::death_lifecycle::{
@@ -1303,6 +1305,7 @@ mod tests {
                 LifeRecord::new("offline:Azure"),
             ))
             .id();
+
         app.world_mut()
             .resource_mut::<Events<LifespanExtensionIntent>>()
             .send(LifespanExtensionIntent {
@@ -1363,7 +1366,6 @@ mod tests {
                 LifeRecord::new("offline:Azure"),
             ))
             .id();
-
         app.world_mut()
             .resource_mut::<Events<LifespanExtensionIntent>>()
             .send(LifespanExtensionIntent {
@@ -1412,6 +1414,8 @@ mod tests {
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
+        let before = summarize_world_qi(app.world_mut());
+        assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
 
         app.world_mut()
             .resource_mut::<Events<LifespanExtensionIntent>>()
@@ -1450,10 +1454,9 @@ mod tests {
         assert!((emitted[0].amount - released).abs() < 1e-9);
         assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
 
-        let observed_total = cultivation.qi_current
-            + zone.spirit_qi * QI_ZONE_UNIT_CAPACITY
-            + app.world().resource::<WorldQiAccount>().total();
-        assert!((observed_total - SPIRIT_QI_TOTAL).abs() < 1e-9);
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("延寿丹缩减真元上限后应将差额完整释放到 zone");
     }
 
     #[test]
