@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_imports)]
 
 use super::*;
+use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::schema::common::SPIRIT_QI_TOTAL;
 use crate::world::dimension::DimensionKind;
 use crate::worldgen::pseudo_vein::{decay_rate_per_tick, PSEUDO_VEIN_INITIAL_QI};
 use valence::prelude::{App, DVec3};
@@ -205,12 +207,15 @@ fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
     };
     let mut active_events = ActiveEventsResource::default();
     let mut qi_ledger = WorldQiAccount::default();
-    let physical_total_before = qi_ledger.total()
-        + zones
-            .zones
-            .iter()
-            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
-            .sum::<f64>();
+    let mut qi_world = App::new();
+    qi_world.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    qi_world.insert_resource(qi_ledger.clone());
+    qi_world.insert_resource(zones.clone());
+    let before = summarize_world_qi(qi_world.world_mut());
+    assert_eq!(
+        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        "conservation snapshots must use the configured world qi total"
+    );
     let omen = WorldEventOmen {
         kind: OmenKind::PseudoVeinForming,
         zone_name: "waste".to_string(),
@@ -250,16 +255,15 @@ fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
         0.0,
         "a rejected spawn must not debit or fabricate a pending-pool balance"
     );
-    let physical_total_after = qi_ledger.total()
-        + zones
-            .zones
-            .iter()
-            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
-            .sum::<f64>();
+    qi_world.insert_resource(qi_ledger);
+    qi_world.insert_resource(zones);
+    let after = summarize_world_qi(qi_world.world_mut());
     assert_eq!(
-        physical_total_after, physical_total_before,
-        "an unfunded spawn must preserve the real ledger plus zone qi total"
+        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        "conservation snapshots must retain the configured world qi total"
     );
+    assert_conservation(&before, &after, 0.0)
+        .expect("an unfunded heartbeat spawn must preserve the observed qi total");
 }
 
 #[test]
