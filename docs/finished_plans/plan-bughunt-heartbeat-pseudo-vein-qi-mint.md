@@ -9,6 +9,8 @@
 - 进料：heartbeat omen `OmenKind::PseudoVeinForming` 通过 `WorldQiAccount` 从 `pending_inflow_account()` 借入真元。
 - 出料：`ZoneRegistry::register_runtime_zone` 注册动态伪灵脉 runtime zone；`QiTransfer` 记录借出、衰减归还与消散归还。
 - 结算与换算：使用 `inject_zone_for_pseudo_vein_target`、`settle_ephemeral_pseudo_vein_zone_to_target`、`settle_ephemeral_pseudo_vein_zone`；zone 比率换算使用 `QI_ZONE_UNIT_CAPACITY`。
+- 共享类型 / event：复用 `WorldQiAccount`、`ZoneRegistry` 资源与 `QiTransfer` event，不新增同义 component 或 event。
+- 跨仓库契约：本 plan 仅改 server 测试与文档，不改 agent/client 契约；heartbeat 伪灵脉既有 omen/VFX 下发不在范围内。
 - 世界观锚点：沿用 `worldview.md §一 L18`，全服灵气总量恒定且不会凭空产生。
 
 > 范围声明：本文只处理 heartbeat 自动伪灵脉的账本借还，不消费或修改其他 plan。起草时已避开 #975 dormant 负灵域死亡释放 `.max(0.0)` 与 #989 灵物磨损 overflow；#899 的重启恢复/持久化不替代本计划的借还语义。
