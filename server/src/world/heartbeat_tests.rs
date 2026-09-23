@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_imports)]
 
 use super::*;
+use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::schema::common::SPIRIT_QI_TOTAL;
 use crate::world::dimension::DimensionKind;
 use crate::worldgen::pseudo_vein::{decay_rate_per_tick, PSEUDO_VEIN_INITIAL_QI};
 use valence::prelude::{App, DVec3};
@@ -194,6 +196,74 @@ fn pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi() {
         "expected pending-pool debit and external dynamic-zone credit to preserve the complete owner total"
     );
     assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
+}
+
+#[test]
+fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
+    let mut heartbeat = WorldHeartbeat::default();
+    let mut zones = ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+    };
+    let mut active_events = ActiveEventsResource::default();
+    let mut qi_ledger = WorldQiAccount::default();
+    let mut qi_world = App::new();
+    qi_world.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    qi_world.insert_resource(qi_ledger.clone());
+    qi_world.insert_resource(zones.clone());
+    let before = summarize_world_qi(qi_world.world_mut());
+    assert_eq!(
+        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        "conservation snapshots must use the configured world qi total"
+    );
+    let omen = WorldEventOmen {
+        kind: OmenKind::PseudoVeinForming,
+        zone_name: "waste".to_string(),
+        target_player: None,
+        origin: DVec3::new(10.0, 65.0, 10.0),
+        intensity: 0.6,
+        scheduled_at_tick: 0,
+        fires_at_tick: 0,
+        expires_at_tick: 200,
+    };
+
+    assert!(
+        spawn_pseudo_vein_from_omen(
+            &mut heartbeat,
+            &mut zones,
+            &mut active_events,
+            &mut qi_ledger,
+            &omen,
+            Season::Summer,
+            200,
+        )
+        .is_none(),
+        "an unfunded pending pool must reject the heartbeat pseudo-vein spawn"
+    );
+
+    assert_eq!(
+        heartbeat.active_pseudo_vein_count(),
+        0,
+        "a rejected spawn must not publish lifecycle state"
+    );
+    assert!(
+        zones.find_zone_by_name("pseudo_vein_heartbeat_0").is_none(),
+        "a rejected spawn must remove its zero-balance runtime zone"
+    );
+    assert_eq!(
+        qi_ledger.balance(&pending_inflow_account()),
+        0.0,
+        "a rejected spawn must not debit or fabricate a pending-pool balance"
+    );
+    qi_world.insert_resource(qi_ledger);
+    qi_world.insert_resource(zones);
+    let after = summarize_world_qi(qi_world.world_mut());
+    assert_eq!(
+        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        "conservation snapshots must retain the configured world qi total"
+    );
+    assert_conservation(&before, &after, 0.0)
+        .expect("an unfunded heartbeat spawn must preserve the observed qi total");
 }
 
 #[test]
