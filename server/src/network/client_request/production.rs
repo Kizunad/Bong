@@ -16,7 +16,7 @@ use crate::schema::alchemy::AlchemyInterventionV1;
 
 use crate::network::client_request_handler::{
     AlchemyRequestParams, ClientRequestDispatchParams, CombatRequestParams,
-    NpcEngagementRequestParams, SkillScrollRequestParams,
+    NpcEngagementRequestParams, QiMaxShrinkReleaseResources, SkillScrollRequestParams,
 };
 
 /// 已通过 schema/version 校验的 Production/Alchemy 请求。
@@ -339,6 +339,11 @@ pub(crate) fn dispatch_production_request<
                 &skill_scroll.cultivations,
                 combat,
                 &mut dispatch.lifespan_extension_tx,
+                QiMaxShrinkReleaseResources {
+                    zones: alchemy.zones.as_deref_mut(),
+                    ledger: alchemy.qi_ledger.as_deref_mut(),
+                    transfers: alchemy.attrition_qi_transfers.as_deref_mut(),
+                },
                 alchemy.vfx_events.as_deref_mut(),
                 &mut npc.audio_events,
                 alchemy.hallucination_events.as_deref_mut(),

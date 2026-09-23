@@ -8,13 +8,20 @@ use super::*;
 use crate::combat::components::{WoundKind, Wounds};
 use crate::combat::events::RevivalActionIntent;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
+use crate::cultivation::death_hooks::QiMaxShrinkReleaseContext;
 use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::ItemInstance;
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{QiAccountId, WorldQiAccount};
+use crate::qi_physics::QiTransferReason;
+use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    ident, App, BlockPos, DVec3, Entity, EntityLayerId, IntoSystemConfigs, Update,
+    ident, App, BlockPos, DVec3, Entity, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
 };
 use valence::testing::create_mock_client;
 
@@ -28,6 +35,155 @@ fn combat_pill_buff_status_payload_preserves_hud_fields() {
     assert_eq!(value["buff_id"], "tie_bi_san");
     assert_eq!(value["remaining_ticks"], 3600);
     assert_eq!(value["effect_multiplier"], 1.25);
+}
+
+#[test]
+fn duan_xu_san_shrinks_qi_max_without_release_when_current_fits() {
+    let mut cultivation = Cultivation {
+        qi_current: 90.0,
+        qi_max: 100.0,
+        ..Default::default()
+    };
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(500),
+        position: None,
+        current_dimension: None,
+        life_record: None,
+        zones: None,
+        ledger: None,
+        qi_transfers: None,
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, 97.0);
+    assert_eq!(cultivation.qi_current, 90.0);
+}
+
+#[test]
+fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(501),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL * 0.97);
+    assert_eq!(cultivation.qi_current, cultivation.qi_max);
+    let zone = zones
+        .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+        .expect("player zone should receive qi released by the cap shrink");
+    let released = SPIRIT_QI_TOTAL * 0.03;
+    assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
+
+    let mut reader = transfers.get_reader();
+    let emitted: Vec<_> = reader.read(&transfers).cloned().collect();
+    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted[0].from, QiAccountId::player("offline:duan-xu-san"));
+    assert_eq!(emitted[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+    assert!((emitted[0].amount - released).abs() < 1e-9);
+    assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
+
+    let observed_total =
+        cultivation.qi_current + zone.spirit_qi * QI_ZONE_UNIT_CAPACITY + ledger.total();
+    assert!((observed_total - SPIRIT_QI_TOTAL).abs() < 1e-9);
+}
+
+#[test]
+fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(502),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: None,
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(ledger.total(), 0.0);
+    assert_eq!(transfers.len(), 0);
+}
+
+#[test]
+fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(503),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: None,
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(transfers.len(), 0);
 }
 
 #[test]

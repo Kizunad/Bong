@@ -130,7 +130,7 @@ use crate::player::state::{
 };
 use crate::qi_physics::attrition::{apply_attrition_checked_with_ledger, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
-use crate::qi_physics::ledger::{AttritionOpKind, WorldQiAccount};
+use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer, WorldQiAccount};
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
@@ -404,6 +404,7 @@ pub struct CombatRequestParams<'w, 's> {
     /// plan-race-system-v1 P3a —— 施放门 race gate（`handle_skill_bar_cast` 拥有门后、
     /// 经脉门前判定，见该函数内插入点）。`Option` 与其余 registry 同规则。
     pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub life_records: Query<'w, 's, &'static crate::cultivation::life_record::LifeRecord>,
     pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
     pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
@@ -581,6 +582,12 @@ pub struct AlchemyRequestParams<'w, 's> {
         Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
     /// plan-fauna-stitched-beast-v1 P3：叙事容器（M1 修复：兽核吸收后推 player narration）
     pub pending_narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
+}
+
+pub(crate) struct QiMaxShrinkReleaseResources<'a> {
+    pub(crate) zones: Option<&'a mut ZoneRegistry>,
+    pub(crate) ledger: Option<&'a mut WorldQiAccount>,
+    pub(crate) transfers: Option<&'a mut Events<QiTransfer>>,
 }
 
 #[derive(SystemParam)]
@@ -2321,6 +2328,11 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut combat_params,
                     &mut dispatch.lifespan_extension_tx,
+                    QiMaxShrinkReleaseResources {
+                        zones: alchemy_params.zones.as_deref_mut(),
+                        ledger: alchemy_params.qi_ledger.as_deref_mut(),
+                        transfers: alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    },
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
                     // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
@@ -4971,6 +4983,7 @@ fn handle_apply_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    qi_release_resources: QiMaxShrinkReleaseResources<'_>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     hallucination_events: Option<
@@ -5003,6 +5016,7 @@ fn handle_apply_pill(
         cultivations,
         combat_params,
         lifespan_extension_tx,
+        qi_release_resources,
         vfx_events,
         audio_events,
         // plan-fauna-stitched-beast-v1 P3 M1 修复：透传幻觉事件和叙事容器
@@ -5966,6 +5980,7 @@ pub(crate) fn handle_alchemy_take_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    qi_release_resources: QiMaxShrinkReleaseResources<'_>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     hallucination_events: Option<
@@ -6247,6 +6262,7 @@ pub(crate) fn handle_alchemy_take_pill(
                 vfx_events,
                 audio_events,
                 clients,
+                qi_release_resources,
             );
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
@@ -6414,6 +6430,7 @@ fn apply_combat_pill_runtime(
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     clients: &mut Query<(&Username, &mut Client)>,
+    mut qi_release_resources: QiMaxShrinkReleaseResources<'_>,
 ) {
     let Some(spec) = crate::alchemy::pill::combat_pill_spec(pill_item_id) else {
         tracing::warn!(
@@ -6468,11 +6485,20 @@ fn apply_combat_pill_runtime(
                 let target = worst_severed_part(&wounds);
                 apply_severed_mend(&mut wounds, target, pos_scale);
                 let qi_max_before = next_cultivation.qi_max;
-                next_cultivation.qi_max = (next_cultivation.qi_max * 0.97).max(0.0);
-                next_cultivation.qi_current =
-                    next_cultivation.qi_current.min(next_cultivation.qi_max);
-                touched_cultivation |=
-                    (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
+                let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
+                    entity,
+                    position: combat_params.positions.get(entity).ok(),
+                    current_dimension: combat_params.dimensions.get(entity).ok(),
+                    life_record: combat_params.life_records.get(entity).ok(),
+                    zones: qi_release_resources.zones.as_deref_mut(),
+                    ledger: qi_release_resources.ledger.as_deref_mut(),
+                    qi_transfers: qi_release_resources.transfers.as_deref_mut(),
+                    source: "combat_pill:duan_xu_san",
+                };
+                if shrink_qi_max_for_duan_xu_san(&mut next_cultivation, &mut qi_release) {
+                    touched_cultivation |=
+                        (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
+                }
             }
             CombatPillKind::SuoDiSan => {
                 let grades = scaled_grades(1, neg_scale);
@@ -6529,6 +6555,14 @@ fn apply_combat_pill_runtime(
         &format!("服下{}，药力入体。", spec.name),
         if realm_pos_scale < 1.0 { 0xFFFFA040 } else { 0 },
     );
+}
+
+fn shrink_qi_max_for_duan_xu_san(
+    cultivation: &mut Cultivation,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_>,
+) -> bool {
+    let new_qi_max = (cultivation.qi_max * 0.97).max(0.0);
+    qi_release.shrink_qi_max(cultivation, new_qi_max)
 }
 
 fn emit_combat_pill_feedback(
