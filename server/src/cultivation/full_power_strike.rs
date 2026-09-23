@@ -390,8 +390,7 @@ fn charge_tick_release_qi_to_zone(
                 QI_ZONE_UNIT_CAPACITY,
             ) {
                 Ok(outcome) => {
-                    zone.spirit_qi =
-                        (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                     if let Some(transfer) = outcome.transfer {
                         records.push(QiDepositRecord {
                             account: transfer.to.clone(),
@@ -453,8 +452,7 @@ fn rollback_zone_deposit(zones: &mut ZoneRegistry, record: &QiDepositRecord) {
         return;
     }
     if let Some(zone) = zones.find_zone_mut(&record.account.id) {
-        zone.spirit_qi =
-            (record.balance_before / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+        zone.spirit_qi = (record.balance_before / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     }
 }
 
@@ -489,16 +487,14 @@ fn withdraw_qi_from_deposits(
                 if actual <= QI_EPSILON {
                     continue;
                 }
-                zone.spirit_qi =
-                    ((current - actual) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                zone.spirit_qi = ((current - actual) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                 let Ok(transfer) = QiTransfer::new(
                     deposit.account.clone(),
                     player.clone(),
                     actual,
                     QiTransferReason::ChargeInterruptRefund,
                 ) else {
-                    zone.spirit_qi =
-                        (current / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    zone.spirit_qi = (current / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                     continue;
                 };
                 qi_account.push_transfer_audit(transfer.clone());
@@ -743,6 +739,8 @@ mod tests {
     use super::*;
     use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
+    use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+    use crate::schema::common::SPIRIT_QI_TOTAL;
     use crate::social::events::SocialRenownDeltaEvent;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
@@ -753,6 +751,7 @@ mod tests {
         // ZoneRegistry は charge_tick_system の ResMut<ZoneRegistry> に必要。
         // fallback zone（spirit_qi=0.9）を差し込む；守恒テストでは適宜 spirit_qi=0.0 に上書き。
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
         app.init_resource::<WorldQiAccount>();
         app.add_event::<AttackIntent>();
         app.add_event::<CombatEvent>();
@@ -1092,10 +1091,21 @@ mod tests {
             qi_deposits: Vec::new(),
         });
 
+        let before = summarize_world_qi(app.world_mut());
+        assert_eq!(
+            before.budget_initial_total, SPIRIT_QI_TOTAL,
+            "interrupt refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
+        );
         charge_then_interrupt(&mut app, caster, attacker);
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("charge interruption refund must preserve the world qi snapshot");
 
         assert!(app.world().get::<ChargingState>(caster).is_none());
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 130.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
         let zone_qi = app
             .world()
             .resource::<ZoneRegistry>()
@@ -1104,6 +1114,13 @@ mod tests {
             .spirit_qi
             * QI_ZONE_UNIT_CAPACITY;
         assert!((zone_qi - 20.0).abs() < QI_EPSILON);
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            0.0,
+            "zone-backed refund must not leave a ledger overflow balance"
+        );
         let event = app
             .world()
             .resource::<Events<ChargeInterruptedEvent>>()
@@ -1116,10 +1133,12 @@ mod tests {
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
-            .any(|transfer| transfer.reason == QiTransferReason::ChargeInterruptRefund
-                && transfer.from == QiAccountId::zone("spawn")
-                && transfer.to == QiAccountId::player(format!("entity:{}", caster.to_bits()))
-                && transfer.amount == 30.0));
+            .any(
+                |transfer| transfer.reason == QiTransferReason::ChargeInterruptRefund
+                    && transfer.from == QiAccountId::zone("spawn")
+                    && transfer.to == QiAccountId::player(format!("entity:{}", caster.to_bits()))
+                    && transfer.amount == 30.0
+            ));
         assert!(
             !has_active_status(
                 app.world().get::<StatusEffects>(caster).unwrap(),
@@ -1155,7 +1174,10 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 130.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
         assert_eq!(
             app.world()
                 .resource::<Events<ChargeInterruptedEvent>>()
@@ -1182,7 +1204,10 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 150.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            150.0
+        );
         let event = app
             .world()
             .resource::<Events<ChargeInterruptedEvent>>()
@@ -1221,7 +1246,10 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 110.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            110.0
+        );
         assert_eq!(
             app.world()
                 .resource::<ZoneRegistry>()
@@ -1272,7 +1300,10 @@ mod tests {
             .spirit_qi
             * QI_ZONE_UNIT_CAPACITY;
         assert_eq!(zone_raw, -5.0);
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 130.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
         let event = app
             .world()
             .resource::<Events<ChargeInterruptedEvent>>()
@@ -1303,8 +1334,14 @@ mod tests {
         charge_then_interrupt(&mut app, caster, attacker);
 
         let overflow = pending_inflow_account();
-        assert_eq!(app.world().resource::<WorldQiAccount>().balance(&overflow), 20.0);
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 130.0);
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            20.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
         assert_eq!(
             app.world()
                 .resource::<ZoneRegistry>()
@@ -1335,7 +1372,13 @@ mod tests {
         app.add_systems(Update, charge_tick_system);
         app.update();
         app.update();
-        assert_eq!(app.world().get::<ChargingState>(caster).unwrap().qi_committed, 100.0);
+        assert_eq!(
+            app.world()
+                .get::<ChargingState>(caster)
+                .unwrap()
+                .qi_committed,
+            100.0
+        );
         assert_eq!(
             app.world()
                 .resource::<WorldQiAccount>()
@@ -1347,7 +1390,10 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 60.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            60.0
+        );
         assert_eq!(
             app.world()
                 .resource::<WorldQiAccount>()
@@ -1413,13 +1459,15 @@ mod tests {
         app.update();
 
         let zones = app.world().resource::<ZoneRegistry>();
-        let spawn_raw = zones.find_zone_by_name("spawn").unwrap().spirit_qi
-            * QI_ZONE_UNIT_CAPACITY;
-        let second_raw = zones.find_zone_by_name("second").unwrap().spirit_qi
-            * QI_ZONE_UNIT_CAPACITY;
+        let spawn_raw = zones.find_zone_by_name("spawn").unwrap().spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        let second_raw =
+            zones.find_zone_by_name("second").unwrap().spirit_qi * QI_ZONE_UNIT_CAPACITY;
         assert_eq!(spawn_raw, 40.0);
         assert_eq!(second_raw, 0.0);
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 60.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            60.0
+        );
     }
 
     #[test]
@@ -1503,7 +1551,10 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<Cultivation>(caster).unwrap().qi_current, 200.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            200.0
+        );
         let zone_raw = app
             .world()
             .resource::<ZoneRegistry>()
