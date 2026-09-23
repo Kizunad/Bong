@@ -71,15 +71,18 @@ python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step concept --pro
 python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step icon
 
 # 步骤 3: 生成 MC 正交三视图 (基于概念图的图生图)
-# 物品会自动提示装备在纯灰色模特玩家身上
+# 穿戴防具（带纯灰模特）：
 python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step three_view --type item
 
-# `--type` 还支持 standalone（独立放置的设施/方块/炉子，不带灰色模特）与 creature（生物）。
-# 未显式传入时默认是 item；独立放置的炼丹炉应显式声明 standalone：
+# 手持物（单手右手持握、MC 游戏内真实比例、可加附加约束）：
+python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step three_view --type held --prompt "<附加约束>"
+
+# `--type` 还支持 standalone（独立放置设施/方块/炉子，不带灰色模特）与 creature（生物）。
+# 独立放置的炼丹炉等设施声明 standalone：
 python3 modelScript/tools/gen_pipeline_refs.py alchemy_furnace --step three_view --type standalone
 
-# 步骤 4: 生成 MC 爆炸分解图 (基于三视图的图生图，带结构与文字标注)
-python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step exploded
+# 步骤 4: 生成 MC 爆炸分解图 (基于三视图/概念图的图生图，带结构与文字标注，支持 --prompt 附加约束)
+python3 modelScript/tools/gen_pipeline_refs.py <asset_name> --step exploded --prompt "<分解细节约束>"
 ```
 
 ---
