@@ -574,9 +574,11 @@ pub fn process_lifespan_extension_intents(
             intent.requested_years
         };
         let accumulated_before = ledger.accumulated_years;
+        let mut next_lifespan = lifespan.clone();
+        let mut next_ledger = ledger.clone();
         let Some(applied_years) = apply_lifespan_extension(
-            &mut lifespan,
-            &mut ledger,
+            &mut next_lifespan,
+            &mut next_ledger,
             requested_years,
             contract.consumes_enlightenment(),
         ) else {
@@ -593,12 +595,20 @@ pub fn process_lifespan_extension_intents(
             qi_transfers: qi_transfers.as_deref_mut(),
             source: contract.source(),
         };
-        apply_extension_cost(
-            contract.cost(applied_years, accumulated_before, lifespan.cap_by_realm),
+        if !apply_extension_cost(
+            contract.cost(
+                applied_years,
+                accumulated_before,
+                next_lifespan.cap_by_realm,
+            ),
             cultivation,
             player_state,
             &mut qi_release,
-        );
+        ) {
+            continue;
+        }
+        *lifespan = next_lifespan;
+        *ledger = next_ledger;
 
         let event = LifespanEventRecord {
             at_tick: clock.tick,
@@ -760,12 +770,15 @@ fn apply_extension_cost(
     cultivation: Option<valence::prelude::Mut<'_, Cultivation>>,
     player_state: Option<valence::prelude::Mut<'_, PlayerState>>,
     qi_release: &mut super::death_hooks::QiMaxShrinkReleaseContext<'_>,
-) {
-    if let Some(mut cultivation) = cultivation {
-        if cost.qi_cap_delta < 0.0 {
-            let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
-            let new_qi_max = (cultivation.qi_max * factor).max(1.0);
-            qi_release.shrink_qi_max(&mut cultivation, new_qi_max);
+) -> bool {
+    if cost.qi_cap_delta < 0.0 {
+        let Some(mut cultivation) = cultivation else {
+            return false;
+        };
+        let factor = (1.0 + cost.qi_cap_delta).clamp(0.05, 1.0);
+        let new_qi_max = (cultivation.qi_max * factor).max(1.0);
+        if !qi_release.shrink_qi_max(&mut cultivation, new_qi_max) {
+            return false;
         }
     }
     if let Some(mut player_state) = player_state {
@@ -773,6 +786,7 @@ fn apply_extension_cost(
             player_state.karma = (player_state.karma + cost.karma_delta).clamp(-1.0, 1.0);
         }
     }
+    true
 }
 
 pub fn lifespan_cap_for_actor(
@@ -1475,6 +1489,18 @@ mod tests {
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
+        let lifespan_before = app
+            .world()
+            .entity(entity)
+            .get::<LifespanComponent>()
+            .unwrap()
+            .clone();
+        let ledger_before = app
+            .world()
+            .entity(entity)
+            .get::<LifespanExtensionLedger>()
+            .unwrap()
+            .clone();
 
         app.world_mut()
             .resource_mut::<Events<LifespanExtensionIntent>>()
@@ -1488,6 +1514,22 @@ mod tests {
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
         assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<LifespanComponent>()
+                .unwrap(),
+            &lifespan_before,
+            "延寿代价未能释放时不能提交寿命收益"
+        );
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<LifespanExtensionLedger>()
+                .unwrap(),
+            &ledger_before,
+            "延寿代价未能释放时不能消耗延寿账本"
+        );
         assert_eq!(
             app.world()
                 .resource::<ZoneRegistry>()

@@ -6468,8 +6468,8 @@ fn apply_combat_pill_runtime(
     let mut touched_cultivation = false;
     if let Ok(mut wounds) = combat_params.wounds.get_mut(entity) {
         use crate::alchemy::pill::{
-            apply_severed_mend, apply_wound_heal, apply_wound_worsen, scaled_grades,
-            worst_non_severed_part, worst_severed_part, CombatPillKind,
+            apply_wound_heal, apply_wound_worsen, scaled_grades, worst_non_severed_part,
+            CombatPillKind,
         };
         match spec.kind {
             CombatPillKind::HuoXueDan => {
@@ -6482,8 +6482,6 @@ fn apply_combat_pill_runtime(
                 apply_wound_heal(&mut wounds, target, grades);
             }
             CombatPillKind::DuanXuSan => {
-                let target = worst_severed_part(&wounds);
-                apply_severed_mend(&mut wounds, target, pos_scale);
                 let qi_max_before = next_cultivation.qi_max;
                 let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
                     entity,
@@ -6495,10 +6493,16 @@ fn apply_combat_pill_runtime(
                     qi_transfers: qi_release_resources.transfers.as_deref_mut(),
                     source: "combat_pill:duan_xu_san",
                 };
-                if shrink_qi_max_for_duan_xu_san(&mut next_cultivation, &mut qi_release) {
-                    touched_cultivation |=
-                        (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
+                if !try_apply_duan_xu_san_mend(
+                    &mut wounds,
+                    &mut next_cultivation,
+                    pos_scale,
+                    &mut qi_release,
+                ) {
+                    return;
                 }
+                touched_cultivation |=
+                    (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
             }
             CombatPillKind::SuoDiSan => {
                 let grades = scaled_grades(1, neg_scale);
@@ -6563,6 +6567,21 @@ fn shrink_qi_max_for_duan_xu_san(
 ) -> bool {
     let new_qi_max = (cultivation.qi_max * 0.97).max(0.0);
     qi_release.shrink_qi_max(cultivation, new_qi_max)
+}
+
+fn try_apply_duan_xu_san_mend(
+    wounds: &mut Wounds,
+    cultivation: &mut Cultivation,
+    success_scale: f32,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_>,
+) -> bool {
+    let target = crate::alchemy::pill::worst_severed_part(wounds);
+    if !shrink_qi_max_for_duan_xu_san(cultivation, qi_release) {
+        return false;
+    }
+
+    crate::alchemy::pill::apply_severed_mend(wounds, target, success_scale);
+    true
 }
 
 fn emit_combat_pill_feedback(

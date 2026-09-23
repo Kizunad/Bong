@@ -122,6 +122,18 @@ fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
         qi_max: SPIRIT_QI_TOTAL,
         ..Default::default()
     };
+    let mut wounds = Wounds {
+        entries: vec![crate::combat::components::Wound {
+            location: crate::body_plan::BodyPartId::new("leg_l"),
+            kind: WoundKind::Blunt,
+            severity: 0.95,
+            bleeding_per_sec: 2.0,
+            created_at_tick: 1,
+            inflicted_by: None,
+        }],
+        ..Default::default()
+    };
+    let wounds_before = serde_json::to_value(&wounds).unwrap();
     let mut zones = ZoneRegistry::fallback();
     zones.zones[0].spirit_qi = 0.0;
     let mut ledger = WorldQiAccount::default();
@@ -139,13 +151,20 @@ fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
         source: "combat_pill:duan_xu_san",
     };
 
-    assert!(!shrink_qi_max_for_duan_xu_san(
+    assert!(!try_apply_duan_xu_san_mend(
+        &mut wounds,
         &mut cultivation,
+        1.0,
         &mut release
     ));
 
     assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
     assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(
+        serde_json::to_value(&wounds).unwrap(),
+        wounds_before,
+        "断续散缩容释放失败时不得接骨"
+    );
     assert_eq!(zones.zones[0].spirit_qi, 0.0);
     assert_eq!(ledger.total(), 0.0);
     assert_eq!(transfers.len(), 0);
