@@ -1,5 +1,7 @@
 # BugHunt: 延寿丹与断续散缩容真元上限后 clamp 差额真元蒸发
 
+> 阶段总览：P0 第一性原理验真与 promotion ✅ 2026-09-23；P1 延寿丹缩容记账 ✅ 2026-09-23；P2 断续散缩容记账 ✅ 2026-09-23；P3 契约测试与 server 门禁 ✅ 2026-09-23；P4 主线复验与归档 ✅ 2026-09-23。
+
 ## Bug 摘要
 
 **严重度：critical（延寿丹分支，skeptic 由 high 调整为 critical）+ medium（断续散分支，unchanged）**
@@ -36,7 +38,7 @@
 - `server/src/network/client_request_handler.rs:225-`（`CombatRequestParams` struct：有 `positions`/`unique_ids`/`buff_tx` 等字段，但缺 `Query<&CurrentDimension>`/`Option<ResMut<ZoneRegistry>>`/`Option<ResMut<Events<QiTransfer>>>`；文件顶部 178/191 行已 `use crate::world::dimension::{CurrentDimension, DimensionKind}` 与 `use crate::world::zone::{ZoneRegistry, ...}`，接线成本低）
 - `server/src/cultivation/race_change.rs:192-228`（**正确先例**：`new_qi_max` 算出后先 `excess = (cultivation.qi_current - new_qi_max).max(0.0)`，再查 `Position`/`CurrentDimension`/`ZoneRegistry` 构造 `QiExcessReleasePlan`）
 - `server/src/cultivation/race_change.rs:311-350`（`apply_qi_excess_release`：把 `transfer.accepted` 写回 `zone.spirit_qi` 并 `emit QiTransfer(..., ReleaseToZone)`，`transfer.overflow` 走无上限 overflow 账户；此函数是 `fn`（非 `pub fn`），仅限 race_change.rs 内部复用）
-- `server/src/cultivation/death_hooks.rs:278-338`（**已存在、已导出的共用 helper** `pub fn release_qi_amount_to_zone(entity, amount, position, current_dimension, life_record, zones, qi_transfers, source) -> f64`：Position/ZoneRegistry/CurrentDimension 任一缺失都自动 fallback 到 overflow 账户，语义与 race_change.rs 的 fallback 完全一致，两处修复应共同调用这一个函数，不再各写一份）
+- `server/src/cultivation/death_hooks.rs::QiMaxShrinkReleaseContext` 与 `release_qi_amount_to_zone`（skeleton 中记录的旧 helper 签名已过时；当前 helper 接收 `&mut Cultivation`、差额、身份/位置/区域资源、`WorldQiAccount` 与可选 `QiTransfer` 事件，并返回 `Result<QiFlowOutcome, QiFlowError>`。缩容 context 只有在完整释放差额后才改 `qi_max`；缺 `LifeRecord`、账本或事件，或释放未完整扣账时 fail closed，保留原 `qi_max` 与 `qi_current`。）
 - `server/src/cultivation/lifespan.rs:7`（`use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};`——`death_hooks` 模块已被 lifespan.rs 部分 import，接入 `release_qi_amount_to_zone` 只需扩展 use 列表）
 
 ## 触发路径
@@ -71,21 +73,18 @@
 
 主循环复核：已亲读关键行确认。
 
-## Skeleton Fix Plan
+## 实施结果
 
-统一原则：**两处共用同一个已存在的公开 helper `crate::cultivation::death_hooks::release_qi_amount_to_zone`**（`death_hooks.rs:278-338`，已内建 Position/ZoneRegistry/CurrentDimension 缺失时的 overflow 兜底），照抄 `race_change.rs:192-347` 的"先算差额、再释放"设计，**禁止各自另写一份找 zone + 写 `zone.spirit_qi` + emit `QiTransfer` 的逻辑**。
+- [x] 两处缩容共用 `QiMaxShrinkReleaseContext` 与 `release_qi_amount_to_zone`；由公共 helper 处理差额、账本和 `QiTransfer`，没有复制 zone 写入逻辑。
+- [x] `apply_extension_cost` 和断续散分支只在完整释放超额真元后收缩 `qi_max`，保留延寿丹年费率与断续散 `0.97` 比例。
+- [x] 断续散通过 `CombatRequestParams` 取得身份、位置、维度与释放资源，不向自由函数堆叠裸参数。
+- [x] 有超额需要释放时，若 helper 返回错误、缺少 `LifeRecord`/`WorldQiAccount`/`QiTransfer`，或实际扣账小于请求金额，则不收缩 `qi_max`，也不截断 `qi_current`；无法证明完整记账时不销毁真元。
+- [x] 延寿丹累计代价测试保留变陡曲线断言，并检查区域余额、转账 from/to/amount/reason 与守恒；未满值不产生释放，缺身份时不缩容。
+- [x] 断续散测试覆盖未满值、释放到区域、缺 `LifeRecord` 和缺账本四种结果。
+- [x] 评估专属 narration/日志后不新增：现有 `QiTransfer` 事件和区域余额提供可审计结果，本修复不扩展叙事契约。
+- [x] 客户端请求校验和 IPC/schema 均未改变；此缺陷位于 server 内部真元结算路径。
 
-- [ ] `lifespan.rs::apply_extension_cost`：在收缩 `qi_max` 前记录 `qi_current_before = cultivation.qi_current`，clamp 后计算 `overflow = (qi_current_before - cultivation.qi_current).max(0.0)`，返回给调用方（或直接在函数内完成释放，视资源可用性决定签名形态）。
-- [ ] 扩展 `process_lifespan_extension_intents`（`lifespan.rs:525`）的系统签名，穿入 `Query<&Position>`、`Query<&CurrentDimension>`、`Option<ResMut<ZoneRegistry>>`、`Option<ResMut<Events<QiTransfer>>>`（`ZoneRegistry` 已在文件顶部 import，`death_hooks` 模块也已部分 import，扩展 use 列表即可）。
-- [ ] `overflow > 0.0` 时调用 `death_hooks::release_qi_amount_to_zone(entity, overflow, position, current_dimension, life_record.as_deref(), zones.as_deref_mut(), qi_transfers.as_deref_mut(), "life_extension_pill_shrink")`，不再由 `.min()` 静默吞掉。
-- [ ] 修正既有测试 `lifespan_extension_pill_cost_increases_with_accumulated_extension`（`lifespan.rs:1338-1385`）：不能只断言 `qi_current == qi_max`，必须补上"差额已经通过某条可观察路径释放"的断言（提供 `Position`+`ZoneRegistry` 时断言目标 `zone.spirit_qi` 增加且对应量的 `QiTransfer(ReleaseToZone)` 事件被 emit；若测试场景未 spawn 这些资源，断言 fallback 到 overflow 账户的等价审计事件被 emit，而不是让差额彻底消失于断言之外）。
-- [ ] `client_request_handler.rs::CombatRequestParams`（或专为 `apply_combat_pill_runtime` 传参的更窄结构）补充 `Query<&CurrentDimension>`、`Option<ResMut<ZoneRegistry>>`、`Option<ResMut<Events<QiTransfer>>>`（文件顶部 178/191 行已 `use` 对应类型，接线成本低）。
-- [ ] `apply_combat_pill_runtime` 的 `CombatPillKind::DuanXuSan` 分支（`17337-17346`）同样记录 `qi_current_before`，clamp 后算 `overflow`，调用同一个 `death_hooks::release_qi_amount_to_zone(entity, overflow, ..., "combat_pill_duan_xu_san_shrink")`。
-- [ ] 两处修复均只做"释放差额"，**不修改 `qi_max` 收缩本身的数值/比例**——这是道具的既定代价曲线，本 plan 只补齐守恒记账，不改变现有难度平衡。
-- [ ] 本 bug 与 C2S 门禁无关（不是漏检请求合法性问题），纯粹是服务端内部真元记账缺陷；`take_pill`/`AlchemyTakePill` 的合法性校验本就完全在 server 侧完成，本次修复不新增任何 client 侧改动，也不需要额外的 client UX 隐藏——server 对真元流动的计算权威性保持不变，只是补全其应有的一步。
-- [ ] 评估是否需要给 `overflow` 事件补充专属 `narration`/日志，便于运营侧观测这条此前完全无声的泄漏路径是否已被彻底堵住（可选，不阻塞本 plan 收口）。
-
-## 验收测试计划
+## 初始验收测试方案（实际结果见 Finish Evidence）
 
 **server/ cargo test（`server/src/cultivation/lifespan.rs` 单测）**：
 - happy path：玩家 `qi_current < qi_max`（服丹前真元未满，如 60/100），服用延寿丹后 `qi_max` 按既有公式收缩，`qi_current` 保持原值不变（收缩后仍小于新 `qi_max`），断言**没有**产生任何 `QiTransfer(ReleaseToZone)` 事件（overflow 应为 0，不应该有多余释放）。
@@ -105,10 +104,52 @@
 **跨模块守恒回归（可选，建议）**：
 - 若时间允许，补一条"服延寿丹 + 服断续散"组合场景的集成测试，验证连续两种丹药触发的两笔释放各自独立记账，互不覆盖、互不吞并（分别落在各自的 `QiTransferReason` 变体或 source 标签下，便于审计区分）。
 
-## 风险
+## 实际验收结果
+
+- `lifespan_extension_pill_reduces_qi_max_by_cost_curve`：未满值时按原代价曲线缩容，当前真元不变。
+- `lifespan_extension_pill_cost_increases_with_accumulated_extension`：累计年限提高代价；满值差额进入区域并产生正确 `QiTransfer`，最终余额守恒。
+- `lifespan_extension_missing_life_record_keeps_qi_shrink_fail_closed`：缺少身份时保留原上限与当前真元，且区域、账本和事件均无变化。
+- `duan_xu_san_shrinks_qi_max_without_release_when_current_fits`、`duan_xu_san_releases_excess_to_zone_and_emits_transfer`：分别锁定未满值和满值释放契约。
+- `duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed`、`duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed`：锁定关键资源缺失时不缩容、不吞真元。
+
+Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过，86 个测试结果汇总为 12,592 passed、0 failed、6 ignored。沙箱内首次运行因 Unix socket/端口绑定权限受限未能完成；同一完整测试命令在获准沙箱外重跑后退出码为 0。
+
+## 修复前风险评估
 
 - `apply_extension_cost` 目前是纯函数（无 ECS 资源访问），扩展签名穿入 `Position`/`ZoneRegistry`/`Events<QiTransfer>` 会牵动其调用方 `process_lifespan_extension_intents` 的 Query 元组——需注意 `Position`/`CurrentDimension` 在部分测试场景（离线批处理角色）可能不存在，必须复用 `death_hooks::release_qi_amount_to_zone` 自带的 overflow fallback，不能假设资源必然齐备。
 - `apply_combat_pill_runtime` 当前是纯参数传递的自由函数（非 Bevy system），扩展它需要的 `Query<&CurrentDimension>`/`ZoneRegistry`/`Events<QiTransfer>` 必须从更上层调用链（`handle_alchemy_take_pill` → 更上层的 system）逐层穿入或塞进 `CombatRequestParams`——穿参层数较深，修复时需确认不破坏该函数已有的 `#[allow(clippy::too_many_arguments)]` 参数表可维护性（可考虑打包成一个小的 `QiReleaseContext` struct 传入，而非逐个新增裸参数）。
 - 两处修复都不应改变道具本身的代价曲线数值（`qi_max` 收缩比例/年费率），只补记账——若顺手"调平衡"会把一个纯 bug 修复变成数值改动，扩大 review 范围。
 - 既有测试 `lifespan_extension_pill_cost_increases_with_accumulated_extension` 修改断言时要小心不要削弱其原有的"缩容曲线随累计年限变陡"这条核心锁定，只是新增守恒相关断言，不能替换掉原有内容。
 - 若线上已有大量真实玩家因这两条路径长期蒸发真元，服务器灵气总量可能已经偏离 `SPIRIT_QI_TOTAL` 初值；本 plan 范围只堵住未来的泄漏，不包含历史存量的对账/回填，需要另行评估是否值得追溯修正（大概率不值得，纯记账缺口通常量级很小，可作为已知限制记录而非强制回填）。
+
+## Finish Evidence
+
+### 落地清单
+
+- 延寿丹结算与契约测试：`server/src/cultivation/lifespan.rs`。
+- 共用缩容释放 context 与账本 helper：`server/src/cultivation/death_hooks.rs`。
+- 断续散生产接线与契约测试：`server/src/network/client_request_handler.rs`、`server/src/network/client_request/production.rs`、`server/src/network/client_request_handler_tests.rs`。
+
+### 关键 commit
+
+- `225af3745`（2026-09-23）：将本 plan promotion 为 active。
+- `13e271abb`（2026-09-23）：修复延寿丹真元缩容释放记账。
+- `87ef1dbf4`（2026-09-23）：修复断续散真元缩容释放记账。
+- 主线复验：`git fetch origin && git merge origin/main` 成功，`origin/main` 为 `bcb81488ff8da0aee8b94855c484a3e4993c5840`，merge 结果 already up to date。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo fmt --check`：通过。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：通过。
+- `scripts/build-token.sh cargo test`：通过；86 个测试结果汇总为 12,592 passed、0 failed、6 ignored。沙箱权限不足导致的首次运行未被当作通过；获准沙箱外的完整重跑通过。
+
+### 跨仓库核验
+
+- server：`QiMaxShrinkReleaseContext::shrink_qi_max`、`release_qi_amount_to_zone`、`LifespanExtensionIntent` 与 `CombatPillKind::DuanXuSan` 已覆盖。
+- agent：`AlchemyTakePillRequestV1` schema 未改，IPC 契约不变。
+- client：`ClientRequestSender.sendAlchemyTakePill` 与 `ClientRequestProtocol.encodeAlchemyTakePill` 未改，仍使用现有 `alchemy_take_pill` 请求。
+
+### 遗留 / 后续
+
+- 不追溯核算本修复前可能已蒸发的历史真元；本 plan 只阻止未来损耗。
+- 无需 agent/client 配套改动；该问题与 C2S 合法性门禁无关。
