@@ -135,13 +135,18 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - `225af3745`（2026-09-23）：将本 plan promotion 为 active。
 - `13e271abb`（2026-09-23）：修复延寿丹真元缩容释放记账。
 - `87ef1dbf4`（2026-09-23）：修复断续散真元缩容释放记账。
-- 主线复验：`git fetch origin && git merge origin/main` 成功，`origin/main` 为 `bcb81488ff8da0aee8b94855c484a3e4993c5840`，merge 结果 already up to date。
+- `41e22cbcf`（2026-09-24）：缩容释放失败时不提交延寿与断续散的正向收益，并补齐断续散失败回归。
+- `cbb059a43`（2026-09-24）：将两处测试守恒断言改为 `summarize_world_qi` + `assert_conservation`。
+- `46b5c79af`（2026-09-24）：补齐延寿成功路径测试所需的真元资源 fixture。
+- `c48f70d46`（2026-09-24）：合并主线复验；`origin/main` 为 `64e996dd2ed9514bffad4f6c45666380efe2faa7`。
 
 ### 测试结果
 
 - `scripts/build-token.sh cargo fmt --check`：通过。
 - `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：通过。
-- `scripts/build-token.sh cargo test`：通过；86 个测试结果汇总为 12,592 passed、0 failed、6 ignored。沙箱权限不足导致的首次运行未被当作通过；获准沙箱外的完整重跑通过。
+- Kody 返工目标回归：延寿丹失败闭锁、断续散失败闭锁均通过。
+- 合并主线前 `scripts/build-token.sh cargo test`：通过，12,592 passed、0 failed、6 ignored。
+- `git fetch origin && git merge origin/main` 后重跑完整门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,593 passed、0 failed、6 ignored。主线新增测试使 passed 数增加 1。
 
 ### 跨仓库核验
 
@@ -152,4 +157,6 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 ### 遗留 / 后续
 
 - 不追溯核算本修复前可能已蒸发的历史真元；本 plan 只阻止未来损耗。
+- 断续散请求仍按既有顺序先消费丹药并结算丹毒；缩容释放失败时不接骨、不写回 Cultivation，也不发送正向状态或反馈。
+- `client_request_handler.rs` 中对 `source_debited` 与请求量的运行时完整性校验属于生产记账闭锁，保留原实现；`assert_conservation` 仅用于测试/审计快照。
 - 无需 agent/client 配套改动；该问题与 C2S 合法性门禁无关。
