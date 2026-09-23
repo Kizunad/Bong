@@ -367,8 +367,8 @@ fn charge_tick_release_qi_to_zone(
         return Some(Vec::new());
     }
     let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
-    // zone 无法接纳的部分进入已有、可持久化的待分配池；动态 entity-key overflow
-    // 无法跨重启恢复，会把成功释放后留存的余额重新变成蒸发。
+    // zone 无法接纳的部分进入固定、可持久化的待分配池；该真实账本余额会随沉积台账
+    // 一起记录，打断时可按沉积前余额精确扣回。
     let overflow = pending_inflow_account();
     let mut records = Vec::new();
     let mut zone_transfer = None;
