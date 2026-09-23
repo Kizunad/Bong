@@ -4,6 +4,13 @@
 
 > **阶段总览：** P0 ✅ 2026-09-23（PR #1152 落地，本轮验证）；P1 ✅ 2026-09-23（PR #1152 落地，本轮验证）；P2 ✅ 2026-09-23（PR #1152 落地，本轮验证）。
 
+## 接入面
+
+- 进料：heartbeat omen `OmenKind::PseudoVeinForming` 通过 `WorldQiAccount` 从 `pending_inflow_account()` 借入真元。
+- 出料：`ZoneRegistry::register_runtime_zone` 注册动态伪灵脉 runtime zone；`QiTransfer` 记录借出、衰减归还与消散归还。
+- 结算与换算：使用 `inject_zone_for_pseudo_vein_target`、`settle_ephemeral_pseudo_vein_zone_to_target`、`settle_ephemeral_pseudo_vein_zone`；zone 比率换算使用 `QI_ZONE_UNIT_CAPACITY`。
+- 世界观锚点：沿用 `worldview.md §一 L18`，全服灵气总量恒定且不会凭空产生。
+
 > 范围声明：本文只处理 heartbeat 自动伪灵脉的账本借还，不消费或修改其他 plan。起草时已避开 #975 dormant 负灵域死亡释放 `.max(0.0)` 与 #989 灵物磨损 overflow；#899 的重启恢复/持久化不替代本计划的借还语义。
 
 ## Bug 摘要
