@@ -979,7 +979,7 @@ mod tests {
     use valence::prelude::{App, Events, Position, Update};
 
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::ledger::{QiAccountId, QiTransfer};
+    use crate::qi_physics::ledger::{QiAccountId, QiTransfer, WorldQiAccount};
     use crate::qi_physics::QiTransferReason;
     use crate::schema::common::SPIRIT_QI_TOTAL;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -1291,8 +1291,13 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.insert_resource(CultivationClock { tick: 99 });
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<LifespanExtensionIntent>();
         app.add_event::<LifespanEventEmitted>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, process_lifespan_extension_intents);
 
         let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
@@ -1302,7 +1307,14 @@ mod tests {
             .spawn((
                 lifespan,
                 LifespanExtensionLedger::default(),
+                Cultivation {
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
                 LifeRecord::new("offline:Azure"),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
 
