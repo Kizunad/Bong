@@ -1362,6 +1362,90 @@ mod tests {
     }
 
     #[test]
+    fn shared_overflow_refunds_only_each_session_deposit() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let first = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        let second = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        for caster in [first, second] {
+            app.world_mut().entity_mut(caster).insert(ChargingState {
+                slot: 0,
+                started_at_tick: 10,
+                qi_committed: 0.0,
+                target_qi: 50.0,
+                qi_deposits: Vec::new(),
+            });
+        }
+
+        let before = summarize_world_qi(app.world_mut());
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+
+        let overflow = pending_inflow_account();
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            100.0,
+            "两次蓄力应各向共享待分配池沉积 50 真元"
+        );
+        assert_eq!(
+            app.world().get::<ChargingState>(first).unwrap().qi_deposits[0].balance_before,
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .get::<ChargingState>(second)
+                .unwrap()
+                .qi_deposits[0]
+                .balance_before,
+            50.0
+        );
+
+        app.add_systems(Update, charge_interrupt_system);
+        app.world_mut().send_event(combat_hit(attacker, first));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(first).unwrap().qi_current,
+            130.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(second).unwrap().qi_current,
+            100.0,
+            "第一会话退款不得修改第二会话玩家真元"
+        );
+        assert!(app.world().get::<ChargingState>(second).is_some());
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            70.0,
+            "第一会话只应取回自己理论退款额度 30"
+        );
+
+        app.world_mut().send_event(combat_hit(attacker, second));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(second).unwrap().qi_current,
+            130.0,
+            "共享池余额基线不能吞掉第二会话自己的可退款份额"
+        );
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            40.0
+        );
+        assert!(app.world().get::<ChargingState>(first).is_none());
+        assert!(app.world().get::<ChargingState>(second).is_none());
+
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("共享 overflow 两会话先后打断必须保持世界真元守恒");
+    }
+
+    #[test]
     fn fully_charged_state_refunds_sixty_percent_across_zone_and_overflow() {
         let mut app = app_with_zone();
         app.world_mut()
