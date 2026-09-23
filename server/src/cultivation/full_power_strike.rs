@@ -419,7 +419,16 @@ fn charge_tick_release_qi_to_zone(
             QiTransferReason::Channeling,
         ) {
             Ok(Some(transfer)) => transfer,
-            Ok(None) => return Some(records),
+            Ok(None) => {
+                tracing::error!(
+                    remaining,
+                    "[bong][full_power_strike] positive charge overflow produced no ledger transfer"
+                );
+                for record in records.iter().rev() {
+                    rollback_zone_deposit(zones, record);
+                }
+                return None;
+            }
             Err(error) => {
                 tracing::warn!(
                     ?error,
@@ -503,10 +512,10 @@ fn withdraw_qi_from_deposits(
             }
             QiAccountKind::Overflow => {
                 let current = qi_account.balance(&deposit.account);
-                let recoverable = (current - deposit.balance_before)
-                    .max(0.0)
-                    .min(deposit.amount);
-                let actual = wanted.min(recoverable);
+                // pending_inflow_account is shared by all sessions. `balance_before` is
+                // diagnostic only here; using current - balance_before would treat another
+                // session's later deposit as this session's refundable balance.
+                let actual = wanted.min(current);
                 if actual <= QI_EPSILON {
                     continue;
                 }
