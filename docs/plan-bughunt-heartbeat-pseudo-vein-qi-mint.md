@@ -1,19 +1,21 @@
 # plan-bughunt-heartbeat-pseudo-vein-qi-mint
 
-> **Skeleton / BugHunt A3（server-qi 第三轮）**。一句话主题：`world::heartbeat` 旧伪灵脉自动生成路径仍直接把 `Zone.spirit_qi` 写成 0.4-0.8 的高灵气 runtime zone，并在后续 tick 直接衰减/清零；该路径没有从 `pending_inflow_account` 借出、没有 `WorldQiAccount::transfer`、没有 `QiTransfer` 审计，导致伪灵脉自动刷新时凭空铸造灵气，消散时又把未被吸收的灵气直接销毁。
+> **BugHunt A3（server-qi 第三轮）**。一句话主题：核验 heartbeat 自动伪灵脉曾绕过账本铸造、销毁真元的历史缺陷；生产路径已由 PR #1152 修复，本轮补齐并验证拒绝无资金生成的契约测试。
 
-> 范围声明：本 skeleton 只记录 bug，不消费/归档 plan，不修改源码。已避开 #975 dormant 负灵域死亡释放 `.max(0.0)` 与 #989 灵物磨损 overflow 未落账；也核对 #899 仅覆盖 heartbeat 伪灵脉 runtime zone 重启恢复/持久化，不覆盖本条账本借还语义。
+> **阶段总览：** P0 ✅ 2026-09-23（PR #1152 落地，本轮验证）；P1 ✅ 2026-09-23（PR #1152 落地，本轮验证）；P2 ✅ 2026-09-23（PR #1152 落地，本轮验证）。
+
+> 范围声明：本文只处理 heartbeat 自动伪灵脉的账本借还，不消费或修改其他 plan。起草时已避开 #975 dormant 负灵域死亡释放 `.max(0.0)` 与 #989 灵物磨损 overflow；#899 的重启恢复/持久化不替代本计划的借还语义。
 
 ## Bug 摘要
 
-`world::register` 同时注册了新的 `world::pseudo_vein_runtime` 和旧的 `world::heartbeat`。新路径已经把灵潮/伪灵脉接入 `pending_inflow_account`，通过 `inject_zone_for_pseudo_vein` 真实借出、消散时 `PseudoVeinSettle` 归还；但 heartbeat 自动 omen 路径仍走旧的 `spawn_pseudo_vein_from_omen`：
+本节记录 skeleton 起草时的历史缺陷。起草时，`world::register` 同时注册新的 `world::pseudo_vein_runtime` 和旧的 `world::heartbeat`；新路径已经把灵潮/伪灵脉接入 `pending_inflow_account`，但 heartbeat 自动 omen 路径仍走旧的 `spawn_pseudo_vein_from_omen`：
 
 - 创建时注册 `pseudo_vein_heartbeat_*` runtime zone，直接设置 `spirit_qi: omen.intensity`。
 - 同时把 `PseudoVeinRuntimeState.qi_current = omen.intensity`。
 - 后续 `advance_active_pseudo_veins` 每次把 `zone.spirit_qi` 覆盖为旧 state 衰减后的 snapshot，耗尽时直接设成 `0.0`。
 - 整条路径没有 `WorldQiAccount` 参数，没有 `pending_inflow_account`，没有真实 `QiTransfer`。
 
-这违反 `worldview.md §一 L18` 的“全服灵气总量恒定，不会凭空产生”，也违反 `docs/CLAUDE.md §四 L58-L60` 对自定 qi 衰减/绕过守恒账本的红线。`worldview.md §二 L38` 与 `worldview.md §十三 L1277` 允许伪灵脉作为天道陷阱出现，但 `worldview.md §二 L50` 明确存在“代偿”负灵风暴语义，不是系统外创生豁免。
+这违反 `worldview.md §一 L18` 的“全服灵气总量恒定，不会凭空产生”，也违反 `docs/CLAUDE.md §四 L58-L60` 对自定 qi 衰减/绕过守恒账本的红线。`worldview.md §二 L38` 与 `worldview.md §十三 L1277` 允许伪灵脉作为天道陷阱出现，但 `worldview.md §二 L50` 明确存在“代偿”负灵风暴语义，不是系统外创生豁免。当前实现与逐项验真结果见“验证结论 + 证据”。
 
 ## 对实际游玩体验的影响
 
@@ -21,7 +23,7 @@
 
 结果是：服务器会周期性给地图凭空投放可修炼、可突破、可炼丹的高灵气窗口。玩家越会踩节奏、越会围绕伪灵脉打坐/冲境/起炉，越能把这些未从全服预算扣出的灵气变成自己的 `qi_current`。伪灵脉消散时，未被吸收的那部分又直接清零，导致真元经济既能凭空发奖，也会凭空销毁，破坏“修炼消耗 = 别人少掉”的核心体验。
 
-## 证据定位
+## 初始证据定位（skeleton 起草时）
 
 - 注册链：`server/src/world/mod.rs:145` 注册 `pseudo_vein_runtime::register`，`server/src/world/mod.rs:152` 随后仍注册 `heartbeat::register`。
 - heartbeat 调度：`server/src/world/heartbeat.rs:454-468` 把 `heartbeat_tick`、`chain_reaction_tick`、`zone_qi_inflow_tick` 挂进 `Update`；`server/src/world/heartbeat.rs:577-668` 的 `heartbeat_tick` 会推进旧 `active_pseudo_veins`，触发 due omen，再继续 `maybe_queue_pseudo_vein`。
@@ -60,35 +62,77 @@
 
 ## Skeleton Fix Plan
 
-### P0 — 统一 heartbeat 自动伪灵脉入口
+### P0 ✅ 2026-09-23 — 统一 heartbeat 自动伪灵脉入口（PR #1152 落地，本轮验证）
 
 - 让 heartbeat 自动伪灵脉不再直接注册旧 `PseudoVeinRuntimeState` runtime zone。
 - 优先复用 `world::pseudo_vein_runtime` 的 `PseudoVeinRuntime` component 与 `inject_zone_for_pseudo_vein` / settlement 路径。
 - 若短期不能删旧 state，则旧 `spawn_pseudo_vein_from_omen` 至少必须拿到 `WorldQiAccount`，按 `pending_inflow_account -> zone` 真实借出后才能提高 `zone.spirit_qi`，并记录 `QiTransfer`。
 
-### P1 — 收口旧衰减/消散语义
+### P1 ✅ 2026-09-23 — 收口旧衰减/消散语义（PR #1152 落地，本轮验证）
 
 - 旧 `advance_active_pseudo_veins` 不能继续只按 `PseudoVeinRuntimeState.qi_current` 覆盖 `Zone.spirit_qi`。
 - 消散时必须把未被玩家/NPC吸收的余额按 `QI_ZONE_UNIT_CAPACITY` 换算，转回 `pending_inflow_account`，等价于新 `PseudoVeinSettle` 语义。
 - 链式事件 `PseudoVeinDissipated` 可保留，但 `redistributed_qi` 不能代替账本搬运。
 
-### P2 — 删除或隔离旧世界生成 runtime
+### P2 ✅ 2026-09-23 — 隔离旧生命周期状态的真元权威（PR #1152 落地，本轮验证）
 
 - 明确 `worldgen::pseudo_vein::PseudoVeinRuntimeState` 是 terrain/telemetry helper 还是生产 runtime。
 - 如果不再作为生产 qi runtime 使用，移除 heartbeat 对它的依赖，避免下一次改动又绕回旧直写字段。
 - 如果必须保留，补充注释说明它只计算展示/阶段，不拥有真元余额；真实余额以 `WorldQiAccount` 与 `Zone.spirit_qi` 同步路径为准。
 
-## 验收测试计划
+## 验收测试对照
 
-- 新增 heartbeat 自动路径单测：触发 `PseudoVeinForming` omen 前后，用 `summarize_world_qi` / `WorldQiAccount` 对拍，断言伪灵脉创建不会增加 `total_observed`，`pending_inflow_account` 按注入量下降。
-- 新增旧回归测试：`spawn_pseudo_vein_from_omen` 或替代入口不得在无 `WorldQiAccount` 时把 `Zone.spirit_qi` 从低值直接抬高；缺账本应降级为零注入或拒绝生成真实高灵气。
-- 新增消散测试：伪灵脉剩余未吸收余额消散后转回 `pending_inflow_account`，不能直接 `zone.spirit_qi = 0.0` 丢失。
-- 新增玩家体验链路测试：玩家在 heartbeat 伪灵脉内修炼获得的 `qi_current` 必须对应 zone/pending pool 的等额减少，不能凭空增加 `total_observed`。
-- 跑 server 栈：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
+- 创建借款：`pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi` 检查动态 zone 余额及 zone+ledger 总量；通用 pending-pool 注入测试检查真实余额扣减。
+- 无资金拒绝：本轮新增 `pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded`，检查没有伪灵脉 zone/lifecycle、待分配池余额仍为零且物理总量不变。
+- 衰减/消散：`heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep` 检查逐 tick 对拍；`restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool` 检查剩余余额全额回池。
+- 玩家吸收：`qi_regen_records_transfer_audit_without_mirroring_ledger_balance` 检查实际 `qi_current` 增长与 zone 扣款等额；heartbeat 创建测试确认其 zone 余额来自已扣款的池。两段同步守恒路径由同栈契约测试覆盖，无跨进程边界。
+- server 门禁：`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 均通过。
+
+## 验证结论 + 证据
+
+- **创建与借款：已由 PR #1152 修复。** `spawn_pseudo_vein_from_omen` 先以 `spirit_qi: 0.0` 注册动态 zone，再调用 `inject_zone_for_pseudo_vein_target`；借款失败会移除 runtime zone，成功后 lifecycle 状态取真实 zone 余额。注入 helper 按 `pending_inflow_account` 的真实余额限额，并走 `ReleaseToZone` transfer。证据：`server/src/world/heartbeat.rs:2098`、`server/src/world/heartbeat.rs:2132`、`server/src/world/heartbeat.rs:2147`、`server/src/world/pseudo_vein_runtime.rs:509`。测试 `pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi` 对拍 zone 与 ledger 总余额；`inject_zone_for_pseudo_vein_borrows_from_pending_pool_and_debits_it` 断言待分配池实际扣款。
+- **衰减与消散：已由 PR #1152 修复。** heartbeat 每 tick 以 `Zone.spirit_qi` 校准 lifecycle，再通过 `settle_ephemeral_pseudo_vein_zone_to_target` 把衰减量真实转回待分配池；最终移除 zone 前会结清全部剩余余额，失败则保留 runtime 重试。证据：`server/src/world/heartbeat.rs:1349`、`server/src/world/heartbeat.rs:1379`、`server/src/world/heartbeat.rs:1412`、`server/src/world/pseudo_vein_runtime.rs:552`、`server/src/world/pseudo_vein_runtime.rs:564`。测试 `heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep` 锁定持续衰减守恒；`restored_pseudo_vein_first_tick_returns_dynamic_zone_balance_to_pending_pool` 断言剩余余额全额回池。
+- **缺少可用待分配余额：生产路径会拒绝生成；本轮补齐直接入口测试。** `heartbeat_tick` 要求 `ResMut<WorldQiAccount>`，缺少 resource 时系统不可运行；对存在但未注入 `pending_inflow_account` 余额的 ledger，heartbeat 入口必须返回 `None`、清除零余额 runtime zone 且不增加物理总量。新测试 `pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded` 断言实际 pool 余额和 zone+ledger 总量；通用 helper 的空池测试为 `inject_zone_for_pseudo_vein_is_a_noop_when_pool_is_empty`。证据：`server/src/world/heartbeat.rs:905`、`server/src/world/heartbeat.rs:2147`、`server/src/world/heartbeat_tests.rs:200`、`server/tests/unit/world/pseudo_vein_runtime_test.rs:242`。
+- **玩家吸收链路：由组合契约覆盖。** `qi_regen_records_transfer_audit_without_mirroring_ledger_balance` 断言玩家实际 `qi_current` 增量、zone 实际扣款和 `CultivationRegen` transfer 等额；heartbeat 创建测试证明动态伪灵脉 zone 的余额来自真实池借款。两段为同一 server 内同步路径，不涉及跨进程时序。证据：`server/tests/unit/cultivation/tick_test.rs:219`、`server/src/world/heartbeat_tests.rs:133`。
+- **修复来源：** PR #1152 已合并（2026-07-11）；生产守恒修复由 `264b80a43`（2026-07-10，生成/恢复/消散守恒）和 `59d1a8f9b`（2026-07-10，lifecycle 与账本同值）落地。`docs/plan-refactor-qi-ledger-v1.md:86` 也将其列为已修复项，本轮已独立复核实现。
 
 ## 风险
+
+以下风险为 skeleton 起草时的实施注意事项，不表示当前仍有未修生产缺陷；本轮复核未发现账本借还路径缺口。
 
 - #899 若先合并，会让 heartbeat 伪灵脉 runtime zone 被持久化；修本 bug 时要同时处理持久化字段中的已注入余额/借款额，否则重启后仍会出现“zone 恢复了，账本没恢复”的分叉。
 - 直接切换到 `PseudoVeinRuntime` 可能影响 world heartbeat 的 omen/VFX/链式兽潮时序，需要保留 `PseudoVeinDissipated` 事件语义。
 - `summarize_world_qi` 的 `zone_qi` 是分率口径，`WorldQiAccount` 是绝对量口径；测试需要沿用现有守恒测试的换算/对拍方式，避免把口径差误判成新 bug。
 - 修复时不要把伪灵脉改成纯特效：它仍应是真实诱饵，只是必须从全服预算中借出并在消散时结算。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/world/heartbeat.rs:2098` 创建时以零余额注册并从池注入；`server/src/world/pseudo_vein_runtime.rs:509` 扣减真实待分配池；无资金时回滚 runtime zone。入口契约由 `server/src/world/heartbeat_tests.rs:200` 覆盖。
+- P1：`server/src/world/heartbeat.rs:1349` 每 tick 从真实 zone 余额推进 lifecycle 并结算衰减；消散前全额结算后再移除。由 `server/src/world/heartbeat_tests.rs:617`、`server/src/world/heartbeat_tests.rs:809` 覆盖。
+- P2：保留 `PseudoVeinRuntimeState` 负责生命周期/年龄，真元余额以 `Zone.spirit_qi` 为权威；heartbeat 同步及账本结算代码见 `server/src/world/heartbeat.rs:1369`、`server/src/world/pseudo_vein_runtime.rs:564`。
+
+### 关键 commit
+
+- `264b80a439ea0f244075e44584944a53d504fd17`（2026-07-10）：守住动态伪灵脉生成、恢复与消散守恒。
+- `59d1a8f9b882c20305ff99004c236f63108c9e86`（2026-07-10）：保持动态伪灵脉生命周期与账本同值。
+- PR #1152 于 2026-07-11 合并；本轮 promotion 为 `4bcfb803e`（2026-09-23），缺池入口回归测试为 `17881dd9c`（2026-09-23）。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo fmt --check`：PASS。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：PASS。
+- `scripts/build-token.sh cargo test`：12,588 passed，0 failed；另有 5 个文档测试标记为 ignored。
+- 定向回归 `scripts/build-token.sh cargo test pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded`：1 passed，0 failed。
+
+### 跨仓库核验
+
+- Server：`spawn_pseudo_vein_from_omen`、`QiTransfer`、`PseudoVeinSettle` 与 heartbeat/ledger 契约测试命中本修复范围。
+- Agent/schema：`agent/packages/schema/src/pseudo-vein.ts:13` 定义 `PseudoVeinSnapshotV1`，`:28` 定义 `PseudoVeinDissipateEventV1`；`agent/packages/schema/src/channels.ts:265`、`:268` 定义活动/消散频道，本轮未改动。
+- Client：`client/src/main/java/com/bong/client/hud/OmenHudPlanner.java:38` 处理 `PSEUDO_VEIN` HUD 表现，本轮未改动。
+
+### 遗留 / 后续
+
+- 本计划范围内无生产代码待办；本轮仅补齐空待分配池时 heartbeat 入口拒绝生成的回归测试。
+- Agent/schema 与 Client 的既有协议和表现契约未变，不需要跨栈改动。
