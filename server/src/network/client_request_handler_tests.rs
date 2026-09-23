@@ -1793,8 +1793,10 @@ mod external_ingress_tests {
             BotanyHarvestMode, BotanyPhase, HarvestSession, HarvestSessionStore,
         };
         use crate::botany::registry::BotanyPlantId;
-        use crate::combat::components::{Lifecycle, UnlockedStyles, WoundKind, Wounds};
-        use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+        use crate::combat::components::{Lifecycle, UnlockedStyles, Wound, WoundKind, Wounds};
+        use crate::cultivation::components::{
+            Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+        };
         use crate::cultivation::known_techniques::KnownTechniques;
         use crate::cultivation::tribulation::TribulationState;
         use crate::forge::session::{ForgeSession, StepState};
@@ -1809,6 +1811,8 @@ mod external_ingress_tests {
         use crate::npc::faction::{
             FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
         };
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use crate::schema::common::SPIRIT_QI_TOTAL;
         use crate::skill::components::{ScrollId, SkillId, SkillSet};
         use crate::zhenfa::trap_content::TrapTargetFace;
         use crate::zhenfa::{
@@ -1821,6 +1825,31 @@ mod external_ingress_tests {
         };
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
+
+        fn combat_pill_item(instance_id: u64) -> ItemInstance {
+            ItemInstance {
+                instance_id,
+                template_id: "duan_xu_san".to_string(),
+                display_name: "duan_xu_san".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.1,
+                rarity: ItemRarity::Rare,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            }
+        }
 
         fn mark_test_layer_as_overworld(app: &mut App) {
             let world = app.world_mut();
@@ -9534,6 +9563,139 @@ mod external_ingress_tests {
             let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
             assert!(inventory.containers[0].items.is_empty());
             assert_eq!(inventory.revision.0, 1);
+        }
+
+        #[test]
+        fn duan_xu_san_release_preflight_rejects_before_consumption() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+
+            let mut duan_xu_san = ItemTemplate::minimal_for_test("duan_xu_san");
+            duan_xu_san.category = ItemCategory::Pill;
+            duan_xu_san.effect = Some(ItemEffect::CombatPill {
+                pill_item_id: "duan_xu_san".to_string(),
+            });
+            app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+                "duan_xu_san".to_string(),
+                duan_xu_san,
+            )])));
+            app.insert_resource(WorldQiAccount::default());
+
+            let inventory = inventory_with_item(combat_pill_item(77));
+            let wounds = Wounds {
+                entries: vec![Wound {
+                    location: crate::body_plan::BodyPartId::new("leg_l"),
+                    kind: WoundKind::Cut,
+                    severity: 0.95,
+                    bleeding_per_sec: 2.0,
+                    created_at_tick: 1,
+                    inflicted_by: None,
+                }],
+                ..Default::default()
+            };
+            let wounds_before = serde_json::to_value(&wounds).unwrap();
+            let qi_before = Cultivation {
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Default::default()
+            };
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    qi_before.clone(),
+                    PlayerState::default(),
+                    wounds,
+                    Contamination::default(),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let zone_qi_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .expect("fallback zone should exist")
+                .spirit_qi;
+            let ledger_qi_before = app.world().resource::<WorldQiAccount>().total();
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+            assert_eq!(inventory.revision.0, 0, "拒绝服丹不得推进背包 revision");
+            assert_eq!(
+                inventory.containers[0].items[0].instance.stack_count, 1,
+                "缩容释放预检失败时丹药不得被扣除"
+            );
+            assert!(
+                has_inventory_snapshot_payload(&mut helper),
+                "拒绝服丹应沿现有路径重同步背包快照"
+            );
+
+            let contamination = app.world().get::<Contamination>(entity).unwrap();
+            assert!(
+                contamination.entries.is_empty(),
+                "缩容释放预检失败时不得写入断续散丹毒"
+            );
+            assert_eq!(
+                serde_json::to_value(app.world().get::<Wounds>(entity).unwrap()).unwrap(),
+                wounds_before,
+                "缩容释放预检失败时不得接骨"
+            );
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(cultivation.qi_max, qi_before.qi_max);
+            assert_eq!(cultivation.qi_current, qi_before.qi_current);
+            assert_eq!(
+                app.world()
+                    .resource::<ZoneRegistry>()
+                    .zones
+                    .first()
+                    .expect("fallback zone should exist")
+                    .spirit_qi,
+                zone_qi_before,
+                "缩容释放预检失败时不得向 zone 释放真元"
+            );
+            assert_eq!(
+                app.world().resource::<WorldQiAccount>().total(),
+                ledger_qi_before,
+                "缩容释放预检失败时不得改动真元账本"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<crate::qi_physics::ledger::QiTransfer>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 QiTransfer"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<ApplyStatusEffectIntent>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出正向效果"
+            );
         }
 
         #[test]

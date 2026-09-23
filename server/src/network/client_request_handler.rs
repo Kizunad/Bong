@@ -5980,7 +5980,7 @@ pub(crate) fn handle_alchemy_take_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
-    qi_release_resources: QiMaxShrinkReleaseResources<'_>,
+    mut qi_release_resources: QiMaxShrinkReleaseResources<'_>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     hallucination_events: Option<
@@ -6123,6 +6123,34 @@ pub(crate) fn handle_alchemy_take_pill(
         return;
     }
 
+    if let ItemEffect::CombatPill { pill_item_id } = &effect {
+        let is_duan_xu_san = crate::alchemy::pill::combat_pill_spec(pill_item_id)
+            .is_some_and(|spec| spec.kind == crate::alchemy::pill::CombatPillKind::DuanXuSan);
+        if is_duan_xu_san
+            && !preflight_duan_xu_san(
+                entity,
+                alchemy_multiplier,
+                foreign_qi.effect_multiplier,
+                cultivations,
+                combat_params,
+                &mut qi_release_resources,
+            )
+        {
+            tracing::warn!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected:断续散缩容释放预检失败"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "take_pill_duan_xu_san_release_unavailable",
+            );
+            return;
+        }
+    }
+
     let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
     if let Err(error) = consume_result {
         tracing::warn!(
@@ -6245,7 +6273,7 @@ pub(crate) fn handle_alchemy_take_pill(
             }
         }
         ItemEffect::CombatPill { pill_item_id } => {
-            apply_combat_pill_runtime(
+            if !apply_combat_pill_runtime(
                 entity,
                 pill_item_id.as_str(),
                 &template.id,
@@ -6263,7 +6291,20 @@ pub(crate) fn handle_alchemy_take_pill(
                 audio_events,
                 clients,
                 qi_release_resources,
-            );
+            ) {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` runtime rejected after consumption"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_runtime_rejected",
+                );
+                return;
+            }
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();
@@ -6431,12 +6472,12 @@ fn apply_combat_pill_runtime(
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     clients: &mut Query<(&Username, &mut Client)>,
     mut qi_release_resources: QiMaxShrinkReleaseResources<'_>,
-) {
+) -> bool {
     let Some(spec) = crate::alchemy::pill::combat_pill_spec(pill_item_id) else {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{template_id}` references unknown combat pill `{pill_item_id}`"
         );
-        return;
+        return false;
     };
 
     let base_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
@@ -6499,7 +6540,7 @@ fn apply_combat_pill_runtime(
                     pos_scale,
                     &mut qi_release,
                 ) {
-                    return;
+                    return false;
                 }
                 touched_cultivation |=
                     (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
@@ -6559,6 +6600,49 @@ fn apply_combat_pill_runtime(
         &format!("服下{}，药力入体。", spec.name),
         if realm_pos_scale < 1.0 { 0xFFFFA040 } else { 0 },
     );
+    true
+}
+
+fn preflight_duan_xu_san(
+    entity: Entity,
+    alchemy_multiplier: f64,
+    foreign_qi_multiplier: f64,
+    cultivations: &Query<&Cultivation>,
+    combat_params: &mut CombatRequestParams,
+    qi_release_resources: &mut QiMaxShrinkReleaseResources<'_>,
+) -> bool {
+    let Ok(wounds) = combat_params.wounds.get(entity) else {
+        return true;
+    };
+    let mut staged_wounds = wounds.clone();
+    let mut staged_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
+    let (realm_pos_scale, _) =
+        crate::alchemy::pill::mortal_pill_realm_scale(staged_cultivation.realm);
+    let success_scale =
+        (realm_pos_scale * alchemy_multiplier as f32 * foreign_qi_multiplier as f32).max(0.0);
+    let mut staged_zones = qi_release_resources.zones.as_deref().cloned();
+    let mut staged_ledger = qi_release_resources.ledger.as_deref().cloned();
+    let mut staged_transfers = Events::default();
+    let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
+        entity,
+        position: combat_params.positions.get(entity).ok(),
+        current_dimension: combat_params.dimensions.get(entity).ok(),
+        life_record: combat_params.life_records.get(entity).ok(),
+        zones: staged_zones.as_mut(),
+        ledger: staged_ledger.as_mut(),
+        qi_transfers: qi_release_resources
+            .transfers
+            .as_ref()
+            .map(|_| &mut staged_transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    try_apply_duan_xu_san_mend(
+        &mut staged_wounds,
+        &mut staged_cultivation,
+        success_scale,
+        &mut qi_release,
+    )
 }
 
 fn shrink_qi_max_for_duan_xu_san(
