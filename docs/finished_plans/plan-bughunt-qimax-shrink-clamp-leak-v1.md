@@ -139,6 +139,8 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - `cbb059a43`（2026-09-24）：将两处测试守恒断言改为 `summarize_world_qi` + `assert_conservation`。
 - `46b5c79af`（2026-09-24）：补齐延寿成功路径测试所需的真元资源 fixture。
 - `c48f70d46`（2026-09-24）：合并主线复验；`origin/main` 为 `64e996dd2ed9514bffad4f6c45666380efe2faa7`。
+- `08507474c`（2026-09-24）：第二轮 Kody 返工，将断续散缩容释放可行性预检提前到扣丹药、写丹毒之前，并补齐拒绝路径契约测试。
+- `45e5d13af`（2026-09-24）：合并最新主线 `5bdead4a656f4502ae839c2ecb8c8a4cf9a2ba49` 后复验 server 门禁。
 
 ### 测试结果
 
@@ -147,6 +149,8 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - Kody 返工目标回归：延寿丹失败闭锁、断续散失败闭锁均通过。
 - 合并主线前 `scripts/build-token.sh cargo test`：通过，12,592 passed、0 failed、6 ignored。
 - `git fetch origin && git merge origin/main` 后重跑完整门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,593 passed、0 failed、6 ignored。主线新增测试使 passed 数增加 1。
+- 第二轮 Kody 返工目标回归：`duan_xu_san_release_preflight_rejects_before_consumption` 通过，确认预检失败时丹药、丹毒、伤口、`qi_max`、`qi_current`、zone 与账本均不变，并发出背包重同步。
+- 合并最新主线后重跑完整 server 门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,594 passed、0 failed、6 ignored。
 
 ### 跨仓库核验
 
