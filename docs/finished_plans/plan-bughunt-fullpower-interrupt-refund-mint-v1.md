@@ -86,7 +86,7 @@
   ChargeInterruptRefund,
   ```
 - [x] 更新已存在的两条手工构造 `ChargingState` 的测试（`953-1002` 的 `charge_interrupted_by_damage_refunds_60_percent_qi`、`1005-1044` 的 `charge_interrupted_by_multiple_hits_refunds_once`），让它们改为**先跑一遍 `charge_tick_system` 走真实沉积路径再打断**（而不是直接手塞 `qi_committed`），确保测试覆盖真实生产链路而非只测半截。
-- [x] 明确**不改动**成功释放路径（`release_full_power_with_exhaust`，215-291 行）——release 时 `qi_committed` 早已 100% 转化为攻击强度输入，这是"蓄力期间真元持续外泄进环境、`qi_committed` 只是意图强度计数"的既定设计（与 `zhenmai_v2`/`baomai_v3` 一致），不属于本 bug 范围，不应借机重新设计。
+- [x] 明确**不改动**成功释放路径（`server/src/cultivation/full_power_strike.rs:229-289::release_full_power_with_exhaust`）——release 时 `qi_committed` 早已 100% 转化为攻击强度输入，这是"蓄力期间真元持续外泄进环境、`qi_committed` 只是意图强度计数"的既定设计（与 `zhenmai_v2`/`baomai_v3` 一致），不属于本 bug 范围，不应借机重新设计。
 
 ## 验收测试计划
 
@@ -115,7 +115,9 @@
 - P0 验真：确认 `charge_tick_system` 已把消耗真元写入 zone 或 `pending_inflow_account()`，而旧 `charge_interrupt_system` 只做玩家侧裸退款；触发路径与可达性结论保持 critical。
 - P1 台账与扣回：`server/src/cultivation/full_power_strike.rs:67-75` 的 `QiDepositRecord` / `ChargingState.qi_deposits` 记录每笔真实沉积；`charge_tick_release_qi_to_zone`（约 `357-449` 行）在 zone 与固定 overflow 账户间原子落账；`withdraw_qi_from_deposits`（约 `459-535` 行）按最近沉积优先、基线和余额上限实际扣回；`charge_interrupt_system`（约 `570-620` 行）只把实际扣回量加回玩家。
 - P1 账本契约：`server/src/qi_physics/ledger.rs:147-154` 新增 `QiTransferReason::ChargeInterruptRefund`，`transfer_ledger_qi_to_external`（约 `792-832` 行）为 overflow 退款提供源账户真实扣减与外部回写的原子事务。
+- P1 返工收口：正值 overflow 转移若返回 `Ok(None)`，`charge_tick_release_qi_to_zone` 现在回滚本 tick 已写入的 zone 沉积并报告失败；该结果只允许用于零金额 no-op，不能提交玩家扣减。共享待分配池退款改为 `min(本会话沉积额, 当前共享余额)`，不再用跨会话的 `当前余额 - balance_before` 推断归属。
 - P2 回归测试：`server/src/cultivation/full_power_strike.rs` 覆盖 zone、overflow、跨 zone、zone 被抽走、负 zone、玩家容量不足、多命中和连续会话；`summarize_world_qi` + `assert_conservation` 使用 `SPIRIT_QI_TOTAL` 锁住世界守恒。
+- P2 返工测试：`shared_overflow_refunds_only_each_session_deposit` 覆盖两个会话先后沉积共享池、先后打断、他人份额不受侵占及最终守恒。
 - P3 兼容面：`server/src/network/full_power_emit.rs` 的 `ChargingState` fixture 补齐新字段；成功释放路径未改动。
 
 ### 关键 commit
@@ -126,13 +128,15 @@
 - `449ebe287`（2026-09-24）：补充 `SPIRIT_QI_TOTAL` 快照与守恒回归断言。
 - `a9ca6bc08`（2026-09-24）：澄清固定 overflow 账本的可回收语义。
 - `f0f6c22cb`（2026-09-24）：合并最新 `origin/main`（`5bdead4a6`）。
+- `b4e3ceae5`（2026-09-24）：修复正值 overflow 空转移结果与共享池退款归属。
+- `eaac568e8`（2026-09-24）：补充双会话共享 overflow 守恒契约测试。
 
 ### 测试结果
 
 - `scripts/build-token.sh cargo fmt --check`：PASS（沙箱外最终门禁）。
 - `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：PASS（沙箱外，退出码 0）。
-- `scripts/build-token.sh cargo test cultivation::full_power_strike`：29 passed，0 failed。
-- `scripts/build-token.sh cargo test`：PASS（沙箱外，退出码 0；10,364 个库测试及 integration/doc tests 全部通过）。
+- `scripts/build-token.sh cargo test cultivation::full_power_strike`：30 passed，0 failed。
+- `scripts/build-token.sh cargo test`：PASS（沙箱外，退出码 0；10,365 个库测试及 integration/doc tests 全部通过）。
 
 ### 跨仓库核验
 
