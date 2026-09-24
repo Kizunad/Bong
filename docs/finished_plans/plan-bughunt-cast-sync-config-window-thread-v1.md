@@ -2,6 +2,14 @@
 
 > BugHunt 线程 C7（client-ui 第七轮）验证记录。历史问题是 `cast_sync` 到达时功法配置窗口可能由 network thread 直接变更 UI；当前 `origin/main@6d7e1699b` 已通过客户端窗口重构消除该路径，本计划只记录主线复验结论并归档。
 
+## 接入面
+
+- 进料：`bong:server_data` channel 中的 `cast_sync` payload。
+- 处理链：`ServerDataRouter.route(...)` → `CastSyncHandler.handle(...)` → `CastStateStore.replace(...)` → `UiWindowRuntime.initialize()` 注册的 `ClientTickEvents.END_CLIENT_TICK` → `SkillConfigWindows.refresh()`。
+- 共享类型：`ServerDataEnvelope`、`ServerDataDispatch`、`CastState`。
+- 跨仓库契约：本 plan 只是验证结论，不改 server、agent、client 任何契约。
+- 世界观与守恒：不涉及 worldview 与 `qi_physics`，这是纯客户端线程边界问题。
+
 ## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
