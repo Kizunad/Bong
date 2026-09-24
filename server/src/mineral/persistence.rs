@@ -152,6 +152,9 @@ impl ExhaustedMineralsLog {
     }
 
     /// 强制刷盘 — 测试 / 关服 hook 用。
+    ///
+    /// 原子落盘：先写同目录 `.tmp` 临时文件，成功后再 rename 到最终路径，
+    /// 避免写入失败或进程中断时截断上一份有效的耗尽日志。
     pub fn flush(&mut self) -> Result<(), String> {
         if !self.dirty {
             return Ok(());
@@ -166,8 +169,16 @@ impl ExhaustedMineralsLog {
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("serialize exhausted log failed: {e}"))?;
-        fs::write(&self.file_path, json)
-            .map_err(|e| format!("write {} failed: {e}", self.file_path.display()))?;
+        let tmp_path = self.file_path.with_extension("tmp");
+        fs::write(&tmp_path, json)
+            .map_err(|e| format!("write {} failed: {e}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &self.file_path).map_err(|e| {
+            format!(
+                "rename {} to {} failed: {e}",
+                tmp_path.display(),
+                self.file_path.display()
+            )
+        })?;
         self.dirty = false;
         self.flush_clock = 0;
         Ok(())
