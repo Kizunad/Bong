@@ -1,5 +1,14 @@
 # BugHunt: 全力一击蓄力被打断时 60% 真元退还未从灵域扣回，净铸真元
 
+## 阶段总览
+
+- P0 第一性原理验真：✅ 2026-09-24
+- P1 沉积台账与真实扣回实现：✅ 2026-09-24
+- P2 守恒回归测试：✅ 2026-09-24
+- P3 server 门禁与 `origin/main` 复验：✅ 2026-09-24
+- P4 Finish Evidence 与归档准备：✅ 2026-09-24
+- P5 claim 分支交付准备：✅ 2026-09-24
+
 ## Bug 摘要
 
 **critical**（skeptic 维持原判 unchanged，未调整）。
@@ -54,18 +63,18 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 在 `ChargingState`（`full_power_strike.rs:62-68`）新增真元沉积台账字段，例如：
+- [x] 在 `ChargingState`（`full_power_strike.rs:62-68`）新增真元沉积台账字段，例如：
   ```rust
   pub qi_deposits: Vec<QiDepositRecord>,
   ```
   其中 `QiDepositRecord { pub account: QiAccountId, pub amount: f64 }`（新类型，`Debug + Clone + PartialEq`），累计记录每个 tick 真元实际转移到的账户（zone 或 overflow）及金额。允许同一次蓄力产生多条记录（玩家蓄力途中跨 zone 移动、zone 从未满变满等场景）。
-- [ ] 改造 `charge_tick_release_qi_to_zone`（339-464 行）：在每个真正落地写入 `zone.spirit_qi` 或发出 overflow `QiTransfer` 的分支后，把对应的 `(QiAccountId, amount)` 追加进调用方传入的 `&mut Vec<QiDepositRecord>` 出参；`charge_tick_system`（294-333 行）从 `charging.qi_deposits` 借出这个 `Vec` 传入。
-- [ ] 新增守恒对称函数（如 `withdraw_qi_from_deposits`，与 `charge_tick_release_qi_to_zone` 同文件相邻放置），输入目标退还量 `qi_refunded: f64` 与 `&[QiDepositRecord]`，**从台账尾部开始**（最近沉积优先，或按占比均摊，二选一但要写清楚并测试）依次扣回：
+- [x] 改造 `charge_tick_release_qi_to_zone`（339-464 行）：在每个真正落地写入 `zone.spirit_qi` 或发出 overflow `QiTransfer` 的分支后，把对应的 `(QiAccountId, amount)` 追加进调用方传入的 `&mut Vec<QiDepositRecord>` 出参；`charge_tick_system`（294-333 行）从 `charging.qi_deposits` 借出这个 `Vec` 传入。
+- [x] 新增守恒对称函数（如 `withdraw_qi_from_deposits`，与 `charge_tick_release_qi_to_zone` 同文件相邻放置），输入目标退还量 `qi_refunded: f64` 与 `&[QiDepositRecord]`，**从台账尾部开始**（最近沉积优先，或按占比均摊，二选一但要写清楚并测试）依次扣回：
   - 目标是 zone 账户：`zones.find_zone_mut(zone_name)`；换算方式与写入方向相反：`zone.spirit_qi = ((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY) - amount).max(<该 zone 台账记录的下限>) / QI_ZONE_UNIT_CAPACITY`。**禁止**扣穿到台账记录范围之外的真实存量——如果 zone 已被其他系统（天道每时代衰减、其他玩家的采集/开光等）动过导致可扣余量不足，按 `fix_sketch` 退化：能扣多少扣多少，差额记入 `qi_lost` 而非硬塞进 `qi_refunded`，绝不倒扣出负值制造新的凭空。
-  - 目标是 overflow 账户：由于本模块的 overflow 记账目前只是审计事件（未见任何 system 消费 `EventReader<QiTransfer>` 把它落地成可查询余额），退还时只需发一条对称的 `QiTransfer(from=overflow:<key>, to=player:<entity_bits>, reason=ChargeInterruptRefund)` 供审计，与沉积路径的"只发事件"对称，不引入新的不对称语义。
+  - 目标是 overflow 账户：沉积路径使用固定的 `pending_inflow_account()` 真实账本余额；退款通过 `transfer_ledger_qi_to_external` 原子扣减该余额并发出对称的 `QiTransfer(from=overflow:<key>, to=player:<entity_bits>, reason=ChargeInterruptRefund)` 审计事件。
   - 返回值必须是**实际可确认扣回的量**，不能大于请求的 `qi_refunded`。
-- [ ] 改造 `charge_interrupt_system`（500-534 行）签名，追加 `mut zones: ResMut<ZoneRegistry>` 与 `mut qi_transfer_writer: EventWriter<QiTransfer>`（比照 `charge_tick_system` 的资源依赖）。用上面的对称函数把 516 行原本裸算的 `charging.qi_committed * 0.6` 换成"先算出理论退还额度，再从 `charging.qi_deposits` 里实际扣回，取两者较小值"；`cultivation.qi_current` 只加实际扣回成功的部分；`ChargeInterruptedEvent.qi_refunded` / `qi_lost` 字段值必须反映扣回后的真实数字（server 是唯一权威，client HUD 展示只能跟随，不得自行估算）。
-- [ ] 在 `qi_physics::ledger::QiTransferReason`（紧邻现有 `TiandaoCondense` / `DuguReturnToZone` 等 zone→其他账户方向变体旁）新增 `ChargeInterruptRefund` 变体，文档注释按仓库惯例写清守恒约束：
+- [x] 改造 `charge_interrupt_system`（500-534 行）签名，追加 `mut zones: ResMut<ZoneRegistry>` 与 `mut qi_transfer_writer: EventWriter<QiTransfer>`（比照 `charge_tick_system` 的资源依赖）。用上面的对称函数把 516 行原本裸算的 `charging.qi_committed * 0.6` 换成"先算出理论退还额度，再从 `charging.qi_deposits` 里实际扣回，取两者较小值"；`cultivation.qi_current` 只加实际扣回成功的部分；`ChargeInterruptedEvent.qi_refunded` / `qi_lost` 字段值必须反映扣回后的真实数字（server 是唯一权威，client HUD 展示只能跟随，不得自行估算）。
+- [x] 在 `qi_physics::ledger::QiTransferReason`（紧邻现有 `TiandaoCondense` / `DuguReturnToZone` 等 zone→其他账户方向变体旁）新增 `ChargeInterruptRefund` 变体，文档注释按仓库惯例写清守恒约束：
   ```
   /// 全力一击蓄力被打断时，把已沉积进 zone/overflow 的真元按已记录台账扣回并归还玩家。
   ///
@@ -76,8 +85,8 @@
   ///   - 台账不足时差额计入 qi_lost，绝不多退、绝不凭空铸造。
   ChargeInterruptRefund,
   ```
-- [ ] 更新已存在的两条手工构造 `ChargingState` 的测试（`953-1002` 的 `charge_interrupted_by_damage_refunds_60_percent_qi`、`1005-1044` 的 `charge_interrupted_by_multiple_hits_refunds_once`），让它们改为**先跑一遍 `charge_tick_system` 走真实沉积路径再打断**（而不是直接手塞 `qi_committed`），确保测试覆盖真实生产链路而非只测半截。
-- [ ] 明确**不改动**成功释放路径（`release_full_power_with_exhaust`，215-291 行）——release 时 `qi_committed` 早已 100% 转化为攻击强度输入，这是"蓄力期间真元持续外泄进环境、`qi_committed` 只是意图强度计数"的既定设计（与 `zhenmai_v2`/`baomai_v3` 一致），不属于本 bug 范围，不应借机重新设计。
+- [x] 更新已存在的两条手工构造 `ChargingState` 的测试（`953-1002` 的 `charge_interrupted_by_damage_refunds_60_percent_qi`、`1005-1044` 的 `charge_interrupted_by_multiple_hits_refunds_once`），让它们改为**先跑一遍 `charge_tick_system` 走真实沉积路径再打断**（而不是直接手塞 `qi_committed`），确保测试覆盖真实生产链路而非只测半截。
+- [x] 明确**不改动**成功释放路径（`server/src/cultivation/full_power_strike.rs:229-289::release_full_power_with_exhaust`）——release 时 `qi_committed` 早已 100% 转化为攻击强度输入，这是"蓄力期间真元持续外泄进环境、`qi_committed` 只是意图强度计数"的既定设计（与 `zhenmai_v2`/`baomai_v3` 一致），不属于本 bug 范围，不应借机重新设计。
 
 ## 验收测试计划
 
@@ -95,6 +104,47 @@
 ## 风险
 
 - 台账扣回逻辑必须严格保证"退还给玩家的量 == 从 zone/overflow 实际扣回的量"，如果实现时图省事直接扣回原始 `qi_committed * 0.6` 而不做"实际可扣回量"的 clamp，等于换了个位置的凭空铸造（把红旗从"直接加钱"挪到"假装扣了但其实没扣够"），必须靠上面"台账不足"那条测试卡死。
-- `QiAccountId::overflow` 账户当前在本模块里只是审计事件、没有被任何 system 落地成可查询余额（全仓未见 `EventReader<QiTransfer>` 消费者）；本 fix 的 overflow 分支只能做到"发对称审计事件"而不能做"验证 overflow 账户真实还有这么多余额可扣"——这是仓库既有的更大缺口（overflow 记账本身不闭环），不在本 plan 范围内展开重构，只要求新代码不引入比现状更差的不对称即可。
+- overflow 退款已通过固定的 `pending_inflow_account()` 走真实 `WorldQiAccount` 余额扣减，并由 `transfer_ledger_qi_to_external` 保证源账户扣减与外部玩家回写原子对称；动态 entity-key overflow 的跨重启恢复仍是其他路径的既有边界，不在本 plan 范围内扩展。
 - 不得借本次修复顺手改变"打断退还 60%"这个数值设计本身（那是 `plan-baomai-v2.md` 定的游戏性数值，不属于守恒 bug），也不得把成功释放路径（`release_full_power_with_exhaust`）一并"顺手"改造成从 zone 扣钱——release 侧的 `qi_committed` 早已在蓄力阶段真实转移完毕，是另一套设计，混在一起改会扩大 PR 范围、增加 review 负担。
 - 修改 `charge_interrupt_system` 函数签名（新增 `ResMut<ZoneRegistry>`/`EventWriter<QiTransfer>`）需要确认 `register()`（124-150 行）里的 system 调度顺序（`CombatSystemSet::Resolve`，在 `resolve_attack_intents` 之后）不会因为新增的 `ResMut<ZoneRegistry>` 与 `charge_tick_system`（`CombatSystemSet::Intent`）产生 Bevy ECS 调度冲突/借用冲突——两者本就在不同 SystemSet 且顺序上 Intent 先于 Resolve，理论上安全，但需要跑 `cargo test` 全量确认没有新的 ambiguity 警告。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 验真：确认 `charge_tick_system` 已把消耗真元写入 zone 或 `pending_inflow_account()`，而旧 `charge_interrupt_system` 只做玩家侧裸退款；触发路径与可达性结论保持 critical。
+- P1 台账与扣回：`server/src/cultivation/full_power_strike.rs:67-75` 的 `QiDepositRecord` / `ChargingState.qi_deposits` 记录每笔真实沉积；`charge_tick_release_qi_to_zone`（约 `357-449` 行）在 zone 与固定 overflow 账户间原子落账；`withdraw_qi_from_deposits`（约 `459-535` 行）按最近沉积优先、基线和余额上限实际扣回；`charge_interrupt_system`（约 `570-620` 行）只把实际扣回量加回玩家。
+- P1 账本契约：`server/src/qi_physics/ledger.rs:147-154` 新增 `QiTransferReason::ChargeInterruptRefund`，`transfer_ledger_qi_to_external`（约 `792-832` 行）为 overflow 退款提供源账户真实扣减与外部回写的原子事务。
+- P1 返工收口：正值 overflow 转移若返回 `Ok(None)`，`charge_tick_release_qi_to_zone` 现在回滚本 tick 已写入的 zone 沉积并报告失败；该结果只允许用于零金额 no-op，不能提交玩家扣减。共享待分配池退款改为 `min(本会话沉积额, 当前共享余额)`，不再用跨会话的 `当前余额 - balance_before` 推断归属。
+- P2 回归测试：`server/src/cultivation/full_power_strike.rs` 覆盖 zone、overflow、跨 zone、zone 被抽走、负 zone、玩家容量不足、多命中和连续会话；`summarize_world_qi` + `assert_conservation` 使用 `SPIRIT_QI_TOTAL` 锁住世界守恒。
+- P2 返工测试：`shared_overflow_refunds_only_each_session_deposit` 覆盖两个会话先后沉积共享池、先后打断、他人份额不受侵占及最终守恒。
+- P3 兼容面：`server/src/network/full_power_emit.rs` 的 `ChargingState` fixture 补齐新字段；成功释放路径未改动。
+
+### 关键 commit
+
+- `21b5c350c` / `9af2553eb`：旧本地分支留下的升格与真实修复来源，保留在 `backup/plan-bughunt-fullpower-interrupt-refund-mint-v1-local-20260924`，未删除。
+- `907d88eac`（2026-09-24）：将 plan 升格为 active（对应旧 `21b5c350c`）。
+- `d48cdb016`（2026-07-27）：迁移并落地真实守恒修复（对应旧 `9af2553eb`）。
+- `449ebe287`（2026-09-24）：补充 `SPIRIT_QI_TOTAL` 快照与守恒回归断言。
+- `a9ca6bc08`（2026-09-24）：澄清固定 overflow 账本的可回收语义。
+- `f0f6c22cb`（2026-09-24）：合并最新 `origin/main`（`5bdead4a6`）。
+- `b4e3ceae5`（2026-09-24）：修复正值 overflow 空转移结果与共享池退款归属。
+- `eaac568e8`（2026-09-24）：补充双会话共享 overflow 守恒契约测试。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo fmt --check`：PASS（沙箱外最终门禁）。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：PASS（沙箱外，退出码 0）。
+- `scripts/build-token.sh cargo test cultivation::full_power_strike`：30 passed，0 failed。
+- `scripts/build-token.sh cargo test`：PASS（沙箱外，退出码 0；10,365 个库测试及 integration/doc tests 全部通过）。
+
+### 跨仓库核验
+
+- Server：`ChargingState`、`charge_tick_release_qi_to_zone`、`withdraw_qi_from_deposits`、`charge_interrupt_system`、`QiTransferReason::ChargeInterruptRefund` 与 `transfer_ledger_qi_to_external` 均已命中实现和测试。
+- Client：没有 payload/schema 变更；`ChargeInterruptedEvent` 的现有 HUD 清理契约保持不变，server emitter fixture 已适配 `qi_deposits` 字段。
+- Agent：未触及 Redis key、IPC schema 或 agent 命令，故无跨进程迁移工作。
+
+### 遗留 / 后续
+
+- “打断退还 60%”的游戏设计数值与成功释放路径保持原样。
+- 动态 entity-key overflow 的跨重启恢复属于既有账本边界，不在本 plan 范围内；客户端 `FullPowerStateStore` 断线残留是独立的 `plan-bughunt-full-power-charging-session-bleed-v1`。

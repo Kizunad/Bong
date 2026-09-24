@@ -22,7 +22,11 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::identity::PlayerIdentities;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::{
+    pending_inflow_account, qi_release_to_zone, transfer_external_qi_to_ledger,
+    transfer_ledger_qi_to_external, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason,
+    WorldQiAccount,
+};
 use crate::schema::social::RenownTagV1;
 use crate::social::events::SocialRenownDeltaEvent;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -59,12 +63,21 @@ pub const FULL_POWER_CHARGE_ANIM_ID: &str = "bong:baomai_full_power_charge";
 pub const FULL_POWER_RELEASE_ANIM_ID: &str = "bong:baomai_full_power_release";
 pub const FULL_POWER_HIGH_REALM_FAME_DELTA: i32 = 25;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct QiDepositRecord {
+    pub account: QiAccountId,
+    pub amount: f64,
+    /// 本次沉积前该物理账户的余额；退款不得扣穿这个下限去拿走既有存量。
+    pub balance_before: f64,
+}
+
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct ChargingState {
     pub slot: u8,
     pub started_at_tick: u64,
     pub qi_committed: f64,
     pub target_qi: f64,
+    pub qi_deposits: Vec<QiDepositRecord>,
 }
 
 #[derive(Debug, Clone, Copy, Component, PartialEq)]
@@ -179,6 +192,7 @@ pub fn start_charge_fn(
         started_at_tick: now_tick,
         qi_committed: 0.0,
         target_qi: initial_qi,
+        qi_deposits: Vec::new(),
     });
     world.send_event(ChargeStartedEvent {
         caster,
@@ -301,6 +315,7 @@ pub fn charge_tick_system(
         Option<&CurrentDimension>,
     )>,
     mut zones: ResMut<ZoneRegistry>,
+    mut qi_account: ResMut<WorldQiAccount>,
     mut qi_transfer_writer: EventWriter<QiTransfer>,
 ) {
     for (entity, mut charging, mut cultivation, rate_override, position, dimension) in &mut q {
@@ -315,20 +330,23 @@ pub fn charge_tick_system(
         if to_consume <= f64::EPSILON {
             continue;
         }
-        cultivation.qi_current =
-            (cultivation.qi_current - to_consume).clamp(0.0, cultivation.qi_max);
-        charging.qi_committed += to_consume;
-
-        // 守恒：每 tick 消耗的真元必须归还 zone（或 overflow），
-        // 以防真元从全局 ledger 凭空消失。
-        charge_tick_release_qi_to_zone(
+        // 守恒：先确认真元已经真实落入 zone 或运行期 overflow 余额，成功后才提交
+        // 玩家扣减与 qi_committed；失败时本 tick 保持原状，绝不产生无来源的退款台账。
+        let Some(deposits) = charge_tick_release_qi_to_zone(
             entity,
             to_consume,
             position.map(|p| p.get()),
             dimension.map(|d| d.0).unwrap_or(DimensionKind::Overworld),
             &mut zones,
+            &mut qi_account,
             &mut qi_transfer_writer,
-        );
+        ) else {
+            continue;
+        };
+        cultivation.qi_current =
+            (cultivation.qi_current - to_consume).clamp(0.0, cultivation.qi_max);
+        charging.qi_committed += to_consume;
+        charging.qi_deposits.extend(deposits);
     }
 }
 
@@ -342,125 +360,185 @@ fn charge_tick_release_qi_to_zone(
     position: Option<DVec3>,
     dimension: DimensionKind,
     zones: &mut ZoneRegistry,
+    qi_account: &mut WorldQiAccount,
     qi_transfer_writer: &mut EventWriter<QiTransfer>,
-) {
+) -> Option<Vec<QiDepositRecord>> {
     if amount <= QI_EPSILON {
-        return;
+        return Some(Vec::new());
     }
     let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
+    // zone 无法接纳的部分进入固定、可持久化的待分配池；该真实账本余额会随沉积台账
+    // 一起记录，打断时可按沉积前余额精确扣回。
+    let overflow = pending_inflow_account();
+    let mut records = Vec::new();
+    let mut zone_transfer = None;
 
-    let transfer = if let Some(position) = position {
-        let zone_name = zones
+    let zone_name = position.and_then(|position| {
+        zones
             .find_zone(dimension, position)
-            .map(|zone| zone.name.clone());
-        if let Some(zone_name) = zone_name {
-            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-                let to = QiAccountId::zone(zone.name.clone());
-                // 不 .max(0.0)：负灵域（spirit_qi<0）下当 0 会跳过负缺口、凭空多 credit，破坏守恒。
-                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(
-                    amount,
-                    from.clone(),
-                    to,
-                    zone_current,
-                    QI_ZONE_UNIT_CAPACITY,
-                ) {
-                    Ok(outcome) => {
-                        zone.spirit_qi =
-                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-                        if let Some(transfer) = outcome.transfer {
-                            if outcome.overflow > QI_EPSILON {
-                                // 满载溢出：溢出部分路由到 overflow 账户。
-                                let overflow_transfer = QiTransfer::new(
-                                    from.clone(),
-                                    QiAccountId::overflow(format!(
-                                        "full_power_strike:charge_tick:{}",
-                                        entity.to_bits()
-                                    )),
-                                    outcome.overflow,
-                                    QiTransferReason::Channeling,
-                                );
-                                qi_transfer_writer.send(transfer);
-                                if let Ok(ot) = overflow_transfer {
-                                    qi_transfer_writer.send(ot);
-                                }
-                                return;
-                            }
-                            Some(transfer)
-                        } else {
-                            // zone 全满 (accepted=0)：全量路由 overflow。
-                            QiTransfer::new(
-                                from.clone(),
-                                QiAccountId::overflow(format!(
-                                    "full_power_strike:charge_tick:{}",
-                                    entity.to_bits()
-                                )),
-                                amount,
-                                QiTransferReason::Channeling,
-                            )
-                            .ok()
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            ?error,
-                            "[bong][full_power_strike] charge_tick qi_release_to_zone error; routing to overflow"
-                        );
-                        QiTransfer::new(
-                            from.clone(),
-                            QiAccountId::overflow(format!(
-                                "full_power_strike:charge_tick:{}",
-                                entity.to_bits()
-                            )),
-                            amount,
-                            QiTransferReason::Channeling,
-                        )
-                        .ok()
-                    }
-                }
-            } else {
-                // zone 名找到但 find_zone_mut 返回 None（不应发生，防御性路由）。
-                QiTransfer::new(
-                    from.clone(),
-                    QiAccountId::overflow(format!(
-                        "full_power_strike:charge_tick:{}",
-                        entity.to_bits()
-                    )),
-                    amount,
-                    QiTransferReason::Channeling,
-                )
-                .ok()
-            }
-        } else {
-            // 位置在任何已知 zone 之外。
-            QiTransfer::new(
-                from.clone(),
-                QiAccountId::overflow(format!(
-                    "full_power_strike:charge_tick:{}",
-                    entity.to_bits()
-                )),
+            .map(|zone| zone.name.clone())
+    });
+    let mut remaining = amount;
+    if let Some(zone_name) = zone_name {
+        if let Some(zone) = zones.find_zone_mut(&zone_name) {
+            let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+            match qi_release_to_zone(
                 amount,
-                QiTransferReason::Channeling,
-            )
-            .ok()
+                from.clone(),
+                QiAccountId::zone(zone_name.clone()),
+                zone_current,
+                QI_ZONE_UNIT_CAPACITY,
+            ) {
+                Ok(outcome) => {
+                    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    if let Some(transfer) = outcome.transfer {
+                        records.push(QiDepositRecord {
+                            account: transfer.to.clone(),
+                            amount: transfer.amount,
+                            balance_before: zone_current,
+                        });
+                        zone_transfer = Some(transfer);
+                    }
+                    remaining = outcome.overflow;
+                }
+                Err(error) => tracing::warn!(
+                    ?error,
+                    "[bong][full_power_strike] charge tick zone deposit failed; routing to overflow"
+                ),
+            }
         }
-    } else {
-        // 无 Position 组件（理论上不应发生，但防御性处理）。
-        QiTransfer::new(
-            from.clone(),
-            QiAccountId::overflow(format!(
-                "full_power_strike:charge_tick:{}",
-                entity.to_bits()
-            )),
-            amount,
-            QiTransferReason::Channeling,
-        )
-        .ok()
-    };
-
-    if let Some(t) = transfer {
-        qi_transfer_writer.send(t);
     }
+
+    if remaining > QI_EPSILON {
+        let overflow_balance_before = qi_account.balance(&overflow);
+        let transfer = match transfer_external_qi_to_ledger(
+            qi_account,
+            from,
+            overflow,
+            remaining,
+            QiTransferReason::Channeling,
+        ) {
+            Ok(Some(transfer)) => transfer,
+            Ok(None) => {
+                tracing::error!(
+                    remaining,
+                    "[bong][full_power_strike] positive charge overflow produced no ledger transfer"
+                );
+                for record in records.iter().rev() {
+                    rollback_zone_deposit(zones, record);
+                }
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "[bong][full_power_strike] failed to credit charge overflow"
+                );
+                for record in records.iter().rev() {
+                    rollback_zone_deposit(zones, record);
+                }
+                return None;
+            }
+        };
+        records.push(QiDepositRecord {
+            account: transfer.to.clone(),
+            amount: transfer.amount,
+            balance_before: overflow_balance_before,
+        });
+        if let Some(zone_transfer) = zone_transfer.take() {
+            qi_transfer_writer.send(zone_transfer);
+        }
+        qi_transfer_writer.send(transfer);
+    } else if let Some(zone_transfer) = zone_transfer {
+        qi_transfer_writer.send(zone_transfer);
+    }
+
+    Some(records)
+}
+
+fn rollback_zone_deposit(zones: &mut ZoneRegistry, record: &QiDepositRecord) {
+    if record.account.kind != QiAccountKind::Zone {
+        return;
+    }
+    if let Some(zone) = zones.find_zone_mut(&record.account.id) {
+        zone.spirit_qi = (record.balance_before / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    }
+}
+
+fn withdraw_qi_from_deposits(
+    requested: f64,
+    deposits: &[QiDepositRecord],
+    player: QiAccountId,
+    zones: &mut ZoneRegistry,
+    qi_account: &mut WorldQiAccount,
+    qi_transfer_writer: &mut EventWriter<QiTransfer>,
+) -> f64 {
+    let mut remaining = requested.max(0.0);
+    let mut withdrawn = 0.0;
+    for deposit in deposits.iter().rev() {
+        if remaining <= QI_EPSILON {
+            break;
+        }
+        let wanted = remaining.min(deposit.amount.max(0.0));
+        if wanted <= QI_EPSILON {
+            continue;
+        }
+        let actual = match deposit.account.kind {
+            QiAccountKind::Zone => {
+                let Some(zone) = zones.find_zone_mut(&deposit.account.id) else {
+                    continue;
+                };
+                let current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                let recoverable = (current - deposit.balance_before)
+                    .max(0.0)
+                    .min(deposit.amount);
+                let actual = wanted.min(recoverable);
+                if actual <= QI_EPSILON {
+                    continue;
+                }
+                zone.spirit_qi = ((current - actual) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                let Ok(transfer) = QiTransfer::new(
+                    deposit.account.clone(),
+                    player.clone(),
+                    actual,
+                    QiTransferReason::ChargeInterruptRefund,
+                ) else {
+                    zone.spirit_qi = (current / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    continue;
+                };
+                qi_account.push_transfer_audit(transfer.clone());
+                qi_transfer_writer.send(transfer);
+                actual
+            }
+            QiAccountKind::Overflow => {
+                let current = qi_account.balance(&deposit.account);
+                // pending_inflow_account is shared by all sessions. `balance_before` is
+                // diagnostic only here; using current - balance_before would treat another
+                // session's later deposit as this session's refundable balance.
+                let actual = wanted.min(current);
+                if actual <= QI_EPSILON {
+                    continue;
+                }
+                match transfer_ledger_qi_to_external(
+                    qi_account,
+                    deposit.account.clone(),
+                    player.clone(),
+                    actual,
+                    QiTransferReason::ChargeInterruptRefund,
+                ) {
+                    Ok(Some(transfer)) => {
+                        qi_transfer_writer.send(transfer);
+                        actual
+                    }
+                    Ok(None) | Err(_) => 0.0,
+                }
+            }
+            _ => 0.0,
+        };
+        withdrawn += actual;
+        remaining = (remaining - actual).max(0.0);
+    }
+    withdrawn
 }
 
 pub fn apply_full_power_attack_intent_system(
@@ -497,12 +575,16 @@ pub fn apply_full_power_attack_intent_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy ECS system params are independently scheduled resources/queries.
 pub fn charge_interrupt_system(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut combat_events: EventReader<CombatEvent>,
     charging_q: Query<&ChargingState>,
     mut cultivations: Query<&mut Cultivation>,
+    mut zones: ResMut<ZoneRegistry>,
+    mut qi_account: ResMut<WorldQiAccount>,
+    mut qi_transfer_writer: EventWriter<QiTransfer>,
     mut interrupted: EventWriter<ChargeInterruptedEvent>,
 ) {
     let mut interrupted_this_tick = HashSet::new();
@@ -513,12 +595,25 @@ pub fn charge_interrupt_system(
         let Ok(charging) = charging_q.get(event.target) else {
             continue;
         };
-        let qi_refunded = charging.qi_committed * 0.6;
+        let theoretical_refund = charging.qi_committed * 0.6;
+        let player = QiAccountId::player(format!("entity:{}", event.target.to_bits()));
+        let qi_refunded = if let Ok(mut cultivation) = cultivations.get_mut(event.target) {
+            let player_room = (cultivation.qi_max - cultivation.qi_current).max(0.0);
+            let requested = theoretical_refund.min(player_room);
+            let actual = withdraw_qi_from_deposits(
+                requested,
+                &charging.qi_deposits,
+                player,
+                &mut zones,
+                &mut qi_account,
+                &mut qi_transfer_writer,
+            );
+            cultivation.qi_current = (cultivation.qi_current + actual).min(cultivation.qi_max);
+            actual
+        } else {
+            0.0
+        };
         let qi_lost = (charging.qi_committed - qi_refunded).max(0.0);
-        if let Ok(mut cultivation) = cultivations.get_mut(event.target) {
-            cultivation.qi_current =
-                (cultivation.qi_current + qi_refunded).clamp(0.0, cultivation.qi_max);
-        }
         commands
             .entity(event.target)
             .remove::<ChargingState>()
@@ -653,6 +748,8 @@ mod tests {
     use super::*;
     use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
+    use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+    use crate::schema::common::SPIRIT_QI_TOTAL;
     use crate::social::events::SocialRenownDeltaEvent;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
@@ -663,6 +760,8 @@ mod tests {
         // ZoneRegistry は charge_tick_system の ResMut<ZoneRegistry> に必要。
         // fallback zone（spirit_qi=0.9）を差し込む；守恒テストでは適宜 spirit_qi=0.0 に上書き。
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.init_resource::<WorldQiAccount>();
         app.add_event::<AttackIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<ChargeStartedEvent>();
@@ -679,6 +778,34 @@ mod tests {
     fn app_with_zone() -> App {
         // app() already includes ZoneRegistry::fallback().
         app()
+    }
+
+    fn combat_hit(attacker: Entity, target: Entity) -> CombatEvent {
+        CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 10,
+            body_part: crate::combat::components::BodyPart::Chest,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.0,
+            damage: 1.0,
+            contam_delta: 0.0,
+            description: "test hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        }
+    }
+
+    fn charge_then_interrupt(app: &mut App, caster: Entity, attacker: Entity) {
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.add_systems(Update, charge_interrupt_system);
+        app.update();
     }
 
     /// 测试辅助：读取最近一次施加给 caster 的虚脱 ApplyStatusEffectIntent 的时长。
@@ -772,6 +899,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 0.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
@@ -799,6 +927,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 130.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
@@ -829,6 +958,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 600.0,
             target_qi: 600.0,
+            qi_deposits: Vec::new(),
         });
 
         let result = release_full_power_fn(app.world_mut(), caster, 1, Some(target));
@@ -888,6 +1018,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 600.0,
             target_qi: 600.0,
+            qi_deposits: Vec::new(),
         });
 
         let result = release_full_power_fn(app.world_mut(), caster, 1, None);
@@ -925,6 +1056,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 10.0,
             target_qi: 120.0,
+            qi_deposits: Vec::new(),
         });
         assert_eq!(
             start_charge_fn(app.world_mut(), charging, 0, None),
@@ -951,46 +1083,428 @@ mod tests {
     }
 
     #[test]
-    fn charge_interrupted_by_damage_refunds_60_percent_qi() {
-        let mut app = app();
+    fn charge_interrupted_by_damage_withdraws_zone_before_refund() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
         let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
-        let caster = actor(&mut app, Realm::Induce, 50.0, 200.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
         app.world_mut().entity_mut(caster).insert(ChargingState {
             slot: 0,
             started_at_tick: 10,
-            qi_committed: 100.0,
-            target_qi: 200.0,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
         });
+
+        let before = summarize_world_qi(app.world_mut());
+        assert_eq!(
+            before.budget_initial_total, SPIRIT_QI_TOTAL,
+            "interrupt refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
+        );
+        charge_then_interrupt(&mut app, caster, attacker);
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("charge interruption refund must preserve the world qi snapshot");
+
+        assert!(app.world().get::<ChargingState>(caster).is_none());
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY;
+        assert!((zone_qi - 20.0).abs() < QI_EPSILON);
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            0.0,
+            "zone-backed refund must not leave a ledger overflow balance"
+        );
+        let event = app
+            .world()
+            .resource::<Events<ChargeInterruptedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(event.qi_refunded, 30.0);
+        assert_eq!(event.qi_lost, 20.0);
+        assert!(app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .any(
+                |transfer| transfer.reason == QiTransferReason::ChargeInterruptRefund
+                    && transfer.from == QiAccountId::zone("spawn")
+                    && transfer.to == QiAccountId::player(format!("entity:{}", caster.to_bits()))
+                    && transfer.amount == 30.0
+            ));
+        assert!(
+            !has_active_status(
+                app.world().get::<StatusEffects>(caster).unwrap(),
+                StatusEffectKind::Exhausted,
+            ),
+            "打断只退还可追回真元并清除蓄力，不应误走成功释放的虚脱状态"
+        );
+    }
+
+    #[test]
+    fn charge_interrupted_by_multiple_hits_refunds_once() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        for _ in 0..2 {
+            app.world_mut().send_event(combat_hit(attacker, caster));
+        }
         app.add_systems(Update, charge_interrupt_system);
-        app.world_mut().send_event(CombatEvent {
-            attacker,
-            target: caster,
-            resolved_at_tick: 10,
-            body_part: crate::combat::components::BodyPart::Chest,
-            wound_kind: WoundKind::Blunt,
-            source: AttackSource::Melee,
-            debug_command: false,
-            physical_damage: 0.0,
-            damage: 1.0,
-            contam_delta: 0.0,
-            description: "test hit".to_string(),
-            defense_kind: None,
-            defense_effectiveness: None,
-            defense_contam_reduced: None,
-            defense_wound_severity: None,
-        });
 
         app.update();
 
-        assert!(app.world().get::<ChargingState>(caster).is_none());
-        assert!(
-            !is_exhausted(app.world(), caster),
-            "蓄力被打断不应进入虚脱（虚脱仅在成功释放后施加）"
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
         );
+        assert_eq!(
+            app.world()
+                .resource::<Events<ChargeInterruptedEvent>>()
+                .iter_current_update_events()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn interrupt_before_first_charge_tick_refunds_nothing() {
+        let mut app = app_with_zone();
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_interrupt_system);
+        app.world_mut().send_event(combat_hit(attacker, caster));
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            150.0
+        );
+        let event = app
+            .world()
+            .resource::<Events<ChargeInterruptedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!((event.qi_refunded, event.qi_lost), (0.0, 0.0));
+    }
+
+    #[test]
+    fn depleted_zone_reduces_actual_interrupt_refund() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.2;
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.add_systems(Update, charge_interrupt_system);
+
+        app.update();
+
         assert_eq!(
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
             110.0
         );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi,
+            0.0
+        );
+        let event = app
+            .world()
+            .resource::<Events<ChargeInterruptedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(event.qi_refunded, 10.0);
+        assert_eq!(event.qi_lost, 40.0);
+    }
+
+    #[test]
+    fn refund_does_not_withdraw_below_negative_zone_deposit_baseline() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = -0.5;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.add_systems(Update, charge_interrupt_system);
+
+        app.update();
+
+        let zone_raw = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY;
+        assert_eq!(zone_raw, -5.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
+        let event = app
+            .world()
+            .resource::<Events<ChargeInterruptedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(event.qi_refunded, 30.0);
+        assert_eq!(event.qi_lost, 20.0);
+    }
+
+    #[test]
+    fn full_zone_overflow_is_real_balance_debited_on_interrupt() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        charge_then_interrupt(&mut app, caster, attacker);
+
+        let overflow = pending_inflow_account();
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            20.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            130.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi,
+            1.0
+        );
+    }
+
+    #[test]
+    fn shared_overflow_refunds_only_each_session_deposit() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let first = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        let second = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        for caster in [first, second] {
+            app.world_mut().entity_mut(caster).insert(ChargingState {
+                slot: 0,
+                started_at_tick: 10,
+                qi_committed: 0.0,
+                target_qi: 50.0,
+                qi_deposits: Vec::new(),
+            });
+        }
+
+        let before = summarize_world_qi(app.world_mut());
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+
+        let overflow = pending_inflow_account();
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            100.0,
+            "两次蓄力应各向共享待分配池沉积 50 真元"
+        );
+        assert_eq!(
+            app.world().get::<ChargingState>(first).unwrap().qi_deposits[0].balance_before,
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .get::<ChargingState>(second)
+                .unwrap()
+                .qi_deposits[0]
+                .balance_before,
+            50.0
+        );
+
+        app.add_systems(Update, charge_interrupt_system);
+        app.world_mut().send_event(combat_hit(attacker, first));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(first).unwrap().qi_current,
+            130.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(second).unwrap().qi_current,
+            100.0,
+            "第一会话退款不得修改第二会话玩家真元"
+        );
+        assert!(app.world().get::<ChargingState>(second).is_some());
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            70.0,
+            "第一会话只应取回自己理论退款额度 30"
+        );
+
+        app.world_mut().send_event(combat_hit(attacker, second));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(second).unwrap().qi_current,
+            130.0,
+            "共享池余额基线不能吞掉第二会话自己的可退款份额"
+        );
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&overflow),
+            40.0
+        );
+        assert!(app.world().get::<ChargingState>(first).is_none());
+        assert!(app.world().get::<ChargingState>(second).is_none());
+
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("共享 overflow 两会话先后打断必须保持世界真元守恒");
+        assert_eq!(
+            after.budget_initial_total, SPIRIT_QI_TOTAL,
+            "shared overflow refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
+        );
+    }
+
+    #[test]
+    fn fully_charged_state_refunds_sixty_percent_across_zone_and_overflow() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 100.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 100.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<ChargingState>(caster)
+                .unwrap()
+                .qi_committed,
+            100.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            50.0
+        );
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.add_systems(Update, charge_interrupt_system);
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            60.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            0.0
+        );
+        let zone_raw = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY;
+        assert_eq!(zone_raw, 40.0);
         let event = app
             .world()
             .resource::<Events<ChargeInterruptedEvent>>()
@@ -1002,45 +1516,158 @@ mod tests {
     }
 
     #[test]
-    fn charge_interrupted_by_multiple_hits_refunds_once() {
-        let mut app = app();
+    fn cross_zone_charge_refunds_recent_deposits_first() {
+        let mut app = app_with_zone();
+        let mut second = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .clone();
+        second.name = "second".to_string();
+        second.bounds = (
+            DVec3::new(200.0, 64.0, -128.0),
+            DVec3::new(456.0, 80.0, 128.0),
+        );
+        second.spirit_qi = 0.0;
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+            zones.zones.push(second);
+        }
         let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
-        let caster = actor(&mut app, Realm::Induce, 50.0, 200.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 100.0, 200.0);
         app.world_mut().entity_mut(caster).insert(ChargingState {
             slot: 0,
             started_at_tick: 10,
-            qi_committed: 100.0,
-            target_qi: 200.0,
+            qi_committed: 0.0,
+            target_qi: 100.0,
+            qi_deposits: Vec::new(),
         });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(Position::new([220.0_f64, 65.0, 0.0]));
+        app.update();
+        app.world_mut().send_event(combat_hit(attacker, caster));
         app.add_systems(Update, charge_interrupt_system);
-        for _ in 0..2 {
-            app.world_mut().send_event(CombatEvent {
-                attacker,
-                target: caster,
-                resolved_at_tick: 10,
-                body_part: crate::combat::components::BodyPart::Chest,
-                wound_kind: WoundKind::Blunt,
-                source: AttackSource::Melee,
-                debug_command: false,
-                physical_damage: 0.0,
-                damage: 1.0,
-                contam_delta: 0.0,
-                description: "test hit".to_string(),
-                defense_kind: None,
-                defense_effectiveness: None,
-                defense_contam_reduced: None,
-                defense_wound_severity: None,
-            });
-        }
+
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let spawn_raw = zones.find_zone_by_name("spawn").unwrap().spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        let second_raw =
+            zones.find_zone_by_name("second").unwrap().spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        assert_eq!(spawn_raw, 40.0);
+        assert_eq!(second_raw, 0.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            60.0
+        );
+    }
+
+    #[test]
+    fn two_charge_interrupt_sessions_do_not_leak_deposit_state() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.add_systems(Update, charge_tick_system);
+        app.update();
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.add_systems(Update, charge_interrupt_system);
+        app.update();
+        let zone_after_first = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 12,
+            qi_committed: 0.0,
+            target_qi: 50.0,
+            qi_deposits: Vec::new(),
+        });
+        app.update();
+        app.world_mut().send_event(combat_hit(attacker, caster));
+        app.update();
+
+        let zone_after_second = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!((zone_after_second - zone_after_first * 2.0).abs() < QI_EPSILON);
+        assert!(app.world().get::<ChargingState>(caster).is_none());
+    }
+
+    #[test]
+    fn interrupt_refund_is_capped_by_player_room() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+        let attacker = actor(&mut app, Realm::Induce, 100.0, 100.0);
+        let caster = actor_in_zone(&mut app, Realm::Induce, 190.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 50.0,
+            target_qi: 50.0,
+            qi_deposits: vec![QiDepositRecord {
+                account: QiAccountId::zone("spawn"),
+                amount: 50.0,
+                balance_before: 0.0,
+            }],
+        });
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+        app.add_systems(Update, charge_interrupt_system);
+        app.world_mut().send_event(combat_hit(attacker, caster));
 
         app.update();
 
         assert_eq!(
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
-            110.0
+            200.0
         );
-        let events = app.world().resource::<Events<ChargeInterruptedEvent>>();
-        assert_eq!(events.iter_current_update_events().count(), 1);
+        let zone_raw = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY;
+        assert_eq!(zone_raw, 40.0);
+        let event = app
+            .world()
+            .resource::<Events<ChargeInterruptedEvent>>()
+            .iter_current_update_events()
+            .next()
+            .unwrap();
+        assert_eq!(event.qi_refunded, 10.0);
+        assert_eq!(event.qi_lost, 40.0);
     }
 
     /// 端到端状态机：释放 → status_effect_apply_tick 入 StatusEffects（虚脱生效）
@@ -1059,6 +1686,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 1.0,
             target_qi: 1.0,
+            qi_deposits: Vec::new(),
         });
         // qi_committed=1 < FULL_POWER_MIN_QI_TO_START(100) 会被拒；直接施加短时虚脱 status。
         insert_exhausted_status(&mut app, caster, STATUS_EFFECT_TICK_INTERVAL_TICKS);
@@ -1090,6 +1718,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 600.0,
             target_qi: 600.0,
+            qi_deposits: Vec::new(),
         });
 
         let result = release_full_power_fn(app.world_mut(), caster, 1, None);
@@ -1272,6 +1901,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 0.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
@@ -1322,6 +1952,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 0.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
@@ -1376,6 +2007,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 0.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
@@ -1413,6 +2045,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 150.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
         app.add_systems(Update, charge_tick_system);
 
