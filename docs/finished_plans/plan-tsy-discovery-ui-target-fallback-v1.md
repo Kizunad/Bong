@@ -1,6 +1,6 @@
-# plan-tsy-discovery-ui-target-fallback-v1（骨架）
+# plan-tsy-discovery-ui-target-fallback-v1（Active）
 
-> **骨架（草案）**。一句话主题：`agent/packages/tiandao/src/runtime.ts` 的 `processTsyZoneActivatedForUi()` 在 `tsy_zone_activated.player_id` 未命中当前 `world_state.players` 时，会把本应发给“首次踏入该 TSY 的触发玩家”的 `tsy_discovery` 面板，错误 fallback 到 `state.players[0]`。由于 server 端只认 `target_player` 是否在线，不校验“这个人是不是该 TSY 的触发者”，结果是**无关在线玩家会收到并接管别人的秘境发现面板，原触发者反而收不到，且被误投递者现有面板还可能被静默替换**。
+> **Active**。一句话主题：`agent/packages/tiandao/src/runtime.ts` 的 `processTsyZoneActivatedForUi()` 在 `tsy_zone_activated.player_id` 未命中当前 `world_state.players` 时，会把本应发给“首次踏入该 TSY 的触发玩家”的 `tsy_discovery` 面板，错误 fallback 到 `state.players[0]`。由于 server 端只认 `target_player` 是否在线，不校验“这个人是不是该 TSY 的触发者”，结果是**无关在线玩家会收到并接管别人的秘境发现面板，原触发者反而收不到，且被误投递者现有面板还可能被静默替换**。
 
 > 立项动机：这不是单纯的 UI 小瑕疵，而是 `schema -> tiandao runtime -> agent_ui session -> 后续 button_click 推演` 整条消费链的选人错误。`TsyZoneActivatedV1.player_id` 与 server 注释都已把语义锁成“触发 first-enter 的 canonical_player_id”，agent 侧仍保留“找不到就发给第一个在线玩家”的降级分支，并且测试把该错误行为固化成绿灯。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | TSY 发现面板 target fallback 错发 / 顶掉他人 session / 意图注入错人 | fix_pr | ⬜ |
+| P0 | TSY 发现面板 target fallback 错发 / 顶掉他人 session / 意图注入错人 | fix_pr | ✅ 2026-09-24 |
 
 ## P0 — TSY 发现面板 target fallback 错发 / 顶掉他人 session / 意图注入错人
 
@@ -62,4 +62,43 @@
 
 ## 审计来源
 
-bughunt 定点轮（范围仅 `agent runtime / tiandao / schema` 消费链，避开 locust warning duration contract drift、insight offer context clobber 一类已知题）。证据来自 `agent/packages/schema/src/tsy.ts`、`agent/packages/tiandao/src/runtime.ts`、`agent/packages/tiandao/tests/runtime.test.ts`、`server/src/world/tsy_lifecycle.rs`、`server/src/network/agent_ui.rs` 的闭环人工复核。附带说明：本地尝试运行 `npm test -w @bong/tiandao -- --run tests/runtime.test.ts -t "falls back to first online player when player_id not found in state"` 时，当前 worktree 因缺本地 TS 工具链在 `tsc: not found` 处停止，故本轮结论以静态证据为主、未附执行日志。
+bughunt 定点轮（范围仅 `agent runtime / tiandao / schema` 消费链，避开 locust warning duration contract drift、insight offer context clobber 一类已知题）。证据来自 `agent/packages/schema/src/tsy.ts`、`agent/packages/tiandao/src/runtime.ts`、`agent/packages/tiandao/tests/runtime.test.ts`、`server/src/world/tsy_lifecycle.rs`、`server/src/network/agent_ui.rs` 的闭环人工复核；合并最新 `origin/main` 后已重新执行 schema / tiandao 完整测试与 workspace build。
+
+## Finish Evidence
+
+### 落地清单
+
+- `agent/packages/tiandao/src/runtime.ts:processTsyZoneActivatedForUi`：按 `event.player_id` 精确查找触发玩家；目标 miss 时记录 `warn` 并跳过，不再 fallback 到任意在线玩家，后续事件仍继续处理。
+- `agent/packages/tiandao/tests/runtime.test.ts`：覆盖命中、目标 miss 不错投、无在线玩家、同批次 miss 后继续有效事件，以及 triggerUi 异常后的继续处理。
+- `docs/finished_plans/plan-tsy-discovery-ui-target-fallback-v1.md`：归档本计划并记录本次主线复验结果。
+
+### 第一性原理验真
+
+- `origin/main` 在合并前仍保留 `state.players.find((p) => p.uuid === event.player_id) ?? state.players[0]`；`TsyZoneActivatedV1.player_id` 和 `server/src/world/tsy_lifecycle.rs` 都将其定义为 first-enter 触发者 canonical ID，故 bug 在今日主线上仍存在。
+- `server/src/network/agent_ui.rs` 只验证 `target_player` 在线；任意在线玩家接盘会创建真实 session，并可能替换其既有面板，不能依赖 server 侧兜底。
+
+### 关键 commit
+
+- `168078dab`（2026-07-11）：移除 TSY 发现面板向无关在线玩家 fallback 的最小修复。
+- `492e4bca`（2026-07-11）：补齐 mixed-batch miss 后继续处理的回归契约。
+- `c3d90462`（2026-07-11）：同步当时最新主线并保留 agent/schema 门禁证据。
+- `9a702332c`（2026-09-24）：合并当前 `origin/main` `eb16b224d`，确认修复移植到今日 runtime 结构。
+
+### 测试结果
+
+- `npm test -w @bong/schema`：33 files / 913 tests passed。
+- `npm test -w @bong/tiandao`：72 files / 873 tests passed。
+- `npm run build`：schema 与 tiandao workspace TypeScript build passed。
+- schema generated-artifacts freshness gate 在 schema 测试中通过；本计划未修改 client 文件，因此不触发 client Gradle 门禁。
+
+### 跨仓库核验
+
+- server：`TsyZoneActivated.triggering_player_entity` 写入的 `player_id` 仍是触发者 canonical ID，`AgentUiRequestCommandV1.target_player` 精确路由不变。
+- agent：`processTsyZoneActivatedForUi` 只向精确命中的触发玩家调用 `triggerUi`，miss 只告警并跳过。
+- client：无源码改动；TSY `tsy_discovery` payload 与按钮契约保持不变，错误 target 不再由 agent 产生。
+
+### 遗留 / 后续
+
+- 本修复于 2026-07-11 完成，因旧流程的历史提交署名阻塞搁置；本次合并主线后复验并完成归档。
+- 早期历史提交的 trailer 按任务约束保持原样，未 amend、rebase 或 force-push；本次新增提交均使用 `Model: gpt-6-luna`。
+- `player_id` miss 的告警可作为后续时序监测入口；不得恢复“任意在线玩家接盘”的 fallback 语义。
