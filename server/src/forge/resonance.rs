@@ -32,6 +32,11 @@ pub fn damage_resonance_multiplier(resonance: f64) -> f32 {
     (0.7 + 0.6 * resonance.clamp(0.0, 1.0)) as f32
 }
 
+/// 计算暗器封印效率（封入量 / 支付量），不是 `qi_physics` 的环境衰减率。
+///
+/// 上限 1.0 保证封印不会凭空增加真元；低于 1.0 的差额由
+/// `combat::carrier::finish_charge` 以 `total_deducted - sealed_qi` 传给
+/// `release_unsealed_carrier_qi`，释放回环境以保持守恒。
 pub fn carrier_seal_efficiency_multiplier(resonance: f64) -> f32 {
     (0.8 + 0.2 * resonance.clamp(0.0, 1.0)) as f32
 }

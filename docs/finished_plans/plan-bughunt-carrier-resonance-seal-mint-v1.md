@@ -4,6 +4,13 @@
 >
 > 阶段总览：P0 验真与方案收口 ✅ 2026-09-24 ｜ P1 守恒修复 ✅ 2026-09-24 ｜ P2 饱和测试与全栈门禁 ✅ 2026-09-24 ｜ P3 主线同步、终验与归档 ✅ 2026-09-24
 
+## Preflight（2026-09-24）
+
+- `docs/worldview.md`：已核对真元只能转移、全服总量守恒及暗器相关语义；本 plan / PR 未修改该文件。
+- `docs/finished_plans/` 与 `docs/plan-*.md`：执行 `grep -RilE 'carrier|resonance|seal' docs/finished_plans docs/plan-*.md`。命中既有暗器/共鸣/qi ledger 基础文档；直接相邻的是 `docs/plan-bughunt-anqi-throw-imprint-drop-v1.md`（投掷失败提前删除 imprint 的状态一致性问题），不涉及封印效率放大或 miss 铸币。未发现与本 plan 同一根因的重复 plan。
+- `docs/plans-skeleton/`：执行 `grep -RilE 'carrier|resonance|seal' docs/plans-skeleton`。相关命中包括 `plan-bughunt-anqi-carrier-charged-agent-narration.md`（agent 叙事订阅缺口）与 `plan-bughunt-qi-ledger-asymmetry-v1.md`（全局 ledger producer 审计，提及 carrier 为待治理项）；两者均不覆盖本 plan 的共鸣效率铸币漏洞，未发现重复 plan。
+- `reminder.md`：仓库根目录与 `docs/reminder.md` 均不存在；仓内仅有 `docs/plans-skeleton/reminder.md`，已确认是 skeleton 提醒文件，与本 plan 无关。
+
 ## 接入面
 
 - **进料**：`ChargeCarrierIntent` / `CarrierCharging`、`Cultivation.qi_current`、`PlayerInventory` 中的 `ArtifactColor` 与凹槽深度、`ZoneRegistry`。
