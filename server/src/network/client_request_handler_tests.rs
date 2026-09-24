@@ -58,7 +58,7 @@ fn duan_xu_san_shrinks_qi_max_without_release_when_current_fits() {
         qi_max: 100.0,
         ..Default::default()
     };
-    let mut release = QiMaxShrinkReleaseContext {
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
         entity: Entity::from_raw(500),
         position: None,
         current_dimension: None,
@@ -94,7 +94,7 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
     let life_record = LifeRecord::new("offline:duan-xu-san");
     let before = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
     assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
-    let mut release = QiMaxShrinkReleaseContext {
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
         entity: Entity::from_raw(501),
         position: Some(&position),
         current_dimension: Some(&dimension),
@@ -198,7 +198,7 @@ fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
     let position = Position::new([8.0, 66.0, 8.0]);
     let dimension = CurrentDimension(DimensionKind::Overworld);
     let life_record = LifeRecord::new("offline:duan-xu-san");
-    let mut release = QiMaxShrinkReleaseContext {
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
         entity: Entity::from_raw(503),
         position: Some(&position),
         current_dimension: Some(&dimension),
@@ -9580,8 +9580,23 @@ mod external_ingress_tests {
                 duan_xu_san,
             )])));
             app.insert_resource(WorldQiAccount::default());
+            let spoil_profile = crate::shelflife::DecayProfile::Spoil {
+                id: crate::shelflife::DecayProfileId::new("duan_xu_san_preflight_spoil"),
+                formula: crate::shelflife::DecayFormula::Exponential {
+                    half_life_ticks: 100,
+                },
+                spoil_threshold: 60.0,
+            };
+            let mut decay_profiles = DecayProfileRegistry::new();
+            decay_profiles.insert(spoil_profile.clone()).unwrap();
+            app.insert_resource(decay_profiles);
+            app.add_event::<SpoilConsumeWarning>();
+            app.add_event::<AgeBonusRoll>();
+            app.world_mut().resource_mut::<CombatClock>().tick = 100;
 
-            let inventory = inventory_with_item(combat_pill_item(77));
+            let mut pill = combat_pill_item(77);
+            pill.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &spoil_profile));
+            let inventory = inventory_with_item(pill);
             let wounds = Wounds {
                 entries: vec![Wound {
                     location: crate::body_plan::BodyPartId::new("leg_l"),
@@ -9695,6 +9710,22 @@ mod external_ingress_tests {
                     .next()
                     .is_none(),
                 "缩容释放预检失败时不得发出正向效果"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<SpoilConsumeWarning>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 腐败消费事件"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<AgeBonusRoll>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 峰值消费事件"
             );
         }
 
