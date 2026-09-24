@@ -1,0 +1,25 @@
+# 渊空畸变体 VoidDistorted —— 特征点名清单
+#
+# 依据 AI 参考图（概念图、三视图与爆炸分解图）及用户审定特征清单：
+# - asymmetric_carapace：非对称畸变开裂的异化兽躯背甲（一侧硬骨棘增生，一侧撕裂肌理）
+# - warped_split_head：扭曲开裂的半颅骨异化头颅与外翻交错獠牙
+# - dominant_claw_arm：粗长强壮、带有尖锐黑铁长爪的异变主支撑前臂
+# - atrophied_bone_limb：对侧萎缩折叠、带有尖锐短刺的异化副肢
+# - ragged_hind_paws：低伏发力、紧扣地面的粗壮兽足后肢
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+void_flesh  = [54, 46, 62]
+bone_crest  = [180, 172, 160]
+chitin_dark = [36, 34, 40]
+claw_iron   = [24, 22, 28]
+
+[features]
+asymmetric_carapace = { elements = ["carapace_asym_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4", "TOP"], min_px = { FRONT = 1500, TOP = 2000 } }
+warped_split_head = { elements = ["head_split_"], must_show_in = ["FRONT", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 1200, SIDE_L = 1000 } }
+dominant_claw_arm = { elements = ["arm_dominant_"], must_show_in = ["FRONT", "SIDE_L", "3/4"], min_px = { FRONT = 1000, SIDE_L = 1200 } }
+atrophied_bone_limb = { elements = ["limb_atrophied_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 200, SIDE_R = 300 } }
+ragged_hind_paws = { elements = ["hind_paw_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4"], min_px = { BACK = 1200, SIDE_L = 800 } }
