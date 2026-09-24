@@ -174,6 +174,72 @@ class ZoneAtmosphereTest {
     }
 
     @Test
+    void live_zone_ids_resolve_to_their_existing_visual_profiles() {
+        ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.loadDefault();
+        Map<String, String> expectedProfiles = Map.of(
+            "spawn", "spawn_plain",
+            "lingquan_marsh", "spring_marsh",
+            "youan_depths", "dark_cavern",
+            "dan_zong_yi_yuan", "dan_zong_yi_yuan"
+        );
+
+        expectedProfiles.forEach((liveZoneId, expectedProfileId) -> {
+            ZoneAtmosphereProfile actual = registry.forZone(liveZoneId);
+
+            assertEquals(
+                expectedProfileId,
+                actual.zoneId(),
+                liveZoneId + " 应命中既有视觉 profile，而不是静默回退 wilderness"
+            );
+            assertTrue(
+                registry.hasProfile(liveZoneId),
+                liveZoneId + " 的 live zone id 应被 registry 识别为已有 profile"
+            );
+        });
+    }
+
+    @Test
+    void zone_profile_lookup_preserves_direct_tsy_and_fallback_semantics() {
+        ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.loadDefault();
+
+        assertEquals("spring_marsh", registry.forZone(" spring_marsh ").zoneId());
+        assertEquals("spring_marsh", registry.forZone(" lingquan_marsh ").zoneId());
+        assertEquals("tsy", registry.forZone("tsy_lingxu").zoneId());
+        assertEquals("tsy", registry.forZone("tianshuiyao_deep").zoneId());
+        assertEquals("wilderness", registry.forZone("unmapped_zone").zoneId());
+        assertEquals("wilderness", registry.forZone(null).zoneId());
+        assertEquals("wilderness", registry.forZone("   ").zoneId());
+        assertTrue(registry.hasProfile("tsy_lingxu"));
+        assertTrue(registry.hasProfile("   "));
+        assertFalse(registry.hasProfile("unmapped_zone"));
+    }
+
+    @Test
+    void direct_profile_id_takes_precedence_over_live_zone_alias() {
+        ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.fromJson(Map.of(
+            "spawn",
+            """
+            {
+              "zone_id":"spawn",
+              "fog_color":"#112233",
+              "fog_density":0.42,
+              "ambient_particle":{"type":"cloud256_dust","tint":"#445566","density":0.2},
+              "sky_tint":"#223344",
+              "entry_transition_fx":"FADE",
+              "ambient_recipe_id":"ambient_custom_spawn"
+            }
+            """
+        ));
+
+        ZoneAtmosphereProfile actual = registry.forZone("spawn");
+
+        assertEquals("spawn", actual.zoneId());
+        assertEquals(0x112233, actual.fogColorRgb());
+        assertEquals("ambient_custom_spawn", actual.ambientRecipeId());
+        assertTrue(registry.hasProfile("spawn"));
+    }
+
+    @Test
     void dead_zone_desaturation_50pct() {
         ZoneAtmosphereCommand command = commandFor(
             ZoneState.create("blood_valley", "Blood Valley", 0.0, 5, "collapsed", 10L),
