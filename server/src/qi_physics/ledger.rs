@@ -737,6 +737,10 @@ impl WorldQiAccount {
         Ok(value)
     }
 
+    /// 只读探测，结果仅用于判定，不提交任何余额或转移。
+    ///
+    /// 闭包可以在事务 overlay 上执行完整的账本试算；闭包返回后 overlay 与新增审计项
+    /// 一并丢弃，真实 `WorldQiAccount` 保持不变。
     pub(crate) fn probe_transaction<T>(
         &mut self,
         operation: impl FnOnce(&mut WorldQiAccountTransaction<'_>) -> T,
