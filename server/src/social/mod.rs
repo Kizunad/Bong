@@ -1055,15 +1055,7 @@ fn handle_sparring_invite_responses(
 fn dispatch_trade_offers(
     mut requests: EventReader<TradeOfferRequest>,
     mut registry: ResMut<TradeOfferRegistry>,
-    players: Query<
-        (
-            Entity,
-            &Lifecycle,
-            &Position,
-            &PlayerInventory,
-        ),
-        With<Client>,
-    >,
+    players: Query<(Entity, &Lifecycle, &Position, &PlayerInventory), With<Client>>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for request in requests.read() {
