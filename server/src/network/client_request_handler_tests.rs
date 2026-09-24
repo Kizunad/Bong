@@ -13,7 +13,7 @@ use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::ItemInstance;
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{
     assert_conservation, summarize_world_qi, QiAccountId, WorldQiAccount, WorldQiSnapshot,
 };
@@ -9610,10 +9610,34 @@ mod external_ingress_tests {
             };
             let wounds_before = serde_json::to_value(&wounds).unwrap();
             let qi_before = Cultivation {
-                qi_current: SPIRIT_QI_TOTAL,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_current: QI_EPSILON,
+                qi_max: QI_EPSILON,
                 ..Default::default()
             };
+
+            let tiny_excess = crate::cultivation::death_hooks::qi_max_shrink_release_amount(
+                qi_before.qi_current,
+                qi_before.qi_max * 0.97,
+            )
+            .expect("tiny positive excess must still require a release");
+            assert!(tiny_excess > 0.0 && tiny_excess <= QI_EPSILON);
+            let mut runtime_cultivation = qi_before.clone();
+            let mut runtime_release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> =
+                QiMaxShrinkReleaseContext {
+                    entity: Entity::from_raw(504),
+                    position: None,
+                    current_dimension: None,
+                    life_record: None,
+                    zones: None,
+                    ledger: None,
+                    qi_transfers: None,
+                    source: "combat_pill:duan_xu_san",
+                };
+            assert!(
+                !shrink_qi_max_for_duan_xu_san(&mut runtime_cultivation, &mut runtime_release,),
+                "实际缩容对 tiny excess 缺少 LifeRecord 时必须拒绝"
+            );
+            assert_eq!(runtime_cultivation.qi_max, qi_before.qi_max);
 
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app

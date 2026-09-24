@@ -90,9 +90,10 @@ pub(crate) struct QiMaxShrinkReleaseContext<'a, L: QiLedgerOps + ?Sized = WorldQ
 
 impl<L: QiLedgerOps + ?Sized> QiMaxShrinkReleaseContext<'_, L> {
     pub(crate) fn shrink_qi_max(&mut self, cultivation: &mut Cultivation, new_qi_max: f64) -> bool {
-        let excess = (cultivation.qi_current - new_qi_max).max(0.0);
-        if excess > 0.0 && !self.release_excess(cultivation, excess) {
-            return false;
+        if let Some(excess) = qi_max_shrink_release_amount(cultivation.qi_current, new_qi_max) {
+            if !self.release_excess(cultivation, excess) {
+                return false;
+            }
         }
 
         cultivation.qi_max = new_qi_max;
@@ -155,6 +156,15 @@ impl<L: QiLedgerOps + ?Sized> QiMaxShrinkReleaseContext<'_, L> {
             }
         }
     }
+}
+
+/// 返回缩减 qi 上限时必须释放的正 excess；`None` 表示无需释放。
+///
+/// 预检与实际缩容都使用此判定，保持任意正 excess（包括小于等于
+/// `QI_EPSILON` 的值）都经过相同的账本、事件和 `LifeRecord` 资源检查。
+pub(crate) fn qi_max_shrink_release_amount(qi_current: f64, new_qi_max: f64) -> Option<f64> {
+    let excess = (qi_current - new_qi_max).max(0.0);
+    (excess > 0.0).then_some(excess)
 }
 
 fn release_cultivation_qi_to_zone(

@@ -6617,8 +6617,11 @@ fn preflight_duan_xu_san(
     let mut staged_wounds = wounds.clone();
     let mut staged_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
     let new_qi_max = (staged_cultivation.qi_max * 0.97).max(0.0);
-    if (staged_cultivation.qi_current - new_qi_max).max(0.0)
-        <= crate::qi_physics::constants::QI_EPSILON
+    if crate::cultivation::death_hooks::qi_max_shrink_release_amount(
+        staged_cultivation.qi_current,
+        new_qi_max,
+    )
+    .is_none()
     {
         return true;
     }
