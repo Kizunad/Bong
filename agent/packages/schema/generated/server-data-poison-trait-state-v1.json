@@ -40,5 +40,6 @@
     "toxicity_tier_unlocked": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "2823c288847b860589d2203a647308e48bde567d0017508cc8ba3da1628bf579"
 }

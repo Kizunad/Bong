@@ -86,8 +86,13 @@ public final class ZoneAtmosphereRenderer {
         return seasonOverride;
     }
 
-    public static void clearSeasonOverrideForTests() {
+    /** Clears only the session-derived season override; profile registry and renderer wiring stay live. */
+    public static void clearSeasonOverrideOnDisconnect() {
         seasonOverride = null;
+    }
+
+    public static void clearSeasonOverrideForTests() {
+        clearSeasonOverrideOnDisconnect();
     }
 
     public static void clear() {

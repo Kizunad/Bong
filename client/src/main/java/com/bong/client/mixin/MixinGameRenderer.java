@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.combat.juice.CastFovController;
 import com.bong.client.combat.juice.KillJuiceController;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.state.PlayerStateStore;
@@ -42,7 +43,9 @@ public class MixinGameRenderer {
             state,
             System.currentTimeMillis(),
             PlayerStateStore.snapshot().localNegPressure()
-        ) + KillJuiceController.fovDelta(System.currentTimeMillis());
+        ) + KillJuiceController.fovDelta(System.currentTimeMillis())
+            // plan-fpv-cast-av-v1 P3 —— 施法 release 的 FOV 脉冲（加法偏移，与上述源共存）。
+            + CastFovController.fovDelta();
         if (delta == 0.0) {
             return;
         }

@@ -1,0 +1,53 @@
+[[recipes]]
+id = "workbench.prep.forge_station"
+category = "tool"
+display_name = "锻造台组件"
+qi_cost = 0.0
+time_sec = 100
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 4
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 2
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 6
+
+[recipes.output]
+template_id = "fan_iron_anvil"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.prep.furnace_kit"
+category = "tool"
+display_name = "凡铁炉组件"
+qi_cost = 0.0
+time_sec = 120
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 6
+
+[[recipes.materials]]
+template_id = "spirit_charcoal"
+count = 2
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 4
+
+[recipes.output]
+template_id = "furnace_fantie"
+count = 1
+
+[recipes.requirements]

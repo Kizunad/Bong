@@ -1,0 +1,20 @@
+# 麻布护头（linen_helmet）Round 2 人工点名清单。
+#
+# 这件没有外部正交参考图；形制依据是本生成器内写明的缠头麻布、护耳片、后脑搭接
+# 与外露骨扣/系带分层。点名器只核对这些人写的可见契约，不替模型决定形制。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 顶布与后脑搭接必须形成连续的软布轮廓，不能退化成一只平顶硬壳。
+crown_and_bridge = { elements = ["cap_", "back_drape"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 40, SIDE_R = 30, BACK = 40, SIDE_L = 30, TOP = 40 } }
+# 额前压布是面向 -z 的主识别层。
+forehead_wrap = { elements = ["forehead_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L"], min_px = { FRONT = 20, SIDE_R = 8, SIDE_L = 8 } }
+# 护耳片必须左右成对，且不能在侧视中消失。
+ear_flaps = { elements = ["ear_flap_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 20, SIDE_R = 20, BACK = 20, SIDE_L = 20 }, mirror = true }
+# 两侧系带/结是固定软布护头的外露结构。
+side_fasteners = { elements = ["side_tie_", "side_knot_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L"], min_px = { FRONT = 8, SIDE_R = 8, SIDE_L = 8 }, mirror = true }
+# 额中骨扣单独点名，防止它随固定件简化时被漏删。
+bone_toggle = { names = ["bone_toggle"], must_show_in = ["FRONT"], min_px = { FRONT = 4 } }

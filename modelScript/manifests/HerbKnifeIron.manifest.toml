@@ -1,0 +1,10 @@
+# 凡铁采药刀 (HerbKnifeIron / herb_knife_iron) 特征清单
+facing = "+x"
+mirror_x = 8.0
+size = 260
+
+[features]
+pivot_brass   = { elements = ["pivot_"], must_show_in = ["SIDE_L", "SIDE_R", "3/4"], min_px = 60 }
+wood_handle   = { elements = ["handle_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "3/4"], min_px = 250 }
+sickle_blade  = { elements = ["blade_"], must_show_in = ["SIDE_R", "3/4"], min_px = 180 }
+cord_tail     = { elements = ["cord_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 40 }

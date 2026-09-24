@@ -94,6 +94,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         if (removed != null) {
             removed.deactivateOwnedFlag();
         }
+        pending.removeIf(queued -> queued.instanceId() == payload.instanceId());
         sink.stop(payload.instanceId(), payload.fadeOutTicks());
         return true;
     }
@@ -127,6 +128,55 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public int activeLoopCountForTests() {
         return loops.size();
+    }
+
+    int pendingCountForTests() {
+        return pending.size();
+    }
+
+    long tickForTests() {
+        return tick;
+    }
+
+    float ambientVolumeFactorForTests() {
+        return ambientVolumeFactor;
+    }
+
+    /**
+     * 断线时撤销本 session 的所有声音派生状态。
+     *
+     * <p>先从 player 摘掉全部旧会话引用和派生 flag，再 best-effort 硬停 sink 中的实例；
+     * sink 的 {@link RuntimeException} 只记录，不得阻断本地状态复位或中央 helper 的后续
+     * animation/HUD 清理。{@link Error} 仍原样透传。
+     * mixer、telemetry、flag provider 与 sink 依赖均保留，保证同一 player 在新 session 可重用。
+     */
+    public void clearOnDisconnect() {
+        List<Long> staleInstanceIds = new ArrayList<>(loops.keySet());
+        loops.clear();
+        pending.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
+        ambientVolumeFactor = 1.0f;
+        lastCombatActive = false;
+        lastCombatHpPercent = Float.NaN;
+        tick = 0L;
+        mixer.clearOnDisconnect();
+
+        for (Long instanceId : staleInstanceIds) {
+            try {
+                sink.stop(instanceId, 0);
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to stop sound instance {} while clearing disconnect state",
+                    instanceId,
+                    exception
+                );
+            }
+        }
+        try {
+            sink.clearOnDisconnect();
+        } catch (RuntimeException exception) {
+            BongClient.LOGGER.error("Failed to clear sound sink on disconnect", exception);
+        }
     }
 
     public void setMusicState(MusicStateMachine.State state) {
@@ -223,8 +273,25 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             TiandaoPresenceState state = TiandaoPresenceStore.snapshot();
             return state.active() && state.response().equals(response);
         }
-        if (EnvironmentAudioLoopState.isActive(flag)) {
-            return true;
+        // 有内置状态谓词的 flag（低血 / 灵田抽灵）必须**先**按真实状态判定，不能被
+        // payload 自注册的 sticky flag 短路成永真：server 发带 flag 的 loop 时
+        // play() 会 EnvironmentAudioLoopState.activate(flag)，若让 sticky 优先，
+        // recipe 的 while_flag 就成了死条件——heartbeat_low_hp 的
+        // `minecraft:entity.player.hurt` 层会在血量回满（含重生）后仍每秒重放。
+        // 与上面 `tiandao:` 前缀同一治法（见 tiandaoFlagFollowsPresenceState... 测试）。
+        Boolean stateDriven = stateDrivenFlagActive(flag);
+        if (stateDriven != null) {
+            return stateDriven;
+        }
+        // 无内置谓词的 flag（环境雾堤 / fauna 压迫感 hum 等）仍由 server 的
+        // play…stop 配对拥有生命周期。
+        return EnvironmentAudioLoopState.isActive(flag);
+    }
+
+    /** 内置状态谓词；返回 null 表示该 flag 无内置状态、生命周期归 server 的 play/stop。 */
+    private static Boolean stateDrivenFlagActive(String flag) {
+        if (flag == null) {
+            return Boolean.FALSE;
         }
         return switch (flag) {
             case "hp_below_20" -> CombatHudStateStore.snapshot().hpPercent() < 0.2f;
@@ -233,7 +300,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
                 LingtianSessionStore.Snapshot snapshot = LingtianSessionStore.snapshot();
                 yield snapshot.active() && snapshot.kind() == LingtianSessionStore.Kind.DRAIN_QI;
             }
-            default -> false;
+            default -> null;
         };
     }
 

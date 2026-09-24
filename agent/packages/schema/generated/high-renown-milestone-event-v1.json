@@ -52,5 +52,6 @@
     "zone": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "2331ff2c64c94142616c3d5fff740f17046689b0564dddad6eb01ae753a3ff57"
 }

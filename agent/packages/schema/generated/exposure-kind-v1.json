@@ -16,5 +16,6 @@
       "const": "death",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "4b63797005cf030e236187fe83959c6b3f2ab12aec863341b8863b73bfa4b1f4"
 }

@@ -138,7 +138,7 @@ pub(crate) fn compute_faction_census(
         })
         .collect();
     // 按 group_id 升序——确定性输出（EmergentGroupId 派生 Ord）。
-    entries.sort_by(|a, b| a.group_id.cmp(&b.group_id));
+    entries.sort_by_key(|a| a.group_id);
     entries
 }
 
@@ -228,6 +228,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -238,6 +239,7 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
+            pending_combat_winner: None,
         }
     }
 

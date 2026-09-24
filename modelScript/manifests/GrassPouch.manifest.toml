@@ -1,0 +1,60 @@
+# 小草包 grass_pouch —— 特征点名清单
+#
+# **这份清单是人写的，工具不会替你生成一份。** 点名器只核对这里列出的东西，
+# 没有任何「从参考图/从模型自动推断该有哪些特征」的路径 —— 那等于自己出题自己判卷。
+# 小草包前两轮**整件漏掉背带**（参考图里画面占比仅次于包身，没它那件读作「放在
+# 地上的篮子」）时，七道数值门全绿：有没有背带根本不在任何一道门的问题域里。
+#
+# 特征来源：`gen_grass_pouch.py` 各 part 函数文档里记下来的参考图读图结论
+# （三条可辨差异 + 参考图三视的形制交代），不是从成品模型倒推的。
+#
+# min_px 的数字来自差分实测（抽掉该特征前后变了多少像素），门限压在实测值的
+# 六到七成：正常迭代的抖动不会撞红，整件丢失/被别的件罩死一定撞红。
+# 换 size 跑这份清单，门限会整体失真 —— 所以 size 也写在这儿。
+
+facing = "+z"        # 翻盖前檐在 +z：FLAP_FRONT_Z = HALF_D + 0.60
+mirror_x = 8.0       # 生成器写盘前把 x/z 各 +8 平移进 MC 方块空间，中轴在 x=8
+size = 260
+
+# 材质普查用（色相单位向量分类）。必须与 gen_grass_pouch.MATS 逐项一致 ——
+# test_manifest 有一条对拍断言钉着，改了一边另一边会撞红。
+[materials]
+weave  = [152, 136, 102]
+seam   = [114, 100, 72]
+braid  = [176, 160, 120]
+flap   = [134, 118, 88]
+cord   = [140, 128, 98]
+bone   = [206, 198, 170]
+stitch = [72, 56, 42]
+
+[features]
+# 包身：底板 + 四壁。收口做出来的圆底是「草包不是货箱」的第一眼判据。
+woven_body = { elements = ["wall_", "floor"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 4200, SIDE_R = 1600 } }
+
+# 可辨差异 ①：双股封边。比编身亮一档 = 新编的边 = 「完好」的证据（破草包是散口）。
+# 盖必须比包身窄，否则盖檐把封边整条罩住，这条差异等于白做。
+braided_rim = { elements = ["braid_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 400, SIDE_R = 620 } }
+
+# 横向粗编带：读出「一条条」而不是一块横纹木板。正视被翻盖檐罩掉大半，门限相应低。
+weave_bands = { elements = ["band_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 120, SIDE_R = 160 } }
+
+# 斜挎背带：**前两轮整件漏掉的就是它**。左右成对，缺一侧就是残的。
+shoulder_strap = { elements = ["strap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 850 }, mirror = true }
+
+# 翻盖：盖住上口、压向左前。侧视只看得见薄薄一条檐，门限差一个数量级。
+flap_lid = { elements = ["flap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2200, SIDE_R = 280 } }
+
+# 可辨差异 ③：系盖两道草绳（破草包只有一片平盖 + 一个小扣）。
+lash_cords = { elements = ["lash_", "peg_tie"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1100, SIDE_R = 270 } }
+
+# 骨扣：竖挂在前檐外的骨栓。历史上因为「前檐加深」与它的 z 位置脱钩，被檐吞到
+# 只探出 0.16px（FRONT 实测仅 115px）—— 门限 450 就是冲着那次缺陷设的。
+bone_toggle = { elements = ["bone_peg"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 450, SIDE_R = 380 } }
+
+# 可辨差异 ②：侧插袋 + 露头草药，**只在右侧**（右 = FRONT 视里观者右手边 = +x）。
+side_pocket = { elements = ["pocket_", "sprig_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1200, SIDE_R = 1700 }, asym = "right" }
+
+# 针脚：密而整齐（对比破草包的散线）。缝在盖檐**下沿之外**的裸露前壁上 ——
+# 前两轮缝在封边正下方，被盖檐罩死，差分实测七条合计只剩 15px。只查正视：
+# 它们在前壁上，侧视本来就看不见（实测 0px），列进去等于自己给自己挖坑。
+hem_stitch = { elements = ["hem_"], must_show_in = ["FRONT"], min_px = 200 }

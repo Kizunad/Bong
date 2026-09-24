@@ -133,7 +133,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -249,7 +249,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -392,7 +392,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -1039,5 +1039,6 @@
         }
       }
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "7187c1885397a97b09282599050586a579d76229a8d750679771ba89abd26b2f"
 }

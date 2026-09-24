@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "anqi_hud",
+  "kind": "echo",
+  "echo_count": 0,
+  "aim_progress": 0,
+  "charge_progress": 0,
+  "abrasion_container": "",
+  "abrasion_qi_payload": 0,
+  "tick": 9007199254740992
+}

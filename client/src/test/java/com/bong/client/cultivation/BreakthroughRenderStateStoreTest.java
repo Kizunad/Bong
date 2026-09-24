@@ -44,6 +44,16 @@ class BreakthroughRenderStateStoreTest {
     }
 
     @Test
+    void clearOnDisconnect_clearsOnlyRenderSnapshot() {
+        BreakthroughRenderStateStore.replace(new BreakthroughRenderState(payload("actorA"), 1_000L));
+
+        BreakthroughRenderStateStore.clearOnDisconnect();
+
+        assertNull(BreakthroughRenderStateStore.snapshot(),
+            "断线清理必须移除上一会话未过期的突破演出，避免其坐标在新世界继续被渲染");
+    }
+
+    @Test
     void resetForTests_clearsToNull() {
         BreakthroughRenderStateStore.replace(new BreakthroughRenderState(payload("actorA"), 1_000L));
         BreakthroughRenderStateStore.resetForTests();

@@ -122,6 +122,28 @@ spirit_quality_initial = 0.0
 description = "皱巴巴的草纸，画着编草甲的手法。可解锁草编甲手搓配方。"
 
 [[item]]
+id = "scroll_armor_linen"
+name = "麻布僧袍配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "记着粗布、草绳与骨扣缝制僧袍的旧图样，可解锁麻布僧袍手搓配方。"
+
+[[item]]
+id = "scroll_armor_mutated_bone"
+name = "异兽刺骨甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.45
+description = "记着异兽骨片、兽皮与粗布衬层的缀甲图样，可解锁异兽刺骨甲手搓配方。"
+
+[[item]]
 id = "armor_straw_helmet"
 name = "斗笠"
 category = "armor"
@@ -428,3 +450,91 @@ base_weight = 0.35
 rarity = "common"
 spirit_quality_initial = 0.3
 description = "残卷缠面的短靴。凡物·残卷；防御 +6，耐久 140。"
+
+[[item]]
+id = "armor_linen_helmet"
+name = "麻布僧袍盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "层叠麻布缠成的护头。凡物·麻布僧袍；防御 +2.5，耐久 70。"
+
+[[item]]
+id = "armor_linen_chestplate"
+name = "麻布僧袍胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.7
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "粗布内衬与斜披僧袍护住胸腹。凡物·麻布僧袍；防御 +2.5，耐久 70。"
+
+[[item]]
+id = "armor_linen_leggings"
+name = "麻布僧袍腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.55
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "宽松麻裤与交叉行缠护住下肢。凡物·麻布僧袍；防御 +2.5，耐久 70。"
+
+[[item]]
+id = "armor_linen_boots"
+name = "麻布僧袍靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "多层粗布缠成的软靴。凡物·麻布僧袍；防御 +2.5，耐久 70。"
+
+[[item]]
+id = "armor_mutated_bone_helmet"
+name = "异兽刺骨甲盔"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.9
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "带刺骨片与皮带固定的护头。凡物·异兽刺骨甲；防御 +8，耐久 180。"
+
+[[item]]
+id = "armor_mutated_bone_chestplate"
+name = "异兽刺骨甲胸甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 2.2
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "异兽肋骨板叠覆粗布衬层，肩侧以皮带固定。凡物·异兽刺骨甲；防御 +8，耐久 180。"
+
+[[item]]
+id = "armor_mutated_bone_leggings"
+name = "异兽刺骨甲腿甲"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 1.6
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "异兽胫骨护板与交叉皮带护住双腿。凡物·异兽刺骨甲；防御 +8，耐久 180。"
+
+[[item]]
+id = "armor_mutated_bone_boots"
+name = "异兽刺骨甲靴"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "骨片包覆脚背并以皮带束紧的短靴。凡物·异兽刺骨甲；防御 +8，耐久 180。"

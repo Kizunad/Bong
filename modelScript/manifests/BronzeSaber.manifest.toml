@@ -1,0 +1,11 @@
+# 青铜单刀 (BronzeSaber / bronze_saber) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+ring_pommel = { elements = ["ring_"], must_show_in = ["FRONT", "3/4", "SIDE_R"], min_px = 80 }
+cord_grip   = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 250 }
+guard_plate = { elements = ["guard_plate", "blade_collar"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 100 }
+blade_body  = { elements = ["blade_spine_", "blade_edge_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 200 }
+tassel_fringe = { elements = ["tassel_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 50 }

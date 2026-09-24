@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -83,6 +84,48 @@ public class LingtianSessionHandlerTest {
         assertEquals(20, snapshot.elapsedTicks());
         assertEquals(160, snapshot.targetTicks());
         assertEquals("ci_she_hao", snapshot.plantId());
+    }
+
+    @Test
+    void clearOnDisconnectDropsOldSnapshotAndAcceptsNewSessionSnapshot() {
+        LingtianSessionStore.replace(new LingtianSessionStore.Snapshot(
+            true,
+            LingtianSessionStore.Kind.DRAIN_QI,
+            12,
+            64,
+            -7,
+            20,
+            160,
+            "old_plant",
+            "old_session",
+            0.4f,
+            true
+        ));
+
+        LingtianSessionStore.clearOnDisconnect();
+
+        LingtianSessionStore.Snapshot cleared = LingtianSessionStore.snapshot();
+        assertEquals(LingtianSessionStore.Snapshot.empty(), cleared,
+            "断线生产清理必须把旧灵田 session 还原为空快照，不能留下 HUD 或吸灵 loop 可读的 active 状态");
+        assertFalse(cleared.active(), "空快照必须 inactive，避免断线后继续显示旧进度");
+
+        LingtianSessionStore.Snapshot nextSession = new LingtianSessionStore.Snapshot(
+            true,
+            LingtianSessionStore.Kind.HARVEST,
+            -3,
+            70,
+            9,
+            8,
+            40,
+            "new_plant",
+            "new_session",
+            0.0f,
+            false
+        );
+        LingtianSessionStore.replace(nextSession);
+
+        assertEquals(nextSession, LingtianSessionStore.snapshot(),
+            "清空后新连接首包必须能完整重写旧 session，而非被断线状态阻塞");
     }
 
     @Test

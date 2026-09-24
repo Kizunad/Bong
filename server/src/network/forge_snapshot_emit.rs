@@ -10,7 +10,7 @@ use valence::prelude::{Added, Client, Entity, EventReader, Query, Res, Username,
 use crate::forge::blueprint::{Blueprint, BlueprintRegistry, StepSpec};
 use crate::forge::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
-    InscriptionScrollSubmit, StepAdvance, TemperingHit,
+    InscriptionScrollApplied, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSession, ForgeSessionId, ForgeSessions, ForgeStep, StepState};
@@ -80,6 +80,48 @@ pub fn send_station_snapshot_to_player(
         return;
     };
     send_server_data_payload(client, bytes.as_slice());
+}
+
+/// 工位右键授权回执。先同步会话和图谱，最后打开窗口；空工位必须清掉旧会话。
+pub fn send_forge_open_to_player(
+    client: &mut Client,
+    station: &WeaponForgeStation,
+    owner_name: &str,
+    session: Option<&ForgeSession>,
+    learned: &LearnedBlueprints,
+    registry: &BlueprintRegistry,
+) {
+    let session_data = match session {
+        Some(session) => {
+            let blueprint = registry.get(&session.blueprint);
+            build_session_data(
+                session,
+                blueprint.map_or("", |value| value.name.as_str()),
+                blueprint,
+            )
+        }
+        None => ForgeSessionDataV1 {
+            session_id: 0,
+            blueprint_id: String::new(),
+            blueprint_name: String::new(),
+            active: false,
+            current_step: ForgeStepV1::Done,
+            step_index: 0,
+            achieved_tier: 0,
+            step_state: ForgeStepStateDataV1::None,
+        },
+    };
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeSession(Box::new(session_data)));
+    if let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) {
+        send_server_data_payload(client, &bytes);
+    }
+    send_blueprint_book_to_player(client, learned, registry);
+    let mut data = build_station_data(station, owner_name);
+    data.open_screen = true;
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeStation(Box::new(data)));
+    if let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) {
+        send_server_data_payload(client, &bytes);
+    }
 }
 
 /// P2 — 单独推 session 快照（不附带 station/blueprint book），供淬炼击键 / 铭文 / 开光
@@ -197,7 +239,7 @@ pub fn push_forge_start_snapshot_on_accept(
 /// 只推 session，不重发 station/blueprint_book（避免每次击键都重发三件套）。
 pub fn push_forge_session_snapshot_on_interaction(
     mut tempering_hits: EventReader<TemperingHit>,
-    mut scroll_submits: EventReader<InscriptionScrollSubmit>,
+    mut scroll_applied: EventReader<InscriptionScrollApplied>,
     mut consecration_injects: EventReader<ConsecrationInject>,
     sessions: Res<ForgeSessions>,
     registry: Res<BlueprintRegistry>,
@@ -207,8 +249,8 @@ pub fn push_forge_session_snapshot_on_interaction(
     for hit in tempering_hits.read() {
         touched.push(hit.session);
     }
-    for submit in scroll_submits.read() {
-        touched.push(submit.session);
+    for applied in scroll_applied.read() {
+        touched.push(applied.session);
     }
     for inject in consecration_injects.read() {
         touched.push(inject.session);
@@ -229,7 +271,7 @@ pub fn push_forge_session_snapshot_on_interaction(
     }
 }
 
-/// `ForgeStepAdvance` 处理后（`handle_step_advance` 之后）回推最新快照：未完成则和
+/// `ForgeStepAdvance` 处理后（forge step advance 阶段之后）回推最新快照：未完成则和
 /// 起炉受理一样推 station+session+blueprint_book 三件套（`send_forge_snapshots_to_player`
 /// 的第二个真实调用点）；已到 Done 则只推 station（`has_session` 已被引擎清 false）+
 /// blueprint_book，不带 session（结算内容由 `push_forge_outcome_on_event` 的
@@ -297,6 +339,7 @@ fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponF
         integrity: station.integrity,
         owner_name: owner_name.to_string(),
         has_session: station.session.is_some(),
+        open_screen: false,
         // plan-forge-session-entry-wiring-v1 §4.1#3 — 正常放砧路径 pos 恒 Some
         // （station::handle_place_station_request 经 `WeaponForgeStation::placed` 构造）；
         // 无 pos 只可能出现在测试 fixture，defensive 落 (0,0,0)。
@@ -395,6 +438,35 @@ fn build_blueprint_book(
                 display_name: bp.name.clone(),
                 tier_cap: bp.tier_cap,
                 step_count: bp.steps.len() as u32,
+                output_item: bp
+                    .outcomes
+                    .perfect
+                    .as_ref()
+                    .or(bp.outcomes.good.as_ref())
+                    .map(|value| value.weapon.clone())
+                    .unwrap_or_default(),
+                steps: bp
+                    .steps
+                    .iter()
+                    .map(|step| forge_step_to_v1(ForgeStep::from_kind(step.kind())))
+                    .collect(),
+                required_materials: bp
+                    .steps
+                    .iter()
+                    .find_map(|step| match step {
+                        StepSpec::Billet { profile } => Some(
+                            profile
+                                .required
+                                .iter()
+                                .map(|item| crate::schema::forge::ForgeMaterialRequirementV1 {
+                                    material: item.material.clone(),
+                                    count: item.count,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect();
@@ -604,7 +676,7 @@ mod tests {
         let mut sessions = app
             .world_mut()
             .remove_resource::<ForgeSessions>()
-            .unwrap_or_else(ForgeSessions::new);
+            .unwrap_or_default();
         let mut session =
             ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
         session.current_step = current_step;
@@ -753,7 +825,7 @@ mod tests {
     fn tempering_hit_pushes_session_only_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -797,7 +869,7 @@ mod tests {
     fn consecration_inject_pushes_session_snapshot() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -831,7 +903,7 @@ mod tests {
     fn interaction_snapshot_skips_unknown_session_without_panic() {
         let mut app = App::new();
         app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
         app.add_event::<ConsecrationInject>();
         app.insert_resource(registry_with_qing_feng());
         app.insert_resource(ForgeSessions::new());
@@ -882,6 +954,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(9),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -919,6 +992,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(10),
+            from_step: ForgeStep::Consecration,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -955,6 +1029,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(11),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);

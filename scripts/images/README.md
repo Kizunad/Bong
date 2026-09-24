@@ -56,6 +56,65 @@ python scripts/images/gen.py "four-corner sumi-e ink splashes, center transparen
 | `preview_runes_grid.py` | 符文字符宫格预览 |
 | `process_particles_batch.py` | 批量对粒子图跑 `lum_to_alpha` + 缩尺 |
 | `render_rune_chars.py` | 用字体直接渲染符文汉字（不靠 AI 画中文） |
+| `review_icons.py` | 扫描 PNG 或读取前后对照清单，生成带快照的离线审图库 |
+
+## 离线审图库
+
+依赖 Python 3.11+ 与 Pillow。直接生成客户端物品图库：
+
+```bash
+python3 scripts/images/review_icons.py --out local_images/item-review
+
+# 扫描其他 PNG 目录，按相对路径导出标记
+python3 scripts/images/review_icons.py \
+    --source local_images/new-icons --out local_images/new-icons-review
+
+# 原图、生成输入、去背结果对照
+python3 scripts/images/review_icons.py \
+    --manifest local_images/remaster/review-data.json \
+    --out local_images/remaster-review --title "道具重画与去背对照"
+```
+
+用浏览器打开输出目录里的 `index.html`，无需启动服务器。支持搜索、分类筛选、
+深底/白底/黑底/棋盘底、32px/64px 实际尺寸预览，以及返工/重画/去背景标记和备注。
+扫描物品目录时按文件名关联服务端 TOML 中的名称和原有描述；无对应定义时显示文件名。
+
+对照清单结构如下，图片路径相对于清单文件，也可用绝对路径：
+
+```json
+{
+  "images": [
+    {
+      "id": "I001",
+      "name": "草绳",
+      "path": "client/src/main/resources/assets/bong-client/textures/gui/items/grass_rope.png",
+      "icon": "icons/grass_rope.png",
+      "old": "originals/grass_rope.png",
+      "input": "raw/grass_rope.png",
+      "cutout": "cutouts/grass_rope.png",
+      "mask": "masks/grass_rope.png",
+      "redraw": true,
+      "warnings": [],
+      "note": "检查细绳边缘"
+    }
+  ]
+}
+```
+
+`id`、`path`、`icon` 必填；编号和资源路径不可重复。其他字段可省略，
+`remove_background: true` 用于归入原图去背景分类。只接受本地 PNG。
+工具将输入图和缩略图复制到输出目录，保留 alpha 和长宽比，不修改输入资源。
+原图快照应指向处理前的备份，以免客户端资源替换后失去对照。
+整个输出目录可移动或分享；不覆盖已有输出目录，失败后重试请换一个新目录。
+
+标记按图片内容与资源路径分批保存到浏览器，标题变化不会清空标记；图片变化会创建新批次。
+导出文件为 `bong-icon-review-selection.json`，包含 `version`、`datasetId` 和 `selections`，
+每项保留 `id`、`name`、`path`、`redo`、`redraw`、`remove_background`、`note`。
+可在同批图库中导入，按资源路径合并；格式、批次或路径不匹配时整份拒绝，保留现有标记。
+移动目录或换浏览器前先导出，浏览器本地保存不保证跨路径可用。
+
+“不含透明像素”筛选只检查 alpha，不判断灰白棋盘是否被画进 RGB。
+工具、HTML 模板进入 Git；图库、原图快照与导出清单保留在 `local_images/`。
 
 ## 画风细则
 

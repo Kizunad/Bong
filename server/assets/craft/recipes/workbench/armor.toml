@@ -1,0 +1,183 @@
+[[recipes]]
+id = "workbench.armor.armor_hide_boots"
+category = "armor_craft"
+display_name = "皮甲·脚"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 2
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "armor_hide_boots"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.armor_hide_helmet"
+category = "armor_craft"
+display_name = "皮甲·头"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 2
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "armor_hide_helmet"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.armor_straw_boots"
+category = "armor_craft"
+display_name = "草甲·脚"
+qi_cost = 0.0
+time_sec = 25
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 4
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "armor_straw_boots"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.armor_straw_helmet"
+category = "armor_craft"
+display_name = "草甲·头"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 5
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "armor_straw_helmet"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.hide_chest"
+category = "armor_craft"
+display_name = "皮甲·胸"
+qi_cost = 0.0
+time_sec = 65
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 4
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "armor_hide_chestplate"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.hide_legs"
+category = "armor_craft"
+display_name = "皮甲·腿"
+qi_cost = 0.0
+time_sec = 55
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 3
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "armor_hide_leggings"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.straw_chest"
+category = "armor_craft"
+display_name = "草甲·胸"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 8
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "armor_straw_chestplate"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.armor.straw_legs"
+category = "armor_craft"
+display_name = "草甲·腿"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 6
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "armor_straw_leggings"
+count = 1
+
+[recipes.requirements]

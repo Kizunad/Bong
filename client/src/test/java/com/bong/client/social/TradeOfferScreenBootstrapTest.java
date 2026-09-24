@@ -56,6 +56,51 @@ class TradeOfferScreenBootstrapTest {
     }
 
     @Test
+    void requestPickerIsAnOccupiedOtherScreenWhenNoIncomingOfferExists() {
+        TradeOfferScreen picker = TradeOfferScreen.requestPicker("entity:42");
+        assertTrue(picker.isRequestPicker(), "出站 picker 必须标记为 request mode");
+        assertEquals(
+            TradeOfferScreenBootstrap.ScreenKind.REQUEST_PICKER,
+            TradeOfferScreenBootstrap.screenKindOf(picker, null),
+            "没有入站 offer 时，出站 picker 必须保持独立分类，不能被 stale-offer 清理逻辑关闭"
+        );
+        assertEquals(
+            TradeOfferScreenBootstrap.Decision.NOOP,
+            TradeOfferScreenBootstrap.decide(null, TradeOfferScreenBootstrap.screenKindOf(picker, null), 1_000L)
+        );
+    }
+
+    @Test
+    void expiredIncomingOfferDoesNotCloseOutgoingRequestPicker() {
+        assertEquals(
+            TradeOfferScreenBootstrap.Decision.DECLINE_EXPIRED,
+            TradeOfferScreenBootstrap.decide(
+                offer("t-expired", 500L),
+                TradeOfferScreenBootstrap.ScreenKind.REQUEST_PICKER,
+                1_000L
+            ),
+            "过期入站 offer 仍必须发送拒绝回执，即使当前是出站 picker"
+        );
+        assertFalse(
+            TradeOfferScreenBootstrap.isIncomingTradeScreen(TradeOfferScreenBootstrap.ScreenKind.REQUEST_PICKER),
+            "出站 request picker 不是入站交易屏，过期清理不得关闭它"
+        );
+    }
+
+    @Test
+    void activeIncomingOfferDoesNotReplaceOutgoingRequestPicker() {
+        assertEquals(
+            TradeOfferScreenBootstrap.Decision.BLOCKED_TOAST,
+            TradeOfferScreenBootstrap.decide(
+                offer("t-active", 5_000L),
+                TradeOfferScreenBootstrap.ScreenKind.REQUEST_PICKER,
+                1_000L
+            ),
+            "活跃入站 offer 遇到出站 picker 时必须提示而不是替换玩家当前操作的 picker"
+        );
+    }
+
+    @Test
     void noOfferButMatchingTradeScreenOpenClosesIt() {
         assertEquals(
             TradeOfferScreenBootstrap.Decision.CLOSE_SCREEN,

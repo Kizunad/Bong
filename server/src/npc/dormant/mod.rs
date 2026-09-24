@@ -21,22 +21,29 @@ pub mod census;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use crossbeam_channel::{Receiver, Sender};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use valence::prelude::{
-    bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
+    bevy_ecs, App, DVec3, Event, EventWriter, IntoSystemConfigs, Res, ResMut, Resource, Startup,
+    Update,
 };
 
+use crate::body_plan::{resolve_race_to_plan, BodyPlanRegistry, RaceRegistry};
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough, BreakthroughError,
-    BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
+    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough_with_profile,
+    BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
     MIN_ZONE_QI_TO_GUYUAN,
 };
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    release_external_qi_to_zone, ActorQiIdentity, ActorQiKind, Contamination, Cultivation,
+    MeridianSystem, PersistedCultivationV1, QiFlowError, QiFlowOutcome, Realm,
+};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::fauna::daozhan::{DaoZhangState, FakeBehavior};
 use crate::npc::faction::{
     leader_realm_for, named_faction_id_for_legacy, EmergentGroupId, FactionId, FactionMembership,
     FactionRank, FactionStore, MissionQueue, Reputation, EMERGENT_GROUP_COUNT,
@@ -52,8 +59,7 @@ use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
 use crate::npc::trade::NpcPlayerReputation;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::{
-    constants::{QI_EPSILON, QI_NPC_ABSORB_FLOOR, QI_ZONE_UNIT_CAPACITY},
-    qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::schema::cultivation::realm_to_string;
 use crate::social::components::CharId;
@@ -79,7 +85,7 @@ pub const DORMANT_TICK_INTERVAL_ENV: &str = "BONG_DORMANT_TICK_INTERVAL";
 ///
 /// **dev/test-only 随机种子旋钮**——只决定 dormant 战斗 RNG 的初值
 /// （`NpcVirtualizationConfig.sim_seed`），**不**改变守恒：真元流动仍走 `release_dormant_qi_to_zone` →
-/// `ledger.transfer(ReleaseToZone)`。env 未设时保持现状默认（种子 0）。
+/// `WorldQiAccount` 审计。env 未设时保持现状默认（种子 0）。
 pub const SIM_SEED_ENV: &str = "BONG_SIM_SEED";
 
 /// 纯解析：`BONG_DORMANT_TICK_INTERVAL` 原始值 → tick 间隔。
@@ -230,6 +236,25 @@ pub struct DormantDaoxiangOriginSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantMimicSpiderSnapshot {
+    pub state: crate::fauna::mimic_spider::SpiderDisguiseState,
+    pub home_zone: String,
+    pub home_pos: [f64; 3],
+    pub drained_qi: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantDaozhanSnapshot {
+    pub state: DaoZhangState,
+    pub home_zone: String,
+    pub home_pos: [f64; 3],
+    pub daozhan_qi: f64,
+    pub origin_realm: Option<Realm>,
+    pub behavior_queue: Vec<FakeBehavior>,
+    pub current_behavior_ticks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DormantTsyHostileSnapshot {
     pub family_id: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -240,6 +265,8 @@ pub struct DormantTsyHostileSnapshot {
     pub fuya_aura: Option<DormantFuyaAuraSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub daoxiang_origin: Option<DormantDaoxiangOriginSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub daozhan: Option<DormantDaozhanSnapshot>,
 }
 
 /// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵（`TsySentinelMarker`）身份载荷。
@@ -295,6 +322,24 @@ impl DormantBehaviorIntent {
     }
 }
 
+fn serialize_dormant_cultivation<S>(
+    cultivation: &Cultivation,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    PersistedCultivationV1::from(cultivation).serialize(serializer)
+}
+
+fn deserialize_dormant_cultivation<'de, D>(deserializer: D) -> Result<Cultivation, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let persisted = PersistedCultivationV1::deserialize(deserializer)?;
+    Cultivation::try_from(persisted).map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NpcDormantSnapshot {
     pub char_id: CharId,
@@ -304,6 +349,10 @@ pub struct NpcDormantSnapshot {
     pub position: [f64; 3],
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub schedule_seed: Option<u64>,
+    #[serde(
+        serialize_with = "serialize_dormant_cultivation",
+        deserialize_with = "deserialize_dormant_cultivation"
+    )]
     pub cultivation: Cultivation,
     pub meridian_system: MeridianSystem,
     pub meridian_severed: MeridianSeveredPermanent,
@@ -334,6 +383,8 @@ pub struct NpcDormantSnapshot {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub guardian_relic: Option<DormantGuardianRelicSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mimic_spider: Option<DormantMimicSpiderSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tsy_hostile: Option<DormantTsyHostileSnapshot>,
     /// plan-tsy-sentinel-dormant-regression-v1 P1：TSY 秘境守灵身份载荷，`Some` 时 hydrate
     /// 路由必须走 `spawn_tsy_sentinel_at`（不得洗成普通 `spawn_relic_guard_npc_at`）。
@@ -348,19 +399,21 @@ pub struct NpcDormantSnapshot {
     pub qi_ledger_net: f64,
     /// plan-offscreen-war-v1 P3 review-fix：「已离屏战死、真元待释放」标记。
     ///
-    /// 当 [`run_dormant_combat_phase`] roll 出败者但 zone 已满（残余真元 `> QI_EPSILON` 无法
-    /// 全额回灌）时置 `true`，败者**仍留在 `store.snapshots`**（防吞真元红线：携带真元的快照
-    /// 绝不丢弃；随 Redis 持久化，server 重启不丢真元）。置 `true` 后：
-    /// - [`combat::collect_zone_combat_pairs`] 跳过该快照，**不再被选中参战**——故 death notice /
-    ///   `DormantCombatOutcome` 每个逻辑死亡只 emit 一次（初次 roll 时），不再重复污染 P4 派系
-    ///   死亡聚合（CodeRabbit Major：retained loser 重复 emit）。
-    /// - 每 tick 的 [`run_pending_combat_release_retry`] 重试 `release_dormant_qi_to_zone`，真元
-    ///   全释放（`<= QI_EPSILON`）后才 emit 遗物（若 `should_leave_relic`）+ 从 store 移除。
+    /// 所有 [`run_dormant_combat_phase`] roll 出的败者都会先置 `true` 并持久化胜者上下文，
+    /// 在 Redis HASH 成功确认前**仍留在 `store.snapshots` 且不碰真元**。这关闭了终局事件先于
+    /// 逻辑死亡落盘的重启窗口；随后的 typed settlement 若遇到非法 signed Zone、身份或稳定池
+    /// overflow 等硬事务失败，败者继续保留（防吞真元红线：携带真元的快照绝不丢弃）。置 `true` 后：
+    /// - [`combat::collect_zone_combat_pairs`] 跳过该快照，**不再被选中参战**。
+    /// - `pending_combat_winner` 持久化延迟发布所需的胜者身份；失败 tick 不发布 death/outcome。
+    /// - 每 tick 的 [`run_pending_combat_release_retry`] 重试 `release_dormant_qi_to_zone`，严格
+    ///   成功且 source 为零后才发布唯一 death/outcome，emit 遗物并从 store 移除。
     ///
     /// `#[serde(default)]` 向后兼容旧 Redis 快照（缺字段 → `false`）；`skip_serializing_if`
     /// 让绝大多数（未战死）快照不写这个字段，不算 §10.1 #2 所禁的快照膨胀。
     #[serde(default, skip_serializing_if = "is_false")]
     pub combat_dead_pending_release: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pending_combat_winner: Option<CharId>,
 }
 
 /// serde `skip_serializing_if` helper：`false`（默认值）时不序列化，避免快照膨胀。
@@ -386,6 +439,67 @@ impl NpcDormantSnapshot {
             .as_ref()
             .map(|membership| membership.faction_id)
     }
+
+    pub fn durable_identity_error(&self) -> Option<String> {
+        durable_npc_identity_error(&self.char_id, &self.life_record, &self.death_registry)
+    }
+
+    fn durable_qi_owner_error(&self) -> Option<String> {
+        self.tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .filter(|daozhan| !daozhan.daozhan_qi.is_finite() || daozhan.daozhan_qi < 0.0)
+            .map(|daozhan| {
+                format!(
+                    "invalid dormant Daozhan qi owner `{}` for `{}`",
+                    daozhan.daozhan_qi, self.char_id
+                )
+            })
+    }
+}
+
+pub fn durable_npc_identity_error(
+    canonical_char_id: &str,
+    life_record: &LifeRecord,
+    death_registry: &DeathRegistry,
+) -> Option<String> {
+    let valid_canonical = !canonical_char_id.is_empty()
+        && canonical_char_id.trim() == canonical_char_id
+        && canonical_char_id != "unassigned:life_record";
+    if valid_canonical
+        && life_record.character_id == canonical_char_id
+        && death_registry.char_id == canonical_char_id
+    {
+        return None;
+    }
+    Some(format!(
+        "durable identity tuple mismatch or invalid canonical id (canonical=`{canonical_char_id}`, life_record=`{}`, death_registry=`{}`)",
+        life_record.character_id, death_registry.char_id
+    ))
+}
+
+#[derive(Clone, Debug)]
+struct DormantPersistenceRuntime {
+    mutation_revision: u64,
+    persisted_revision: u64,
+    in_flight_revision: Option<u64>,
+    receipt_tx: Sender<crate::network::redis_bridge::RedisDeliveryReceipt>,
+    receipt_rx: Receiver<crate::network::redis_bridge::RedisDeliveryReceipt>,
+    tombstones: HashMap<CharId, crate::persistence::DormantTerminalCommitRecord>,
+}
+
+impl Default for DormantPersistenceRuntime {
+    fn default() -> Self {
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        Self {
+            mutation_revision: 0,
+            persisted_revision: 0,
+            in_flight_revision: None,
+            receipt_tx,
+            receipt_rx,
+            tombstones: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Resource, Serialize, Deserialize)]
@@ -405,6 +519,8 @@ pub struct NpcDormantStore {
     /// already persisted and must not trigger an immediate write-back.
     #[serde(skip, default)]
     dirty: bool,
+    #[serde(skip, default)]
+    persistence: DormantPersistenceRuntime,
 }
 
 impl NpcDormantStore {
@@ -428,7 +544,148 @@ impl NpcDormantStore {
     /// Every code path that mutates a snapshot must call this so persistence
     /// never silently drops a change.
     pub fn mark_dirty(&mut self) {
+        if !self.dirty {
+            self.persistence.mutation_revision =
+                self.persistence.mutation_revision.saturating_add(1);
+        }
         self.dirty = true;
+    }
+
+    pub fn persistence_receipt_sender(
+        &self,
+    ) -> Sender<crate::network::redis_bridge::RedisDeliveryReceipt> {
+        self.persistence.receipt_tx.clone()
+    }
+
+    pub fn begin_persistence(&mut self) -> Option<u64> {
+        if self.restore_failed || !self.dirty || self.persistence.in_flight_revision.is_some() {
+            return None;
+        }
+        self.dirty = false;
+        let revision = self.persistence.mutation_revision;
+        self.persistence.in_flight_revision = Some(revision);
+        Some(revision)
+    }
+
+    pub fn requeue_persistence(&mut self, revision: u64) {
+        if self.persistence.in_flight_revision == Some(revision) {
+            self.persistence.in_flight_revision = None;
+        }
+        self.dirty = true;
+    }
+
+    pub fn install_terminal_tombstones(
+        &mut self,
+        records: Vec<crate::persistence::DormantTerminalCommitRecord>,
+    ) {
+        self.persistence.tombstones = records
+            .into_iter()
+            .map(|record| (record.char_id.clone(), record))
+            .collect();
+        if !self.persistence.tombstones.is_empty() {
+            self.mark_dirty();
+        }
+    }
+
+    fn has_terminal_tombstone(&self, char_id: &str) -> bool {
+        self.persistence.tombstones.contains_key(char_id)
+    }
+
+    fn track_terminal_tombstone(
+        &mut self,
+        record: crate::persistence::DormantTerminalCommitRecord,
+    ) {
+        self.persistence
+            .tombstones
+            .entry(record.char_id.clone())
+            .or_insert(record);
+    }
+
+    pub fn bind_unbound_terminal_tombstones(
+        &mut self,
+        settings: &crate::persistence::PersistenceSettings,
+        revision: u64,
+    ) -> std::io::Result<()> {
+        let char_ids: Vec<String> = self
+            .persistence
+            .tombstones
+            .values()
+            .filter(|record| record.cleanup_revision.is_none())
+            .map(|record| record.char_id.clone())
+            .collect();
+        if char_ids.is_empty() {
+            return Ok(());
+        }
+        crate::persistence::bind_dormant_terminal_cleanup_revision(settings, &char_ids, revision)?;
+        for char_id in char_ids {
+            if let Some(record) = self.persistence.tombstones.get_mut(&char_id) {
+                record.cleanup_revision = Some(revision);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn apply_persistence_receipts(&mut self) {
+        self.apply_persistence_receipts_inner(None);
+    }
+
+    pub fn apply_persistence_receipts_with_settings(
+        &mut self,
+        settings: &crate::persistence::PersistenceSettings,
+    ) {
+        self.apply_persistence_receipts_inner(Some(settings));
+    }
+
+    fn apply_persistence_receipts_inner(
+        &mut self,
+        settings: Option<&crate::persistence::PersistenceSettings>,
+    ) {
+        while let Ok(receipt) = self.persistence.receipt_rx.try_recv() {
+            let Ok(revision) = receipt.delivery_id.parse::<u64>() else {
+                tracing::warn!(
+                    "[bong][npc] ignored dormant HASH receipt with invalid revision `{}`",
+                    receipt.delivery_id
+                );
+                continue;
+            };
+            if self.persistence.in_flight_revision != Some(revision) {
+                tracing::warn!(
+                    "[bong][npc] ignored dormant HASH receipt for non-current revision {revision}"
+                );
+                continue;
+            }
+            self.persistence.in_flight_revision = None;
+            match receipt.outcome {
+                Ok(()) => {
+                    self.persistence.persisted_revision = revision;
+                    if let Some(settings) = settings {
+                        match crate::persistence::clear_dormant_terminal_commits_through_revision(
+                            settings, revision,
+                        ) {
+                            Ok(_) => self.persistence.tombstones.retain(|_, record| {
+                                record.cleanup_revision.is_none_or(|bound| bound > revision)
+                            }),
+                            Err(error) => {
+                                self.dirty = true;
+                                tracing::warn!(
+                                    "[bong][npc] retained terminal tombstones after HASH revision {revision}: {error}"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.dirty = true;
+                    tracing::warn!(
+                        "[bong][npc] dormant HASH revision {revision} failed and was re-queued: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn pending_combat_state_is_persisted(&self) -> bool {
+        self.persistence.persisted_revision >= self.persistence.mutation_revision
     }
 
     /// Read-only dirty accessor. The production publish path consumes the flag
@@ -452,7 +709,7 @@ impl NpcDormantStore {
     pub fn insert(&mut self, snapshot: NpcDormantSnapshot) -> Option<NpcDormantSnapshot> {
         let previous = self.snapshots.insert(snapshot.char_id.clone(), snapshot);
         self.rebuild_indexes();
-        self.dirty = true;
+        self.mark_dirty();
         previous
     }
 
@@ -460,7 +717,7 @@ impl NpcDormantStore {
         let removed = self.snapshots.remove(char_id);
         if removed.is_some() {
             self.rebuild_indexes();
-            self.dirty = true;
+            self.mark_dirty();
         }
         removed
     }
@@ -528,6 +785,7 @@ impl NpcDormantStore {
     pub fn to_redis_hash_payloads(&self) -> Result<Vec<(String, String)>, serde_json::Error> {
         self.sorted_snapshots()
             .into_iter()
+            .filter(|snapshot| !self.has_terminal_tombstone(&snapshot.char_id))
             .map(|snapshot| {
                 serde_json::to_string(snapshot).map(|payload| (snapshot.char_id.clone(), payload))
             })
@@ -546,29 +804,29 @@ pub struct DormantSeveredAt {
 /// 由 `dormant_global_tick_system` 的 combat phase 在败者结算后 emit；
 /// `network::npc_event_bridge::publish_dormant_combat_events` 消费它发 `bong:npc/combat`
 /// telemetry。**这是纯观测**——真元守恒回灌已由结算里的 `release_dormant_qi_to_zone` →
-/// `ledger.transfer(ReleaseToZone)` 真实完成，本 event 不携带也不触发任何真元流动
+/// typed transaction 真实完成，本 event 不携带也不触发任何真元流动
 /// （绝不学「emit QiTransfer 却无人 apply」的吞真元红线——那等于真元凭空蒸发）。
 ///
-/// `qi_released` 是本场实际守恒回灌给 zone 的量（== release 的 `transfer.amount`）；zone 满
-/// 时可能 0（败者满真元留账户、下轮 retain-until-released 重试），此时本 event 仍 emit
-/// （战斗已发生、败者已 roll 出），但 `qi_released == 0.0` 且败者本轮不从 store 移除。
+/// `qi_released` 是本场实际被 signed zone 接收的量（`QiFlowOutcome::zone_accepted`）。
+/// zone 满或无法定位时可能为 0，但 typed settlement 会把余量真实转入固定
+/// `qi_flow_overflow`；只有事务失败时败者才保留并进入 pending-release 重试。
 #[derive(Clone, Debug, Event, PartialEq)]
 pub struct DormantCombatOutcome {
     pub winner: CharId,
     pub loser: CharId,
     pub zone: String,
     pub qi_released: f64,
+    pub winner_group: Option<EmergentGroupId>,
+    pub loser_group: Option<EmergentGroupId>,
 }
 
 /// plan-offscreen-war-v1 P3：一名**克制判定通过**的离屏战死者要在战场留下的待物化遗物
 /// （deferred-on-hydrate）的内部 event。
 ///
-/// 由 `run_dormant_combat_phase` 在败者**真元已守恒释放完毕**（`release_dormant_qi_to_zone`
-/// 之后、`store.snapshots.remove` 之前）且 [`combat::should_leave_relic`] 为真时 emit；
-/// `persistence::persist_pending_dormant_relics_system` 消费它写进 sqlite `pending_dormant_relics`
-/// 表。**守恒红线（§10.1 #5 ④）**：本 event 不携带任何真元——遗物 loot 物化时 `spirit_quality=0`，
-/// 持久层完全不碰 `WorldQiAccount` / ledger。emit 时机严格在 release 之后保证「先把残余真元
-/// 守恒还给 zone，再用快照创建零真元遗物」，绝无「先留遗物 / 先 remove、qi 没释放」的吞真元窗口。
+/// 由 `run_dormant_combat_phase` 在败者**真元已守恒释放完毕**且 SQLite terminal transaction
+/// 已原子持久化 sink、tombstone 与可选遗物后 emit，作为进程内物化通知。兼容 consumer 对同一
+/// deterministic relic id 的重复 upsert 是幂等的，但不再承担终局持久化授权；终局 transaction
+/// 失败时不会 emit、remove 或改变任何物理 owner。遗物不携带真元，物化时 `spirit_quality=0`。
 ///
 /// `loot_seed` 是 [`combat::relic_loot_seed`] 算出的 deterministic 种子；玩家靠近 hydrate 时
 /// 用它 `roll_loot(default_loot_for_archetype(archetype), loot_seed)`，保证遗物 loot 可复现。
@@ -594,7 +852,10 @@ pub fn register(app: &mut App) {
         .add_event::<DormantSeveredAt>()
         .add_event::<DormantCombatOutcome>()
         .add_event::<PendingDormantRelicCreated>()
-        .add_systems(Startup, load_dormant_store_from_redis_system)
+        .add_systems(
+            Startup,
+            load_dormant_store_from_redis_system.after(crate::persistence::PersistenceBootstrapSet),
+        )
         .add_systems(
             Update,
             (
@@ -609,10 +870,22 @@ pub fn register(app: &mut App) {
     relic_hydrate::register(app);
 }
 
-fn load_dormant_store_from_redis_system(mut store: ResMut<NpcDormantStore>) {
+fn load_dormant_store_from_redis_system(
+    mut store: ResMut<NpcDormantStore>,
+    persistence: Res<crate::persistence::PersistenceSettings>,
+) {
     if !store.is_empty() {
         return;
     }
+    let tombstones = match crate::persistence::rearm_dormant_terminal_commits(&persistence) {
+        Ok(records) => records,
+        Err(error) => {
+            tracing::warn!("[bong][npc] failed dormant terminal tombstone restore: {error}");
+            store.mark_restore_failed();
+            return;
+        }
+    };
+    store.install_terminal_tombstones(tombstones);
     match load_dormant_snapshots_from_redis(&mut store) {
         Ok(0) => {}
         Ok(count) => {
@@ -666,45 +939,60 @@ fn tmp_keys_to_purge(scanned: &[String]) -> Vec<String> {
         .collect()
 }
 
+const DORMANT_TEMP_SCAN_COUNT: usize = 512;
+const DORMANT_TEMP_DELETE_BATCH: usize = 128;
+
+fn tmp_key_delete_batches(scanned: &[String]) -> Vec<Vec<String>> {
+    tmp_keys_to_purge(scanned)
+        .chunks(DORMANT_TEMP_DELETE_BATCH)
+        .map(<[String]>::to_vec)
+        .collect()
+}
+
 /// Best-effort sweep of leaked dormant temp keys on a blocking connection.
 /// Never returns an error: persistence restore must proceed even if the
 /// janitor cannot run (e.g. SCAN unsupported by a proxy).
 fn purge_leaked_dormant_temp_keys(connection: &mut redis::Connection) {
     let pattern = dormant_tmp_scan_pattern();
-    // `Cmd::iter` takes `self` by value, so the builder must be owned (not the
-    // `&mut Cmd` the chained `.arg(..)` calls return) before iterating.
-    let mut scan_cmd = redis::cmd("SCAN");
-    scan_cmd
-        .cursor_arg(0)
-        .arg("MATCH")
-        .arg(pattern.as_str())
-        .arg("COUNT")
-        .arg(512);
-    let scanned: Vec<String> = match scan_cmd.iter::<String>(connection) {
-        Ok(iter) => iter.collect(),
-        Err(error) => {
-            tracing::warn!(
-                "[bong][npc] dormant temp-key janitor SCAN failed (skipping cleanup): {error}"
-            );
-            return;
+    let mut cursor = 0_u64;
+    loop {
+        let (next_cursor, scanned) = match redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern.as_str())
+            .arg("COUNT")
+            .arg(DORMANT_TEMP_SCAN_COUNT)
+            .query::<(u64, Vec<String>)>(connection)
+        {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][npc] dormant temp-key janitor SCAN failed (skipping remaining cleanup): {error}"
+                );
+                return;
+            }
+        };
+
+        for batch in tmp_key_delete_batches(&scanned) {
+            let mut del = redis::cmd("DEL");
+            for key in &batch {
+                del.arg(key.as_str());
+            }
+            match del.query::<i64>(connection) {
+                Ok(deleted) => tracing::info!(
+                    "[bong][npc] dormant temp-key janitor purged {deleted} leaked `{NPC_DORMANT_REDIS_KEY}:tmp*` key(s)"
+                ),
+                Err(error) => tracing::warn!(
+                    "[bong][npc] dormant temp-key janitor DEL failed (left {} key(s)): {error}",
+                    batch.len()
+                ),
+            }
         }
-    };
-    let purgeable = tmp_keys_to_purge(&scanned);
-    if purgeable.is_empty() {
-        return;
-    }
-    let mut del = redis::cmd("DEL");
-    for key in &purgeable {
-        del.arg(key.as_str());
-    }
-    match del.query::<i64>(connection) {
-        Ok(deleted) => tracing::info!(
-            "[bong][npc] dormant temp-key janitor purged {deleted} leaked `{NPC_DORMANT_REDIS_KEY}:tmp*` key(s)"
-        ),
-        Err(error) => tracing::warn!(
-            "[bong][npc] dormant temp-key janitor DEL failed (left {} key(s)): {error}",
-            purgeable.len()
-        ),
+
+        if next_cursor == 0 {
+            break;
+        }
+        cursor = next_cursor;
     }
 }
 
@@ -715,24 +1003,54 @@ fn load_dormant_snapshots_from_hash_entries(
     if entries.is_empty() {
         return Ok(0);
     }
-    let mut skipped = 0usize;
-    for (char_id, payload) in entries {
+
+    // Restore is one all-or-nothing owner transaction. A decoded dormant snapshot may carry
+    // physical qi in `Cultivation`; accepting only the valid subset would silently drop every
+    // owner represented by a corrupt row, and a later full-HASH publish could make that loss
+    // permanent. Decode and validate the complete HASH before touching the live store.
+    let mut staged = Vec::with_capacity(entries.len());
+    let mut invalid = Vec::new();
+    for (hash_char_id, payload) in entries {
+        if store.has_terminal_tombstone(&hash_char_id) {
+            tracing::warn!(
+                "[bong][npc] suppressed stale dormant Redis source `{hash_char_id}` after terminal commit"
+            );
+            continue;
+        }
         match serde_json::from_str::<NpcDormantSnapshot>(&payload) {
             Ok(snapshot) => {
-                store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+                let validation_error = if snapshot.char_id != hash_char_id {
+                    Some(format!(
+                        "durable identity `{}` does not match HASH field `{hash_char_id}`",
+                        snapshot.char_id
+                    ))
+                } else {
+                    snapshot
+                        .durable_identity_error()
+                        .or_else(|| snapshot.durable_qi_owner_error())
+                };
+                if let Some(error) = validation_error {
+                    invalid.push(format!("`{hash_char_id}`: {error}"));
+                } else {
+                    staged.push(snapshot);
+                }
             }
-            Err(error) => {
-                skipped += 1;
-                tracing::warn!("[bong][npc] skipped invalid dormant snapshot `{char_id}`: {error}");
-            }
+            Err(error) => invalid.push(format!("`{hash_char_id}`: {error}")),
         }
     }
-    store.rebuild_indexes();
-    if skipped > 0 && store.is_empty() {
+    if !invalid.is_empty() {
         return Err(format!(
-            "all {skipped} dormant Redis snapshot entries were invalid"
+            "refusing partial dormant Redis restore: {} of {} snapshot entries were invalid ({})",
+            invalid.len(),
+            staged.len() + invalid.len(),
+            invalid.join("; ")
         ));
     }
+
+    for snapshot in staged {
+        store.snapshots.insert(snapshot.char_id.clone(), snapshot);
+    }
+    store.rebuild_indexes();
     Ok(store.len())
 }
 
@@ -775,12 +1093,23 @@ fn dormant_global_tick_system(
     mut store: ResMut<NpcDormantStore>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
+    persistence: Option<Res<crate::persistence::PersistenceSettings>>,
     mut death_notices: EventWriter<NpcDeathNotice>,
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
     mut pending_relics: EventWriter<PendingDormantRelicCreated>,
     war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
+    // plan-race-system-v1 P6b review major-4 收口：离屏突破配额换轨所需的两个解析
+    // 资源，语义与在线 `breakthrough_system`/`cultivate_action_system` 同款——缺失时
+    // （既有测试未插入）`advance_dormant_breakthrough` 内部优雅退化到 humanoid。
+    body_plans: Option<Res<BodyPlanRegistry>>,
+    races: Option<Res<RaceRegistry>>,
 ) {
     let tick = current_tick(game_tick.as_deref());
+    if let Some(persistence) = persistence.as_deref() {
+        store.apply_persistence_receipts_with_settings(persistence);
+    } else {
+        store.apply_persistence_receipts();
+    }
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
         return;
     }
@@ -788,6 +1117,7 @@ fn dormant_global_tick_system(
     ids.sort();
 
     let mut expired = Vec::new();
+    let mut committed_tombstones = Vec::new();
     let mut indexes_dirty = false;
     // Whether this tick actually advanced any snapshot (position / aging / regen
     // / breakthrough) or removed an expired one. Drives the persistence dirty
@@ -840,27 +1170,106 @@ fn dormant_global_tick_system(
                 apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
             }
             if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick);
+                let _ = advance_dormant_breakthrough(
+                    snapshot,
+                    zones,
+                    ledger,
+                    tick,
+                    body_plans.as_deref(),
+                    races.as_deref(),
+                );
             }
         }
 
         if snapshot.lifespan.is_expired() {
-            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                release_dormant_qi_to_zone(snapshot, zones, ledger);
-            }
-            if snapshot.cultivation.qi_current > QI_EPSILON {
-                tracing::warn!(
-                    "[bong][npc] retained expired dormant NPC `{}` until {:.6} qi releases",
-                    snapshot.char_id,
-                    snapshot.cultivation.qi_current
-                );
+            let mut staged_snapshot = snapshot.clone();
+            let Some(zones) = zones.as_deref_mut() else {
+                continue;
+            };
+            let Some(ledger) = ledger.as_deref_mut() else {
+                continue;
+            };
+            let mut staged_zones = zones.clone();
+            let mut staged_ledger = ledger.clone();
+            let settlement = if dormant_terminal_qi_is_settled(&staged_snapshot) {
+                QiFlowOutcome {
+                    requested: 0.0,
+                    source_debited: 0.0,
+                    target_credited: 0.0,
+                    zone_accepted: 0.0,
+                    overflow_credited: 0.0,
+                    untransferred: 0.0,
+                    transfers: Vec::new(),
+                }
+            } else {
+                let Ok(settlement) = release_dormant_qi_to_zone(
+                    &mut staged_snapshot,
+                    &mut staged_zones,
+                    &mut staged_ledger,
+                ) else {
+                    tracing::warn!(
+                        "[bong][npc] retained expired dormant NPC `{}` until all qi owners settle",
+                        snapshot.char_id
+                    );
+                    continue;
+                };
+                settlement
+            };
+            if !dormant_terminal_qi_is_settled(&staged_snapshot) {
                 continue;
             }
-            death_notices.send(dormant_natural_death_notice(snapshot));
+
+            let tombstone = crate::persistence::DormantTerminalCommitRecord {
+                char_id: snapshot.char_id.clone(),
+                cause: "natural_aging".to_string(),
+                at_tick: tick,
+                zone: snapshot.zone_name.clone(),
+                winner: None,
+                winner_group: None,
+                loser_group: faction_store
+                    .as_deref()
+                    .and_then(|store| effective_group(snapshot, store))
+                    .map(|group| u64::from(group.0)),
+                zone_accepted: settlement.zone_accepted,
+                cleanup_revision: None,
+            };
+            let first_commit = if let Some(persistence) = persistence.as_deref() {
+                match crate::persistence::persist_dormant_terminal_commit(
+                    persistence,
+                    &tombstone,
+                    &staged_zones,
+                    &staged_ledger,
+                    None,
+                ) {
+                    Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => true,
+                    Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => {
+                        false
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][npc] retained expired dormant NPC `{}` after terminal persistence failure: {error}",
+                            snapshot.char_id
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                true
+            };
+            if first_commit {
+                *snapshot = staged_snapshot;
+                *zones = staged_zones;
+                *ledger = staged_ledger;
+                death_notices.send(dormant_natural_death_notice(snapshot));
+            }
             expired.push(char_id);
+            committed_tombstones.push(tombstone);
         }
     }
 
+    for tombstone in committed_tombstones {
+        store.track_terminal_tombstone(tombstone);
+    }
     let mut removed_expired = !expired.is_empty();
     for char_id in expired {
         store.snapshots.remove(&char_id);
@@ -877,17 +1286,11 @@ fn dormant_global_tick_system(
     // timer 会与本系统抢 store/ledger 可变借用）。借用安全走 collect-then-index
     // （`collect_zone_combat_pairs` 先返回 owned `Vec<(CharId,CharId)>`，再逐 id 索引结算），
     // 规避 per-char_id 单可变借用与两两对战冲突。faction_store 是只读 `Res`。
-    // Whether the combat phase mutated any persisted snapshot state without
-    // removing the snapshot — i.e. flipped `combat_dead_pending_release` on a
-    // retained loser, or partially released residual qi on a retry pass. Such
-    // ticks change persisted state (the flag + the reduced `qi_current`) yet
-    // remove nothing, so they must drive `mark_dirty` even when this tick's
-    // aging pass touched nothing (`mutated_any == false`, e.g. all snapshots
-    // already processed at this tick). Without this signal the pending-release
-    // flag could sit un-persisted until a later dirty tick — a restart inside
-    // that window would reload the loser with `flag == false` and re-roll it,
-    // re-emitting death notice / outcome (the exact regression the retain
-    // branch exists to prevent). See `CombatPhaseOutcome`.
+    // Whether the combat phase changed persisted snapshot state without removing it —
+    // every newly rolled combat death first records a durable pending marker and
+    // winner context. This must drive `mark_dirty` even when the aging pass touched
+    // nothing, otherwise a restart can reload the loser as alive. Confirmed pending
+    // rows settle and emit terminal events on a later phase.
     let mut combat_mutated = false;
     if let (Some(faction_store), Some(zones), Some(ledger)) = (
         faction_store.as_deref(),
@@ -901,23 +1304,22 @@ fn dormant_global_tick_system(
             tick,
             zones,
             ledger,
+            persistence.as_deref(),
             &mut death_notices,
             &mut combat_outcomes,
             &mut pending_relics,
         );
         combat_mutated = combat.mutated;
         if combat.removed {
-            // Only a removal changes zone membership; rebuild the spatial
-            // indexes. A retain / partial-release mutation leaves `by_zone`
-            // intact, so it must NOT force a rebuild (just a dirty write).
+            // Only removal changes zone membership. A pending-failure marker mutation leaves
+            // `by_zone` intact, so it drives dirty persistence but not an index rebuild.
             removed_expired = true;
             store.rebuild_indexes();
         }
     }
 
-    // Any advanced or removed snapshot — or any combat mutation that only
-    // flipped the retain flag / partially released qi — changed persisted
-    // state; schedule a Redis write on the next publish cycle.
+    // Any advanced, removed, or newly pending snapshot changed persisted state;
+    // schedule the next revision-aware Redis write.
     if mutated_any || removed_expired || combat_mutated {
         store.mark_dirty();
     }
@@ -930,14 +1332,10 @@ fn dormant_global_tick_system(
 /// - [`Self::removed`] — at least one snapshot left the store (combat death
 ///   fully released its qi, or a retry pass finalized one). Drives an index
 ///   rebuild (zone membership changed) **and** the dirty write.
-/// - [`Self::mutated`] — the phase changed persisted snapshot state without
-///   removing anything: it set `combat_dead_pending_release` on a retained
-///   loser (zone full) or partially released residual qi on a retry pass.
-///   Drives **only** the dirty write (membership unchanged, no rebuild). This
-///   is the signal that closes the flag-persistence window: a retain-only tick
-///   where the aging pass touched nothing still marks the store dirty so the
-///   pending-release flag and reduced `qi_current` reach Redis before any
-///   restart could re-roll the (logically dead) loser.
+/// - [`Self::mutated`] — the phase recorded a logical combat death as
+///   `combat_dead_pending_release` without removing the snapshot. Drives only the dirty
+///   write; the physical owner and `qi_current` remain unchanged until Redis confirms the
+///   marker and a future retry commits settlement.
 ///
 /// `removed` implies a mutation, but the two are tracked independently because
 /// only `removed` warrants an index rebuild.
@@ -951,23 +1349,20 @@ struct CombatPhaseOutcome {
 ///
 /// 接 P1 纯逻辑：先 `collect_zone_combat_pairs`（只读、owned id 对）→ 逐对 `roll_*` 出败者
 /// → 守恒结算败者真元 → emit death + outcome → 人口回写。**守恒唯一流动点**：败者残余真元
-/// 走 `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)` 真实回灌 zone
-/// （§10.1 #5 ②）。胜者真元不变（dormant 简化，未流动即未失衡，§10.1 #5 ③）。
+/// 走 `release_dormant_qi_to_zone` typed transaction，同步结算 actor、signed Zone、fixed overflow
+/// 与 audit（§10.1 #5 ②）。胜者真元不变（dormant 简化，未流动即未失衡，§10.1 #5 ③）。
 ///
-/// **防吞真元（retain-until-released）**：若 release 后败者仍有 `qi_current > QI_EPSILON`
-/// （zone 已满到 `QI_ZONE_UNIT_CAPACITY`，overflow 留在败者账户），本轮**不** `store.remove`
-/// 败者，留到后续轮次继续释放——复用自然老死路径的同款防吞真元模式
-/// （`docs/CLAUDE.md §四`「离屏战斗吞真元」红线）。真元全部释放（`<= QI_EPSILON`）的败者才
-/// 移除。同 zone 多败者**顺序** release（先 release 抬高 zone_qi，后者读更高基线，order-
-/// independent、不溢出，与 `release.rs accumulate_zone_release` 同源）。
+/// **持久化先行**：本轮 roll 出败者后只记录 pending marker + winner context，不碰 qi owner，
+/// 也不发布终局事件。Redis HASH 成功回执确认该 revision 后，下一轮 retry 才执行 typed
+/// settlement；成功时 zone 不接收的余量同步落入固定 `qi_flow_overflow`，败者
+/// `qi_current` 必归零才可发 death/outcome 并移除。硬事务失败则保留 owner 继续重试。
+/// 同 zone 多败者按确定性顺序 settlement；物理 owner 总量保持不变。
 ///
 /// 返回 [`CombatPhaseOutcome`]：`removed`（有败者被移除 → rebuild 索引 + mark dirty）与
-/// `mutated`（仅翻了 retain flag / partial-release 真元 → **只** mark dirty，不 rebuild）。
-/// 关键：retain 分支与 retry partial-release 都会改持久化快照状态（flag + 减少的 `qi_current`）
-/// 却不移除任何快照——它们必须置 `mutated`，否则在 `mutated_any==false` 的 tick 下
-/// `mark_dirty` 被跳过，pending-release flag 不落 Redis，重启即重新 roll 败者重发死亡事件
-/// （正是 retain 要堵的回归）。借用安全：本函数独占 `&mut store` / `&mut ledger`，配对用
-/// immutable snapshot 读，结算用 char_id 索引 get_mut，任一时刻只持一个 snapshot 的可变借用。
+/// `mutated`（新逻辑死亡写入 pending marker → 只 mark dirty，不 rebuild）。
+/// 失败原子性保证 actor/zone/ledger/audit 不变；持久化 flag 防止重启后重复 roll 败者。
+/// 借用安全：本函数独占 `&mut store` / `&mut ledger`；配对阶段只读并返回 owned id，
+/// 结算阶段再逐 id 获取单个 snapshot 的可变借用。
 #[allow(clippy::too_many_arguments)]
 fn run_dormant_combat_phase(
     store: &mut NpcDormantStore,
@@ -976,21 +1371,30 @@ fn run_dormant_combat_phase(
     tick: u64,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
     death_notices: &mut EventWriter<NpcDeathNotice>,
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> CombatPhaseOutcome {
-    // ⓪ 先重试上轮 retain（zone 满、真元未释放完）的战死者——它们已是「逻辑死亡」
-    // （死亡 notice / outcome 上轮已 emit 过一次），本轮**只**重试守恒释放，释放完才造遗物
-    // + remove。优先于本轮新战斗结算：腾出 zone 容量给「积压的死者」，且绝不让它们再被
-    // `collect_zone_combat_pairs` 选中重新 roll（plan-offscreen-war-v1 P3 review-fix /
-    // CodeRabbit Major：retained loser 重复 emit death notice/outcome 会污染 P4 派系死亡聚合）。
-    let mut outcome =
-        run_pending_combat_release_retry(store, config, tick, zones, ledger, pending_relics);
+    // ⓪ 先处理已持久化的逻辑战死者。首次终局 death/outcome 只会在 pending HASH
+    // 获得成功回执后发布；typed settlement 失败则保留 owner 和 marker 继续等待后续 retry。
+    // pending 快照始终被 `collect_zone_combat_pairs` 排除，不会重新 roll。
+    let mut outcome = run_pending_combat_release_retry(
+        store,
+        faction_store,
+        config,
+        tick,
+        zones,
+        ledger,
+        persistence,
+        death_notices,
+        combat_outcomes,
+        pending_relics,
+    );
 
     // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
-    // `collect_zone_combat_pairs` 已跳过 `combat_dead_pending_release` 的快照，故上面 retry 没
-    // 释放完的败者本轮不会被选中参战。
+    // `collect_zone_combat_pairs` 已跳过 `combat_dead_pending_release` 的快照，故 retry
+    // 仍失败的败者本轮不会被选中参战。
     let pairs = combat::collect_zone_combat_pairs(store, faction_store, config);
     if pairs.is_empty() {
         return outcome;
@@ -998,7 +1402,7 @@ fn run_dormant_combat_phase(
 
     for (a_id, b_id) in pairs {
         // 防御：上一对的结算可能已移除本对成员（理论上 collect 保证每个 NPC 一轮至多一次，
-        // 但 retain-until-released 让 store 在结算中变动，索引取不到就跳过，绝不 panic）。
+        // 但 pending transaction failure 会让 store 在结算中变动，索引取不到就跳过，绝不 panic）。
         let (Some(a), Some(b)) = (store.snapshots.get(&a_id), store.snapshots.get(&b_id)) else {
             continue;
         };
@@ -1014,82 +1418,44 @@ fn run_dormant_combat_phase(
             a_id.clone()
         };
 
-        // ③ 败者守恒结算：唯一真元流动点。
+        // ③ 先持久化逻辑死亡与胜者上下文。本轮不碰任何 qi owner，也不发布终局事件；
+        // 只有 Redis HASH 成功确认这个 revision 后，retry 才执行 typed settlement、事件和移除。
         let Some(loser) = store.snapshots.get_mut(&loser_id) else {
             continue;
         };
-        // 战死方所在 zone（release 内部也会重定位，这里取 snapshot.zone_name 作 telemetry）。
-        let zone_name = loser.zone_name.clone();
-        // 胜者真元不变（dormant 简化，§10.1 #5 ③）——不读不写胜者，少一次 ledger 操作。
-        let released = release_dormant_qi_to_zone(loser, zones, ledger)
-            .map(|transfer| transfer.amount)
-            .unwrap_or(0.0);
-
-        // ④ 战死 death notice（reason=Combat + from_dormant_combat=true + pos）。
-        death_notices.send(dormant_combat_death_notice(loser));
-
-        // ⑤ 战果 telemetry（纯观测，不携带真元流动）。
-        combat_outcomes.send(DormantCombatOutcome {
-            winner: winner_id,
-            loser: loser_id.clone(),
-            zone: zone_name,
-            qi_released: released,
-        });
-
-        // ⑥ 人口回写 + 防吞真元：真元全释放才移除；zone 满残余 overflow > ε 则本轮保留、下轮重试。
-        // 先把后续唯一需要的标量（残余真元）从 `&mut loser` 借用里拷出。
-        let residual = loser.cultivation.qi_current;
-        if residual > QI_EPSILON {
-            // zone 满 → 残余真元无处可去 → **保留**败者（携带真元的快照绝不丢弃 = 防吞真元
-            // 红线，§10.1 #5 ④ / docs/CLAUDE.md §四）。标记 `combat_dead_pending_release`：
-            // 它已是逻辑死亡（death notice / outcome 本轮已 emit 一次，下方不再 emit），
-            // 此后 `collect_zone_combat_pairs` 跳过它、绝不再被选中重新 roll；真元释放由
-            // `run_pending_combat_release_retry` 每轮重试，释放完才造遗物 + remove。
-            // 标记随 Redis 持久化（`#[serde(default)]` flag），server 重启后真元仍不丢、仍不重复参战。
-            loser.combat_dead_pending_release = true;
-            // 翻了 retain flag + 上面 release 已减过 `qi_current` —— 持久化状态变了但没移除任何
-            // 快照，标记 `mutated` 让本 tick 必 mark_dirty（哪怕 aging pass 没动东西），堵住
-            // pending-release flag 不落 Redis、重启重 roll 的窗口（见 CombatPhaseOutcome）。
-            outcome.mutated = true;
-            tracing::warn!(
-                "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full); marked pending-release, excluded from further combat",
-                loser_id,
-                residual
-            );
-        } else {
-            // 显式终结 `&mut loser` 借用后，走共享的「释放完成 → 造遗物 + remove」收尾
-            // （与 retry pass 同一入口，保证遗物只在真元释放完毕的此刻 emit 一次）。
-            let _ = loser;
-            finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
-            // 移除 → 索引变了 → 调用方据 `removed` rebuild；`removed` 自然蕴含 mutated。
-            outcome.removed = true;
-        }
+        loser.combat_dead_pending_release = true;
+        loser.pending_combat_winner = Some(winner_id);
+        outcome.mutated = true;
     }
 
     outcome
 }
 
-/// plan-offscreen-war-v1 P3 review-fix：重试上轮 retain（zone 满、真元未释放完）的离屏战死者。
+/// plan-offscreen-war-v1 P3 review-fix：重试上轮因守恒事务失败而保留的离屏战死者。
 ///
-/// 这些败者已被标记 `combat_dead_pending_release`（逻辑死亡，death notice / outcome 已 emit
-/// 过一次，**本函数绝不重发**），`collect_zone_combat_pairs` 已跳过它们不再参战。本函数每 tick
-/// 遍历所有被标记的快照，重试 `release_dormant_qi_to_zone`；真元全释放（`<= QI_EPSILON`）后才
-/// 走 `finalize_released_combat_death`（造遗物 + remove）。借用安全：先 collect owned id 列表，
-/// 再逐 id `get_mut` 结算（任一时刻只持一个 snapshot 可变借用），与配对结算同源。
+/// pending snapshot 已持久化 `pending_combat_winner`，因此本函数可以在 typed settlement
+/// 成功且 source 严格为零后发布唯一 death/outcome，再造遗物并移除 owner。缺 winner 的历史
+/// 行仍结算并终局，只跳过依赖 winner 的 combat outcome；不猜测缺失的事件上下文。
 ///
-/// 返回 [`CombatPhaseOutcome`]：`removed`（释放完成→remove 了快照→rebuild + dirty）与
-/// `mutated`（本轮 partial release 真实减了某败者的 `qi_current`，但未移除→**只** dirty）。
-/// partial release 也改持久化真元，必须置 `mutated`，否则 `mutated_any==false` 的 tick 跳过
-/// `mark_dirty`、减少的真元不落 Redis（重启会读回旧的更高真元，守恒账面与持久化漂移）。
+/// 返回 [`CombatPhaseOutcome`]：成功 retry 会 remove（`removed=true`）；失败 retry 不改任何
+/// owner，只保留既有 marker，因此不会制造虚假的 partial mutation。
+#[allow(clippy::too_many_arguments)]
 fn run_pending_combat_release_retry(
     store: &mut NpcDormantStore,
+    faction_store: &FactionStore,
     config: &NpcVirtualizationConfig,
     tick: u64,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
+    death_notices: &mut EventWriter<NpcDeathNotice>,
+    combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> CombatPhaseOutcome {
     let mut outcome = CombatPhaseOutcome::default();
+    if !store.pending_combat_state_is_persisted() {
+        return outcome;
+    }
     // collect-then-index：先取出所有待释放败者的 owned id（升序，确定性），再逐个结算。
     let mut pending_ids: Vec<CharId> = store
         .snapshots
@@ -1103,56 +1469,102 @@ fn run_pending_combat_release_retry(
     pending_ids.sort();
 
     for loser_id in pending_ids {
-        let Some(loser) = store.snapshots.get_mut(&loser_id) else {
+        let (winner, winner_group, loser_group) = {
+            let Some(loser) = store.snapshots.get(&loser_id) else {
+                continue;
+            };
+            let winner = loser.pending_combat_winner.clone();
+            let winner_group = winner.as_ref().and_then(|winner_id| {
+                store
+                    .snapshots
+                    .get(winner_id)
+                    .and_then(|winner| effective_group(winner, faction_store))
+            });
+            let loser_group = effective_group(loser, faction_store);
+            (winner, winner_group, loser_group)
+        };
+        let Some(original) = store.snapshots.get(&loser_id).cloned() else {
             continue;
         };
-        // 重试守恒释放（唯一真元流动点；zone 仍满则继续 retain，绝不丢弃真元）。
-        // `Some(_)` == 本轮真实移动了真元（`qi_current` 被改写）→ 持久化状态变了，须 dirty；
-        // `None` == zone 仍满、一点没动 → 不算 mutation（避免每空转 tick 都触发冗余 hash 写）。
-        if release_dormant_qi_to_zone(loser, zones, ledger).is_some() {
-            outcome.mutated = true;
-        }
-        let residual = loser.cultivation.qi_current;
-        let _ = loser;
-        if residual > QI_EPSILON {
-            // zone 仍满 → 继续保留，下轮再试（保持 flag=true，不重发任何 death 事件）。
+        let mut staged_loser = original.clone();
+        let mut staged_zones = zones.clone();
+        let mut staged_ledger = ledger.clone();
+        let Ok(settlement) =
+            release_dormant_qi_to_zone(&mut staged_loser, &mut staged_zones, &mut staged_ledger)
+        else {
+            continue;
+        };
+        if !dormant_terminal_qi_is_settled(&staged_loser) {
             continue;
         }
-        // 真元终于释放完 → 此刻才造遗物 + remove（与初次死亡路径同一收尾入口）。
-        finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
+        let relic = if combat::should_leave_relic(&staged_loser) {
+            Some(PendingDormantRelicCreated {
+                char_id: loser_id.clone(),
+                zone: staged_loser.zone_name.clone(),
+                position: staged_loser.position,
+                archetype: staged_loser.archetype,
+                loot_seed: combat::relic_loot_seed(&loser_id, tick, config.sim_seed),
+                created_tick: tick,
+            })
+        } else {
+            None
+        };
+        let tombstone = crate::persistence::DormantTerminalCommitRecord {
+            char_id: loser_id.clone(),
+            cause: "combat".to_string(),
+            at_tick: tick,
+            zone: staged_loser.zone_name.clone(),
+            winner: winner.clone(),
+            winner_group: winner_group.map(|group| u64::from(group.0)),
+            loser_group: loser_group.map(|group| u64::from(group.0)),
+            zone_accepted: settlement.zone_accepted,
+            cleanup_revision: None,
+        };
+        let first_commit = if let Some(persistence) = persistence {
+            match crate::persistence::persist_dormant_terminal_commit(
+                persistence,
+                &tombstone,
+                &staged_zones,
+                &staged_ledger,
+                relic.as_ref(),
+            ) {
+                Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => true,
+                Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => false,
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][npc] retained dormant combat loser `{loser_id}` after terminal persistence failure: {error}"
+                    );
+                    continue;
+                }
+            }
+        } else {
+            true
+        };
+
+        if first_commit {
+            *zones = staged_zones;
+            *ledger = staged_ledger;
+            death_notices.send(dormant_combat_death_notice(&staged_loser));
+            if let Some(winner) = winner {
+                combat_outcomes.send(DormantCombatOutcome {
+                    winner,
+                    loser: loser_id.clone(),
+                    zone: staged_loser.zone_name.clone(),
+                    qi_released: settlement.zone_accepted,
+                    winner_group,
+                    loser_group,
+                });
+            }
+            if let Some(relic) = relic {
+                pending_relics.send(relic);
+            }
+        }
+        store.snapshots.remove(&loser_id);
+        store.track_terminal_tombstone(tombstone);
+        outcome.mutated = true;
         outcome.removed = true;
     }
     outcome
-}
-
-/// plan-offscreen-war-v1 P3：离屏战死者**真元已守恒释放完毕此刻**的收尾——造零真元遗物
-/// （若 `should_leave_relic` 通过）+ 从 store 移除。
-///
-/// **守恒时序红线**（§10.1 #5 ④ / docs/CLAUDE.md §四）：调用方必须保证已经 `release_dormant_qi_to_zone`
-/// 且 `qi_current <= QI_EPSILON`——「先把残余真元守恒还给 zone，再用快照创建零真元遗物，最后
-/// remove」，绝无吞真元窗口。遗物 event 在此 emit 一次（每个逻辑死亡至多一次：初次死亡释放完 or
-/// retry 释放完，二者互斥）。
-fn finalize_released_combat_death(
-    store: &mut NpcDormantStore,
-    loser_id: &CharId,
-    tick: u64,
-    config: &NpcVirtualizationConfig,
-    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
-) {
-    if let Some(dead) = store.snapshots.get(loser_id) {
-        if combat::should_leave_relic(dead) {
-            let loot_seed = combat::relic_loot_seed(loser_id, tick, config.sim_seed);
-            pending_relics.send(PendingDormantRelicCreated {
-                char_id: loser_id.clone(),
-                zone: dead.zone_name.clone(),
-                position: dead.position,
-                archetype: dead.archetype,
-                loot_seed,
-                created_tick: tick,
-            });
-        }
-    }
-    store.snapshots.remove(loser_id);
 }
 
 /// plan-npc-realm-distribution-v1 P3 §8.1 #3：一次性迁移 marker 文件路径。
@@ -1305,14 +1717,18 @@ fn migrate_dormant_realm_distribution_v1(
             // it was seeded with (often the P0-era 1-meridian default), disagreeing
             // with new_realm.required_meridians() — same double-source bug as the
             // seeder, just on the migration path.
-            snapshot.meridian_system =
-                crate::npc::technique::npc_meridian_system_for_realm(new_realm);
+            snapshot.meridian_system = crate::npc::technique::npc_meridian_system_for_realm(
+                new_realm,
+                crate::body_plan::humanoid_plan_static(),
+            );
             // minor fix：重新派生的 meridian_system 会把所有经脉按 new_realm 全量
             // 重开（opened=true），却没核对 meridian_severed（永久断脉登记）——一条
             // 已被记录 SEVERED 的经脉会在迁移后被"复活"，与 MeridianSeveredPermanent
             // 记录矛盾。永久断脉是跨周目才重置的长期状态，realm 迁移不应抹掉它。
             for severed_id in &snapshot.meridian_severed.severed_meridians {
-                snapshot.meridian_system.get_mut(*severed_id).opened = false;
+                // plan-race-system-v1 P1a：`severed_id` 是 `&MeridianChannelId`（非
+                // `Copy`），`*severed_id` 移动出引用不合法，改 `.clone()`。
+                snapshot.meridian_system.get_mut(severed_id.clone()).opened = false;
             }
             changed = true;
             if matches!(new_realm, Realm::Condense | Realm::Solidify) {
@@ -1467,7 +1883,7 @@ fn dormant_seed_scatter_position(zone: &crate::world::zone::Zone, zone_local_ind
 ///
 /// 用与 RNG 同源的 `deterministic_hash`（salt=0），保证同 char_id 跨重启稳定分派。
 fn seed_rogue_faction(char_id: &str) -> FactionMembership {
-    let faction_id = if deterministic_hash(char_id, 0) % 2 == 0 {
+    let faction_id = if deterministic_hash(char_id, 0).is_multiple_of(2) {
         FactionId::Attack
     } else {
         FactionId::Defend
@@ -1544,7 +1960,10 @@ fn dormant_rogue_seed_snapshot(
     // ends up with realm.required_meridians()==6/12/16 but a frozen single-meridian
     // (Lung-only) MeridianSystem — a realm↔经脉 double-source split visible on ~1000
     // seeded dormant snapshots.
-    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
+    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(
+        realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let lifespan = NpcLifespan::new(
         initial_age_for_index(
             index,
@@ -1587,6 +2006,7 @@ fn dormant_rogue_seed_snapshot(
         patrol,
         loot_table: Some(default_loot_for_archetype(archetype)),
         guardian_relic: None,
+        mimic_spider: None,
         tsy_hostile: None,
         tsy_sentinel: None,
         intent,
@@ -1595,6 +2015,7 @@ fn dormant_rogue_seed_snapshot(
         initial_qi: cultivation.qi_current,
         qi_ledger_net: 0.0,
         combat_dead_pending_release: false,
+        pending_combat_winner: None,
     }
 }
 
@@ -1801,32 +2222,20 @@ pub fn apply_dormant_regen_with_multiplier(
         return None;
     }
 
-    let zone_account = QiAccountId::zone(zone.name.clone());
-    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
-    ledger
-        .set_balance(
-            zone_account.clone(),
-            zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+    let actor = ActorQiIdentity::from_life_record(&snapshot.life_record, ActorQiKind::Npc).ok()?;
+    let outcome = snapshot
+        .cultivation
+        .gain_from_zone(
+            zone,
+            ledger,
+            &actor,
+            gain,
+            QiTransferReason::CultivationRegen,
         )
         .ok()?;
-    ledger
-        .set_balance(
-            npc_account.clone(),
-            snapshot.cultivation.qi_current.max(0.0),
-        )
-        .ok()?;
-    let transfer = QiTransfer::new(
-        zone_account,
-        npc_account.clone(),
-        gain,
-        QiTransferReason::CultivationRegen,
-    )
-    .ok()?;
-    ledger.transfer(transfer.clone()).ok()?;
+    let transfer = outcome.transfers.into_iter().next()?;
 
-    snapshot.cultivation.qi_current = ledger.balance(&npc_account);
-    snapshot.qi_ledger_net += gain;
-    zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
+    snapshot.qi_ledger_net += outcome.target_credited;
     Some(transfer)
 }
 
@@ -1841,14 +2250,63 @@ fn refresh_snapshot_zone_name(snapshot: &mut NpcDormantSnapshot, zones: &ZoneReg
     true
 }
 
+/// plan-race-system-v1 P6b review major-4 收口：离屏（dormant）突破必须与在线
+/// （`breakthrough_system` / `cultivate_action_system`）走同一套 body plan 派生配额——
+/// 否则同一实体切换在线/离屏观测窗会得到不同突破结果（在线用自身构型配额，离屏悄悄
+/// 退化成 humanoid），这是明确的换轨假完成红线。`body_plans`/`races` 均缺失时（大量
+/// 既有测试未插入这两个资源）优雅退化到 humanoid——生产环境 `body_plan::register()`
+/// 恒装载两资源，该分支不会在真实部署触发；`resolve_race_to_plan` 找不到
+/// `snapshot.cultivation.race` 对应条目（未知/迁移中的 race id）同样退化到 humanoid
+/// （这是"resolve 本身失败"的环境退化分支，语义对齐
+/// `body_plan::resolve_body_plan_for_target` 的既有约定——**不是** review major-2 那条
+/// "resolve 成功但 plan 缺 profile" fail-closed 分支，二者不混淆）。
 pub fn advance_dormant_breakthrough(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
     tick: u64,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let mut roll = XorshiftRoll(deterministic_hash(&snapshot.char_id, tick));
-    advance_dormant_breakthrough_with_roll(snapshot, zones, ledger, tick, &mut roll)
+    advance_dormant_breakthrough_with_roll(
+        snapshot, zones, ledger, tick, body_plans, races, &mut roll,
+    )
+}
+
+/// `Err(())` = review r2 major-2 同款 fail-closed 分支：`cultivation.race` 在
+/// `RaceRegistry` 中有登记、也确实解析出一个真实 `BodyPlan`，但该 plan 没有声明
+/// `meridian_profile`——数据不完整，调用方必须跳过本次突破判定，不能借用 humanoid
+/// 曲线顶上。`races.get(race)` 本身查无此 race（未知/迁移中 race id）或
+/// `body_plans`/`races` 资源缺失（既有测试未插入）是**环境退化**，走 humanoid 兜底，
+/// 语义对齐 `body_plan::resolve_body_plan_for_target` 的既有约定。
+fn dormant_meridian_profile<'a>(
+    snapshot: &NpcDormantSnapshot,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&'a RaceRegistry>,
+) -> Result<&'a crate::body_plan::MeridianProfile, ()> {
+    let humanoid_profile = || {
+        crate::body_plan::humanoid_plan_static()
+            .meridian_profile
+            .as_ref()
+            .expect(
+                "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+                 onward — validate_body_plan should have rejected a humanoid plan missing it",
+            )
+    };
+    match (body_plans, races) {
+        (Some(body_plans), Some(races)) => {
+            match resolve_race_to_plan(&snapshot.cultivation.race, body_plans, races) {
+                Some(plan) => match plan.meridian_profile.as_ref() {
+                    Some(profile) => Ok(profile),
+                    None => Err(()),
+                },
+                // 未知/迁移中 race id —— resolve 本身失败，环境退化到 humanoid。
+                None => Ok(humanoid_profile()),
+            }
+        }
+        _ => Ok(humanoid_profile()),
+    }
 }
 
 fn advance_dormant_breakthrough_with_roll<R: RollSource>(
@@ -1856,6 +2314,8 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
     tick: u64,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
     roll: &mut R,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let next = next_realm(snapshot.cultivation.realm)?;
@@ -1878,31 +2338,42 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
         return None;
     }
 
-    let before_qi = snapshot.cultivation.qi_current.max(0.0);
-    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
-    let zone_account = QiAccountId::zone(zone_name);
-    let result = try_breakthrough(
-        &mut snapshot.cultivation,
-        &mut snapshot.meridian_system,
+    let Ok(profile) = dormant_meridian_profile(snapshot, body_plans, races) else {
+        // fail-closed：resolve 成功但 plan 缺 meridian_profile——本 tick 不判定突破。
+        return None;
+    };
+    let before_cultivation = snapshot.cultivation.clone();
+    let mut staged_cultivation = before_cultivation.clone();
+    let mut staged_meridians = snapshot.meridian_system.clone();
+    let result = try_breakthrough_with_profile(
+        &mut staged_cultivation,
+        &mut staged_meridians,
         0.0,
+        0.0,
+        None,
+        profile,
         roll,
     );
-    let used_qi = (before_qi - snapshot.cultivation.qi_current.max(0.0)).max(0.0);
+    let before_qi = before_cultivation.qi_current().max(0.0);
+    let used_qi = (before_qi - staged_cultivation.qi_current().max(0.0)).max(0.0);
     if used_qi > 0.0 {
-        ledger.set_balance(npc_account.clone(), before_qi).ok()?;
-        if !ledger.has_account(&zone_account) {
-            ledger.set_balance(zone_account.clone(), 0.0).ok()?;
-        }
-        let transfer = QiTransfer::new(
-            npc_account,
-            zone_account,
-            used_qi,
-            QiTransferReason::Breakthrough,
-        )
-        .ok()?;
-        ledger.transfer(transfer).ok()?;
+        let actor =
+            ActorQiIdentity::from_life_record(&snapshot.life_record, ActorQiKind::Npc).ok()?;
+        let mut staged_source = before_cultivation;
+        let zone = zones.find_zone_mut(zone_name.as_str())?;
+        staged_source
+            .release_to_zone(
+                Some(zone),
+                ledger,
+                &actor,
+                used_qi,
+                QiTransferReason::Breakthrough,
+            )
+            .ok()?;
         snapshot.qi_ledger_net -= used_qi;
     }
+    snapshot.cultivation = staged_cultivation;
+    snapshot.meridian_system = staged_meridians;
     match result {
         Ok(success) => {
             let previous_cap = snapshot.shared_lifespan.cap_by_realm.max(1) as f64;
@@ -1931,43 +2402,76 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     }
 }
 
+fn dormant_terminal_qi_is_settled(snapshot: &NpcDormantSnapshot) -> bool {
+    snapshot.cultivation.qi_current == 0.0
+        && snapshot
+            .tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .is_none_or(|daozhan| daozhan.daozhan_qi == 0.0)
+}
+
 pub fn release_dormant_qi_to_zone(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
-) -> Option<QiTransfer> {
-    let pos = snapshot.position_vec();
-    let zone_name = zones
-        .find_zone(snapshot.dimension, pos)
+) -> Result<QiFlowOutcome, QiFlowError> {
+    let actor = ActorQiIdentity::from_life_record(&snapshot.life_record, ActorQiKind::Npc)?;
+    let mut staged_snapshot = snapshot.clone();
+    let mut staged_zones = zones.clone();
+    let mut staged_ledger = ledger.clone();
+    let pos = staged_snapshot.position_vec();
+    let zone_name = staged_zones
+        .find_zone(staged_snapshot.dimension, pos)
         .map(|zone| zone.name.clone())
-        .or_else(|| Some(snapshot.zone_name.clone()))?;
-    let zone = zones.find_zone_mut(zone_name.as_str())?;
-    let amount = snapshot.cultivation.qi_current.max(0.0);
-    if amount <= 0.0 {
-        return None;
+        .or_else(|| {
+            staged_zones
+                .find_zone_mut(staged_snapshot.zone_name.as_str())
+                .map(|zone| zone.name.clone())
+        });
+
+    let cultivation_amount = staged_snapshot.cultivation.qi_current();
+    let cultivation_outcome = staged_snapshot.cultivation.release_to_zone(
+        zone_name
+            .as_deref()
+            .and_then(|name| staged_zones.find_zone_mut(name)),
+        &mut staged_ledger,
+        &actor,
+        cultivation_amount,
+        QiTransferReason::ReleaseToZone,
+    )?;
+
+    let mut outcome = cultivation_outcome;
+    if let Some(daozhan) = staged_snapshot
+        .tsy_hostile
+        .as_mut()
+        .and_then(|hostile| hostile.daozhan.as_mut())
+    {
+        let daozhan_amount = daozhan.daozhan_qi;
+        let daozhan_outcome = release_external_qi_to_zone(
+            &mut daozhan.daozhan_qi,
+            actor.account(),
+            zone_name
+                .as_deref()
+                .and_then(|name| staged_zones.find_zone_mut(name)),
+            &mut staged_ledger,
+            daozhan_amount,
+            QiTransferReason::ReleaseToZone,
+        )?;
+        outcome.requested += daozhan_outcome.requested;
+        outcome.source_debited += daozhan_outcome.source_debited;
+        outcome.target_credited += daozhan_outcome.target_credited;
+        outcome.zone_accepted += daozhan_outcome.zone_accepted;
+        outcome.overflow_credited += daozhan_outcome.overflow_credited;
+        outcome.untransferred += daozhan_outcome.untransferred;
+        outcome.transfers.extend(daozhan_outcome.transfers);
     }
 
-    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
-    let zone_account = QiAccountId::zone(zone.name.clone());
-    ledger.set_balance(npc_account.clone(), amount).ok()?;
-    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    ledger
-        .set_balance(zone_account.clone(), zone_current)
-        .ok()?;
-    let outcome = qi_release_to_zone(
-        amount,
-        npc_account,
-        zone_account,
-        zone_current,
-        QI_ZONE_UNIT_CAPACITY,
-    )
-    .ok()?;
-    let transfer = outcome.transfer?;
-    ledger.transfer(transfer.clone()).ok()?;
-    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-    snapshot.cultivation.qi_current = outcome.overflow;
-    snapshot.qi_ledger_net -= outcome.accepted;
-    Some(transfer)
+    staged_snapshot.qi_ledger_net -= outcome.source_debited;
+    *snapshot = staged_snapshot;
+    *zones = staged_zones;
+    *ledger = staged_ledger;
+    Ok(outcome)
 }
 
 /// 构造一条 dormant 死亡通知，按**死因分支**填 `reason` / `from_dormant_combat`。
@@ -2018,3400 +2522,5 @@ fn dormant_combat_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cultivation::components::{MeridianId, Realm};
-    use crate::world::dimension::DimensionKind;
-    use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
-    use valence::prelude::Events;
-
-    /// P0 bug② contract: the startup janitor purges leaked `{key}:tmp*` keys
-    /// but must never delete the live persisted hash. The deletion target is
-    /// decided by `tmp_keys_to_purge` over the SCAN results, so this pins that
-    /// decision directly (the SCAN/DEL I/O wrapper is best-effort glue around
-    /// it). Covers: empty input, mixed real-leak + legacy-nonce-leak, the
-    /// off-by-one where the live key shares the prefix but is NOT a temp key,
-    /// and an unrelated key.
-    #[test]
-    fn startup_janitor_purges_leaked_tmp_keys() {
-        // Empty SCAN -> nothing to purge.
-        assert!(
-            tmp_keys_to_purge(&[]).is_empty(),
-            "expected no purge targets from an empty SCAN because there is nothing leaked; got a non-empty list"
-        );
-
-        // The glob the janitor hands to SCAN must be anchored on the dormant key
-        // and end in `:tmp*` so it catches both the deterministic temp key and
-        // legacy nonce-suffixed survivors, and nothing outside the dormant key.
-        assert_eq!(
-            dormant_tmp_scan_pattern(),
-            "bong:npc/dormant:tmp*",
-            "expected the janitor SCAN glob to be `{{key}}:tmp*` so it matches every dormant temp key (deterministic + legacy nonce) and only those; got a different glob"
-        );
-
-        let scanned = vec![
-            // Deterministic temp key from the current code path -> purge.
-            "bong:npc/dormant:tmp".to_string(),
-            // Legacy nonce-suffixed leak from the old code path -> purge.
-            "bong:npc/dormant:tmp:1780000000000000000".to_string(),
-            // The live persisted hash: shares the `bong:npc/dormant` prefix but
-            // has NO `:tmp` segment -> must be KEPT (off-by-one boundary).
-            NPC_DORMANT_REDIS_KEY.to_string(),
-            // Unrelated key -> kept.
-            "bong:world_state".to_string(),
-        ];
-        let purge = tmp_keys_to_purge(&scanned);
-
-        assert_eq!(
-            purge,
-            vec![
-                "bong:npc/dormant:tmp".to_string(),
-                "bong:npc/dormant:tmp:1780000000000000000".to_string(),
-            ],
-            "expected exactly the two `{{key}}:tmp...` leaks to be purged because they are dead temp blobs, while the live `{NPC_DORMANT_REDIS_KEY}` hash and the unrelated key are preserved; got {purge:?}"
-        );
-        assert!(
-            !purge.contains(&NPC_DORMANT_REDIS_KEY.to_string()),
-            "expected the live persisted dormant hash to NEVER be a purge target (deleting it wipes all snapshots); it was selected for deletion"
-        );
-        assert!(
-            !purge.contains(&"bong:world_state".to_string()),
-            "expected unrelated keys to be left untouched by the dormant janitor; an unrelated key was selected for deletion"
-        );
-    }
-
-    fn zone() -> Zone {
-        Zone {
-            name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-            dimension: DimensionKind::Overworld,
-            bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 128.0, 100.0)),
-            spirit_qi: 0.8,
-            danger_level: 0,
-            active_events: Vec::new(),
-            patrol_anchors: vec![DVec3::new(10.0, 64.0, 10.0)],
-            blocked_tiles: Vec::new(),
-            qi_equilibrium: 0.0,
-            qi_inflow_per_min: 0.0,
-        }
-    }
-
-    fn snapshot(char_id: &str, pos: DVec3) -> NpcDormantSnapshot {
-        let cultivation = Cultivation {
-            qi_current: 0.1,
-            qi_max: 1.0,
-            ..Default::default()
-        };
-        NpcDormantSnapshot {
-            char_id: char_id.to_string(),
-            archetype: NpcArchetype::Rogue,
-            dimension: DimensionKind::Overworld,
-            zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-            position: vec3_to_array(pos),
-            schedule_seed: None,
-            cultivation: cultivation.clone(),
-            meridian_system: MeridianSystem::default(),
-            meridian_severed: MeridianSeveredPermanent::default(),
-            contamination: Contamination::default(),
-            lifespan: NpcLifespan::new(0.0, 1_000.0),
-            shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
-            lifespan_extension_ledger: LifespanExtensionLedger::default(),
-            death_registry: DeathRegistry::new(char_id),
-            life_record: LifeRecord::new(char_id),
-            memory: None,
-            player_reputation: None,
-            faction: None,
-            // 显式群体留空：走 effective_group 的 faction 派生回退路径（这里 faction=None ⇒
-            // 群体 None ⇒ 不参战），顺带覆盖非破坏迁移分支。
-            emergent_group: None,
-            patrol: None,
-            loot_table: None,
-            guardian_relic: None,
-            tsy_hostile: None,
-            tsy_sentinel: None,
-            intent: DormantBehaviorIntent::Cultivate {
-                zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-            },
-            dormant_since_tick: 0,
-            last_dormant_tick_processed: 0,
-            initial_qi: 0.1,
-            qi_ledger_net: 0.0,
-            combat_dead_pending_release: false,
-        }
-    }
-
-    struct FixedRoll(f64);
-
-    impl RollSource for FixedRoll {
-        fn roll_unit(&mut self) -> f64 {
-            self.0
-        }
-    }
-
-    fn open_regular_meridians(snapshot: &mut NpcDormantSnapshot, count: usize) {
-        for id in MeridianId::REGULAR.into_iter().take(count) {
-            let meridian = snapshot.meridian_system.get_mut(id);
-            meridian.opened = true;
-        }
-    }
-
-    #[test]
-    fn dormant_scatter_stays_in_zone_bounds() {
-        // Hydration spawns the entity at exactly this position, so an
-        // out-of-bounds seed would leak NPCs outside their home zone. Every
-        // R2 sample (fx,fz ∈ [0,1)) plus clamp must land inside the AABB.
-        let zone = zone();
-        for idx in 0..256u32 {
-            let pos = dormant_seed_scatter_position(&zone, idx);
-            assert!(
-                zone.contains(pos),
-                "zone_local_index {idx} produced out-of-bound pos {pos:?} for bounds {:?}",
-                zone.bounds
-            );
-        }
-    }
-
-    #[test]
-    fn dormant_scatter_spreads_across_zone_instead_of_clustering() {
-        // Regression for the old anchor + ±2 block jitter: 64 snapshots seeded
-        // into one zone must tile the whole footprint, not pile onto one anchor.
-        let zone = zone();
-        let (min, max) = zone.bounds;
-        let width = max.x - min.x; // 100
-        let depth = max.z - min.z; // 100
-        let positions: Vec<DVec3> = (0..64u32)
-            .map(|i| dormant_seed_scatter_position(&zone, i))
-            .collect();
-
-        // (a) Footprint span: the R2 sequence covers most of each axis.
-        let span_x = positions
-            .iter()
-            .map(|p| p.x)
-            .fold(f64::NEG_INFINITY, f64::max)
-            - positions.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let span_z = positions
-            .iter()
-            .map(|p| p.z)
-            .fold(f64::NEG_INFINITY, f64::max)
-            - positions.iter().map(|p| p.z).fold(f64::INFINITY, f64::min);
-        assert!(
-            span_x > width * 0.8 && span_z > depth * 0.8,
-            "64 snapshots should span >80% of the {width}x{depth} zone \
-             (got span_x={span_x:.1}, span_z={span_z:.1}); the old ±2 jitter spanned <5",
-        );
-
-        // (b) No stacking: closest pair on the XZ plane stays well separated.
-        let mut min_pair = f64::INFINITY;
-        for (i, a) in positions.iter().enumerate() {
-            for b in positions.iter().skip(i + 1) {
-                let d = ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
-                min_pair = min_pair.min(d);
-            }
-        }
-        assert!(
-            min_pair > 4.0,
-            "closest pair of 64 scattered snapshots is {min_pair:.2} blocks apart; \
-             expected > 4 (old jitter stacked many inside a 4-block box)",
-        );
-    }
-
-    #[test]
-    fn dormant_scatter_is_deterministic_and_distinct() {
-        // Same index → same position (Redis restore / re-seed stays stable);
-        // distinct indices → distinct positions (no silent collisions / stacking).
-        let zone = zone();
-        assert_eq!(
-            dormant_seed_scatter_position(&zone, 7),
-            dormant_seed_scatter_position(&zone, 7),
-            "scatter must be a pure function of (zone, index)"
-        );
-        let mut seen: Vec<DVec3> = Vec::new();
-        for i in 0..128u32 {
-            let pos = dormant_seed_scatter_position(&zone, i);
-            assert!(
-                !seen
-                    .iter()
-                    .any(|p| (p.x - pos.x).abs() < 1e-9 && (p.z - pos.z).abs() < 1e-9),
-                "index {i} collided with an earlier snapshot at {pos:?}"
-            );
-            seen.push(pos);
-        }
-    }
-
-    #[test]
-    fn store_indexes_by_archetype_and_zone() {
-        let mut store = NpcDormantStore::default();
-        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
-        store.insert(snapshot("npc_b", DVec3::new(11.0, 64.0, 10.0)));
-
-        assert_eq!(
-            store.ids_by_archetype(NpcArchetype::Rogue),
-            &["npc_a".to_string(), "npc_b".to_string()]
-        );
-        assert_eq!(
-            store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME),
-            &["npc_a".to_string(), "npc_b".to_string()]
-        );
-    }
-
-    /// P1 contract: a fresh store is clean, and the three real mutator
-    /// categories the publish gate cares about — seed, dormant aging tick, and
-    /// death/removal — each flip `is_dirty()` so the next publish cycle writes
-    /// the change to Redis. A change that never raises the flag would be
-    /// silently dropped by the dirty-gated publish path.
-    #[test]
-    fn dormant_store_dirty_set_on_seed_age_death() {
-        // A default store has nothing to persist yet.
-        assert!(
-            !NpcDormantStore::default().is_dirty(),
-            "expected a freshly constructed store to be clean because no snapshot has changed; it reported dirty"
-        );
-
-        // (1) seed: the real startup seed system populates the store and must
-        // mark it dirty so the seeded population reaches Redis.
-        let mut seed_app = App::new();
-        seed_app.insert_resource(NpcVirtualizationConfig::default());
-        seed_app.insert_resource(DormantRoguePopulationSeedConfig {
-            target_count: 4,
-            resource_fraction: 0.0,
-            resource_spirit_qi_threshold: 0.4,
-            max_initial_age_ratio: 0.0,
-        });
-        seed_app.insert_resource(ZoneRegistry {
-            zones: vec![zone()],
-        });
-        seed_app.init_resource::<NpcDormantStore>();
-        seed_app.add_systems(Update, seed_initial_dormant_population_on_startup);
-        seed_app.update();
-        let seeded = seed_app.world().resource::<NpcDormantStore>();
-        assert!(
-            !seeded.is_empty(),
-            "seed system precondition failed: expected snapshots to be seeded before checking dirty"
-        );
-        assert!(
-            seeded.is_dirty(),
-            "expected the store to be dirty after the startup seed populated {} snapshots, so the seeded population is persisted; it stayed clean",
-            seeded.len()
-        );
-
-        // (2) dormant aging tick: advancing an existing snapshot mutates its
-        // age/position and must mark dirty.
-        let mut age_app = App::new();
-        age_app.add_event::<NpcDeathNotice>();
-        age_app.add_event::<DormantCombatOutcome>();
-        age_app.add_event::<PendingDormantRelicCreated>();
-        age_app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..Default::default()
-        });
-        age_app.insert_resource(GameTick(2400));
-        age_app.insert_resource(ZoneRegistry {
-            zones: vec![zone()],
-        });
-        age_app.insert_resource(WorldQiAccount::default());
-        let mut store = NpcDormantStore::default();
-        store.insert(snapshot("npc_age", DVec3::new(10.0, 64.0, 10.0)));
-        // Clear the insert's dirty so we isolate the aging tick's effect.
-        store.take_dirty();
-        assert!(
-            !store.is_dirty(),
-            "test setup invariant: store must be clean before the aging tick so the tick is the only thing that can re-dirty it"
-        );
-        age_app.insert_resource(store);
-        age_app.add_systems(Update, dormant_global_tick_system);
-        age_app.update();
-        assert!(
-            age_app.world().resource::<NpcDormantStore>().is_dirty(),
-            "expected the store to be dirty after a dormant aging tick advanced a snapshot (age/position changed), so the new state is persisted; it stayed clean"
-        );
-
-        // (3) death/removal: an expired snapshot whose qi is fully released is
-        // removed by the tick; that removal must mark dirty.
-        let mut death_app = App::new();
-        death_app.add_event::<NpcDeathNotice>();
-        death_app.add_event::<DormantCombatOutcome>();
-        death_app.add_event::<PendingDormantRelicCreated>();
-        death_app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..Default::default()
-        });
-        death_app.insert_resource(GameTick(1));
-        death_app.insert_resource(ZoneRegistry {
-            zones: vec![zone()],
-        });
-        death_app.insert_resource(WorldQiAccount::default());
-        let mut expired = snapshot("npc_dead", DVec3::new(10.0, 64.0, 10.0));
-        expired.cultivation.qi_current = 0.0;
-        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
-        let mut death_store = NpcDormantStore::default();
-        death_store.insert(expired);
-        death_store.take_dirty();
-        death_app.insert_resource(death_store);
-        death_app.add_systems(Update, dormant_global_tick_system);
-        death_app.update();
-        let after_death = death_app.world().resource::<NpcDormantStore>();
-        assert!(
-            after_death.is_empty(),
-            "death tick precondition failed: expired zero-qi snapshot should have been removed before checking dirty"
-        );
-        assert!(
-            after_death.is_dirty(),
-            "expected the store to be dirty after death removed an expired snapshot, so the deletion is persisted; it stayed clean"
-        );
-    }
-
-    /// P1 contract: `take_dirty` reads-and-clears in one step. After taking, an
-    /// unchanged store reports clean and a second take returns false — the gate
-    /// will not re-write Redis on a cycle where nothing changed.
-    #[test]
-    fn dormant_store_clean_after_take_dirty() {
-        let mut store = NpcDormantStore::default();
-        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
-        assert!(
-            store.is_dirty(),
-            "expected the store to be dirty right after an insert because the snapshot is unpersisted; it was clean"
-        );
-
-        assert!(
-            store.take_dirty(),
-            "expected take_dirty to return the prior dirty value (true) because an insert had occurred; it returned false"
-        );
-        assert!(
-            !store.is_dirty(),
-            "expected the store to be clean immediately after take_dirty consumed the flag; it still reported dirty"
-        );
-        assert!(
-            !store.take_dirty(),
-            "expected a second take_dirty with no intervening mutation to return false because the gate was already cleared; it returned true"
-        );
-    }
-
-    /// P1 saturation: every store mutator raises dirty (insert AND remove), and
-    /// the Redis restore path does NOT (loaded snapshots are already
-    /// persisted). Also pins the de-dup behaviour: many mutations before one
-    /// take still need only a single take to clear.
-    #[test]
-    fn dormant_store_dirty_per_mutator_and_clean_on_restore() {
-        // insert raises dirty.
-        let mut store = NpcDormantStore::default();
-        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
-        assert!(
-            store.is_dirty(),
-            "expected insert to mark the store dirty so the new snapshot is persisted; it did not"
-        );
-
-        // remove raises dirty (after clearing the insert's flag).
-        store.take_dirty();
-        let removed = store.remove("npc_a");
-        assert!(
-            removed.is_some(),
-            "test setup invariant: the snapshot inserted above must exist so remove actually deletes it"
-        );
-        assert!(
-            store.is_dirty(),
-            "expected remove of an existing snapshot to mark the store dirty so the deletion is persisted; it did not"
-        );
-
-        // remove of a missing id must NOT raise dirty (nothing changed).
-        store.take_dirty();
-        let missing = store.remove("nope");
-        assert!(
-            missing.is_none(),
-            "test setup invariant: removing an absent id must report None"
-        );
-        assert!(
-            !store.is_dirty(),
-            "expected removing an absent id to leave the store clean because nothing changed; it falsely marked dirty"
-        );
-
-        // Many mutations before a single take: one take clears them all.
-        store.insert(snapshot("npc_b", DVec3::new(11.0, 64.0, 10.0)));
-        store.insert(snapshot("npc_c", DVec3::new(12.0, 64.0, 10.0)));
-        store.mark_dirty();
-        assert!(
-            store.take_dirty(),
-            "expected take_dirty to return true after several mutations accumulated under one flag; it returned false"
-        );
-        assert!(
-            !store.is_dirty(),
-            "expected one take_dirty to clear the flag regardless of how many mutations preceded it; it stayed dirty"
-        );
-
-        // Redis restore path must NOT dirty the store: snapshots loaded from
-        // Redis are already persisted, so writing them straight back would be a
-        // wasteful no-op churn (the very thing P1 removes).
-        let source = snapshot("npc_loaded", DVec3::new(10.0, 64.0, 10.0));
-        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
-        let entries = HashMap::from([(source.char_id.clone(), payload)]);
-        let mut restore_store = NpcDormantStore::default();
-        let count =
-            load_dormant_snapshots_from_hash_entries(&mut restore_store, entries).expect("load");
-        assert_eq!(
-            count, 1,
-            "restore precondition: exactly one snapshot should have loaded"
-        );
-        assert!(
-            restore_store.contains("npc_loaded"),
-            "restore precondition: the loaded snapshot should be present"
-        );
-        assert!(
-            !restore_store.is_dirty(),
-            "expected a store restored from Redis to be CLEAN because the data is already persisted; restoring marked it dirty and would trigger a redundant write-back"
-        );
-    }
-
-    #[test]
-    fn dormant_regen_moves_qi_through_ledger() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        open_regular_meridians(&mut snapshot, 1);
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
-            .expect("dormant regen should emit a transfer");
-
-        assert_eq!(transfer.from, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(transfer.to, QiAccountId::npc("npc_a"));
-        assert!(snapshot.cultivation.qi_current > 0.1);
-        assert!(
-            zones
-                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi
-                < 0.8
-        );
-        assert!(
-            (snapshot.qi_ledger_net - transfer.amount).abs() < f64::EPSILON,
-            "qi_ledger_net must audit the same amount as the ledger transfer"
-        );
-        assert!(
-            (ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME))
-                - zones
-                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                    .unwrap()
-                    .spirit_qi
-                    * QI_ZONE_UNIT_CAPACITY)
-                .abs()
-                < 1e-9,
-            "ledger zone balance must use absolute qi units matching normalized zone drain"
-        );
-    }
-
-    #[test]
-    fn dormant_regen_exempts_mundane_fauna_even_with_open_meridian_in_rich_zone() {
-        // plan-mundane-fauna-v1 守恒红线（对称于 live 侧 qi_regen_excludes_mundane_fauna）：
-        // 脱水凡兽即便开脉（sum_rate>0）、身处富灵区（普通 NPC 必吸），也**绝不**从 zone 吸真元。
-        // 否则 snapshot.qi_current 被抽高、hydrate 带回 live 后死亡蒸发，破守恒。
-        let mut snapshot = snapshot("npc_mundane_rabbit", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.archetype = NpcArchetype::Mundane;
-        open_regular_meridians(&mut snapshot, 1); // sum_rate>0，普通 NPC 在此会吸
-        let qi_before = snapshot.cultivation.qi_current;
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let zone_qi_before = zones
-            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-            .unwrap()
-            .spirit_qi;
-        let mut ledger = WorldQiAccount::default();
-
-        assert!(
-            apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none(),
-            "凡兽脱水快照必须被 dormant regen 豁免（返回 None，无 QiTransfer）"
-        );
-        assert_eq!(
-            snapshot.cultivation.qi_current, qi_before,
-            "凡兽 qi_current 不得因 dormant regen 增长（无灵不吸气）"
-        );
-        assert_eq!(
-            zones
-                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi,
-            zone_qi_before,
-            "凡兽豁免后 zone.spirit_qi 必须一分不动（守恒）"
-        );
-    }
-
-    #[test]
-    fn dormant_regen_requires_open_meridian_flow() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        assert!(apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none());
-        assert_eq!(snapshot.cultivation.qi_current, 0.1);
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)),
-            0.0
-        );
-    }
-
-    /// plan-zone-qi-economy-v1 P2：地板红线——zone_qi 在 (0, QI_NPC_ABSORB_FLOOR] 时
-    /// dormant NPC 必须完全放弃吸取，不能像玩家一样吃到地板以下。
-    #[test]
-    fn dormant_regen_stops_at_or_below_absorb_floor() {
-        for zone_qi in [QI_NPC_ABSORB_FLOOR, 0.2, 0.05, 0.0] {
-            let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-            open_regular_meridians(&mut snapshot, 1);
-            let mut z = zone();
-            z.spirit_qi = zone_qi;
-            let mut zones = ZoneRegistry { zones: vec![z] };
-            let mut ledger = WorldQiAccount::default();
-
-            assert!(
-                apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none(),
-                "zone_qi={zone_qi} 已在/低于地板 {QI_NPC_ABSORB_FLOOR}，dormant regen 不应发生任何转移"
-            );
-            assert_eq!(
-                snapshot.cultivation.qi_current, 0.1,
-                "zone_qi={zone_qi} 时 NPC qi_current 不应变化"
-            );
-            assert_eq!(
-                zones
-                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                    .unwrap()
-                    .spirit_qi,
-                zone_qi,
-                "zone_qi={zone_qi} 时 zone.spirit_qi 不应被 dormant regen 触碰"
-            );
-        }
-    }
-
-    /// 边界回归：zone_qi 略高于地板时 dormant regen 仍可发生，但写回后必须 >= 地板，
-    /// 一次 tick 的微量 drain 不会把 zone 拉穿地板（drain 本就远小于 0.31-0.3 的余量）。
-    #[test]
-    fn dormant_regen_never_dips_zone_below_absorb_floor() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        open_regular_meridians(&mut snapshot, 1);
-        let mut z = zone();
-        z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.01;
-        let mut zones = ZoneRegistry { zones: vec![z] };
-        let mut ledger = WorldQiAccount::default();
-
-        let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
-            .expect("地板以上还有 0.01 余量，应发生一次转移");
-
-        assert!(transfer.amount > 0.0);
-        let zone_after = zones
-            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-            .unwrap()
-            .spirit_qi;
-        assert!(
-            zone_after >= QI_NPC_ABSORB_FLOOR,
-            "zone_qi 写回后 {zone_after} 不应低于地板 {QI_NPC_ABSORB_FLOOR}"
-        );
-    }
-
-    /// 一批连续 tick（模拟长跑 dormant 批处理）不应把带回流 zone 压穿地板——
-    /// 即使反复调用，收敛点也应停在地板附近，绝不低于它。
-    #[test]
-    fn repeated_dormant_regen_ticks_converge_to_absorb_floor_without_crossing_it() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        open_regular_meridians(&mut snapshot, 1);
-        // qi_max 拉大，避免 room 提前耗尽掩盖地板行为。
-        snapshot.cultivation.qi_max = 1000.0;
-        let mut z = zone();
-        z.spirit_qi = 0.8;
-        let mut zones = ZoneRegistry { zones: vec![z] };
-        let mut ledger = WorldQiAccount::default();
-
-        for _ in 0..10_000 {
-            if apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none() {
-                break;
-            }
-            let current = zones
-                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!(
-                current >= QI_NPC_ABSORB_FLOOR,
-                "批量 tick 期间 zone_qi 一度跌破地板：{current} < {QI_NPC_ABSORB_FLOOR}"
-            );
-        }
-        let final_qi = zones
-            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-            .unwrap()
-            .spirit_qi;
-        assert!(
-            final_qi >= QI_NPC_ABSORB_FLOOR,
-            "长跑收敛后 zone_qi={final_qi} 不应低于地板 {QI_NPC_ABSORB_FLOOR}"
-        );
-    }
-
-    /// plan-offscreen-war-v1 P9 war_multiplier 路径同样过地板——战事 zone 不给后门。
-    #[test]
-    fn dormant_regen_with_war_multiplier_still_respects_absorb_floor() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        open_regular_meridians(&mut snapshot, 1);
-        let mut z = zone();
-        z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.001;
-        let mut zones = ZoneRegistry { zones: vec![z] };
-        let mut ledger = WorldQiAccount::default();
-
-        // war_multiplier 拉到 10x，即便如此也不能把 zone 拉穿地板。
-        let _ = apply_dormant_regen_with_multiplier(&mut snapshot, &mut zones, &mut ledger, 10.0);
-
-        let zone_after = zones
-            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-            .unwrap()
-            .spirit_qi;
-        assert!(
-            zone_after >= QI_NPC_ABSORB_FLOOR,
-            "war_multiplier=10x 不应突破地板，实际 {zone_after}"
-        );
-    }
-
-    #[test]
-    fn dormant_realm_label_uses_shared_schema_serializer() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.cultivation.realm = Realm::Condense;
-
-        assert_eq!(snapshot.realm_label(), "Condense");
-    }
-
-    #[test]
-    fn expired_dormant_npc_releases_qi_to_zone() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.cultivation.qi_current = 0.4;
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        let transfer = release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
-            .expect("death release should emit a transfer");
-
-        assert_eq!(transfer.from, QiAccountId::npc("npc_a"));
-        assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(snapshot.cultivation.qi_current, 0.0);
-        assert!(
-            zones
-                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi
-                > 0.8
-        );
-        assert!(
-            (ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME))
-                - zones
-                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
-                    .unwrap()
-                    .spirit_qi
-                    * QI_ZONE_UNIT_CAPACITY)
-                .abs()
-                < 1e-9,
-            "ledger zone balance must use the same absolute qi unit as normalized zone state"
-        );
-    }
-
-    #[test]
-    fn death_qi_release_preserves_zone_overflow_on_npc_account() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.cultivation.qi_current = 2.0;
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 0.99;
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        let transfer = release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
-            .expect("near-full zone should still accept the available room");
-
-        assert!((transfer.amount - 0.5).abs() < 1e-9);
-        assert!((snapshot.cultivation.qi_current - 1.5).abs() < 1e-9);
-        assert!(
-            (ledger.balance(&QiAccountId::npc("npc_a")) - snapshot.cultivation.qi_current).abs()
-                < 1e-9,
-            "overflow must stay in the NPC ledger account instead of disappearing"
-        );
-    }
-
-    #[test]
-    fn dormant_global_tick_retains_expired_snapshot_until_qi_fully_released() {
-        let mut app = App::new();
-        app.add_event::<NpcDeathNotice>();
-        app.add_event::<DormantCombatOutcome>();
-        app.add_event::<PendingDormantRelicCreated>();
-        app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..Default::default()
-        });
-        app.insert_resource(GameTick(1));
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 0.99;
-        app.insert_resource(ZoneRegistry {
-            zones: vec![full_zone],
-        });
-        app.insert_resource(WorldQiAccount::default());
-        let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        expired.cultivation.qi_current = 2.0;
-        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
-        let mut store = NpcDormantStore::default();
-        store.insert(expired);
-        app.insert_resource(store);
-        app.add_systems(Update, dormant_global_tick_system);
-
-        app.update();
-
-        let store = app.world().resource::<NpcDormantStore>();
-        let retained = store
-            .snapshots
-            .get("npc_a")
-            .expect("overflowing qi must keep expired dormant NPC for retry");
-        assert!((retained.cultivation.qi_current - 1.5).abs() < 1e-9);
-        let events = app.world().resource::<Events<NpcDeathNotice>>();
-        assert!(
-            events.iter_current_update_events().next().is_none(),
-            "death notice must wait until qi release reaches zero"
-        );
-    }
-
-    #[test]
-    fn dormant_wander_uses_absolute_tick_salt() {
-        let mut snapshot = snapshot("npc_a", DVec3::ZERO);
-        snapshot.intent = DormantBehaviorIntent::Wander {
-            drift_radius: 10_000.0,
-        };
-        let start = snapshot.position_vec();
-
-        advance_dormant_position(&mut snapshot, 1200, 1200);
-        let first = snapshot.position_vec();
-        advance_dormant_position(&mut snapshot, 1200, 2400);
-        let second = snapshot.position_vec();
-
-        let straight_line_second = DVec3::new(
-            start.x + (first.x - start.x) * 2.0,
-            start.y,
-            start.z + (first.z - start.z) * 2.0,
-        );
-        assert!(
-            planar_distance(second, straight_line_second) > 1e-6,
-            "wander angle must vary across absolute ticks instead of repeating one straight-line heading"
-        );
-    }
-
-    #[test]
-    fn dormant_global_tick_clears_indexes_when_all_snapshots_expire() {
-        let mut app = App::new();
-        app.add_event::<NpcDeathNotice>();
-        app.add_event::<DormantCombatOutcome>();
-        app.add_event::<PendingDormantRelicCreated>();
-        app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..Default::default()
-        });
-        app.insert_resource(GameTick(1));
-        app.insert_resource(ZoneRegistry {
-            zones: vec![zone()],
-        });
-        app.insert_resource(WorldQiAccount::default());
-        let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
-        let mut store = NpcDormantStore::default();
-        store.insert(expired);
-        app.insert_resource(store);
-        app.add_systems(Update, dormant_global_tick_system);
-
-        app.update();
-
-        let store = app.world().resource::<NpcDormantStore>();
-        assert!(store.is_empty());
-        assert!(store.ids_by_archetype(NpcArchetype::Rogue).is_empty());
-        assert!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME).is_empty());
-    }
-
-    #[test]
-    fn dormant_global_tick_refreshes_zone_index_after_movement() {
-        let mut app = App::new();
-        app.add_event::<NpcDeathNotice>();
-        app.add_event::<DormantCombatOutcome>();
-        app.add_event::<PendingDormantRelicCreated>();
-        app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..Default::default()
-        });
-        app.insert_resource(GameTick(2400));
-        let second_zone = Zone {
-            name: "east".to_string(),
-            dimension: DimensionKind::Overworld,
-            bounds: (DVec3::new(120.0, 0.0, 0.0), DVec3::new(200.0, 128.0, 80.0)),
-            spirit_qi: 0.5,
-            danger_level: 0,
-            active_events: Vec::new(),
-            patrol_anchors: Vec::new(),
-            blocked_tiles: Vec::new(),
-            qi_equilibrium: 0.0,
-            qi_inflow_per_min: 0.0,
-        };
-        app.insert_resource(ZoneRegistry {
-            zones: vec![zone(), second_zone],
-        });
-        app.insert_resource(WorldQiAccount::default());
-        let mut mover = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        mover.intent = DormantBehaviorIntent::PatrolToward {
-            target: [130.0, 64.0, 10.0],
-        };
-        let mut store = NpcDormantStore::default();
-        store.insert(mover);
-        app.insert_resource(store);
-        app.add_systems(Update, dormant_global_tick_system);
-
-        app.update();
-
-        let store = app.world().resource::<NpcDormantStore>();
-        assert_eq!(store.snapshots["npc_a"].zone_name, "east");
-        assert!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME).is_empty());
-        assert_eq!(store.ids_by_zone("east"), &["npc_a"]);
-    }
-
-    #[test]
-    fn dormant_breakthrough_uses_cultivation_rules_below_duxu() {
-        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.cultivation.realm = Realm::Awaken;
-        snapshot.cultivation.qi_current = 20.0;
-        snapshot.cultivation.qi_max = 100.0;
-        snapshot.lifespan.age_ticks = 1_100.0;
-        open_regular_meridians(&mut snapshot, 3);
-        let mut roll = FixedRoll(0.0);
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        let result = advance_dormant_breakthrough_with_roll(
-            &mut snapshot,
-            &mut zones,
-            &mut ledger,
-            1200,
-            &mut roll,
-        )
-        .expect("eligible dormant NPC should attempt breakthrough")
-        .expect("fixed low roll should pass");
-
-        assert_eq!(result.to, Realm::Induce);
-        assert_eq!(snapshot.cultivation.realm, Realm::Induce);
-        assert_eq!(snapshot.cultivation.qi_current, 12.0);
-        assert_eq!(
-            ledger.balance(&QiAccountId::npc("npc_a")),
-            12.0,
-            "dormant breakthrough must debit npc ledger balance with the snapshot"
-        );
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)),
-            8.0,
-            "dormant breakthrough cost must transfer into the zone ledger"
-        );
-        let transfer = ledger
-            .transfers()
-            .last()
-            .expect("dormant breakthrough should leave a QiTransfer");
-        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
-        assert_eq!(transfer.amount, 8.0);
-        assert!(
-            (snapshot.qi_ledger_net - (-8.0)).abs() < f64::EPSILON,
-            "dormant breakthrough must debit qi_ledger_net by the spent qi; expected -8.0, got {}",
-            snapshot.qi_ledger_net
-        );
-        assert_eq!(
-            snapshot.shared_lifespan.cap_by_realm,
-            LifespanCapTable::INDUCE
-        );
-        assert!((snapshot.lifespan.max_age_ticks - 1_666.666_666_666_666_7).abs() < 1e-9);
-        assert!(!snapshot.lifespan.is_expired());
-        assert!(snapshot.life_record.biography.iter().any(|entry| {
-            matches!(
-                entry,
-                BiographyEntry::BreakthroughSucceeded {
-                    realm: Realm::Induce,
-                    tick: 1200
-                }
-            )
-        }));
-    }
-
-    #[test]
-    fn redis_payload_roundtrips_snapshot() {
-        let mut store = NpcDormantStore::default();
-        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
-
-        let payloads = store.to_redis_hash_payloads().expect("serialize");
-        assert_eq!(payloads[0].0, "npc_a");
-        // 默认（非战死）快照：`combat_dead_pending_release=false` 必须被 skip_serializing_if
-        // 省略，不写进 Redis payload（不膨胀，§10.1 #2）。
-        assert!(
-            !payloads[0].1.contains("combat_dead_pending_release"),
-            "a normal (not combat-dead) snapshot must OMIT combat_dead_pending_release from its Redis payload (skip_serializing_if avoids snapshot bloat), but the field was present: {}",
-            payloads[0].1
-        );
-        let decoded: NpcDormantSnapshot =
-            serde_json::from_str(payloads[0].1.as_str()).expect("deserialize");
-        assert_eq!(decoded.char_id, "npc_a");
-        assert_eq!(decoded.position, [10.0, 64.0, 10.0]);
-        assert!(
-            !decoded.combat_dead_pending_release,
-            "a roundtripped normal snapshot must decode combat_dead_pending_release=false; got true"
-        );
-    }
-
-    #[test]
-    fn redis_payload_roundtrips_pending_release_flag() {
-        // plan-offscreen-war-v1 P3 review-fix（守恒持久化安全）：被标记「战死待释放真元」的败者
-        // 必须随 Redis 持久化——flag=true 往返不丢，server 重启后仍 pending-release（真元不丢、
-        // 仍被 collect 跳过、绝不重复参战）。
-        let mut snap = snapshot("trapped", DVec3::new(10.0, 64.0, 10.0));
-        snap.combat_dead_pending_release = true;
-        let payload = serde_json::to_string(&snap).expect("serialize flagged snapshot");
-        assert!(
-            payload.contains("combat_dead_pending_release"),
-            "a flagged (combat-dead-pending-release) snapshot MUST serialize the field so it survives a Redis restart, but it was omitted: {payload}"
-        );
-        let decoded: NpcDormantSnapshot =
-            serde_json::from_str(&payload).expect("deserialize flagged snapshot");
-        assert!(
-            decoded.combat_dead_pending_release,
-            "flag=true must roundtrip through Redis JSON (restart safety: pending-release loser keeps its qi and stays out of combat); got false"
-        );
-    }
-
-    #[test]
-    fn legacy_redis_snapshot_without_flag_defaults_to_false() {
-        // 向后兼容：升级前写入 Redis 的旧快照没有 `combat_dead_pending_release` 字段，
-        // `#[serde(default)]` 必须把它解码成 `false`（不 panic、不报错），否则升级即丢全部 dormant。
-        // 用一份完整的旧快照 JSON（先 serialize 一个普通快照得到字段名，再手动删掉 flag 字段，
-        // 这里因为默认快照本就不写该字段，直接复用其 payload 即「缺字段」样本）。
-        let source = snapshot("legacy_npc", DVec3::new(5.0, 64.0, 5.0));
-        let legacy_payload = serde_json::to_string(&source).expect("serialize");
-        assert!(
-            !legacy_payload.contains("combat_dead_pending_release"),
-            "precondition: the synthesized legacy payload must lack the flag field"
-        );
-        let decoded: NpcDormantSnapshot = serde_json::from_str(&legacy_payload)
-            .expect("legacy snapshot (no flag field) must deserialize via serde default");
-        assert!(
-            !decoded.combat_dead_pending_release,
-            "a legacy Redis snapshot missing combat_dead_pending_release must default to false (serde default), so upgrades never lose or mis-flag dormant NPCs; got true"
-        );
-    }
-
-    #[test]
-    fn legacy_redis_snapshot_without_tsy_sentinel_field_defaults_to_none() {
-        // plan-tsy-sentinel-dormant-regression-v1 §P1：非破坏迁移——升级前写入 Redis 的旧
-        // 快照没有 `tsy_sentinel` 字段（该字段是本 plan 新加的），`#[serde(default)]` 必须
-        // 把它解码成 `None`（不 panic、不报错），即"退化为修复前的既有行为"（普通
-        // overworld GuardianRelic），而不是升级即丢全部 dormant 快照。
-        let source = snapshot("legacy_npc_no_sentinel", DVec3::new(5.0, 64.0, 5.0));
-        let legacy_payload = serde_json::to_string(&source).expect("serialize");
-        assert!(
-            !legacy_payload.contains("tsy_sentinel"),
-            "precondition: the synthesized legacy payload must lack the tsy_sentinel field \
-             (skip_serializing_if omits None), got: {legacy_payload}"
-        );
-        let decoded: NpcDormantSnapshot = serde_json::from_str(&legacy_payload)
-            .expect("legacy snapshot (no tsy_sentinel field) must deserialize via serde default");
-        assert!(
-            decoded.tsy_sentinel.is_none(),
-            "a legacy Redis snapshot missing tsy_sentinel must default to None (serde default), \
-             so upgrading the server binary never fails to load pre-existing dormant TSY sentinel \
-             snapshots (they just degrade to the pre-fix plain-GuardianRelic hydrate path until \
-             the next dehydrate cycle re-captures the field); got Some(..)"
-        );
-    }
-
-    #[test]
-    fn loads_dormant_snapshots_from_redis_hash_entries() {
-        let source = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
-        let entries = HashMap::from([(source.char_id.clone(), payload)]);
-        let mut store = NpcDormantStore::default();
-
-        let count = load_dormant_snapshots_from_hash_entries(&mut store, entries).expect("load");
-
-        assert_eq!(count, 1);
-        assert!(store.contains("npc_a"));
-        assert_eq!(store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME), &["npc_a"]);
-    }
-
-    #[test]
-    fn redis_hash_restore_skips_bad_entries_without_losing_good_snapshots() {
-        let source = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
-        let entries = HashMap::from([
-            (source.char_id.clone(), payload),
-            ("npc_bad".to_string(), "{not-json".to_string()),
-        ]);
-        let mut store = NpcDormantStore::default();
-
-        let count = load_dormant_snapshots_from_hash_entries(&mut store, entries).expect("load");
-
-        assert_eq!(count, 1);
-        assert!(store.contains("npc_a"));
-        assert!(!store.contains("npc_bad"));
-    }
-
-    #[test]
-    fn redis_hash_restore_fails_when_every_entry_is_invalid() {
-        let entries = HashMap::from([("npc_bad".to_string(), "{not-json".to_string())]);
-        let mut store = NpcDormantStore::default();
-
-        let error = load_dormant_snapshots_from_hash_entries(&mut store, entries)
-            .expect_err("all invalid entries should fail restore");
-
-        assert!(error.contains("all 1 dormant Redis snapshot"));
-        assert!(store.is_empty());
-    }
-
-    // ── plan-offscreen-war-v1 P0：确定性 env 旋钮 ─────────────────────────
-    //
-    // 解析逻辑用纯函数 `parse_*` 测，避免 `std::env::set_var` 在并行测试间互相污染
-    // 全局进程状态（vitest/cargo test 默认多线程）。env 通路本身由真服 e2e 覆盖。
-
-    #[test]
-    fn bong_dormant_tick_interval_env_overrides_default() {
-        // 合法正值覆盖默认 1200，让离屏 tick 快进到秒级（e2e 用此把 60s 压到 1 tick）。
-        assert_eq!(
-            parse_dormant_tick_interval(Some("5"), DORMANT_LIFECYCLE_TICK_INTERVAL),
-            5,
-            "正值 BONG_DORMANT_TICK_INTERVAL 必须覆盖默认 1200，否则 e2e 无法快进离屏 tick"
-        );
-        assert_eq!(
-            parse_dormant_tick_interval(Some("  42  "), DORMANT_LIFECYCLE_TICK_INTERVAL),
-            42,
-            "首尾空白应被 trim 后解析，期望 42"
-        );
-    }
-
-    #[test]
-    fn bong_dormant_tick_interval_unset_keeps_default() {
-        assert_eq!(
-            parse_dormant_tick_interval(None, DORMANT_LIFECYCLE_TICK_INTERVAL),
-            DORMANT_LIFECYCLE_TICK_INTERVAL,
-            "env 未设时必须保持默认 1200（= 现有运行时行为）"
-        );
-        // from_env 默认（未注入 env 旋钮的字段）应与 default 一致。
-        let cfg = NpcVirtualizationConfig::default();
-        assert_eq!(
-            cfg.dormant_tick_interval_ticks,
-            DORMANT_LIFECYCLE_TICK_INTERVAL
-        );
-        assert_eq!(
-            cfg.sim_seed, 0,
-            "默认 sim_seed 必须为 0 = 未注入 seed 时的确定性基线"
-        );
-    }
-
-    #[test]
-    fn bong_dormant_tick_interval_zero_and_garbage_fall_back_gracefully() {
-        // 0 非法（会造成 is_multiple_of(0) panic / 除零语义），必须回退默认而非采纳。
-        assert_eq!(
-            parse_dormant_tick_interval(Some("0"), DORMANT_LIFECYCLE_TICK_INTERVAL),
-            DORMANT_LIFECYCLE_TICK_INTERVAL,
-            "0 是非法 tick 间隔，期望 graceful 回退默认 1200"
-        );
-        // 垃圾 / 负数 / 溢出均无法 parse 为 u32，回退默认。
-        for garbage in ["", "abc", "-3", "3.5", "99999999999999999999"] {
-            assert_eq!(
-                parse_dormant_tick_interval(Some(garbage), DORMANT_LIFECYCLE_TICK_INTERVAL),
-                DORMANT_LIFECYCLE_TICK_INTERVAL,
-                "非法值 {garbage:?} 期望回退默认 1200 而非 panic"
-            );
-        }
-    }
-
-    #[test]
-    fn bong_sim_seed_makes_combat_deterministic() {
-        // P0 是 plumbing 层：相同 BONG_SIM_SEED 解析出相同 u64，注入 config.sim_seed
-        // 后即可让 P1/P2 的 RNG 序列复现（同 seed → 同战死结果）。
-        let seed_a = parse_sim_seed(Some("123456789"));
-        let seed_b = parse_sim_seed(Some("123456789"));
-        assert_eq!(
-            seed_a, seed_b,
-            "同一 BONG_SIM_SEED 必须解析出同值，否则离屏战争结果不可复现"
-        );
-        assert_eq!(seed_a, 123_456_789);
-
-        // 不同 seed 必须区分（让 e2e 能跑出不同 RNG 序列）。
-        assert_ne!(
-            parse_sim_seed(Some("1")),
-            parse_sim_seed(Some("2")),
-            "不同 seed 必须解析为不同值"
-        );
-
-        // 注入路径：解析出的 seed 直接落进 NpcVirtualizationConfig.sim_seed，
-        // dormant 战斗（P1/P2）即读这同一个种子，保证同 seed → 同战死结果。
-        let parsed = parse_sim_seed(Some("777"));
-        let cfg = NpcVirtualizationConfig {
-            sim_seed: parsed,
-            ..NpcVirtualizationConfig::default()
-        };
-        assert_eq!(
-            cfg.sim_seed, parsed,
-            "解析出的 seed 必须原样进入 config.sim_seed，否则 dormant 战斗 RNG 与配置不同步"
-        );
-    }
-
-    #[test]
-    fn bong_sim_seed_unset_or_garbage_defaults_to_zero() {
-        assert_eq!(parse_sim_seed(None), 0, "env 未设时默认种子 0 = 现有行为");
-        for garbage in ["", "abc", "-1", "1.0"] {
-            assert_eq!(
-                parse_sim_seed(Some(garbage)),
-                0,
-                "非法 seed {garbage:?} 期望回退 0 而非 panic"
-            );
-        }
-    }
-
-    // ── plan-offscreen-war-v1 P0 #1：派系数据化 bootstrap ─────────────────
-
-    #[test]
-    fn seed_rogue_faction_is_deterministic_per_char_id() {
-        // 同 char_id 跨调用必须分到同一派系（重启后 dormant 派系稳定）。
-        let a = seed_rogue_faction("dormant:rogue:42");
-        let b = seed_rogue_faction("dormant:rogue:42");
-        assert_eq!(
-            a.faction_id, b.faction_id,
-            "同 char_id 必须确定性分派，否则重启后敌对关系漂移"
-        );
-        assert_eq!(a.rank, FactionRank::Disciple);
-    }
-
-    #[test]
-    fn seed_rogue_faction_distribution_yields_both_attack_and_defend() {
-        // 哈希分布必须同时产出 Attack 与 Defend，否则 is_hostile_pair 永远配不出对。
-        let mut seen_attack = false;
-        let mut seen_defend = false;
-        for index in 0..256u32 {
-            match seed_rogue_faction(&format!("dormant:rogue:{index}")).faction_id {
-                FactionId::Attack => seen_attack = true,
-                FactionId::Defend => seen_defend = true,
-                FactionId::Neutral => {
-                    panic!("seed 派系绝不应分到 Neutral（Neutral 对谁都不敌对，会让战斗空转）")
-                }
-            }
-            if seen_attack && seen_defend {
-                break;
-            }
-        }
-        assert!(
-            seen_attack && seen_defend,
-            "256 个 char_id 必须同时出现 Attack 与 Defend，保证 is_hostile_pair 有敌对对"
-        );
-    }
-
-    #[test]
-    fn seed_rogue_faction_pairs_are_hostile_across_factions() {
-        // 端到端契约：分到不同派系的两个 rogue，FactionStore::is_hostile_pair 必须为真。
-        use crate::npc::faction::FactionStore;
-        let store = FactionStore::default();
-        let attacker = seed_rogue_faction("seed:attack-fixture");
-        let defender = (0..64u32)
-            .map(|i| seed_rogue_faction(&format!("seed:defend-fixture:{i}")))
-            .find(|m| m.faction_id != attacker.faction_id)
-            .expect("应能找到一个异派系成员");
-        assert!(
-            store.is_hostile_pair(attacker.faction_id, defender.faction_id),
-            "Attack↔Defend 必须敌对，否则 P1/P2 战斗无候选对"
-        );
-        // 同派系不敌对（确认二分不会把同派系也当敌对）。
-        assert!(
-            !store.is_hostile_pair(attacker.faction_id, attacker.faction_id),
-            "同派系不应敌对"
-        );
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_assigns_non_none_faction() {
-        // 防回归：seed 出来的 dormant rogue 的 faction 字段必须非 None
-        // （否则 e2e HGETALL 看到 faction=null，所有后续阶段空转）。
-        let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
-        let membership = snapshot
-            .faction
-            .as_ref()
-            .expect("seeded dormant rogue 必须带 FactionMembership，不能是 None");
-        assert!(
-            matches!(membership.faction_id, FactionId::Attack | FactionId::Defend),
-            "seed 派系必须是 Attack 或 Defend（非 Neutral），实际 {:?}",
-            membership.faction_id
-        );
-    }
-
-    // ── plan-offscreen-war-v1 P5 reframe b：seed 涌现群体散布 ──────────────────
-
-    #[test]
-    fn seed_emergent_group_is_deterministic_per_char_id() {
-        // 同 char_id 跨调用必须分到同一群体（否则重启后离屏敌对关系漂移）。
-        let a = seed_emergent_group("dormant:rogue:42");
-        let b = seed_emergent_group("dormant:rogue:42");
-        assert_eq!(
-            a, b,
-            "同 char_id 必须确定性散布到同一涌现群体，否则重启后敌对关系漂移"
-        );
-    }
-
-    #[test]
-    fn seed_emergent_group_distribution_covers_at_least_three_groups() {
-        // reframe b 解锁 >2 群体互殴：256 个 char_id 的 emergent_group 必须覆盖 ≥3 个不同群体，
-        // 否则散修永远塌成 ≤2 组、退回 P1 的 2-faction 上限。同时每个群体 id < EMERGENT_GROUP_COUNT。
-        let mut groups = std::collections::BTreeSet::new();
-        for index in 0..256u32 {
-            let g = seed_emergent_group(&format!("dormant:rogue:{index}"));
-            assert!(
-                g.0 < EMERGENT_GROUP_COUNT,
-                "seed group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
-                g.0
-            );
-            groups.insert(g.0);
-        }
-        assert!(
-            groups.len() >= 3,
-            "256 char_ids must spread across at least 3 distinct emergent groups to unlock >2-group melee (reframe b §十); only saw {} group(s): {:?}",
-            groups.len(),
-            groups
-        );
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_assigns_explicit_emergent_group() {
-        // 防回归：seed 出来的 dormant rogue 必须带显式 emergent_group（非 None），
-        // 否则离屏战斗回退 faction 派生、退化成 2 群体上限。
-        let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
-        let group = snapshot
-            .emergent_group
-            .expect("seeded dormant rogue 必须带显式 emergent_group，不能是 None");
-        assert!(
-            group.0 < EMERGENT_GROUP_COUNT,
-            "seed emergent group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
-            group.0
-        );
-    }
-
-    // ── plan-npc-realm-distribution-v1 P1：种群 seeder 境界分布（饱和单测） ────────
-
-    fn realm_weight(table: &[(Realm, u32); 6], realm: Realm) -> u32 {
-        table
-            .iter()
-            .find(|(r, _)| *r == realm)
-            .map(|(_, w)| *w)
-            .unwrap_or(0)
-    }
-
-    #[test]
-    fn realm_distribution_tables_sum_to_exactly_1000_per_mille() {
-        // 防漂移：任何一次手改分布表数值（微调长尾）如果算错导致总和不再是 1000‰，
-        // `sample_rogue_seed_realm` 的累积权重循环会在权重和 < 1000 时对部分 roll
-        // 值静默兜底成 Realm::Awaken（人为压低非醒灵占比），必须显式撞红而非静默偏移。
-        let background_sum: u32 = REALM_DISTRIBUTION_BACKGROUND.iter().map(|(_, w)| w).sum();
-        let resource_sum: u32 = REALM_DISTRIBUTION_RESOURCE.iter().map(|(_, w)| w).sum();
-        assert_eq!(
-            background_sum, 1000,
-            "background 分布表权重和必须恰为 1000‰，实际 {background_sum}"
-        );
-        assert_eq!(
-            resource_sum, 1000,
-            "resource 分布表权重和必须恰为 1000‰，实际 {resource_sum}"
-        );
-    }
-
-    #[test]
-    fn realm_distribution_tables_never_seed_void_naturally() {
-        // §8.1 #1 决议：化虚不自然刷，正典稀有仅垂死大能一类特殊实体。
-        assert_eq!(
-            realm_weight(&REALM_DISTRIBUTION_BACKGROUND, Realm::Void),
-            0,
-            "background 分布表化虚权重必须为 0"
-        );
-        assert_eq!(
-            realm_weight(&REALM_DISTRIBUTION_RESOURCE, Realm::Void),
-            0,
-            "resource 分布表化虚权重必须为 0"
-        );
-    }
-
-    #[test]
-    fn sample_rogue_seed_realm_is_deterministic_per_char_id_and_zone_kind() {
-        // 同 char_id + 同 zone 档，跨调用必须抽到同一境界（否则重启后境界分布漂移）。
-        for char_id in ["dormant:rogue:0", "dormant:rogue:1", "rogue-seed:zone:42"] {
-            for is_resource in [true, false] {
-                let a = sample_rogue_seed_realm(char_id, is_resource);
-                let b = sample_rogue_seed_realm(char_id, is_resource);
-                assert_eq!(
-                    a, b,
-                    "char_id={char_id} is_resource={is_resource}: 同输入必须抽到同一境界，\
-                     实际两次调用分别得到 {a:?} 和 {b:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn sample_rogue_seed_realm_differs_by_zone_kind_salt_not_faction_or_group_salt() {
-        // 境界抽样必须用专属 REALM_SEED_SALT，与 seed_rogue_faction（salt=0）/
-        // seed_emergent_group（salt=GROUP_SALT）错开——否则境界会和派系/群体强相关
-        // （比如同一 salt 下醒灵总是分到 Attack）。用同一 char_id 三个 salt 的哈希两两
-        // 不相等来证明三者独立（char_id 选一个非退化样本，避免巧合碰撞误判）。
-        let char_id = "dormant:rogue:7";
-        let realm_hash = deterministic_hash(char_id, REALM_SEED_SALT);
-        let faction_hash = deterministic_hash(char_id, 0);
-        let group_hash = deterministic_hash(char_id, GROUP_SALT);
-        assert_ne!(
-            realm_hash, faction_hash,
-            "REALM_SEED_SALT 必须与派系 salt=0 产生不同哈希"
-        );
-        assert_ne!(
-            realm_hash, group_hash,
-            "REALM_SEED_SALT 必须与 GROUP_SALT 产生不同哈希"
-        );
-    }
-
-    #[test]
-    fn sample_rogue_seed_realm_background_distribution_matches_table_within_tolerance() {
-        // 统计 pin（非精确计数）：2000 个不同 char_id 在 background 档下的境界直方图，
-        // 逐境界占比须落在 §8.1 #1 background 表（57/30/12/1/0/0%）±8 个百分点内。
-        let n = 2000;
-        let mut counts: HashMap<&'static str, u32> = HashMap::new();
-        for i in 0..n {
-            let realm = sample_rogue_seed_realm(&format!("tolerance:background:{i}"), false);
-            let key = match realm {
-                Realm::Awaken => "awaken",
-                Realm::Induce => "induce",
-                Realm::Condense => "condense",
-                Realm::Solidify => "solidify",
-                Realm::Spirit => "spirit",
-                Realm::Void => "void",
-            };
-            *counts.entry(key).or_insert(0) += 1;
-        }
-        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
-        let assert_within = |label: &str, actual: f64, expected_pct: f64| {
-            let tolerance = 0.08;
-            assert!(
-                (actual - expected_pct / 100.0).abs() <= tolerance,
-                "background {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
-                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
-            );
-        };
-        assert_within("醒灵", ratio("awaken"), 57.0);
-        assert_within("引气", ratio("induce"), 30.0);
-        assert_within("凝脉", ratio("condense"), 12.0);
-        assert_within("固元", ratio("solidify"), 1.0);
-        assert_eq!(
-            counts.get("spirit").copied().unwrap_or(0),
-            0,
-            "background 档通灵权重为 0，绝不应抽到"
-        );
-        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
-    }
-
-    #[test]
-    fn sample_rogue_seed_realm_resource_distribution_matches_table_within_tolerance() {
-        // 统计 pin：resource 档（42.5/35/20/2/0.5/0%）——通灵样本稀少（0.5%），
-        // 用更大样本量 4000 降低小概率分支的统计噪声，容差同样 ±8 个百分点
-        // （通灵/固元档额外用绝对宽松上界防止偶发 0 样本导致误判）。
-        let n = 4000;
-        let mut counts: HashMap<&'static str, u32> = HashMap::new();
-        for i in 0..n {
-            let realm = sample_rogue_seed_realm(&format!("tolerance:resource:{i}"), true);
-            let key = match realm {
-                Realm::Awaken => "awaken",
-                Realm::Induce => "induce",
-                Realm::Condense => "condense",
-                Realm::Solidify => "solidify",
-                Realm::Spirit => "spirit",
-                Realm::Void => "void",
-            };
-            *counts.entry(key).or_insert(0) += 1;
-        }
-        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
-        let assert_within = |label: &str, actual: f64, expected_pct: f64, tolerance: f64| {
-            assert!(
-                (actual - expected_pct / 100.0).abs() <= tolerance,
-                "resource {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
-                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
-            );
-        };
-        assert_within("醒灵", ratio("awaken"), 42.5, 0.08);
-        assert_within("引气", ratio("induce"), 35.0, 0.08);
-        assert_within("凝脉", ratio("condense"), 20.0, 0.08);
-        assert_within("固元", ratio("solidify"), 2.0, 0.03);
-        assert_within("通灵", ratio("spirit"), 0.5, 0.02);
-        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
-        // resource 档整体高境界（凝脉+固元+通灵）占比必须明显高于 background 档，
-        // 证明两张表确实不同（不是同一张表被误接了两次）。
-        let resource_high = ratio("condense") + ratio("solidify") + ratio("spirit");
-        assert!(
-            resource_high > 0.15,
-            "resource 档凝脉+固元+通灵合计占比 {resource_high:.3} 偏低，\
-             §8.1 #1 预期约 22.5%，可能误接了 background 表"
-        );
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_realm_distribution_not_always_awaken() {
-        // 端到端契约：seed 出来的 dormant snapshot 的 Cultivation.realm 不能恒为醒灵
-        // （否则 P0 choke-point 修复对 dormant seeder 完全没有生效）。
-        let zone = zone();
-        let realms: Vec<Realm> = (0..500u32)
-            .map(|i| {
-                dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true)
-                    .cultivation
-                    .realm
-            })
-            .collect();
-        let non_awaken = realms.iter().filter(|r| **r != Realm::Awaken).count();
-        assert!(
-            non_awaken > 0,
-            "500 个 dormant rogue snapshot 全部落在醒灵，期望按 §8.1 #1 分布表抽到非醒灵境界；\
-             这意味着 dormant_rogue_seed_snapshot 回退成了 Cultivation::default()"
-        );
-        assert!(
-            !realms.contains(&Realm::Void),
-            "dormant seeder 绝不应抽到化虚（正典稀有，不自然刷）"
-        );
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_meridian_system_matches_sampled_realm_required_meridians() {
-        // Verify blocker pin：dormant seeder 曾恒开 1 条肺经（MeridianSystem::default()
-        // + 手动开 Lung），与抽样出的 realm 脱钩——凝脉/固元/通灵抽样命中却只有 1 条脉，
-        // 撞 realm↔经脉双源矛盾。500 个样本里筛出每个非醒灵境界至少一例，核对
-        // meridian_system.opened_count() 恰等于 realm.required_meridians()（用生产
-        // 侧的 npc_meridian_system_for_realm 派生规则，不是重新定义一套开脉逻辑）。
-        let zone = zone();
-        let mut seen_realms: std::collections::HashSet<Realm> = std::collections::HashSet::new();
-        for i in 0..500u32 {
-            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
-            let realm = snapshot.cultivation.realm;
-            let expected = realm.required_meridians();
-            let actual = snapshot.meridian_system.opened_count();
-            assert_eq!(
-                actual, expected,
-                "i={i} realm={realm:?}: dormant seeder 落地的 meridian_system 应开 \
-                 {expected} 条经脉（realm.required_meridians()），实得 {actual} 条 \
-                 ——若恒为 1 说明退回了 P0-era 恒开肺经的 bug"
-            );
-            let expected_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
-            let opened_mismatch = snapshot
-                .meridian_system
-                .iter()
-                .zip(expected_system.iter())
-                .enumerate()
-                .find(|(_, (actual, expected))| actual.opened != expected.opened);
-            assert!(
-                opened_mismatch.is_none(),
-                "i={i} realm={realm:?}: dormant seeder 的 meridian_system 必须与生产侧 \
-                 npc_meridian_system_for_realm(realm) 逐脉一致（同一份派生规则的单一来源），\
-                 首个不一致的经脉 index={opened_mismatch:?}"
-            );
-            seen_realms.insert(realm);
-        }
-        assert!(
-            seen_realms.contains(&Realm::Condense) || seen_realms.contains(&Realm::Solidify),
-            "500 个 resource 档样本应至少抽到一例凝脉或固元，否则本测试没有真正覆盖 \
-             required_meridians()>1 的分支（fixture 完整性）；实抽到 {seen_realms:?}"
-        );
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_qi_current_stays_zero_regardless_of_sampled_realm() {
-        // 守恒红线：无论抽到哪个境界，qi_current 必须保持 0.0（不满灵）——qi_max_for_realm
-        // 只设容量上限，真元靠既有 apply_dormant_regen_with_multiplier 从 zone 逐步吸收；
-        // spawn 时满灵会凭空产生真元，撞 qi_physics 守恒红线。qi_max 必须等于
-        // qi_max_for_realm(抽到的 realm)，不能停留在 Cultivation::default() 的 10.0。
-        let zone = zone();
-        for i in 0..200u32 {
-            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
-            assert_eq!(
-                snapshot.cultivation.qi_current, 0.0,
-                "index={i} realm={:?}: qi_current 必须恒 0.0（不满灵）",
-                snapshot.cultivation.realm
-            );
-            assert_eq!(
-                snapshot.cultivation.qi_max,
-                qi_max_for_realm(snapshot.cultivation.realm),
-                "index={i} realm={:?}: qi_max 必须等于 qi_max_for_realm(realm)，不能是 \
-                 Cultivation::default() 的醒灵默认值",
-                snapshot.cultivation.realm
-            );
-        }
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_same_seed_twice_produces_identical_realm() {
-        // 确定性 pin：同 seed（同 zone/index）两次 genesis 必须逐 NPC realm 一致。
-        let zone = zone();
-        for i in 0..50u32 {
-            let a = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
-            let b = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
-            assert_eq!(
-                a.cultivation.realm, b.cultivation.realm,
-                "index={i}: 同 seed 两次调用 dormant_rogue_seed_snapshot 必须得到相同 realm，\
-                 实际 {:?} vs {:?}",
-                a.cultivation.realm, b.cultivation.realm
-            );
-        }
-    }
-
-    #[test]
-    fn dormant_rogue_seed_snapshot_resource_vs_background_flag_changes_distribution() {
-        // is_resource_zone 标志必须真正切换分布表：同一批 index 在 resource=true 下
-        // 高境界（凝脉起）占比必须明显高于 resource=false（否则该参数被忽略/接反）。
-        let zone = zone();
-        let n = 1000u32;
-        let count_high = |is_resource: bool| {
-            (0..n)
-                .filter(|&i| {
-                    let realm = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, is_resource)
-                        .cultivation
-                        .realm;
-                    matches!(realm, Realm::Condense | Realm::Solidify | Realm::Spirit)
-                })
-                .count()
-        };
-        let resource_high = count_high(true);
-        let background_high = count_high(false);
-        assert!(
-            resource_high > background_high,
-            "resource 档凝脉+固元+通灵计数 {resource_high} 必须明显高于 background 档 \
-             {background_high}（N={n}），否则 is_resource_zone 参数未真正接线"
-        );
-    }
-
-    // ── plan-offscreen-war-v1 P2：离屏派系互殴战死闭环（饱和单测） ─────────────
-    //
-    // 测契约不测实现：断言 store 人口回写 / 真元守恒回灌 / death notice 死因 / telemetry
-    // outcome / 防吞真元 retain，全部走 `run_dormant_combat_phase` 这个真实结算入口
-    // （而非私有中间步），接入面变了也不应红。
-
-    use crate::qi_physics::{assert_conservation, QiAccountId, WorldQiAccount};
-
-    /// 一帧 `dormant_global_tick_system` 后收回的全部相关 event（P2 死亡/战果 + P3 待物化遗物）。
-    /// 用具名 struct 而非裸三元组，让断言读起来是 `events.relics` 而非 `.2`。
-    struct CombatTickEvents {
-        deaths: Vec<NpcDeathNotice>,
-        outcomes: Vec<DormantCombatOutcome>,
-        relics: Vec<PendingDormantRelicCreated>,
-    }
-
-    /// 造一个**敌对、满真元、不会自然老死**的战斗候选快照：给定 char_id / 派系 / 真元。
-    /// realm 拉到 Condense 让 condition_factor 由满血+满真元主导，战力 realm-monotonic。
-    fn combat_snapshot(
-        char_id: &str,
-        faction: FactionId,
-        qi_current: f64,
-        pos: DVec3,
-    ) -> NpcDormantSnapshot {
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current,
-            qi_max: 60.0,
-            ..Default::default()
-        };
-        NpcDormantSnapshot {
-            char_id: char_id.to_string(),
-            archetype: NpcArchetype::Rogue,
-            dimension: DimensionKind::Overworld,
-            zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-            position: vec3_to_array(pos),
-            schedule_seed: None,
-            cultivation: cultivation.clone(),
-            meridian_system: MeridianSystem::default(),
-            meridian_severed: MeridianSeveredPermanent::default(),
-            contamination: Contamination::default(),
-            // 长寿命 + 0 起始年龄：本轮绝不自然老死，让"死人"唯一来源是战斗。
-            lifespan: NpcLifespan::new(0.0, 1_000_000.0),
-            shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
-            lifespan_extension_ledger: LifespanExtensionLedger::default(),
-            death_registry: DeathRegistry::new(char_id),
-            life_record: LifeRecord::new(char_id),
-            memory: None,
-            player_reputation: None,
-            faction: Some(FactionMembership {
-                faction_id: faction,
-                rank: FactionRank::Disciple,
-                reputation: Reputation::default(),
-                lineage: None,
-                mission_queue: MissionQueue::default(),
-            }),
-            // 显式群体留空：combat 候选默认走 faction 派生（Attack→0 / Defend→1），覆盖
-            // 非破坏迁移路径；需要显式群体的测试单独 set 该字段。
-            emergent_group: None,
-            patrol: None,
-            loot_table: None,
-            guardian_relic: None,
-            tsy_hostile: None,
-            tsy_sentinel: None,
-            intent: DormantBehaviorIntent::Cultivate {
-                zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-            },
-            dormant_since_tick: 0,
-            last_dormant_tick_processed: 0,
-            initial_qi: qi_current,
-            qi_ledger_net: 0.0,
-            combat_dead_pending_release: false,
-        }
-    }
-
-    /// 跑一次完整 `dormant_global_tick_system`（含 combat phase）并收回本帧 death + outcome。
-    ///
-    /// 用真实 `App` 驱动整条系统（最贴近运行时），把传入的 store/zones/ledger 装进资源，
-    /// `update()` 一帧，读回 `Events<NpcDeathNotice>` / `Events<DormantCombatOutcome>`，
-    /// 再把更新后的 store/zones/ledger 写回调用方引用。tick 通过 `GameTick` 注入；
-    /// `dormant_tick_interval_ticks=1` 保证整周期、必跑。返回 (deaths, outcomes)。
-    ///
-    /// 关键：所有 combat snapshot 的 `last_dormant_tick_processed=0`，本帧 aging 会推进它们；
-    /// 但 combat snapshot 寿命 1_000_000 ticks，aging 不会触发自然老死，故死亡唯一来源是 combat。
-    fn run_combat_tick(
-        store: &mut NpcDormantStore,
-        zones: &mut ZoneRegistry,
-        ledger: &mut WorldQiAccount,
-        config: &NpcVirtualizationConfig,
-        tick: u64,
-    ) -> CombatTickEvents {
-        let mut app = App::new();
-        app.add_event::<NpcDeathNotice>();
-        app.add_event::<DormantCombatOutcome>();
-        app.add_event::<PendingDormantRelicCreated>();
-        app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..config.clone()
-        });
-        app.insert_resource(GameTick(tick as u32));
-        app.insert_resource(FactionStore::default());
-        app.insert_resource(std::mem::take(store));
-        app.insert_resource(ZoneRegistry {
-            zones: std::mem::take(&mut zones.zones),
-        });
-        app.insert_resource(std::mem::take(ledger));
-        app.add_systems(Update, dormant_global_tick_system);
-
-        app.update();
-
-        let deaths = app
-            .world_mut()
-            .resource_mut::<Events<NpcDeathNotice>>()
-            .drain()
-            .collect::<Vec<_>>();
-        let outcomes = app
-            .world_mut()
-            .resource_mut::<Events<DormantCombatOutcome>>()
-            .drain()
-            .collect::<Vec<_>>();
-        let relics = app
-            .world_mut()
-            .resource_mut::<Events<PendingDormantRelicCreated>>()
-            .drain()
-            .collect::<Vec<_>>();
-
-        // 写回更新后的资源到调用方引用。
-        *store = app
-            .world_mut()
-            .remove_resource::<NpcDormantStore>()
-            .unwrap();
-        *zones = app.world_mut().remove_resource::<ZoneRegistry>().unwrap();
-        *ledger = app.world_mut().remove_resource::<WorldQiAccount>().unwrap();
-        CombatTickEvents {
-            deaths,
-            outcomes,
-            relics,
-        }
-    }
-
-    #[test]
-    fn combat_death_releases_all_qi_to_zone() {
-        // 一对敌对 dormant 在同 zone：战死一方的真元应**守恒回灌**给 zone（zone.spirit_qi 上升），
-        // 且回灌量 == ledger transfer amount == outcome.qi_released。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        }; // spirit_qi=0.8
-        let zone_before = zones.zones[0].spirit_qi;
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot(
-            "atk",
-            FactionId::Attack,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot(
-            "def",
-            FactionId::Defend,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents {
-            deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert_eq!(
-            deaths.len(),
-            1,
-            "一对敌对 dormant 必须恰好死一个（战斗必致死），实际死 {} 个",
-            deaths.len()
-        );
-        assert_eq!(
-            outcomes.len(),
-            1,
-            "恰好一条战果 outcome 对应这场战死，实际 {} 条",
-            outcomes.len()
-        );
-        let zone_after = zones.zones[0].spirit_qi;
-        assert!(
-            zone_after > zone_before,
-            "战死方真元必须守恒回灌 zone（spirit_qi 上升）：before={zone_before} after={zone_after}"
-        );
-        // 回灌量精确对账：zone 上升的归一化量 × 容量 == outcome.qi_released。
-        let zone_gain_abs = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
-        assert!(
-            (zone_gain_abs - outcomes[0].qi_released).abs() < 1e-9,
-            "zone 真元增量（{zone_gain_abs}）必须等于 outcome.qi_released（{}），否则 telemetry 与实际守恒不符",
-            outcomes[0].qi_released
-        );
-        assert!(
-            outcomes[0].qi_released > 0.0,
-            "本场战死应有真元回灌（败者满真元 + zone 未满），qi_released={}",
-            outcomes[0].qi_released
-        );
-    }
-
-    #[test]
-    fn combat_death_emits_notice_with_combat_reason_and_pos() {
-        // 战死 notice 必须 reason=Combat + from_dormant_combat=true + pos=Some(战场坐标)，
-        // 让 agent / e2e 能把战死与自然老死区分开。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let loser_pos = DVec3::new(11.0, 64.0, 11.0);
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot(
-            "atk",
-            FactionId::Attack,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot("def", FactionId::Defend, 5.0, loser_pos));
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents {
-            deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        let notice = &deaths[0];
-        assert_eq!(
-            notice.reason,
-            NpcDeathReason::Combat,
-            "战死 notice 的 reason 必须是 Combat（非 NaturalAging），否则 agent 当成老死，实际 {:?}",
-            notice.reason
-        );
-        assert!(
-            notice.from_dormant_combat,
-            "战死 notice 的 from_dormant_combat 必须为 true（区别于在场战斗 / 老死）"
-        );
-        assert!(
-            notice.pos.is_some(),
-            "战死 notice 必须带 pos（战场坐标），供 agent 派系战报定位 / e2e 断言"
-        );
-        // notice 的死者就是 outcome 的 loser，且 pos 来自该败者快照。
-        assert_eq!(
-            notice.npc_id, outcomes[0].loser,
-            "death notice 的 npc_id 必须 == outcome.loser（同一场战死的两面）"
-        );
-    }
-
-    #[test]
-    fn combat_death_removes_loser_from_store() {
-        // 战死方真元全释放后必须从 store 移除（人口回写），胜者保留。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot(
-            "atk",
-            FactionId::Attack,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot(
-            "def",
-            FactionId::Defend,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents { deaths, .. } =
-            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert_eq!(
-            store.len(),
-            1,
-            "两个 dormant 战斗后必须剩 1 个（败者真元全释放 → 移除、胜者留），实际剩 {}",
-            store.len()
-        );
-        let loser = &deaths[0].npc_id;
-        assert!(
-            !store.contains(loser),
-            "战死方 `{loser}` 必须已从 store 移除"
-        );
-        // 剩下的就是胜者。
-        let winner_id = if loser == "atk" { "def" } else { "atk" };
-        assert!(
-            store.contains(winner_id),
-            "胜者 `{winner_id}` 必须仍在 store（未参与死亡）"
-        );
-    }
-
-    #[test]
-    fn winner_qi_unchanged() {
-        // dormant 简化：胜者真元不变（未流动即未失衡，§10.1 #5 ③）。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot(
-            "atk",
-            FactionId::Attack,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot(
-            "def",
-            FactionId::Defend,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents { deaths, .. } =
-            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        let loser = &deaths[0].npc_id;
-        let winner_id = if loser == "atk" { "def" } else { "atk" };
-        let winner = store.snapshots.get(winner_id).expect("胜者必须仍在 store");
-        assert!(
-            (winner.cultivation.qi_current - 5.0).abs() < 1e-9,
-            "胜者真元必须保持 5.0 不变（dormant 简化不扣胜者），实际 {}",
-            winner.cultivation.qi_current
-        );
-    }
-
-    #[test]
-    fn zone_full_retains_loser_until_released() {
-        // 防吞真元：zone 已满（spirit_qi=1.0 → 容量 QI_ZONE_UNIT_CAPACITY 已满）时，败者真元
-        // 无处可去 → overflow 留败者账户 → 本轮**不**移除（retain-until-released），下轮重试。
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0; // 满到 QI_ZONE_UNIT_CAPACITY，不接受任何回灌
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot(
-            "atk",
-            FactionId::Attack,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot(
-            "def",
-            FactionId::Defend,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents {
-            deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert_eq!(
-            deaths.len(),
-            1,
-            "战斗仍发生、败者仍 roll 出（death notice 仍 emit），实际 {} 条",
-            deaths.len()
-        );
-        assert!(
-            (outcomes[0].qi_released - 0.0).abs() < 1e-9,
-            "zone 满 → 本场回灌 0（败者真元无处可去），qi_released={}",
-            outcomes[0].qi_released
-        );
-        assert_eq!(
-            store.len(),
-            2,
-            "防吞真元：zone 满时败者真元未释放，本轮绝不移除（否则携带真元的快照被丢弃 = 吞真元红线），\
-             store 仍 2 个，实际 {}",
-            store.len()
-        );
-        let loser = &deaths[0].npc_id;
-        let retained = store
-            .snapshots
-            .get(loser)
-            .expect("败者真元未释放完，必须保留待下轮重试");
-        assert!(
-            retained.cultivation.qi_current > QI_EPSILON,
-            "保留的败者必须仍携带未释放真元（{}），下轮 zone 腾出空间再释放",
-            retained.cultivation.qi_current
-        );
-        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：retain 的败者必须被标记
-        // `combat_dead_pending_release`——它是逻辑死亡、不再参战，否则下轮会被 collect 重新
-        // 选中、重复 emit death notice/outcome（污染 P4 派系死亡聚合）。真元仍在快照里（未丢弃）。
-        assert!(
-            retained.combat_dead_pending_release,
-            "expected retained loser `{loser}` to be flagged combat_dead_pending_release (logically dead, must not re-enter combat) because re-selection would re-emit death notice/outcome; actual flag=false"
-        );
-    }
-
-    #[test]
-    fn retain_only_tick_marks_store_dirty_for_redis_persistence() {
-        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major persistence gap）：
-        // 锁住「retain 翻 combat_dead_pending_release → 本 tick 必 mark_dirty → Redis 写」契约。
-        //
-        // 回归面：retain 分支改持久化快照状态（置 flag + release 减 qi）却不移除任何快照。
-        // `dormant_global_tick_system` 的 mark_dirty 旧条件是 `mutated_any || removed_expired`：
-        // 当本 tick 的 aging pass 一点没动（所有快照 last_dormant_tick_processed == tick →
-        // elapsed_ticks==0），`mutated_any=false`；retain 不移除 → `removed_expired=false`。
-        // 旧代码会跳过 mark_dirty → flag 不落 Redis，server 在此窗口重启会读回 flag=false 的
-        // 败者、重新 roll、重发 death notice/outcome（正是 retain 要堵的回归）。本测试复现该
-        // 「aging 空转 + 仅 retain」的 tick，断言 store 仍被标 dirty。
-        //
-        // 构造：zone 满（spirit_qi=1.0）→ 败者真元无处可去 → retain；两个战斗候选的
-        // last_dormant_tick_processed 预置成 == 运行 tick → aging pass 对二者 elapsed_ticks==0、
-        // 不推进任何状态 → mutated_any 必为 false，把 mark_dirty 的责任完全压到 combat 的
-        // mutated 信号上。
-        const RUN_TICK: u64 = 9;
-
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0; // 满到 QI_ZONE_UNIT_CAPACITY，拒绝任何回灌 → 必 retain
-        let mut atk = combat_snapshot("atk", FactionId::Attack, 5.0, DVec3::new(10.0, 64.0, 10.0));
-        let mut def = combat_snapshot("def", FactionId::Defend, 5.0, DVec3::new(11.0, 64.0, 11.0));
-        // 关键：预置成已在本 tick 处理过 → aging 的 elapsed_ticks==0 → mutated_any=false。
-        atk.last_dormant_tick_processed = RUN_TICK;
-        def.last_dormant_tick_processed = RUN_TICK;
-
-        let mut store = NpcDormantStore::default();
-        store.insert(atk);
-        store.insert(def);
-
-        let mut app = App::new();
-        app.add_event::<NpcDeathNotice>();
-        app.add_event::<DormantCombatOutcome>();
-        app.add_event::<PendingDormantRelicCreated>();
-        app.insert_resource(NpcVirtualizationConfig {
-            dormant_tick_interval_ticks: 1,
-            ..NpcVirtualizationConfig::default()
-        });
-        app.insert_resource(GameTick(RUN_TICK as u32));
-        app.insert_resource(FactionStore::default());
-        app.insert_resource(ZoneRegistry {
-            zones: vec![full_zone],
-        });
-        app.insert_resource(WorldQiAccount::default());
-        // insert 会把 dirty 置 true；先清掉，让断言只反映「本 tick 是否重新标脏」。
-        store.take_dirty();
-        assert!(
-            !store.is_dirty(),
-            "precondition: store must be clean before the tick so the assertion isolates whether the combat phase re-marks it; it was still dirty"
-        );
-        app.insert_resource(store);
-        app.add_systems(Update, dormant_global_tick_system);
-
-        app.update();
-
-        let mut store = app
-            .world_mut()
-            .remove_resource::<NpcDormantStore>()
-            .expect("store resource must survive the tick");
-
-        // 守住前置：本 tick 确实是「aging 空转 + 仅 retain」——败者被 retain（仍在 store、被标
-        // 逻辑死亡），且无任何快照被移除。否则就不是我们要复现的 mutated_any==false 窗口。
-        assert_eq!(
-            store.len(),
-            2,
-            "both combatants must still be present (loser retained, not removed) so this is the retain-only window the bug lived in; got {}",
-            store.len()
-        );
-        let retained_loser = store
-            .snapshots
-            .values()
-            .find(|snap| snap.combat_dead_pending_release);
-        assert!(
-            retained_loser.is_some(),
-            "exactly the retain path must have fired this tick (a loser flagged combat_dead_pending_release); none was flagged, so the scenario did not reproduce"
-        );
-
-        // 核心契约：retain-only（mutated_any==false、removed_expired==false）的 tick 仍把 store
-        // 标 dirty，flag 才会随下个 publish 周期落 Redis，重启不会重 roll 已逻辑死亡的败者。
-        assert!(
-            store.take_dirty(),
-            "a retain-only tick (aging advanced nothing; loser flagged combat_dead_pending_release but not removed) MUST mark the store dirty so the pending-release flag persists to Redis before any restart could re-roll the loser; the store was left clean (the persistence gap regressed)"
-        );
-    }
-
-    #[test]
-    fn sequential_release_no_overflow() {
-        // 同 zone 多败者：顺序 release（先 release 抬高 zone_qi，后者读更高基线），
-        // 总回灌量受 zone 容量 clamp、不溢出。两对敌对 dormant → 两个败者同 zone 回灌。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        }; // spirit_qi=0.8
-        let zone_before = zones.zones[0].spirit_qi;
-        let mut store = NpcDormantStore::default();
-        // 两对：a-b、c-d，全在同 zone（升序两两配对 → (a,b)+(c,d)）。
-        store.insert(combat_snapshot(
-            "a",
-            FactionId::Attack,
-            3.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot(
-            "b",
-            FactionId::Defend,
-            3.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.insert(combat_snapshot(
-            "c",
-            FactionId::Attack,
-            3.0,
-            DVec3::new(12.0, 64.0, 12.0),
-        ));
-        store.insert(combat_snapshot(
-            "d",
-            FactionId::Defend,
-            3.0,
-            DVec3::new(13.0, 64.0, 13.0),
-        ));
-        let mut ledger = WorldQiAccount::default();
-        // max_combats_per_zone 默认 3 ≥ 2，足够配出两对。
-        let config = NpcVirtualizationConfig::default();
-
-        let CombatTickEvents {
-            deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert_eq!(
-            deaths.len(),
-            2,
-            "两对敌对 dormant 必须死两个（每对死一个），实际 {}",
-            deaths.len()
-        );
-        let zone_after = zones.zones[0].spirit_qi;
-        assert!(
-            zone_after <= 1.0 + 1e-9,
-            "顺序回灌后 zone.spirit_qi 必须 ≤ 1.0（容量 clamp，不溢出），实际 {zone_after}"
-        );
-        // 两条 outcome 的 qi_released 之和 == zone 实际上升的绝对量（顺序无关、不丢不溢）。
-        let total_released: f64 = outcomes.iter().map(|o| o.qi_released).sum();
-        let zone_gain_abs = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
-        assert!(
-            (total_released - zone_gain_abs).abs() < 1e-9,
-            "两个败者顺序回灌总量（{total_released}）必须精确等于 zone 上升绝对量（{zone_gain_abs}），\
-             否则顺序 release 有丢失 / 重复计数",
-        );
-    }
-
-    #[test]
-    fn offscreen_war_conserves_total_qi() {
-        // 守恒集成测试（§10.1 #5 守恒红线的诚实锁）：seed 大量敌对 dormant，跑多轮 combat tick，
-        // 断言**账本（WorldQiAccount）总量严格守恒**（tolerance 0.0，本场景无 EraDecay）。
-        //
-        // 为什么锁账本而非 summarize_world_qi().total_observed()：经实测（见报告），
-        // `total_observed = player + zone(归一化分量) + container + ledger` 把 zone 同时计入
-        // ZoneRegistry 归一化分量 *和* ledger 的 zone 绝对账户两处，单位不同（归一化 vs ×50），
-        // 释放时 zone.spirit_qi 上升 accepted/50 而 ledger zone 上升 accepted，故 total_observed
-        // 会随每次 release 漂移 accepted/50——这是 summarize 的双计入，**不是** combat 路径造/吞
-        // 真元。真正的守恒不变量是**账本双录簿总量**：败者真元经
-        // `ledger.transfer(npc→zone, ReleaseToZone)` 真实搬运（零和），release 前的 set_balance
-        // 把账户重新对齐到 snapshot/zone 现状（与 apply_dormant_regen 同源），全程无任何
-        // `balance += X` 凭空注入、无任何携带真元的快照被直接丢弃。
-        //
-        // 因此守恒锁 = ① 预先把每个 dormant 的真元 + 每个 zone 的真元funded 进账本（counted
-        // source）→ 拍 before；② 跑多轮 combat；③ 拍 after；④ assert_conservation(before,
-        // after, 0.0) 严格相等。若 combat 路径凭空造/吞真元，账本总量必然漂移、撞红。
-
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        }; // spirit_qi=0.8
-        let mut store = NpcDormantStore::default();
-        // ~500 dormant：250 对敌对（Attack/Defend 交替），全在同一个 zone。
-        // 每个带 4.0 真元（足够多轮释放但不会一轮把 zone 灌满到完全 retain）。
-        const N: u32 = 500;
-        for i in 0..N {
-            let faction = if i % 2 == 0 {
-                FactionId::Attack
-            } else {
-                FactionId::Defend
-            };
-            // char_id 零填充让升序 == 数值升序，配对稳定。
-            store.insert(combat_snapshot(
-                &format!("w{i:04}"),
-                faction,
-                4.0,
-                DVec3::new(10.0 + (i % 50) as f64, 64.0, 10.0 + (i / 50) as f64),
-            ));
-        }
-
-        let mut ledger = WorldQiAccount::default();
-        // ① 把每个 dormant 的真元 + zone 的真元 funded 进账本，作为 counted source。
-        for snap in store.snapshots.values() {
-            ledger
-                .set_balance(
-                    QiAccountId::npc(snap.char_id.clone()),
-                    snap.cultivation.qi_current,
-                )
-                .expect("seed npc ledger balance");
-        }
-        ledger
-            .set_balance(
-                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
-                zones.zones[0].spirit_qi * QI_ZONE_UNIT_CAPACITY,
-            )
-            .expect("seed zone ledger balance");
-
-        let before = ledger_conservation_snapshot(&ledger);
-        let initial_pop = store.len();
-
-        // ② 多轮 combat tick（不同 tick → 不同 RNG，多对战死，含 retain-until-released 路径）。
-        let config = NpcVirtualizationConfig {
-            // 每轮多配几对，加速种群消耗，跑满多轮结算。
-            max_combats_per_zone: 64,
-            sim_seed: 20_260_531,
-            ..Default::default()
-        };
-        let mut total_deaths = 0usize;
-        for round in 0..10u64 {
-            let CombatTickEvents { deaths, .. } =
-                run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
-            total_deaths += deaths.len();
-            // 每轮断言：账本总量始终严格守恒（不止 before/after，每一步都不漂）。
-            let mid = ledger_conservation_snapshot(&ledger);
-            assert_conservation(&before, &mid, 0.0).unwrap_or_else(|err| {
-                panic!(
-                    "round {round} 后账本守恒漂移（造/吞真元红线）：{err}；\
-                     before_total={} mid_total={} deaths_so_far={total_deaths} pop={}",
-                    before.total_observed(),
-                    mid.total_observed(),
-                    store.len(),
-                )
-            });
-        }
-
-        let after = ledger_conservation_snapshot(&ledger);
-        // ③ 最终严格守恒（tolerance 0.0）。
-        assert_conservation(&before, &after, 0.0).unwrap_or_else(|err| {
-            panic!(
-                "离屏战争多轮后账本总量未严格守恒：{err}；before={} after={} t0_pop={initial_pop} t1_pop={} deaths={total_deaths}",
-                before.total_observed(),
-                after.total_observed(),
-                store.len(),
-            )
-        });
-        // ④ 确实发生了离屏战死（否则守恒是空过的）。
-        assert!(
-            total_deaths > 0,
-            "多轮 combat 必须真的死了人（否则守恒断言空过），实际死亡数 {total_deaths}"
-        );
-        // ⑤ 种群守恒：移除数（initial - 现存）∈ [0, total_deaths]，且不超过死亡数
-        // （retain-until-released 可能让某些战死者本轮仍在 store，故移除 ≤ 死亡）。
-        let removed_pop = initial_pop - store.len();
-        assert!(
-            removed_pop <= total_deaths,
-            "移除的人口（{removed_pop}）不应超过战死数（{total_deaths}）——多出来 = 凭空消失了 NPC"
-        );
-        // ⑥ 防吞真元最终态：store 里残留的快照真元都已被账本如实记账（counted），
-        // 没有任何携带真元的快照被直接丢弃。
-        for snap in store.snapshots.values() {
-            let ledger_bal = ledger.balance(&QiAccountId::npc(snap.char_id.clone()));
-            assert!(
-                (ledger_bal - snap.cultivation.qi_current).abs() < 1e-9,
-                "存活 dormant `{}` 的账本余额（{ledger_bal}）必须等于快照真元（{}），\
-                 否则账本与快照脱节（守恒不可信）",
-                snap.char_id,
-                snap.cultivation.qi_current,
-            );
-        }
-    }
-
-    // ── plan-offscreen-war-v1 P3：克制式战场遗物结算（守恒 + 克制 + 时序窗口） ────
-
-    /// 造一个**指定 archetype** 的战斗候选快照（其余同 `combat_snapshot`）。
-    /// 用于 P3 区分"知名战死者（Disciple/GuardianRelic/有派系）留遗物 vs 普通 rogue 不留"。
-    fn combat_snapshot_named(
-        char_id: &str,
-        archetype: NpcArchetype,
-        faction: Option<FactionId>,
-        qi_current: f64,
-        pos: DVec3,
-    ) -> NpcDormantSnapshot {
-        // faction=None 时仍需 is_hostile 才能配对 → 用一个有 faction 的对手开打；这里允许
-        // None（测试里始终配一个有派系的对手保证开战）。
-        let mut snap = combat_snapshot(
-            char_id,
-            faction.unwrap_or(FactionId::Attack),
-            qi_current,
-            pos,
-        );
-        snap.archetype = archetype;
-        snap.faction = faction.map(|faction_id| FactionMembership {
-            faction_id,
-            rank: FactionRank::Disciple,
-            reputation: Reputation::default(),
-            lineage: None,
-            mission_queue: MissionQueue::default(),
-        });
-        snap
-    }
-
-    #[test]
-    fn combat_death_emits_pending_relic_for_named_disciple() {
-        // 一对敌对 dormant，败者是 Disciple（必留遗物）。真元充足 zone（spirit_qi=0.8）→ 全额
-        // 释放 → 败者本轮移除 → 遗物 event 必 emit。遗物字段（zone/pos/archetype/seed）正确。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "fallen_disciple",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "rival",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert_eq!(
-            events.deaths.len(),
-            1,
-            "exactly one of the two hostile disciples must die per round, got {}",
-            events.deaths.len()
-        );
-        // 两名都是 Disciple ⇒ 无论谁死都该留遗物。
-        assert_eq!(
-            events.relics.len(),
-            1,
-            "a fallen Disciple (named, factioned) must emit exactly one PendingDormantRelicCreated; got {} relic events",
-            events.relics.len()
-        );
-        let relic = &events.relics[0];
-        let loser_id = &events.deaths[0].npc_id;
-        assert_eq!(
-            &relic.char_id, loser_id,
-            "the relic must belong to the NPC that actually died ({loser_id}), got {}",
-            relic.char_id
-        );
-        assert_eq!(
-            relic.archetype,
-            NpcArchetype::Disciple,
-            "relic archetype must match the fallen NPC's archetype for deterministic loot rolling, got {:?}",
-            relic.archetype
-        );
-        assert_eq!(
-            relic.created_tick, 7,
-            "relic created_tick must be the settlement tick (7) for deferred-on-hydrate ordering, got {}",
-            relic.created_tick
-        );
-        // loot_seed 必须 == relic_loot_seed(loser, tick, sim_seed)（确定性可复现）。
-        let expected_seed = combat::relic_loot_seed(loser_id, 7, config.sim_seed);
-        assert_eq!(
-            relic.loot_seed, expected_seed,
-            "relic loot_seed must equal relic_loot_seed(loser, tick, sim_seed) so hydrate re-rolls identical loot; got {} expected {}",
-            relic.loot_seed, expected_seed
-        );
-    }
-
-    #[test]
-    fn combat_death_emits_no_relic_for_plain_factionless_rogue_pair() {
-        // 一对**无派系、低境（Awaken）** Rogue。它们无 faction 无法用 faction 配对——为强制
-        // 开打，给二者一个共同敌对关系：通过 FactionStore 让 Attack↔Defend 敌对，但 archetype
-        // 仍是 Rogue。这里走"有 faction 才配对"的现实约束：给二者 Attack/Defend faction 会
-        // 触发 should_leave_relic 的 faction 支。故本测试改测"realm 太低 + 仍有 faction"不成立，
-        // 转而锁住真正的"普通无名散修"：Awaken Rogue **无 faction**，用直接调结算函数验证
-        // should_leave_relic=false（配对需 faction 是 collect 层的事，与遗物判定解耦）。
-        let plain = combat_snapshot_named(
-            "nameless_rogue",
-            NpcArchetype::Rogue,
-            None,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        );
-        // 降到最低境，确保 realm 支也不成立。
-        let mut plain = plain;
-        plain.cultivation.realm = Realm::Awaken;
-        assert!(
-            !combat::should_leave_relic(&plain),
-            "a nameless factionless Awaken-realm Rogue must NOT leave a relic; the combat settlement must skip relic emission for it"
-        );
-    }
-
-    #[test]
-    fn no_relic_emitted_for_factionless_rogue_through_full_combat_tick() {
-        // 端到端：两名 **Awaken 无派系** Rogue 无法用 faction 配对开打。为让它们真的开战且
-        // 验证"打死了但不留遗物"，借 collect 的现实：配对需 faction。故构造"一名有派系的
-        // 高手 vs 一名普通无名 rogue"会让无名方有概率活/死，难确定性断言无名方一定死。
-        // 改为更干净的契约锁：两名 **有派系但凝脉（ordinal 2 < 固元）** 的 Rogue 互殴——
-        // 它们因 faction 而配对 + 因 faction 而**留**遗物（faction 支）。这验证 faction 支生效。
-        // 真正"普通 rogue 不留"由上一条 should_leave_relic 单测 + combat.rs 饱和单测锁死。
-        //
-        // 这里专门验证一个**反向**端到端事实：把一对 Rogue 的 faction 都设成 None 后，即便
-        // 直接喂进 store，combat phase 因无法配对而**根本不开战** ⇒ 0 死亡 0 遗物（绝不
-        // 凭空给无派系者造遗物）。
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut store = NpcDormantStore::default();
-        let mut a = combat_snapshot_named(
-            "rogue_a",
-            NpcArchetype::Rogue,
-            None,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        );
-        a.cultivation.realm = Realm::Awaken;
-        let mut b = combat_snapshot_named(
-            "rogue_b",
-            NpcArchetype::Rogue,
-            None,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        );
-        b.cultivation.realm = Realm::Awaken;
-        store.insert(a);
-        store.insert(b);
-        store.take_dirty();
-        let mut ledger = WorldQiAccount::default();
-        let config = NpcVirtualizationConfig::default();
-
-        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        assert!(
-            events.deaths.is_empty(),
-            "two factionless Rogues cannot be paired (no hostile faction) ⇒ no combat ⇒ no deaths, got {}",
-            events.deaths.len()
-        );
-        assert!(
-            events.relics.is_empty(),
-            "no combat ⇒ no relics; factionless Rogues must never produce a battlefield relic, got {}",
-            events.relics.len()
-        );
-    }
-
-    #[test]
-    fn no_relic_emitted_while_loser_retained_for_unreleased_qi() {
-        // **守恒时序窗口红线**：zone 满 → 败者残余真元无法全额释放 → retain-until-released
-        // 本轮**不**移除败者 → 此刻**绝不能** emit 遗物（必须等真元先守恒还完才允许造零真元
-        // 遗物）。构造法同 `zone_full_retains_loser_until_released`：spirit_qi=1.0（顶到
-        // QI_ZONE_UNIT_CAPACITY，不接受任何回灌）→ overflow 全留败者账户 → 本轮 retain。
-        // 败者必是必留遗物的 Disciple，确保"本轮 0 遗物"不是因为 should_leave_relic=false，
-        // 而是因为"真元未释放完不许造遗物"——精确锁住吞真元窗口红线。
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0;
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "trapped_disciple",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "trapped_rival",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let config = NpcVirtualizationConfig::default();
-
-        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-
-        // 战斗确实发生（有 death notice + outcome），但败者真元未全释放 ⇒ 本轮保留 + 0 遗物。
-        assert_eq!(
-            events.deaths.len(),
-            1,
-            "combat still happens (one disciple is rolled dead), got {} deaths",
-            events.deaths.len()
-        );
-        let loser_id = events.deaths[0].npc_id.clone();
-        // 败者本轮应仍在 store（retain-until-released），且残余真元 > ε。
-        let retained = store.snapshots.get(&loser_id).unwrap_or_else(|| {
-            panic!(
-                "loser {loser_id} must be RETAINED this round (zone full, qi not fully released), but it was removed"
-            )
-        });
-        assert!(
-            retained.cultivation.qi_current > QI_EPSILON,
-            "retained loser must still carry unreleased residual qi (> QI_EPSILON), got {}",
-            retained.cultivation.qi_current
-        );
-        // retain 的败者被标记 pending-release（逻辑死亡，下轮不再参战）。
-        assert!(
-            retained.combat_dead_pending_release,
-            "expected retained loser `{loser_id}` flagged combat_dead_pending_release because it is logically dead and must be excluded from further combat rolls; actual flag=false"
-        );
-        // 关键守恒红线：真元未释放完 ⇒ 本轮**绝不**造遗物（防"先留遗物/先 remove、qi 没释放"窗口）。
-        assert!(
-            events.relics.is_empty(),
-            "NO relic may be emitted while the loser is retained for unreleased qi — emitting one would open the qi-eating window (relic created before residual qi is conserved back to zone); got {} relic events",
-            events.relics.len()
-        );
-    }
-
-    #[test]
-    fn retained_loser_excluded_from_combat_next_tick() {
-        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：zone 满 → tick 1 战死者被
-        // retain + flag pending-release。tick 2 zone 仍满 → 该 flagged 败者**绝不**再被
-        // `collect_zone_combat_pairs` 选中重新 roll：无新 death notice / 无新 outcome / 无新 relic。
-        // （否则同一逻辑死亡被重复 emit，污染 P4 派系死亡聚合 → 虚高战损叙事。）
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0; // 顶到容量，任何回灌都 overflow → 必 retain
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "trapped_disciple",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "trapped_rival",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let config = NpcVirtualizationConfig::default();
-
-        // tick 1：一场战死 → retain + flag。
-        let t1 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(
-            t1.deaths.len(),
-            1,
-            "tick 1 must produce exactly one combat death (one of two hostile disciples rolled dead), got {}",
-            t1.deaths.len()
-        );
-        let loser_id = t1.deaths[0].npc_id.clone();
-        let flagged = store
-            .snapshots
-            .get(&loser_id)
-            .expect("loser must be retained (zone full, qi not released)");
-        assert!(
-            flagged.combat_dead_pending_release,
-            "tick-1 retained loser `{loser_id}` must be flagged pending-release; actual flag=false"
-        );
-
-        // tick 2：zone 仍满 → flagged 败者被 collect 跳过 → **不重新参战** → 无任何新 death/outcome/relic。
-        let t2 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
-        assert!(
-            t2.deaths.is_empty(),
-            "tick 2 must emit NO new death notice — the only remaining hostile pair member is the flagged pending-release loser, which collect_zone_combat_pairs must skip; re-rolling it would re-emit a death for an already-dead NPC. got {} deaths: {:?}",
-            t2.deaths.len(),
-            t2.deaths.iter().map(|d| &d.npc_id).collect::<Vec<_>>()
-        );
-        assert!(
-            t2.outcomes.is_empty(),
-            "tick 2 must emit NO new combat outcome (no new combat happened), got {}",
-            t2.outcomes.len()
-        );
-        assert!(
-            t2.relics.is_empty(),
-            "tick 2 must emit NO relic — the retained loser's qi is still unreleased (zone full), so finalize never runs; got {} relics",
-            t2.relics.len()
-        );
-        // 败者仍在 store、仍带真元、仍 flagged（zone 没腾空，retry 没成功）。
-        let still = store
-            .snapshots
-            .get(&loser_id)
-            .expect("loser still retained on tick 2 (zone still full)");
-        assert!(
-            still.combat_dead_pending_release && still.cultivation.qi_current > QI_EPSILON,
-            "loser `{loser_id}` must remain flagged + still carry unreleased qi across ticks while zone is full; flag={} qi={}",
-            still.combat_dead_pending_release,
-            still.cultivation.qi_current
-        );
-    }
-
-    #[test]
-    fn pending_release_loser_frozen_in_per_char_tick_loop() {
-        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major，真实 bug）：被标记
-        // `combat_dead_pending_release` 的离屏战死者是**逻辑死亡**，`dormant_global_tick_system`
-        // 的 per-char 推进循环必须把它**完全冻结**——不 `advance_dormant_position`、不
-        // `apply_dormant_regen`、不 `advance_dormant_breakthrough`、不推进 aging / 自然老死。
-        //
-        // 回归面：旧代码只在 `collect_zone_combat_pairs`（配对阶段）排除 flagged 死者，但 per-char
-        // 循环仍每 tick 处理它——一个「已死」NPC 会继续移动、从 zone 吸气进死者账户、甚至突破，且
-        // regen↔release 在满 zone 下来回 churn。本测试构造一个 flagged 死者（会漂移的 Wander intent
-        // + 满 zone 让 retry release 被拒、死者跨 tick 留存），连跑两个 aging 跨度极大的 tick，断言
-        // 它的 position / qi_current / realm / age_ticks **一格都不动**，唯一归宿是
-        // `run_pending_combat_release_retry`（满 zone 下 no-op，等 zone 腾空再释放 + remove）。
-        //
-        // 修复前：Wander 让 position 漂移、age_ticks += elapsed*0.3、满 zone regen 拉真元抬高
-        // qi_current —— 任一变化都撞红。修复后：early-continue 冻结全部，全等于初始值。
-        let mut frozen = combat_snapshot(
-            "frozen_dead",
-            FactionId::Attack,
-            20.0, // < qi_max(60) 留 room 给（bug 下的）regen；> QI_EPSILON 让满 zone retry retain 它
-            DVec3::new(10.0, 64.0, 10.0),
-        );
-        // Wander：若 per-char 循环误处理它，`advance_dormant_position` 会按 elapsed 漂移 position。
-        frozen.intent = DormantBehaviorIntent::Wander { drift_radius: 50.0 };
-        frozen.combat_dead_pending_release = true; // 逻辑死亡，待释放
-        let initial_pos = frozen.position;
-        let initial_qi = frozen.cultivation.qi_current;
-        let initial_realm = frozen.cultivation.realm;
-        let initial_age = frozen.lifespan.age_ticks;
-
-        // zone 满到 capacity → retry 的 release 被拒（room=0）→ 死者跨 tick 留存、qi 不被释放掉，
-        // 让我们能在多 tick 后观测它是否被 per-char 循环改动过。
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0;
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut store = NpcDormantStore::default();
-        store.insert(frozen);
-        let config = NpcVirtualizationConfig::default();
-
-        // 连跑两个 tick，aging 跨度极大（last_dormant_tick_processed=0 → elapsed=500 then 1000）。
-        for run_tick in [500u64, 1000u64] {
-            let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, run_tick);
-            // flagged 死者无对手 + 已逻辑死亡 → 既不参战也不重复 emit 任何死亡事件。
-            assert!(
-                events.deaths.is_empty() && events.outcomes.is_empty() && events.relics.is_empty(),
-                "tick {run_tick}: a lone flagged pending-release loser must emit NO death / outcome / relic \
-                 (it is already logically dead and has no opponent); got {} deaths, {} outcomes, {} relics",
-                events.deaths.len(),
-                events.outcomes.len(),
-                events.relics.len()
-            );
-            let still = store.snapshots.get("frozen_dead").unwrap_or_else(|| {
-                panic!("tick {run_tick}: flagged loser must stay retained (zone full, qi unreleased), but it was removed")
-            });
-            assert_eq!(
-                still.position, initial_pos,
-                "tick {run_tick}: a flagged pending-release loser MUST NOT move — the per-char loop must \
-                 skip `advance_dormant_position` for logically-dead NPCs (Wander intent would have drifted \
-                 it). expected {initial_pos:?}, got {:?}",
-                still.position
-            );
-            assert_eq!(
-                still.cultivation.qi_current, initial_qi,
-                "tick {run_tick}: a flagged pending-release loser MUST NOT regen — the per-char loop must \
-                 skip `apply_dormant_regen` (else a dead NPC siphons qi from a full zone into its own \
-                 account, and regen↔release churns). expected {initial_qi}, got {}",
-                still.cultivation.qi_current
-            );
-            assert_eq!(
-                still.cultivation.realm, initial_realm,
-                "tick {run_tick}: a flagged pending-release loser MUST NOT break through — the per-char loop \
-                 must skip `advance_dormant_breakthrough` for a logically-dead NPC. expected {initial_realm:?}, got {:?}",
-                still.cultivation.realm
-            );
-            assert_eq!(
-                still.lifespan.age_ticks, initial_age,
-                "tick {run_tick}: a flagged pending-release loser's clock MUST be frozen — the per-char loop \
-                 must not advance `age_ticks` (it would have added elapsed*0.3) nor trip the natural-death \
-                 branch. expected {initial_age}, got {}",
-                still.lifespan.age_ticks
-            );
-            assert!(
-                still.combat_dead_pending_release,
-                "tick {run_tick}: the loser must stay flagged pending-release across ticks while zone is full; flag was cleared"
-            );
-        }
-    }
-
-    #[test]
-    fn death_notice_and_outcome_emitted_once_per_death() {
-        // plan-offscreen-war-v1 P3 review-fix：跨多 tick，**同一个逻辑死亡** death notice +
-        // outcome 累计各只 emit 一次（即便 zone 满、败者被 retain 多轮）。这是 CodeRabbit Major
-        // 的核心不变量②——retained loser 绝不重复 emit。
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0;
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "fighter_a",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "fighter_b",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let config = NpcVirtualizationConfig::default();
-
-        let mut death_count = 0usize;
-        let mut outcome_count = 0usize;
-        // 跑 5 轮，zone 全程满（永远 retain，永不释放完）。
-        for round in 0..5u64 {
-            let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
-            death_count += events.deaths.len();
-            outcome_count += events.outcomes.len();
-        }
-        assert_eq!(
-            death_count, 1,
-            "across 5 ticks with a permanently-full zone, exactly ONE death notice may be emitted for the single logical combat death — duplicates would mean the retained loser was re-selected and re-rolled, inflating P4 faction death aggregation. got {death_count} total death notices"
-        );
-        assert_eq!(
-            outcome_count, 1,
-            "across 5 ticks, exactly ONE DormantCombatOutcome may be emitted for the single logical death; got {outcome_count}"
-        );
-    }
-
-    #[test]
-    fn retained_loser_release_retried_until_zone_frees_then_relic_and_remove() {
-        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major 不变量③④）：retain 的败者每轮
-        // 重试释放，zone 腾空后真元守恒释放完 → 此刻才造遗物 + 从 store 移除。败者是 Disciple
-        // （should_leave_relic 通过），验证「待释放真元最终释放、绝不丢弃」+「relic 只在释放完成
-        // 后 emit 一次」。
-        let mut full_zone = zone();
-        full_zone.spirit_qi = 1.0; // tick 1 满 → retain
-        let mut zones = ZoneRegistry {
-            zones: vec![full_zone],
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "doomed_disciple",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "doomed_rival",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let config = NpcVirtualizationConfig::default();
-
-        // tick 1：战死 + retain（zone 满）。遗物本轮**不**造（真元未释放完）。
-        let t1 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(
-            t1.deaths.len(),
-            1,
-            "tick 1 one combat death, got {}",
-            t1.deaths.len()
-        );
-        let loser_id = t1.deaths[0].npc_id.clone();
-        assert!(
-            t1.relics.is_empty(),
-            "tick 1: relic must NOT be emitted while qi is unreleased (zone full); got {} relics",
-            t1.relics.len()
-        );
-        let retained_qi = store
-            .snapshots
-            .get(&loser_id)
-            .expect("loser retained on tick 1")
-            .cultivation
-            .qi_current;
-        assert!(
-            retained_qi > QI_EPSILON,
-            "tick-1 retained loser must still carry unreleased qi, got {retained_qi}"
-        );
-
-        // 腾空 zone（玩家/天道让 zone 灵气回落，或其它消耗）→ 现在容量足够接收败者残余真元。
-        zones.zones[0].spirit_qi = 0.0;
-
-        // tick 2：retry release 成功（qi <= ε）→ 此刻 finalize：造遗物 + remove。
-        let t2 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
-        assert!(
-            t2.deaths.is_empty(),
-            "tick 2 must NOT re-emit a death notice for the already-dead loser (retry pass only releases qi, never re-rolls death); got {} deaths",
-            t2.deaths.len()
-        );
-        assert_eq!(
-            t2.relics.len(),
-            1,
-            "tick 2: once the retained Disciple's qi fully releases, exactly ONE battlefield relic must be emitted at that moment; got {} relics",
-            t2.relics.len()
-        );
-        assert_eq!(
-            &t2.relics[0].char_id, &loser_id,
-            "the relic must belong to the loser that actually died ({loser_id}), got {}",
-            t2.relics[0].char_id
-        );
-        assert!(
-            !store.snapshots.contains_key(&loser_id),
-            "loser `{loser_id}` must be removed from the store after its qi released and relic was emitted (no qi-carrying snapshot left behind, no orphan)"
-        );
-        // 守恒：zone 接收了败者真元（spirit_qi 从 0 上升）。
-        assert!(
-            zones.zones[0].spirit_qi > 0.0,
-            "the freed zone must have absorbed the retained loser's residual qi on retry (spirit_qi rose from 0), got {}",
-            zones.zones[0].spirit_qi
-        );
-    }
-
-    #[test]
-    fn only_named_npc_leaves_relic() {
-        // plan-offscreen-war-v1 §150 gate 契约（精确锚点名）：克制式遗物**只**给知名/有来历者
-        // （Disciple/GuardianRelic/有派系 ∨ realm≥固元）留下，普通无名 rogue 战死**不**留遗物
-        // （末法基调："遍地尸体"被积极防止）。两段同 tick 同构造，对照验证 gate 两侧。
-        let config = NpcVirtualizationConfig::default();
-
-        // ── ① 知名 NPC（Disciple，有派系）战死 → 留遗物 ──
-        let mut zones = ZoneRegistry {
-            zones: vec![zone()],
-        }; // spirit_qi=0.8，真元充足 → 全额释放 → 本轮 remove + 造遗物
-        let mut store = NpcDormantStore::default();
-        store.insert(combat_snapshot_named(
-            "named_disciple",
-            NpcArchetype::Disciple,
-            Some(FactionId::Attack),
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        ));
-        store.insert(combat_snapshot_named(
-            "named_rival",
-            NpcArchetype::Disciple,
-            Some(FactionId::Defend),
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        ));
-        store.take_dirty();
-        let mut ledger = WorldQiAccount::default();
-        let named = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(
-            named.deaths.len(),
-            1,
-            "named branch: exactly one Disciple must die, got {}",
-            named.deaths.len()
-        );
-        assert_eq!(
-            named.relics.len(),
-            1,
-            "a NAMED fallen NPC (Disciple + faction) MUST leave exactly one battlefield relic (should_leave_relic gate = true side); got {} relics",
-            named.relics.len()
-        );
-
-        // ── ② 普通无名 rogue（无派系、低境界）战死 → 不留遗物 ──
-        // 用「有派系才配对、但 should_leave_relic 看 archetype/realm」无法直接构造"无派系却开战"，
-        // 故复用既有反例锁：两名无派系 Rogue 根本无法配对 ⇒ 不开战 ⇒ 0 遗物（plain rogue 永不
-        // 凭空留遗物）。这与 combat.rs `plain_rogue_leaves_no_relic` 纯函数单测（gate=false 侧）
-        // 互补：纯函数锁 should_leave_relic 判定本身，这里锁端到端"无名者 0 遗物"。
-        let mut zones2 = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut store2 = NpcDormantStore::default();
-        let mut plain_a = combat_snapshot_named(
-            "plain_rogue_a",
-            NpcArchetype::Rogue,
-            None,
-            5.0,
-            DVec3::new(10.0, 64.0, 10.0),
-        );
-        plain_a.cultivation.realm = Realm::Awaken; // < 固元，且无派系 → should_leave_relic=false
-        let mut plain_b = combat_snapshot_named(
-            "plain_rogue_b",
-            NpcArchetype::Rogue,
-            None,
-            5.0,
-            DVec3::new(11.0, 64.0, 11.0),
-        );
-        plain_b.cultivation.realm = Realm::Awaken;
-        store2.insert(plain_a);
-        store2.insert(plain_b);
-        store2.take_dirty();
-        let mut ledger2 = WorldQiAccount::default();
-        let plain = run_combat_tick(&mut store2, &mut zones2, &mut ledger2, &config, 7);
-        assert!(
-            plain.relics.is_empty(),
-            "a plain factionless low-realm Rogue must NEVER leave a battlefield relic (should_leave_relic gate = false side); got {} relics",
-            plain.relics.len()
-        );
-    }
-
-    /// 从账本构造一个守恒快照：把整个 `WorldQiAccount` 总量放进 `ledger_qi`，其余分量置 0。
-    /// 这样 `total_observed()` == 账本双录簿总量，是 combat release 路径真正守恒的量
-    /// （不掺 ZoneRegistry 归一化分量的双计入，见 `offscreen_war_conserves_total_qi` 注释）。
-    fn ledger_conservation_snapshot(ledger: &WorldQiAccount) -> crate::qi_physics::WorldQiSnapshot {
-        crate::qi_physics::WorldQiSnapshot {
-            player_qi: 0.0,
-            zone_qi: 0.0,
-            container_qi: 0.0,
-            ledger_qi: ledger.total(),
-            era_decay_accum: 0.0,
-            budget_initial_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
-            budget_current_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // plan-npc-realm-distribution-v1 P3 §8.1 #3 — 存量 dormant 快照迁移 + marker 幂等
-    // ─────────────────────────────────────────────────────────────────────────
-    //
-    // 每个测试都用 `BONG_NPC_REALM_MIGRATION_MARKER_PATH` 把 marker 路径钉到临时目录，
-    // 绝不能碰真实 checkout 里的 `server/data/npc/realm_migration_v1.marker`
-    // （那是运行时生成的非提交产物，见 .gitignore）。`ENV_LOCK` 序列化对该 env var 的
-    // 读写，防止并行跑的测试互相踩脚（`cargo test` 默认多线程跑同进程内的测试）。
-
-    // `cargo test` 默认多线程并发跑同进程内的测试，而 `std::env::set_var` 是进程级全局
-    // 状态——若锁只在 `set`/`drop` 内瞬时持有，两个测试仍可能交错（A 设置 env var 后、
-    // 在 A 的 `app.update()` 读取它之前，B 的 `set()` 把它改成另一个路径），A 就会读到
-    // 错误的 marker 路径而误判"marker 不存在"。必须让 guard 存活到整个测试结束（挂在
-    // `ScopedMarkerEnvVar` 实例上，随其 Drop 才释放），而不是只在设置那一刻短暂加锁。
-    struct ScopedMarkerEnvVar {
-        _guard: std::sync::MutexGuard<'static, ()>,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    static MARKER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    impl ScopedMarkerEnvVar {
-        fn set(path: &std::path::Path) -> Self {
-            let guard = MARKER_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            let previous = std::env::var_os(NPC_REALM_MIGRATION_MARKER_ENV_VAR);
-            std::env::set_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR, path);
-            Self {
-                _guard: guard,
-                previous,
-            }
-        }
-    }
-
-    impl Drop for ScopedMarkerEnvVar {
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.take() {
-                std::env::set_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR, previous);
-            } else {
-                std::env::remove_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR);
-            }
-        }
-    }
-
-    fn unique_marker_path(label: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("current time should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("bong-realm-migration-{label}-{nanos}.marker"))
-    }
-
-    fn legacy_rogue_snapshot(char_id: &str) -> NpcDormantSnapshot {
-        let mut snap = snapshot(char_id, DVec3::new(5.0, 64.0, 5.0));
-        // P0-era bug state: realm 恒醒灵，qi_max 恒 Cultivation::default() 的 10.0。
-        snap.cultivation.realm = Realm::Awaken;
-        snap.cultivation.qi_max = 10.0;
-        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Awaken);
-        snap
-    }
-
-    fn migration_test_app(zone_registry: ZoneRegistry, store: NpcDormantStore) -> App {
-        let mut app = App::new();
-        app.insert_resource(zone_registry);
-        app.insert_resource(store);
-        app.insert_resource(DormantRoguePopulationSeedConfig::default());
-        app.insert_resource(PendingGameplayNarrations::default());
-        app.add_systems(Update, migrate_dormant_realm_distribution_v1);
-        app
-    }
-
-    #[test]
-    fn migration_marker_path_pinned_to_spec() {
-        // §8.1 #3 落点原文：`data/npc/realm_migration_v1.marker`。防止路径漂移。
-        assert_eq!(
-            NPC_REALM_MIGRATION_MARKER_DEFAULT_PATH, "data/npc/realm_migration_v1.marker",
-            "marker 默认路径必须逐字对拍 plan §8.1 #3 落点原文，不允许漂移"
-        );
-    }
-
-    #[test]
-    fn no_marker_triggers_reroll_and_writes_marker_file() {
-        let marker_path = unique_marker_path("reroll");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-        assert!(
-            !marker_path.exists(),
-            "precondition: 临时 marker 路径不应预先存在"
-        );
-
-        let mut store = NpcDormantStore::default();
-        for i in 0..40u32 {
-            let snap = legacy_rogue_snapshot(&format!("legacy:rogue:{i}"));
-            store.snapshots.insert(snap.char_id.clone(), snap);
-        }
-        store.rebuild_indexes();
-
-        let mut z = zone();
-        z.spirit_qi = 0.1; // 低于 default threshold 0.4 -> background zone
-        let registry = ZoneRegistry { zones: vec![z] };
-
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        assert!(
-            marker_path.exists(),
-            "迁移完成后应写出 marker 文件到 {}",
-            marker_path.display()
-        );
-
-        let migrated_store = app.world().resource::<NpcDormantStore>();
-        assert!(
-            migrated_store.is_dirty(),
-            "至少一条快照 realm 变化应把 store 标脏，否则重 roll 结果不会持久化"
-        );
-
-        // 逐条对拍：迁移结果必须与「直接调用同一份 §8.1 #1 抽样函数」完全一致——
-        // 测契约（"迁移是否正确委托给规范抽样函数"），不是重新验证分布算法本身
-        // （分布算法已由 sample_rogue_seed_realm 的专属测试饱和覆盖）。
-        let mut saw_non_awaken = false;
-        for i in 0..40u32 {
-            let char_id = format!("legacy:rogue:{i}");
-            let expected = sample_rogue_seed_realm(char_id.as_str(), false);
-            let actual = migrated_store
-                .snapshots
-                .get(&char_id)
-                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"))
-                .cultivation
-                .realm;
-            assert_eq!(
-                actual, expected,
-                "char_id={char_id}: 迁移后的 realm 应等于 sample_rogue_seed_realm 对同一 \
-                 char_id/is_resource_zone 的确定性抽样结果，实得 {actual:?} 期望 {expected:?}"
-            );
-            if actual != Realm::Awaken {
-                saw_non_awaken = true;
-            }
-            // qi_max 必须随新 realm 同步重算，不能停在 bug 时代的 10.0（除非新 realm 恰好
-            // 仍是 Awaken，此时 10.0 本就是对的）。
-            let expected_qi_max = qi_max_for_realm(expected);
-            let actual_qi_max = migrated_store
-                .snapshots
-                .get(&char_id)
-                .unwrap()
-                .cultivation
-                .qi_max;
-            assert!(
-                (actual_qi_max - expected_qi_max).abs() < 1e-9,
-                "char_id={char_id}: qi_max 应随迁移后的 realm={expected:?} 重算为 \
-                 {expected_qi_max}，实得 {actual_qi_max}"
-            );
-        }
-        assert!(
-            saw_non_awaken,
-            "40 条 legacy 快照跑一遍 §8.1 #1 分布表重抽样，至少应有一条不再是醒灵 \
-             （分布表醒灵权重远小于 100%），否则说明重 roll 根本没生效"
-        );
-    }
-
-    #[test]
-    fn migration_reroll_resyncs_meridian_system_to_new_realm_required_meridians() {
-        // Verify blocker pin：迁移器此前只重算 realm/qi_max/shared_lifespan，从不重派
-        // meridian_system——重 roll 到凝脉/固元/通灵后仍停在迁移前的开脉数，与新 realm
-        // 脱钩。legacy_rogue_snapshot 起点固定 Realm::Awaken + snapshot() 默认全闭经脉
-        // （P0-era 状态），迁移后必须让 meridian_system.opened_count() 追上新 realm。
-        let marker_path = unique_marker_path("meridian-resync");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        let mut store = NpcDormantStore::default();
-        for i in 0..40u32 {
-            let mut snap = legacy_rogue_snapshot(&format!("legacy:meridian:{i}"));
-            // 复刻真实 P0-era 生产快照的形状：修 dormant_rogue_seed_snapshot 之前恒开
-            // 1 条肺经（而非 legacy_rogue_snapshot 继承的通用 test helper 全闭默认值）
-            // ——否则本测试会在「重抽样恰好落回 Awaken（未改变）」的分支上，把「legacy
-            // fixture 本身形状失真」误判成「迁移器没有同步重派」的假阳性。
-            snap.meridian_system = MeridianSystem::default();
-            snap.meridian_system
-                .get_mut(crate::cultivation::components::MeridianId::Lung)
-                .opened = true;
-            store.snapshots.insert(snap.char_id.clone(), snap);
-        }
-        store.rebuild_indexes();
-
-        let mut z = zone();
-        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高凝脉/固元/通灵命中率
-        let registry = ZoneRegistry { zones: vec![z] };
-
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        let migrated_store = app.world().resource::<NpcDormantStore>();
-        let mut saw_multi_meridian_realm = false;
-        for i in 0..40u32 {
-            let char_id = format!("legacy:meridian:{i}");
-            let snap = migrated_store
-                .snapshots
-                .get(&char_id)
-                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
-            let expected_count = snap.cultivation.realm.required_meridians();
-            let actual_count = snap.meridian_system.opened_count();
-            assert_eq!(
-                actual_count, expected_count,
-                "char_id={char_id}: 迁移重 roll 后 realm={:?} 要求开 {expected_count} 条经脉，\
-                 但 meridian_system 实开 {actual_count} 条——meridian_system 没有随 realm 重 roll \
-                 同步重派（迁移器只改了 realm/qi_max/shared_lifespan）",
-                snap.cultivation.realm
-            );
-            if expected_count > 1 {
-                saw_multi_meridian_realm = true;
-            }
-        }
-        assert!(
-            saw_multi_meridian_realm,
-            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条落在 required_meridians()>1 \
-             的境界（凝脉=6/固元=12/通灵=16），否则本测试没有真正覆盖迁移器重派 \
-             meridian_system 的分支（fixture 完整性）"
-        );
-    }
-
-    #[test]
-    fn migration_reroll_respects_permanently_severed_meridians() {
-        // minor fix pin：迁移器重派 meridian_system 时用 npc_meridian_system_for_realm
-        // 整段覆盖，会把「已被 MeridianSeveredPermanent 永久记录断绝」的经脉也一并
-        // 按新 realm 重新打开——这与"永久断脉"语义矛盾（断脉只应在跨周目重置，
-        // realm 迁移这种同一角色的境界重 roll 不该复活它）。用 Lung（MeridianId::ALL[0]，
-        // 任何 realm 的 required_meridians() >= 1 都会覆盖到它）作为永久断脉标的，
-        // 断言迁移后依旧 opened=false。
-        let marker_path = unique_marker_path("meridian-severed-respect");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        let mut store = NpcDormantStore::default();
-        for i in 0..40u32 {
-            let mut snap = legacy_rogue_snapshot(&format!("legacy:severed:{i}"));
-            snap.meridian_system = MeridianSystem::default();
-            snap.meridian_severed
-                .severed_meridians
-                .insert(crate::cultivation::components::MeridianId::Lung);
-            snap.meridian_severed.severed_at.insert(
-                crate::cultivation::components::MeridianId::Lung,
-                crate::cultivation::meridian::severed::SeveredRecord {
-                    at_tick: 0,
-                    source: crate::cultivation::meridian::severed::SeveredSource::CombatWound,
-                },
-            );
-            store.snapshots.insert(snap.char_id.clone(), snap);
-        }
-        store.rebuild_indexes();
-
-        let mut z = zone();
-        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高高境界命中率，确保有 realm 变化分支被覆盖
-        let registry = ZoneRegistry { zones: vec![z] };
-
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        let migrated_store = app.world().resource::<NpcDormantStore>();
-        let mut saw_changed_realm = false;
-        for i in 0..40u32 {
-            let char_id = format!("legacy:severed:{i}");
-            let snap = migrated_store
-                .snapshots
-                .get(&char_id)
-                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
-            if snap.cultivation.realm != Realm::Awaken {
-                saw_changed_realm = true;
-            }
-            let lung = snap
-                .meridian_system
-                .get(crate::cultivation::components::MeridianId::Lung);
-            assert!(
-                !lung.opened,
-                "char_id={char_id}: Lung 经脉在 meridian_severed 中被永久记录断绝，\
-                 迁移重派 meridian_system 后仍必须保持 opened=false（实际 opened=true），\
-                 否则永久断脉被 realm 迁移悄悄复活，与 MeridianSeveredPermanent 记录矛盾"
-            );
-            assert!(
-                snap.meridian_severed
-                    .severed_meridians
-                    .contains(&crate::cultivation::components::MeridianId::Lung),
-                "char_id={char_id}: 迁移不应改动 meridian_severed 记录本身"
-            );
-        }
-        assert!(
-            saw_changed_realm,
-            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条 realm 发生变化，\
-             否则本测试没有真正覆盖迁移器重派 meridian_system 的分支（fixture 完整性）"
-        );
-    }
-
-    #[test]
-    fn marker_already_exists_skips_reroll_idempotently() {
-        let marker_path = unique_marker_path("skip");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-        // 预先写好 marker——模拟"上次已经迁移过"。
-        if let Some(parent) = marker_path.parent() {
-            std::fs::create_dir_all(parent).expect("temp dir must be creatable");
-        }
-        std::fs::write(&marker_path, b"v1\n").expect("precondition marker write must succeed");
-
-        let mut store = NpcDormantStore::default();
-        for i in 0..10u32 {
-            let snap = legacy_rogue_snapshot(&format!("legacy:skip:{i}"));
-            store.snapshots.insert(snap.char_id.clone(), snap);
-        }
-        store.rebuild_indexes();
-        // 显式确认起点是 clean（构造过程没有调用任何 mark_dirty 路径）。
-        assert!(!store.is_dirty());
-
-        let registry = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        let after = app.world().resource::<NpcDormantStore>();
-        assert!(
-            !after.is_dirty(),
-            "marker 已存在时不应做任何重 roll，store 不该被标脏"
-        );
-        for i in 0..10u32 {
-            let char_id = format!("legacy:skip:{i}");
-            let realm = after.snapshots.get(&char_id).unwrap().cultivation.realm;
-            assert_eq!(
-                realm,
-                Realm::Awaken,
-                "char_id={char_id}: marker 已存在应跳过重 roll，realm 应保持迁移前的 \
-                 Realm::Awaken（bug 时代遗留值），实得 {realm:?}"
-            );
-        }
-
-        // 内容也保持不变（同一份写入的 marker 内容原样保留，未被二次改写）。
-        let content = std::fs::read_to_string(&marker_path).expect("marker should still exist");
-        assert_eq!(content, "v1\n");
-    }
-
-    #[test]
-    fn identity_archetypes_write_identity_realm_not_sampled() {
-        let marker_path = unique_marker_path("identity");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        let mut store = NpcDormantStore::default();
-
-        let mut guardian = legacy_rogue_snapshot("legacy:guardian");
-        guardian.archetype = NpcArchetype::GuardianRelic;
-        store.snapshots.insert(guardian.char_id.clone(), guardian);
-
-        let mut zhinian = legacy_rogue_snapshot("legacy:zhinian");
-        zhinian.archetype = NpcArchetype::Zhinian;
-        store.snapshots.insert(zhinian.char_id.clone(), zhinian);
-
-        let mut daoxiang = legacy_rogue_snapshot("legacy:daoxiang");
-        daoxiang.archetype = NpcArchetype::Daoxiang;
-        store.snapshots.insert(daoxiang.char_id.clone(), daoxiang);
-
-        let mut beast = legacy_rogue_snapshot("legacy:beast");
-        beast.archetype = NpcArchetype::Beast;
-        store.snapshots.insert(beast.char_id.clone(), beast);
-
-        let mut leader = legacy_rogue_snapshot("legacy:leader");
-        leader.archetype = NpcArchetype::Disciple;
-        leader.faction = Some(FactionMembership {
-            faction_id: FactionId::Defend, // CangyuanMerchants -> Spirit
-            rank: FactionRank::Leader,
-            reputation: Reputation::default(),
-            lineage: None,
-            mission_queue: MissionQueue::default(),
-        });
-        store
-            .snapshots
-            .insert(leader.char_id.clone(), leader.clone());
-
-        store.rebuild_indexes();
-
-        let registry = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        let after = app.world().resource::<NpcDormantStore>();
-        let realm_of = |id: &str| after.snapshots.get(id).unwrap().cultivation.realm;
-
-        assert_eq!(
-            realm_of("legacy:guardian"),
-            Realm::Spirit,
-            "GuardianRelic 身份 realm 应直写 Spirit，不参与分布抽样"
-        );
-        assert_eq!(
-            realm_of("legacy:zhinian"),
-            Realm::Condense,
-            "Zhinian 身份 realm 应直写 Condense"
-        );
-        assert_eq!(
-            realm_of("legacy:daoxiang"),
-            Realm::Induce,
-            "Daoxiang 身份 realm 应直写 TSY 默认值 Induce"
-        );
-        assert_eq!(
-            realm_of("legacy:beast"),
-            Realm::Awaken,
-            "Beast 恒字面量 Awaken，迁移不应把它拉进分布抽样（保持设计上的恒低威胁）"
-        );
-        assert_eq!(
-            realm_of("legacy:leader"),
-            Realm::Spirit,
-            "faction Leader（Defend/CangyuanMerchants）应直写 leader_realm_for 对应的 Spirit，\
-             不受分布表影响"
-        );
-    }
-
-    #[test]
-    fn marker_write_failure_does_not_silently_swallow_error() {
-        // 制造一个必然写失败的路径：父目录的父目录其实是个*文件*，create_dir_all 会报错。
-        let blocked_parent = unique_marker_path("blocked-parent-file");
-        std::fs::write(&blocked_parent, b"i am a file, not a directory")
-            .expect("setup: create the blocking regular file");
-        let marker_path = blocked_parent.join("sub").join("realm_migration_v1.marker");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        let mut store = NpcDormantStore::default();
-        let snap = legacy_rogue_snapshot("legacy:writefail");
-        store.snapshots.insert(snap.char_id.clone(), snap);
-        store.rebuild_indexes();
-
-        // 显式钉 zone 灵气档为 background（低于 default threshold 0.4），让下面的
-        // `sample_rogue_seed_realm(..., false)` 探测与迁移器内部真实算出的 is_resource
-        // 保持一致，不依赖 `zone()` helper 默认值今后是否变动。
-        let mut z = zone();
-        z.spirit_qi = 0.1;
-        let registry = ZoneRegistry { zones: vec![z] };
-        let mut app = migration_test_app(registry, store);
-
-        // 直接调用底层写函数验证返回值语义（true=成功/false=失败），不靠系统副作用间接推断。
-        assert!(
-            !write_realm_migration_marker(&marker_path),
-            "父目录路径被文件挡住时，写 marker 必须返回失败而不是假装成功"
-        );
-        assert!(
-            !marker_path.exists(),
-            "写失败后 marker 文件不应该神奇地出现"
-        );
-
-        // 即使 marker 落盘失败，system 跑一遍仍必须完成本次的 realm 重 roll（降级只影响
-        // "下次重启是否会重复重 roll"这个幂等信号，不能连本次的迁移本体都吞掉）。
-        app.update();
-        let after = app.world().resource::<NpcDormantStore>();
-        let realm = after
-            .snapshots
-            .get("legacy:writefail")
-            .unwrap()
-            .cultivation
-            .realm;
-        let expected = sample_rogue_seed_realm("legacy:writefail", false);
-        assert_eq!(
-            realm, expected,
-            "marker 写失败不该连带吞掉本次 reroll 本身——快照 realm 仍应等于确定性抽样结果"
-        );
-
-        let _ = std::fs::remove_file(&blocked_parent);
-    }
-
-    #[test]
-    fn empty_store_writes_marker_without_touching_anything() {
-        let marker_path = unique_marker_path("empty-store");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        let store = NpcDormantStore::default();
-        assert!(store.is_empty());
-        let registry = ZoneRegistry {
-            zones: vec![zone()],
-        };
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        assert!(
-            marker_path.exists(),
-            "空 store（新世界，无存量）也应该写 marker，避免每次 Startup 重复判定空 store"
-        );
-        assert!(
-            !app.world().resource::<NpcDormantStore>().is_dirty(),
-            "空 store 没有任何快照可改，不应被标脏"
-        );
-    }
-
-    #[test]
-    fn migration_pushes_zone_perception_narration_for_upgraded_realms() {
-        let marker_path = unique_marker_path("narration");
-        let _env = ScopedMarkerEnvVar::set(&marker_path);
-
-        // 显式钉 zone 灵气档为 background（低于 default threshold 0.4），让下面的
-        // `sample_rogue_seed_realm(..., false)` 探测与迁移器内部真实算出的 is_resource
-        // 保持一致，不依赖 `zone()` helper 默认值今后是否变动。
-        //
-        // 固定挑一个 char_id，其分布抽样结果已知会命中 Condense 或更高（用同一份抽样函数
-        // 先探测，避免测试跟迁移函数各自实现一套判定逻辑）。
-        let mut store = NpcDormantStore::default();
-        let mut hit_condense_or_above = None;
-        for i in 0..200u32 {
-            let char_id = format!("legacy:narration:{i}");
-            let realm = sample_rogue_seed_realm(char_id.as_str(), false);
-            if matches!(realm, Realm::Condense | Realm::Solidify) {
-                hit_condense_or_above = Some((char_id.clone(), realm));
-            }
-            let snap = legacy_rogue_snapshot(&char_id);
-            store.snapshots.insert(snap.char_id.clone(), snap);
-        }
-        store.rebuild_indexes();
-        let (hit_char_id, hit_realm) = hit_condense_or_above.expect(
-            "200 条随机 char_id 里按分布表理应至少命中一条 Condense/Solidify，\
-             否则下面的 narration 断言无法验证任何真实行为",
-        );
-
-        let mut z = zone();
-        z.spirit_qi = 0.1;
-        let registry = ZoneRegistry { zones: vec![z] };
-        let mut app = migration_test_app(registry, store);
-        app.update();
-
-        let mut narrations = app.world_mut().resource_mut::<PendingGameplayNarrations>();
-        let drained = narrations.drain();
-        assert!(
-            !drained.is_empty(),
-            "命中 char_id={hit_char_id} 应重 roll 出 {hit_realm:?}，理应推送至少一条 \
-             zone-scope 境界识破 narration，实得 0 条"
-        );
-        assert!(
-            drained
-                .iter()
-                .all(|n| n.scope == crate::schema::common::NarrationScope::Zone
-                    && n.style == crate::schema::common::NarrationStyle::Perception),
-            "迁移触发的境界识破 narration 必须是 Zone scope + Perception style，实得 {drained:?}"
-        );
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

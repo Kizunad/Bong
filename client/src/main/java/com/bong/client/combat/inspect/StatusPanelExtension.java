@@ -50,7 +50,11 @@ public final class StatusPanelExtension {
         if (!e.sourceLabel().isEmpty()) {
             sb.append("\u6765\u6e90: ").append(e.sourceLabel()).append('\n');
         }
-        sb.append("\u5269\u4f59: ").append(formatMs(e.remainingMs())).append('\n');
+        if (e.indefinite()) {
+            sb.append(e.id().equals("bleeding") ? "持续至伤口止血" : "持续生效").append('\n');
+        } else {
+            sb.append("剩余: ").append(formatRemaining(e.remainingMs())).append('\n');
+        }
         sb.append("\u9a71\u6563\u96be\u5ea6: ").append(e.dispelDifficulty()).append("/5");
         return sb.toString();
     }
@@ -90,10 +94,15 @@ public final class StatusPanelExtension {
             || normalized.equals("化虚");
     }
 
-    private static String formatMs(long ms) {
-        if (ms <= 0L) return "0.0s";
-        double s = ms / 1000.0;
-        return String.format(java.util.Locale.ROOT, "%.1fs", s);
+    public static String formatRemaining(long ms) {
+        if (ms == StatusEffectStore.INDEFINITE_REMAINING_MS) return "持续";
+        long clamped = Math.max(0L, ms);
+        if (clamped < 60_000L) {
+            double tenths = Math.floor(clamped / 100.0) / 10.0;
+            return String.format(Locale.ROOT, "%.1fs", tenths);
+        }
+        long totalSeconds = clamped / 1000L;
+        return totalSeconds / 60L + "m " + totalSeconds % 60L + "s";
     }
 
     private StatusPanelExtension() {}

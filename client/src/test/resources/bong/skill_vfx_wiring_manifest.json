@@ -1,0 +1,79 @@
+[
+  {
+    "skill_id": "burst_meridian.ni_mai_hu_ti",
+    "event_id": "bong:burst_meridian_ni_mai_hu_ti",
+    "color": "#C58B3F",
+    "player_class": "BurstMeridianFamilyPlayer",
+    "legacy_event_id": "bong:burst_meridian_beng_quan"
+  },
+  {
+    "skill_id": "burst_meridian.tie_shan_kao",
+    "event_id": "bong:burst_meridian_tie_shan_kao",
+    "color": "#C58B3F",
+    "player_class": "BurstMeridianFamilyPlayer",
+    "legacy_event_id": "bong:burst_meridian_beng_quan"
+  },
+  {
+    "skill_id": "burst_meridian.xue_beng_bu",
+    "event_id": "bong:burst_meridian_xue_beng_bu",
+    "color": "#C58B3F",
+    "player_class": "BurstMeridianFamilyPlayer",
+    "legacy_event_id": "bong:burst_meridian_beng_quan"
+  },
+  {
+    "skill_id": "npc.buff_defense",
+    "event_id": "bong:npc_buff_defense",
+    "color": "#5BA8C9",
+    "player_class": "NpcSkillAuraPlayer",
+    "legacy_event_id": "bong:burst_meridian_beng_quan"
+  },
+  {
+    "skill_id": "npc.buff_speed",
+    "event_id": "bong:npc_buff_speed",
+    "color": "#E3C766",
+    "player_class": "NpcSkillAuraPlayer",
+    "legacy_event_id": "bong:jiemai_neutralize_dust"
+  },
+  {
+    "skill_id": "npc.heal_basic",
+    "event_id": "bong:npc_heal_basic",
+    "color": "#A8E6CF",
+    "player_class": "NpcSkillAuraPlayer",
+    "legacy_event_id": "bong:yidao_meridian_repair"
+  },
+  {
+    "skill_id": "zhenmai.harden",
+    "event_id": "bong:zhenmai_harden_shell",
+    "color": "#B8944F",
+    "player_class": "ZhenmaiPulsePlayer",
+    "legacy_event_id": "bong:jiemai_neutralize_dust"
+  },
+  {
+    "skill_id": "zhenmai.multipoint",
+    "event_id": "bong:zhenmai_multipoint_ring",
+    "color": "#E0C27E",
+    "player_class": "ZhenmaiPulsePlayer",
+    "legacy_event_id": "bong:jiemai_burst_blood"
+  },
+  {
+    "skill_id": "zhenmai.neutralize",
+    "event_id": "bong:zhenmai_neutralize_dust",
+    "color": "#C9A05C",
+    "player_class": "ZhenmaiPulsePlayer",
+    "legacy_event_id": "bong:jiemai_neutralize_dust"
+  },
+  {
+    "skill_id": "zhenmai.parry",
+    "event_id": "bong:zhenmai_parry_flash",
+    "color": "#D4AF6A",
+    "player_class": "ZhenmaiPulsePlayer",
+    "legacy_event_id": "bong:jiemai_burst_blood"
+  },
+  {
+    "skill_id": "zhenmai.sever_chain",
+    "event_id": "bong:zhenmai_sever_snap",
+    "color": "#F2D68A",
+    "player_class": "ZhenmaiPulsePlayer",
+    "legacy_event_id": "bong:jiemai_sever_flash"
+  }
+]

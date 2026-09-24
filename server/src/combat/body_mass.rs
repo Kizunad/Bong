@@ -81,10 +81,11 @@ impl Default for BodyMass {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Component, Default)]
 pub enum Stance {
     Rooted,
     Braced,
+    #[default]
     Standing,
     Moving,
     Casting,
@@ -120,12 +121,6 @@ impl Stance {
                 Self::Standing
             }
         }
-    }
-}
-
-impl Default for Stance {
-    fn default() -> Self {
-        Self::Standing
     }
 }
 
@@ -228,6 +223,7 @@ mod tests {
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),

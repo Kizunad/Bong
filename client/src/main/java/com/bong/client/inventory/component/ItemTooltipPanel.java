@@ -523,7 +523,7 @@ public class ItemTooltipPanel extends BaseComponent {
     // ─── plan-inventory-hint-panel-v1 P2：测试专用访问器 ──────────────────────
     // draw()/computeRequiredHeight() 对非空 item 会触达 MinecraftClient.getInstance()
     // （无 MC 启动的单测环境会 NPE），故这些访问器只安全覆盖"空槽 hover"路径
-    // （item==null 时 computeRequiredHeight 不touch MC，见既有惯例 PackContainerWindow.*ForTest()）。
+    // （item==null 时 computeRequiredHeight 不访问 MinecraftClient）。
     InventoryItem hoveredItemForTest() { return hoveredItem; }
 
     EquipSlotType hoveredSlotTypeForTest() { return hoveredSlotType; }

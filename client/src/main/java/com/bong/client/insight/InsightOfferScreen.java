@@ -1,5 +1,6 @@
 package com.bong.client.insight;
 
+import com.bong.client.ui.ScreenTransitionController;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.container.Containers;
@@ -12,6 +13,7 @@ import io.wispforest.owo.ui.core.Sizing;
 import io.wispforest.owo.ui.core.Surface;
 import io.wispforest.owo.ui.core.VerticalAlignment;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -25,15 +27,23 @@ import java.util.function.LongSupplier;
 /**
  * 顿悟邀约弹窗——展示 trigger 上下文 + 2-3 个候选 + "心未契机" 拒绝按钮 + 倒计时。
  *
- * <p>关闭方式：
+ * <p>关闭方式（全部收敛为 exactly-once settlement，先 claim 后 dispatch 后 close，
+ * 见 r7-insight-settlement.tsv commit_order）：
  * <ul>
- *   <li>点击候选卡 → 提交 CHOSEN，关闭。</li>
- *   <li>点击底部"心未契机" → 提交 DECLINED，关闭。</li>
- *   <li>倒计时归零 (tick 检测) → 提交 TIMED_OUT，关闭。</li>
- *   <li>ESC：和"心未契机"等价。</li>
+ *   <li>点击候选卡 → claim offerId → 提交 CHOSEN → 关闭。</li>
+ *   <li>点击底部"心未契机" → claim offerId → 提交 DECLINED → 关闭。</li>
+ *   <li>倒计时归零 (tick 检测) → claim offerId → 提交 TIMED_OUT → 关闭。</li>
+ *   <li>ESC / 转场取消 (ANIMATED_OPEN_CANCELLED) / 异常移除 (REMOVED_EXCEPTIONALLY)：
+ *       与"心未契机"等价，claim 只作用于本屏 own 的 offerId。</li>
  * </ul>
+ *
+ * <p>实例身份：本屏在创建时捕获自己 offer 实例的 {@link SessionToken}，所有结算路径
+ * 都经 {@code InsightOfferStore.settleIfCurrent(offerId, ...)} compare-and-clear 匹配
+ * current/pending 实例；被替换后，旧屏的任何迟到回调都不能清除后来的 offer B。
  */
-public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
+public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
+    implements ScreenTransitionController.PendingOpenCancellationHandler,
+    ScreenTransitionController.CurrentScreenCancellationHandler {
     static final Text TITLE = Text.literal("◇ 心 有 所 感 ◇");
     static final String HEART_DEMON_TRIGGER_PREFIX = "heart_demon:";
 
@@ -55,7 +65,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     private static final int COLOR_DECLINE = 0xFFAAAAAA;
 
     private final InsightOfferViewModel offer;
-    private final Consumer<InsightDecision> onDecision;
+    private final InsightOfferStore.SessionToken sessionToken;
     private final LongSupplier clock;
 
     private FlowLayout timerLabelHolder;
@@ -63,16 +73,97 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     private boolean settled;
 
     public InsightOfferScreen(InsightOfferViewModel offer) {
-        this(offer, InsightOfferStore::submit, System::currentTimeMillis);
+        this(offer, InsightOfferStore.sessionTokenFor(offer), System::currentTimeMillis);
+    }
+
+    /** 测试用：注入可控时钟。 */
+    InsightOfferScreen(InsightOfferViewModel offer, LongSupplier clock) {
+        this(offer, InsightOfferStore.sessionTokenFor(offer), clock);
     }
 
     InsightOfferScreen(InsightOfferViewModel offer,
-                       Consumer<InsightDecision> onDecision,
+                       InsightOfferStore.SessionToken sessionToken,
                        LongSupplier clock) {
         super(TITLE);
         this.offer = Objects.requireNonNull(offer, "offer");
-        this.onDecision = Objects.requireNonNull(onDecision, "onDecision");
+        this.sessionToken = Objects.requireNonNull(sessionToken, "sessionToken");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    // ─── 生命周期收口：所有 terminal 路径都收敛到 settle()，claim 先于 dispatch 先于 close ───
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (settled) {
+            return;
+        }
+        long now = clock.getAsLong();
+        if (offer.isExpired(now)) {
+            settle(InsightDecision.timedOut(offer.triggerId()));
+            return;
+        }
+        if (timerLabelHolder != null) {
+            timerLabelHolder.clearChildren();
+            timerLabelHolder.child(buildTimerLabel(Math.max(0L, offer.remainingMillis(now) / 1000L)));
+        }
+    }
+
+    @Override
+    public void close() {
+        if (!settled) {
+            // 任何未结算的关闭都按 declined 处理 (e.g. ESC)
+            settle(InsightDecision.declined(offer.triggerId()));
+            return;
+        }
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc != null && mc.currentScreen == this) {
+            mc.setScreen(null);
+        }
+    }
+
+    /** 转场取消直接移除当前屏（ESC 中途取消 current→next 转场）。 */
+    @Override
+    public void onCurrentScreenCancelled() {
+        settleIfNotSettled(InsightDecision.declined(offer.triggerId()));
+    }
+
+    /** 本屏尚在 250ms 开屏转场中被取消（ANIMATED_OPEN_CANCELLED）。 */
+    @Override
+    public void onPendingOpenCancelled() {
+        settleIfNotSettled(InsightDecision.declined(offer.triggerId()));
+    }
+
+    @Override
+    public boolean continuesWith(Screen replacementScreen) {
+        return replacementScreen instanceof InsightOfferScreen replacement
+            && replacement.sessionToken == sessionToken;
+    }
+
+    @Override
+    public boolean shouldPause() {
+        return false;
+    }
+
+    private void settleIfNotSettled(InsightDecision decision) {
+        if (!settled) {
+            settle(decision);
+        }
+    }
+
+    private void settle(InsightDecision decision) {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        // 1) 先对 exact offerId 原子 claim（compare-and-clear 只作用于 matching current 实例）；
+        //    失败 = stale/duplicate，幂等 no-op。2) dispatch 发送。3) 若仍是当前屏则关闭。
+        // 发送失败不影响 close 尝试（send failure 是 primary，但 close 仍尝试，tsv send_failure）。
+        InsightOfferStore.settleIfCurrent(offer.offerId(), decision);
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc != null && mc.currentScreen == this) {
+            mc.setScreen(null);
+        }
     }
 
     @Override
@@ -212,53 +303,6 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         return Components.label(Text.literal(text)).color(Color.ofArgb(color));
     }
 
-    @Override
-    public void tick() {
-        super.tick();
-        if (settled) {
-            return;
-        }
-        long now = clock.getAsLong();
-        if (offer.isExpired(now)) {
-            settle(InsightDecision.timedOut(offer.triggerId()));
-            return;
-        }
-        if (timerLabelHolder != null) {
-            timerLabelHolder.clearChildren();
-            timerLabelHolder.child(buildTimerLabel(Math.max(0L, offer.remainingMillis(now) / 1000L)));
-        }
-    }
-
-    @Override
-    public void close() {
-        if (!settled) {
-            // 任何未结算的关闭都按 declined 处理 (e.g. ESC)
-            settle(InsightDecision.declined(offer.triggerId()));
-            return;
-        }
-        super.close();
-    }
-
-    @Override
-    public boolean shouldPause() {
-        return false;
-    }
-
-    private void settle(InsightDecision decision) {
-        if (settled) {
-            return;
-        }
-        settled = true;
-        try {
-            onDecision.accept(decision);
-        } finally {
-            MinecraftClient mc = MinecraftClient.getInstance();
-            if (mc != null && mc.currentScreen == this) {
-                mc.setScreen(null);
-            }
-        }
-    }
-
     private long remainingSeconds() {
         return Math.max(0L, offer.remainingMillis(clock.getAsLong()) / 1000L);
     }
@@ -323,6 +367,37 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
 
     boolean settledForTests() {
         return settled;
+    }
+
+    // ─── 测试钩子：无头驱动 tick/close/removed/转场回调（不依赖 MC 运行时）───
+
+    void tickForTests() {
+        tick();
+    }
+
+    void closeForTests() {
+        close();
+    }
+
+    void removedForTests() {
+        settleIfNotSettled(InsightDecision.declined(offer.triggerId()));
+    }
+
+    void onPendingOpenCancelledForTests() {
+        onPendingOpenCancelled();
+    }
+
+    void onCurrentScreenCancelledForTests() {
+        onCurrentScreenCancelled();
+    }
+
+    boolean continuesWithForTests(InsightOfferScreen other) {
+        return continuesWith(other);
+    }
+
+    /** 测试用：模拟玩家点击候选卡 / 拒绝按钮的结算入口。 */
+    void settleForTests(InsightDecision decision) {
+        settle(decision);
     }
 
     public record RenderContent(List<String> lines) {

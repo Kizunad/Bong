@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "instance_id",
+    "stack_count",
+    "item_id",
+    "display_name",
+    "cast_duration_ms",
+    "cooldown_ms",
+    "icon_texture"
+  ],
+  "properties": {
+    "instance_id": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "stack_count": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "item_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "display_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "cast_duration_ms": {
+      "minimum": 0,
+      "maximum": 4294967295,
+      "type": "integer"
+    },
+    "cooldown_ms": {
+      "minimum": 0,
+      "maximum": 4294967295,
+      "type": "integer"
+    },
+    "icon_texture": {
+      "type": "string"
+    }
+  },
+  "x-bong-typebox-source-sha256": "e431c5dd600e3ffd0d3b0baf824e43803f27b1ed11feb499900a57abe687efd2"
+}

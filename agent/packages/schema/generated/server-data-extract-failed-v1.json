@@ -24,5 +24,6 @@
       "const": "spirit_qi_drained",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "5343d7343d02c7e97f3e113c2e66a342d8a6e1c8217430c06d0eb33fb0bd6a78"
 }

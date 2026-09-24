@@ -88,13 +88,17 @@ pub enum CastOutcomeV1 {
     /// 招式未习得或未激活（KnownTechniques 缺失 / active=false）。
     /// 此前这类拒绝冒用 RejectInvalidTarget，玩家被"目标无效"文案误导。
     RejectTechniqueInactive,
+    /// plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— 种族门拒绝：本体 race_id /
+    /// is_humanoid 未通过该招式的 `RaceGate`（`RaceGate::Humanoid` 档最常见触发，
+    /// 如非人形种族尝试施放剑道/爆脉类肢体依赖招式）。
+    RejectRaceMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CastSyncV1 {
     pub phase: CastPhaseV1,
-    /// 0..=8 表示 F1..F9；idle 时 client 忽略。
+    /// 从 0 开始的槽索引；idle 时 client 忽略。
     pub slot: u8,
     pub duration_ms: u32,
     pub started_at_ms: u64,
@@ -103,18 +107,27 @@ pub struct CastSyncV1 {
 
 /// plan-HUD-v1 §10.4 / §11.4 F1-F9 槽位完整配置 + 当前 cooldown。
 /// server 在 `QuickSlotBindings` 变化时推（绑定 / cast 完成 / 中断 → cooldown 写入）。
-/// `slots` / `cooldown_until_ms` 永远长度 9（client 用 idx 取）。
+/// `slots` / `cooldown_until_ms` 长度与 QuickSlotBindings::SLOT_COUNT 一致。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotConfigV1 {
+    pub eligible_item_ids: Vec<String>,
     pub slots: Vec<Option<QuickSlotEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
+    /// 仅 quick_slot_bind 的直接权威回推携带；普通 cooldown/config 广播为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_request_id: Option<String>,
+    /// 与 ack_request_id 同时出现；true=已持久化并提交，false=拒绝且状态未变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_accepted: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotEntryV1 {
+    pub instance_id: u64,
+    pub stack_count: u32,
     pub item_id: String,
     pub display_name: String,
     pub cast_duration_ms: u32,
@@ -126,6 +139,8 @@ pub struct QuickSlotEntryV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillBarConfigV1 {
+    #[serde(default)]
+    pub dash_skill_id: String,
     pub slots: Vec<Option<SkillBarEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
@@ -159,6 +174,12 @@ pub struct TechniquesSnapshotV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TechniqueEntryV1 {
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub input_kind: String,
+    #[serde(default)]
+    pub icon_texture: String,
     pub id: String,
     pub display_name: String,
     pub grade: String,
@@ -253,6 +274,8 @@ pub struct CombatHudStateV1 {
     pub qi_percent: f32,
     /// 体力百分比 [0.0, 1.0]。
     pub stamina_percent: f32,
+    /// 是否处于服务端 CombatState 的战斗窗口。
+    pub combat_active: bool,
     pub derived: DerivedAttrFlagsV1,
 }
 
@@ -337,6 +360,7 @@ mod tests {
             hp_percent: 0.85,
             qi_percent: 0.42,
             stamina_percent: 0.91,
+            combat_active: true,
             derived: DerivedAttrFlagsV1 {
                 flying: true,
                 phasing: false,
@@ -576,10 +600,13 @@ mod tests {
     #[test]
     fn quickslot_config_roundtrip_preserves_content() {
         let original = QuickSlotConfigV1 {
+            eligible_item_ids: vec!["huiyuan_pill".into()],
             slots: vec![
                 Some(QuickSlotEntryV1 {
-                    item_id: "kai_mai_pill".to_string(),
-                    display_name: "开脉丹".to_string(),
+                    instance_id: 42,
+                    stack_count: 2,
+                    item_id: "huiyuan_pill".to_string(),
+                    display_name: "回元丹".to_string(),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     icon_texture: String::new(),
@@ -594,6 +621,8 @@ mod tests {
                 None,
             ],
             cooldown_until_ms: vec![1_700_000_001_500, 0, 0, 0, 0, 0, 0, 0, 0],
+            ack_request_id: Some("bind-42".to_string()),
+            bind_accepted: Some(true),
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: QuickSlotConfigV1 = serde_json::from_str(&json).expect("deserialize");
@@ -603,6 +632,7 @@ mod tests {
     #[test]
     fn skillbar_config_roundtrip_preserves_item_skill_and_empty_slots() {
         let original = SkillBarConfigV1 {
+            dash_skill_id: "movement.dash".into(),
             slots: vec![
                 Some(SkillBarEntryV1::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
@@ -637,6 +667,9 @@ mod tests {
     fn techniques_snapshot_roundtrip_preserves_detail_fields() {
         let original = TechniquesSnapshotV1 {
             entries: vec![TechniqueEntryV1 {
+                category: "attack".into(),
+                input_kind: "skill".into(),
+                icon_texture: String::new(),
                 id: "burst_meridian.beng_quan".to_string(),
                 display_name: "崩拳".to_string(),
                 grade: "yellow".to_string(),

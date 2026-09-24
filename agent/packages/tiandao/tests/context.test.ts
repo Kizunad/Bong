@@ -4,6 +4,7 @@ import {
   assembleContext,
   CALAMITY_RECIPE,
   ERA_RECIPE,
+  MUTATION_RECIPE,
   balanceBlock,
   createContextInput,
   chatSignalsBlock,
@@ -11,6 +12,7 @@ import {
   perceptionEnvelopeBlock,
   peerDecisionsBlock,
   recentNarrationsBlock,
+  tsyRuntimeEventsBlock,
   worldSnapshotBlock,
   worldTrendBlock,
 } from "../src/context.js";
@@ -189,6 +191,7 @@ describe("context with chat signals", () => {
   it("renders chat signals block with sentiment summary", () => {
     const input = createContextInput(createTestWorldState(), [
       {
+        ts: 10_000,
         player: "offline:Steve",
         raw: "灵气太少了",
         sentiment: -0.7,
@@ -196,13 +199,14 @@ describe("context with chat signals", () => {
         influence_weight: 0.8,
       },
       {
+        ts: 10_000,
         player: "offline:Alex",
         raw: "今天不错",
         sentiment: 0.3,
         intent: "social",
         influence_weight: 0.2,
       },
-    ]);
+    ], 10_000);
 
     const text = chatSignalsBlock.render(input);
     expect(text).toContain("## 近期民意");
@@ -216,13 +220,14 @@ describe("context with chat signals", () => {
       CALAMITY_RECIPE,
       createContextInput(createTestWorldState(), [
         {
+          ts: 10_000,
           player: "offline:Steve",
           raw: "灵气太少了",
           sentiment: -0.7,
           intent: "complaint",
           influence_weight: 0.8,
         },
-      ]),
+      ], 10_000),
     );
 
     expect(context).toContain("## 近期民意");
@@ -236,6 +241,7 @@ describe("context with chat signals", () => {
     };
 
     const manySignals: ChatSignal[] = Array.from({ length: 10 }, (_, i) => ({
+      ts: 10_000,
       player: `offline:p${i}`,
       raw: "灵气太少了灵气太少了灵气太少了",
       sentiment: -0.5,
@@ -245,10 +251,85 @@ describe("context with chat signals", () => {
 
     const context = assembleContext(
       tinyRecipe,
-      createContextInput(createTestWorldState(), manySignals),
+      createContextInput(createTestWorldState(), manySignals, 10_000),
     );
 
     expect(context).not.toContain("## 近期民意");
+  });
+});
+
+describe("TSY enter/exit runtime context", () => {
+  it("renders complete validated payloads and preserves the qi placeholder warning", () => {
+    const enter = {
+      v: 1 as const,
+      kind: "tsy_enter" as const,
+      tick: 42,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      return_to: {
+        dimension: "minecraft:overworld",
+        pos: [12.5, 64, -8.25],
+      },
+      filtered_items: [
+        {
+          instance_id: 7,
+          template_id: "bone_coin",
+          reason: "spirit_quality_too_high" as const,
+        },
+      ],
+    };
+    const exit = {
+      v: 1 as const,
+      kind: "tsy_exit" as const,
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    };
+
+    const text = tsyRuntimeEventsBlock.render(
+      createContextInput(createTestWorldState(), [], undefined, {
+        tsyRuntimeEvents: [enter, exit],
+      }),
+    );
+
+    expect(text).toContain("## 活坍缩渊进出信号");
+    expect(text).toContain(JSON.stringify(enter));
+    expect(text).toContain(JSON.stringify(exit));
+    expect(text).toContain("qi_drained_total 当前仅为 wire 占位字段");
+  });
+
+  it("injects TSY events into the mutation recipe and stays empty without events", () => {
+    const event = {
+      v: 1 as const,
+      kind: "tsy_exit" as const,
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    };
+
+    expect(tsyRuntimeEventsBlock.render(createContextInput(createTestWorldState()))).toBe("");
+    const context = assembleContext(
+      MUTATION_RECIPE,
+      createContextInput(createTestWorldState(), [], undefined, {
+        tsyRuntimeEvents: [event],
+      }),
+    );
+    expect(context).toContain("tsy_exit");
+    expect(context).toContain("duration_ticks");
+  });
+
+  it("keeps TSY runtime blocks required so a full token budget cannot drop events", () => {
+    for (const recipe of [CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE]) {
+      const block = recipe.blocks.find((candidate) => candidate.name === "tsy_runtime_events");
+      expect(
+        block?.required,
+        `${recipe.agentName} must treat validated TSY runtime events as required context`,
+      ).toBe(true);
+    }
   });
 });
 
@@ -367,6 +448,7 @@ describe("context with task-21 world model blocks", () => {
   it("preserves required blocks and trims optional task-21 blocks under token pressure", () => {
     const { model, state } = createSeededWorldModel();
     const noisySignals: ChatSignal[] = Array.from({ length: 10 }, (_, index) => ({
+      ts: 1_710_000_123,
       player: `offline:p${index}`,
       raw: "灵气太少了灵气太少了灵气太少了灵气太少了",
       sentiment: -0.5,

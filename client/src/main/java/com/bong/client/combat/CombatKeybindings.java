@@ -2,8 +2,8 @@ package com.bong.client.combat;
 
 import com.bong.client.BongClient;
 import com.bong.client.botany.BotanyHudBootstrap;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -12,7 +12,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.function.IntConsumer;
 
 /**
- * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
+ * Combat-HUD key bindings (§7). Registers currently available quick-use keys, the Jiemai
  * reaction key (default unbound — DefenseWindow only; interaction-intent-cleanup-v1
  * P3 dropped the old V default to avoid clashing with the movement dash key), and
  * the R spell-volume hold.
@@ -46,8 +46,16 @@ public final class CombatKeybindings {
     }
 
     public static void register() {
-        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
-            QUICK_SLOT_KEYS[i] = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        installBindings(BongKeybindRegistry.global());
+
+        ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F2, jiemai [unbound], R, event stream toggle, shield hold).");
+    }
+
+    static void installBindings(BongKeybindRegistry registry) {
+        for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
+            QUICK_SLOT_KEYS[i] = registry.register(new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("combat.quick_slot_" + (i + 1)),
                 "key.bong-client.quick_slot_" + (i + 1),
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_F1 + i,
@@ -59,34 +67,35 @@ public final class CombatKeybindings {
         // KeyBinding.wasPressed() 都触发 → 冲刺的同时企图发截脉。截脉是有严格 server
         // 窗口期的反应技，不适合占用常用键、更不应「不小心按到就可能发 C2S」。改为默认
         // 未绑定，由玩家在控制设置里显式分配一个不冲突的键。
-        jiemaiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        jiemaiKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.jiemai_react"),
             "key.bong-client.jiemai_react",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
-        spellVolumeKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        spellVolumeKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.spell_volume_hold"),
             "key.bong-client.spell_volume_hold",
             InputUtil.Type.KEYSYM,
             GLFW.GLFW_KEY_R,
             CATEGORY
         ));
-        eventStreamToggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        eventStreamToggleKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.event_stream_toggle"),
             "key.bong-client.event_stream_toggle",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
         // plan-shield-block-v1 P1 — 举盾持键（默认未绑定；主要路径是右键 MixinMouse 仲裁）。
-        shieldHoldKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        shieldHoldKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.shield_hold"),
             "key.bong-client.shield_hold",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
-
-        ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, jiemai [unbound], R, event stream toggle, shield hold).");
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {
@@ -113,11 +122,7 @@ public final class CombatKeybindings {
     private static void onTick(MinecraftClient client) {
         if (client == null || client.player == null) return;
 
-        for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
-            while (QUICK_SLOT_KEYS[i].wasPressed()) {
-                quickSlotHandler.accept(i);
-            }
-        }
+        consumeQuickSlotPresses();
 
         while (jiemaiKey.wasPressed()) {
             jiemaiHandler.run();
@@ -149,7 +154,64 @@ public final class CombatKeybindings {
             shieldHoldHandler.onShieldHold(shieldHeldNow);
             shieldHeldLastTick = shieldHeldNow;
         }
+    }
 
+    static int consumeQuickSlotPresses() {
+        int consumed = 0;
+        for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
+            while (QUICK_SLOT_KEYS[i].wasPressed()) {
+                quickSlotHandler.accept(i);
+                consumed++;
+            }
+        }
+        return consumed;
+    }
+
+    /**
+     * Clears only session-bound key state.
+     *
+     * <p>Registered bindings and intent handlers are process-lifetime wiring. They must survive
+     * reconnect; pending presses and held-edge observations belong to the previous session and must
+     * be discarded before a fresh session can consume input.</p>
+     */
+    public static void clearOnDisconnect() {
+        for (KeyBinding quickSlotKey : QUICK_SLOT_KEYS) {
+            while (quickSlotKey != null && quickSlotKey.wasPressed()) {
+                // Drain old-session presses without dispatching them.
+            }
+        }
+        spellVolumeHeldLastTick = false;
+        shieldHeldLastTick = false;
+    }
+
+    static boolean spellVolumeHeldLastTickForTests() {
+        return spellVolumeHeldLastTick;
+    }
+
+    static boolean shieldHeldLastTickForTests() {
+        return shieldHeldLastTick;
+    }
+
+    static void setHeldEdgesForTests(boolean spellVolumeHeld, boolean shieldHeld) {
+        spellVolumeHeldLastTick = spellVolumeHeld;
+        shieldHeldLastTick = shieldHeld;
+    }
+
+    static void resetForTests() {
+        for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
+            QUICK_SLOT_KEYS[i] = null;
+        }
+        jiemaiKey = null;
+        spellVolumeKey = null;
+        eventStreamToggleKey = null;
+        shieldHoldKey = null;
+        quickSlotHandler = slot -> { };
+        jiemaiHandler = () -> { };
+        spellVolumeHandler = pressed -> { };
+        eventStreamToggleHandler = () -> { };
+        shieldHoldHandler = pressed -> { };
+        spellVolumeHeldLastTick = false;
+        shieldHeldLastTick = false;
     }
 
     @FunctionalInterface

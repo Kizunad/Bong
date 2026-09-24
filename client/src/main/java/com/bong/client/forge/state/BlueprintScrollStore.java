@@ -13,7 +13,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 只能通过 server 回推的下一条快照体现——不做本地乐观 + 校正双路径。</p>
  */
 public final class BlueprintScrollStore {
-    public record Entry(String id, String displayName, int tierCap, int stepCount) {}
+    public record Material(String material, int count) {}
+    public record Entry(String id, String displayName, int tierCap, int stepCount, String outputItem,
+                        List<String> steps, List<Material> requiredMaterials) {
+        public Entry { steps = List.copyOf(steps); requiredMaterials = List.copyOf(requiredMaterials); }
+    }
 
     private static volatile List<Entry> learned = new CopyOnWriteArrayList<>();
     private static volatile int currentIndex = 0;
@@ -37,6 +41,11 @@ public final class BlueprintScrollStore {
         if (learned.isEmpty()) return null;
         if (currentIndex < 0 || currentIndex >= learned.size()) return null;
         return learned.get(currentIndex);
+    }
+
+    public static void clearOnDisconnect() {
+        learned = new CopyOnWriteArrayList<>();
+        currentIndex = 0;
     }
 
     public static void resetForTests() {

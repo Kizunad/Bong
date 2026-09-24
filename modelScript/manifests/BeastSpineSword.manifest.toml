@@ -1,0 +1,11 @@
+# 异兽脊骨剑特征清单；依据 server/assets/items/weapons.toml 的物品描述。
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+bone_spine = { elements = ["vertebra_", "joint_", "spur_", "cinnabar_runic_", "marrow_core_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 140, SIDE_R = 90, "3/4" = 180 } }
+guard = { elements = ["guard_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 100, SIDE_R = 60, "3/4" = 120 } }
+grip = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 100, SIDE_R = 70, "3/4" = 130 } }
+tassel = { elements = ["tassel_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 40, SIDE_R = 25, "3/4" = 55 } }
+tip = { elements = ["tip_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 35, "3/4" = 45 } }

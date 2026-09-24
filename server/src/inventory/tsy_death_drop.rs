@@ -86,6 +86,18 @@ pub fn apply_tsy_death_drop(
     // 原带物先 collect 出 candidate_ids 喂给 select_drop_instance_ids 做 50% Roll。
     let mut entry_carry_ids: Vec<u64> = Vec::new();
     let mut tsy_acquired_records: Vec<DroppedItemRecord> = Vec::new();
+    for entry in &inventory.material_preparation.materials {
+        if snapshot.contains(&entry.item.instance_id) {
+            entry_carry_ids.push(entry.item.instance_id);
+        } else {
+            tsy_acquired_records.push(DroppedItemRecord {
+                container_id: "material_preparation".into(),
+                row: 0,
+                col: 0,
+                instance: entry.item.clone(),
+            });
+        }
+    }
 
     for container in &inventory.containers {
         for placed in &container.items {
@@ -249,6 +261,21 @@ pub fn apply_tsy_death_drop(
         }
     }
 
+    inventory.material_preparation.materials.retain(|entry| {
+        if !all_dropped_ids.contains(&entry.item.instance_id) {
+            return true;
+        }
+        if entry_dropped_set.contains(&entry.item.instance_id) {
+            entry_carry_dropped.push(DroppedItemRecord {
+                container_id: "material_preparation".into(),
+                row: 0,
+                col: 0,
+                instance: entry.item.clone(),
+            });
+        }
+        false
+    });
+    inventory.material_preparation.clear_empty_recipe();
     if !all_dropped_ids.is_empty() {
         super::bump_revision(inventory);
     }
@@ -309,6 +336,7 @@ mod tests {
             })
             .collect();
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -493,6 +521,7 @@ mod tests {
         use crate::combat::weapon::WeaponKind;
         use crate::inventory::{ItemCategory, ItemTemplate, WeaponSpec};
         ItemTemplate {
+            quick_use: false,
             id: id.into(),
             display_name: id.into(),
             category: ItemCategory::Weapon,
@@ -524,6 +553,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

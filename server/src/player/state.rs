@@ -11,14 +11,16 @@ use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
+use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
-use crate::inventory::PlayerInventory;
-use crate::persistence::{DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
+use crate::inventory::{DroppedLootEntry, PlayerInventory};
+use crate::persistence::{ZoneRuntimeRecord, DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::player::spawn_selector::SpawnPurpose;
+use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::PlayerSocialSnapshotV1;
@@ -32,7 +34,7 @@ pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 // plan-layered-equip-v1 P0.6（决议 #4）— inventory schema 内容版本。
 // v1 = equipped 每槽单件 ItemInstance；v2 = SlotContents{worn:Vec, held:Option}。
 // PLAYER_ROW_SCHEMA_VERSION bump 到 2：load 时 schema_version < 2 触发 migrate_equipped_v1_to_v2。
-const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
+pub(crate) const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
 const INVENTORY_SCHEMA_VERSION: i32 = 2;
 const DEFAULT_INVENTORY_JSON: &str = "null";
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
@@ -57,11 +59,38 @@ impl Default for PlayerState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct PlayerUiPrefs {
     #[serde(default)]
-    pub quick_slots: [Option<String>; 9],
+    pub dash_skill_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_quick_slot_instances")]
+    pub quick_slots: [Option<u64>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
-    pub skill_bar: [SkillSlotPersist; 9],
+    pub skill_bar: [SkillSlotPersist; SkillBarBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_configs: BTreeMap<String, SkillConfig>,
+}
+
+fn deserialize_quick_slot_instances<'de, D>(
+    deserializer: D,
+) -> Result<[Option<u64>; QuickSlotBindings::SLOT_COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedQuickSlot {
+        Instance(u64),
+        LegacyTemplate(String),
+    }
+
+    let entries: [Option<PersistedQuickSlot>; QuickSlotBindings::SLOT_COUNT] =
+        Deserialize::deserialize(deserializer)?;
+    Ok(entries.map(|entry| match entry {
+        Some(PersistedQuickSlot::Instance(instance_id)) => Some(instance_id),
+        Some(PersistedQuickSlot::LegacyTemplate(legacy_template)) => {
+            let _ = legacy_template;
+            None
+        }
+        None => None,
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -87,11 +116,11 @@ impl PlayerUiPrefs {
             return bindings;
         };
 
-        for (slot, template_id) in self.quick_slots.iter().enumerate() {
-            let Some(template_id) = template_id.as_deref() else {
+        for (slot, instance_id) in self.quick_slots.iter().enumerate() {
+            let Some(instance_id) = *instance_id else {
                 continue;
             };
-            if let Some(instance_id) = first_inventory_instance_for_template(inventory, template_id)
+            if crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id).is_some()
             {
                 bindings.set(slot as u8, Some(instance_id));
             }
@@ -99,11 +128,45 @@ impl PlayerUiPrefs {
         bindings
     }
 
+    /// Remove persisted skill-bar entries that are no longer valid generic actions.
+    /// Dedicated-input techniques have their own C2S path and must not be rebound through
+    /// the skill bar after reconnect; unknown ids are cleared as well.
+    pub(crate) fn sanitize_skill_bar_bindings(&mut self, registry: &TechniqueRegistry) -> bool {
+        let mut changed = false;
+        for persist in &mut self.skill_bar {
+            let SkillSlotPersist::Skill { skill_id } = persist else {
+                continue;
+            };
+            let invalid = registry
+                .get(skill_id)
+                .is_none_or(|definition| definition.input_kind() == "dedicated");
+            if invalid {
+                *persist = SkillSlotPersist::Empty;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(crate) fn skill_bar_bindings(
         &self,
         inventory: Option<&PlayerInventory>,
+        registry: Option<&TechniqueRegistry>,
     ) -> SkillBarBindings {
-        let mut bindings = SkillBarBindings::default();
+        let mut bindings = SkillBarBindings {
+            dash_skill_id: self
+                .dash_skill_id
+                .as_ref()
+                .filter(|id| {
+                    registry.is_some_and(|registry| {
+                        registry
+                            .get(id)
+                            .is_some_and(|definition| definition.input_kind() == "dash")
+                    })
+                })
+                .cloned(),
+            ..Default::default()
+        };
         for (slot, persist) in self.skill_bar.iter().enumerate() {
             let slot_value = match persist {
                 SkillSlotPersist::Empty => SkillSlot::Empty,
@@ -113,9 +176,20 @@ impl PlayerUiPrefs {
                     })
                     .map(|instance_id| SkillSlot::Item { instance_id })
                     .unwrap_or_default(),
-                SkillSlotPersist::Skill { skill_id } => SkillSlot::Skill {
-                    skill_id: skill_id.clone(),
-                },
+                SkillSlotPersist::Skill { skill_id } => {
+                    let valid = registry.is_none_or(|registry| {
+                        registry
+                            .get(skill_id)
+                            .is_some_and(|definition| definition.input_kind() != "dedicated")
+                    });
+                    if valid {
+                        SkillSlot::Skill {
+                            skill_id: skill_id.clone(),
+                        }
+                    } else {
+                        SkillSlot::Empty
+                    }
+                }
             };
             bindings.set(slot as u8, slot_value);
         }
@@ -158,13 +232,30 @@ pub struct LoadedPlayerSlices {
     pub position: [f64; 3],
     pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
+    pub craft_session: Option<CraftSession>,
     pub lifespan: Option<LifespanComponent>,
     pub in_coffin: bool,
     /// 棺材档级：Some(grade) = 在棺内 + 档级；None = 不在棺内（与 in_coffin=false 语义对齐）
     pub coffin_grade: Option<CoffinGrade>,
     pub skill_set: SkillSet,
-    pub known_techniques: KnownTechniques,
+    pub known_techniques: LoadedKnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
+}
+
+/// 功法聚合加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
+/// （JSON 损坏、SELECT 报错），或连接都打不开导致**行状态完全不可知**——两种情况都
+/// 绝不允许用 `KnownTechniques::default()` 覆盖写回（会把玩家全部功法+熟练度
+/// 永久清零）。production join 由 canonical persistence adapter 保留 failed provenance、挂
+/// `KnownTechniquesLoadFailed` 并统一阻断 Changed/disconnect/shutdown 写出口；仍消费本聚合
+/// API 的调用方也必须保留同一写保护语义。唯一能确认「无数据」的是连接成功且查到无行
+/// （真新玩家），归入 `Loaded(default)`，可正常写回。
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadedKnownTechniques {
+    Loaded(KnownTechniques),
+    LoadFailed,
+    /// 本次聚合加载主动跳过功法；canonical persistence slice 负责独立加载。
+    /// 该状态不携带可写回的数据，调用方不得将其解释为空功法表。
+    NotLoaded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,6 +511,25 @@ pub fn load_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> LoadedPlayerSlices {
+    load_player_slices_inner(persistence, username, true)
+}
+
+/// 加载玩家其它切片，但跳过功法读取。
+///
+/// 功法由 canonical persistence slice 独立加载并管理写保护，因此该路径返回
+/// [`LoadedKnownTechniques::NotLoaded`]，调用方不得据此写回功法。
+pub(crate) fn load_player_slices_for_canonical_techniques(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> LoadedPlayerSlices {
+    load_player_slices_inner(persistence, username, false)
+}
+
+fn load_player_slices_inner(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    load_known_techniques: bool,
+) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
     let connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
@@ -437,11 +547,14 @@ pub fn load_player_slices(
                 ),
                 last_dimension: DimensionKind::default(),
                 inventory: None,
+                craft_session: None,
                 lifespan: None,
                 in_coffin: false,
                 coffin_grade: None,
                 skill_set: SkillSet::default(),
-                known_techniques: KnownTechniques::default(),
+                // 连接都打不开 = 行状态不可知（DB busy/文件不可达），
+                // 必须按 LoadFailed 写保护，绝不能当「新玩家」用 default 覆盖写回
+                known_techniques: LoadedKnownTechniques::LoadFailed,
                 ui_prefs: PlayerUiPrefs::default(),
             };
         }
@@ -470,6 +583,17 @@ pub fn load_player_slices(
         Err(error) => {
             tracing::warn!(
                 "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using default inventory fallback",
+                username,
+                persistence.db_path().display()
+            );
+            None
+        }
+    };
+    let craft_session = match load_player_craft_session_from_sqlite(&connection, username) {
+        Ok(session) => session,
+        Err(error) => {
+            tracing::error!(
+                "[bong][player] failed to load persisted craft session for `{}` from sqlite {}: {error}; refusing to invent a replacement session",
                 username,
                 persistence.db_path().display()
             );
@@ -506,16 +630,22 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
-    let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
-        Ok(known_techniques) => known_techniques,
-        Err(error) => {
-            tracing::warn!(
-                "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; using default known techniques",
-                username,
-                persistence.db_path().display()
-            );
-            KnownTechniques::default()
+    let known_techniques = if load_known_techniques {
+        match load_player_known_techniques_from_sqlite(&connection, username) {
+            Ok(known_techniques) => {
+                LoadedKnownTechniques::Loaded(known_techniques.unwrap_or_default())
+            }
+            Err(error) => {
+                tracing::error!(
+                    "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; blocking known techniques persistence for this session to protect the stored row",
+                    username,
+                    persistence.db_path().display()
+                );
+                LoadedKnownTechniques::LoadFailed
+            }
         }
+    } else {
+        LoadedKnownTechniques::NotLoaded
     };
     let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
         Ok(ui_prefs) => ui_prefs,
@@ -534,6 +664,7 @@ pub fn load_player_slices(
         position,
         last_dimension,
         inventory,
+        craft_session,
         lifespan,
         in_coffin,
         coffin_grade,
@@ -558,6 +689,46 @@ pub fn save_player_shrine_anchor_slice(
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_shrine_anchor_slice_in_sqlite(&mut connection, username, anchor)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe：读回断线前持久化的死亡/复活
+/// 状态机（`state`/`fortune_remaining`/`awaiting_decision`/各 deadline tick）。
+/// `None` = 该用户名从未落过盘（首次登录，或 pre-v39 老档），调用方应回退到
+/// `Lifecycle::default()` 而非当作"读取失败"处理。
+///
+/// `current_combat_clock_tick` 是读档当刻（重连那一瞬）的 `CombatClock.tick`——用于把
+/// 落盘时刻记录的"绝对 tick" deadline（
+/// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到当前 tick 空间，
+/// 详见 `translate_lifecycle_deadline_tick_across_restart` 的文档注释。
+pub fn load_player_lifecycle_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    current_combat_clock_tick: u64,
+) -> io::Result<Option<crate::combat::components::Lifecycle>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_lifecycle_from_sqlite(&connection, username, current_combat_clock_tick)
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe：断线/关服 flush 时把当前
+/// `Lifecycle` 组件整份落盘，让重连不再盲插 `Lifecycle::default()`（否则待复活玩家
+/// 会被静默重置成满运气次数的"新角色"，绕过渡劫概率判定与永久终结风险）。
+///
+/// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，作为跨重启折算 deadline 的锚点
+/// 存进 `combat_clock_tick_at_save` 列（见 `load_player_lifecycle_slice`）。
+pub fn save_player_lifecycle_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    lifecycle: &crate::combat::components::Lifecycle,
+    combat_clock_tick: u64,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_lifecycle_slice_in_sqlite(
+        &mut connection,
+        username,
+        lifecycle,
+        combat_clock_tick,
+    )?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -602,6 +773,7 @@ pub fn save_player_slices(
         skill_set,
         None,
         None,
+        None,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -617,6 +789,7 @@ pub fn save_player_slices_with_coffin(
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
     grade: Option<CoffinGrade>,
+    craft_session: Option<&CraftSession>,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_slices_in_sqlite(
@@ -630,6 +803,7 @@ pub fn save_player_slices_with_coffin(
         skill_set,
         Some(grade.is_some()),
         grade,
+        Some(craft_session),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -726,6 +900,102 @@ pub fn save_player_inventory_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+pub fn save_player_inventory_and_craft_session_slices(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+    craft_session: Option<&CraftSession>,
+) -> io::Result<PathBuf> {
+    save_player_craft_checkpoint(
+        persistence,
+        username,
+        inventory,
+        craft_session,
+        None,
+        None,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn save_player_craft_checkpoint(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: Option<&PlayerInventory>,
+    craft_session: Option<&CraftSession>,
+    cultivation: Option<&Cultivation>,
+    qi_ledger: Option<&WorldQiAccount>,
+    durable_drops: &[DroppedLootEntry],
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    let inventory_json = serialize_inventory_json(inventory)?;
+    let craft_session_json = craft_session
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    persist_player_craft_session_in_transaction(
+        &transaction,
+        username,
+        craft_session_json.as_deref(),
+        last_updated_wall,
+    )?;
+    if let Some(cultivation) = cultivation {
+        crate::persistence::upsert_player_cultivation_slice(
+            &transaction,
+            username,
+            cultivation,
+            last_updated_wall,
+        )?;
+    }
+    if let Some(qi_ledger) = qi_ledger {
+        crate::persistence::upsert_runtime_qi_account_balances(
+            &transaction,
+            qi_ledger,
+            last_updated_wall,
+        )?;
+    }
+    crate::persistence::upsert_dropped_loot_entries(
+        &transaction,
+        durable_drops,
+        last_updated_wall,
+    )?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+pub fn save_player_inventory_and_delete_dropped_loot(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: &PlayerInventory,
+    dropped_instance_id: u64,
+    zone_runtime: Option<&ZoneRuntimeRecord>,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    let inventory_json = serialize_inventory_json(Some(inventory))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    crate::persistence::delete_dropped_loot_entry(&transaction, dropped_instance_id)?;
+    if let Some(zone_runtime) = zone_runtime {
+        crate::persistence::upsert_zone_runtime(&transaction, zone_runtime, last_updated_wall)?;
+    }
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub fn rotate_current_character_id(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -815,11 +1085,55 @@ where
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// 尝试在不等待 SQLite 写锁的情况下更新 UI 偏好。
+///
+/// 网络请求处理系统位于 ECS 主线程；这里的快速路径只能做一次零等待尝试，
+/// 否则另一个合法的持久化写事务就能把 `quick_slot_bind` 的 ACK 挡在几十秒之外。
+/// `SQLITE_BUSY` 原样保留在返回的 `io::Error` 中，调用方据此把更新排到后续帧。
+pub(crate) fn try_update_player_ui_prefs<F>(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    update: F,
+) -> io::Result<PathBuf>
+where
+    F: FnOnce(&mut PlayerUiPrefs),
+{
+    let mut connection = open_player_connection_with_timeout(persistence, Duration::ZERO)?;
+    let mut ui_prefs = load_player_ui_prefs_from_sqlite(&connection, username)?;
+    update(&mut ui_prefs);
+    persist_player_ui_prefs_slice_in_sqlite(&mut connection, username, &ui_prefs)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+/// `io::Error::other(rusqlite::Error)` 保留底层错误作为 source；网络层只需要知道
+/// 这次失败是否可通过下一帧重试，不应依赖 rusqlite 具体错误文本。
+pub(crate) fn is_sqlite_busy_error(error: &io::Error) -> bool {
+    let Some(source) = error.get_ref() else {
+        return false;
+    };
+    let Some(sqlite_error) = source.downcast_ref::<rusqlite::Error>() else {
+        return false;
+    };
+    matches!(
+        sqlite_error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if matches!(
+                code.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
 pub fn export_player_bundle(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> io::Result<PlayerExportBundle> {
     let loaded = load_player_slices(persistence, username);
+    let LoadedKnownTechniques::Loaded(known_techniques) = loaded.known_techniques else {
+        return Err(io::Error::other(format!(
+            "known techniques for `{username}` could not be reliably loaded; refusing to export a default table in its place"
+        )));
+    };
     let connection = open_player_connection(persistence)?;
     let current_char_id: String = connection
         .query_row(
@@ -847,7 +1161,7 @@ pub fn export_player_bundle(
         last_dimension: loaded.last_dimension,
         inventory: loaded.inventory,
         skill_set: loaded.skill_set,
-        known_techniques: loaded.known_techniques,
+        known_techniques,
         ui_prefs,
     })
 }
@@ -1029,7 +1343,16 @@ pub fn import_player_bundle(
     transaction.commit().map_err(io::Error::other)
 }
 
-fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Connection> {
+pub(crate) fn open_player_connection(
+    persistence: &PlayerStatePersistence,
+) -> io::Result<Connection> {
+    open_player_connection_with_timeout(persistence, Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))
+}
+
+fn open_player_connection_with_timeout(
+    persistence: &PlayerStatePersistence,
+    busy_timeout: Duration,
+) -> io::Result<Connection> {
     if let Some(parent) = persistence.db_path().parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1039,7 +1362,7 @@ fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Co
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(io::Error::other)?;
     connection
-        .busy_timeout(Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))
+        .busy_timeout(busy_timeout)
         .map_err(io::Error::other)?;
     Ok(connection)
 }
@@ -1257,6 +1580,26 @@ fn load_player_inventory_from_sqlite(
     serde_json::from_value::<PlayerInventory>(value)
         .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn load_player_craft_session_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<CraftSession>> {
+    let session_json: Option<String> = connection
+        .query_row(
+            "SELECT session_json FROM player_craft_sessions WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    session_json
+        .map(|json| {
+            serde_json::from_str::<CraftSession>(&json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .transpose()
 }
 
 /// plan-layered-equip-v1 P0.6（决议 #4 / #17）— inventory v1→v2 存档迁移（原地改写 Value）。
@@ -1722,10 +2065,18 @@ fn load_player_skill_set_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+pub(crate) fn load_player_known_techniques_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<KnownTechniques>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_known_techniques_from_sqlite(&connection, username)
+}
+
 fn load_player_known_techniques_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<KnownTechniques> {
+) -> io::Result<Option<KnownTechniques>> {
     let known_techniques_json: Option<String> = connection
         .query_row(
             "
@@ -1740,11 +2091,100 @@ fn load_player_known_techniques_from_sqlite(
         .map_err(io::Error::other)?;
 
     let Some(known_techniques_json) = known_techniques_json else {
-        return Ok(KnownTechniques::default());
+        return Ok(None);
     };
 
     serde_json::from_str::<KnownTechniques>(&known_techniques_json)
+        .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe：`None` = 未落过盘（vs. 老档 /
+/// 首次登录），调用方要能区分"从未持久化"和"反序列化失败"（后者仍走 `Err` fail-loud，
+/// 不静默吞成 `None` 掩盖坏数据）。
+///
+/// 读回后会把两个"绝对 tick" deadline 字段（
+/// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到 `current_combat_clock_tick`
+/// 所在的 tick 空间——见 `translate_lifecycle_deadline_tick_across_restart`。
+fn load_player_lifecycle_from_sqlite(
+    connection: &Connection,
+    username: &str,
+    current_combat_clock_tick: u64,
+) -> io::Result<Option<crate::combat::components::Lifecycle>> {
+    let row: Option<(String, i64, u64)> = connection
+        .query_row(
+            "
+            SELECT lifecycle_json, last_updated_wall, combat_clock_tick_at_save
+            FROM player_lifecycle
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some((lifecycle_json, last_updated_wall, combat_clock_tick_at_save)) = row else {
+        return Ok(None);
+    };
+
+    let mut lifecycle =
+        serde_json::from_str::<crate::combat::components::Lifecycle>(&lifecycle_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    let now_wall = current_unix_seconds();
+    lifecycle.revival_decision_deadline_tick = translate_lifecycle_deadline_tick_across_restart(
+        lifecycle.revival_decision_deadline_tick,
+        combat_clock_tick_at_save,
+        last_updated_wall,
+        now_wall,
+        current_combat_clock_tick,
+    );
+    lifecycle.weakened_until_tick = translate_lifecycle_deadline_tick_across_restart(
+        lifecycle.weakened_until_tick,
+        combat_clock_tick_at_save,
+        last_updated_wall,
+        now_wall,
+        current_combat_clock_tick,
+    );
+
+    Ok(Some(lifecycle))
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：把落盘时刻记录
+/// 的"绝对 tick" deadline 折算到读档当刻的 `CombatClock` tick 空间。
+///
+/// `CombatClock` 每次进程重启都从 0 重新计数（`combat::mod::register` 里
+/// `insert_resource(CombatClock::default())`），全仓没有任何从持久化恢复 tick 的代码。
+/// `revival_decision_deadline_tick`/`weakened_until_tick` 都是
+/// 落盘那一刻算出的"绝对 tick"值——若跨重启直接复用，新进程 tick=0 时，旧 deadline 动辄
+/// 百万级，等价于几十小时后才会被 `auto_confirm_revival_decisions`
+/// 结算，期间玩家会卡在 AwaitingRevival（`resolve.rs` 同时禁止攻击与被攻击）却没有任何
+/// UI 解释为什么，然后在数小时后的随机时刻被强制渡劫、可能永久终结角色。
+///
+/// 用 `combat_clock_tick_at_save`（落盘时刻 CombatClock.tick）+ `last_updated_wall`
+/// （落盘时刻墙钟）两个锚点，按真实流逝的墙钟秒数折算出"距 deadline 还剩多少 tick"，
+/// 再叠加到 `current_combat_clock_tick` 上，重建一个在当前 tick 空间里有意义的新
+/// deadline——镜像 `player_lifespan.offline_pause_wall` 按墙钟折算离线寿元的模式
+/// （`load_player_lifespan_from_sqlite`）。同一进程内断线重连（未重启）时，这个折算
+/// 结果应与直接复用旧绝对值几乎一致（wall 流逝与 tick 流逝理论上同步，±1 tick 抖动可忽略）；
+/// 跨重启时则会正确地把"早已过期"的 deadline 立即结算（`remaining_now` 饱和到 0），而不是
+/// 把它错当成几十小时后的未来事件。
+fn translate_lifecycle_deadline_tick_across_restart(
+    deadline_tick: Option<u64>,
+    combat_clock_tick_at_save: u64,
+    last_updated_wall: i64,
+    now_wall: i64,
+    current_combat_clock_tick: u64,
+) -> Option<u64> {
+    let deadline_tick = deadline_tick?;
+    let remaining_at_save = deadline_tick.saturating_sub(combat_clock_tick_at_save);
+    // now_wall < last_updated_wall（系统时钟回拨）时按 0 流逝处理，不倒推出负数流逝时间。
+    let elapsed_wall_seconds = now_wall.saturating_sub(last_updated_wall).max(0) as u64;
+    let elapsed_ticks =
+        elapsed_wall_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND);
+    let remaining_now = remaining_at_save.saturating_sub(elapsed_ticks);
+    Some(current_combat_clock_tick.saturating_add(remaining_now))
 }
 
 fn persist_player_core_slice_in_sqlite(
@@ -1784,6 +2224,7 @@ fn persist_player_core_slice_in_sqlite(
             None,
             None,
             &SkillSet::default(),
+            None,
             None,
             None,
         )?;
@@ -1968,6 +2409,52 @@ fn persist_player_known_techniques_slice_in_sqlite(
     Ok(())
 }
 
+/// bughunt player-lifecycle-relog-death-consequence-wipe：整份 `Lifecycle` 组件镜像进
+/// `player_lifecycle.lifecycle_json`（同 known_techniques 的单 JSON 列模式），覆盖
+/// state/fortune_remaining/awaiting_decision/各 deadline tick —— 调用方（断线清理 /
+/// 关服 flush）必须传入断连那一刻的真实组件值，不得传入尚未跑过状态转换的陈旧快照。
+///
+/// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，写入 `combat_clock_tick_at_save`
+/// 列，作为读档时折算"绝对 tick" deadline 的锚点（见 `load_player_lifecycle_from_sqlite`）。
+fn persist_player_lifecycle_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    lifecycle: &crate::combat::components::Lifecycle,
+    combat_clock_tick: u64,
+) -> io::Result<()> {
+    let lifecycle_json = serde_json::to_string(lifecycle)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_lifecycle (
+                username,
+                lifecycle_json,
+                schema_version,
+                last_updated_wall,
+                combat_clock_tick_at_save
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(username) DO UPDATE SET
+                lifecycle_json = excluded.lifecycle_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall,
+                combat_clock_tick_at_save = excluded.combat_clock_tick_at_save
+            ",
+            params![
+                username,
+                lifecycle_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall,
+                combat_clock_tick
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn persist_player_slices_in_sqlite(
     connection: &mut Connection,
@@ -1981,6 +2468,8 @@ fn persist_player_slices_in_sqlite(
     in_coffin: Option<bool>,
     // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
     coffin_grade: Option<CoffinGrade>,
+    // None = 调用方无 craft 上下文，保留数据库原值；Some(None) = 删除 session。
+    craft_session: Option<Option<&CraftSession>>,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
@@ -1991,6 +2480,11 @@ fn persist_player_slices_in_sqlite(
     let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
+    let craft_session_json = craft_session
+        .flatten()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
     let coffin_grade_value = resolve_coffin_grade_for_persist(connection, username, coffin_grade)?;
 
@@ -2185,7 +2679,79 @@ fn persist_player_slices_in_sqlite(
             )
             .map_err(io::Error::other)?;
     }
+    if craft_session.is_some() {
+        persist_player_craft_session_in_transaction(
+            &transaction,
+            username,
+            craft_session_json.as_deref(),
+            last_updated_wall,
+        )?;
+    }
     transaction.commit().map_err(io::Error::other)
+}
+
+fn persist_player_inventory_json_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    inventory_json: &str,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                inventory_json = excluded.inventory_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                inventory_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn persist_player_craft_session_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    session_json: Option<&str>,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    if let Some(session_json) = session_json {
+        transaction
+            .execute(
+                "
+                INSERT INTO player_craft_sessions (
+                    username, session_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(username) DO UPDATE SET
+                    session_json = excluded.session_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
+                ",
+                params![
+                    username,
+                    session_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    } else {
+        transaction
+            .execute(
+                "DELETE FROM player_craft_sessions WHERE username = ?1",
+                params![username],
+            )
+            .map_err(io::Error::other)?;
+    }
+    Ok(())
 }
 
 fn ensure_player_auxiliary_rows(connection: &mut Connection, username: &str) -> io::Result<()> {
@@ -2326,6 +2892,7 @@ fn migrate_legacy_player_json_to_sqlite(
         &SkillSet::default(),
         None,
         None,
+        None,
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -2404,2645 +2971,5 @@ fn realm_progress_score(realm: Realm) -> f64 {
 }
 
 #[cfg(test)]
-mod player_state_tests {
-    use super::*;
-    use crate::combat::components::TICKS_PER_SECOND;
-    use crate::cultivation::lifespan::LifespanCapTable;
-    use crate::inventory::{
-        move_equipped_item_to_first_container_slot, set_item_instance_durability, ContainerState,
-        InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
-        MAIN_PACK_CONTAINER_ID,
-    };
-    use crate::network::agent_bridge::serialize_server_data_payload;
-    use crate::persistence::bootstrap_sqlite;
-    use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
-    use rusqlite::{params, Connection};
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::sync::{Arc, Barrier};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use uuid::Uuid;
-
-    fn unique_temp_dir(test_name: &str) -> PathBuf {
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-
-        std::env::temp_dir().join(format!(
-            "bong-player-state-{test_name}-{}-{unique_suffix}",
-            std::process::id()
-        ))
-    }
-
-    fn approx_eq(left: f64, right: f64) {
-        assert!(
-            (left - right).abs() < 1e-9,
-            "expected {left} to be approximately equal to {right}"
-        );
-    }
-
-    fn sqlite_persistence(test_name: &str) -> (PlayerStatePersistence, PathBuf) {
-        let data_dir = unique_temp_dir(test_name);
-        let db_path = data_dir.join("bong.db");
-        bootstrap_sqlite(&db_path, &format!("player-state-{test_name}"))
-            .expect("sqlite bootstrap should succeed");
-        (
-            PlayerStatePersistence::with_db_path(&data_dir, &db_path),
-            data_dir,
-        )
-    }
-
-    fn iron_sword_instance(instance_id: u64, durability: f64) -> ItemInstance {
-        ItemInstance {
-            instance_id,
-            template_id: "iron_sword".to_string(),
-            display_name: "Iron Sword".to_string(),
-            grid_w: 1,
-            grid_h: 2,
-            weight: 1.2,
-            rarity: ItemRarity::Common,
-            description: "weapon persistence fixture".to_string(),
-            stack_count: 1,
-            spirit_quality: 1.0,
-            durability,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: None,
-            forge_color: None,
-            forge_side_effects: Vec::new(),
-            forge_achieved_tier: None,
-            alchemy: None,
-            lingering_owner_qi: None,
-        }
-    }
-
-    fn empty_weapon_inventory() -> PlayerInventory {
-        PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: InventoryRevision(41),
-            containers: vec![ContainerState {
-                quick_access: false,
-                id: MAIN_PACK_CONTAINER_ID.to_string(),
-                name: "Main Pack".to_string(),
-                rows: 5,
-                cols: 7,
-                items: Vec::new(),
-                owner_instance_id: None,
-            }],
-            equipped: HashMap::new(),
-            hotbar: Default::default(),
-            bone_coins: 17,
-            max_weight: 45.0,
-        }
-    }
-
-    fn equipped_iron_sword_inventory(durability: f64) -> PlayerInventory {
-        let mut inventory = empty_weapon_inventory();
-        inventory.equipped.insert(
-            EQUIP_SLOT_MAIN_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(iron_sword_instance(9_001, durability)),
-        );
-        inventory
-    }
-
-    /// 构造一个 v1 形态的 inventory JSON（每装备槽单件 object），仅含 equipped 段供 migrate 测试。
-    fn v1_inventory_json_with_equipped(equipped: serde_json::Value) -> serde_json::Value {
-        serde_json::json!({
-            "revision": 1,
-            "containers": [],
-            "equipped": equipped,
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 0,
-            "max_weight": 50.0
-        })
-    }
-
-    fn v1_treasure_item(instance_id: u64, template: &str) -> serde_json::Value {
-        serde_json::json!({
-            "instance_id": instance_id,
-            "template_id": template,
-            "display_name": template,
-            "grid_w": 1, "grid_h": 1, "weight": 0.2,
-            "rarity": "Uncommon", "description": "", "stack_count": 1,
-            "spirit_quality": 0.5, "durability": 1.0
-        })
-    }
-
-    // plan-layered-equip-v1 P4（决议 #8）— 旧 treasure_belt_* 槽迁入触发位 triggered_treasures，
-    // 按 belt 槽序排列；不进装备槽 worn。
-    #[test]
-    fn migrate_v1_treasure_belt_lands_in_trigger_slots_in_order() {
-        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
-            "treasure_belt_0": v1_treasure_item(10, "talisman_a"),
-            "treasure_belt_2": v1_treasure_item(12, "talisman_c"),
-            "treasure_belt_1": v1_treasure_item(11, "talisman_b"),
-        }));
-
-        migrate_equipped_v1_to_v2(&mut value);
-
-        // 触发位顺序应按 belt_0,belt_1,belt_2（BTreeMap 槽名升序）。
-        let triggered = value
-            .get("triggered_treasures")
-            .and_then(|v| v.as_array())
-            .expect("triggered_treasures array present after migration");
-        let ids: Vec<u64> = triggered
-            .iter()
-            .map(|item| item.get("instance_id").and_then(|v| v.as_u64()).unwrap())
-            .collect();
-        assert_eq!(
-            ids,
-            vec![10, 11, 12],
-            "treasure_belt_0/1/2 should map to trigger slots in belt order"
-        );
-
-        // 装备结构里不应留 treasure_belt 槽（也不应进 worn）。
-        let equipped = value.get("equipped").and_then(|v| v.as_object()).unwrap();
-        assert!(
-            !equipped.contains_key("treasure_belt_0")
-                && !equipped.contains_key("treasure_belt_1")
-                && !equipped.contains_key("treasure_belt_2"),
-            "no treasure_belt slot key should survive migration"
-        );
-    }
-
-    // 反序列化迁移产物为 PlayerInventory，确认 triggered_treasures 真正落进结构。
-    #[test]
-    fn migrate_v1_treasure_belt_deserializes_into_triggered_treasures_field() {
-        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
-            "treasure_belt_0": v1_treasure_item(20, "talisman_x"),
-        }));
-        migrate_equipped_v1_to_v2(&mut value);
-
-        let inventory: PlayerInventory =
-            serde_json::from_value(value).expect("migrated v2 json deserializes");
-        assert_eq!(inventory.triggered_treasures.len(), 1);
-        assert_eq!(inventory.triggered_treasures[0].instance_id, 20);
-        assert_eq!(inventory.triggered_treasures[0].template_id, "talisman_x");
-    }
-
-    // 无 treasure_belt 的旧档迁移后不应凭空生出 triggered_treasures 字段（serde default 空）。
-    #[test]
-    fn migrate_v1_without_treasure_belt_leaves_trigger_slot_empty() {
-        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
-            "main_hand": v1_treasure_item(30, "iron_sword"),
-        }));
-        migrate_equipped_v1_to_v2(&mut value);
-        assert!(
-            value.get("triggered_treasures").is_none(),
-            "no treasure_belt → migration must not inject triggered_treasures"
-        );
-        let inventory: PlayerInventory =
-            serde_json::from_value(value).expect("deserializes with serde default empty trigger");
-        assert!(inventory.triggered_treasures.is_empty());
-    }
-
-    /// 构造一个 v1 单件装备 object（带 instance_id），供 equipped 槽 / 容器 item 迁移测试复用。
-    fn v1_equip_item(instance_id: u64, template: &str) -> serde_json::Value {
-        serde_json::json!({
-            "instance_id": instance_id,
-            "template_id": template,
-            "display_name": template,
-            "grid_w": 2, "grid_h": 2, "weight": 0.5,
-            "rarity": "Common", "description": "", "stack_count": 1,
-            "spirit_quality": 0.5, "durability": 0.5
-        })
-    }
-
-    // Bug1（真机回归）— 旧 default.toml 形态：chest=fake_spirit_hide、main_hand=iron_sword、
-    // back_pack=worn_grass_pouch。迁移后 equipped 必须非空且正确：
-    // chest.worn == [worn_grass_pouch, fake_spirit_hide]（栈底背包件、栈顶伪皮，与 fresh 实例化一致），
-    // main_hand.held == iron_sword。绝不允许迁空 / 错置 / 把 equipped 件丢进容器。
-    #[test]
-    fn migrate_v1_legacy_default_loadout_keeps_equipped_correct() {
-        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
-            "chest": v1_equip_item(1, "fake_spirit_hide"),
-            "main_hand": v1_equip_item(2, "iron_sword"),
-            "back_pack": v1_equip_item(3, "worn_grass_pouch"),
-        }));
-        migrate_equipped_v1_to_v2(&mut value);
-        let inventory: PlayerInventory =
-            serde_json::from_value(value).expect("migrated v2 json deserializes");
-
-        let chest = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_CHEST)
-            .expect("chest slot must exist after migration (equipped 不得迁空)");
-        let chest_worn: Vec<&str> = chest.worn.iter().map(|i| i.template_id.as_str()).collect();
-        assert_eq!(
-            chest_worn,
-            vec!["worn_grass_pouch", "fake_spirit_hide"],
-            "迁移后 chest.worn 应为 [背包件, 伪皮]（栈底→栈顶），与 default.toml fresh 实例化一致；实际 {chest_worn:?}"
-        );
-        assert!(
-            chest.held.is_none(),
-            "身体槽 chest 不应有 held 件；实际 {:?}",
-            chest.held.as_ref().map(|i| &i.template_id)
-        );
-
-        let main_hand = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
-            .expect("main_hand slot must exist after migration");
-        assert_eq!(
-            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
-            Some("iron_sword"),
-            "武器应迁入 main_hand.held（而非 worn / 容器）"
-        );
-        assert!(
-            main_hand.worn.is_empty(),
-            "手槽 main_hand 不应有 worn 件；实际 {:?}",
-            main_hand.worn
-        );
-
-        // 不得残留旧背包专属槽 key。
-        assert!(
-            !inventory.equipped.contains_key("back_pack"),
-            "旧 back_pack 装备槽 key 不应在 v2 equipped 中存活"
-        );
-    }
-
-    // Bug3（真机回归）— 旧档背包件在 back_pack 装备槽，且有同名 `back_pack` 容器装着物品。
-    // 迁移后该容器必须改名到 pack_<背包件 instance_id>，否则 rebuild_containers_from_equipment
-    // 会新建空 pack_*、把旧 back_pack 容器留成无主孤儿（物品取不出）。
-    #[test]
-    fn migrate_v1_renames_legacy_backpack_container_to_pack_instance_namespace() {
-        let mut value = serde_json::json!({
-            "revision": 1,
-            "containers": [
-                {
-                    "id": "body_pocket", "name": "暗袋", "rows": 2, "cols": 3,
-                    "items": [{
-                        "row": 0, "col": 0,
-                        "instance": v1_equip_item(50, "fengling_bone_coin")
-                    }]
-                },
-                {
-                    "id": "back_pack", "name": "破草包", "rows": 3, "cols": 3,
-                    "items": [{
-                        "row": 0, "col": 0,
-                        "instance": v1_equip_item(51, "spirit_grass")
-                    }]
-                }
-            ],
-            "equipped": {
-                "back_pack": v1_equip_item(42, "worn_grass_pouch"),
-            },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 7,
-            "max_weight": 23.0
-        });
-        migrate_equipped_v1_to_v2(&mut value);
-        let inventory: PlayerInventory =
-            serde_json::from_value(value).expect("migrated v2 json deserializes");
-
-        // 背包件迁到 chest.worn。
-        let chest = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_CHEST)
-            .expect("chest slot present");
-        assert_eq!(
-            chest
-                .worn
-                .iter()
-                .map(|i| i.template_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["worn_grass_pouch"],
-            "worn_grass_pouch 应迁到 chest.worn"
-        );
-        let pack_instance_id = chest.worn[0].instance_id;
-        assert_eq!(pack_instance_id, 42, "迁移保留原 instance_id");
-
-        // 旧 back_pack 容器应改名到 pack_42，且内含物品原样保留。
-        let expected_id = crate::inventory::container_id_for_worn_pack(pack_instance_id);
-        let renamed = inventory
-            .containers
-            .iter()
-            .find(|c| c.id == expected_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "应存在改名后的容器 `{expected_id}`；实际容器 ids = {:?}",
-                    inventory
-                        .containers
-                        .iter()
-                        .map(|c| &c.id)
-                        .collect::<Vec<_>>()
-                )
-            });
-        assert_eq!(
-            renamed.items.len(),
-            1,
-            "改名后容器内物品必须保留（不丢数据）"
-        );
-        assert_eq!(renamed.items[0].instance.template_id, "spirit_grass");
-
-        // 旧 back_pack id 不应再存在（已被改名，不留孤儿）。
-        assert!(
-            !inventory.containers.iter().any(|c| c.id == "back_pack"),
-            "旧 back_pack 容器 id 应已改名消失，不留无主孤儿"
-        );
-        // body_pocket 不动。
-        assert!(
-            inventory.containers.iter().any(|c| c.id == "body_pocket"),
-            "body_pocket 容器应原样保留"
-        );
-    }
-
-    /// 把任意 inventory_json 以指定 schema_version 落进 sqlite，再走 load_player_inventory_from_sqlite。
-    /// 复现真机 join → 加载链路（DEFAULT_INVENTORY_JSON / orphan-pack / 正常 v2 / v1 迁移分流全覆盖）。
-    fn load_inventory_row(
-        schema_version: i32,
-        inventory_json: &str,
-    ) -> (Option<PlayerInventory>, PathBuf) {
-        let (persistence, data_dir) = sqlite_persistence("load-inventory-row");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        connection
-            .execute(
-                "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
-                 VALUES (?1, ?2, ?3, 0)",
-                params!["LoadProbe", inventory_json, schema_version],
-            )
-            .expect("insert inventory row");
-        let loaded = load_player_inventory_from_sqlite(&connection, "LoadProbe")
-            .expect("load_player_inventory_from_sqlite should not error");
-        (loaded, data_dir)
-    }
-
-    // Bug A（真机回归）— 真机污染存档：#736 旧迁移 bug 把伪皮冲进 body_pocket、清空 equipped、
-    // 丢 iron_sword/worn_grass_pouch，只剩孤儿 pack_<id> 容器，且已落盘为 schema_version=2。
-    // 这是 Kizun3Desu 实测行内 JSON（worn_grass_pouch instance_id=11 派生 pack_11，但 equipped 空）。
-    // 加载时必须识别为污染、丢弃存档、回落默认 loadout（返回 None），否则玩家 join 后 equipped 永久空。
-    #[test]
-    fn corrupt_v2_with_orphan_pack_container_is_discarded_to_default_loadout() {
-        // 真机 Kizun3Desu v2 污染行的最小忠实复刻：equipped 空 + pack_11 孤儿容器 + body_pocket。
-        let corrupt_v2 = serde_json::json!({
-            "revision": 8,
-            "containers": [
-                {
-                    "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3,
-                    "items": [
-                        { "row": 0, "col": 0, "instance": v1_equip_item(2, "ningmai_powder") },
-                        // 伪皮被旧迁移 bug 冲进 body_pocket（真机症状）。
-                        { "row": 0, "col": 1, "instance": v1_equip_item(12, "fake_spirit_hide") }
-                    ]
-                },
-                {
-                    // 孤儿 pack_11：派生自 worn_grass_pouch(instance_id=11)，但 equipped 里已无该件。
-                    "id": "pack_11", "name": "破草包", "rows": 3, "cols": 3,
-                    "items": [
-                        { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") }
-                    ]
-                }
-            ],
-            "equipped": {},
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 7,
-            "max_weight": 23.0,
-            "triggered_treasures": []
-        });
-        let (loaded, data_dir) = load_inventory_row(2, &corrupt_v2.to_string());
-        assert!(
-            loaded.is_none(),
-            "孤儿 pack_<id> 容器（equipped 无对应 worn 背包件）= #736 污染指纹，必须丢弃回落默认 loadout（返回 None），\
-             否则 attach_player_state 会把空 equipped 存档插上、抑制默认 loadout，玩家 join 后 equipped 永久空；实际 loaded.is_some()={}",
-            loaded.is_some()
-        );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // Bug A（防误伤）— 健康 v2 存档：equipped 有 chest.worn 背包件 + 与之自洽的 pack_<id> 容器。
-    // 这不是污染（容器有 backing worn 件），必须原样保留，绝不能被自愈逻辑误丢。
-    #[test]
-    fn healthy_v2_with_backed_pack_container_is_preserved() {
-        let pack_id = crate::inventory::container_id_for_worn_pack(11);
-        let healthy_v2 = serde_json::json!({
-            "revision": 3,
-            "containers": [
-                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] },
-                {
-                    "id": pack_id, "name": "破草包", "rows": 3, "cols": 3,
-                    "items": [ { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") } ]
-                }
-            ],
-            // worn_grass_pouch instance_id=11，与 pack_11 自洽 ⇒ 非孤儿。
-            "equipped": {
-                "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
-            },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 7,
-            "max_weight": 23.0,
-            "triggered_treasures": []
-        });
-        let (loaded, data_dir) = load_inventory_row(2, &healthy_v2.to_string());
-        let inventory = loaded
-            .expect("健康 v2 存档（pack_<id> 有 backing worn 件）必须原样保留，不得被自愈误丢");
-        let chest = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_CHEST)
-            .expect("chest 槽应保留");
-        assert_eq!(
-            chest.worn.iter().map(|i| i.instance_id).collect::<Vec<_>>(),
-            vec![11],
-            "chest.worn 背包件 instance_id 应原样保留"
-        );
-        assert!(
-            inventory.containers.iter().any(|c| c.id == pack_id),
-            "自洽 pack_<id> 容器应原样保留"
-        );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // Bug A（防误伤）— 合法裸装玩家：equipped 空且无任何 pack_<id> 容器（卸背包时容器随之清掉）。
-    // 不是污染（没有孤儿容器），必须原样保留空 equipped，不能被误判为 #736 污染而重置。
-    #[test]
-    fn naked_v2_without_pack_container_is_preserved_not_reset() {
-        let naked_v2 = serde_json::json!({
-            "revision": 5,
-            "containers": [
-                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] }
-            ],
-            "equipped": {},
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 0,
-            "max_weight": 23.0,
-            "triggered_treasures": []
-        });
-        let (loaded, data_dir) = load_inventory_row(2, &naked_v2.to_string());
-        let inventory =
-            loaded.expect("合法裸装存档（无 pack_<id> 容器）必须保留，不得误判为污染重置");
-        assert!(
-            inventory.equipped.is_empty(),
-            "裸装玩家 equipped 应保持空（保留其存档原貌），实际 {:?}",
-            inventory.equipped.keys().collect::<Vec<_>>()
-        );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // plan-tarkov-backpack-v1 P0（交付物 #6 / 测试清单）— 旧存档（无 owner_instance_id 字段）
-    // 加载后，`pack_<id>` 容器的 owner_instance_id 应由前缀解析回填，且回填发生在孤儿检测前
-    // （断言旧 pack_<id> 容器未被误删 + owner 正确）。
-    #[test]
-    fn load_backfills_owner_instance_id_for_legacy_pack_container() {
-        let pack_id = crate::inventory::container_id_for_worn_pack(11);
-        // 旧格式：containers 里 pack_11 无 owner_instance_id 字段（serde default → None）。
-        // equipped 有自洽 worn 件 ⇒ 非孤儿，应保留。
-        let legacy_v2 = serde_json::json!({
-            "revision": 3,
-            "containers": [
-                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] },
-                {
-                    "id": pack_id, "name": "破草包", "rows": 3, "cols": 3,
-                    "items": [ { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") } ]
-                }
-            ],
-            "equipped": {
-                "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
-            },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 7,
-            "max_weight": 23.0,
-            "triggered_treasures": []
-        });
-        let (loaded, data_dir) = load_inventory_row(2, &legacy_v2.to_string());
-        let inventory = loaded.expect(
-            "旧存档（pack_<id> 有 backing worn 件、无 owner 字段）加载后必须保留——\
-             owner_instance_id 已回填，孤儿检测在回填后运行不会误判",
-        );
-        let pack = inventory
-            .containers
-            .iter()
-            .find(|c| c.id == pack_id)
-            .expect("旧 pack_<id> 容器必须未被误删（回填先于孤儿检测）");
-        assert_eq!(
-            pack.owner_instance_id,
-            Some(11),
-            "因为 backfill_owner_instance_ids 必须按 `pack_<id>` 前缀把 owner_instance_id 回填为 11，\
-             实际 = {:?}",
-            pack.owner_instance_id
-        );
-        // body_pocket（非 pack 容器）不应被回填。
-        let body = inventory
-            .containers
-            .iter()
-            .find(|c| c.id == "body_pocket")
-            .expect("body_pocket 应保留");
-        assert_eq!(
-            body.owner_instance_id, None,
-            "非 pack 容器（body_pocket）不应被回填 owner_instance_id"
-        );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // plan-tarkov-backpack-v1 P0（交付物 #7 / 测试清单）— 孤儿检测在回填后运行：
-    // 合法新格式容器（owner 已回填、与 equipped worn 件自洽）不被误判孤儿、不被丢弃。
-    #[test]
-    fn orphan_detection_runs_after_backfill_no_false_positive() {
-        // 直测：手工构造一个旧格式 inventory（pack_<id> owner=None 但有 backing worn 件），
-        // 先回填、再孤儿检测——回填后判定为合法（前缀路径与 owner 路径一致），不应误判孤儿。
-        let pack_id = crate::inventory::container_id_for_worn_pack(77);
-        let mut inventory = PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: crate::inventory::InventoryRevision(1),
-            containers: vec![
-                crate::inventory::ContainerState {
-                    quick_access: false,
-                    id: "body_pocket".to_string(),
-                    name: "贴身口袋".to_string(),
-                    rows: 2,
-                    cols: 3,
-                    items: Vec::new(),
-                    owner_instance_id: None,
-                },
-                crate::inventory::ContainerState {
-                    quick_access: false,
-                    id: pack_id.clone(),
-                    name: "破草包".to_string(),
-                    rows: 3,
-                    cols: 3,
-                    items: Vec::new(),
-                    // 旧格式：owner 字段缺省。
-                    owner_instance_id: None,
-                },
-            ],
-            equipped: {
-                let mut e = std::collections::HashMap::new();
-                // worn 件 instance_id=77 与 pack_77 自洽（template 不影响孤儿判定，仅看 instance_id）。
-                e.insert(
-                    crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-                    crate::inventory::SlotContents::worn_single(iron_sword_instance(77, 1.0)),
-                );
-                e
-            },
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 23.0,
-        };
-
-        // 回填前：pack_77 owner=None，但前缀解析可得 77（已有 backing worn 件 77）。
-        backfill_owner_instance_ids(&mut inventory);
-        assert_eq!(
-            inventory
-                .containers
-                .iter()
-                .find(|c| c.id == pack_id)
-                .and_then(|c| c.owner_instance_id),
-            Some(77),
-            "回填后 pack_77 owner 应为 77"
-        );
-        // 回填后孤儿检测：pack_77 有 backing worn 件 77 ⇒ 合法、非孤儿。
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "回填后合法新格式容器（owner 与 worn 件自洽）绝不应被误判孤儿（防 #736 污染误删）"
-        );
-    }
-
-    // ─── plan-tarkov-backpack-v1 套包修复 §6 — orphan 检测扩到「任意位置」（防 #736 复发）───
-
-    /// 构造一个仅含指定 containers + equipped + hotbar 的最小 inventory（孤儿检测只看 instance_id）。
-    fn orphan_test_inventory(
-        containers: Vec<crate::inventory::ContainerState>,
-        equipped: std::collections::HashMap<String, crate::inventory::SlotContents>,
-        hotbar: [Option<ItemInstance>; 9],
-    ) -> PlayerInventory {
-        PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: crate::inventory::InventoryRevision(1),
-            containers,
-            equipped,
-            hotbar,
-            bone_coins: 0,
-            max_weight: 23.0,
-        }
-    }
-
-    fn pack_container(instance_id: u64) -> crate::inventory::ContainerState {
-        crate::inventory::ContainerState {
-            quick_access: false,
-            id: crate::inventory::container_id_for_worn_pack(instance_id),
-            name: "包".to_string(),
-            rows: 3,
-            cols: 3,
-            items: Vec::new(),
-            owner_instance_id: Some(instance_id),
-        }
-    }
-
-    #[test]
-    fn orphan_detection_false_for_pack_in_body_pocket() {
-        // 背包件躺在 body_pocket 容器内（合法 retention），其 pack_<id> 容器不应误判孤儿。
-        let bp = crate::inventory::ContainerState {
-            quick_access: false,
-            id: "body_pocket".to_string(),
-            name: "暗袋".to_string(),
-            rows: 2,
-            cols: 3,
-            items: vec![crate::inventory::PlacedItemState {
-                row: 0,
-                col: 0,
-                instance: iron_sword_instance(55, 1.0),
-            }],
-            owner_instance_id: None,
-        };
-        let inventory = orphan_test_inventory(
-            vec![bp, pack_container(55)],
-            std::collections::HashMap::new(),
-            Default::default(),
-        );
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "背包件在 body_pocket（任意位置存活判据）时 pack_55 不应被判孤儿（防 #736 误删存档）"
-        );
-    }
-
-    #[test]
-    fn orphan_detection_false_for_pack_in_hotbar() {
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
-        hotbar[2] = Some(iron_sword_instance(66, 1.0));
-        let inventory = orphan_test_inventory(
-            vec![pack_container(66)],
-            std::collections::HashMap::new(),
-            hotbar,
-        );
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "背包件在 hotbar 时 pack_66 不应被判孤儿"
-        );
-    }
-
-    #[test]
-    fn orphan_detection_false_for_pack_held() {
-        let mut equipped = std::collections::HashMap::new();
-        equipped.insert(
-            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            crate::inventory::SlotContents {
-                worn: Vec::new(),
-                held: Some(iron_sword_instance(77, 1.0)),
-            },
-        );
-        let inventory =
-            orphan_test_inventory(vec![pack_container(77)], equipped, Default::default());
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "背包件 held 时 pack_77 不应被判孤儿"
-        );
-    }
-
-    #[test]
-    fn orphan_detection_true_for_truly_orphan_container() {
-        // pack_<id> 容器但该 instance 全 inventory 任意位置查无 ⇒ 真孤儿 ⇒ #736 污染指纹。
-        let inventory = orphan_test_inventory(
-            vec![pack_container(99)],
-            std::collections::HashMap::new(),
-            Default::default(),
-        );
-        assert!(
-            inventory_has_orphan_pack_container(&inventory),
-            "无任何 backing 背包件的 pack_99 容器应判为真孤儿（保留对真污染的检测）"
-        );
-    }
-
-    #[test]
-    fn orphan_detection_true_for_pack_container_when_owner_nested_in_pack_grid() {
-        // P5「2 层封顶」镜像：背包件 2 仅作为 host pack 的 grid 内货物时不属携带面，rebuild
-        // 永不为它建 pack_2 容器；若存档残留 pack_2 容器，则它确为孤儿（与 rebuild 镜像一致）。
-        let host = crate::inventory::ContainerState {
-            quick_access: false,
-            id: crate::inventory::container_id_for_worn_pack(1),
-            name: "host".to_string(),
-            rows: 4,
-            cols: 4,
-            items: vec![crate::inventory::PlacedItemState {
-                row: 0,
-                col: 0,
-                instance: iron_sword_instance(2, 1.0),
-            }],
-            owner_instance_id: Some(1),
-        };
-        let mut equipped = std::collections::HashMap::new();
-        equipped.insert(
-            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-            crate::inventory::SlotContents::worn_single(iron_sword_instance(1, 1.0)),
-        );
-        let inventory =
-            orphan_test_inventory(vec![host, pack_container(2)], equipped, Default::default());
-        assert!(
-            inventory_has_orphan_pack_container(&inventory),
-            "grid 内货物背包件 2 不属携带面（2 层封顶），其残留 pack_2 容器应判为孤儿（与 rebuild 镜像）"
-        );
-    }
-
-    // Bug A（真机回归核心）— 真机 v1 旧档（旧 default.toml 形态：chest=fake_spirit_hide、
-    // main_hand=iron_sword、back_pack=worn_grass_pouch + 同名 back_pack 容器装 7 件），
-    // 走完整 sqlite 加载链路（schema_version=1 → migrate → 反序列化）。
-    // 必须：equipped 非空 + chest.worn==[worn_grass_pouch, fake_spirit_hide] + main_hand.held==iron_sword
-    // + back_pack 容器改名到 pack_<worn_grass_pouch instance_id> 且 7 件原样保留 + body_pocket 不动。
-    // 这把真机 join 加载路径整条锁死，任何回归（迁空 / 错置 / 丢件 / 孤儿容器）立即撞红。
-    #[test]
-    fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
-        let v1_row = serde_json::json!({
-            "revision": 1,
-            "containers": [
-                {
-                    "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3,
-                    "items": [
-                        { "row": 0, "col": 0, "instance": v1_equip_item(2, "ningmai_powder") },
-                        { "row": 0, "col": 1, "instance": v1_equip_item(3, "fengling_bone_coin") }
-                    ]
-                },
-                {
-                    "id": "back_pack", "name": "破草包", "rows": 3, "cols": 3,
-                    "items": [
-                        { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") },
-                        { "row": 0, "col": 1, "instance": v1_equip_item(5, "ningmai_powder") },
-                        { "row": 0, "col": 2, "instance": v1_equip_item(6, "guyuan_pill") },
-                        { "row": 1, "col": 0, "instance": v1_equip_item(7, "bone_spike") },
-                        { "row": 1, "col": 1, "instance": v1_equip_item(8, "ash_spider_silk") },
-                        { "row": 2, "col": 1, "instance": v1_equip_item(9, "ci_she_hao_seed") },
-                        { "row": 2, "col": 2, "instance": v1_equip_item(10, "ning_mai_cao_seed") }
-                    ]
-                }
-            ],
-            "equipped": {
-                "chest": v1_equip_item(11, "fake_spirit_hide"),
-                "main_hand": v1_equip_item(12, "iron_sword"),
-                "back_pack": v1_equip_item(13, "worn_grass_pouch")
-            },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
-            "bone_coins": 7,
-            "max_weight": 23.0
-        });
-        let (loaded, data_dir) = load_inventory_row(1, &v1_row.to_string());
-        let inventory = loaded.expect("v1 旧档加载后 inventory 必须存在（不得迁空、不得误判污染）");
-
-        assert!(
-            !inventory.equipped.is_empty(),
-            "真机 join 加载后 equipped 绝不能为空（Bug A 核心症状）"
-        );
-        let chest = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_CHEST)
-            .expect("chest 槽必须存在");
-        assert_eq!(
-            chest
-                .worn
-                .iter()
-                .map(|i| i.template_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["worn_grass_pouch", "fake_spirit_hide"],
-            "chest.worn 应为 [背包件, 伪皮]（栈底→栈顶），与 default.toml fresh 实例化一致"
-        );
-        let main_hand = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
-            .expect("main_hand 槽必须存在（iron_sword 不得丢失）");
-        assert_eq!(
-            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
-            Some("iron_sword"),
-            "iron_sword 必须迁入 main_hand.held（真机数据丢失尤其严重，必锁死）"
-        );
-
-        // back_pack 容器改名到 pack_<worn_grass_pouch instance_id=13>，7 件原样保留。
-        let expected_pack_id = crate::inventory::container_id_for_worn_pack(13);
-        let pack = inventory
-            .containers
-            .iter()
-            .find(|c| c.id == expected_pack_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "back_pack 容器应改名到 `{expected_pack_id}`；实际容器 ids = {:?}",
-                    inventory
-                        .containers
-                        .iter()
-                        .map(|c| &c.id)
-                        .collect::<Vec<_>>()
-                )
-            });
-        assert_eq!(
-            pack.items.len(),
-            7,
-            "改名后 pack 容器内 7 件原样保留（不丢数据）"
-        );
-        assert!(
-            !inventory.containers.iter().any(|c| c.id == "back_pack"),
-            "旧 back_pack 容器 id 不应残留（已改名，否则成无主孤儿 = 取不出）"
-        );
-        assert!(
-            inventory.containers.iter().any(|c| c.id == "body_pocket"),
-            "body_pocket 容器应原样保留"
-        );
-        // 关键：加载产物自身不得触发 orphan 判定（自洽，pack_13 有 backing worn 件）。
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "v1 迁移产物必须自洽：pack_<id> 容器与 chest.worn 背包件 instance_id 对齐，不得被误判孤儿"
-        );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // Bug A（fresh join 路径）— 全新玩家（无 sqlite 行）应回落默认 loadout（instantiate_inventory_from_loadout），
-    // equipped 正确填充：chest.worn==[worn_grass_pouch, fake_spirit_hide]、main_hand.held==iron_sword。
-    // 这把 default.toml → try_into_loadout → instantiate 的 fresh 实例化结构锁死。
-    #[test]
-    fn fresh_instantiate_from_default_loadout_populates_equipped() {
-        use crate::inventory::{
-            instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
-            InventoryInstanceIdAllocator,
-        };
-        // 真机 fresh join 路径：真实 ItemRegistry（assets/items）+ 真实 default.toml → instantiate。
-        let registry = load_item_registry().expect("load item registry from assets/items");
-        let loadout = load_default_loadout(&registry).expect("default loadout should load");
-        let mut allocator = InventoryInstanceIdAllocator::default();
-        let inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
-            .expect("instantiate default loadout should succeed");
-
-        assert!(
-            !inventory.equipped.is_empty(),
-            "fresh 实例化后 equipped 绝不能为空"
-        );
-        let chest = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_CHEST)
-            .expect("chest 槽必须存在");
-        assert_eq!(
-            chest
-                .worn
-                .iter()
-                .map(|i| i.template_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["worn_grass_pouch", "fake_spirit_hide"],
-            "fresh chest.worn 应为 [破草包, 伪皮]（两条 [[equip]] slot=chest 聚合到 worn 栈）"
-        );
-        let main_hand = inventory
-            .equipped
-            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
-            .expect("main_hand 槽必须存在");
-        assert_eq!(
-            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
-            Some("iron_sword"),
-            "fresh main_hand.held 应为 iron_sword（[[equip]] slot=main_hand）"
-        );
-        assert!(
-            !inventory_has_orphan_pack_container(&inventory),
-            "fresh 实例化产物自洽：pack_<id> 与 chest.worn 背包件对齐，不得被误判孤儿"
-        );
-    }
-
-    fn persisted_inventory_snapshot(
-        persistence: &PlayerStatePersistence,
-        username: &str,
-    ) -> serde_json::Value {
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let inventory_json: String = connection
-            .query_row(
-                "SELECT inventory_json FROM inventories WHERE username = ?1",
-                params![username],
-                |row| row.get(0),
-            )
-            .expect("persisted inventory row should exist");
-
-        serde_json::from_str(&inventory_json).expect("persisted inventory JSON should decode")
-    }
-
-    fn persist_player_with_inventory(
-        persistence: &PlayerStatePersistence,
-        username: &str,
-        inventory: &PlayerInventory,
-    ) {
-        save_player_slices(
-            persistence,
-            username,
-            &PlayerState::default(),
-            [11.0, 70.0, -2.0],
-            DimensionKind::default(),
-            Some(inventory),
-            None,
-            &SkillSet::default(),
-        )
-        .expect("player slices with inventory should persist");
-    }
-
-    fn only_container_item(inventory: &PlayerInventory) -> &ItemInstance {
-        &inventory.containers[0].items[0].instance
-    }
-
-    #[test]
-    fn loads_and_saves_player_state_in_sqlite() {
-        let (persistence, data_dir) = sqlite_persistence("sqlite-load-save");
-        let autosave_interval_ticks = 60 * TICKS_PER_SECOND;
-
-        let persisted = PlayerState {
-            karma: 0.2,
-            inventory_score: 0.4,
-        };
-
-        let save_path = save_player_state(&persistence, "Azure", &persisted)
-            .expect("saving PlayerState should succeed");
-        let reloaded = load_player_state(&persistence, "Azure");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let current_char_id: String = connection
-            .query_row(
-                "SELECT current_char_id FROM player_core WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_core row should exist");
-        let (pos_x, pos_y, pos_z): (f64, f64, f64) = connection
-            .query_row(
-                "SELECT pos_x, pos_y, pos_z FROM player_slow WHERE username = ?1",
-                params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .expect("player_slow row should exist");
-        let inventory_json: String = connection
-            .query_row(
-                "SELECT inventory_json FROM inventories WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("inventories row should exist");
-        let prefs_json: String = connection
-            .query_row(
-                "SELECT prefs_json FROM player_ui_prefs WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_ui_prefs row should exist");
-        let prefs: PlayerUiPrefs =
-            serde_json::from_str(&prefs_json).expect("prefs_json should decode");
-        let current_char_uuid =
-            Uuid::parse_str(&current_char_id).expect("current_char_id should be a UUID");
-        let [spawn_x, spawn_y, spawn_z] =
-            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin);
-
-        assert_eq!(save_path, persistence.db_path().to_path_buf());
-        assert_eq!(reloaded, persisted.normalized());
-        assert_eq!(autosave_interval_ticks, 1_200);
-        assert_eq!(current_char_uuid.get_version_num(), 7);
-        assert_eq!((pos_x, pos_y, pos_z), (spawn_x, spawn_y, spawn_z));
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&inventory_json)
-                .expect("inventory_json should decode"),
-            serde_json::Value::Null
-        );
-        assert_eq!(prefs, PlayerUiPrefs::default());
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn invalid_persisted_login_y_falls_back_to_spawn() {
-        let (persistence, data_dir) = sqlite_persistence("invalid-login-y");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("saving PlayerState should succeed");
-        save_player_slow_slice(
-            &persistence,
-            "Azure",
-            [42.0, -26_297.0, -3.5],
-            DimensionKind::default(),
-        )
-        .expect("saving invalid slow slice should succeed");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-
-        assert_eq!(
-            loaded.position,
-            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin)
-        );
-        assert_eq!(loaded.last_dimension, DimensionKind::default());
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn persisted_login_y_above_runtime_world_falls_back_to_spawn() {
-        let (persistence, data_dir) = sqlite_persistence("too-high-login-y");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("saving PlayerState should succeed");
-        save_player_slow_slice(
-            &persistence,
-            "Azure",
-            [42.0, MAX_SAFE_PLAYER_Y + 1.0, -3.5],
-            DimensionKind::default(),
-        )
-        .expect("saving too-high slow slice should succeed");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-
-        assert_eq!(
-            loaded.position,
-            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin)
-        );
-        assert_eq!(loaded.last_dimension, DimensionKind::default());
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn player_export_bundle_roundtrips_back_into_sqlite() {
-        let (source_persistence, source_data_dir) = sqlite_persistence("export-bundle-source");
-        let exported_state = PlayerState {
-            karma: 0.25,
-            inventory_score: 0.7,
-        };
-        save_player_slices(
-            &source_persistence,
-            "Azure",
-            &exported_state,
-            [64.0, 80.0, -12.0],
-            DimensionKind::Tsy,
-            None,
-            None,
-            &SkillSet::default(),
-        )
-        .expect("source player slices should persist");
-
-        let bundle = export_player_bundle(&source_persistence, "Azure")
-            .expect("player export bundle should load");
-
-        let (target_persistence, target_data_dir) = sqlite_persistence("export-bundle-target");
-        import_player_bundle(&target_persistence, &bundle)
-            .expect("player export bundle should import");
-
-        let connection =
-            Connection::open(target_persistence.db_path()).expect("sqlite db should open");
-        let current_char_id: String = connection
-            .query_row(
-                "SELECT current_char_id FROM player_core WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_core row should exist after import");
-        let (karma, inventory_score): (f64, f64) = connection
-            .query_row(
-                "
-                SELECT karma, inventory_score
-                FROM player_core
-                WHERE username = ?1
-                ",
-                params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("player_core payload should exist after import");
-        let (pos_x, pos_y, pos_z, last_dimension_text): (f64, f64, f64, String) = connection
-            .query_row(
-                "SELECT pos_x, pos_y, pos_z, last_dimension FROM player_slow WHERE username = ?1",
-                params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .expect("player_slow row should exist after import");
-        let inventory_json: String = connection
-            .query_row(
-                "SELECT inventory_json FROM inventories WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("inventories row should exist after import");
-        let prefs_json: String = connection
-            .query_row(
-                "SELECT prefs_json FROM player_ui_prefs WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_ui_prefs row should exist after import");
-
-        assert_eq!(bundle.kind, "player_export_v1");
-        assert_eq!(current_char_id, bundle.current_char_id);
-        assert_eq!(karma, 0.25);
-        assert_eq!(inventory_score, 0.7);
-        assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
-        assert_eq!(last_dimension_text, "tsy");
-        assert_eq!(bundle.last_dimension, DimensionKind::Tsy);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&inventory_json)
-                .expect("inventory_json should decode"),
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&prefs_json)
-                .expect("prefs_json should decode"),
-            bundle.ui_prefs
-        );
-
-        let _ = fs::remove_dir_all(&source_data_dir);
-        let _ = fs::remove_dir_all(&target_data_dir);
-    }
-
-    #[test]
-    fn player_lifespan_slice_roundtrips_with_offline_pause_wall() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-roundtrip");
-        let player_state = PlayerState::default();
-        let lifespan = LifespanComponent {
-            born_at_tick: 144,
-            years_lived: 12.5,
-            cap_by_realm: LifespanCapTable::CONDENSE,
-            offline_pause_tick: Some(120),
-        };
-
-        save_player_slices(
-            &persistence,
-            "Azure",
-            &player_state,
-            [11.0, 70.0, -2.0],
-            DimensionKind::default(),
-            None,
-            Some(&lifespan),
-            &SkillSet::default(),
-        )
-        .expect("lifespan slice should persist with player slices");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let offline_pause_wall: i64 = connection
-            .query_row(
-                "SELECT offline_pause_wall FROM player_lifespan WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_lifespan row should exist");
-
-        assert_eq!(loaded_lifespan.born_at_tick, lifespan.born_at_tick);
-        assert_eq!(loaded_lifespan.cap_by_realm, lifespan.cap_by_realm);
-        assert!(loaded_lifespan.years_lived >= lifespan.years_lived);
-        assert!(loaded_lifespan.years_lived < lifespan.years_lived + 0.01);
-        assert!(offline_pause_wall > 0);
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn player_known_techniques_slice_roundtrips_dash_proficiency() {
-        let (persistence, data_dir) = sqlite_persistence("known-techniques-roundtrip");
-        let known_techniques = KnownTechniques {
-            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
-                id: "movement.dash".to_string(),
-                proficiency: 0.42,
-                active: true,
-            }],
-        };
-
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-        save_player_known_techniques_slice(&persistence, "Azure", &known_techniques)
-            .expect("known techniques slice should persist");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let known_techniques_json: String = connection
-            .query_row(
-                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_known_techniques row should exist");
-        let snapshot: serde_json::Value = serde_json::from_str(&known_techniques_json)
-            .expect("known techniques JSON should decode");
-
-        assert_eq!(loaded.known_techniques, known_techniques);
-        assert_eq!(
-            snapshot
-                .pointer("/entries/0/id")
-                .and_then(serde_json::Value::as_str),
-            Some("movement.dash")
-        );
-        let proficiency = snapshot
-            .pointer("/entries/0/proficiency")
-            .and_then(serde_json::Value::as_f64)
-            .expect("dash proficiency should persist");
-        assert!((proficiency - 0.42).abs() < 1e-6);
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn player_lifespan_load_applies_offline_delta_from_pause_wall() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-offline-delta");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let offline_pause_wall = current_unix_seconds()
-            - (crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10);
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        connection
-            .execute(
-                "
-                INSERT INTO player_lifespan (
-                    username,
-                    born_at_tick,
-                    years_lived,
-                    cap_by_realm,
-                    offline_pause_wall,
-                    in_coffin,
-                    schema_version,
-                    last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ",
-                params![
-                    "Azure",
-                    0_u64,
-                    6.0_f64,
-                    LifespanCapTable::AWAKEN,
-                    offline_pause_wall,
-                    0_i64,
-                    PLAYER_ROW_SCHEMA_VERSION,
-                    offline_pause_wall,
-                ],
-            )
-            .expect("lifespan fixture should insert");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert!(
-            (6.99..=7.01).contains(&loaded_lifespan.years_lived),
-            "expected ten offline real hours at x0.1 to add about one year, got {}",
-            loaded_lifespan.years_lived
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn player_lifespan_load_applies_coffin_offline_multiplier() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-coffin-offline-delta");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let offline_pause_wall = current_unix_seconds()
-            - (crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10);
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        connection
-            .execute(
-                "
-                INSERT INTO player_lifespan (
-                    username,
-                    born_at_tick,
-                    years_lived,
-                    cap_by_realm,
-                    offline_pause_wall,
-                    in_coffin,
-                    schema_version,
-                    last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ",
-                params![
-                    "Azure",
-                    0_u64,
-                    6.0_f64,
-                    LifespanCapTable::AWAKEN,
-                    offline_pause_wall,
-                    1_i64,
-                    PLAYER_ROW_SCHEMA_VERSION,
-                    offline_pause_wall,
-                ],
-            )
-            .expect("lifespan fixture should insert");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert!(loaded.in_coffin);
-        // in_coffin=true 且无 coffin_grade → 默认凡木档 0.09
-        assert_eq!(
-            loaded.coffin_grade,
-            Some(CoffinGrade::Mundane),
-            "in_coffin=true + no explicit grade should load as Some(Mundane)"
-        );
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Mundane)) - 0.09).abs() < 1e-9,
-            "mundane offline multiplier should be 0.09, got {}",
-            offline_lifespan_multiplier(Some(CoffinGrade::Mundane))
-        );
-        assert!(
-            (6.89..=6.91).contains(&loaded_lifespan.years_lived),
-            "expected ten offline real hours in coffin at x0.09 to add about 0.9 years, got {}",
-            loaded_lifespan.years_lived
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn offline_lifespan_multiplier_all_grades() {
-        // 四档离线倍率 = OFFLINE(0.1) × lifespan_factor
-        assert!(
-            (offline_lifespan_multiplier(None) - 0.1).abs() < 1e-9,
-            "None → 0.1"
-        );
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Mundane)) - 0.09).abs() < 1e-9,
-            "Mundane → 0.09"
-        );
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Jade)) - 0.07).abs() < 1e-9,
-            "Jade → 0.07"
-        );
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Stone)) - 0.05).abs() < 1e-9,
-            "Stone → 0.05"
-        );
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Bronze)) - 0.03).abs() < 1e-9,
-            "Bronze → 0.03"
-        );
-    }
-
-    #[test]
-    fn player_lifespan_load_treats_zero_pause_wall_as_no_offline_delta() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-zero-pause-wall");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        connection
-            .execute(
-                "
-                INSERT INTO player_lifespan (
-                    username,
-                    born_at_tick,
-                    years_lived,
-                    cap_by_realm,
-                    offline_pause_wall,
-                    in_coffin,
-                    schema_version,
-                    last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ",
-                params![
-                    "Azure",
-                    0_u64,
-                    12.0_f64,
-                    LifespanCapTable::AWAKEN,
-                    0_i64,
-                    0_i64,
-                    PLAYER_ROW_SCHEMA_VERSION,
-                    0_i64,
-                ],
-            )
-            .expect("legacy zero-pause lifespan fixture should insert");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert_eq!(loaded_lifespan.years_lived, 12.0);
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn equipped_weapon_persists_across_player_reload() {
-        let (persistence, data_dir) = sqlite_persistence("equipped-weapon-reload");
-        let inventory = equipped_iron_sword_inventory(0.87);
-
-        persist_player_with_inventory(&persistence, "Azure", &inventory);
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_inventory = loaded.inventory.expect("inventory should reload");
-        let main_hand_slot = loaded_inventory
-            .equipped
-            .get(EQUIP_SLOT_MAIN_HAND)
-            .expect("main_hand iron_sword should reload from sqlite");
-        let main_hand = main_hand_slot
-            .held
-            .as_ref()
-            .expect("main_hand slot should have held iron_sword");
-        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
-
-        assert_eq!(main_hand.instance_id, 9_001);
-        assert_eq!(main_hand.template_id, "iron_sword");
-        approx_eq(main_hand.durability, 0.87);
-        assert_eq!(
-            snapshot
-                .pointer("/equipped/main_hand/held/template_id")
-                .and_then(serde_json::Value::as_str),
-            Some("iron_sword")
-        );
-        println!(
-            "weapon_persistence_snapshot equipped={}",
-            serde_json::to_string(&snapshot).expect("snapshot should serialize")
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn unequipped_weapon_persists_empty_main_hand_across_reload() {
-        let (persistence, data_dir) = sqlite_persistence("unequipped-weapon-reload");
-        let mut inventory = equipped_iron_sword_inventory(0.62);
-        move_equipped_item_to_first_container_slot(&mut inventory, 9_001)
-            .expect("equipped sword should move back into the main pack");
-
-        persist_player_with_inventory(&persistence, "Azure", &inventory);
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_inventory = loaded.inventory.expect("inventory should reload");
-        let packed_sword = only_container_item(&loaded_inventory);
-        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
-
-        assert!(!loaded_inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
-        assert_eq!(packed_sword.instance_id, 9_001);
-        assert_eq!(packed_sword.template_id, "iron_sword");
-        approx_eq(packed_sword.durability, 0.62);
-        assert!(snapshot.pointer("/equipped/main_hand").is_none());
-        assert_eq!(
-            snapshot
-                .pointer("/containers/0/items/0/instance/template_id")
-                .and_then(serde_json::Value::as_str),
-            Some("iron_sword")
-        );
-        println!(
-            "weapon_persistence_snapshot unequipped={}",
-            serde_json::to_string(&snapshot).expect("snapshot should serialize")
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn broken_weapon_state_persists_after_inventory_slice_flush() {
-        let (persistence, data_dir) = sqlite_persistence("broken-weapon-reload");
-        let mut inventory = equipped_iron_sword_inventory(1.0);
-        persist_player_with_inventory(&persistence, "Azure", &inventory);
-
-        set_item_instance_durability(&mut inventory, 9_001, 0.0)
-            .expect("weapon durability should update to broken");
-        move_equipped_item_to_first_container_slot(&mut inventory, 9_001)
-            .expect("broken weapon should move back into the main pack");
-        save_player_inventory_slice(&persistence, "Azure", Some(&inventory))
-            .expect("changed inventory slice should persist");
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_inventory = loaded.inventory.expect("inventory should reload");
-        let broken_sword = only_container_item(&loaded_inventory);
-        let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
-
-        assert!(!loaded_inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
-        assert_eq!(broken_sword.instance_id, 9_001);
-        assert_eq!(broken_sword.template_id, "iron_sword");
-        approx_eq(broken_sword.durability, 0.0);
-        assert_eq!(
-            snapshot
-                .pointer("/containers/0/items/0/instance/durability")
-                .and_then(serde_json::Value::as_f64),
-            Some(0.0)
-        );
-        println!(
-            "weapon_persistence_snapshot broken={}",
-            serde_json::to_string(&snapshot).expect("snapshot should serialize")
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    /// plan-tarkov-backpack-v1 P2 e2e（交付物 #1 / 测试清单）— 拖入穿戴中 pack 后跨重载持久化。
-    ///
-    /// 经 `apply_inventory_move` 真路径把物品拖入穿戴中的 `pack_<id>` 容器（穿戴态门控放行）→
-    /// `save_player_slices` 落盘 → `load_player_slices` 重载 → 物品仍在 `pack_<id>` 内。
-    /// 锁住「拖入持久化无额外入口、经 flush 自动落盘、重载不丢」契约；任何把 pack_<id> 容器
-    /// 内含物从持久化序列中摘掉的回归立即撞红。
-    #[test]
-    fn e2e_drag_item_into_pack_persists_across_reload() {
-        use crate::inventory::{
-            apply_inventory_move, container_id_for_worn_pack, rebuild_containers_from_equipment,
-            ContainerSpec, ItemCategory, ItemRegistry, ItemTemplate, PlacedItemState, SlotContents,
-            EQUIP_SLOT_CHEST,
-        };
-        use crate::schema::inventory::InventoryLocationV1;
-
-        let (persistence, data_dir) = sqlite_persistence("drag-into-pack-reload");
-
-        // 合成 registry：一个 worn pack 模板（chest，3×3）+ 一个 1×1 misc 可移动物品。
-        let pack_template = ItemTemplate {
-            id: "e2e_chest_pack".to_string(),
-            display_name: "胸前套包".to_string(),
-            category: ItemCategory::Container,
-            placeable: None,
-            max_stack_count: 1,
-            grid_w: 2,
-            grid_h: 2,
-            base_weight: 0.5,
-            rarity: ItemRarity::Common,
-            spirit_quality_initial: 1.0,
-            description: "e2e pack".to_string(),
-            effect: None,
-            cast_duration_ms: 0,
-            cooldown_ms: 0,
-            weapon_spec: None,
-            forge_station_spec: None,
-            blueprint_scroll_spec: None,
-            inscription_scroll_spec: None,
-            technique_scroll_spec: None,
-            readable_scroll_spec: None,
-            recipe_fragment_spec: None,
-            container_spec: Some(ContainerSpec {
-                quick_access: false,
-                rows: 3,
-                cols: 3,
-                weight_capacity: 10.0,
-                equip_slot: EQUIP_SLOT_CHEST.to_string(),
-                durability_cost_per_op: 0.0,
-                attrition_exempt: false,
-                accept_filter: None,
-            }),
-            shield_spec: None,
-            shelflife_profile: None,
-            shelflife_track: None,
-        };
-        let mut dust = pack_template.clone();
-        dust.id = "e2e_dust".to_string();
-        dust.display_name = "灵尘".to_string();
-        dust.category = ItemCategory::Misc;
-        dust.container_spec = None;
-        dust.grid_w = 1;
-        dust.grid_h = 1;
-        let registry = ItemRegistry::from_map(HashMap::from([
-            ("e2e_chest_pack".to_string(), pack_template),
-            ("e2e_dust".to_string(), dust),
-        ]));
-
-        // 穿戴 chest pack（instance 8801）→ rebuild 建 pack_8801 容器 + 回填 owner。
-        let mut inventory = empty_weapon_inventory();
-        let mut pack_item = iron_sword_instance(8_801, 1.0);
-        pack_item.template_id = "e2e_chest_pack".to_string();
-        pack_item.grid_w = 2;
-        pack_item.grid_h = 2;
-        inventory.equipped.insert(
-            EQUIP_SLOT_CHEST.to_string(),
-            SlotContents::worn_single(pack_item),
-        );
-        let _ = rebuild_containers_from_equipment(&mut inventory, &registry);
-
-        // main_pack 放一件 dust（8802），准备拖入 pack_8801。
-        let mut dust_item = iron_sword_instance(8_802, 1.0);
-        dust_item.template_id = "e2e_dust".to_string();
-        dust_item.grid_w = 1;
-        dust_item.grid_h = 1;
-        let main = inventory
-            .containers
-            .iter_mut()
-            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
-            .expect("main_pack 存在");
-        main.items.push(PlacedItemState {
-            row: 0,
-            col: 0,
-            instance: dust_item,
-        });
-
-        // 拖入穿戴中的 pack_8801（穿戴态门控放行 + 落位）。
-        let pack_id = container_id_for_worn_pack(8_801);
-        let from = InventoryLocationV1::Container {
-            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
-            row: 0,
-            col: 0,
-        };
-        let to = InventoryLocationV1::Container {
-            container_id: pack_id.clone(),
-            row: 1,
-            col: 2,
-        };
-        apply_inventory_move(&mut inventory, &registry, 8_802, &from, &to, false)
-            .expect("拖入穿戴中的 pack_8801 应成功");
-
-        // 落盘。
-        persist_player_with_inventory(&persistence, "PackReload", &inventory);
-
-        // 重载。
-        let loaded = load_player_slices(&persistence, "PackReload");
-        let loaded_inventory = loaded.inventory.expect("inventory should reload");
-
-        // pack_8801 容器仍存在，dust(8802) 仍在其中（位置守恒 row=1,col=2）。
-        let pack = loaded_inventory
-            .containers
-            .iter()
-            .find(|c| c.id == pack_id)
-            .unwrap_or_else(|| panic!("重载后 `{pack_id}` 容器应仍存在"));
-        let placed = pack
-            .items
-            .iter()
-            .find(|p| p.instance.instance_id == 8_802)
-            .unwrap_or_else(|| {
-                panic!(
-                    "重载后 dust(8802) 应仍在 `{pack_id}` 内（拖入持久化经 flush 自动落盘，不丢）"
-                )
-            });
-        assert_eq!(
-            (placed.row, placed.col),
-            (1, 2),
-            "重载后 dust 落位坐标应守恒 (1,2)；实际 ({},{})",
-            placed.row,
-            placed.col
-        );
-        assert_eq!(
-            placed.instance.template_id, "e2e_dust",
-            "重载后 instance 8802 模板应保持 e2e_dust"
-        );
-        // dust 不应残留在 main_pack。
-        let main = loaded_inventory
-            .containers
-            .iter()
-            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
-            .expect("main_pack 重载存在");
-        assert!(
-            !main.items.iter().any(|p| p.instance.instance_id == 8_802),
-            "拖入 pack 后 dust(8802) 不应再残留在 main_pack（move 而非 copy）"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
-        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": ["tea", null, null, null, null, null, null, null, null]
-        }))
-        .expect("legacy prefs should decode with default skill_bar");
-
-        assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
-        assert!(prefs.skill_configs.is_empty());
-        assert!(prefs
-            .skill_bar
-            .iter()
-            .all(|slot| matches!(slot, SkillSlotPersist::Empty)));
-    }
-
-    #[test]
-    fn ui_prefs_accepts_legacy_payload_without_skill_configs() {
-        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": [null, null, null, null, null, null, null, null, null],
-            "skill_bar": [
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"}
-            ]
-        }))
-        .expect("legacy prefs should decode without skill_configs");
-
-        assert!(prefs.skill_configs.is_empty());
-    }
-
-    #[test]
-    fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
-        let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": ["tea", null, null, null, null, null, null, null, null],
-            "skill_bar": [
-                {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
-                {"kind":"item","template_id":"tea"},
-                {"kind":"item","template_id":"missing"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"}
-            ]
-        }))
-        .expect("prefs should decode");
-        let inventory = PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: crate::inventory::InventoryRevision(0),
-            containers: vec![crate::inventory::ContainerState {
-                quick_access: false,
-                id: "main".to_string(),
-                name: "main".to_string(),
-                rows: 5,
-                cols: 7,
-                items: vec![crate::inventory::PlacedItemState {
-                    row: 0,
-                    col: 0,
-                    instance: crate::inventory::ItemInstance {
-                        instance_id: 42,
-                        template_id: "tea".to_string(),
-                        display_name: "tea".to_string(),
-                        grid_w: 1,
-                        grid_h: 1,
-                        weight: 0.1,
-                        rarity: crate::inventory::ItemRarity::Common,
-                        description: String::new(),
-                        stack_count: 1,
-                        spirit_quality: 1.0,
-                        durability: 1.0,
-                        freshness: None,
-                        mineral_id: None,
-                        charges: None,
-                        forge_quality: None,
-                        forge_color: None,
-                        forge_side_effects: Vec::new(),
-                        forge_achieved_tier: None,
-                        alchemy: None,
-                        lingering_owner_qi: None,
-                    },
-                }],
-
-                owner_instance_id: None,
-            }],
-            equipped: Default::default(),
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 50.0,
-        };
-
-        let quick = prefs.quick_slot_bindings(Some(&inventory));
-        let skill_bar = prefs.skill_bar_bindings(Some(&inventory));
-
-        assert_eq!(quick.slots[0], Some(42));
-        assert!(matches!(
-            &skill_bar.slots[0],
-            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
-        ));
-        assert_eq!(skill_bar.slots[1], SkillSlot::Item { instance_id: 42 });
-        assert_eq!(skill_bar.slots[2], SkillSlot::Empty);
-    }
-
-    #[test]
-    fn import_player_bundle_rejects_invalid_current_char_id() {
-        let (persistence, data_dir) = sqlite_persistence("import-invalid-char-id");
-        let bundle = PlayerExportBundle {
-            kind: "player_export_v1".to_string(),
-            username: "Azure".to_string(),
-            current_char_id: "not-a-uuid".to_string(),
-            state: PlayerState {
-                karma: 0.25,
-                inventory_score: 0.7,
-            },
-            position: [64.0, 80.0, -12.0],
-            last_dimension: DimensionKind::default(),
-            inventory: None,
-            skill_set: SkillSet::default(),
-            known_techniques: KnownTechniques::default(),
-            ui_prefs: serde_json::json!({
-                "quick_slots": [null, null, null, null, null, null, null, null, null]
-            }),
-        };
-
-        let error = import_player_bundle(&persistence, &bundle)
-            .expect_err("invalid current_char_id should be rejected");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let player_core_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_core WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_core query should succeed");
-        let player_slow_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_slow WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_slow query should succeed");
-        let inventories_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM inventories WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("inventories query should succeed");
-        let prefs_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_ui_prefs WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_ui_prefs query should succeed");
-
-        assert!(player_core_exists.is_none());
-        assert!(player_slow_exists.is_none());
-        assert!(inventories_exists.is_none());
-        assert!(prefs_exists.is_none());
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn import_player_bundle_rejects_invalid_ui_prefs() {
-        let (persistence, data_dir) = sqlite_persistence("import-invalid-ui-prefs");
-        let bundle = PlayerExportBundle {
-            kind: "player_export_v1".to_string(),
-            username: "Azure".to_string(),
-            current_char_id: Uuid::now_v7().to_string(),
-            state: PlayerState {
-                karma: 0.25,
-                inventory_score: 0.7,
-            },
-            position: [64.0, 80.0, -12.0],
-            last_dimension: DimensionKind::default(),
-            inventory: None,
-            skill_set: SkillSet::default(),
-            known_techniques: KnownTechniques::default(),
-            ui_prefs: serde_json::json!({
-                "quick_slots": [0, 1, 2]
-            }),
-        };
-
-        let error = import_player_bundle(&persistence, &bundle)
-            .expect_err("invalid ui_prefs should be rejected");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let player_core_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_core WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_core query should succeed");
-        let player_slow_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_slow WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_slow query should succeed");
-        let inventories_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM inventories WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("inventories query should succeed");
-        let prefs_exists: Option<String> = connection
-            .query_row(
-                "SELECT username FROM player_ui_prefs WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("player_ui_prefs query should succeed");
-
-        assert!(player_core_exists.is_none());
-        assert!(player_slow_exists.is_none());
-        assert!(inventories_exists.is_none());
-        assert!(prefs_exists.is_none());
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn computes_composite_power() {
-        let state = PlayerState {
-            karma: 0.25,
-            inventory_score: 0.4,
-        };
-
-        let cultivation = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 60.0,
-            qi_max: 100.0,
-            ..Cultivation::default()
-        };
-
-        let breakdown = state.power_breakdown(&cultivation);
-        approx_eq(breakdown.combat, 0.39);
-        approx_eq(breakdown.wealth, 0.4);
-        approx_eq(breakdown.social, 0.4);
-        approx_eq(breakdown.karma, 0.25);
-        approx_eq(breakdown.territory, 0.325);
-        approx_eq(state.composite_power(&cultivation), 0.36225);
-    }
-
-    #[test]
-    fn serializes_player_state_payload() {
-        let state = PlayerState {
-            karma: 0.2,
-            inventory_score: 0.4,
-        };
-
-        let cultivation = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 78.0,
-            // qi_max≠qi_current 且≠100 fallback：锁住 HUD 真元条分母 = 真实 qi_max（非 current、非 100）。
-            qi_max: 150.0,
-            ..Cultivation::default()
-        };
-
-        let payload = state.server_payload_with_social_and_local_pressure(
-            &cultivation,
-            Some(canonical_player_id("Steve")),
-            "blood_valley",
-            None,
-            None,
-            None,
-        );
-        let bytes =
-            serialize_server_data_payload(&payload).expect("PlayerState payload should serialize");
-        let json: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("serialized payload should decode as JSON value");
-
-        assert_eq!(json.get("v"), Some(&serde_json::json!(SERVER_DATA_VERSION)));
-        assert_eq!(json.get("type"), Some(&serde_json::json!("player_state")));
-        assert_eq!(
-            json.get("player"),
-            Some(&serde_json::json!("offline:Steve"))
-        );
-        assert_eq!(json.get("realm"), Some(&serde_json::json!("Induce")));
-        assert_eq!(json.get("spirit_qi"), Some(&serde_json::json!(78.0)));
-        // P0 HUD fix：下发真元上限，client 才能算正确分母；缺失 payload 会被拒收。
-        assert_eq!(json.get("spirit_qi_max"), Some(&serde_json::json!(150.0)));
-        assert_eq!(json.get("karma"), Some(&serde_json::json!(0.2)));
-        assert_eq!(json.get("zone"), Some(&serde_json::json!("blood_valley")));
-
-        match payload.payload {
-            ServerDataPayloadV1::PlayerState {
-                spirit_qi_max,
-                composite_power,
-                breakdown,
-                ..
-            } => {
-                approx_eq(spirit_qi_max, cultivation.qi_max);
-                approx_eq(composite_power, state.composite_power(&cultivation));
-                approx_eq(breakdown.combat, state.power_breakdown(&cultivation).combat);
-                approx_eq(breakdown.wealth, state.power_breakdown(&cultivation).wealth);
-                approx_eq(breakdown.social, state.power_breakdown(&cultivation).social);
-                approx_eq(breakdown.karma, state.power_breakdown(&cultivation).karma);
-                approx_eq(
-                    breakdown.territory,
-                    state.power_breakdown(&cultivation).territory,
-                );
-            }
-            other => panic!("expected PlayerState payload, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn migrate_legacy_player_json_to_sqlite_once() {
-        let (persistence, data_dir) = sqlite_persistence("legacy-migrate");
-
-        #[derive(serde::Serialize)]
-        struct LegacyPlayerStateV0 {
-            realm: String,
-            spirit_qi: f64,
-            spirit_qi_max: f64,
-            karma: f64,
-            experience: u64,
-            inventory_score: f64,
-        }
-
-        let legacy_state = LegacyPlayerStateV0 {
-            realm: "Induce".to_string(),
-            spirit_qi: 78.0,
-            spirit_qi_max: 100.0,
-            karma: 0.2,
-            experience: 1_200,
-            inventory_score: 0.4,
-        };
-        let expected_state = PlayerState {
-            karma: 0.2,
-            inventory_score: 0.4,
-        };
-        let save_path = persistence.path_for_username("CorruptCultivator");
-        let migrated_path = persistence.migrated_path_for_username("CorruptCultivator");
-
-        fs::create_dir_all(persistence.data_dir()).expect("test data dir should be creatable");
-        fs::write(
-            &save_path,
-            serde_json::to_vec_pretty(&legacy_state).expect("legacy state should serialize"),
-        )
-        .expect("legacy PlayerState fixture should be writable");
-
-        let migrated = load_player_state(&persistence, "CorruptCultivator");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let first_char_id: String = connection
-            .query_row(
-                "SELECT current_char_id FROM player_core WHERE username = ?1",
-                params!["CorruptCultivator"],
-                |row| row.get(0),
-            )
-            .expect("migrated player_core row should exist");
-        let reloaded = load_player_state(&persistence, "CorruptCultivator");
-        let second_char_id: String = connection
-            .query_row(
-                "SELECT current_char_id FROM player_core WHERE username = ?1",
-                params!["CorruptCultivator"],
-                |row| row.get(0),
-            )
-            .expect("reloaded player_core row should exist");
-
-        assert_eq!(migrated, expected_state.normalized());
-        assert_eq!(reloaded, expected_state.normalized());
-        assert!(
-            !save_path.exists(),
-            "legacy json should be renamed after migration"
-        );
-        assert!(
-            migrated_path.exists(),
-            "migrated legacy json should be preserved"
-        );
-        assert_eq!(first_char_id, second_char_id);
-        assert_eq!(
-            Uuid::parse_str(&first_char_id)
-                .expect("current_char_id should be a UUID")
-                .get_version_num(),
-            7
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn corrupt_legacy_player_json_falls_back_without_affecting_other_players() {
-        let (persistence, data_dir) = sqlite_persistence("corrupt-json-isolation");
-        let corrupted_username = "CorruptCultivator";
-        let healthy_username = "StableCultivator";
-        let corrupted_path = persistence.path_for_username(corrupted_username);
-        let corrupted_migrated_path = persistence.migrated_path_for_username(corrupted_username);
-        let healthy_state = PlayerState {
-            karma: -0.3,
-            inventory_score: 0.55,
-        };
-
-        save_player_state(&persistence, healthy_username, &healthy_state)
-            .expect("healthy player state should persist");
-
-        fs::create_dir_all(persistence.data_dir()).expect("test data dir should be creatable");
-        fs::write(&corrupted_path, br#"{"realm":"broken""#)
-            .expect("corrupted legacy fixture should be writable");
-
-        let corrupted_loaded = load_player_state(&persistence, corrupted_username);
-        let healthy_loaded = load_player_state(&persistence, healthy_username);
-
-        assert_eq!(corrupted_loaded, PlayerState::default());
-        assert_eq!(healthy_loaded, healthy_state.normalized());
-        assert!(
-            corrupted_path.exists(),
-            "corrupted legacy json should remain in place after failed migration"
-        );
-        assert!(
-            !corrupted_migrated_path.exists(),
-            "corrupted legacy json should not be marked as migrated"
-        );
-
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let corrupted_row: Option<(f64, f64)> = connection
-            .query_row(
-                "
-                SELECT karma, inventory_score
-                FROM player_core
-                WHERE username = ?1
-                ",
-                params![corrupted_username],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .expect("corrupted player_core row query should succeed");
-        let healthy_row: (f64, f64) = connection
-            .query_row(
-                "
-                SELECT karma, inventory_score
-                FROM player_core
-                WHERE username = ?1
-                ",
-                params![healthy_username],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("healthy player_core row should exist");
-
-        assert_eq!(
-            corrupted_row,
-            Some((
-                PlayerState::default().karma,
-                PlayerState::default().inventory_score,
-            ))
-        );
-        assert_eq!(
-            healthy_row,
-            (
-                healthy_state.normalized().karma,
-                healthy_state.normalized().inventory_score,
-            )
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn concurrent_player_core_slice_writers_serialize_under_sqlite_busy_timeout() {
-        let (persistence, data_dir) = sqlite_persistence("core-slice-concurrency");
-        let writer_count = 50usize;
-        let baseline_state = PlayerState {
-            karma: 0.1,
-            inventory_score: 0.2,
-        };
-
-        for index in 0..writer_count {
-            save_player_state(
-                &persistence,
-                format!("Player{index}").as_str(),
-                &baseline_state,
-            )
-            .expect("baseline player state should persist");
-        }
-
-        let persistence = Arc::new(persistence);
-        let barrier = Arc::new(Barrier::new(writer_count + 1));
-        let handles = (0..writer_count)
-            .map(|index| {
-                let persistence = Arc::clone(&persistence);
-                let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
-                    let username = format!("Player{index}");
-                    let updated_state = PlayerState {
-                        karma: ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0),
-                        inventory_score: (index as f64 / writer_count as f64).clamp(0.0, 1.0),
-                    };
-
-                    barrier.wait();
-                    save_player_core_slice(persistence.as_ref(), username.as_str(), &updated_state)
-                })
-            })
-            .collect::<Vec<_>>();
-
-        barrier.wait();
-        let errors = handles
-            .into_iter()
-            .map(|handle| handle.join().expect("writer thread should not panic"))
-            .filter_map(Result::err)
-            .map(|error| error.to_string())
-            .collect::<Vec<_>>();
-        assert!(
-            errors.is_empty(),
-            "all concurrent player core slice writers should succeed: {errors:?}"
-        );
-
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        let row_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM player_core", [], |row| row.get(0))
-            .expect("player_core row count should be readable");
-        assert_eq!(row_count, writer_count as i64);
-
-        for index in 0..writer_count {
-            let username = format!("Player{index}");
-            let (karma, inventory_score): (f64, f64) = connection
-                .query_row(
-                    "
-                    SELECT karma, inventory_score
-                    FROM player_core
-                    WHERE username = ?1
-                    ",
-                    params![username.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .expect("updated player_core row should exist");
-
-            assert_eq!(karma, ((index as f64 / 25.0) - 1.0).clamp(-1.0, 1.0));
-            assert_eq!(
-                inventory_score,
-                (index as f64 / writer_count as f64).clamp(0.0, 1.0)
-            );
-        }
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // ─── plan-coffin-tiers-v1 P0 charge #2/#13 ──────────────────────────
-    // save_player_lifespan_slice（无棺上下文）不能把已存的 Jade/Stone/Bronze grade 洗成 Mundane
-
-    #[test]
-    fn save_player_lifespan_slice_preserves_jade_grade_on_no_coffin_context_save() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-jade-grade-preserve");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        // 先存一个 Jade 棺玩家
-        let lifespan = crate::cultivation::lifespan::LifespanComponent {
-            born_at_tick: 0,
-            years_lived: 10.0,
-            cap_by_realm: 100,
-            offline_pause_tick: None,
-        };
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Azure",
-            &lifespan,
-            Some(CoffinGrade::Jade),
-        )
-        .expect("save with jade coffin should succeed");
-
-        // 验证 DB 里 grade=jade
-        {
-            let conn = Connection::open(persistence.db_path()).expect("db should open");
-            let grade: String = conn
-                .query_row(
-                    "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
-                    params!["Azure"],
-                    |row| row.get(0),
-                )
-                .expect("grade row should exist");
-            assert_eq!(grade, "jade", "grade should be jade after save_with_coffin");
-        }
-
-        // 触发无棺上下文保存（模拟悟道延寿路径）
-        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
-            .expect("save_player_lifespan_slice should succeed");
-
-        // 验证 grade 没有被洗成 mundane
-        {
-            let conn = Connection::open(persistence.db_path()).expect("db should open");
-            let grade: String = conn
-                .query_row(
-                    "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
-                    params!["Azure"],
-                    |row| row.get(0),
-                )
-                .expect("grade row should exist after no-coffin save");
-            assert_eq!(
-                grade, "jade",
-                "save_player_lifespan_slice (无棺上下文) 不应把 jade 洗成 mundane，\
-                 期望 jade，实际 {grade}"
-            );
-        }
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn save_player_lifespan_slice_preserves_stone_grade() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-stone-grade-preserve");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let lifespan = crate::cultivation::lifespan::LifespanComponent {
-            born_at_tick: 0,
-            years_lived: 5.0,
-            cap_by_realm: 100,
-            offline_pause_tick: None,
-        };
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Azure",
-            &lifespan,
-            Some(CoffinGrade::Stone),
-        )
-        .expect("save with stone coffin should succeed");
-        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
-            .expect("save without coffin context should succeed");
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        let grade: String = conn
-            .query_row(
-                "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("grade row should exist");
-        assert_eq!(
-            grade, "stone",
-            "save_player_lifespan_slice 不应洗掉 stone grade，期望 stone，实际 {grade}"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn save_player_lifespan_slice_preserves_bronze_grade() {
-        let (persistence, data_dir) = sqlite_persistence("lifespan-bronze-grade-preserve");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let lifespan = crate::cultivation::lifespan::LifespanComponent {
-            born_at_tick: 0,
-            years_lived: 5.0,
-            cap_by_realm: 100,
-            offline_pause_tick: None,
-        };
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Azure",
-            &lifespan,
-            Some(CoffinGrade::Bronze),
-        )
-        .expect("save with bronze coffin should succeed");
-        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
-            .expect("save without coffin context should succeed");
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        let grade: String = conn
-            .query_row(
-                "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("grade row should exist");
-        assert_eq!(
-            grade, "bronze",
-            "save_player_lifespan_slice 不应洗掉 bronze grade，期望 bronze，实际 {grade}"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // ─── F21 — clear_coffin_flag_for_username (断连时无 LifespanComponent 兜底) ───
-
-    #[test]
-    fn clear_coffin_flag_for_username_zeroes_in_coffin_and_resets_grade() {
-        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-happy-path");
-        let lifespan = crate::cultivation::lifespan::LifespanComponent {
-            born_at_tick: 0,
-            years_lived: 3.0,
-            cap_by_realm: 100,
-            offline_pause_tick: None,
-        };
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Azure",
-            &lifespan,
-            Some(CoffinGrade::Bronze),
-        )
-        .expect("seeding an in-coffin row should succeed");
-
-        {
-            let conn = Connection::open(persistence.db_path()).expect("db should open");
-            let (in_coffin, grade): (i64, String) = conn
-                .query_row(
-                    "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
-                    params!["Azure"],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .expect("seed row should exist");
-            assert_eq!(
-                in_coffin, 1,
-                "sanity check: seed row must start in_coffin=1"
-            );
-            assert_eq!(
-                grade, "bronze",
-                "sanity check: seed row must start grade=bronze"
-            );
-        }
-
-        clear_coffin_flag_for_username(&persistence, "Azure")
-            .expect("clearing an existing row should succeed");
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        let (in_coffin, grade): (i64, String) = conn
-            .query_row(
-                "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
-                params!["Azure"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("row should still exist after clearing");
-        assert_eq!(
-            in_coffin, 0,
-            "F21: in_coffin must be zeroed so the join-time re-pin check \
-             (`persisted.in_coffin`) does not fire on a coffin that may no longer exist"
-        );
-        assert_eq!(
-            grade,
-            CoffinGrade::default().as_db_str(),
-            "coffin_grade must reset to the NOT NULL column default ('mundane'), not NULL — the \
-             column has no NULL representation (NOT NULL DEFAULT 'mundane')"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn clear_coffin_flag_for_username_is_a_noop_when_no_row_exists() {
-        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-noop-no-row");
-
-        // 没有先 save_player_lifespan_slice_with_coffin 播种任何行。
-        clear_coffin_flag_for_username(&persistence, "GhostUser")
-            .expect("clearing a nonexistent row must succeed (0 rows affected), not error");
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        let row_exists: Option<i64> = conn
-            .query_row(
-                "SELECT 1 FROM player_lifespan WHERE username = ?1",
-                params!["GhostUser"],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("query should not error");
-        assert!(
-            row_exists.is_none(),
-            "F21: clearing a username with no player_lifespan row must not insert a new \
-             (incomplete) row — `UPDATE ... WHERE username = ?1` on 0 matching rows is a true no-op"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn clear_coffin_flag_for_username_only_touches_the_target_username() {
-        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-isolation");
-        let lifespan = crate::cultivation::lifespan::LifespanComponent {
-            born_at_tick: 0,
-            years_lived: 1.0,
-            cap_by_realm: 100,
-            offline_pause_tick: None,
-        };
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Azure",
-            &lifespan,
-            Some(CoffinGrade::Jade),
-        )
-        .expect("seeding Azure's in-coffin row should succeed");
-        save_player_lifespan_slice_with_coffin(
-            &persistence,
-            "Bystander",
-            &lifespan,
-            Some(CoffinGrade::Stone),
-        )
-        .expect("seeding Bystander's in-coffin row should succeed");
-
-        clear_coffin_flag_for_username(&persistence, "Azure")
-            .expect("clearing Azure's row should succeed");
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        let (bystander_in_coffin, bystander_grade): (i64, String) = conn
-            .query_row(
-                "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
-                params!["Bystander"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("Bystander row should still exist");
-        assert_eq!(
-            bystander_in_coffin, 1,
-            "F21: clearing Azure's coffin flag must not touch Bystander's row"
-        );
-        assert_eq!(
-            bystander_grade, "stone",
-            "F21: clearing Azure's coffin flag must not touch Bystander's grade"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    // ─── plan-coffin-tiers-v1 P0 charge #6 — 非 mundane DB 全链路 ─────────
-    // save_player_lifespan_slice_with_coffin(Jade/Stone/Bronze) → DB → load → offline 回算正确
-
-    #[test]
-    fn db_full_chain_jade_coffin_offline_multiplier() {
-        let (persistence, data_dir) = sqlite_persistence("db-full-chain-jade");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        // 玩家在 Jade 棺内，离线 10 年等效真实秒
-        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
-        let offline_pause_wall = current_unix_seconds() - offline_seconds;
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        conn.execute(
-            "INSERT INTO player_lifespan (
-                username, born_at_tick, years_lived, cap_by_realm,
-                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'jade', ?6, ?7)",
-            params![
-                "Azure",
-                0_u64,
-                6.0_f64,
-                100_u32,
-                offline_pause_wall,
-                PLAYER_ROW_SCHEMA_VERSION,
-                offline_pause_wall
-            ],
-        )
-        .expect("jade lifespan fixture should insert");
-        drop(conn);
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert!(loaded.in_coffin, "should be in_coffin");
-        assert_eq!(
-            loaded.coffin_grade,
-            Some(CoffinGrade::Jade),
-            "loaded grade should be Some(Jade), got {:?}",
-            loaded.coffin_grade
-        );
-        // jade 倍率 0.07 → 10 年 × 0.07 = 0.7 年
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Jade)) - 0.07).abs() < 1e-9,
-            "jade offline multiplier should be 0.07"
-        );
-        assert!(
-            (6.69..=6.71).contains(&loaded_lifespan.years_lived),
-            "expected 10 offline years in jade coffin at x0.07 to add ~0.7 years, \
-             started at 6.0, got {}",
-            loaded_lifespan.years_lived
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn db_full_chain_stone_coffin_offline_multiplier() {
-        let (persistence, data_dir) = sqlite_persistence("db-full-chain-stone");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
-        let offline_pause_wall = current_unix_seconds() - offline_seconds;
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        conn.execute(
-            "INSERT INTO player_lifespan (
-                username, born_at_tick, years_lived, cap_by_realm,
-                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'stone', ?6, ?7)",
-            params![
-                "Azure",
-                0_u64,
-                6.0_f64,
-                100_u32,
-                offline_pause_wall,
-                PLAYER_ROW_SCHEMA_VERSION,
-                offline_pause_wall
-            ],
-        )
-        .expect("stone lifespan fixture should insert");
-        drop(conn);
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert!(loaded.in_coffin, "should be in_coffin");
-        assert_eq!(
-            loaded.coffin_grade,
-            Some(CoffinGrade::Stone),
-            "loaded grade should be Some(Stone), got {:?}",
-            loaded.coffin_grade
-        );
-        // stone 倍率 0.05 → 10 年 × 0.05 = 0.5 年
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Stone)) - 0.05).abs() < 1e-9,
-            "stone offline multiplier should be 0.05"
-        );
-        assert!(
-            (6.49..=6.51).contains(&loaded_lifespan.years_lived),
-            "expected 10 offline years in stone coffin at x0.05 to add ~0.5 years, \
-             started at 6.0, got {}",
-            loaded_lifespan.years_lived
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn db_full_chain_bronze_coffin_offline_multiplier() {
-        let (persistence, data_dir) = sqlite_persistence("db-full-chain-bronze");
-        save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
-        let offline_pause_wall = current_unix_seconds() - offline_seconds;
-
-        let conn = Connection::open(persistence.db_path()).expect("db should open");
-        conn.execute(
-            "INSERT INTO player_lifespan (
-                username, born_at_tick, years_lived, cap_by_realm,
-                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'bronze', ?6, ?7)",
-            params![
-                "Azure",
-                0_u64,
-                6.0_f64,
-                100_u32,
-                offline_pause_wall,
-                PLAYER_ROW_SCHEMA_VERSION,
-                offline_pause_wall
-            ],
-        )
-        .expect("bronze lifespan fixture should insert");
-        drop(conn);
-
-        let loaded = load_player_slices(&persistence, "Azure");
-        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
-
-        assert!(loaded.in_coffin, "should be in_coffin");
-        assert_eq!(
-            loaded.coffin_grade,
-            Some(CoffinGrade::Bronze),
-            "loaded grade should be Some(Bronze), got {:?}",
-            loaded.coffin_grade
-        );
-        // bronze 倍率 0.03 → 10 年 × 0.03 = 0.3 年
-        assert!(
-            (offline_lifespan_multiplier(Some(CoffinGrade::Bronze)) - 0.03).abs() < 1e-9,
-            "bronze offline multiplier should be 0.03"
-        );
-        assert!(
-            (6.29..=6.31).contains(&loaded_lifespan.years_lived),
-            "expected 10 offline years in bronze coffin at x0.03 to add ~0.3 years, \
-             started at 6.0, got {}",
-            loaded_lifespan.years_lived
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-}
+#[path = "state_tests.rs"]
+mod tests;

@@ -35,6 +35,10 @@ public final class CarrierStateStore {
         snapshot = next == null ? State.NONE : next;
     }
 
+    public static void clearOnDisconnect() {
+        snapshot = State.NONE;
+    }
+
     public static void resetForTests() {
         snapshot = State.NONE;
     }

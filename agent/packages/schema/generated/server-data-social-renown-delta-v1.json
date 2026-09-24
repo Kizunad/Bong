@@ -64,5 +64,6 @@
     "reason": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "dbcff61290a237fa6943c66cf1730eb74c5456f90725c6fcb06340b4081dc0c2"
 }

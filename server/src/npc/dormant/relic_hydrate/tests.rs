@@ -32,6 +32,7 @@ const TEST_PLAQUE: &str = "item.relic.engraved_plaque";
 /// 成 0（而非继承 template 初始品质）。
 fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: template_id.to_string(),
         display_name: format!("display:{template_id}"),
         category: ItemCategory::Misc,
@@ -57,6 +58,7 @@ fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate
         shelflife_profile: None,
         shield_spec: None,
         shelflife_track: None,
+        wearer_race: crate::body_plan::types::RaceGateOwned::default(),
     }
 }
 
@@ -390,9 +392,7 @@ fn relic_hydrate_app(
         std::process::id()
     ));
     let db_path = root.join("data").join("bong.db");
-    let deceased = root.join("deceased");
-    let settings =
-        PersistenceSettings::with_paths(&db_path, &deceased, format!("relic-{test_name}"));
+    let settings = PersistenceSettings::with_db_path(&db_path, format!("relic-{test_name}"));
     bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap sqlite");
 
     let mut app = App::new();
@@ -402,6 +402,7 @@ fn relic_hydrate_app(
         ..Default::default()
     });
     app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
         zones: vec![test_zone(zone_name, DimensionKind::Overworld)],
     });
     // registry 含 engraved_plaque（GuardianRelic chance=1.0 必命中）。

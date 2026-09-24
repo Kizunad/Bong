@@ -148,6 +148,7 @@ mod tests {
     #[test]
     fn zone_names_lists_registry_entries_in_order() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 crate::world::zone::Zone {
                     name: "spawn".to_string(),

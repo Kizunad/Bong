@@ -1,7 +1,6 @@
 {
   "category.bong-client.controls": "Bong Controls",
   "key.bong-client.interact": "Interact",
-  "key.bong-client.open_cultivation_screen": "Open Cultivation Screen",
   "key.bong-client.open_craft_screen": "Open Craft Screen",
   "category.bong-client.combat": "Bong Combat HUD",
   "key.bong-client.quick_slot_1": "Use Quick Slot F1",
@@ -25,5 +24,8 @@
   "category.bong-client.mineral": "Bong Mineral",
   "key.bong-client.mineral_sense": "Sense Mineral Vein",
   "category.bong-client.social": "Bong Social",
-  "key.bong-client.spirit_niche_mark_coordinate": "Sense Spirit Niche (Gaze + Mark)"
+  "key.bong-client.spirit_niche_mark_coordinate": "Sense Spirit Niche (Gaze + Mark)",
+  "key.bong-client.juice_multiplier_cycle": "Cycle Cast Juice Intensity",
+  "message.bong-client.juice_multiplier.off": "Cast Shake: Off",
+  "message.bong-client.juice_multiplier.level": "Cast Shake: %s%%"
 }

@@ -51,7 +51,7 @@ fn should_emit_identity_panel_state(
     if identities.last_switch_tick == 0 {
         return false;
     }
-    if now_tick % IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS != 0 {
+    if !now_tick.is_multiple_of(IDENTITY_PANEL_COOLDOWN_REFRESH_INTERVAL_TICKS) {
         return false;
     }
     let cooldown_refresh_deadline = identities

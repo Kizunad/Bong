@@ -209,6 +209,7 @@ mod tests {
 
     fn make_inventory(slot_key: &str, item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {

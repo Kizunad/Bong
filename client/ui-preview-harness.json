@@ -1,0 +1,160 @@
+{
+  "_doc": "真实 Fabric/owo UI 截图。framebuffer 经 GUI scale 换算为逻辑 viewport；状态机会严格对拍后才截图。",
+  "output_dir": "ui-preview-screenshots",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "craft-minimum",
+      "scene_id": "craft",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "craft-window"
+    },
+    {
+      "name": "craft-odd",
+      "scene_id": "craft",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "craft-window"
+    },
+    {
+      "name": "craft-wide",
+      "scene_id": "craft",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "craft-window"
+    },
+    {
+      "name": "terminate-minimum",
+      "scene_id": "terminate",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "terminate"
+    },
+    {
+      "name": "coffin-menu-minimum",
+      "scene_id": "coffin-menu",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "coffin-menu"
+    },
+    {
+      "name": "repair-minimum",
+      "scene_id": "repair",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "repair"
+    },
+    {
+      "name": "death-minimum",
+      "scene_id": "death",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "death"
+    },
+    {
+      "name": "death-odd",
+      "scene_id": "death",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "death"
+    },
+    {
+      "name": "forge-carrier-minimum",
+      "scene_id": "forge-carrier",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "forge-carrier"
+    },
+    {
+      "name": "forge-carrier-odd",
+      "scene_id": "forge-carrier",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "forge-carrier"
+    },
+    {
+      "name": "identity-panel-empty",
+      "scene_id": "identity-panel-empty",
+      "framebuffer_width": 640,
+      "framebuffer_height": 640,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 320,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-minimum",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 640,
+      "framebuffer_height": 640,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 320,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-odd",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 801,
+      "framebuffer_height": 641,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 321,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-wide",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "zhenfa-layout-minimum",
+      "scene_id": "zhenfa-layout",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "zhenfa-layout"
+    }
+  ]
+}

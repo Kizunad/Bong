@@ -28,5 +28,6 @@
         "type": "string"
       }
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e9252f2aa538034dfe7d18d641da0cad63fe6bc320f621002b90ec5a735d3cfe"
 }

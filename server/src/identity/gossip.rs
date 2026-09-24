@@ -158,7 +158,7 @@ pub fn npc_identity_gossip_tick(
 ) {
     let tick = game_tick.as_deref().map(|tick| tick.0).unwrap_or(0);
     let cfg = config.as_deref().cloned().unwrap_or_default();
-    if cfg.interval_ticks == 0 || tick % cfg.interval_ticks != 0 {
+    if cfg.interval_ticks == 0 || !tick.is_multiple_of(cfg.interval_ticks) {
         return;
     }
     let Some(zone_registry) = zone_registry.as_deref() else {
@@ -345,6 +345,7 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("same", 0.0, 50.0), zone("far", 100.0, 150.0)],
         });
         app.insert_resource(IdentityGossipConfig {

@@ -100,9 +100,20 @@ public final class BotanyDragState {
         lastPanelY = Integer.MIN_VALUE;
     }
 
-    public static void resetForTests() {
+    /** Clears the old connection's drag interaction without touching process wiring. */
+    public static void clearOnDisconnect() {
         resetForNewSession();
+        lastPanelWidth = 0;
+        lastPanelHeight = 0;
+        dragStartMouseX = 0;
+        dragStartMouseY = 0;
+        dragStartDeltaX = 0;
+        dragStartDeltaY = 0;
         lastSessionId = "";
+    }
+
+    public static void resetForTests() {
+        clearOnDisconnect();
     }
 
     private static boolean isMouseOverPanel(double mx, double my) {

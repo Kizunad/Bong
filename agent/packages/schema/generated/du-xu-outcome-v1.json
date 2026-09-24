@@ -20,5 +20,6 @@
       "const": "fled",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "f937b039aa8f59c91449915d8bd78f80cf1d0abc8dde6b3b278b51902d156fcf"
 }

@@ -1130,6 +1130,7 @@ mod tests {
     fn collapse_extract_progress_targets_rift_mouth_zone() {
         let mut app = app_with_extract_system(tick_extract_progress);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "rift_mouth_north_001".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -1179,6 +1180,7 @@ mod tests {
             tsy: tsy_layer,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "tsy_lingxu_01_shallow".to_string(),
                 dimension: DimensionKind::Tsy,
@@ -1251,6 +1253,7 @@ mod tests {
             tsy: tsy_layer,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "tsy_lingxu_01_shallow".to_string(),
                 dimension: DimensionKind::Tsy,

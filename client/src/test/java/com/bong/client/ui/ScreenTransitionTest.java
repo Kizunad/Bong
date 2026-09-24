@@ -1,10 +1,9 @@
 package com.bong.client.ui;
 
 import com.bong.client.alchemy.AlchemyScreen;
-import com.bong.client.forge.ForgeScreen;
-import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
@@ -17,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScreenTransitionTest {
@@ -25,6 +25,23 @@ class ScreenTransitionTest {
         ScreenTransitionRegistry.resetForTests();
         ScreenTransitionController.resetForTests();
         UiTransitionSettings.resetForTests();
+    }
+
+    @Test
+    void quickPlayBeforePlayerCreationDoesNotDelayScreenInstallation() throws Exception {
+        // 不启动 GL 窗口，模拟 Quick Play 尚未创建 world/player 的客户端。
+        var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        var unsafe = (sun.misc.Unsafe) field.get(null);
+        var client = (MinecraftClient) unsafe.allocateInstance(MinecraftClient.class);
+        var stale = ScreenTransition.play(null, new DummyScreen("pending"),
+            ScreenTransition.Type.FADE, 200, ScreenTransition.Easing.LINEAR, () -> {});
+        ScreenTransitionController.setActiveTransitionForTests(active(stale));
+
+        assertFalse(ScreenTransitionController.interceptSetScreen(client, new DummyScreen("connecting")),
+            "登录前必须让原版立即挂载连接界面，避免无玩家时进入 handleInputEvents");
+        assertNull(ScreenTransitionController.activeTransition(), "旧转场不得覆盖新的连接界面");
+        assertTrue(stale.cancelled());
     }
 
     @Test
@@ -170,25 +187,11 @@ class ScreenTransitionTest {
     }
 
     @Test
-    void cultivation_slowest() {
-        ScreenTransitionRegistry.bootstrapDefaults();
-
-        TransitionConfig config = ScreenTransitionRegistry.getOrDefault(CultivationScreen.class);
-
-        assertEquals(ScreenTransition.Type.FADE, config.openTransition());
-        assertEquals(600, config.openDurationMs());
-        assertEquals(TransitionConfig.OverlayStyle.VIGNETTE, config.overlayStyle());
-    }
-
-    @Test
     void eight_screen_defaults_cover_core_surfaces() {
         ScreenTransitionRegistry.bootstrapDefaults();
 
         assertTrue(ScreenTransitionRegistry.get(InspectScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(ForgeScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(AlchemyScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(CultivationScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(ItemInspectScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(GameMenuScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.SparringInviteScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.TradeOfferScreen.class).isPresent());
@@ -284,7 +287,60 @@ class ScreenTransitionTest {
     }
 
     @Test
-    void same_screen_request_clears_previous_transition() {
+    void disconnectClearCancelsOnlyVisualTransitionWithoutProtocolSettlement() {
+        PendingScreen oldPending = new PendingScreen("old pending");
+        ScreenTransition.TransitionHandle oldHandle = ScreenTransition.play(
+            new DummyScreen("old"),
+            oldPending,
+            ScreenTransition.Type.FADE,
+            200,
+            ScreenTransition.Easing.LINEAR,
+            () -> {
+            }
+        );
+        ScreenTransitionController.setActiveTransitionForTests(active(oldHandle));
+        int cancellationsBefore = ScreenTransitionController.cancelledTransitionsForTests();
+
+        ScreenTransitionController.clearOnDisconnect();
+
+        assertTrue(oldHandle.cancelled(), "disconnect cleanup must cancel the old visual transition handle");
+        assertNull(ScreenTransitionController.activeTransition(),
+            "disconnect cleanup must not retain an old pending transition");
+        assertEquals(cancellationsBefore, ScreenTransitionController.cancelledTransitionsForTests(),
+            "disconnect cleanup must not mutate the test-only normal-cancellation counter");
+        assertFalse(oldPending.cancellationCalled,
+            "disconnect cleanup must not send a pending-open protocol terminal callback");
+
+        ScreenTransition.TransitionHandle freshHandle = ScreenTransition.play(
+            new DummyScreen("fresh old"),
+            new DummyScreen("fresh pending"),
+            ScreenTransition.Type.SLIDE_UP,
+            300,
+            ScreenTransition.Easing.LINEAR,
+            () -> {
+            }
+        );
+        ScreenTransitionController.setActiveTransitionForTests(active(freshHandle));
+        assertSame(freshHandle, ScreenTransitionController.activeTransition().handle(),
+            "a fresh connection must be able to establish a new visual transition after teardown");
+    }
+
+    private static ScreenTransitionController.ActiveTransition active(ScreenTransition.TransitionHandle handle) {
+        return new ScreenTransitionController.ActiveTransition(
+            handle,
+            new TransitionConfig.TransitionSpec(
+                handle.type(),
+                200,
+                ScreenTransition.Easing.LINEAR,
+                TransitionConfig.OverlayStyle.NONE,
+                false
+            ),
+            ScreenTransition.nowMillis()
+        );
+    }
+
+    @Test
+    void same_screen_request_is_consumed_and_clears_previous_transition() {
         DummyScreen current = new DummyScreen("current");
         ScreenTransition.TransitionHandle stale = ScreenTransition.play(
             new DummyScreen("old"),
@@ -309,10 +365,28 @@ class ScreenTransitionTest {
 
         boolean sameScreen = ScreenTransitionController.clearActiveTransitionIfSameScreen(current, current);
 
-        assertTrue(sameScreen);
-        assertNull(ScreenTransitionController.activeTransition());
-        assertTrue(stale.cancelled());
-        assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests());
+        assertTrue(sameScreen,
+            "same-instance setScreen 必须被消费，避免 vanilla removed() 误结算协议终态，实际=" + sameScreen);
+        assertNull(ScreenTransitionController.activeTransition(),
+            "same-instance 请求消费后不得残留旧 transition");
+        assertTrue(stale.cancelled(),
+            "same-instance 请求必须取消旧 transition handle，实际 cancelled=" + stale.cancelled());
+        assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests(),
+            "same-instance 请求只能结算一次旧 transition");
+    }
+
+    private static final class PendingScreen extends DummyScreen
+        implements ScreenTransitionController.PendingOpenCancellationHandler {
+        private boolean cancellationCalled;
+
+        PendingScreen(String title) {
+            super(title);
+        }
+
+        @Override
+        public void onPendingOpenCancelled() {
+            cancellationCalled = true;
+        }
     }
 
     private static class DummyScreen extends Screen {

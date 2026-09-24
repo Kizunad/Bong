@@ -19,25 +19,38 @@ public final class CombatHudStateHandler implements ServerDataHandler {
         Float hpPercent = readUnitFloat(payload, "hp_percent");
         Float qiPercent = readUnitFloat(payload, "qi_percent");
         Float staminaPercent = readUnitFloat(payload, "stamina_percent");
+        Boolean combatActive = readRequiredBoolean(payload, "combat_active");
         JsonObject derivedObj = readObject(payload, "derived");
-        if (hpPercent == null || qiPercent == null || staminaPercent == null || derivedObj == null) {
+        if (hpPercent == null || qiPercent == null || staminaPercent == null
+            || combatActive == null || derivedObj == null) {
+            // 坏帧不能继续沿用旧的战斗判断，否则邀请策略会在权威输入失效后放行。
+            CombatHudStateStore.clear();
             return ServerDataDispatch.noOp(
                 envelope.type(),
                 "Ignoring combat_hud_state payload: required fields missing or invalid"
             );
         }
 
-        boolean flying = readBool(derivedObj, "flying");
-        boolean phasing = readBool(derivedObj, "phasing");
-        boolean tribulationLocked = readBool(derivedObj, "tribulation_locked");
+        Boolean flying = readRequiredBoolean(derivedObj, "flying");
+        Boolean phasing = readRequiredBoolean(derivedObj, "phasing");
+        Boolean tribulationLocked = readRequiredBoolean(derivedObj, "tribulation_locked");
+        if (flying == null || phasing == null || tribulationLocked == null) {
+            // derived flags 也是权威帧的一部分；缺失或类型错误时不能默认为 false。
+            CombatHudStateStore.clear();
+            return ServerDataDispatch.noOp(
+                envelope.type(),
+                "Ignoring combat_hud_state payload: derived flags missing or invalid"
+            );
+        }
 
-        CombatHudState next = CombatHudState.create(
+        CombatHudState next = CombatHudState.createAuthoritative(
             hpPercent,
             qiPercent,
             staminaPercent,
-            DerivedAttrFlags.of(flying, phasing, tribulationLocked)
+            DerivedAttrFlags.of(flying, phasing, tribulationLocked),
+            combatActive
         );
-        CombatHudStateStore.replace(next);
+        CombatHudStateStore.replaceAuthoritative(next);
 
         return ServerDataDispatch.handled(
             envelope.type(),
@@ -62,10 +75,10 @@ public final class CombatHudStateHandler implements ServerDataHandler {
         return element.getAsJsonObject();
     }
 
-    private static boolean readBool(JsonObject object, String fieldName) {
+    private static Boolean readRequiredBoolean(JsonObject object, String fieldName) {
         JsonElement element = object.get(fieldName);
-        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) return false;
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) return null;
         JsonPrimitive primitive = element.getAsJsonPrimitive();
-        return primitive.isBoolean() && primitive.getAsBoolean();
+        return primitive.isBoolean() ? primitive.getAsBoolean() : null;
     }
 }

@@ -1,0 +1,61 @@
+# dagger_grip_switch —— 「这条动作应该看得出什么」的人写清单。
+#
+# **v1~v3 这条动画根本没在换握。** 三个版本都想用手臂表达换握，而手持物被 display 变换
+# 焊死在前臂上，刃相对前臂的朝向按定义恒定（v3 实测全程 0.00°）。当时的门只好退而量
+# 「世界刃向转过多少度」，而那个量对一次普通挥砍也有 87° —— 于是门限被调到 55° 去迁就
+# 一条没换握的动画，看起来一路全绿。
+#
+# 2026-09-01 用户在 Blockbench 里给匕首骨头打了 t0=0° / t8≈180° 两帧，把这件事写明白了。
+# 下面第一组特征就是这两帧，它们是本条动画**唯一不可让步**的东西。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+# 回程见 `dagger_reverse_grip_switch.anim.toml` —— 两条两端逐轴焊死，构成一对。
+
+name = "匕首换握（正握 → 反握）"
+beats = "t0 正握（θ=0） → t2 反向预备 +12° → t3 起转 → t4 刃过横指向右外侧 → t5 转过大半 → t6 到位略过冲 → t8 反握（θ=180）"
+
+[[feature]]
+key = "it_starts_in_a_forward_grip"
+check = "grip_angle_at"
+tick = 0.0
+value = 0
+tol = 8.0
+
+[[feature]]
+key = "it_ends_in_a_reversed_grip"
+check = "grip_angle_at"
+tick = 8.0
+value = 180      # 用户手摆的那一帧是 177.5°；容差盖住手摆抖动
+tol = 12.0
+
+[[feature]]
+key = "it_is_genuinely_half_turned_at_the_midpoint"
+check = "grip_angle_at"
+tick = 4.0
+value = -78      # 过半程时刃横指向右外侧（远离身体）。**旋向是本版选的**：θ=−90 时刃在
+                 # 前臂系里指向玩家右外侧，θ=+90 会横穿身体前方往躯干/头上蹭
+tol = 15.0
+
+[[feature]]
+key = "guard_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 0.0
+value = [-3.7, 13.1, -5.7]
+tol = 0.6
+
+[[feature]]
+key = "it_reads_as_turning_the_knife_not_swinging_it"
+check = "grip_travel_max"
+value = 13.0     # 握把跨度（实测 9.8px）。参照：一次完整挥砍 15.1px。手要是整个挥出去，
+                 # 观众读到的就是"挥了一刀"而不是"刀在手里掉了个头"
+
+[[feature]]
+key = "the_blade_sweeps_a_visible_arc"
+check = "tip_travel_min"
+value = 22.0     # 半圈自转必然让刀尖扫过一个半圆（实测 31.8px）。太小 = 翻转没做满
+
+[[feature]]
+key = "never_lifts_into_the_torch_pose"
+check = "tip_below"
+value = 26.0     # 下巴线（实测最高 20.7）

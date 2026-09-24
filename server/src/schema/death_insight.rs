@@ -73,7 +73,7 @@ mod tests {
             death_count: 3,
             rebirth_chance: None,
             lifespan_remaining_years: Some(0.0),
-            recent_biography: vec!["t83980:near_death:cultivation:NaturalAging".to_string()],
+            recent_biography: vec!["t83980:death:cultivation:NaturalAging".to_string()],
             position: Some(DeathInsightPositionV1 {
                 x: 8.0,
                 y: 150.0,

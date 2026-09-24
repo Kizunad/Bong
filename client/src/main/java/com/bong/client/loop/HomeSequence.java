@@ -111,11 +111,16 @@ public final class HomeSequence {
         audioBridge = SoundRecipePlayer.instance();
     }
 
-    public static void resetForTests() {
+    /** Clears old-world home/run state while preserving the audio bridge seam and monotonic instance ids. */
+    public static void clearOnDisconnect() {
         state = State.away();
         runBaselineInventoryKeys = new HashSet<>();
         runBaselineCaptured = false;
         newItemUntilMs.clear();
+    }
+
+    public static void resetForTests() {
+        clearOnDisconnect();
         resetAudioBridgeForTests();
     }
 

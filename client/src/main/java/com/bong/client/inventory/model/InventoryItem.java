@@ -520,6 +520,10 @@ public final class InventoryItem {
         return "combat_technique".equals(scrollKind);
     }
 
+    public boolean isCraftRecipeScroll() {
+        return "craft_recipe_scroll".equals(scrollKind);
+    }
+
     public boolean isInscriptionScroll() {
         return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
     }

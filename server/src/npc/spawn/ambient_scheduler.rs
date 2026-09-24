@@ -37,24 +37,29 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, Position, Query, Res, ResMut,
-    Resource, Update, With, Without,
+    apply_deferred, bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3,
+    Despawned, Entity, IntoSystemConfigs, IntoSystemSetConfigs, Position, Query, Res, ResMut,
+    Resource, SystemSet, Update, With, Without,
 };
 
-use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
-use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, QiFlowError};
+use crate::cultivation::life_record::LifeRecord;
+use crate::fauna::mimic_spider::{transfer_spider_qi_to_zone, MimicSpiderBlackboard};
+use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
+use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone_or_overflow;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
-use crate::qi_physics::{QiAccountId, WorldQiAccount};
+use crate::qi_physics::WorldQiAccount;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{
     era_beast_spawn_gate, spawn_natural_mob_at, MobSpawnFilter, NaturalMobKind,
 };
 use crate::world::season::{Season, WorldSeasonState};
+use crate::world::terrain::{SurfaceProvider, TerrainProviders};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 调度核每次巡检的粗节流步长（对齐 heiwushi 的 `last_check_tick` 早退模式）。
@@ -68,6 +73,29 @@ pub const AMBIENT_RING_MIN_RADIUS: f64 = 24.0;
 pub const AMBIENT_RING_MAX_RADIUS: f64 = 64.0;
 /// 存活 ambient 实体距所有 Overworld 玩家超过此距离即回收（`insert(Despawned)`）。
 pub const AMBIENT_DESPAWN_RADIUS: f64 = 96.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub enum AmbientTerminalSystemSet {
+    Recycle,
+    Flush,
+    PostRecycle,
+}
+
+pub fn configure_terminal_schedule(app: &mut App) {
+    app.configure_sets(
+        Update,
+        (
+            AmbientTerminalSystemSet::Recycle,
+            AmbientTerminalSystemSet::Flush,
+            AmbientTerminalSystemSet::PostRecycle,
+        )
+            .chain(),
+    )
+    .add_systems(
+        Update,
+        apply_deferred.in_set(AmbientTerminalSystemSet::Flush),
+    );
+}
 
 // ---------------------------------------------------------------------------
 // ThreatBudget — 按 zone danger_level 查表
@@ -411,7 +439,7 @@ pub fn decide_ambient_check(
     era_spawn_seed: u64,
 ) -> AmbientCheckOutcome {
     let budget = dead_zone_threat_budget(threat_budget(danger_level), zone_kind);
-    if !should_run_interval(now_tick, budget.spawn_interval_ticks as u32) {
+    if !should_run_interval(now_tick, budget.spawn_interval_ticks) {
         return AmbientCheckOutcome::Throttled;
     }
     if counts_against_threat_budget && alive_count >= budget.max_alive {
@@ -434,6 +462,310 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 // 距离环采样 —— 复用 PoissonSpawnSampler 的自适应间距参数，环带范围为自研逻辑
 // ---------------------------------------------------------------------------
 
+/// Ambient-only outcome of scanning a loaded runtime column for a landing.
+///
+/// `Unsafe` is deliberately narrow: a standable support with liquid in its feet
+/// or head cell is authoritative runtime data that a stale raster must not
+/// override. Other columns without a safe support remain `Miss` so the ambient
+/// resolver may use its explicit fallback path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingScan {
+    Safe(i32),
+    Unsafe,
+    Miss,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingCheck {
+    Safe,
+    LiquidObstructed,
+    Miss,
+}
+
+/// Scan the standard ambient runtime window for the topmost safe footing.
+fn scan_ground_landing_from_chunk(
+    wx: i32,
+    wz: i32,
+    ref_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    scan_ground_landing_from_chunk_range(wx, wz, ref_y - 16, ref_y + 4, layer)
+}
+
+fn scan_ground_landing_from_chunk_range(
+    wx: i32,
+    wz: i32,
+    bottom: i32,
+    top: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    let Some(layer) = layer else {
+        return GroundLandingScan::Miss;
+    };
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return GroundLandingScan::Miss;
+    }
+
+    let scan_top = top.min(max_y);
+    let scan_bottom = bottom.max(min_y);
+    if scan_bottom > scan_top {
+        return GroundLandingScan::Miss;
+    }
+
+    let mut liquid_obstructed = false;
+    for ground_y in (scan_bottom..=scan_top).rev() {
+        match classify_ground_landing_at(wx, wz, ground_y, layer) {
+            GroundLandingCheck::Safe => return GroundLandingScan::Safe(ground_y),
+            GroundLandingCheck::LiquidObstructed => liquid_obstructed = true,
+            GroundLandingCheck::Miss => {}
+        }
+    }
+
+    if liquid_obstructed {
+        GroundLandingScan::Unsafe
+    } else {
+        GroundLandingScan::Miss
+    }
+}
+
+/// Whether `ground_y` is a safe ambient landing in a loaded layer.
+///
+/// Support must block motion and be neither liquid/waterlogged, passthrough, nor leaves.
+/// Feet and head must both be readable, clear, non-liquid/waterlogged, and non-leaves.
+fn is_safe_ground_landing_at(wx: i32, wz: i32, ground_y: i32, layer: &ChunkLayer) -> bool {
+    classify_ground_landing_at(wx, wz, ground_y, layer) == GroundLandingCheck::Safe
+}
+
+fn classify_ground_landing_at(
+    wx: i32,
+    wz: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> GroundLandingCheck {
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return GroundLandingCheck::Miss;
+    };
+    let local_x = wx.rem_euclid(16) as u32;
+    let local_z = wz.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(ground_y),
+        block_at(ground_y + 1),
+        block_at(ground_y + 2),
+    ) else {
+        return GroundLandingCheck::Miss;
+    };
+
+    // A liquid/waterlogged structural support is not merely an invalid foothold:
+    // it is authoritative loaded data that must veto raster fallback. Preserve
+    // `Miss` for non-motion blocks, passthrough, and leaves, which are not
+    // structural landing candidates at all.
+    if support.blocks_motion()
+        && !is_ambient_passthrough_block(support)
+        && !is_ambient_leaf_block(support)
+        && contains_ambient_liquid(support)
+    {
+        return GroundLandingCheck::LiquidObstructed;
+    }
+    if !is_strict_ground_support(support) {
+        return GroundLandingCheck::Miss;
+    }
+    if contains_ambient_liquid(feet) || contains_ambient_liquid(head) {
+        return GroundLandingCheck::LiquidObstructed;
+    }
+    if is_clear_for_ground(feet) && is_clear_for_ground(head) {
+        GroundLandingCheck::Safe
+    } else {
+        GroundLandingCheck::Miss
+    }
+}
+
+/// Whether a block has a liquid kind or carries water through a waterlogged state.
+fn contains_ambient_liquid(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::{PropName, PropValue};
+
+    block.is_liquid() || block.get(PropName::Waterlogged) == Some(PropValue::True)
+}
+
+fn is_strict_ground_support(block: valence::prelude::BlockState) -> bool {
+    block.blocks_motion()
+        && !contains_ambient_liquid(block)
+        && !is_ambient_passthrough_block(block)
+        && !is_ambient_leaf_block(block)
+}
+
+fn is_clear_for_ground(block: valence::prelude::BlockState) -> bool {
+    !block.blocks_motion() && !contains_ambient_liquid(block) && !is_ambient_leaf_block(block)
+}
+
+// These explicit block sets intentionally mirror Navigator's legacy classifiers,
+// but remain private because this is an ambient admission contract, not navigation.
+fn is_ambient_passthrough_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockState;
+
+    block == BlockState::GRASS
+        || block == BlockState::TALL_GRASS
+        || block == BlockState::FERN
+        || block == BlockState::LARGE_FERN
+        || block == BlockState::POPPY
+        || block == BlockState::DANDELION
+        || block == BlockState::DEAD_BUSH
+        || block == BlockState::LILY_PAD
+        || block == BlockState::SNOW
+        || block == BlockState::VINE
+        || block == BlockState::TORCH
+        || block == BlockState::WALL_TORCH
+        || block == BlockState::RAIL
+        || block == BlockState::REDSTONE_WIRE
+}
+
+fn is_ambient_leaf_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockKind;
+
+    matches!(
+        block.to_kind(),
+        BlockKind::OakLeaves
+            | BlockKind::SpruceLeaves
+            | BlockKind::BirchLeaves
+            | BlockKind::JungleLeaves
+            | BlockKind::AcaciaLeaves
+            | BlockKind::DarkOakLeaves
+            | BlockKind::AzaleaLeaves
+            | BlockKind::FloweringAzaleaLeaves
+            | BlockKind::CherryLeaves
+            | BlockKind::MangroveLeaves
+    )
+}
+
+/// Result of consulting the live runtime column for an ambient spawn.
+///
+/// `NeedsRaster { loaded_chunk: false }` means no runtime column is available, so a passable raster
+/// may provide the fallback directly. A loaded chunk whose standard scan misses returns
+/// `NeedsRaster { loaded_chunk: true }`: after obtaining the raster Y, ambient must re-check that
+/// exact runtime landing before accepting it. `LoadedUnsafe` is an authoritative veto discovered
+/// by the standard scan and never consults stale raster data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AmbientRuntimeGround {
+    Safe(i32),
+    LoadedUnsafe,
+    NeedsRaster { loaded_chunk: bool },
+}
+
+fn loaded_ambient_landing_is_safe(
+    world_x: i32,
+    world_z: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> bool {
+    is_safe_ground_landing_at(world_x, world_z, ground_y, layer)
+}
+
+fn resolve_ambient_runtime_ground(
+    world_x: i32,
+    world_z: i32,
+    reference_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> AmbientRuntimeGround {
+    let Some(layer) = layer else {
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
+    };
+    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
+    }
+
+    match scan_ground_landing_from_chunk(world_x, world_z, reference_y, Some(layer)) {
+        GroundLandingScan::Safe(ground_y) => AmbientRuntimeGround::Safe(ground_y),
+        GroundLandingScan::Unsafe => AmbientRuntimeGround::LoadedUnsafe,
+        GroundLandingScan::Miss => AmbientRuntimeGround::NeedsRaster { loaded_chunk: true },
+    }
+}
+
+/// Validate a raster fallback against the exact landing cells of an already-loaded runtime chunk.
+///
+/// Raster surface Y is a baked hint, not authority over authored/player blocks. Its exact
+/// support/feet/head cells must be readable, standable, and non-liquid. Nearby supports do not
+/// override the raster landing; an out-of-height or unsafe landing fails closed.
+fn resolve_loaded_raster_landing(
+    world_x: i32,
+    world_z: i32,
+    surface_y: i32,
+    layer: &ChunkLayer,
+) -> AmbientRuntimeGround {
+    if !loaded_ambient_landing_is_safe(world_x, world_z, surface_y, layer) {
+        return AmbientRuntimeGround::LoadedUnsafe;
+    }
+
+    AmbientRuntimeGround::Safe(surface_y)
+}
+
+/// Resolve an ambient ground candidate from the live world first, then the terrain raster.
+///
+/// A loaded [`ChunkLayer`] is authoritative because it contains caves, floating islands,
+/// decorations, and player-built blocks that the baked raster cannot represent. The runtime
+/// scan deliberately reuses Navigator's standard `ref_y - 16 .. ref_y + 4` support/headroom
+/// contract. Missing runtime data may use a passable raster directly; a loaded standard-window
+/// miss may use it only after the exact runtime raster landing passes support/feet/head validation.
+/// A loaded support whose support/feet/head block is any water or lava state is an authoritative
+/// veto. Both sources missing or unsafe rejects the candidate; the sampled/player Y is never
+/// preserved.
+fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
+    candidate: DVec3,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+) -> Option<DVec3> {
+    let world_x = candidate.x.floor() as i32;
+    let world_z = candidate.z.floor() as i32;
+    let reference_y = candidate.y.floor() as i32;
+
+    let loaded_chunk_needs_raster_validation =
+        match resolve_ambient_runtime_ground(world_x, world_z, reference_y, layer) {
+            AmbientRuntimeGround::Safe(ground_y) => {
+                return Some(DVec3::new(
+                    candidate.x,
+                    f64::from(ground_y + 1),
+                    candidate.z,
+                ));
+            }
+            AmbientRuntimeGround::LoadedUnsafe => return None,
+            AmbientRuntimeGround::NeedsRaster { loaded_chunk } => loaded_chunk,
+        };
+
+    let surface = terrain?.query_surface(world_x, world_z);
+    if !surface.passable {
+        return None;
+    }
+    if loaded_chunk_needs_raster_validation {
+        match resolve_loaded_raster_landing(world_x, world_z, surface.y, layer?) {
+            AmbientRuntimeGround::Safe(_) => {}
+            AmbientRuntimeGround::LoadedUnsafe | AmbientRuntimeGround::NeedsRaster { .. } => {
+                return None
+            }
+        }
+    }
+
+    Some(DVec3::new(
+        candidate.x,
+        f64::from(surface.y + 1),
+        candidate.z,
+    ))
+}
+
 /// 以 `anchor`（通常是触发巡检的玩家位置）为圆心，在
 /// [`AMBIENT_RING_MIN_RADIUS`, `AMBIENT_RING_MAX_RADIUS`] 环带内做 Mitchell's
 /// best-candidate 采样：`PoissonSpawnSampler::adaptive_for_zone` 只用来取自适应间距参数
@@ -441,8 +773,9 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 /// 逻辑——`PoissonSpawnSampler::sample_position` 采的是整个 zone AABB 均匀候选点，不是
 /// "距玩家 24~64 格环带"，两者用途不同不可直接复用。
 ///
-/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）；若 `max_candidates`
-/// 次尝试全部越界或与既有点距离不足，返回 `None`（zone 太小/已饱和，本次跳过不刷）。
+/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）。在合法候选中优先
+/// 选择距既有点最远者；若它们都低于最小间距，仍保留最远候选作为既有 best-effort fallback。
+/// 只有所有候选均越界时才返回 `None`。
 pub fn sample_ambient_ring_position(
     zone_bounds: (DVec3, DVec3),
     anchor: DVec3,
@@ -483,11 +816,10 @@ pub fn sample_ambient_ring_position(
                 (dx * dx + dz * dz).sqrt()
             })
             .fold(f64::INFINITY, f64::min);
-        // existing_positions 为空时 min_dist == f64::INFINITY，score 恒最大，首个越界通过的
-        // 候选点即被采用——与 PoissonSpawnSampler 首个 NPC 直接落点的语义一致。
-        let score = min_dist - sampler.min_same_archetype_dist;
-        if score > best_score {
-            best_score = score;
+        // Keep the pre-fix sampler's best-effort fallback: density is a scoring
+        // preference, not an admission gate for an in-bounds ring candidate.
+        if min_dist > best_score {
+            best_score = min_dist;
             best = Some(candidate);
         }
     }
@@ -505,6 +837,10 @@ pub fn sample_ambient_ring_position(
 pub trait AmbientMarkerData: Component {
     fn new(spawned_at: u64, home_zone: String) -> Self;
     fn home_zone(&self) -> &str;
+    /// 能吐纳的新增物种必须在超距回收前结算活体与账本余额。
+    fn requires_qi_settlement() -> bool {
+        false
+    }
 }
 
 /// P0 定义的威胁 marker（P1 起挂在真实生成的妖兽/鼠群实体上）。
@@ -566,6 +902,166 @@ impl<M> Default for AmbientSchedulerState<M> {
 /// 类型时牵连另一侧实现。
 pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3, Season) -> Option<Entity>;
 
+/// Scheduler 候选提交所需的不可分割上下文。地表解析、真实 pool 调用、marker 挂载与
+/// pending 记账必须共用这一条提交路径，避免测试只覆盖 resolver、生产调用点却再次漏接。
+struct AmbientSpawnRequest<'a> {
+    layer: Entity,
+    zone: &'a Zone,
+    candidate: DVec3,
+    season: Season,
+    now: u64,
+}
+
+/// 把一个已通过 scheduler 预算门的环带候选提交给真实 pool。
+///
+/// 提交严格 fail-closed：runtime 标准窗口和 raster fallback 都无法给出安全脚点、或 pool
+/// 拒绝时均返回 `None`，既不挂 marker 也不占本 tick pending 预算；只有真实 pool 返回实体后
+/// 才依次挂载 marker 并增加 pending。
+fn submit_ambient_spawn_candidate<M, P>(
+    commands: &mut Commands,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    pool_fn: AmbientPoolFn,
+    pending_spawns_by_zone: &mut HashMap<String, u32>,
+    request: AmbientSpawnRequest<'_>,
+) -> Option<Entity>
+where
+    M: AmbientMarkerData,
+    P: SurfaceProvider + ?Sized,
+{
+    submit_ambient_pack_member::<M, P>(
+        commands,
+        layer,
+        terrain,
+        pool_fn,
+        pending_spawns_by_zone,
+        request,
+        None,
+    )
+}
+
+/// 群体的选种/归属使用共同原点，每个成员仍单独通过地表落点门。
+fn submit_ambient_pack_member<M, P>(
+    commands: &mut Commands,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    pool_fn: AmbientPoolFn,
+    pending_spawns_by_zone: &mut HashMap<String, u32>,
+    request: AmbientSpawnRequest<'_>,
+    origin: Option<DVec3>,
+) -> Option<Entity>
+where
+    M: AmbientMarkerData,
+    P: SurfaceProvider + ?Sized,
+{
+    let spawn_position = resolve_ambient_ground_position(request.candidate, layer, terrain)?;
+    let spawned = pool_fn(
+        commands,
+        request.layer,
+        request.zone,
+        spawn_position,
+        origin.unwrap_or(spawn_position),
+        request.season,
+    )?;
+    commands
+        .entity(spawned)
+        .insert(M::new(request.now, request.zone.name.clone()));
+    *pending_spawns_by_zone
+        .entry(request.zone.name.clone())
+        .or_insert(0) += 1;
+    Some(spawned)
+}
+
+/// Dev-only one-shot ambient pool selector. This is crate-visible so the command layer can exercise
+/// the exact production submission boundary without exposing either concrete `spawn_*` function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmbientDevSpawnKind {
+    Mundane,
+    Threat,
+    Wildlife(crate::fauna::components::BeastKind),
+}
+
+impl AmbientDevSpawnKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mundane => "mundane",
+            Self::Threat => "threat",
+            Self::Wildlife(kind) => kind.as_str(),
+        }
+    }
+}
+
+/// One-shot dev ambient input. It preserves the production resolver inputs while keeping the
+/// command seam from growing a flat argument list.
+pub(crate) struct AmbientDevSpawnRequest<'a, P: SurfaceProvider + ?Sized> {
+    pub kind: AmbientDevSpawnKind,
+    pub layer: Entity,
+    pub runtime_layer: Option<&'a ChunkLayer>,
+    pub terrain: Option<&'a P>,
+    pub zone: &'a Zone,
+    pub candidate: DVec3,
+    pub season: Season,
+    pub now: u64,
+}
+
+/// Submit exactly one dev ambient candidate through the production resolver, real species pool,
+/// marker insertion, and pending accounting path.
+///
+/// `request.layer` is the authoritative Overworld entity layer used by the real pool.
+/// `request.runtime_layer` and `request.terrain` deliberately remain independently optional: a
+/// loaded runtime layer works without a raster, while a passable raster can resolve an
+/// unloaded/missing runtime layer. The local pending map exists only to preserve the production
+/// submission contract; this one-shot bypasses scheduler cadence and budget by design and never
+/// leaks its resolved Y as a command oracle.
+pub(crate) fn submit_ambient_dev_spawn_once<P: SurfaceProvider + ?Sized>(
+    commands: &mut Commands,
+    request: AmbientDevSpawnRequest<'_, P>,
+) -> Option<Entity> {
+    let AmbientDevSpawnRequest {
+        kind,
+        layer,
+        runtime_layer,
+        terrain,
+        zone,
+        candidate,
+        season,
+        now,
+    } = request;
+    let request = AmbientSpawnRequest {
+        layer,
+        zone,
+        candidate,
+        season,
+        now,
+    };
+    let mut pending_spawns_by_zone = HashMap::new();
+
+    match kind {
+        AmbientDevSpawnKind::Mundane => submit_ambient_spawn_candidate::<MundaneFaunaMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            mundane_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+        AmbientDevSpawnKind::Threat => submit_ambient_spawn_candidate::<AmbientThreatMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            ambient_threat_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+        AmbientDevSpawnKind::Wildlife(kind) => {
+            let position = resolve_ambient_ground_position(candidate, runtime_layer, terrain)?;
+            Some(crate::fauna::wildlife::spawn::spawn_at(
+                commands, layer, zone, position, kind, position,
+            ))
+        }
+    }
+}
+
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
 /// "刷什么"，`counts_against_threat_budget` 决定该 marker 类型的活体数是否计入
 /// `budget_fn` 返回的 `max_alive`（`plan-mundane-fauna-v1` 的被动 pool 传 `false`，
@@ -575,6 +1071,8 @@ pub struct AmbientSchedulerConfig<M> {
     pub budget_fn: fn(u8) -> ThreatBudget,
     pub pool_fn: AmbientPoolFn,
     pub counts_against_threat_budget: bool,
+    /// 配置群体生成的池逐只占预算、逐点检查地面；旧池保留单只行为。
+    pub pack_size: Option<fn(&Zone, DVec3) -> u32>,
     _marker: PhantomData<fn() -> M>,
 }
 
@@ -588,6 +1086,7 @@ impl<M> AmbientSchedulerConfig<M> {
             budget_fn,
             pool_fn,
             counts_against_threat_budget,
+            pack_size: None,
             _marker: PhantomData,
         }
     }
@@ -604,7 +1103,66 @@ pub fn register(app: &mut App) {
             ambient_threat_pool_fn,
             true,
         ))
-        .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        .add_systems(
+            Update,
+            ambient_scheduler_system::<AmbientThreatMarker>
+                .in_set(AmbientTerminalSystemSet::Recycle),
+        );
+}
+
+fn settle_rat_recycle(
+    cultivation: &mut Cultivation,
+    life_record: &LifeRecord,
+    zone: Option<&mut Zone>,
+    ledger: &mut WorldQiAccount,
+) -> Result<(), QiFlowError> {
+    let identity = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)?;
+    let rat_account = identity.account();
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_zone = zone.as_deref().cloned();
+    let mut staged_ledger = ledger.clone();
+    let cultivation_qi = staged_cultivation.qi_current;
+    staged_cultivation.release_to_zone(
+        staged_zone.as_mut(),
+        &mut staged_ledger,
+        &identity,
+        cultivation_qi,
+        crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+    )?;
+    transfer_rat_drained_qi_to_zone_or_overflow(
+        &mut staged_ledger,
+        staged_zone.as_mut(),
+        &rat_account,
+    )?;
+    *cultivation = staged_cultivation;
+    if let (Some(zone), Some(staged_zone)) = (zone, staged_zone) {
+        *zone = staged_zone;
+    }
+    *ledger = staged_ledger;
+    Ok(())
+}
+
+fn settle_spider_recycle(
+    cultivation: &mut Cultivation,
+    life_record: &LifeRecord,
+    zone: Option<&mut Zone>,
+    ledger: &mut WorldQiAccount,
+) -> Result<(), QiFlowError> {
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_zone = zone.as_deref().cloned();
+    let mut staged_ledger = ledger.clone();
+    transfer_spider_qi_to_zone(
+        &mut staged_cultivation,
+        staged_zone.as_mut(),
+        &mut staged_ledger,
+        life_record,
+    )?;
+    *cultivation = staged_cultivation;
+    if let (Some(zone), Some(staged_zone)) = (zone, staged_zone) {
+        *zone = staged_zone;
+    }
+    *ledger = staged_ledger;
+    Ok(())
 }
 
 /// 通用 ambient 调度系统，按 `M: AmbientMarkerData` 单态化——每个 marker 类型注册一次
@@ -615,13 +1173,15 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     tick: Option<Res<GameTick>>,
     mut state: ResMut<AmbientSchedulerState<M>>,
     config: Res<AmbientSchedulerConfig<M>>,
-    alive: Query<
+    mut alive: Query<
         (
             Entity,
             &M,
             &Position,
             Option<&RatBlackboard>,
             Option<&MimicSpiderBlackboard>,
+            Option<&LifeRecord>,
+            Option<&mut Cultivation>,
         ),
         Without<Despawned>,
     >,
@@ -630,6 +1190,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     dimension_layers: Option<Res<DimensionLayers>>,
     era_state: Option<Res<WorldEraState>>,
     world_season: Option<Res<WorldSeasonState>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
+    chunk_layers: Query<&ChunkLayer, Without<Despawned>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut commands: Commands,
 ) {
@@ -674,58 +1236,100 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     // 1) 超距回收：任意存活 ambient marker 距最近 Overworld 玩家 > 96 格 → Despawned。
     //    Valence 层实体裸 despawn 会在下一次 send_entity_update_messages 崩服，必须走
     //    insert(Despawned) 软删除模式（对齐 heiwushi/scenario/dying_master 现有回收路径）。
-    for (entity, _marker, pos, rat_blackboard, spider_blackboard) in &alive {
+    for (entity, _marker, pos, rat_blackboard, spider_blackboard, life_record, cultivation) in
+        &mut alive
+    {
         let nearest = overworld_players
             .iter()
             .map(|p| planar_distance(pos.get(), *p))
             .fold(f64::INFINITY, f64::min);
         if should_recycle_ambient(nearest) {
-            // §Verify blocker②(守恒蒸发红线) — 持有 drained_qi>0 的鼠患/拟态蛛（咬玩家/
-            // 吸收 Disguised 期偷来的 qi）超距回收若直接 insert(Despawned)，不会触发
-            // `release_drained_qi_on_death_system`/`spider_release_qi_on_death_system`
-            // （两者只监听 `DeathEvent`，超距回收从不发它），残余 qi 会在软删除时 100%
-            // 蒸发。回收前必须先走与死亡归还同一条计算路径把 qi 还给 zone，再
-            // insert(Despawned)。
-            if rat_blackboard.is_some() || spider_blackboard.is_some() {
-                if let Some(zone_name) = registry
-                    .find_zone(DimensionKind::Overworld, pos.get())
-                    .map(|zone| zone.name.clone())
-                {
-                    if let Some(zone) = registry.find_zone_mut(zone_name.as_str()) {
-                        if rat_blackboard.is_some() {
-                            // §8.1 决议 #1/#3 —— 100% 转账 + field-authority 写回，
-                            // 替换旧的 1% 直写字段路径（`return_rat_drained_qi_to_zone`）。
-                            match qi_account.as_deref_mut() {
-                                Some(account) => {
-                                    let rat_account =
-                                        QiAccountId::npc(format!("rat:{}", entity.index()));
-                                    if let Err(error) =
-                                        transfer_rat_drained_qi_to_zone(account, zone, &rat_account)
-                                    {
-                                        tracing::debug!(
-                                            "[bong][npc] ambient recycle rat qi transfer to \
-                                             zone failed for {:?}: {:?}",
-                                            entity,
-                                            error
-                                        );
-                                    }
-                                }
-                                None => {
-                                    tracing::debug!(
-                                        "[bong][npc] ambient recycle qi ledger unavailable, \
-                                         skipping rat qi transfer for {:?}",
-                                        entity
-                                    );
-                                }
+            // §Verify blocker②（守恒蒸发红线）——鼠患 reserve 必须先完成 durable
+            // 结算，实体才可进入 Despawned。缺 zone 时全额进入固定 stable overflow；缺
+            // ledger/identity 或事务失败时保留实体，下一轮重试，不能先删 owner 的载体。
+            let mut recycle_ready = true;
+            if rat_blackboard.is_some() || M::requires_qi_settlement() {
+                recycle_ready = match (qi_account.as_deref_mut(), life_record, cultivation) {
+                    (Some(account), Some(life_record), Some(mut cultivation)) => {
+                        let zone_name = registry
+                            .find_zone(DimensionKind::Overworld, pos.get())
+                            .map(|zone| zone.name.clone());
+                        let zone = zone_name
+                            .as_deref()
+                            .and_then(|zone_name| registry.find_zone_mut(zone_name));
+                        match settle_rat_recycle(&mut cultivation, life_record, zone, account) {
+                            Ok(()) => true,
+                            Err(error) => {
+                                tracing::debug!(
+                                    "[bong][npc] ambient recycle rat qi settlement failed for \
+                                     {:?}: {:?}",
+                                    entity,
+                                    error
+                                );
+                                false
                             }
                         }
-                        if let Some(spider) = spider_blackboard {
-                            return_spider_drained_qi_to_zone(zone, spider.drained_qi);
+                    }
+                    (None, _, _) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle qi ledger unavailable; preserving rat \
+                             owner {:?}",
+                            entity
+                        );
+                        false
+                    }
+                    (_, None, _) | (_, _, None) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle rat owner identity unavailable; \
+                             preserving {:?}",
+                            entity
+                        );
+                        false
+                    }
+                };
+            } else if spider_blackboard.is_some() {
+                recycle_ready = match (qi_account.as_deref_mut(), life_record, cultivation) {
+                    (Some(account), Some(life_record), Some(mut cultivation)) => {
+                        let zone_name = registry
+                            .find_zone(DimensionKind::Overworld, pos.get())
+                            .map(|zone| zone.name.clone());
+                        let zone = zone_name
+                            .as_deref()
+                            .and_then(|zone_name| registry.find_zone_mut(zone_name));
+                        match settle_spider_recycle(&mut cultivation, life_record, zone, account) {
+                            Ok(()) => true,
+                            Err(error) => {
+                                tracing::debug!(
+                                    "[bong][npc] ambient recycle spider qi settlement failed for \
+                                     {:?}: {:?}",
+                                    entity,
+                                    error
+                                );
+                                false
+                            }
                         }
                     }
-                }
+                    (None, _, _) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle qi ledger unavailable; preserving spider \
+                             owner {:?}",
+                            entity
+                        );
+                        false
+                    }
+                    (_, None, _) | (_, _, None) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle spider owner identity unavailable; \
+                             preserving {:?}",
+                            entity
+                        );
+                        false
+                    }
+                };
             }
-            commands.entity(entity).insert(Despawned);
+            if recycle_ready {
+                commands.entity(entity).insert(Despawned);
+            }
         }
     }
 
@@ -734,12 +1338,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         return;
     }
 
-    // §Verify blocker③(并发预算越界) — 本 tick 内逐玩家循环重复读同一份 tick 前 `alive`
-    // 快照，`Commands::spawn` 延迟应用到下一次 flush，后一个玩家看不到前一个玩家本 tick
-    // 已排队的 spawn。同一 zone 若有多名玩家各自独立通过预算门，各自都会刷出一只，合计
-    // 可越过 `max_alive`。用本地累加器记录"本 tick 已排队但未落地"的 spawn 数，并入
-    // `alive_count` 一起送进 `decide_ambient_check`，让同 zone 后续玩家的判定看得见前面
-    // 玩家本 tick 已经占用的预算。
+    // `Commands::spawn` is deferred, so pending count—not same-tick spatial
+    // occupancy—preserves the existing per-zone budget until the next tick.
     let mut pending_spawns_by_zone: HashMap<String, u32> = HashMap::new();
 
     // 2) 逐玩家找 zone，判定预算 + 间隔 + era 密度门，命中就在距该玩家 24~64 格环带内刷新。
@@ -750,8 +1350,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 
         let alive_in_zone: Vec<DVec3> = alive
             .iter()
-            .filter(|(_, marker, _, _, _)| marker.home_zone() == zone.name)
-            .map(|(_, _, pos, _, _)| pos.get())
+            .filter(|(_, marker, _, _, _, _, _)| marker.home_zone() == zone.name)
+            .map(|(_, _, pos, _, _, _, _)| pos.get())
             .collect();
         let pending_in_zone = pending_spawns_by_zone.get(&zone.name).copied().unwrap_or(0);
         let alive_count = alive_in_zone.len() as u32 + pending_in_zone;
@@ -762,1414 +1362,86 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         // P3 §8.1 #4 — 死域/负灵域预算乘区：复用既有 `movement_zone_kind` 判定口径
         // （`on_residue_ash=false`，ambient 调度核只关心危险度地理，不关心灰烬地表微观判定）。
         let zone_kind = movement_zone_kind(Some(zone), false);
-        let outcome = decide_ambient_check(
-            now,
-            zone.danger_level,
-            zone_kind,
-            alive_count,
-            config.counts_against_threat_budget,
-            density_mul,
-            spawn_seed,
-        );
+        let outcome = if config.pack_size.is_some() {
+            let budget = dead_zone_threat_budget((config.budget_fn)(zone.danger_level), zone_kind);
+            if !should_run_interval(now, budget.spawn_interval_ticks) {
+                AmbientCheckOutcome::Throttled
+            } else if alive_count >= budget.max_alive {
+                AmbientCheckOutcome::BudgetSaturated
+            } else if !era_beast_spawn_gate(density_mul, spawn_seed) {
+                AmbientCheckOutcome::EraGateBlocked
+            } else {
+                AmbientCheckOutcome::ShouldSpawn { budget }
+            }
+        } else {
+            decide_ambient_check(
+                now,
+                zone.danger_level,
+                zone_kind,
+                alive_count,
+                config.counts_against_threat_budget,
+                density_mul,
+                spawn_seed,
+            )
+        };
         let AmbientCheckOutcome::ShouldSpawn { budget } = outcome else {
             continue;
         };
-
         let Some(spawn_pos) =
             sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
         else {
             continue;
         };
-
-        let Some(spawned) = (config.pool_fn)(
-            &mut commands,
-            layers.overworld,
-            zone,
-            spawn_pos,
-            spawn_pos,
-            season,
-        ) else {
-            // 死域过滤后池为空 / 未来其它 pool_fn 实现判定本次不刷都会走这支——非 panic 分支。
-            // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项
-            // "群体刷新"再回填，当前调度核每次巡检命中只产 1 个实体。
-            let _ = budget.pack_size_range;
+        let pack_size = config
+            .pack_size
+            .map(|count| count(zone, spawn_pos).min(budget.max_alive.saturating_sub(alive_count)))
+            .unwrap_or(1);
+        // Raster 只能替代有效 live layer 内未加载 chunk 的 surface 数据。把 live-layer
+        // 门禁限定在候选提交边界：stale、non-ChunkLayer 或 Despawned target 禁止新 spawn，
+        // 但不能截断本轮前面已经执行的既有 ambient 回收与 qi 归还。
+        let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
-        commands
-            .entity(spawned)
-            .insert(M::new(now, zone.name.clone()));
-        *pending_spawns_by_zone.entry(zone.name.clone()).or_insert(0) += 1;
+        for member in 0..pack_size {
+            let candidate = spawn_pos + DVec3::new(f64::from(member) * 3.0, 0.0, 0.0);
+            if candidate.x > zone.bounds.1.x
+                || candidate.z > zone.bounds.1.z
+                || candidate.x < zone.bounds.0.x
+                || candidate.z < zone.bounds.0.z
+                || overworld_players
+                    .iter()
+                    .any(|player| planar_distance(candidate, *player) < AMBIENT_RING_MIN_RADIUS)
+                || planar_distance(candidate, *player_pos) > AMBIENT_RING_MAX_RADIUS
+            {
+                continue;
+            }
+            let spawned = submit_ambient_pack_member::<M, _>(
+                &mut commands,
+                Some(overworld_chunk_layer),
+                terrain_providers
+                    .as_deref()
+                    .map(|providers| &providers.overworld),
+                config.pool_fn,
+                &mut pending_spawns_by_zone,
+                AmbientSpawnRequest {
+                    layer: layers.overworld,
+                    zone,
+                    candidate,
+                    season,
+                    now,
+                },
+                config.pack_size.map(|_| spawn_pos),
+            );
+            if spawned.is_none() {
+                // runtime 标准窗口与 raster fallback 都无法给出安全脚点、或 pool 拒绝时，
+                // 只丢弃本次候选；helper 保证失败分支不挂 marker、不占 pending，scheduler
+                // 下一轮自然重试。
+                continue;
+            }
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::npc::spawn::common::NpcMarker;
-    use valence::prelude::App;
-
-    // -----------------------------------------------------------------
-    // threat_budget —— 预算表边界
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn threat_budget_danger_zero_clamps_to_danger_one() {
-        // Zone::spawn() 硬编码 fallback danger_level=0（zones.json 缺失时才出现）；
-        // 必须钳到 danger=1 档，绝不 panic 或返回零预算（否则 fallback zone 世界永远
-        // 一只都刷不出）。
-        assert_eq!(
-            threat_budget(0),
-            threat_budget(1),
-            "danger=0 应钳到 danger=1 同档预算"
-        );
-    }
-
-    #[test]
-    fn threat_budget_danger_one_is_sparse_nonzero() {
-        let budget = threat_budget(1);
-        assert!(
-            budget.max_alive >= 1 && budget.max_alive <= 2,
-            "danger=1 max_alive 应落在 1~2 档（零星非包围），实际 {}",
-            budget.max_alive
-        );
-        assert_eq!(
-            budget.spawn_interval_ticks, 600,
-            "danger=1 间隔应 ~600 tick"
-        );
-    }
-
-    #[test]
-    fn threat_budget_danger_seven_is_dense() {
-        let budget = threat_budget(7);
-        assert!(
-            budget.max_alive >= 8 && budget.max_alive <= 10,
-            "danger=7 max_alive 应落在 8~10 档，实际 {}",
-            budget.max_alive
-        );
-        assert_eq!(
-            budget.spawn_interval_ticks, 150,
-            "danger=7 间隔应 ~150 tick"
-        );
-    }
-
-    #[test]
-    fn threat_budget_unknown_high_danger_clamps_to_danger_seven() {
-        // danger_level 是 u8，理论上可以是 8~255（脏数据/未来枚举扩展）——必须钳到
-        // danger=7 的合法上限档，不能因为超出表而 panic 或产出无意义的更大预算。
-        assert_eq!(
-            threat_budget(200),
-            threat_budget(7),
-            "danger>7 的未知 zone 应钳到 danger=7 同档预算"
-        );
-    }
-
-    #[test]
-    fn threat_budget_monotonic_max_alive_across_all_dangers() {
-        // 预算表必须整体单调不减：danger 越高威胁越密集，不能出现"danger=5 比 danger=3
-        // 活体上限还低"这种反直觉数值倒挂。
-        let mut prev = threat_budget(1).max_alive;
-        for danger in 2..=7u8 {
-            let cur = threat_budget(danger).max_alive;
-            assert!(
-                cur >= prev,
-                "danger={danger} max_alive={cur} 不应低于前一档 {prev}"
-            );
-            prev = cur;
-        }
-    }
-
-    #[test]
-    fn threat_budget_spawn_intervals_are_multiples_of_scheduler_stride() {
-        // AMBIENT_SCHEDULER_STRIDE_TICKS 是调度核的粗节流步长；若某档 spawn_interval_ticks
-        // 不是它的整数倍，粗节流会漏检该档在 should_run_interval 命中的 tick（见模块头注释），
-        // 静默丢失该档所有刷新——这是能直接崩坏生产行为的回归，必须锁死。
-        for danger in 1..=7u8 {
-            let interval = threat_budget(danger).spawn_interval_ticks as u64;
-            assert_eq!(
-                interval % AMBIENT_SCHEDULER_STRIDE_TICKS,
-                0,
-                "danger={danger} 的 spawn_interval_ticks={interval} 必须是粗节流步长 {} 的整数倍",
-                AMBIENT_SCHEDULER_STRIDE_TICKS
-            );
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // threat_pool —— danger 1~7 物种池分层（§8.1 #2）
-    // -----------------------------------------------------------------
-
-    fn zone_with(danger_level: u8, spirit_qi: f64, dimension: DimensionKind) -> Zone {
-        Zone {
-            name: "test_zone".to_string(),
-            dimension,
-            bounds: (
-                DVec3::new(-500.0, 0.0, -500.0),
-                DVec3::new(500.0, 200.0, 500.0),
-            ),
-            spirit_qi,
-            danger_level,
-            active_events: Vec::new(),
-            patrol_anchors: Vec::new(),
-            blocked_tiles: Vec::new(),
-            qi_equilibrium: 0.0,
-            qi_inflow_per_min: 0.0,
-        }
-    }
-
-    #[test]
-    fn threat_pool_danger_one_and_two_are_rat_only() {
-        for danger in [1u8, 2u8] {
-            let pool = threat_pool(danger, DimensionKind::Overworld, None);
-            assert_eq!(
-                pool,
-                vec![ThreatPoolEntry {
-                    species: ThreatSpecies::Rat,
-                    weight: 1
-                }],
-                "danger={danger} 应恰好是 Rat 单条目池（§8.1 #2 danger1-2 中立袭扰档）"
-            );
-        }
-    }
-
-    #[test]
-    fn threat_pool_danger_three_and_four_are_five_generic_beasts_no_ash_spider() {
-        for danger in [3u8, 4u8] {
-            let pool = threat_pool(danger, DimensionKind::Overworld, None);
-            assert_eq!(
-                pool.len(),
-                5,
-                "danger={danger} 应是 5 变体通用 beast 池（不含 AshSpider）"
-            );
-            assert!(
-                !pool
-                    .iter()
-                    .any(|e| e.species == ThreatSpecies::Mob(NaturalMobKind::AshSpider)),
-                "danger={danger} 不应包含 AshSpider（该物种只在 danger>=5 档加入）"
-            );
-            for kind in [
-                NaturalMobKind::Zombie,
-                NaturalMobKind::Skeleton,
-                NaturalMobKind::Creeper,
-                NaturalMobKind::Rogue,
-                NaturalMobKind::Daoxiang,
-            ] {
-                assert!(
-                    pool.iter().any(|e| e.species == ThreatSpecies::Mob(kind)),
-                    "danger={danger} 池应含 {kind:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn threat_pool_danger_five_six_seven_add_ash_spider_same_pool() {
-        let pools: Vec<_> = [5u8, 6u8, 7u8]
-            .into_iter()
-            .map(|danger| threat_pool(danger, DimensionKind::Overworld, None))
-            .collect();
-        for (idx, pool) in pools.iter().enumerate() {
-            assert_eq!(
-                pool.len(),
-                6,
-                "danger={} 应是 5 通用 beast + AshSpider = 6 条目",
-                idx + 5
-            );
-            assert!(
-                pool.iter()
-                    .any(|e| e.species == ThreatSpecies::Mob(NaturalMobKind::AshSpider)),
-                "danger={} 应含 AshSpider（死域白名单物种）",
-                idx + 5
-            );
-        }
-        assert_eq!(
-            pools[0], pools[1],
-            "danger5 与 danger6 必须是同一份池（§8.1 #2 未区分 5/6）"
-        );
-        assert_eq!(
-            pools[1], pools[2],
-            "danger7 必须与 5~6 档同一份池——§8.1 #2/#3 明令 danger7 只调 pack/interval，\
-             不新增变体/buff，本测试锁死禁止悄悄给 danger7 加新物种"
-        );
-    }
-
-    #[test]
-    fn threat_pool_danger_zero_clamps_to_one_matches_budget_clamp_semantics() {
-        // 与 threat_budget 的 danger=0 兜底钳位口径对齐（Zone::spawn() fallback）。
-        assert_eq!(
-            threat_pool(0, DimensionKind::Overworld, None),
-            threat_pool(1, DimensionKind::Overworld, None),
-            "danger=0 应钳到 danger=1 同档物种池，不能 panic 或返回空池"
-        );
-    }
-
-    #[test]
-    fn threat_pool_danger_above_seven_clamps_to_seven() {
-        assert_eq!(
-            threat_pool(200, DimensionKind::Overworld, None),
-            threat_pool(7, DimensionKind::Overworld, None),
-            "danger>7 的脏数据/未来扩展应钳到 danger=7 同档物种池"
-        );
-    }
-
-    #[test]
-    fn threat_pool_non_overworld_dimension_is_always_empty() {
-        // TSY 自然涌现走独立直调 spawn_tsy_hostiles_for_family 路径（§8.1 #3），
-        // 不复用本表——任何 danger 档在非 Overworld 维度都必须返回空池。
-        for danger in 1..=7u8 {
-            assert_eq!(
-                threat_pool(danger, DimensionKind::Tsy, None),
-                Vec::new(),
-                "danger={danger} 在 DimensionKind::Tsy 下必须是空池（TSY 不走本表）"
-            );
-        }
-    }
-
-    #[test]
-    fn threat_pool_weight_hook_is_inert_placeholder() {
-        // §8.1 #6：weight_hook 当前恒无操作，任意取值不应改变产出池。
-        for hook in [None, Some(0.0f32), Some(0.5), Some(2.0), Some(-1.0)] {
-            assert_eq!(
-                threat_pool(4, DimensionKind::Overworld, hook),
-                threat_pool(4, DimensionKind::Overworld, None),
-                "weight_hook={hook:?} 不应影响 danger=4 池内容（§8.1 #6 昼夜/天气权重占位钩子）"
-            );
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // select_threat_species —— 权重抽样 + 死域过滤
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn select_threat_species_pins_rat_regardless_of_seed() {
-        let pool = threat_pool(1, DimensionKind::Overworld, None);
-        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
-        for seed in [0u64, 1, 999, u64::MAX] {
-            assert_eq!(
-                select_threat_species(&pool, &zone, seed),
-                Some(ThreatSpecies::Rat),
-                "seed={seed} 单条目 Rat 池应恒选中 Rat"
-            );
-        }
-    }
-
-    #[test]
-    fn select_threat_species_exhaustive_weight_distribution_pin() {
-        // danger3-4 池 5 条目均权重 1，total_weight=5——seed 0..5 应恰好遍历全部 5 个物种
-        // 各一次（roll = seed % 5），锁死"权重抽样按 cumulative 累加正确落位"这条契约。
-        let pool = threat_pool(3, DimensionKind::Overworld, None);
-        let zone = zone_with(3, 0.5, DimensionKind::Overworld);
-        let mut hit: Vec<ThreatSpecies> = (0u64..5)
-            .map(|seed| select_threat_species(&pool, &zone, seed).expect("非死域池非空必命中"))
-            .collect();
-        hit.sort_by_key(|s| format!("{s:?}"));
-        let mut expected: Vec<ThreatSpecies> = pool.iter().map(|entry| entry.species).collect();
-        expected.sort_by_key(|s| format!("{s:?}"));
-        assert_eq!(
-            hit, expected,
-            "seed 0..5 遍历 5 权重相等条目应恰好各命中一次，缺失/重复说明 cumulative 累加有 off-by-one"
-        );
-    }
-
-    #[test]
-    fn select_threat_species_dead_zone_filters_non_whitelisted_generic_beasts() {
-        // is_dead_zone 阈值是 spirit_qi < 0.01（cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD）。
-        let dead_zone = zone_with(5, 0.0, DimensionKind::Overworld);
-        let pool = threat_pool(5, DimensionKind::Overworld, None);
-        for seed in 0u64..6 {
-            let species = select_threat_species(&pool, &dead_zone, seed);
-            assert!(
-                matches!(
-                    species,
-                    Some(ThreatSpecies::Mob(NaturalMobKind::AshSpider))
-                        | Some(ThreatSpecies::Mob(NaturalMobKind::Daoxiang))
-                ),
-                "seed={seed} 死域(spirit_qi=0.0)只应选中 AshSpider/Daoxiang（死域白名单），\
-                 实际选中 {species:?}——Zombie/Skeleton/Creeper/Rogue 必须被 ban_in_dead_zone 挡下"
-            );
-        }
-    }
-
-    #[test]
-    fn select_threat_species_non_dead_zone_allows_all_generic_beasts() {
-        let live_zone = zone_with(5, 0.5, DimensionKind::Overworld);
-        let pool = threat_pool(5, DimensionKind::Overworld, None);
-        // 6 条目全权重 1，seed 0..6 应恰好遍历全部（非死域不过滤任何条目）。
-        let mut hit: Vec<ThreatSpecies> = (0u64..6)
-            .map(|seed| select_threat_species(&pool, &live_zone, seed).expect("非死域必命中"))
-            .collect();
-        hit.sort_by_key(|s| format!("{s:?}"));
-        let mut expected: Vec<ThreatSpecies> = pool.iter().map(|e| e.species).collect();
-        expected.sort_by_key(|s| format!("{s:?}"));
-        assert_eq!(hit, expected, "非死域 zone 不应过滤任何 danger=5 池条目");
-    }
-
-    #[test]
-    fn select_threat_species_returns_none_when_pool_empty() {
-        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
-        assert_eq!(
-            select_threat_species(&[], &zone, 42),
-            None,
-            "空池应返回 None，不能 panic 或凭空造一个物种"
-        );
-    }
-
-    #[test]
-    fn select_threat_species_deterministic_for_same_seed() {
-        let pool = threat_pool(6, DimensionKind::Overworld, None);
-        let zone = zone_with(6, 0.5, DimensionKind::Overworld);
-        let a = select_threat_species(&pool, &zone, 777);
-        let b = select_threat_species(&pool, &zone, 777);
-        assert_eq!(a, b, "同一 seed 必须产出同一物种（可复现，非真随机）");
-    }
-
-    // -----------------------------------------------------------------
-    // ambient_threat_pool_fn —— 真实 pool_fn 端到端（替换 P0 stub）
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn ambient_threat_pool_fn_spawns_rat_marker_in_danger_one_zone() {
-        let mut app = App::new();
-        let layer = app.world_mut().spawn_empty().id();
-        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
-        let spawned = {
-            let mut commands = app.world_mut().commands();
-            ambient_threat_pool_fn(
-                &mut commands,
-                layer,
-                &zone,
-                DVec3::new(10.0, 64.0, 10.0),
-                DVec3::new(10.0, 64.0, 10.0),
-                Season::Summer,
-            )
-        };
-        app.world_mut().flush();
-        let entity = spawned.expect("danger=1 非死域池非空，必须刷出实体");
-        assert!(
-            app.world().get::<RatBlackboard>(entity).is_some(),
-            "danger=1 物种池只有 Rat，产出实体必须带 RatBlackboard（spawn_rat_npc_at 契约）"
-        );
-    }
-
-    #[test]
-    fn ambient_threat_pool_fn_spawns_beast_marker_in_danger_four_zone() {
-        let mut app = App::new();
-        let layer = app.world_mut().spawn_empty().id();
-        let zone = zone_with(4, 0.5, DimensionKind::Overworld);
-        let spawned = {
-            let mut commands = app.world_mut().commands();
-            ambient_threat_pool_fn(
-                &mut commands,
-                layer,
-                &zone,
-                DVec3::new(10.0, 64.0, 10.0),
-                DVec3::new(10.0, 64.0, 10.0),
-                Season::Summer,
-            )
-        };
-        app.world_mut().flush();
-        let entity = spawned.expect("danger=4 通用 beast 池非空，必须刷出实体");
-        assert!(
-            app.world().get::<RatBlackboard>(entity).is_none(),
-            "danger=4 通用 beast 路径不应带 RatBlackboard（会误判成 rat 分支）"
-        );
-        assert!(
-            app.world().get::<NpcMarker>(entity).is_some(),
-            "danger=4 spawn_beast_npc_at 产出实体必须带通用 NpcMarker"
-        );
-    }
-
-    #[test]
-    fn ambient_threat_pool_fn_returns_none_for_tsy_dimension() {
-        let mut app = App::new();
-        let layer = app.world_mut().spawn_empty().id();
-        let zone = zone_with(5, 0.5, DimensionKind::Tsy);
-        let spawned = {
-            let mut commands = app.world_mut().commands();
-            ambient_threat_pool_fn(
-                &mut commands,
-                layer,
-                &zone,
-                DVec3::new(10.0, 64.0, 10.0),
-                DVec3::new(10.0, 64.0, 10.0),
-                Season::Summer,
-            )
-        };
-        assert_eq!(
-            spawned, None,
-            "TSY 维度必须走独立直调 spawn_tsy_hostiles_for_family 路径（§8.1 #3），\
-             本通用 pool_fn 对 TSY zone 必须恒 None，不能顺手刷出主世界物种"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // decide_ambient_check —— 纯判定核心
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn decide_throttled_when_interval_not_elapsed() {
-        // danger=1 → interval 600；tick=599 不是 600 的倍数也不是 0 → Throttled。
-        let outcome = decide_ambient_check(599, 1, MovementZoneKind::Normal, 0, true, 1.0, 0);
-        assert_eq!(outcome, AmbientCheckOutcome::Throttled);
-    }
-
-    #[test]
-    fn decide_runs_at_tick_zero_regardless_of_interval() {
-        // should_run_interval 的 `tick == 0` 分支：世界刚起服第一帧就该有判定机会。
-        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Normal, 0, true, 1.0, 0);
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn {
-                budget: threat_budget(7)
-            }
-        );
-    }
-
-    #[test]
-    fn decide_budget_saturated_when_alive_count_at_max() {
-        let budget = threat_budget(1);
-        let outcome = decide_ambient_check(
-            600,
-            1,
-            MovementZoneKind::Normal,
-            budget.max_alive,
-            true,
-            1.0,
-            0,
-        );
-        assert_eq!(outcome, AmbientCheckOutcome::BudgetSaturated);
-    }
-
-    #[test]
-    fn decide_budget_saturated_boundary_one_below_max_passes() {
-        let budget = threat_budget(1);
-        let outcome = decide_ambient_check(
-            600,
-            1,
-            MovementZoneKind::Normal,
-            budget.max_alive - 1,
-            true,
-            1.0,
-            0,
-        );
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn { budget },
-            "活体数恰好比上限少 1 时应放行，off-by-one 出错会导致 zone 永远刷不满或提前锁死"
-        );
-    }
-
-    #[test]
-    fn decide_ignores_budget_when_counts_against_threat_budget_false() {
-        // plan-mundane-fauna-v1 的被动 pool 用 counts_against_threat_budget=false：
-        // 即使"活体数"远超 max_alive 也不应被威胁预算拦截（它压根不算威胁预算的一部分）。
-        let budget = threat_budget(1);
-        let outcome = decide_ambient_check(
-            600,
-            1,
-            MovementZoneKind::Normal,
-            budget.max_alive * 100,
-            false,
-            1.0,
-            0,
-        );
-        assert_eq!(outcome, AmbientCheckOutcome::ShouldSpawn { budget });
-    }
-
-    #[test]
-    fn decide_era_gate_blocks_when_density_mul_zero() {
-        // beast_density_mul=0.0 时 era_beast_spawn_gate 恒 false（有效概率钳到 0）。
-        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 0.0, 42);
-        assert_eq!(outcome, AmbientCheckOutcome::EraGateBlocked);
-    }
-
-    #[test]
-    fn decide_era_gate_passes_when_density_mul_at_or_above_one() {
-        // Calamity 时代 beast_density_mul > 1.0 时应始终放行（clamp 到
-        // ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX=2.0 后仍 >= 1.0）。
-        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 1.5, 999);
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn {
-                budget: threat_budget(1)
-            }
-        );
-    }
-
-    #[test]
-    fn decide_era_gate_clamp_extreme_density_still_passes() {
-        // beast_density_mul 远超 ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX(2.0) 时应被钳到 2.0
-        // 而非无脑当成"必过"外的其他分支——不管 seed 取什么都应放行。
-        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 99.0, 0);
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn {
-                budget: threat_budget(1)
-            }
-        );
-    }
-
-    #[test]
-    fn decide_ambient_check_dead_zone_widens_budget_over_normal() {
-        // 同一 danger=7 档下，Dead zone_kind 应比 Normal 命中放大后的预算（§8.1 #4），
-        // 而不是"zone_kind 参数被悄悄忽略"的回归。
-        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Dead, 0, true, 1.0, 0);
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn {
-                budget: dead_zone_threat_budget(threat_budget(7), MovementZoneKind::Dead)
-            },
-            "Dead zone_kind 必须命中 dead_zone_threat_budget 放大后的预算，不是原始 threat_budget(7)"
-        );
-        assert_ne!(
-            threat_budget(7),
-            dead_zone_threat_budget(threat_budget(7), MovementZoneKind::Dead),
-            "测试前置条件：danger=7 的死域乘区必须真的放大了预算，否则本用例测不出回归"
-        );
-    }
-
-    #[test]
-    fn decide_ambient_check_dead_zone_budget_saturation_uses_widened_max_alive() {
-        // 死域放大后的 max_alive 更宽——原本会 BudgetSaturated 的活体数在死域里应放行。
-        let normal_budget = threat_budget(7);
-        let dead_budget = dead_zone_threat_budget(normal_budget, MovementZoneKind::Dead);
-        assert!(
-            dead_budget.max_alive > normal_budget.max_alive,
-            "前置条件：死域 max_alive 必须严格大于常态，否则本用例的活体数选取无意义"
-        );
-        let alive_count = normal_budget.max_alive; // 常态下已饱和，死域里应仍未饱和
-        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Dead, alive_count, true, 1.0, 0);
-        assert_eq!(
-            outcome,
-            AmbientCheckOutcome::ShouldSpawn {
-                budget: dead_budget
-            },
-            "活体数={alive_count} 常态下已达上限={}，死域放宽后的上限={} 应仍放行",
-            normal_budget.max_alive,
-            dead_budget.max_alive
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // dead_zone_threat_budget / danger_tide_weight —— P3 生态联动（§8.1 #4/#5）
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn dead_zone_threat_budget_normal_is_identity() {
-        // Normal zone_kind 必须原样返回预算——不放大不缩小，否则常态世界的预算表全部
-        // 静默漂移，回归极难察觉。
-        for danger in 1..=7u8 {
-            let budget = threat_budget(danger);
-            assert_eq!(
-                dead_zone_threat_budget(budget, MovementZoneKind::Normal),
-                budget,
-                "danger={danger} 的 Normal zone_kind 必须是 identity"
-            );
-        }
-    }
-
-    #[test]
-    fn dead_zone_threat_budget_residue_ash_is_identity() {
-        // ResidueAsh 是灰烬地表微观判定，非本 plan 危险度语义覆盖范围——保守不放大。
-        let budget = threat_budget(4);
-        assert_eq!(
-            dead_zone_threat_budget(budget, MovementZoneKind::ResidueAsh),
-            budget
-        );
-    }
-
-    #[test]
-    fn dead_zone_threat_budget_dead_amplifies_max_alive_and_shortens_interval() {
-        let budget = threat_budget(5);
-        let scaled = dead_zone_threat_budget(budget, MovementZoneKind::Dead);
-        assert!(
-            scaled.max_alive > budget.max_alive,
-            "Dead zone_kind 必须放大 max_alive：原始 {}，放大后 {}",
-            budget.max_alive,
-            scaled.max_alive
-        );
-        assert!(
-            scaled.spawn_interval_ticks < budget.spawn_interval_ticks,
-            "Dead zone_kind 必须缩短 spawn_interval_ticks（更频繁刷新）：原始 {}，缩短后 {}",
-            budget.spawn_interval_ticks,
-            scaled.spawn_interval_ticks
-        );
-        assert!(
-            scaled.pack_size_range.1 >= budget.pack_size_range.1,
-            "Dead zone_kind 的 pack_size 上限不应低于原始值"
-        );
-    }
-
-    #[test]
-    fn dead_zone_threat_budget_negative_amplifies_less_than_dead() {
-        let budget = threat_budget(5);
-        let dead = dead_zone_threat_budget(budget, MovementZoneKind::Dead);
-        let negative = dead_zone_threat_budget(budget, MovementZoneKind::Negative);
-        assert!(
-            negative.max_alive >= budget.max_alive,
-            "Negative zone_kind 也应放大（不小于原始值）"
-        );
-        assert!(
-            negative.max_alive <= dead.max_alive,
-            "Negative 乘区({:?})不应超过 Dead 乘区({:?})——死域凶险程度高于负灵域",
-            negative.max_alive,
-            dead.max_alive
-        );
-    }
-
-    #[test]
-    fn dead_zone_threat_budget_never_zeroes_interval() {
-        // 极端情况下缩放不能把 spawn_interval_ticks 缩到 0——0 会让 should_run_interval
-        // 出现除零/无限刷新的边界灾难。
-        for danger in 1..=7u8 {
-            let scaled = dead_zone_threat_budget(threat_budget(danger), MovementZoneKind::Dead);
-            assert!(
-                scaled.spawn_interval_ticks >= 1,
-                "danger={danger} 死域缩放后 spawn_interval_ticks 不能为 0"
-            );
-        }
-    }
-
-    #[test]
-    fn dead_zone_threat_budget_scaled_interval_stays_multiple_of_stride_across_all_dangers_and_kinds(
-    ) {
-        // §Verify blocker①(stride 混叠)：死域/负灵域乘区缩放产出的 spawn_interval_ticks
-        // 必须仍是 AMBIENT_SCHEDULER_STRIDE_TICKS(50) 的整数倍——否则粗节流会漏检
-        // should_run_interval 恰好命中的 tick，有效间隔暴涨到 lcm(50, interval)（几千 tick，
-        // 几分钟起步），而非设计预期的十几秒~几十秒。
-        for danger in 1..=7u8 {
-            for zone_kind in [
-                MovementZoneKind::Normal,
-                MovementZoneKind::Dead,
-                MovementZoneKind::Negative,
-                MovementZoneKind::ResidueAsh,
-            ] {
-                let scaled = dead_zone_threat_budget(threat_budget(danger), zone_kind);
-                assert_eq!(
-                    scaled.spawn_interval_ticks % AMBIENT_SCHEDULER_STRIDE_TICKS as u32,
-                    0,
-                    "danger={danger} zone_kind={zone_kind:?} 缩放后 spawn_interval_ticks={} \
-                     必须是 stride={} 的整数倍，否则粗节流吞检、有效间隔暴涨到 lcm(50,interval)",
-                    scaled.spawn_interval_ticks,
-                    AMBIENT_SCHEDULER_STRIDE_TICKS
-                );
-                assert!(
-                    (100..=600).contains(&scaled.spawn_interval_ticks),
-                    "danger={danger} zone_kind={zone_kind:?} 有效检查间隔={} tick 应落在设计\
-                     范围(十几秒~几十秒，即 100~600 tick 量级)，不应因量化误差跌出该范围",
-                    scaled.spawn_interval_ticks
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn danger_tide_weight_danger_one_is_identity() {
-        // danger=0（zones.json 缺失兜底）与 danger=1 都应钳到权重 1.0——覆盖所有沿用
-        // `danger_level: 0` 兜底 fixture 的既有 heartbeat.rs 测试，保证它们行为不变。
-        assert_eq!(danger_tide_weight(0), 1.0);
-        assert_eq!(danger_tide_weight(1), 1.0);
-    }
-
-    #[test]
-    fn danger_tide_weight_danger_seven_is_max() {
-        assert!(
-            (danger_tide_weight(7) - 1.6).abs() < 1e-9,
-            "danger=7 权重应为 1.6（+60%），实际 {}",
-            danger_tide_weight(7)
-        );
-    }
-
-    #[test]
-    fn danger_tide_weight_monotonic_non_decreasing() {
-        let mut prev = danger_tide_weight(1);
-        for danger in 2..=7u8 {
-            let cur = danger_tide_weight(danger);
-            assert!(
-                cur >= prev,
-                "danger={danger} 权重 {cur} 不应低于前一档 {prev}——danger 越高兽潮应越容易触发"
-            );
-            prev = cur;
-        }
-    }
-
-    #[test]
-    fn danger_tide_weight_above_seven_clamps_to_seven() {
-        assert_eq!(danger_tide_weight(200), danger_tide_weight(7));
-    }
-
-    #[test]
-    fn danger_tide_required_ticks_scale_is_reciprocal_of_weight() {
-        for danger in 0..=7u8 {
-            let scale = danger_tide_required_ticks_scale(danger);
-            let weight = danger_tide_weight(danger);
-            assert!(
-                (scale * weight - 1.0).abs() < 1e-9,
-                "danger={danger}: scale({scale}) * weight({weight}) 应恒为 1.0"
-            );
-        }
-    }
-
-    #[test]
-    fn danger_tide_required_ticks_scale_danger_one_is_identity() {
-        assert_eq!(danger_tide_required_ticks_scale(1), 1.0);
-    }
-
-    #[test]
-    fn danger_tide_required_ticks_scale_danger_seven_shortens_duration() {
-        let scale = danger_tide_required_ticks_scale(7);
-        assert!(
-            scale < 1.0,
-            "danger=7 的 required_ticks 缩放系数必须 < 1.0（缩短所需时长），实际 {scale}"
-        );
-        assert!(
-            (scale - 0.625).abs() < 1e-9,
-            "danger=7 应缩至 1/1.6=0.625，实际 {scale}"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // should_recycle_ambient —— 超距回收 off-by-one
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn should_recycle_false_at_exact_boundary() {
-        assert!(
-            !should_recycle_ambient(AMBIENT_DESPAWN_RADIUS),
-            "恰好 96.0 格不应回收（严格大于才回收）"
-        );
-    }
-
-    #[test]
-    fn should_recycle_true_just_past_boundary() {
-        assert!(
-            should_recycle_ambient(AMBIENT_DESPAWN_RADIUS + 0.001),
-            "超过 96.0 格哪怕一点点也应回收"
-        );
-    }
-
-    #[test]
-    fn should_recycle_false_well_within_radius() {
-        assert!(!should_recycle_ambient(10.0));
-    }
-
-    // -----------------------------------------------------------------
-    // sample_ambient_ring_position —— 距离环 off-by-one + 确定性
-    // -----------------------------------------------------------------
-
-    fn wide_open_bounds() -> (DVec3, DVec3) {
-        (
-            DVec3::new(-10_000.0, 0.0, -10_000.0),
-            DVec3::new(10_000.0, 200.0, 10_000.0),
-        )
-    }
-
-    #[test]
-    fn ring_sample_always_within_ring_radius_bounds() {
-        let anchor = DVec3::new(0.0, 64.0, 0.0);
-        for seed in 0..200u64 {
-            let Some(pos) = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], seed)
-            else {
-                panic!("seed={seed} 在无穷大 bounds + 无既有点时不应返回 None");
-            };
-            let dx = pos.x - anchor.x;
-            let dz = pos.z - anchor.z;
-            let dist = (dx * dx + dz * dz).sqrt();
-            assert!(
-                (AMBIENT_RING_MIN_RADIUS - 1e-6..=AMBIENT_RING_MAX_RADIUS + 1e-6).contains(&dist),
-                "seed={seed} 采样距离 {dist} 超出环带 [{AMBIENT_RING_MIN_RADIUS}, {AMBIENT_RING_MAX_RADIUS}]"
-            );
-        }
-    }
-
-    #[test]
-    fn ring_sample_deterministic_for_same_seed() {
-        let anchor = DVec3::new(100.0, 64.0, 100.0);
-        let a = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], 12345);
-        let b = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], 12345);
-        assert_eq!(a, b, "同一 seed 必须产出同一候选点（可复现，非真随机）");
-    }
-
-    #[test]
-    fn ring_sample_none_when_zone_bounds_exclude_entire_ring() {
-        // zone 边界比环带内环还小 → 所有候选点必然越界 → None。
-        let tiny_bounds = (DVec3::new(-1.0, 0.0, -1.0), DVec3::new(1.0, 200.0, 1.0));
-        let anchor = DVec3::new(0.0, 64.0, 0.0);
-        let result = sample_ambient_ring_position(tiny_bounds, anchor, &[], 7);
-        assert_eq!(
-            result, None,
-            "zone 边界完全排除 24~64 格环带时应返回 None，不能越界刷出 zone 外"
-        );
-    }
-
-    #[test]
-    fn ring_sample_respects_existing_position_spacing_preference() {
-        // 存在既有点时，采样器应更偏向远离既有点的候选（best_score 逻辑）——
-        // 用两个不同 existing_positions 集合验证输出不同，证明 existing_positions 确实
-        // 参与了打分（而非被忽略的死参数）。
-        let anchor = DVec3::new(0.0, 64.0, 0.0);
-        let existing_a = vec![DVec3::new(30.0, 64.0, 0.0)];
-        let existing_b = vec![DVec3::new(-30.0, 64.0, 0.0)];
-        let a = sample_ambient_ring_position(wide_open_bounds(), anchor, &existing_a, 42);
-        let b = sample_ambient_ring_position(wide_open_bounds(), anchor, &existing_b, 42);
-        assert_ne!(
-            a, b,
-            "existing_positions 改变时同 seed 下应选出不同候选点，证明间距打分生效"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // ambient_scheduler_system —— 泛型 ECS 集成测试
-    // -----------------------------------------------------------------
-
-    /// 独立于 `AmbientThreatMarker` 的第二 marker 类型，验证调度核对不同 `M` 单态化后
-    /// 状态/配置/query 完全互不干扰（`plan-mundane-fauna-v1` 复用场景的最小复现）。
-    #[derive(Debug, Clone, Component)]
-    struct TestFaunaMarker {
-        spawned_at: u64,
-        home_zone: String,
-    }
-
-    impl AmbientMarkerData for TestFaunaMarker {
-        fn new(spawned_at: u64, home_zone: String) -> Self {
-            Self {
-                spawned_at,
-                home_zone,
-            }
-        }
-
-        fn home_zone(&self) -> &str {
-            &self.home_zone
-        }
-    }
-
-    fn test_pool_fn(
-        commands: &mut Commands,
-        _layer: Entity,
-        _zone: &Zone,
-        spawn_position: DVec3,
-        _patrol_target: DVec3,
-        _season: Season,
-    ) -> Option<Entity> {
-        Some(
-            commands
-                .spawn((
-                    Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                    crate::npc::spawn::common::NpcMarker,
-                ))
-                .id(),
-        )
-    }
-
-    fn make_app() -> App {
-        let mut app = App::new();
-        app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
-            .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
-                threat_budget,
-                test_pool_fn,
-                true,
-            ))
-            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
-        app
-    }
-
-    fn install_layers(app: &mut App) -> Entity {
-        let overworld = app.world_mut().spawn_empty().id();
-        let tsy = app.world_mut().spawn_empty().id();
-        app.insert_resource(DimensionLayers { overworld, tsy });
-        overworld
-    }
-
-    fn install_zone_registry(app: &mut App, danger_level: u8) {
-        app.insert_resource(ZoneRegistry {
-            zones: vec![Zone {
-                name: "test_zone".to_string(),
-                dimension: DimensionKind::Overworld,
-                bounds: (
-                    DVec3::new(-500.0, 0.0, -500.0),
-                    DVec3::new(500.0, 200.0, 500.0),
-                ),
-                spirit_qi: 0.5,
-                danger_level,
-                active_events: Vec::new(),
-                patrol_anchors: Vec::new(),
-                blocked_tiles: Vec::new(),
-                qi_equilibrium: 0.0,
-                qi_inflow_per_min: 0.0,
-            }],
-        });
-    }
-
-    #[test]
-    fn no_spawn_when_no_player_present() {
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 7);
-        app.insert_resource(GameTick(1_000_000));
-        app.update();
-
-        let mut q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        assert_eq!(
-            q.iter(app.world()).count(),
-            0,
-            "无玩家在场时不应刷新任何 ambient 威胁"
-        );
-    }
-
-    #[test]
-    fn no_spawn_when_no_zone_registry() {
-        let mut app = make_app();
-        install_layers(&mut app);
-        // 故意不插入 ZoneRegistry。
-        app.insert_resource(GameTick(1_000_000));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-        app.update();
-
-        let mut q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        assert_eq!(
-            q.iter(app.world()).count(),
-            0,
-            "缺 ZoneRegistry 时应安全跳过"
-        );
-    }
-
-    #[test]
-    fn spawns_and_tags_marker_when_player_in_high_danger_zone() {
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 7);
-        app.insert_resource(GameTick(0)); // tick=0 → should_run_interval 恒真
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-        app.update();
-
-        let mut q = app
-            .world_mut()
-            .query_filtered::<&AmbientThreatMarker, With<AmbientThreatMarker>>();
-        let markers: Vec<_> = q.iter(app.world()).collect();
-        assert_eq!(
-            markers.len(),
-            1,
-            "danger=7 + 玩家在场 + tick=0 应恰好刷出 1 个 ambient 威胁（test_pool_fn 每次产 1 个）"
-        );
-        assert_eq!(markers[0].home_zone, "test_zone");
-        assert_eq!(markers[0].spawned_at, 0);
-    }
-
-    #[test]
-    fn does_not_spawn_beyond_budget_saturation() {
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 1); // danger=1 → max_alive=2
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-
-        // 预先塞 2 个活体 ambient 威胁（已达 danger=1 的上限）。
-        for _ in 0..2 {
-            app.world_mut().spawn((
-                Position::new([10.0, 64.0, 10.0]),
-                AmbientThreatMarker {
-                    spawned_at: 0,
-                    home_zone: "test_zone".to_string(),
-                },
-            ));
-        }
-        app.update();
-
-        let mut q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        assert_eq!(
-            q.iter(app.world()).count(),
-            2,
-            "danger=1 已有 2 个活体（=max_alive）时不应再刷新第 3 个"
-        );
-    }
-
-    #[test]
-    fn same_zone_multiple_players_do_not_exceed_max_alive_in_single_tick() {
-        // §Verify blocker③(并发预算越界)：danger=1 → max_alive=2。zone 内已有 1 个活体，
-        // 两名玩家同处一 zone 各自独立判定预算——修复前二者都读到同一份 tick 前快照
-        // "alive_count=1 < 2" 各刷一只，合计变成 3，越过 max_alive；修复后第二个玩家的
-        // 判定应看见第一个玩家本 tick 已排队的 1 个 spawn（alive_count=1+1=2 达到上限），
-        // 本 tick 应只新增 1 个，总数封顶在 max_alive=2。
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 1); // danger=1 → max_alive=2
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([100.0, 64.0, 100.0])));
-
-        app.world_mut().spawn((
-            Position::new([10.0, 64.0, 10.0]),
-            AmbientThreatMarker {
-                spawned_at: 0,
-                home_zone: "test_zone".to_string(),
-            },
-        ));
-        app.update();
-
-        let mut q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        let total = q.iter(app.world()).count();
-        assert_eq!(
-            total, 2,
-            "danger=1 max_alive=2：已有 1 活体 + 2 名同 zone 玩家各自触发一次巡检判定，\
-             单次巡检结束后总活体数不应越过 max_alive=2（实际={total}）——越过说明并发预算门\
-             被绕过（Commands::spawn 延迟应用让后一个玩家看不到前一个玩家本 tick 已排队的 spawn）"
-        );
-    }
-
-    #[test]
-    fn recycles_marker_beyond_despawn_radius_via_insert_despawned() {
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 1);
-        app.insert_resource(GameTick(0));
-        // 玩家远在天边，ambient 威胁距其 > 96 格。
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
-        let stray = app
-            .world_mut()
-            .spawn((
-                Position::new([0.0, 64.0, 0.0]),
-                AmbientThreatMarker {
-                    spawned_at: 0,
-                    home_zone: "test_zone".to_string(),
-                },
-            ))
-            .id();
-        app.update();
-
-        assert!(
-            app.world().get::<Despawned>(stray).is_some(),
-            "超距 ambient 威胁必须通过 insert(Despawned) 回收（裸 despawn 会崩服）"
-        );
-    }
-
-    #[test]
-    fn recycle_transfers_full_rat_drained_qi_before_despawn() {
-        // §P0 验收抓手 #3（替换旧 1% 归还 pin）：超距回收持有 drained_qi>0 的鼠患（咬玩家
-        // 偷来的 qi）必须把 `npc:rat:<id>` 账户 100% 转入 zone 账户（不再是 1%），并同步
-        // 写回 `zone.spirit_qi` 字段（§8.1 决议 #3），再 insert(Despawned)。
-        //
-        // ★promote 博弈 blocker v2 修正后的调值说明：drained_qi 从旧版 100.0 降到 10.0——
-        // `QI_ZONE_UNIT_CAPACITY`=50 是 zone 账户绝对上限，旧版 100.0 在 spirit_qi=0.5
-        // （room=25）下必然溢出 75，这正是 blocker 要修的"无条件全额转账不截断"缺陷；调小
-        // 到 room 充足的量级后，本 pin 专测"非满 zone 全额落袋、无 overflow"场景（满 zone/
-        // overflow 场景见 `fauna::rat_phase::tests::rat_death_near_cap_zone_routes_overflow_conserving`）。
-        use valence::prelude::ChunkPos;
-
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 1); // spirit_qi = 0.5
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
-
-        let mut rat_blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
-        rat_blackboard.drained_qi = 10.0;
-        let stray = app
-            .world_mut()
-            .spawn((
-                Position::new([0.0, 64.0, 0.0]),
-                AmbientThreatMarker {
-                    spawned_at: 0,
-                    home_zone: "test_zone".to_string(),
-                },
-                rat_blackboard,
-            ))
-            .id();
-
-        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(rat_account.clone(), 10.0)
-            .expect("seeding the rat ledger balance must succeed");
-        app.insert_resource(ledger);
-
-        app.update();
-
-        assert!(
-            app.world().get::<Despawned>(stray).is_some(),
-            "守恒修复不应影响回收本身——超距鼠患仍应被 insert(Despawned)"
-        );
-
-        let ledger_after = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            ledger_after.balance(&rat_account),
-            0.0,
-            "超距回收必须把 npc:rat 账户清零（100% 转账，不再是只归还 1% 留 99% 僵尸余额）"
-        );
-
-        let zone_account = QiAccountId::zone("test_zone");
-        let expected_zone_account_balance =
-            0.5_f64 * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY + 10.0;
-        assert!(
-            (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
-            "超距回收 drained_qi=10 的鼠患必须 100% 转入 zone 账户（room 充足，无 overflow），\
-             期望 {expected_zone_account_balance}，实际 {}",
-            ledger_after.balance(&zone_account)
-        );
-
-        // room 充足场景不应产生 overflow，overflow 账户必须为空。
-        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
-        assert_eq!(
-            ledger_after.balance(&overflow_account),
-            0.0,
-            "room 充足（25 > drained 10.0）时超距回收不应产生 overflow，overflow 账户应保持空账"
-        );
-
-        let zone_after = app
-            .world()
-            .resource::<ZoneRegistry>()
-            .find_zone_by_name("test_zone")
-            .expect("test_zone 必须仍存在")
-            .spirit_qi;
-        let expected_spirit_qi = (expected_zone_account_balance
-            / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
-        assert!(
-            (zone_after - expected_spirit_qi).abs() < 1e-9,
-            "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与超距回收账户转账同步写回，\
-             期望 zone.spirit_qi={expected_spirit_qi}，实际={zone_after}（回收前 \
-             zone.spirit_qi=0.5）——相等于旧值说明字段被漏写，会被下一次覆盖式重同步二次抹掉"
-        );
-    }
-
-    #[test]
-    fn recycle_returns_spider_drained_qi_to_zone_instead_of_evaporating() {
-        // §Verify blocker②同一红线，覆盖 danger5-7 池内的拟态蛛（AshSpider）——它与鼠患
-        // 共用本调度核的超距回收路径，同样持有 drained_qi（Disguised 期吸收的 qi）。
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 5); // spirit_qi = 0.5
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
-
-        let mut spider_blackboard =
-            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
-        spider_blackboard.drained_qi = 50.0;
-        let stray = app
-            .world_mut()
-            .spawn((
-                Position::new([0.0, 64.0, 0.0]),
-                AmbientThreatMarker {
-                    spawned_at: 0,
-                    home_zone: "test_zone".to_string(),
-                },
-                spider_blackboard,
-            ))
-            .id();
-        app.update();
-
-        assert!(
-            app.world().get::<Despawned>(stray).is_some(),
-            "守恒修复不应影响回收本身——超距拟态蛛仍应被 insert(Despawned)"
-        );
-        let zone_after = app
-            .world()
-            .resource::<ZoneRegistry>()
-            .find_zone_by_name("test_zone")
-            .expect("test_zone 必须仍存在")
-            .spirit_qi;
-        let expected = (0.5
-            + (50.0 * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
-                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
-        assert!(
-            (zone_after - expected).abs() < 1e-9,
-            "超距回收 drained_qi=50 的拟态蛛必须按 drained_qi × ratio / QI_ZONE_UNIT_CAPACITY \
-             把残余 qi 还给 zone，期望 zone.spirit_qi={expected}，实际={zone_after}\
-             （回收前 zone.spirit_qi=0.5）——相等说明蒸发未修复"
-        );
-    }
-
-    #[test]
-    fn generic_marker_type_is_independent_from_threat_marker() {
-        // 泛型参数注入独立生效：第二套 marker_type（TestFaunaMarker）用不同的
-        // budget_fn（恒返回 max_alive=1，逼近饱和）+ counts_against_threat_budget=false，
-        // 与 AmbientThreatMarker 的调度状态/资源/query 完全独立。
-        fn tiny_budget(_danger: u8) -> ThreatBudget {
-            ThreatBudget {
-                max_alive: 1,
-                spawn_interval_ticks: 50,
-                pack_size_range: (1, 1),
-            }
-        }
-
-        let mut app = make_app();
-        install_layers(&mut app);
-        install_zone_registry(&mut app, 1);
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-
-        // 第二套调度实例：counts_against_threat_budget=false，即使已有 100 个"活体"
-        // TestFaunaMarker 也不应被 tiny_budget 的 max_alive=1 拦下。
-        for _ in 0..100 {
-            app.world_mut().spawn((
-                Position::new([5.0, 64.0, 5.0]),
-                TestFaunaMarker {
-                    spawned_at: 0,
-                    home_zone: "test_zone".to_string(),
-                },
-            ));
-        }
-        app.insert_resource(AmbientSchedulerState::<TestFaunaMarker>::default())
-            .insert_resource(AmbientSchedulerConfig::<TestFaunaMarker>::new(
-                tiny_budget,
-                test_pool_fn,
-                false,
-            ))
-            .add_systems(Update, ambient_scheduler_system::<TestFaunaMarker>);
-
-        app.update();
-
-        let mut threat_q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        let mut fauna_q = app.world_mut().query::<&TestFaunaMarker>();
-        assert_eq!(
-            threat_q.iter(app.world()).count(),
-            1,
-            "AmbientThreatMarker 调度实例应正常独立刷出 1 个（danger=1, max_alive=2, 0 在场）"
-        );
-        let fauna_markers: Vec<_> = fauna_q.iter(app.world()).collect();
-        assert_eq!(
-            fauna_markers.len(),
-            101,
-            "TestFaunaMarker 调度实例 counts_against_threat_budget=false，\
-             100 个既有活体不拦截新刷新，应变成 101（不与 AmbientThreatMarker 预算互相干扰）"
-        );
-        assert!(
-            fauna_markers.iter().all(|m| m.spawned_at == 0),
-            "本轮巡检 tick=0，所有 TestFaunaMarker（既有 100 个预置 spawned_at=0 + 新刷 1 个\
-             由 M::new(now, ..) 构造）都应记录 spawned_at=0，验证 marker 构造契约按 tick 落账"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // P3 §8.1 — ambient 存量 beast 衔接 beast_horde_detect_system 集成 case
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn ambient_spawned_beast_feeds_beast_horde_detect_system_beast_count() {
-        // 声明性集成 case（plan §P3「horde 衔接」）：ambient 调度核刷出的常驻 beast 走
-        // `spawn_natural_mob_at` → `spawn_beast_npc_at`，本就挂 `NpcArchetype::Beast`
-        // （`npc/spawn/beast.rs:82`），天然被 `fauna::migration::is_horde_beast` 识别——
-        // **不需要在 `fauna/migration.rs` 里改一行代码**（本 plan 只声明衔接，不吞
-        // `plan-beast-horde-v1` P2 领地争夺 scope）。本用例把这条衔接坐实成一条真实跑通
-        // 的断言，防止未来任一侧重构悄悄断开这条链路。
-        use crate::fauna::migration::{
-            beast_horde_detect_system, BeastHordeEvent, BeastHordeState, FlowFieldComputeTask,
-            FlowFieldPrototype, ZoneDepletionEvent,
-        };
-        use valence::prelude::Events;
-
-        let mut app = App::new();
-        app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
-            .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
-                threat_budget,
-                ambient_threat_pool_fn,
-                true,
-            ))
-            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
-        install_layers(&mut app);
-        app.insert_resource(ZoneRegistry {
-            zones: vec![
-                Zone {
-                    name: "test_zone".to_string(),
-                    dimension: DimensionKind::Overworld,
-                    bounds: (
-                        DVec3::new(-500.0, 0.0, -500.0),
-                        DVec3::new(500.0, 200.0, 500.0),
-                    ),
-                    spirit_qi: 0.05,
-                    danger_level: 7,
-                    active_events: Vec::new(),
-                    patrol_anchors: Vec::new(),
-                    blocked_tiles: Vec::new(),
-                    qi_equilibrium: 0.0,
-                    qi_inflow_per_min: 0.0,
-                },
-                // select_migration_target_zone 需要一个 spirit_qi 更高的邻域才能选出
-                // migration target；无 ZoneGraph 时 fallback 到全体 zones。
-                Zone {
-                    name: "test_zone_refuge".to_string(),
-                    dimension: DimensionKind::Overworld,
-                    bounds: (
-                        DVec3::new(1000.0, 0.0, 1000.0),
-                        DVec3::new(1500.0, 200.0, 1500.0),
-                    ),
-                    spirit_qi: 0.8,
-                    danger_level: 1,
-                    active_events: Vec::new(),
-                    patrol_anchors: Vec::new(),
-                    blocked_tiles: Vec::new(),
-                    qi_equilibrium: 0.0,
-                    qi_inflow_per_min: 0.0,
-                },
-            ],
-        });
-        app.insert_resource(GameTick(0));
-        app.world_mut()
-            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
-        app.update(); // 用真实 pool_fn 刷出 1 只 ambient beast（携带 NpcArchetype::Beast）。
-
-        let mut marker_q = app
-            .world_mut()
-            .query_filtered::<(), With<AmbientThreatMarker>>();
-        assert_eq!(
-            marker_q.iter(app.world()).count(),
-            1,
-            "前置条件：ambient 调度核必须先真的刷出 1 个威胁实体，否则本用例测不出衔接"
-        );
-
-        // 接上 beast_horde_detect_system：同一 App 里追加 migration 系统链路，喂一条低
-        // 灵气 ZoneDepletionEvent 触发兽潮检测——不改 fauna/migration.rs 任何判定逻辑。
-        app.insert_resource(BeastHordeState::default());
-        app.add_event::<ZoneDepletionEvent>();
-        app.add_event::<BeastHordeEvent>();
-        app.add_event::<FlowFieldPrototype>();
-        app.add_event::<FlowFieldComputeTask>();
-        app.add_systems(Update, beast_horde_detect_system);
-        app.world_mut()
-            .resource_mut::<Events<ZoneDepletionEvent>>()
-            .send(ZoneDepletionEvent {
-                zone: "test_zone".to_string(),
-                spirit_qi: 0.05,
-                spirit_qi_rate_of_change: -0.01,
-                tick: 0,
-            });
-        app.update();
-
-        let hordes: Vec<BeastHordeEvent> = {
-            let events = app.world().resource::<Events<BeastHordeEvent>>();
-            events.get_reader().read(events).cloned().collect()
-        };
-        assert_eq!(
-            hordes.len(),
-            1,
-            "beast_horde_detect_system 应识别出 ambient 已刷出的存量 beast 并触发迁徙，\
-             不应因 beast_count==0 短路——若为空数组，说明 ambient marker 挂的组件没被\
-             migration 的 is_horde_beast 识别到，horde 衔接已断"
-        );
-        assert!(
-            hordes[0].beast_count >= 1,
-            "beast_count 应 >= 1（至少数到 ambient 刷出的那只），实际 {}",
-            hordes[0].beast_count
-        );
-        assert_eq!(hordes[0].source_zone, "test_zone");
-    }
-}
+#[path = "ambient_scheduler_tests.rs"]
+mod tests;

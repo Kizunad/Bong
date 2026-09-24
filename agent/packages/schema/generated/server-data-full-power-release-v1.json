@@ -50,5 +50,6 @@
       "minItems": 3,
       "maxItems": 3
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "68b531e76e29ddb906afe0ff82d429f0bef912dcd26ba508d038e738d33005d4"
 }

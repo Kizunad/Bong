@@ -127,6 +127,44 @@ final class GameplayVfxUtil {
         client.particleManager.addParticle(particle);
     }
 
+    /**
+     * 贴地的长宽可分离 decal，带朝向与尾段淡出——血溅散点 / 拖尾用。
+     *
+     * <p>与 {@link #spawnDecal} 的差别：① 不自转（血不会在地上转圈）；
+     * ② 长宽分离且朝向由调用方指定（拖尾要沿飞溅径向拉长）；
+     * ③ {@code yLift} 由调用方逐个错开，避免同一摊血的十几个共面 quad 互相 z-fighting；
+     * ④ 尾段淡出，血渍慢慢渗掉而不是"啪"地消失。
+     */
+    static void spawnGroundSplat(
+        MinecraftClient client,
+        ClientWorld world,
+        SpriteProvider provider,
+        double x,
+        double y,
+        double z,
+        float[] rgb,
+        float alpha,
+        int maxAge,
+        double halfLength,
+        double halfWidth,
+        double rotationRad,
+        double yLift,
+        float fadeOutFrom
+    ) {
+        if (client == null || world == null || provider == null || client.particleManager == null) {
+            return;
+        }
+        BongGroundDecalParticle particle = new BongGroundDecalParticle(world, x, y, z);
+        particle.setDecalShape(halfLength, halfWidth, yLift);
+        particle.setSpin(rotationRad, 0.0);
+        particle.setSpritePublic(provider.getSprite(world.random));
+        particle.setColor(rgb[0], rgb[1], rgb[2]);
+        particle.setAlphaPublic(alpha);
+        particle.setMaxAgePublic(maxAge);
+        particle.setFadeOutFrom(fadeOutFrom);
+        client.particleManager.addParticle(particle);
+    }
+
     static double[] direction(VfxEventPayload.SpawnParticle payload, double[] fallback) {
         if (fallback == null || fallback.length < 3) {
             fallback = DEFAULT_DIRECTION;

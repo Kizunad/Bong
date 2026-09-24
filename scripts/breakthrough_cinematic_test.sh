@@ -27,10 +27,10 @@ if ! grep -q 'version "17\.' <<< "$JAVA_VERSION_OUTPUT"; then
 fi
 
 cd "$ROOT_DIR/server"
-cargo test breakthrough_cinematic::tests::
+"$ROOT_DIR/scripts/build-token.sh" cargo test breakthrough_cinematic::tests::
 
 cd "$ROOT_DIR/client"
-./gradlew --no-daemon test \
+"$ROOT_DIR/scripts/build-token.sh" gradle --no-daemon test \
   --tests "com.bong.client.cultivation.BreakthroughSpectacleRendererTest" \
   --tests "com.bong.client.network.BreakthroughCinematicHandlerTest"
 

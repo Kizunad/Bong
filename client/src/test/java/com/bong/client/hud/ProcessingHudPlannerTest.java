@@ -3,7 +3,6 @@ package com.bong.client.hud;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.alchemy.state.AlchemyAttemptHistoryStore;
 import com.bong.client.alchemy.state.AlchemySessionStore;
-import com.bong.client.forge.state.ForgeSessionStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import net.minecraft.util.math.BlockPos;
@@ -11,52 +10,15 @@ import net.minecraft.util.math.BlockPos;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessingHudPlannerTest {
     @AfterEach
     void reset() {
-        ForgeSessionStore.resetForTests();
-        ForgeProgressHudPlanner.resetForTests();
         AlchemySessionStore.resetForTests();
         AlchemyFurnaceStore.resetForTests();
         AlchemyAttemptHistoryStore.resetForTests();
-    }
-
-    @Test
-    void forgeStepProgressShowsLabelAndBar() {
-        ForgeSessionStore.replace(new ForgeSessionStore.Snapshot(
-            7L,
-            "iron_sword",
-            "铁剑",
-            true,
-            "inscription",
-            1,
-            2,
-            "{\"progress\":0.5}"
-        ));
-
-        List<HudRenderCommand> commands = ForgeProgressHudPlanner.buildCommands(320, 180, 2_000L);
-
-        assertEquals(0.5, ForgeProgressHudPlanner.progressOf(ForgeSessionStore.snapshot()), 1e-6);
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("铭文刻划")));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD && cmd.isRect()));
-    }
-
-    @Test
-    void forgeStepProgressIgnoresNonNumericJsonValues() {
-        ForgeSessionStore.replace(new ForgeSessionStore.Snapshot(
-            7L,
-            "iron_sword",
-            "铁剑",
-            true,
-            "inscription",
-            1,
-            2,
-            "{\"progress\":\"oops\",\"elapsed_ticks\":8,\"target_ticks\":\"later\"}"
-        ));
-
-        assertEquals(0.0, ForgeProgressHudPlanner.progressOf(ForgeSessionStore.snapshot()), 1e-6);
     }
 
     @Test
@@ -104,6 +66,57 @@ class ProcessingHudPlannerTest {
         List<HudRenderCommand> commands = AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
 
         assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD));
+    }
+
+    @Test
+    void alchemyDirectStoreZeroTargetCannotBypassActiveHudGuard() {
+        AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(
+            new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
+        AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
+            "legacy_recipe",
+            true,
+            50,
+            0,
+            0.5f,
+            0.5f,
+            0.1f,
+            5.0,
+            10.0,
+            "炼制中",
+            List.of(),
+            List.of()
+        ));
+
+        assertFalse(AlchemySessionStore.snapshot().isActive(),
+            "direct-store active=true 也必须服从 targetTicks > 0 不变量");
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                .noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD),
+            "绕过 handler 写入的零目标快照也不得渲染“炼制 0%”");
+    }
+
+    @Test
+    void alchemyDirectStoreBlankRecipeCannotBypassActiveHudGuard() {
+        AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(
+            new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
+        AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
+            "   ",
+            true,
+            50,
+            100,
+            0.5f,
+            0.5f,
+            0.1f,
+            5.0,
+            10.0,
+            "炼制中",
+            List.of(),
+            List.of()
+        ));
+
+        assertFalse(AlchemySessionStore.snapshot().isActive(),
+            "blank recipe id 不得被 direct-store active=true 绕过");
+        assertTrue(AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L).stream()
+                .noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD));
     }
 
     @Test

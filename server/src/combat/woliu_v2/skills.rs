@@ -12,6 +12,11 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
 };
+
+/// 涡流·虚渊核签名 recipe——单一真源，供生产 emit（招式映射 + 视觉规格）与
+/// `audio::each_signature_skill_*` 运行时消费契约测试共同引用，避免测试另抄一份 recipe id
+/// 造成映射漂移假绿。
+pub(crate) const WOLIU_VOID_CORE_RECIPE: &str = "woliu_void_core";
 use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -22,6 +27,7 @@ use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::scenario::PassiveTarget;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     qi_release_to_zone, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount,
@@ -305,7 +311,7 @@ pub fn cast_void_core(
 pub fn resolve_woliu_v2_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
     skill: WoliuSkillId,
 ) -> CastResult {
@@ -315,7 +321,7 @@ pub fn resolve_woliu_v2_skill(
         .unwrap_or_default();
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill.as_str(), now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -440,7 +446,7 @@ pub fn resolve_woliu_v2_skill(
         ));
     }
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, cooldown_until_tick);
+        bindings.set_cooldown(skill.as_str(), cooldown_until_tick);
     }
 
     emit_cast_events(
@@ -607,24 +613,30 @@ fn collect_targets_in_radius(
         &Position,
         Option<&CurrentDimension>,
         Option<&Cultivation>,
+        Option<&PassiveTarget>,
     )>();
     query
         .iter(world)
-        .filter_map(|(entity, position, current_dimension, cultivation)| {
-            if entity == caster {
-                return None;
-            }
-            if current_dimension.map(|d| d.0).unwrap_or_default() != dimension {
-                return None;
-            }
-            if !cultivation.is_some_and(|c| c.qi_current > f64::EPSILON) {
-                return None;
-            }
-            if position.get().distance_squared(center) > radius_sq + f64::EPSILON {
-                return None;
-            }
-            Some(entity)
-        })
+        .filter_map(
+            |(entity, position, current_dimension, cultivation, passive_target)| {
+                if entity == caster {
+                    return None;
+                }
+                if passive_target.is_some() {
+                    return None;
+                }
+                if current_dimension.map(|d| d.0).unwrap_or_default() != dimension {
+                    return None;
+                }
+                if !cultivation.is_some_and(|c| c.qi_current > f64::EPSILON) {
+                    return None;
+                }
+                if position.get().distance_squared(center) > radius_sq + f64::EPSILON {
+                    return None;
+                }
+                Some(entity)
+            },
+        )
         .collect()
 }
 
@@ -920,6 +932,9 @@ fn apply_pull_displacement(
     displacement_blocks: f32,
     max_radius: f32,
 ) -> Option<f32> {
+    if world.get::<PassiveTarget>(target).is_some() {
+        return None;
+    }
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
         return None;
     }
@@ -962,6 +977,9 @@ fn apply_radial_displacement(
     displacement_blocks: f32,
     outward: bool,
 ) -> Option<f32> {
+    if world.get::<PassiveTarget>(target).is_some() {
+        return None;
+    }
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
         return None;
     }
@@ -1128,7 +1146,7 @@ fn record_stir_contamination(
     let source = ContamSource {
         amount: contamination_gain,
         color: ColorKind::Intricate,
-        meridian_id: Some(MeridianId::Lung),
+        meridian_id: Some(MeridianId::Lung.channel_id()),
         attacker_id: None,
         introduced_at: now_tick,
     };
@@ -1548,7 +1566,7 @@ pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static s
         ),
         WoliuSkillId::VoidCore => (
             "bong:woliu_void_core_collapse",
-            "woliu_void_core",
+            WOLIU_VOID_CORE_RECIPE,
             "bong:woliu_void_core",
         ),
         _ => (
@@ -1911,16 +1929,18 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             icon_texture: "bong:textures/gui/skill/woliu_hold.png",
         },
         WoliuSkillId::Burst => WoliuSkillVisual {
-            // 瞬涡：200ms 弹反——短促爆发 pop 形态 + 脆响，快速推掌动作。
-            animation_id: "bong:palm_strike",
+            // 瞬涡：200ms 弹反——短促爆发 pop 形态 + 脆响。
+            // P3 借用解除：专属双掌交叉弹开动画（原借通用 palm_strike 单掌推击）。
+            animation_id: "bong:woliu_burst",
             particle_id: "bong:woliu_burst_pop",
             sound_recipe_id: "woliu_burst_pop",
             hud_hint: "burst",
             icon_texture: "bong:textures/gui/skill/woliu_burst.png",
         },
         WoliuSkillId::Mouth => WoliuSkillVisual {
-            // 涡口：远程点按——前推漏斗 funnel 形态 + 远端 siphon 声，瞄准推掌动作。
-            animation_id: "bong:palm_thrust",
+            // 涡口：远程点按——前推漏斗 funnel 形态 + 远端 siphon 声。
+            // P3 借用解除：专属单臂开口虹吸动画（原借通用 palm_thrust 推掌）。
+            animation_id: "bong:woliu_mouth",
             particle_id: "bong:woliu_mouth_funnel",
             sound_recipe_id: "woliu_mouth_funnel",
             hud_hint: "mouth",
@@ -1928,15 +1948,17 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
         },
         WoliuSkillId::Pull => WoliuSkillVisual {
             // 涡引：拉拽——向心拖尾 drag 形态 + 拉拽声，扣抓-收拢动作。
-            animation_id: "bong:woliu_vacuum_lock",
+            // P3 去共用：专属扣抓拖拽动画（原与进阶 vacuum_lock 共用一条）。
+            animation_id: "bong:woliu_pull",
             particle_id: "bong:woliu_pull_drag",
             sound_recipe_id: "woliu_pull_drag",
             hud_hint: "pull",
             icon_texture: "bong:textures/gui/skill/woliu_pull.png",
         },
         WoliuSkillId::Heart => WoliuSkillVisual {
-            // 涡心：山谷级强制断经——大范围强压 field 形态 + 低沉轰鸣，深沉立姿。
-            animation_id: "bong:vortex_spiral_stance",
+            // 涡心：山谷级强制断经——大范围强压 field 形态 + 低沉轰鸣。
+            // P3 去共用：专属举天下压重桩动画（原与 v1 站桩 vortex_spiral_stance 共用）。
+            animation_id: "bong:woliu_heart",
             particle_id: "bong:woliu_heart_field",
             sound_recipe_id: "woliu_heart_field",
             hud_hint: "heart",
@@ -1947,35 +1969,35 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             particle_id: "bong:woliu_vacuum_palm_spiral",
             sound_recipe_id: "woliu_vacuum_palm",
             hud_hint: "vacuum_palm",
-            icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png",
         },
         WoliuSkillId::VortexShield => WoliuSkillVisual {
             animation_id: "bong:woliu_vortex_shield",
             particle_id: "bong:woliu_vortex_shield_sphere",
             sound_recipe_id: "woliu_vortex_shield",
             hud_hint: "vortex_shield",
-            icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png",
         },
         WoliuSkillId::VacuumLock => WoliuSkillVisual {
             animation_id: "bong:woliu_vacuum_lock",
             particle_id: "bong:woliu_vacuum_lock_cage",
             sound_recipe_id: "woliu_vacuum_lock",
             hud_hint: "vacuum_lock",
-            icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png",
         },
         WoliuSkillId::VortexResonance => WoliuSkillVisual {
             animation_id: "bong:woliu_vortex_resonance",
             particle_id: "bong:woliu_vortex_resonance_field",
             sound_recipe_id: "woliu_vortex_resonance",
             hud_hint: "vortex_resonance",
-            icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png",
         },
         WoliuSkillId::TurbulenceBurst => WoliuSkillVisual {
             animation_id: "bong:woliu_turbulence_burst",
             particle_id: "bong:woliu_turbulence_burst_wave",
             sound_recipe_id: "woliu_turbulence_burst",
             hud_hint: "turbulence_burst",
-            icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png",
         },
         // plan-woliu-path-v1：虚蚀路径 5 招式视觉
         WoliuSkillId::AmbientVortex => WoliuSkillVisual {
@@ -2009,7 +2031,7 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
         WoliuSkillId::VoidCore => WoliuSkillVisual {
             animation_id: "bong:woliu_void_core",
             particle_id: "bong:woliu_void_core_collapse",
-            sound_recipe_id: "woliu_void_core",
+            sound_recipe_id: WOLIU_VOID_CORE_RECIPE,
             hud_hint: "void_core",
             icon_texture: "bong:textures/gui/skill/woliu_void_core.png",
         },
@@ -2060,6 +2082,157 @@ mod tests {
         VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
         VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
     };
+
+    #[test]
+    fn passive_target_is_excluded_from_all_woliu_displacement_paths() {
+        let mut world = bevy_ecs::world::World::new();
+        let caster = world
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let passive = world
+            .spawn((
+                Position::new([2.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                PassiveTarget,
+            ))
+            .id();
+        let normal = world
+            .spawn((
+                Position::new([3.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let targets = collect_targets_in_radius(
+            &mut world,
+            caster,
+            DVec3::new(0.0, 64.0, 0.0),
+            DimensionKind::Overworld,
+            8.0,
+        );
+        assert_eq!(targets, vec![normal]);
+
+        let passive_before = world.get::<Position>(passive).unwrap().get();
+        assert_eq!(
+            apply_pull_displacement(&mut world, caster, passive, 1.0, 8.0),
+            None
+        );
+        assert_eq!(
+            apply_radial_displacement(&mut world, passive, DVec3::new(0.0, 64.0, 0.0), 1.0, true,),
+            None
+        );
+        assert_eq!(
+            world.get::<Position>(passive).unwrap().get(),
+            passive_before,
+            "passive target must retain its exact authoritative position across direct and AoE displacement helpers"
+        );
+
+        assert_eq!(
+            apply_pull_displacement(&mut world, caster, normal, 1.0, 8.0),
+            Some(1.0),
+            "control target must still consume the production pull path"
+        );
+    }
+
+    /// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：15 变体
+    /// `visual_for` 的 `icon_texture` 逐条对应 client main resources 磁盘真实
+    /// 资产，防下发悬空引用。专属映射值本身由下方
+    /// `advanced_woliu_visual_icons_pin_exclusive_scroll_mapping` 锁定（存在性
+    /// 与映射正确性分测：本用例挡"引用悬空文件"，映射 pin 挡"回退借用"）。
+    #[test]
+    fn every_woliu_v2_visual_icon_texture_points_at_real_client_asset() {
+        for skill in WoliuSkillId::ALL {
+            let icon = visual_for(skill).icon_texture;
+            let (namespace, path) = icon.split_once(':').unwrap_or_else(|| {
+                panic!("woliu_v2 visual icon `{icon}` 缺少 `namespace:path` 冒号分隔")
+            });
+            let disk = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../client/src/main/resources/assets")
+                .join(namespace)
+                .join(path);
+            assert!(
+                disk.is_file(),
+                "woliu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
+                 server payload 会下发悬空引用，client TextureProbe 探测必失败",
+                disk.display()
+            );
+        }
+    }
+
+    /// plan-skill-av-relink-v1 P2/P3 —— 进阶五招专属图标映射契约 pin（表驱动）：
+    /// `icon_texture` 严格等于各自专属 `skill_scroll_woliu_*.png`。存在性扫描
+    /// 挡不住回退——2026-07-18 之前进阶五招借用的基础招图标至今真实存在于磁盘，
+    /// 仅验文件存在时"重链回退成借用"仍会全绿；本 pin 按值锁死专属映射
+    /// （P0 #2 交付物）+ 进阶五招两两互异 + 与基础招图标集合不相交
+    /// （P3 重复映射判红边界）。
+    #[test]
+    fn advanced_woliu_visual_icons_pin_exclusive_scroll_mapping() {
+        let expected = [
+            (
+                WoliuSkillId::VacuumPalm,
+                "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png",
+            ),
+            (
+                WoliuSkillId::VortexShield,
+                "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png",
+            ),
+            (
+                WoliuSkillId::VacuumLock,
+                "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png",
+            ),
+            (
+                WoliuSkillId::VortexResonance,
+                "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png",
+            ),
+            (
+                WoliuSkillId::TurbulenceBurst,
+                "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png",
+            ),
+        ];
+        let base_icons: Vec<&str> = [
+            WoliuSkillId::Hold,
+            WoliuSkillId::Burst,
+            WoliuSkillId::Mouth,
+            WoliuSkillId::Pull,
+            WoliuSkillId::Heart,
+        ]
+        .into_iter()
+        .map(|skill| visual_for(skill).icon_texture)
+        .collect();
+
+        let mut seen = std::collections::HashSet::new();
+        for (skill, expected_icon) in expected {
+            let icon = visual_for(skill).icon_texture;
+            assert_eq!(
+                icon, expected_icon,
+                "进阶招 {skill:?} 的 icon_texture 必须是专属 scroll 图标（P0 #2 \
+                 重链交付物）——当前值偏离专属映射，疑似回退成借用其它图标"
+            );
+            assert!(
+                seen.insert(icon),
+                "进阶招 {skill:?} 的图标 `{icon}` 与另一进阶招重复——每招图标必须 \
+                 独立可辨（A/V 差异化红线 + P3 重复映射判红）"
+            );
+            assert!(
+                !base_icons.contains(&icon),
+                "进阶招 {skill:?} 的图标 `{icon}` 与基础招图标集合相交——不得回退 \
+                 到 2026-07-18 前的借用状态（基础图标仍存在，存在性扫描挡不住）"
+            );
+        }
+    }
 
     #[test]
     fn proficiency_scales_vortex_combat_knobs() {

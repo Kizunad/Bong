@@ -23,6 +23,7 @@ mod tests {
     use crate::inventory::{
         DroppedLootEntry, DroppedLootRegistry, ItemInstance, ItemRarity, PendingTsyDeathDrop,
     };
+    use crate::qi_physics::{QiTransfer, WorldQiAccount};
     use crate::world::dimension::{
         CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
     };
@@ -98,6 +99,8 @@ mod tests {
     /// 构建一个最小测试 App：lifecycle 三个 tick + cleanup + dim transfer。
     fn make_app(initial_tick: u64) -> App {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<QiTransfer>();
         app.insert_resource(CombatClock { tick: initial_tick });
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(DroppedLootRegistry::default());
@@ -254,13 +257,13 @@ mod tests {
         assert_eq!(started_events.len(), 1);
         assert_eq!(started_events[0].family_id, "tsy_lingxu_01");
 
-        // Collapsing 阶段 spirit_qi 翻倍（ratio=0 → -0.6 ×2 = -1.2 → clamp -1.0）
+        // Collapsing 阶段 spirit_qi 翻倍（ratio=0 → -0.6 ×2 = -1.2）；signed TSY 负压不做通用 clamp。
         {
             let zones = app.world().resource::<ZoneRegistry>();
             let z = zones
                 .find_zone_by_name("tsy_lingxu_01_shallow")
                 .expect("shallow zone");
-            assert!((z.spirit_qi - (-1.0)).abs() < 1e-6);
+            assert!((z.spirit_qi - (-1.2)).abs() < 1e-6);
         }
 
         // 推 30 秒 → Dead + cleanup

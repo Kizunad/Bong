@@ -53,6 +53,21 @@ class DeadDropBreakPlayerTest {
             "gas burst should be removed once its configured lifetime is exhausted");
     }
 
+    @Test
+    void disconnectClearDropsOldGasBurstsAndAllowsFreshBurst() {
+        DeadDropBreakPlayer.enqueueGasBurstForTests(1.0, 64.0, 1.0);
+        assertEquals(1, DeadDropBreakPlayer.pendingGasBurstsForTests(),
+            "old server gas burst must be queued before disconnect cleanup");
+
+        DeadDropBreakPlayer.clearOnDisconnect();
+
+        assertEquals(0, DeadDropBreakPlayer.pendingGasBurstsForTests(),
+            "disconnect cleanup must remove queued old-world gas particles");
+        DeadDropBreakPlayer.enqueueGasBurstForTests(2.0, 65.0, 2.0);
+        assertEquals(1, DeadDropBreakPlayer.pendingGasBurstsForTests(),
+            "fresh server gas burst must queue normally after teardown");
+    }
+
     private static VfxEventPayload.SpawnParticle payload() {
         return new VfxEventPayload.SpawnParticle(
             DeadDropBreakPlayer.EVENT_ID,

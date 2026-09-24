@@ -1,0 +1,13 @@
+# case	logical_width	logical_height	gui_scales	window_scales	mode	below_minimum
+minimum	320	240	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+small_odd	400	240	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+landscape_16_9	640	360	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+classic	854	480	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+wide_small	1000	700	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+squareish	1024	768	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+hd	1280	720	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+wide	1365	768	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+full_hd	1920	1080	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+ultrawide	2560	1080	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+cinema	3440	1440	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false
+portrait	1080	1920	1,2,3,4	1.0,1.25,1.5,2.0	COMPACT_REGULAR_WIDE	false

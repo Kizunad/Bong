@@ -2,6 +2,7 @@ package com.bong.client.inventory;
 
 import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.inventory.model.InventoryItem;
@@ -38,6 +39,9 @@ class InspectScreenSkillBarBindItemTest {
     }
 
     private void captureBackend() {
+        int[] requestSequence = {0};
+        ClientRequestSender.setRequestIdSupplierForTests(
+            () -> "quick-bind-test-" + (++requestSequence[0]));
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8)))
         );
@@ -61,15 +65,15 @@ class InspectScreenSkillBarBindItemTest {
         captureBackend();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
 
-        assertTrue(screen.bindBlockItemToSkillBar(2, blockItem()));
+        assertTrue(screen.bindBlockItemToSkillBar(1, blockItem()));
 
         assertEquals(1, sent.size());
         assertEquals(CLIENT_REQUEST, sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":2,\"binding\":{\"kind\":\"item\",\"template_id\":\"earth_crumb\"}}",
+            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":1,\"binding\":{\"kind\":\"item\",\"template_id\":\"earth_crumb\"}}",
             sent.get(0).body()
         );
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(2);
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(1);
         assertEquals(SkillBarEntry.Kind.ITEM, entry.kind());
         assertEquals("earth_crumb", entry.id());
         // P3 — earth_crumb 映射 vanilla BlockItem（minecraft:dirt）→ iconTexture 留空（blank），
@@ -80,6 +84,21 @@ class InspectScreenSkillBarBindItemTest {
         assertTrue(entry.iconTexture() == null || entry.iconTexture().isBlank(),
             "vanilla 方块（earth_crumb→minecraft:dirt）的 SkillBar iconTexture 应为 blank，"
                 + "以走 HUD itemTexture→原生方块图标路径，实际=`" + entry.iconTexture() + "`");
+    }
+
+    @Test
+    void unavailableCombatSlotRejectsBindingAndBlockPlacement() {
+        captureBackend();
+        int locked = SkillBarConfig.SLOT_COUNT;
+        InventoryModel inventory = InventoryModel.builder().hotbar(0, blockItem()).build();
+        InspectScreen screen = new InspectScreen(inventory);
+
+        assertFalse(screen.bindBlockItemToSkillBar(locked, blockItem()));
+        assertTrue(sent.isEmpty(), "未开放槽绑定必须在发包前拒绝");
+        assertNull(SkillBarStore.snapshot().slot(locked), "越界绑定不得创建额外槽位");
+        assertNull(BlockPlaceIntentResolver.selectedBlockPlaceIntent(
+            locked, inventory, new BlockPos(10, 64, 20), Direction.UP),
+            "越界槽不能生成方块放置请求");
     }
 
     @Test
@@ -99,58 +118,13 @@ class InspectScreenSkillBarBindItemTest {
     // 此处用 HOST_ITEMS 命中（不查 registry）的 earth_crumb 锁住 iconTexture=blank 契约，
     // vanilla:<short> 的图标分流由 BlockVanillaIconMapTest.usesVanillaItemIcon* 单测覆盖。
 
-    // ---- P0: 拖放方块到快捷使用栏（commitQuickUseDrop）同时写 quick_slot + SkillBar ----
-
     @Test
-    void dropBlockIntoQuickUseAlsoBindsSkillBar() {
+    void blocksCannotBindToQuickUse() {
         captureBackend();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
-
-        // 模拟拖放落到快捷栏第 4 槽（index=3）的收口。
-        screen.commitQuickUseDrop(3, blockItem());
-
-        // quick_slot_bind 与 skill_bar_bind 两条 C2S 都发出（顺序：先 quick_slot 再 skill_bar）。
-        assertEquals(2, sent.size(),
-            "拖方块进快捷栏应同时发 quick_slot_bind + skill_bar_bind，实际发了 " + sent.size() + " 条");
-        assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":3,\"item_id\":\"earth_crumb\"}",
-            sent.get(0).body());
-        assertEquals(
-            "{\"type\":\"skill_bar_bind\",\"v\":1,\"slot\":3,\"binding\":{\"kind\":\"item\",\"template_id\":\"earth_crumb\"}}",
-            sent.get(1).body());
-
-        // 本地 SkillBarStore 槽被写成 ITEM（右键「绑定到 N」同效）。
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(3);
-        assertNotNull(entry, "SkillBarStore 槽 3 应被写入 entry");
-        assertEquals(SkillBarEntry.Kind.ITEM, entry.kind(),
-            "拖方块进快捷栏后 SkillBarStore.slot(3) 应为 Kind.ITEM");
-        assertEquals("earth_crumb", entry.id());
-    }
-
-    @Test
-    void dropBlockIntoQuickUseEnablesBlockPlaceIntent() {
-        captureBackend();
-        InspectScreen screen = new InspectScreen(InventoryModel.empty());
-
-        // 拖放收口：写 SkillBarStore.slot(2) = earth_crumb（block）。
-        screen.commitQuickUseDrop(2, blockItem());
-        // 玩家用 HUD 热键选中第 3 槽（1-9 选中栏 index=2）。
-        SkillBarStore.setSelectedSlot(2);
-
-        // 库存中存在该方块实例（hotbar 槽 2 携带 earth_crumb instance=1）。
-        InventoryModel inventory = InventoryModel.builder()
-            .hotbar(2, blockItem())
-            .build();
-
-        BlockPlaceIntentResolver.Intent intent = BlockPlaceIntentResolver.selectedBlockPlaceIntent(
-            2, inventory, new BlockPos(10, 64, 20), Direction.UP);
-
-        assertNotNull(intent,
-            "拖方块进快捷栏并选中该槽后，selectedBlockPlaceIntent 应非空（拖放=可放置）");
-        assertEquals(1L, intent.instanceId(),
-            "intent 应指向被拖入方块的实例 id=1");
-        assertEquals(new BlockPos(10, 65, 20), intent.placePos(),
-            "UP 面放置点应在 targetPos 上方一格");
+        assertFalse(screen.commitQuickUseDrop(1, blockItem()));
+        assertTrue(sent.isEmpty());
+        assertNull(SkillBarStore.snapshot().slot(1));
     }
 
     @Test
@@ -160,18 +134,20 @@ class InspectScreenSkillBarBindItemTest {
 
         InventoryItem pill =
             InventoryItem.createFull(9L, "guyuan_pill", "固元丹", 1, 1, 0.2, "rare", "", 1, 1.0, 1.0);
-        screen.commitQuickUseDrop(5, pill);
+        QuickUseSlotStore.replace(com.bong.client.combat.QuickSlotConfig.empty()
+            .withEligibleItems(java.util.Set.of("guyuan_pill")));
+        assertTrue(screen.commitQuickUseDrop(1, pill));
 
         // 非方块物品：只发 quick_slot_bind，SkillBar 不动（行为回归）。
         assertEquals(1, sent.size(),
             "非方块物品拖进快捷栏只应发 quick_slot_bind，实际发了 " + sent.size() + " 条");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":5,\"item_id\":\"guyuan_pill\"}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"instance_id\":9,\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
 
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(5);
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(1);
         assertNull(entry,
-            "非方块物品不应写入 SkillBarStore.slot(5)，应保持为 null");
+            "非方块物品不应写入 SkillBarStore.slot(1)，应保持为 null");
     }
 
     @Test
@@ -185,9 +161,17 @@ class InspectScreenSkillBarBindItemTest {
         assertEquals(1, sent.size(),
             "清快捷栏槽只应发一条 quick_slot_bind(null)");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":null}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"instance_id\":null,\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
         assertNull(SkillBarStore.snapshot().slot(1));
+    }
+
+    @Test
+    void unavailableQuickUseSlotRejectsBindingBeforeTransport() {
+        captureBackend();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        assertFalse(screen.commitQuickUseDrop(com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, blockItem()));
+        assertTrue(sent.isEmpty(), "未开放的物品快捷槽不得发送绑定请求");
     }
 
     private static InventoryItem blockItem() {

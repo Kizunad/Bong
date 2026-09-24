@@ -25,13 +25,13 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 (
   cd "$ROOT_DIR/client"
-  ./gradlew --no-daemon test --tests "com.bong.client.season.SeasonFullExperienceTest"
+  "$ROOT_DIR/scripts/build-token.sh" gradle --no-daemon test --tests "com.bong.client.season.SeasonFullExperienceTest"
 )
 
 (
   cd "$ROOT_DIR/server"
-  cargo test fauna::migration
-  cargo test npc::seasonal_behavior
+  "$ROOT_DIR/scripts/build-token.sh" cargo test fauna::migration
+  "$ROOT_DIR/scripts/build-token.sh" cargo test npc::seasonal_behavior
 )
 
 (

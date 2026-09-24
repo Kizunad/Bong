@@ -4,7 +4,6 @@ public enum HudRenderLayer {
     BASELINE,
     ZONE,
     COMPASS,
-    QI_RADAR,
     THREAT_INDICATOR,
     HUD_VARIANT,
     TARGET_INFO,
@@ -26,14 +25,12 @@ public enum HudRenderLayer {
     STATUS_EFFECTS,
     PROCESSING_HUD,
     LINGTIAN_OVERLAY,
-    STAMINA_BAR,
     MOVEMENT_HUD,
     SEARCH_PROGRESS,
     DAMAGE_FLOATER,
     FLIGHT_HUD,
     COFFIN,
     TRIBULATION,
-    NEAR_DEATH,
     TSY_EXTRACT,
     /** plan-sou-da-che-v1 P3：回到灵龛后的整理呼吸层。 */
     HOME_SEQUENCE,
@@ -75,5 +72,7 @@ public enum HudRenderLayer {
     /** 盾格挡命中瞬态确认弧光（~350ms）。 */
     SHIELD_BLOCK,
     /** F5 fix — 灵龛守护状态面板（守护载体耐久/破损 + 最近龛侵警报，仅在有数据时渲染）。 */
-    NICHE_GUARDIAN
+    NICHE_GUARDIAN,
+    /** plan-race-system-v1 PR-5b — 易形（morph.yixing）左下形态图标 + 施法期白色 vignette。 */
+    MORPH
 }

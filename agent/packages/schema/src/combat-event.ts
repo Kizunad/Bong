@@ -16,16 +16,17 @@ export const CombatDefenseKindV1 = Type.Union([
 ]);
 export type CombatDefenseKindV1 = Static<typeof CombatDefenseKindV1>;
 
-export const CombatBodyPartV1 = Type.Union([
-  Type.Literal("head"),
-  Type.Literal("chest"),
-  Type.Literal("abdomen"),
-  Type.Literal("back"),
-  Type.Literal("arm_l"),
-  Type.Literal("arm_r"),
-  Type.Literal("leg_l"),
-  Type.Literal("leg_r"),
-]);
+/**
+ * 命中部位 id（plan-race-system-v1 P1c）。
+ *
+ * 曾是 8 段人形闭合 union，wire 开放化后改为任意 string part id（humanoid 沿用 8 个
+ * 既有 snake_case 名字，非 humanoid 构型如 P5 飞鲸的部位不在这 8 段之列）。不留
+ * dual-form 兼容层。
+ */
+export const CombatBodyPartV1 = Type.String({
+  minLength: 1,
+  description: "命中部位 id（humanoid 沿用 8 段既有名字，非 humanoid 构型可为任意 id）",
+});
 export type CombatBodyPartV1 = Static<typeof CombatBodyPartV1>;
 
 export const CombatWoundKindV1 = Type.Union([

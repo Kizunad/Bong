@@ -47,7 +47,8 @@ use components::{
 use ecology::emit_botany_ecology_snapshot;
 use events::{spawn_event_triggered_plants_on_death, BotanyEventSpawnRoll};
 use harvest::{
-    detect_non_session_trample, enforce_harvest_session_constraints, tick_harvest_sessions,
+    detect_non_session_trample, enforce_harvest_session_constraints,
+    release_disconnected_harvest_sessions, tick_harvest_sessions,
 };
 use hazard::{hazard_hints_for_kind, spawn_attracted_mobs_from_harvest, tick_harvest_hazards};
 use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
@@ -80,6 +81,8 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestTerminalEvent>();
     app.add_event::<BotanySkillChangedEvent>();
     app.add_event::<BotanyAttractsMobsEvent>();
+    // botany 早于 npc::register 装载；先创建 commit capability 队列，后续重复 add_event 幂等。
+    app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
 
     app.add_systems(Startup, validate_botany_inventory_primitives_on_startup);
 
@@ -87,10 +90,16 @@ pub fn register(app: &mut App) {
         Update,
         (
             initialize_static_points_from_zones,
-            spawn_event_triggered_plants_on_death,
+            spawn_event_triggered_plants_on_death
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             detect_non_session_trample,
             run_botany_lifecycle_tick,
             tick_harvest_hazards,
+            // plan-bughunt-botany-disconnect-session P0：断线取消必须排在
+            // enforce_harvest_session_constraints / tick_harvest_sessions 之前，
+            // 防止断线当帧 session 恰好到达完成 tick 时被 complete_harvest_for_player
+            // 静默吞掉进度（见 harvest::release_disconnected_harvest_sessions 文档注释）。
+            release_disconnected_harvest_sessions,
             enforce_harvest_session_constraints,
             tick_harvest_sessions,
             spawn_attracted_mobs_from_harvest,
@@ -244,7 +253,7 @@ fn emit_botany_harvest_progress(
         let target_pos = session
             .target_entity
             .and_then(|entity| plants.get(entity).ok().map(|plant| plant.position));
-        if now_tick % PROGRESS_SYNC_INTERVAL_TICKS == 0 {
+        if now_tick.is_multiple_of(PROGRESS_SYNC_INTERVAL_TICKS) {
             let origin_position = target_pos.unwrap_or(session.origin_position);
             let active_tool = inventories
                 .get(session.client_entity)

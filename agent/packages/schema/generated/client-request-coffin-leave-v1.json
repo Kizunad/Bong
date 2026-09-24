@@ -14,5 +14,6 @@
       "const": "coffin_leave",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "7da89fbcb6e2092c84a2390490d4192985ef56233ee1447a87f1d24a7eb8975b"
 }

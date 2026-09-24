@@ -1,11 +1,9 @@
-//! 医道功法 v1：5 招治疗包 + 医者身份底盘。
+//! 医道功法 v1：3 招治疗包 + 医者身份底盘。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, DVec3, Entity, Event, Events, Position};
+use valence::prelude::{bevy_ecs, Component, DVec3, Entity, Event, Events, Position, UniqueId};
 
-use crate::combat::components::{
-    CastSource, Casting, Lifecycle, LifecycleState, SkillBarBindings, Wounds,
-};
+use crate::combat::components::{CastSource, Casting, SkillBarBindings};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
@@ -21,8 +19,8 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
-    qi_release_to_zone, yidao_cast_ticks, QiAccountId, QiTransfer, QiTransferReason,
+    contam_purge, mass_meridian_repair, meridian_repair, qi_release_to_zone, yidao_cast_ticks,
+    QiAccountId, QiTransfer, QiTransferReason,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::yidao::{
@@ -32,34 +30,76 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 const SINGLE_TARGET_RANGE_M: f64 = 5.0;
-const CLOSE_TARGET_RANGE_M: f64 = 1.0;
 const MASS_TARGET_RANGE_M: f64 = 5.0;
 const TICK_MS: u64 = 50;
 
 pub const MERIDIAN_REPAIR_SKILL_ID: &str = "yidao.meridian_repair";
 pub const CONTAM_PURGE_SKILL_ID: &str = "yidao.contam_purge";
-pub const EMERGENCY_RESUSCITATE_SKILL_ID: &str = "yidao.emergency_resuscitate";
-pub const LIFE_EXTENSION_SKILL_ID: &str = "yidao.life_extension";
 pub const MASS_MERIDIAN_REPAIR_SKILL_ID: &str = "yidao.mass_meridian_repair";
+
+// ── plan-skill-anim-fidelity-v1 P4：yidao 3 招两段式动画 id（plan-yidao-v1 §5 欠账）──
+//
+// 全部 3 招走 `resolve_yidao_skill` → `insert_casting` 真实长引导窗（cast_ticks_base
+// 100-1200t，经 `yidao_cast_ticks` 按 mastery/平和色缩放——窗长可变，蓄力段 isLoop
+// 覆盖任意窗长）。起手由 `resolve_yidao_skill` 播蓄力循环段；停止路径 = cast_emit
+// `looping_cast_anim_id` 表驱动（三打断分支 + 自然完成分支 StopAnim，§13 #6 红线）；
+// release 收势段由 `complete_yidao_casts` 有效结算分支接力播出（完成时目标已
+// 失效的无效完成不奖励收势，与 sword_infuse 完成分支先例同语义）。
+// 改任一 id 必须同步 client `player_animation/` 资产与 `AnimCastTicksAlignmentTest`。
+pub const ANIM_YIDAO_MERIDIAN_REPAIR_LOOP: &str = "bong:yidao_meridian_repair_loop";
+pub const ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE: &str = "bong:yidao_meridian_repair_release";
+pub const ANIM_YIDAO_CONTAM_PURGE_LOOP: &str = "bong:yidao_contam_purge_loop";
+pub const ANIM_YIDAO_CONTAM_PURGE_RELEASE: &str = "bong:yidao_contam_purge_release";
+pub const ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP: &str = "bong:yidao_mass_meridian_repair_loop";
+pub const ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE: &str = "bong:yidao_mass_meridian_repair_release";
+
+/// yidao 施术动画优先级（与 sword_infuse 两段式先例同档：cast 起手/收势均 1200）。
+const YIDAO_ANIM_PRIORITY: u16 = 1200;
+/// 蓄力循环段起播淡入（与 `emit_self_visuals` 先例一致）。
+const YIDAO_LOOP_ANIM_FADE_IN_TICKS: u8 = 2;
+/// release 收势接力淡入（承接蓄力段稳定帧，与 sword_infuse release 先例一致）。
+const YIDAO_RELEASE_ANIM_FADE_IN_TICKS: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum YidaoSkillId {
     MeridianRepair,
     ContamPurge,
-    EmergencyResuscitate,
-    LifeExtension,
     MassMeridianRepair,
 }
 
 impl YidaoSkillId {
+    /// 全部 3 招（快照生成 / 映射测试的遍历锚，新增变体必须同步补入）。
+    pub const ALL: [Self; 3] = [
+        Self::MeridianRepair,
+        Self::ContamPurge,
+        Self::MassMeridianRepair,
+    ];
+
     pub fn skill_id(self) -> &'static str {
         match self {
             Self::MeridianRepair => MERIDIAN_REPAIR_SKILL_ID,
             Self::ContamPurge => CONTAM_PURGE_SKILL_ID,
-            Self::EmergencyResuscitate => EMERGENCY_RESUSCITATE_SKILL_ID,
-            Self::LifeExtension => LIFE_EXTENSION_SKILL_ID,
             Self::MassMeridianRepair => MASS_MERIDIAN_REPAIR_SKILL_ID,
+        }
+    }
+
+    /// P4：蓄力循环段动画 id（`resolve_yidao_skill` 起手播出；停止映射见
+    /// `yidao_loop_anim_for_skill_id`）。
+    pub fn loop_anim_id(self) -> &'static str {
+        match self {
+            Self::MeridianRepair => ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            Self::ContamPurge => ANIM_YIDAO_CONTAM_PURGE_LOOP,
+            Self::MassMeridianRepair => ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+        }
+    }
+
+    /// P4：release 收势段动画 id（`complete_yidao_casts` 有效结算分支接力）。
+    pub fn release_anim_id(self) -> &'static str {
+        match self {
+            Self::MeridianRepair => ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            Self::ContamPurge => ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            Self::MassMeridianRepair => ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
         }
     }
 
@@ -67,8 +107,6 @@ impl YidaoSkillId {
         match self {
             Self::MeridianRepair => YidaoSkillIdV1::MeridianRepair,
             Self::ContamPurge => YidaoSkillIdV1::ContamPurge,
-            Self::EmergencyResuscitate => YidaoSkillIdV1::EmergencyResuscitate,
-            Self::LifeExtension => YidaoSkillIdV1::LifeExtension,
             Self::MassMeridianRepair => YidaoSkillIdV1::MassMeridianRepair,
         }
     }
@@ -77,8 +115,6 @@ impl YidaoSkillId {
         match self {
             Self::MeridianRepair => YidaoEventKindV1::MeridianHeal,
             Self::ContamPurge => YidaoEventKindV1::ContamPurge,
-            Self::EmergencyResuscitate => YidaoEventKindV1::EmergencyResuscitate,
-            Self::LifeExtension => YidaoEventKindV1::LifeExtension,
             Self::MassMeridianRepair => YidaoEventKindV1::MassHeal,
         }
     }
@@ -99,13 +135,6 @@ pub struct YidaoSkillSpec {
 
 pub const MERIDIAN_REPAIR_DEPS: &[MeridianId] = &[MeridianId::Heart, MeridianId::Lung];
 pub const CONTAM_PURGE_DEPS: &[MeridianId] = &[MeridianId::Lung, MeridianId::LargeIntestine];
-pub const EMERGENCY_DEPS: &[MeridianId] = &[MeridianId::LargeIntestine];
-pub const LIFE_EXTENSION_DEPS: &[MeridianId] = &[
-    MeridianId::Heart,
-    MeridianId::Lung,
-    MeridianId::LargeIntestine,
-    MeridianId::Kidney,
-];
 pub const MASS_REPAIR_DEPS: &[MeridianId] = &[
     MeridianId::Du,
     MeridianId::Heart,
@@ -138,28 +167,6 @@ pub fn yidao_skill_spec(skill: YidaoSkillId) -> YidaoSkillSpec {
             audio_recipe: "yidao_contam_purge",
             vfx_event_id: "bong:yidao_contam_purge",
         },
-        YidaoSkillId::EmergencyResuscitate => YidaoSkillSpec {
-            skill,
-            cast_ticks_base: 5 * 20,
-            cooldown_ticks: 10 * 20,
-            required_realm: Realm::Awaken,
-            range_m: CLOSE_TARGET_RANGE_M,
-            dependencies: EMERGENCY_DEPS,
-            practice_gain: 10.0,
-            audio_recipe: "yidao_emergency_resuscitate",
-            vfx_event_id: "bong:yidao_emergency_resuscitate",
-        },
-        YidaoSkillId::LifeExtension => YidaoSkillSpec {
-            skill,
-            cast_ticks_base: 30 * 20,
-            cooldown_ticks: 3600 * 20,
-            required_realm: Realm::Spirit,
-            range_m: CLOSE_TARGET_RANGE_M,
-            dependencies: LIFE_EXTENSION_DEPS,
-            practice_gain: 200.0,
-            audio_recipe: "yidao_life_extension",
-            vfx_event_id: "bong:yidao_life_extension",
-        },
         YidaoSkillId::MassMeridianRepair => YidaoSkillSpec {
             skill,
             cast_ticks_base: 60 * 20,
@@ -174,12 +181,20 @@ pub fn yidao_skill_spec(skill: YidaoSkillId) -> YidaoSkillSpec {
     }
 }
 
+/// P4：cast_emit `looping_cast_anim_id` 的 yidao 分表（skill_id 字符串 → 蓄力段
+/// 动画 id）。yidao 3 招全部起手播循环蓄力段，打断/自然完成的 StopAnim 停止路径
+/// 由 cast_emit 通用分支表驱动（§13 #6 红线：无停止路径的循环动画不予合入）。
+pub fn yidao_loop_anim_for_skill_id(skill_id: &str) -> Option<&'static str> {
+    YidaoSkillId::ALL
+        .into_iter()
+        .find(|skill| skill.skill_id() == skill_id)
+        .map(YidaoSkillId::loop_anim_id)
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 pub struct HealingMastery {
     pub meridian_repair: f64,
     pub contam_purge: f64,
-    pub emergency_resuscitate: f64,
-    pub life_extension: f64,
     pub mass_meridian_repair: f64,
 }
 
@@ -188,8 +203,6 @@ impl Default for HealingMastery {
         Self {
             meridian_repair: 0.0,
             contam_purge: 0.0,
-            emergency_resuscitate: 0.0,
-            life_extension: 0.0,
             mass_meridian_repair: 0.0,
         }
     }
@@ -200,8 +213,6 @@ impl HealingMastery {
         match skill {
             YidaoSkillId::MeridianRepair => self.meridian_repair,
             YidaoSkillId::ContamPurge => self.contam_purge,
-            YidaoSkillId::EmergencyResuscitate => self.emergency_resuscitate,
-            YidaoSkillId::LifeExtension => self.life_extension,
             YidaoSkillId::MassMeridianRepair => self.mass_meridian_repair,
         }
     }
@@ -219,8 +230,6 @@ impl HealingMastery {
         match skill {
             YidaoSkillId::MeridianRepair => self.meridian_repair = next,
             YidaoSkillId::ContamPurge => self.contam_purge = next,
-            YidaoSkillId::EmergencyResuscitate => self.emergency_resuscitate = next,
-            YidaoSkillId::LifeExtension => self.life_extension = next,
             YidaoSkillId::MassMeridianRepair => self.mass_meridian_repair = next,
         }
         next - current
@@ -298,8 +307,6 @@ pub struct HealerNpcDecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealerNpcAction {
-    EmergencyResuscitate,
-    LifeExtension,
     ContamPurge,
     MeridianRepair,
     Retreat,
@@ -315,11 +322,6 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(MERIDIAN_REPAIR_SKILL_ID, resolve_meridian_repair_skill);
     registry.register(CONTAM_PURGE_SKILL_ID, resolve_contam_purge_skill);
     registry.register(
-        EMERGENCY_RESUSCITATE_SKILL_ID,
-        resolve_emergency_resuscitate_skill,
-    );
-    registry.register(LIFE_EXTENSION_SKILL_ID, resolve_life_extension_skill);
-    registry.register(
         MASS_MERIDIAN_REPAIR_SKILL_ID,
         resolve_mass_meridian_repair_skill,
     );
@@ -330,8 +332,6 @@ pub fn declare_meridian_dependencies(
 ) {
     dependencies.declare(MERIDIAN_REPAIR_SKILL_ID, MERIDIAN_REPAIR_DEPS.to_vec());
     dependencies.declare(CONTAM_PURGE_SKILL_ID, CONTAM_PURGE_DEPS.to_vec());
-    dependencies.declare(EMERGENCY_RESUSCITATE_SKILL_ID, EMERGENCY_DEPS.to_vec());
-    dependencies.declare(LIFE_EXTENSION_SKILL_ID, LIFE_EXTENSION_DEPS.to_vec());
     dependencies.declare(MASS_MERIDIAN_REPAIR_SKILL_ID, MASS_REPAIR_DEPS.to_vec());
 }
 
@@ -351,30 +351,6 @@ pub fn resolve_contam_purge_skill(
     target: Option<Entity>,
 ) -> CastResult {
     resolve_yidao_skill(world, caster, slot, target, YidaoSkillId::ContamPurge)
-}
-
-pub fn resolve_emergency_resuscitate_skill(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    slot: u8,
-    target: Option<Entity>,
-) -> CastResult {
-    resolve_yidao_skill(
-        world,
-        caster,
-        slot,
-        target,
-        YidaoSkillId::EmergencyResuscitate,
-    )
-}
-
-pub fn resolve_life_extension_skill(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    slot: u8,
-    target: Option<Entity>,
-) -> CastResult {
-    resolve_yidao_skill(world, caster, slot, target, YidaoSkillId::LifeExtension)
 }
 
 pub fn resolve_mass_meridian_repair_skill(
@@ -406,7 +382,7 @@ pub fn resolve_yidao_skill(
         .unwrap_or_default();
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill.skill_id(), now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -448,24 +424,13 @@ pub fn resolve_yidao_skill(
         let Some(patient) = target else {
             return rejected(CastRejectReason::InvalidTarget);
         };
-        if skill == YidaoSkillId::LifeExtension && patient == caster {
-            return rejected(CastRejectReason::InvalidTarget);
-        }
         if !is_patient_in_range(world, caster, patient, spec.range_m) {
             return rejected(CastRejectReason::InvalidTarget);
         }
         vec![patient]
     };
 
-    if !can_apply_yidao_effect(
-        world,
-        caster,
-        &patients,
-        skill,
-        mastery,
-        peace_color,
-        now_tick,
-    ) {
+    if !can_apply_yidao_effect(world, caster, &patients, skill, mastery, peace_color) {
         return rejected(CastRejectReason::InvalidTarget);
     }
 
@@ -478,6 +443,14 @@ pub fn resolve_yidao_skill(
         started_at_tick: now_tick,
     });
     insert_casting(world, caster, slot, spec, cast_ticks, now_tick);
+    // P4：起手播蓄力循环段（isLoop 覆盖可变引导窗）；打断/完成 StopAnim 由
+    // cast_emit 表驱动（`yidao_loop_anim_for_skill_id`），release 由完成分支接力。
+    emit_yidao_anim(
+        world,
+        caster,
+        skill.loop_anim_id(),
+        YIDAO_LOOP_ANIM_FADE_IN_TICKS,
+    );
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
         anim_duration_ticks: cast_ticks as u32,
@@ -509,7 +482,6 @@ pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
             pending.skill,
             pending.mastery,
             pending.peace_color,
-            pending.started_at_tick,
         ) {
             let outcome = apply_yidao_effect(
                 world,
@@ -518,10 +490,7 @@ pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
                 pending.skill,
                 pending.mastery,
                 pending.peace_color,
-                YidaoApplyTiming {
-                    eligibility_tick: event.completed_at_tick,
-                    now_tick: event.completed_at_tick,
-                },
+                event.completed_at_tick,
             );
             if outcome.success_count > 0 || outcome.failure_count > 0 {
                 emit_yidao_vfx_audio(
@@ -529,6 +498,15 @@ pub fn complete_yidao_casts(world: &mut bevy_ecs::world::World) {
                     event.caster,
                     patients.first().copied().unwrap_or(event.caster),
                     spec,
+                );
+                // P4：有效结算才接力 release 收势（蓄力段 StopAnim 已由
+                // cast_emit 自然完成分支同拍发出）；完成时目标失效的无效完成
+                // 不奖励收势——与 sword_infuse 完成分支先例同语义。
+                emit_yidao_anim(
+                    world,
+                    event.caster,
+                    pending.skill.release_anim_id(),
+                    YIDAO_RELEASE_ANIM_FADE_IN_TICKS,
                 );
             }
         }
@@ -568,7 +546,6 @@ fn can_apply_yidao_effect(
     skill: YidaoSkillId,
     mastery: f64,
     peace_color: bool,
-    now_tick: u64,
 ) -> bool {
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return false;
@@ -597,21 +574,6 @@ fn can_apply_yidao_effect(
                 )
                 .is_ok_and(|calc| has_qi(cultivation, calc.qi_cost))
         }
-        YidaoSkillId::EmergencyResuscitate => {
-            let hp_max = world
-                .get::<Wounds>(patient)
-                .map(|wounds| wounds.health_max)
-                .unwrap_or(100.0);
-            emergency_stabilize(cultivation.qi_max, hp_max, mastery).is_ok_and(|calc| {
-                valid_emergency_lifecycle(world, patient, now_tick, calc.dying_window_ticks)
-                    && has_qi(cultivation, calc.qi_cost)
-            })
-        }
-        YidaoSkillId::LifeExtension => life_extend(cultivation.qi_max, mastery, peace_color)
-            .is_ok_and(|calc| {
-                valid_life_extension_lifecycle(world, patient, now_tick, calc.window_ticks)
-                    && has_qi(cultivation, calc.qi_cost.min(cultivation.qi_max))
-            }),
         YidaoSkillId::MassMeridianRepair => {
             let density = local_qi_density_for_mass_repair(world, caster);
             mass_meridian_repair(density, cultivation.realm, mastery, peace_color).is_ok_and(
@@ -633,34 +595,6 @@ fn has_qi(cultivation: &Cultivation, amount: f64) -> bool {
     amount > f64::EPSILON && cultivation.qi_current + f64::EPSILON >= amount
 }
 
-fn valid_emergency_lifecycle(
-    world: &bevy_ecs::world::World,
-    patient: Entity,
-    now_tick: u64,
-    window_ticks: u64,
-) -> bool {
-    world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
-        lifecycle.state == LifecycleState::NearDeath
-            && lifecycle
-                .last_death_tick
-                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(window_ticks))
-    })
-}
-
-fn valid_life_extension_lifecycle(
-    world: &bevy_ecs::world::World,
-    patient: Entity,
-    now_tick: u64,
-    window_ticks: u64,
-) -> bool {
-    world.get::<Lifecycle>(patient).is_some_and(|lifecycle| {
-        lifecycle.state == LifecycleState::NearDeath
-            && lifecycle
-                .last_death_tick
-                .is_some_and(|death_tick| now_tick <= death_tick.saturating_add(window_ticks))
-    })
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct YidaoApplyOutcome {
     patient_ids: Vec<String>,
@@ -676,12 +610,6 @@ struct YidaoApplyOutcome {
     patient_qi_max_delta: f64,
     contract_state: Option<MedicalContractState>,
     detail: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct YidaoApplyTiming {
-    eligibility_tick: u64,
-    now_tick: u64,
 }
 
 impl Default for YidaoApplyOutcome {
@@ -711,45 +639,18 @@ fn apply_yidao_effect(
     skill: YidaoSkillId,
     mastery: f64,
     peace_color: bool,
-    timing: YidaoApplyTiming,
+    now_tick: u64,
 ) -> YidaoApplyOutcome {
     let mut outcome = match skill {
-        YidaoSkillId::MeridianRepair => apply_meridian_repair(
-            world,
-            caster,
-            patients[0],
-            mastery,
-            peace_color,
-            timing.now_tick,
-        ),
+        YidaoSkillId::MeridianRepair => {
+            apply_meridian_repair(world, caster, patients[0], mastery, peace_color, now_tick)
+        }
         YidaoSkillId::ContamPurge => {
             apply_contam_purge(world, caster, patients[0], mastery, peace_color)
         }
-        YidaoSkillId::EmergencyResuscitate => apply_emergency_resuscitate(
-            world,
-            caster,
-            patients[0],
-            mastery,
-            timing.eligibility_tick,
-            timing.now_tick,
-        ),
-        YidaoSkillId::LifeExtension => apply_life_extension(
-            world,
-            caster,
-            patients[0],
-            mastery,
-            peace_color,
-            timing.eligibility_tick,
-            timing.now_tick,
-        ),
-        YidaoSkillId::MassMeridianRepair => apply_mass_meridian_repair(
-            world,
-            caster,
-            patients,
-            mastery,
-            peace_color,
-            timing.now_tick,
-        ),
+        YidaoSkillId::MassMeridianRepair => {
+            apply_mass_meridian_repair(world, caster, patients, mastery, peace_color, now_tick)
+        }
     };
     if outcome.success_count > 0 {
         let successful_patients = outcome.successful_patients.clone();
@@ -759,11 +660,11 @@ fn apply_yidao_effect(
             &successful_patients,
             skill,
             outcome.success_count,
-            timing.now_tick,
+            now_tick,
         );
     }
     if outcome.success_count > 0 || outcome.failure_count > 0 {
-        emit_yidao_event(world, caster, skill, timing.now_tick, &outcome);
+        emit_yidao_event(world, caster, skill, now_tick, &outcome);
     }
     outcome
 }
@@ -868,108 +769,6 @@ fn apply_contam_purge(
         qi_transferred: calc.qi_cost,
         contam_reduced: calc.purge_amount,
         detail: "contamination purged".to_string(),
-        ..Default::default()
-    }
-}
-
-fn apply_emergency_resuscitate(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    patient: Entity,
-    mastery: f64,
-    eligibility_tick: u64,
-    now_tick: u64,
-) -> YidaoApplyOutcome {
-    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
-        return YidaoApplyOutcome::default();
-    };
-    let hp_max = world
-        .get::<Wounds>(patient)
-        .map(|wounds| wounds.health_max)
-        .unwrap_or(100.0);
-    let Ok(calc) = emergency_stabilize(cultivation.qi_max, hp_max, mastery) else {
-        return YidaoApplyOutcome::default();
-    };
-    let valid_lifecycle =
-        valid_emergency_lifecycle(world, patient, eligibility_tick, calc.dying_window_ticks);
-    if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost) {
-        return YidaoApplyOutcome::default();
-    }
-    let mut restored = 0.0_f32;
-    if let Some(mut wounds) = world.get_mut::<Wounds>(patient) {
-        for wound in &mut wounds.entries {
-            wound.bleeding_per_sec = 0.0;
-        }
-        let before = wounds.health_current;
-        wounds.health_current = (wounds.health_current + calc.hp_restore).min(wounds.health_max);
-        restored = wounds.health_current - before;
-    }
-    if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(patient) {
-        lifecycle.revive(now_tick);
-    }
-    emit_qi_transfer(world, caster, patient, calc.qi_cost);
-    YidaoApplyOutcome {
-        patient_ids: vec![entity_wire_id(patient)],
-        successful_patients: vec![patient],
-        success_count: 1,
-        qi_transferred: calc.qi_cost,
-        hp_restored: restored,
-        detail: "emergency stabilized".to_string(),
-        ..Default::default()
-    }
-}
-
-fn apply_life_extension(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    patient: Entity,
-    mastery: f64,
-    peace_color: bool,
-    eligibility_tick: u64,
-    now_tick: u64,
-) -> YidaoApplyOutcome {
-    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
-        return YidaoApplyOutcome::default();
-    };
-    let Ok(calc) = life_extend(cultivation.qi_max, mastery, peace_color) else {
-        return YidaoApplyOutcome::default();
-    };
-    let valid_lifecycle =
-        valid_life_extension_lifecycle(world, patient, eligibility_tick, calc.window_ticks);
-    if !valid_lifecycle || !debit_caster_qi(world, caster, calc.qi_cost.min(cultivation.qi_max)) {
-        return YidaoApplyOutcome::default();
-    }
-    apply_qi_max_loss(world, caster, calc.medic_qi_max_loss_ratio);
-    apply_qi_max_loss(world, patient, calc.patient_qi_max_loss_ratio);
-    add_karma(world, caster, calc.medic_karma_delta);
-    let realm_regressed = maybe_regress_patient_realm(
-        world,
-        caster,
-        patient,
-        calc.patient_realm_regress_chance,
-        now_tick,
-    );
-    if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(patient) {
-        lifecycle.revive(now_tick);
-    }
-    if let Some(mut wounds) = world.get_mut::<Wounds>(patient) {
-        wounds.health_current =
-            (wounds.health_max * calc.revive_hp_fraction).max(wounds.health_current);
-    }
-    emit_qi_transfer(world, caster, patient, calc.qi_cost.min(cultivation.qi_max));
-    YidaoApplyOutcome {
-        patient_ids: vec![entity_wire_id(patient)],
-        successful_patients: vec![patient],
-        success_count: 1,
-        qi_transferred: calc.qi_cost.min(cultivation.qi_max),
-        karma_delta: calc.medic_karma_delta,
-        medic_qi_max_delta: -calc.medic_qi_max_loss_ratio,
-        patient_qi_max_delta: -calc.patient_qi_max_loss_ratio,
-        detail: if realm_regressed {
-            "life extension revived patient; realm regressed".to_string()
-        } else {
-            "life extension revived patient".to_string()
-        },
         ..Default::default()
     }
 }
@@ -1186,6 +985,37 @@ fn insert_casting(
         skill_id: Some(spec.skill.skill_id().to_string()),
         skill_config: None,
     });
+}
+
+/// P4：对施术者发 PlayAnim（蓄力循环段起播 / release 收势接力共用）。缺
+/// `UniqueId` / `Position`（headless 测试实体或 NPC）时静默跳过；粒子/音效
+/// 维持既有 `emit_yidao_vfx_audio` 不动（本 PR 只接动画通道）。
+fn emit_yidao_anim(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    anim_id: &str,
+    fade_in_ticks: u8,
+) {
+    let Some(origin) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+    let Some(target_player) = world
+        .get::<UniqueId>(caster)
+        .map(|unique_id| unique_id.0.to_string())
+    else {
+        return;
+    };
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: YIDAO_ANIM_PRIORITY,
+                fade_in_ticks: Some(fade_in_ticks),
+            },
+        ));
+    }
 }
 
 fn emit_yidao_vfx_audio(
@@ -1533,68 +1363,15 @@ fn deterministic_success_roll(
     (value % 10_000) as f64 / 10_000.0
 }
 
-fn maybe_regress_patient_realm(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    patient: Entity,
-    chance: f64,
-    tick: u64,
-) -> bool {
-    if deterministic_life_extension_regression_roll(caster, patient, tick) >= chance {
-        return false;
-    }
-    let Some(mut cultivation) = world.get_mut::<Cultivation>(patient) else {
-        return false;
-    };
-    let Some(previous) = previous_realm(cultivation.realm) else {
-        return false;
-    };
-    cultivation.realm = previous;
-    true
-}
-
-fn deterministic_life_extension_regression_roll(caster: Entity, patient: Entity, tick: u64) -> f64 {
-    let mut value = caster.to_bits().rotate_left(11) ^ patient.to_bits().rotate_left(29) ^ tick;
-    value ^= 0xD1B5_4A32_D192_ED03;
-    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
-    (value % 10_000) as f64 / 10_000.0
-}
-
-fn previous_realm(realm: Realm) -> Option<Realm> {
-    match realm {
-        Realm::Awaken => None,
-        Realm::Induce => Some(Realm::Awaken),
-        Realm::Condense => Some(Realm::Induce),
-        Realm::Solidify => Some(Realm::Condense),
-        Realm::Spirit => Some(Realm::Solidify),
-        Realm::Void => Some(Realm::Spirit),
-    }
-}
-
 pub fn healer_npc_decision(
-    hp_percent: f32,
     severed_count: u32,
     contam_total: f64,
-    near_death: bool,
     has_enemy_nearby: bool,
-    can_life_extend: bool,
 ) -> HealerNpcDecision {
     if has_enemy_nearby {
         return HealerNpcDecision {
             action: HealerNpcAction::Retreat,
             score: 1.0,
-        };
-    }
-    if near_death && can_life_extend {
-        return HealerNpcDecision {
-            action: HealerNpcAction::LifeExtension,
-            score: 0.98,
-        };
-    }
-    if hp_percent < 0.5 {
-        return HealerNpcDecision {
-            action: HealerNpcAction::EmergencyResuscitate,
-            score: 0.8,
         };
     }
     if severed_count > 0 {
@@ -1633,6 +1410,7 @@ fn rejected(reason: CastRejectReason) -> CastResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::{Lifecycle, Wounds};
     use crate::cultivation::components::{ContamSource, MeridianSystem};
     use valence::prelude::App;
 
@@ -1709,19 +1487,23 @@ mod tests {
     }
 
     #[test]
-    fn register_skills_adds_all_five_resolvers() {
+    fn register_skills_excludes_retired_rescue_skills() {
         let mut registry = SkillRegistry::default();
         register_skills(&mut registry);
         for skill in [
             YidaoSkillId::MeridianRepair,
             YidaoSkillId::ContamPurge,
-            YidaoSkillId::EmergencyResuscitate,
-            YidaoSkillId::LifeExtension,
             YidaoSkillId::MassMeridianRepair,
         ] {
             assert!(
                 registry.lookup(skill.skill_id()).is_some(),
                 "{skill:?} missing"
+            );
+        }
+        for retired in ["yidao.emergency_resuscitate", "yidao.life_extension"] {
+            assert!(
+                registry.lookup(retired).is_none(),
+                "retired rescue must not be castable"
             );
         }
     }
@@ -2040,194 +1822,6 @@ mod tests {
     }
 
     #[test]
-    fn emergency_resuscitate_revives_near_death_and_clears_bleeding() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Induce);
-        let patient = spawn_patient(&mut app);
-        app.world_mut().entity_mut(patient).insert(Wounds {
-            health_current: 0.0,
-            health_max: 100.0,
-            entries: vec![crate::combat::components::Wound {
-                location: crate::body_plan::legacy_body_part_to_id(
-                    crate::combat::components::BodyPart::Chest,
-                ),
-                kind: crate::combat::components::WoundKind::Cut,
-                severity: 0.8,
-                bleeding_per_sec: 8.0,
-                created_at_tick: 90,
-                inflicted_by: None,
-            }],
-        });
-        let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(90);
-        app.world_mut().entity_mut(patient).insert(lifecycle);
-
-        let result = resolve_emergency_resuscitate_skill(app.world_mut(), medic, 2, Some(patient));
-
-        assert!(matches!(result, CastResult::Started { .. }));
-        assert_eq!(
-            app.world().get::<Lifecycle>(patient).unwrap().state,
-            LifecycleState::NearDeath
-        );
-
-        complete_pending_yidao(&mut app, medic);
-
-        let wounds = app.world().get::<Wounds>(patient).unwrap();
-        assert!(wounds.health_current > 0.0);
-        assert_eq!(wounds.entries[0].bleeding_per_sec, 0.0);
-        assert_eq!(
-            app.world().get::<Lifecycle>(patient).unwrap().state,
-            LifecycleState::Alive
-        );
-    }
-
-    #[test]
-    fn emergency_resuscitate_requires_active_near_death_window() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Induce);
-        let patient = spawn_patient(&mut app);
-        app.world_mut().entity_mut(patient).insert(Wounds {
-            health_current: 0.0,
-            health_max: 100.0,
-            entries: vec![crate::combat::components::Wound {
-                location: crate::body_plan::legacy_body_part_to_id(
-                    crate::combat::components::BodyPart::Chest,
-                ),
-                kind: crate::combat::components::WoundKind::Cut,
-                severity: 0.8,
-                bleeding_per_sec: 8.0,
-                created_at_tick: 90,
-                inflicted_by: None,
-            }],
-        });
-        app.world_mut().entity_mut(patient).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
-            last_death_tick: None,
-            ..Default::default()
-        });
-
-        let result = resolve_emergency_resuscitate_skill(app.world_mut(), medic, 2, Some(patient));
-
-        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
-        assert_eq!(
-            app.world().get::<Wounds>(patient).unwrap().health_current,
-            0.0
-        );
-        assert_eq!(
-            app.world().get::<Cultivation>(medic).unwrap().qi_current,
-            300.0
-        );
-        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
-    }
-
-    #[test]
-    fn life_extension_requires_spirit_realm_and_pays_permanent_costs() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Spirit);
-        let patient = spawn_patient(&mut app);
-        let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(100);
-        app.world_mut().entity_mut(patient).insert(lifecycle);
-
-        let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(patient));
-
-        assert!(matches!(result, CastResult::Started { .. }));
-        assert_eq!(
-            app.world().get::<Lifecycle>(patient).unwrap().state,
-            LifecycleState::NearDeath
-        );
-
-        complete_pending_yidao(&mut app, medic);
-
-        assert_eq!(
-            app.world().get::<Lifecycle>(patient).unwrap().state,
-            LifecycleState::Alive
-        );
-        assert!(app.world().get::<Cultivation>(medic).unwrap().qi_max < 300.0);
-        assert!(app.world().get::<Cultivation>(patient).unwrap().qi_max < 100.0);
-        assert!(app.world().get::<Karma>(medic).unwrap().weight > 0.0);
-    }
-
-    #[test]
-    fn life_extension_applies_patient_realm_regression_chance() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Spirit);
-        let patient = spawn_patient(&mut app);
-        app.world_mut()
-            .get_mut::<Cultivation>(patient)
-            .unwrap()
-            .realm = Realm::Spirit;
-        let tick = (100..10_000)
-            .find(|tick| deterministic_life_extension_regression_roll(medic, patient, *tick) < 0.5)
-            .expect("realm regression tick");
-        let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(tick);
-        app.world_mut().entity_mut(patient).insert(lifecycle);
-
-        let outcome = apply_life_extension(app.world_mut(), medic, patient, 0.0, true, tick, tick);
-
-        assert_eq!(outcome.success_count, 1);
-        assert_eq!(
-            app.world().get::<Cultivation>(patient).unwrap().realm,
-            Realm::Solidify
-        );
-        assert!(outcome.detail.contains("realm regressed"));
-    }
-
-    #[test]
-    fn life_extension_requires_death_tick_before_emitting_event() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Spirit);
-        let patient = spawn_patient(&mut app);
-        app.world_mut().entity_mut(patient).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
-            last_death_tick: None,
-            ..Default::default()
-        });
-
-        let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(patient));
-
-        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
-        assert_eq!(
-            app.world().get::<Lifecycle>(patient).unwrap().state,
-            LifecycleState::NearDeath
-        );
-        assert_eq!(
-            app.world().get::<Cultivation>(medic).unwrap().qi_current,
-            300.0
-        );
-        assert_eq!(app.world().get::<Cultivation>(medic).unwrap().qi_max, 300.0);
-        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
-    }
-
-    #[test]
-    fn life_extension_rejects_self_target() {
-        let mut app = app_with_yidao();
-        let medic = spawn_medic(&mut app, Realm::Spirit);
-        app.world_mut().entity_mut(medic).insert(Wounds {
-            health_current: 0.0,
-            health_max: 100.0,
-            entries: Vec::new(),
-        });
-        let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(95);
-        app.world_mut().entity_mut(medic).insert(lifecycle);
-
-        let result = resolve_life_extension_skill(app.world_mut(), medic, 3, Some(medic));
-
-        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
-        assert_eq!(
-            app.world().get::<Lifecycle>(medic).unwrap().state,
-            LifecycleState::NearDeath
-        );
-        assert_eq!(
-            app.world().get::<Cultivation>(medic).unwrap().qi_current,
-            300.0
-        );
-        assert_eq!(app.world().resource::<Events<YidaoEvent>>().len(), 0);
-    }
-
-    #[test]
     fn mass_meridian_repair_repairs_multiple_patients_and_scales_costs_by_n() {
         let mut app = app_with_yidao();
         let medic = spawn_medic(&mut app, Realm::Void);
@@ -2340,10 +1934,7 @@ mod tests {
             YidaoSkillId::MassMeridianRepair,
             0.0,
             true,
-            YidaoApplyTiming {
-                eligibility_tick: tick,
-                now_tick: tick,
-            },
+            tick,
         );
 
         assert_eq!(outcome.success_count as usize, expected_successful.len());
@@ -2406,14 +1997,14 @@ mod tests {
     }
 
     #[test]
-    fn healer_npc_decision_prioritizes_retreat_then_life_extension() {
+    fn healer_npc_decision_prioritizes_retreat_then_meridian_repair() {
         assert_eq!(
-            healer_npc_decision(0.1, 1, 80.0, true, true, true).action,
+            healer_npc_decision(1, 80.0, true).action,
             HealerNpcAction::Retreat
         );
         assert_eq!(
-            healer_npc_decision(0.1, 1, 80.0, true, false, true).action,
-            HealerNpcAction::LifeExtension
+            healer_npc_decision(1, 80.0, false).action,
+            HealerNpcAction::MeridianRepair
         );
     }
 
@@ -2720,6 +2311,323 @@ mod tests {
         assert_eq!(
             release_count, 0,
             "全员成功路径不应产生 ReleaseToZone 事件（成功份额已转给患者），实际有 {release_count} 条"
+        );
+    }
+
+    // ── plan-skill-anim-fidelity-v1 P4：两段式动画接线（事件路径 + id pin）─────
+
+    /// 双端 id 契约 pin：10 个动画 id 逐条锁字面量。改任一端必须同步 client
+    /// `player_animation/` 资产与 `AnimCastTicksAlignmentTest` 映射表。
+    #[test]
+    fn yidao_two_phase_anim_ids_pin_client_assets() {
+        assert_eq!(
+            ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+            "bong:yidao_meridian_repair_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            "bong:yidao_meridian_repair_release"
+        );
+        assert_eq!(ANIM_YIDAO_CONTAM_PURGE_LOOP, "bong:yidao_contam_purge_loop");
+        assert_eq!(
+            ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            "bong:yidao_contam_purge_release"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+            "bong:yidao_mass_meridian_repair_loop"
+        );
+        assert_eq!(
+            ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
+            "bong:yidao_mass_meridian_repair_release"
+        );
+    }
+
+    /// 映射契约：3 招 loop/release 两段 id 全部互异（跨招不共用、段间不串线），
+    /// skill_id 分表逐条命中且未知 id 返 None。
+    #[test]
+    fn yidao_anim_mappings_are_distinct_and_cover_all_skills() {
+        let mut seen = std::collections::HashSet::new();
+        for skill in YidaoSkillId::ALL {
+            assert!(
+                seen.insert(skill.loop_anim_id()),
+                "{skill:?} 蓄力段 id 与其他招共用——每招必须独立可辨"
+            );
+            assert!(
+                seen.insert(skill.release_anim_id()),
+                "{skill:?} release 段 id 与其他段共用——每招必须独立可辨"
+            );
+            assert_eq!(
+                yidao_loop_anim_for_skill_id(skill.skill_id()),
+                Some(skill.loop_anim_id()),
+                "{skill:?} skill_id 分表必须命中其蓄力段 id"
+            );
+        }
+        assert_eq!(
+            yidao_loop_anim_for_skill_id("some.other.skill"),
+            None,
+            "非 yidao 招式查分表必须 miss（不误停别家动画）"
+        );
+    }
+
+    fn drain_play_anim_ids(app: &mut App) -> Vec<String> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .filter_map(|request| match request.payload {
+                VfxEventPayloadV1::PlayAnim { anim_id, .. } => Some(anim_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 医者带 `UniqueId`（真实玩家形态）+ 断脉患者的接经术施术脚手架。
+    fn medic_with_identity_and_severed_patient(app: &mut App) -> (Entity, Entity) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default())
+            .insert(HealingMastery {
+                meridian_repair: 100.0,
+                ..Default::default()
+            });
+        let patient = spawn_patient(app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+        (medic, patient)
+    }
+
+    /// 事件路径 pin：cast 起手恰播 1 条蓄力循环段 PlayAnim（专属 id）。
+    #[test]
+    fn yidao_cast_start_plays_loop_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "前置：施术应进入引导，实际 {result:?}"
+        );
+        assert_eq!(
+            drain_play_anim_ids(&mut app),
+            vec![ANIM_YIDAO_MERIDIAN_REPAIR_LOOP.to_string()],
+            "cast 起手必须恰播接经术专属蓄力循环段（不播 release、不借别家动画）"
+        );
+    }
+
+    /// 负向：被拒绝的施术（无目标）不得播任何动画。
+    #[test]
+    fn yidao_rejected_cast_plays_no_anim() {
+        let mut app = app_with_yidao();
+        let (medic, _patient) = medic_with_identity_and_severed_patient(&mut app);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, None);
+
+        assert_eq!(result, rejected(CastRejectReason::InvalidTarget));
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "被拒绝的施术不得播蓄力段（无引导窗即无动画）"
+        );
+    }
+
+    /// 事件路径 pin：有效完成恰接力 1 条 release PlayAnim（蓄力段 StopAnim 由
+    /// cast_emit 自然完成分支发出，见 cast_emit.rs 专属测试）。
+    #[test]
+    fn yidao_completion_success_plays_release_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+        assert!(matches!(result, CastResult::Started { .. }));
+        // 排空起手蓄力段 PlayAnim，隔离完成分支的接力输出。
+        drain_play_anim_ids(&mut app);
+
+        complete_pending_yidao(&mut app, medic);
+
+        assert!(
+            !app.world()
+                .get::<MeridianSeveredPermanent>(patient)
+                .unwrap()
+                .is_severed(MeridianId::Lung),
+            "前置：接经应已修复肺经（有效结算）"
+        );
+        assert_eq!(
+            drain_play_anim_ids(&mut app),
+            vec![ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE.to_string()],
+            "有效完成必须恰接力 1 条接经术专属 release 收势"
+        );
+    }
+
+    /// 负向：完成时目标已失效（经脉已复通 → can_apply false）的无效完成不奖励
+    /// 收势——不播 release，且 PendingYidaoCast 照常清理。
+    #[test]
+    fn yidao_invalid_completion_plays_no_release_anim() {
+        let mut app = app_with_yidao();
+        let (medic, patient) = medic_with_identity_and_severed_patient(&mut app);
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+        assert!(matches!(result, CastResult::Started { .. }));
+        drain_play_anim_ids(&mut app);
+        // 引导期间患者经脉被他人复通 → 完成时 can_apply_yidao_effect 为 false。
+        app.world_mut()
+            .entity_mut(patient)
+            .insert(MeridianSeveredPermanent::default());
+
+        complete_pending_yidao(&mut app, medic);
+
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "无效完成不得播 release（收势只奖励有效结算）"
+        );
+        assert!(
+            app.world().get::<PendingYidaoCast>(medic).is_none(),
+            "无效完成也必须清理 PendingYidaoCast"
+        );
+    }
+
+    /// 排异加速施术脚手架（患者带两源污染，医者带 UniqueId）。
+    fn medic_and_contaminated_patient(app: &mut App) -> (Entity, Entity) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default());
+        let patient = spawn_patient(app);
+        app.world_mut().entity_mut(patient).insert(Contamination {
+            entries: vec![ContamSource {
+                amount: 20.0,
+                color: ColorKind::Insidious,
+                meridian_id: None,
+                attacker_id: None,
+                introduced_at: 1,
+            }],
+        });
+        (medic, patient)
+    }
+
+    /// 群体接经施术脚手架（3 名断脉患者，医者带 UniqueId + 满熟练度）。
+    fn medic_and_severed_patient_group(app: &mut App) -> (Entity, Vec<Entity>) {
+        let medic = spawn_medic(app, Realm::Void);
+        app.world_mut()
+            .entity_mut(medic)
+            .insert(UniqueId::default())
+            .insert(HealingMastery {
+                mass_meridian_repair: 100.0,
+                ..Default::default()
+            });
+        let mut patients = Vec::new();
+        for meridian in [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney] {
+            let patient = spawn_patient(app);
+            let mut severed = MeridianSeveredPermanent::default();
+            severed.insert(
+                meridian,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                1,
+            );
+            app.world_mut().entity_mut(patient).insert(severed);
+            patients.push(patient);
+        }
+        (medic, patients)
+    }
+
+    /// 事件路径饱和 pin（review r1 补）——**3 招逐条**跑真实 resolve → emit 链路：
+    /// 起手恰播本招专属蓄力段、有效完成恰接力本招专属 release。此前只有接经术
+    /// 一招被真正跑过运行时链路，其余招式仅有字符串级映射断言，委托分支写错
+    /// anim id / 漏调 emit_yidao_anim / 多患者混合结算的 release 分支有 bug
+    /// 都捕捉不到。
+    #[test]
+    fn every_yidao_skill_plays_own_loop_then_release_through_real_emit_path() {
+        type Setup = fn(&mut App) -> (Entity, Option<Entity>);
+        type Resolve = fn(&mut bevy_ecs::world::World, Entity, u8, Option<Entity>) -> CastResult;
+        let cases: Vec<(&str, Setup, Resolve, &str, &str)> = vec![
+            (
+                "接经术",
+                |app| {
+                    let (medic, patient) = medic_with_identity_and_severed_patient(app);
+                    (medic, Some(patient))
+                },
+                resolve_meridian_repair_skill,
+                ANIM_YIDAO_MERIDIAN_REPAIR_LOOP,
+                ANIM_YIDAO_MERIDIAN_REPAIR_RELEASE,
+            ),
+            (
+                "排异加速",
+                |app| {
+                    let (medic, patient) = medic_and_contaminated_patient(app);
+                    (medic, Some(patient))
+                },
+                resolve_contam_purge_skill,
+                ANIM_YIDAO_CONTAM_PURGE_LOOP,
+                ANIM_YIDAO_CONTAM_PURGE_RELEASE,
+            ),
+            (
+                "群体接经",
+                |app| {
+                    let (medic, patients) = medic_and_severed_patient_group(app);
+                    (medic, Some(patients[0]))
+                },
+                resolve_mass_meridian_repair_skill,
+                ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
+                ANIM_YIDAO_MASS_MERIDIAN_REPAIR_RELEASE,
+            ),
+        ];
+
+        for (name, setup, resolve, loop_anim, release_anim) in cases {
+            let mut app = app_with_yidao();
+            let (medic, target) = setup(&mut app);
+
+            let result = resolve(app.world_mut(), medic, 0, target);
+            assert!(
+                matches!(result, CastResult::Started { .. }),
+                "{name}：前置施术应进入引导，实际 {result:?}"
+            );
+            assert_eq!(
+                drain_play_anim_ids(&mut app),
+                vec![loop_anim.to_string()],
+                "{name}：cast 起手必须恰播本招专属蓄力循环段 {loop_anim}（防映射串线/漏发）"
+            );
+
+            complete_pending_yidao(&mut app, medic);
+
+            assert_eq!(
+                drain_play_anim_ids(&mut app),
+                vec![release_anim.to_string()],
+                "{name}：有效完成必须恰接力本招专属 release {release_anim}"
+            );
+        }
+    }
+
+    /// 负向 pin：非玩家施法者（缺 `UniqueId`）静默跳过动画发射——`emit_yidao_anim`
+    /// 的早退分支属于「合法无动画」而非漏发，3 招同构故取一招代表即可。
+    #[test]
+    fn yidao_cast_without_unique_id_emits_no_anim() {
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Void);
+        app.world_mut().entity_mut(medic).insert(HealingMastery {
+            meridian_repair: 100.0,
+            ..Default::default()
+        });
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+
+        let result = resolve_meridian_repair_skill(app.world_mut(), medic, 0, Some(patient));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "前置：缺 UniqueId 不应阻断施术本身（只影响动画发射）"
+        );
+        assert!(
+            drain_play_anim_ids(&mut app).is_empty(),
+            "非玩家施法者缺 UniqueId 时不得发动画事件（无目标可寻址）"
         );
     }
 }

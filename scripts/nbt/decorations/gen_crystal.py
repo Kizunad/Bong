@@ -25,7 +25,7 @@ KIND = "crystal"
 
 
 def _crystal(seed: int, h: int, body: str, tip: str, accent: str,
-             *, body_props=None, tip_props=None) -> StructureBuilder:
+             *, body_props=None, tip_props=None, accent_props=None) -> StructureBuilder:
     """A *cluster* (not a lone pole): a tall central spire ringed by shorter
     satellite shards so the silhouette reads as a crystal growth, and the
     footprint stays a symmetric 3x3 instead of collapsing to a 1-wide sliver.
@@ -55,7 +55,7 @@ def _crystal(seed: int, h: int, body: str, tip: str, accent: str,
         sb.set_block(cx + dx, sat_h, cz + dz, tip, tip_props)
     # Diagonal base stubs (1 tall) — the accent material, framing the bed.
     for dx, dz in [(1, 1), (-1, 1), (1, -1), (-1, -1)]:
-        sb.set_block(cx + dx, 0, cz + dz, accent, tip_props if accent == tip else None)
+        sb.set_block(cx + dx, 0, cz + dz, accent, accent_props)
     return sb
 
 
@@ -91,7 +91,7 @@ def build_obsidian_pillar() -> StructureBuilder:
 def build_frost_cluster() -> StructureBuilder:
     """Rift-mouth frost cluster — packed/blue ice with amethyst tips."""
     return _crystal(63_003, 4, "packed_ice", "blue_ice", "amethyst_cluster",
-                    tip_props={"facing": "up"})
+                    accent_props={"facing": "up"})
 
 
 def build_phantom_qi() -> StructureBuilder:

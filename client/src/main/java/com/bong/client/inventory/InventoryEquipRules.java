@@ -212,7 +212,8 @@ public final class InventoryEquipRules {
     // plan-shield-block-v1 §P4 — 盾不能放入 QuickUse 槽（与 canPlaceIntoHotbar 排盾对齐）。
     // QuickUse 是 F 键快速使用槽，盾必须通过 off_hand 装备路径，不应能拖入此槽。
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
-        return isSingleCell(item) && !isShield(item);
+        return item != null && item.instanceId() > 0
+            && com.bong.client.combat.QuickUseSlotStore.snapshot().allowsItem(item.itemId());
     }
 
     static boolean isHoe(InventoryItem item) {

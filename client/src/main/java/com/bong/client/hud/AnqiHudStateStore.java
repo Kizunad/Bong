@@ -156,6 +156,10 @@ public final class AnqiHudStateStore {
         MULTISHOT_SLOT.set(DimSlot.empty());
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     // ─── 遗留兼容：replace(state)（仅测试向后兼容，生产已改 updateXxx） ─
 
     /**

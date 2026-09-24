@@ -59,5 +59,6 @@
     "reason": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "6ef2ee43cb5dd17897c88b7b45ed0752263235d1b10f7b5158cc51387319bff4"
 }

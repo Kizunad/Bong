@@ -12,5 +12,6 @@
       "const": "bonded_daoxiang",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "c09cef78708b7aaad4b4bc2457c6bf5e908e2c78beb723e3e35c828d42d6c7ca"
 }

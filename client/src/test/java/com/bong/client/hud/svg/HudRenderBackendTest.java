@@ -1,0 +1,204 @@
+package com.bong.client.hud.svg;
+
+import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.resource.ResourceManager;
+import net.minecraft.util.Identifier;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** SVG 基础设施契约：后端边界与资源重载不依赖具体 HUD 组件。 */
+class HudRenderBackendTest {
+    private static final Path CLIENT_ROOT = Path.of("").toAbsolutePath().normalize();
+
+    @Test
+    void contractFixtureNamesExistingBackendTypesAndTests() throws IOException {
+        List<String> rows = fixture("/bong/ui/ui-svg-hud-contract.tsv");
+        assertEquals(8, rows.size(), "SVG contract 必须登记后端接口、解析边界和八个基础类型");
+        for (String row : rows) {
+            String[] fields = row.split("\\t", -1);
+            assertEquals(5, fields.length, "SVG contract 行字段数错误: " + row);
+            Path owner = sourcePath(fields[1]);
+            assertTrue(Files.isDirectory(owner), "SVG owner 目录不存在: " + owner);
+            assertTrue(Files.exists(owner.resolve(fields[0] + ".java")),
+                "SVG contract 类型不存在: " + owner.resolve(fields[0] + ".java"));
+            assertEquals("IMPLEMENTED", fields[3], "已登记的 SVG 基础设施必须有实现状态");
+            assertTrue(testClassExists(fields[4]), "SVG contract test owner 不存在: " + fields[4]);
+        }
+    }
+
+    @Test
+    void svgBackendUsesTheFrozenVisibilityAndGuiSubmissionBoundary() throws IOException {
+        String backend = Files.readString(sourcePath("src/main/java/com/bong/client/hud/svg/SvgHudBackend.java"));
+        String bongHud = Files.readString(sourcePath("src/main/java/com/bong/client/BongHud.java"));
+        String bongClient = Files.readString(sourcePath("src/main/java/com/bong/client/BongClient.java"));
+        assertTrue(backend.contains("implements HudRenderBackend"));
+        assertTrue(bongHud.contains("HudRenderBackend backend"),
+            "BongHud 必须只依赖表现后端接口");
+        assertTrue(bongHud.contains("backend.render(context, client, visibility)"),
+            "生产 HUD 必须把 ScreenHudVisibility 交给注入的后端");
+        assertFalse(bongHud.contains("SvgHudBackend"),
+            "BongHud 不得直接依赖具体 SVG 后端");
+        assertTrue(bongClient.contains("new BongHudRenderer(SvgHudBackend.production())"),
+            "SVG 具体实现必须只在 BongClient 组合根装配");
+        assertFalse(backend.contains("PlayerStateStore"),
+            "SVG 后端不得直接读取 PlayerStateStore");
+        assertFalse(backend.contains("PlayerStateViewModel"),
+            "SVG 后端不得直接依赖 PlayerStateViewModel");
+        assertFalse(backend.contains("HudRealmGate"),
+            "SVG 后端不得直接执行境界门控");
+        assertTrue(backend.contains("MinecraftGuiMeshEmitter"));
+        assertFalse(backend.contains("RenderSystem"), "SVG 后端不得直接触碰 OpenGL 提交 API");
+    }
+
+    @Test
+    void reloadListenerInvalidatesTheCachedBackendRegistry() {
+        SvgHudBackend.resetForTests();
+        ResourceManager manager = emptyResourceManager();
+        SvgHudAssetRegistry beforeReload = SvgHudBackend.registry(manager);
+
+        new SvgHudResourceReloadListener().reload(manager);
+
+        SvgHudAssetRegistry afterReload = SvgHudBackend.registry(manager);
+        assertFalse(beforeReload == afterReload,
+            "资源重载必须丢弃旧 registry，避免 F3+T 后继续使用旧资源包的 mesh");
+        SvgHudBackend.resetForTests();
+    }
+
+    @Test
+    void remainingSvgBatchTransfersOnlyItsRectangles() {
+        HudRenderBackend backend = SvgHudBackend.production();
+        List<HudRenderLayer> firstBatch = List.of(
+            HudRenderLayer.JIEMAI_RING,
+            HudRenderLayer.STATUS_EFFECTS,
+            HudRenderLayer.MOVEMENT_HUD
+        );
+
+        for (HudRenderLayer layer : firstBatch) {
+            assertTrue(backend.handles(HudRenderCommand.rect(layer, 4, 8, 12, 16, 0xFFFFFFFF)),
+                "首批 layer 的矩形几何必须交由 SVG 后端提交: " + layer);
+            assertFalse(backend.handles(HudRenderCommand.text(layer, "动态文字", 4, 8, 0xFFFFFFFF)),
+                "动态文字必须保留 Minecraft GUI 路径: " + layer);
+            assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+                layer, "edge", 4, 8, 0xFFFFFFFF, 1.0
+            )), "SVG 后端只接管矩形，不再绘制边缘指示器: " + layer);
+        }
+        assertFalse(backend.handles(HudRenderCommand.rect(
+            HudRenderLayer.COMPASS, 4, 8, 12, 16, 0xFFFFFFFF
+        )), "已下线的罗盘不得交由 SVG 后端提交");
+        assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+            HudRenderLayer.SPIRITUAL_SENSE,
+            "LIVING_QI",
+            4,
+            8,
+            0xFFFFFFFF,
+            1.0
+        )), "已下线的灵觉边缘指示器不得交由 SVG 后端提交");
+        assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+            HudRenderLayer.THREAT_INDICATOR,
+            "threat",
+            4,
+            8,
+            0xFFFFFFFF,
+            1.0
+        )), "未迁移 layer 的边缘指示器不得改变表现路径");
+        assertFalse(backend.handles(HudRenderCommand.texture(
+            HudRenderLayer.STATUS_EFFECTS,
+            "bong-client:textures/hud/effects/bleeding.png",
+            4,
+            8,
+            12,
+            16,
+            0xFFFFFFFF
+        )), "状态效果图标必须保留 Minecraft GUI 贴图路径");
+        assertFalse(backend.handles(null), "空命令不得被 SVG 后端接管");
+    }
+
+    @Test
+    void namedAssetsUseTheirRegisteredResourceAndRespectPartialHudVisibility() {
+        HudRenderBackend backend = SvgHudBackend.production();
+        HudRenderCommand selected = HudRenderCommand.svg(HudRenderLayer.QUICK_BAR, "selected", 10, 20, 22, 24, -1);
+        assertTrue(backend.handles(selected));
+        assertEquals("bong-client:svg/hud/quick-slot-selected.svg", SvgHudBackend.resourceFor(selected).orElseThrow().toString());
+        assertTrue(SvgHudBackend.resourceFor(HudRenderCommand.svg(
+            HudRenderLayer.QUICK_BAR, "complete", 10, 20, 22, 24, -1)).isEmpty(),
+            "资产只能在所属 layer 内解析，不能取其他 HUD 的资源");
+        assertFalse(backend.handles(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 10, 20, 14, 14, -1)),
+            "冷却遮罩和武器侧槽仍应由 GUI 绘制");
+        assertTrue(SvgHudBackend.visible(HudRenderLayer.QUICK_BAR, ScreenHudVisibility.INVENTORY_DIMMED));
+        assertTrue(SvgHudBackend.visible(HudRenderLayer.CAST_BAR, ScreenHudVisibility.CAST_BAR_ONLY));
+        assertFalse(SvgHudBackend.visible(HudRenderLayer.QUICK_BAR, ScreenHudVisibility.CAST_BAR_ONLY));
+        assertFalse(SvgHudBackend.visible(HudRenderLayer.CAST_BAR, ScreenHudVisibility.HIDDEN));
+    }
+
+    private static List<String> fixture(String resource) throws IOException {
+        try (var input = HudRenderBackendTest.class.getResourceAsStream(resource)) {
+            assertNotNull(input, "缺少 SVG fixture: " + resource);
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8).lines()
+                .filter(line -> !line.isBlank() && !line.stripLeading().startsWith("#"))
+                .toList();
+        }
+    }
+
+    private static boolean testClassExists(String simpleName) {
+        return Files.exists(sourcePath("src/test/java/com/bong/client/hud/svg/" + simpleName + ".java"))
+            || Files.exists(sourcePath("src/test/java/com/bong/client/hud/" + simpleName + ".java"));
+    }
+
+    private static Path sourcePath(String relative) {
+        Path base = Files.isDirectory(CLIENT_ROOT.resolve("src")) ? CLIENT_ROOT : CLIENT_ROOT.resolve("client");
+        String normalized = relative.startsWith("client/") ? relative.substring("client/".length()) : relative;
+        return base.resolve(normalized);
+    }
+
+    private static ResourceManager emptyResourceManager() {
+        return new ResourceManager() {
+            @Override
+            public java.util.Set<String> getAllNamespaces() {
+                return java.util.Set.of("bong-client");
+            }
+
+            @Override
+            public java.util.Optional<net.minecraft.resource.Resource> getResource(Identifier id) {
+                return java.util.Optional.empty();
+            }
+
+            @Override
+            public List<net.minecraft.resource.Resource> getAllResources(Identifier id) {
+                return List.of();
+            }
+
+            @Override
+            public java.util.Map<Identifier, net.minecraft.resource.Resource> findResources(
+                String startingPath,
+                java.util.function.Predicate<Identifier> allowedPathPredicate
+            ) {
+                return java.util.Map.of();
+            }
+
+            @Override
+            public java.util.Map<Identifier, List<net.minecraft.resource.Resource>> findAllResources(
+                String startingPath,
+                java.util.function.Predicate<Identifier> allowedPathPredicate
+            ) {
+                return java.util.Map.of();
+            }
+
+            @Override
+            public java.util.stream.Stream<net.minecraft.resource.ResourcePack> streamResourcePacks() {
+                return java.util.stream.Stream.empty();
+            }
+        };
+    }
+}

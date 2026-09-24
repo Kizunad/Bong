@@ -114,14 +114,38 @@ public final class BongParticleGeometry {
         double rotationRad,
         double yLift
     ) {
+        return buildGroundDecalQuad(center, halfSize, halfSize, rotationRad, yLift);
+    }
+
+    /**
+     * 长宽可分离的贴地四边形（血溅拖尾等需要拉长的 decal）。
+     *
+     * <p>与方形版同一套约定，只是本地 X 轴半长与本地 Z 轴半宽分开给。
+     * {@code rotationRad} 绕 +Y 旋转后，本地 +X 指向世界 {@code (cos, sin)}（XZ 平面）——
+     * 调用方把 rotation 设成"从血溅中心指向该 splat 的方位角"，拉长方向就沿飞溅径向，
+     * 读起来才是甩出去的血道而不是随机长条。
+     *
+     * @param center      四边形中心（相对 camera）
+     * @param halfLength  本地 X 轴半长
+     * @param halfWidth   本地 Z 轴半宽
+     * @param rotationRad 绕 +Y 的旋转角（rad，CCW 为正）
+     * @param yLift       向上微抬值（避免 z-fighting）
+     */
+    public static float[] buildGroundDecalQuad(
+        double[] center,
+        double halfLength,
+        double halfWidth,
+        double rotationRad,
+        double yLift
+    ) {
         double cos = Math.cos(rotationRad);
         double sin = Math.sin(rotationRad);
-        // 本地四角（未旋转）：(-h,-h) (-h,+h) (+h,+h) (+h,-h)，在 XZ 平面
+        // 本地四角（未旋转）：(-l,-w) (-l,+w) (+l,+w) (+l,-w)，在 XZ 平面
         double[][] local = {
-            { -halfSize, -halfSize },
-            { -halfSize,  halfSize },
-            {  halfSize,  halfSize },
-            {  halfSize, -halfSize },
+            { -halfLength, -halfWidth },
+            { -halfLength,  halfWidth },
+            {  halfLength,  halfWidth },
+            {  halfLength, -halfWidth },
         };
         float[] out = new float[12];
         double yBase = center[1] + yLift;

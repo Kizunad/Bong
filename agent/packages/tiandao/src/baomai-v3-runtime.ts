@@ -110,12 +110,12 @@ export function renderMountainShakeNarration(event: BaomaiV3MountainShakeV1): Na
   return validation.ok ? narration : null;
 }
 
-/** 血燃叙事：普通档 vs 近死分支差异化 */
+/** 血燃叙事：普通燃血与致死分支 */
 export function renderBloodBurnNarration(event: BaomaiV3BloodBurnV1): Narration | null {
   const actor = shortName(event.caster_id);
   let text: string;
-  if (event.ended_in_near_death) {
-    text = `${actor} 以命换劲推到了极限，血线烧尽后落入濒死——那口猛劲最终把自己逼到了悬崖边。`;
+  if (event.ended_in_death) {
+    text = `${actor} 燃尽了最后一点生命，倒在自己的血泊中。`;
   } else {
     text = `${actor} 割去一截血量，换来真元池短暂膨涨 ${event.qi_multiplier.toFixed(1)} 倍，热血腥气弥漫皮肤。`;
   }

@@ -1,6 +1,11 @@
 /// Redis channel names — must match @bong/schema channels.ts
 pub const CH_WORLD_STATE: &str = "bong:world_state";
 pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
+// Bot e2e producer-side delivery fence. These are internal harness channels:
+// the request is consumed by the server bridge and the ack is queued after all
+// gameplay outbound messages already produced for the current tick.
+pub const CH_BOT_DELIVERY_FENCE_REQUEST: &str = "bong:bot/delivery_fence/request";
+pub const CH_BOT_DELIVERY_FENCE_ACK: &str = "bong:bot/delivery_fence/ack";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
 pub const CH_TIANDAO_HUNT_NARRATION_REQUEST: &str = "bong:tiandao_hunt_narration_request";
@@ -41,12 +46,11 @@ pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 // agent 订阅后按 zone_halfstep_count 路由 player / zone narration。
 pub const CH_HALFSTEP_RECHALLENGE: &str = "bong:tribulation/halfstep_rechallenge";
 
-// 化虚专属 action（plan-void-actions-v1）：四类行为各自 fanout，agent 侧
+// 化虚专属 action（plan-void-actions-v1）：三类行为各自 fanout，agent 侧
 // 订阅后统一生成全服 narration。
 pub const CH_VOID_ACTION_SUPPRESS_TSY: &str = "bong:void_action/suppress_tsy";
 pub const CH_VOID_ACTION_EXPLODE_ZONE: &str = "bong:void_action/explode_zone";
 pub const CH_VOID_ACTION_BARRIER: &str = "bong:void_action/barrier";
-pub const CH_VOID_ACTION_LEGACY_ASSIGN: &str = "bong:void_action/legacy_assign";
 
 pub fn void_action_channel(
     kind: crate::cultivation::void::components::VoidActionKind,
@@ -59,9 +63,6 @@ pub fn void_action_channel(
             CH_VOID_ACTION_EXPLODE_ZONE
         }
         crate::cultivation::void::components::VoidActionKind::Barrier => CH_VOID_ACTION_BARRIER,
-        crate::cultivation::void::components::VoidActionKind::LegacyAssign => {
-            CH_VOID_ACTION_LEGACY_ASSIGN
-        }
     }
 }
 
@@ -180,6 +181,8 @@ pub const CH_TUIKE_ASH_DECAY: &str = "bong:tuike_v2/ash_decay";
 // event_kind: "appeared" | "dan_received" | "betrayal" | "dead_natural" | "dead_player_kill"。
 // agent 订阅后 LLM 生成 zone perception / death broadcast 两类 narration（各 2 条文案）。
 pub const CH_ELDER_ENCOUNTER: &str = "bong:elder_encounter";
+/// Durable source queue consumed by Tiandao before publishing narration.
+pub const ELDER_ENCOUNTER_DURABLE_REDIS_KEY: &str = "bong:elder_encounter:durable";
 pub const CH_YIDAO_EVENT: &str = "bong:yidao/event";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
@@ -358,10 +361,6 @@ mod tests {
         assert_eq!(CH_VOID_ACTION_SUPPRESS_TSY, "bong:void_action/suppress_tsy");
         assert_eq!(CH_VOID_ACTION_EXPLODE_ZONE, "bong:void_action/explode_zone");
         assert_eq!(CH_VOID_ACTION_BARRIER, "bong:void_action/barrier");
-        assert_eq!(
-            CH_VOID_ACTION_LEGACY_ASSIGN,
-            "bong:void_action/legacy_assign"
-        );
         assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
         assert_eq!(CH_NPC_DEATH, "bong:npc/death");
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");

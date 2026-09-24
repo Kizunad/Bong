@@ -15,15 +15,16 @@ use std::collections::HashMap;
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use valence::prelude::{bevy_ecs, Commands, Component, Entity, Query, Res, Resource, With};
 
+use crate::body_plan::RaceId;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
-    TECHNIQUE_DEFINITIONS,
+    parse_required_realm, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
+    TechniqueDispatch, TechniqueRegistry, NPC_PASSIVE_TECHNIQUE_IDS,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
-use crate::cultivation::technique_scroll::{parse_meridian_id, realm_rank};
+use crate::cultivation::technique_scroll::realm_rank;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcBlackboard;
 
@@ -46,20 +47,6 @@ fn splitmix64_range(seed: u64, n: u32) -> u32 {
         return 0;
     }
     (splitmix64_unit(seed) * n as f32) as u32 % n
-}
-
-// ─── Realm parsing helper ────────────────────────────────────────────────────
-
-fn parse_realm(raw: &str) -> Option<Realm> {
-    match raw {
-        "Awaken" => Some(Realm::Awaken),
-        "Induce" => Some(Realm::Induce),
-        "Condense" => Some(Realm::Condense),
-        "Solidify" => Some(Realm::Solidify),
-        "Spirit" => Some(Realm::Spirit),
-        "Void" => Some(Realm::Void),
-        _ => None,
-    }
 }
 
 // ─── NpcCooldownMap Resource ─────────────────────────────────────────────────
@@ -102,17 +89,35 @@ impl NpcCooldownMap {
 
 // ─── Meridian system builder ────────────────────────────────────────────────
 
-/// 根据境界生成 NPC 用的 MeridianSystem（按 worldview §8.1 #5 规则开脉）。
+/// 根据境界生成 NPC 用的 MeridianSystem（§8.1 #8 "公式即数据"决议：配额来自
+/// `body_plan.meridian_profile.realm_requirements`，不是全局曲线）。
 ///
-/// Awaken=1, Induce=3, Condense=6, Solidify=12, Spirit=16, Void=20。
-/// 打开顺序：先 12 正经（REGULAR），再 8 奇经（EXTRAORDINARY）。
-pub fn npc_meridian_system_for_realm(realm: Realm) -> MeridianSystem {
-    use crate::cultivation::components::MeridianId;
-
-    let count = realm.required_meridians();
-    let mut sys = MeridianSystem::default();
-    for &id in MeridianId::ALL.iter().take(count) {
-        let m = sys.get_mut(id);
+/// humanoid 曲线 Awaken=1, Induce=3, Condense=6, Solidify=12, Spirit=16, Void=20 由
+/// `humanoid.json` 自身声明；打开顺序：按 `body_plan.meridian_profile.channels` 声明
+/// 顺序（humanoid.json 与退役前 `MeridianId::ALL`——先 12 正经（REGULAR），再 8 奇经
+/// （EXTRAORDINARY）——逐条 bit-for-bit 一致，见 `body_plan` 侧对拍测试）。
+///
+/// plan-race-system-v1 P1 对抗审查 M1：此前骨架恒用 `MeridianSystem::default()`
+/// （humanoid 骨架）+ `realm.required_meridians()`（humanoid 全局曲线），传入非人
+/// `body_plan` 时会假参数化——数值仍按 humanoid 走，与传入的 profile 无关。现改为
+/// `MeridianSystem::for_profile(profile)` 建骨架 + 从**本 profile 自身**
+/// `realm_requirements[realm.rank() - 1].total` 读取应开脉数，非人 profile（如 P1
+/// 6-channel 合成构型）不再 panic 或误用 humanoid 数值。
+pub fn npc_meridian_system_for_realm(
+    realm: Realm,
+    body_plan: &crate::body_plan::BodyPlan,
+) -> MeridianSystem {
+    let profile = body_plan.meridian_profile.as_ref().unwrap_or_else(|| {
+        panic!(
+            "[bong][npc][technique] npc_meridian_system_for_realm: body plan {} has no \
+             meridian_profile — cannot generate NPC MeridianSystem",
+            body_plan.id
+        )
+    });
+    let count = profile.realm_requirements[realm.rank() as usize - 1].total as usize;
+    let mut sys = MeridianSystem::for_profile(profile);
+    for channel in profile.channels.iter().take(count) {
+        let m = sys.get_mut(channel.id.clone());
         m.opened = true;
         m.integrity = 1.0;
         m.throughput_current = 1.0;
@@ -127,7 +132,7 @@ pub fn npc_meridian_system_for_realm(realm: Realm) -> MeridianSystem {
 /// 跨模块 audit 测试（验证任意 spawn 路径产出的 NPC 不持有超出自身
 /// `Cultivation.realm` 的功法）共用同一比较口径，避免两处各写一份、日后跑偏。
 pub(crate) fn technique_realm_satisfied(def: &TechniqueDefinition, realm: Realm) -> bool {
-    let Some(required) = parse_realm(def.required_realm) else {
+    let Some(required) = parse_required_realm(&def.required_realm) else {
         return false;
     };
     realm_rank(required) <= realm_rank(realm)
@@ -140,47 +145,83 @@ fn meridian_deps_satisfied(
     meridian_deps: &SkillMeridianDependencies,
 ) -> bool {
     // 1. 检查 SkillMeridianDependencies 表中的依赖
-    let deps = meridian_deps.lookup(definition.id);
+    let deps = meridian_deps.lookup(&definition.id);
     for dep_id in deps {
         let m = meridian_sys.get(*dep_id);
         if !m.opened {
             return false;
         }
     }
-    // 2. 检查 TechniqueDefinition.required_meridians 中的依赖
-    for required in definition.required_meridians {
-        let Some(channel) = parse_meridian_id(required.channel) else {
-            return false;
-        };
-        let m = meridian_sys.get(channel);
-        if !m.opened || m.integrity < f64::from(required.min_health) {
-            return false;
-        }
-    }
-    true
+    crate::cultivation::meridian::severed::check_skill_channels(
+        &definition.required_meridians,
+        meridian_sys,
+        None,
+    )
+    .is_ok()
 }
 
 /// 根据 archetype / realm / 经脉拓扑分配 NPC 功法（spawn 时调用）。
 ///
 /// 分配的功法必须同时满足：
-/// 1. `realm_rank(parse_realm(def.required_realm)) <= realm_rank(npc_realm)`
+/// 1. `realm_rank(parse_required_realm(&def.required_realm)) <= realm_rank(npc_realm)`
 /// 2. 经脉依赖满足（`meridian_deps.lookup` + `MeridianSystem` 已开）
 ///
 /// NPC 功法 proficiency spawn 时固定，不随战斗增长（§8.1 #2 决议）。
 /// 各 archetype 功法分配见 plan §P1.1 表格。
 pub fn assign_npc_techniques(
+    technique_registry: &TechniqueRegistry,
+    archetype: NpcArchetype,
+    realm: Realm,
+    meridian_sys: &MeridianSystem,
+    meridian_deps: &SkillMeridianDependencies,
+    qi_color_hint: Option<&str>,
+    entity_seed: u64,
+) -> KnownTechniques {
+    assign_npc_techniques_for_identity(
+        technique_registry,
+        archetype,
+        realm,
+        meridian_sys,
+        meridian_deps,
+        qi_color_hint,
+        entity_seed,
+        &RaceId::new("human"),
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn assign_npc_techniques_for_identity(
+    technique_registry: &TechniqueRegistry,
     archetype: NpcArchetype,
     realm: Realm,
     meridian_sys: &MeridianSystem,
     meridian_deps: &SkillMeridianDependencies,
     _qi_color_hint: Option<&str>,
     entity_seed: u64,
+    race: &RaceId,
+    is_humanoid: bool,
 ) -> KnownTechniques {
-    // 收集所有 realm + 经脉可用的功法
-    let available: Vec<&TechniqueDefinition> = TECHNIQUE_DEFINITIONS
+    // NPC 主动功法池只收 resolver-backed 条目。`direct_generic` 只有玩家 skill-bar
+    // 生命周期，并不等于 NPC 有可调用的 SkillFn；若把它们混入候选，评分器会给出高分，
+    // action 随后 lookup 失败且不更新冷却/last_tick，最终反复抢占 NPC 的 melee 回合。
+    // `body.guangbo_ticao` 是有意保留的 direct-generic 被动，走下方独立 passive 注入，
+    // 不进入主动池。
+    let available: Vec<&TechniqueDefinition> = technique_registry
         .iter()
         .filter(|def| {
-            technique_realm_satisfied(def, realm)
+            def.dispatch == TechniqueDispatch::MetadataBacked
+                && def.required_race.allows(race, is_humanoid)
+                && technique_realm_satisfied(def, realm)
+                && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
+        })
+        .collect();
+    let passive_available: Vec<&TechniqueDefinition> = technique_registry
+        .iter()
+        .filter(|def| {
+            NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+                && def.required_race.allows(race, is_humanoid)
+                && technique_realm_satisfied(def, realm)
                 && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
         })
         .collect();
@@ -208,18 +249,25 @@ pub fn assign_npc_techniques(
         NpcArchetype::Zhinian => (2, 3, 0.3, 0.6),
     };
 
-    if available.is_empty() {
+    if available.is_empty() && passive_available.is_empty() {
         return KnownTechniques {
             entries: Vec::new(),
         };
     }
 
-    // 决定功法数量
+    // 决定基础功法总数量。被动条目走独立注入路径，但占用同一基础配额；这样 NPC
+    // 仍保持既有 1-3/2-4/3-5 等 KnownTechniques 数量，同时不会把 passive 当成可施法招式。
     let range = (count_max - count_min + 1) as u32;
-    let count = count_min + splitmix64_range(entity_seed, range) as usize;
-    let count = count.min(available.len());
+    let total_count = count_min + splitmix64_range(entity_seed, range) as usize;
+    let passive_count = passive_available.len().min(total_count);
+    // 被动条目共享基础配额，但不能吞掉唯一主动条目；NPC 至少保留一个可施放功法，
+    // 否则通用战斗 scorer 会在已知功法非空时失去 cast-ready 路径。
+    let active_count = total_count
+        .saturating_sub(passive_count)
+        .max(1)
+        .min(available.len());
 
-    // Fisher-Yates shuffle 选前 count 个
+    // Fisher-Yates shuffle 选前 active_count 个
     let mut indices: Vec<usize> = (0..available.len()).collect();
     for i in (1..indices.len()).rev() {
         let j = splitmix64_range(
@@ -231,7 +279,7 @@ pub fn assign_npc_techniques(
 
     let mut entries: Vec<KnownTechnique> = indices
         .iter()
-        .take(count)
+        .take(active_count)
         .enumerate()
         .map(|(idx, &orig_idx)| {
             let def = available[orig_idx];
@@ -245,6 +293,13 @@ pub fn assign_npc_techniques(
         })
         .collect();
 
+    inject_npc_passive_skills(
+        &mut entries,
+        &passive_available,
+        prof_min,
+        prof_max,
+        entity_seed,
+    );
     inject_npc_utility_skills(
         &mut entries,
         realm,
@@ -255,6 +310,28 @@ pub fn assign_npc_techniques(
     );
 
     KnownTechniques { entries }
+}
+
+fn inject_npc_passive_skills(
+    entries: &mut Vec<KnownTechnique>,
+    available: &[&TechniqueDefinition],
+    prof_min: f32,
+    prof_max: f32,
+    seed: u64,
+) {
+    for (index, definition) in available.iter().enumerate() {
+        if entries.iter().any(|entry| entry.id == definition.id) {
+            continue;
+        }
+        let proficiency = prof_min
+            + splitmix64_unit(seed.wrapping_add(index as u64 * 0xD1B5_4A32))
+                * (prof_max - prof_min);
+        entries.push(KnownTechnique {
+            id: definition.id.clone(),
+            proficiency: proficiency.clamp(prof_min, prof_max),
+            active: true,
+        });
+    }
 }
 
 fn inject_npc_utility_skills(
@@ -382,6 +459,7 @@ pub struct SelectedTechnique {
 /// MeridianSeveredPermanent 的场景）。
 #[allow(clippy::too_many_arguments)]
 pub fn select_technique(
+    technique_registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     meridian_deps: &SkillMeridianDependencies,
@@ -400,9 +478,14 @@ pub fn select_technique(
         if !entry.active {
             continue;
         }
-        let Some(def) = technique_definition(&entry.id) else {
+        let Some(def) = technique_registry.get(&entry.id) else {
             continue;
         };
+        if def.dispatch != TechniqueDispatch::MetadataBacked
+            || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+        {
+            continue;
+        }
         if let Some(filter) = category_filter {
             if def.category != filter {
                 continue;
@@ -415,6 +498,15 @@ pub fn select_technique(
         // 实时检查依赖经脉的 opened 状态：dugu 毒会关脉（opened=false）但不写入
         // MeridianSeveredPermanent，所以上面的 SEVERED 检查不足以拦截这类情况。
         if let Some(sys) = meridian_sys {
+            if crate::cultivation::meridian::severed::check_skill_channels(
+                &def.required_meridians,
+                sys,
+                severed,
+            )
+            .is_err()
+            {
+                continue;
+            }
             if deps.iter().any(|dep_id| !sys.get(*dep_id).opened) {
                 continue;
             }
@@ -422,7 +514,7 @@ pub fn select_technique(
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             continue;
         }
-        if f64::from(def.qi_cost) > cultivation.qi_current {
+        if def.qi_cost > cultivation.qi_current {
             continue;
         }
         // 通用功法池(category_filter=None)排除有专属 scorer/action 通道的类别：
@@ -444,7 +536,7 @@ pub fn select_technique(
     }
 
     if ctx.qi_ratio < 0.15 {
-        let mut qi_costs: Vec<f32> = candidates.iter().map(|(_, def)| def.qi_cost).collect();
+        let mut qi_costs: Vec<f64> = candidates.iter().map(|(_, def)| def.qi_cost).collect();
         qi_costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median_idx = qi_costs.len().saturating_sub(1) / 2;
         let median_cost = qi_costs[median_idx];
@@ -567,7 +659,7 @@ impl ActionBuilder for NpcHealAction {
 // ─── NpcHealScorer system ────────────────────────────────────────────────────
 
 /// hp_ratio < 0.3 + has Heal-category technique + heal not on cooldown -> 0.9.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn npc_heal_scorer_system(
     npcs: Query<
         (
@@ -581,6 +673,7 @@ pub fn npc_heal_scorer_system(
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
+    technique_registry: Res<TechniqueRegistry>,
     cooldowns: Option<Res<NpcCooldownMap>>,
     meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut scorers: Query<(&Actor, &mut Score), With<NpcHealScorer>>,
@@ -627,10 +720,13 @@ pub fn npc_heal_scorer_system(
                 if !entry.active {
                     return false;
                 }
-                let Some(def) = technique_definition(&entry.id) else {
+                let Some(def) = technique_registry.get(&entry.id) else {
                     return false;
                 };
-                if def.category != SkillCategory::Heal {
+                if def.dispatch != TechniqueDispatch::MetadataBacked
+                    || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+                    || def.category != SkillCategory::Heal
+                {
                     return false;
                 }
                 let entry_deps = deps.lookup(&entry.id);
@@ -646,7 +742,7 @@ pub fn npc_heal_scorer_system(
                 if cooldowns.is_on_cooldown(*actor, &entry.id, current_tick) {
                     return false;
                 }
-                if f64::from(def.qi_cost) > cultivation.qi_current {
+                if def.qi_cost > cultivation.qi_current {
                     return false;
                 }
                 true
@@ -672,6 +768,7 @@ pub fn npc_heal_scorer_system(
 /// 的实时 opened 检查，防止 dugu 毒关脉后仍释放治疗功法）。
 #[allow(clippy::too_many_arguments)]
 pub fn has_usable_heal_technique(
+    technique_registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     deps: &SkillMeridianDependencies,
@@ -685,10 +782,13 @@ pub fn has_usable_heal_technique(
         if !entry.active {
             return false;
         }
-        let Some(def) = technique_definition(&entry.id) else {
+        let Some(def) = technique_registry.get(&entry.id) else {
             return false;
         };
-        if def.category != SkillCategory::Heal {
+        if def.dispatch != TechniqueDispatch::MetadataBacked
+            || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+            || def.category != SkillCategory::Heal
+        {
             return false;
         }
         let entry_deps = deps.lookup(&entry.id);
@@ -704,7 +804,7 @@ pub fn has_usable_heal_technique(
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             return false;
         }
-        if f64::from(def.qi_cost) > cultivation.qi_current {
+        if def.qi_cost > cultivation.qi_current {
             return false;
         }
         true
@@ -742,7 +842,7 @@ pub fn build_npc_skill_scoring_context(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn npc_technique_scorer_system(
     npcs: Query<
         (
@@ -757,6 +857,7 @@ pub fn npc_technique_scorer_system(
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
+    technique_registry: Res<TechniqueRegistry>,
     cooldowns: Option<Res<NpcCooldownMap>>,
     meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut scorers: Query<(&Actor, &mut Score), With<NpcTechniqueScorer>>,
@@ -810,6 +911,7 @@ pub fn npc_technique_scorer_system(
             let ctx = build_npc_skill_scoring_context(cultivation, wounds_opt, bb);
 
             let has_usable = select_technique(
+                &technique_registry,
                 known,
                 cultivation,
                 deps,
@@ -883,6 +985,11 @@ fn run_technique_action<T: Component>(
                     let severed = world.get::<MeridianSeveredPermanent>(actor_entity);
                     let meridian_sys = world.get::<MeridianSystem>(actor_entity);
 
+                    let technique_registry = world
+                        .get_resource::<TechniqueRegistry>()
+                        .expect(
+                            "cultivation::register must insert TechniqueRegistry before NPC skill selection",
+                        );
                     let empty_deps = SkillMeridianDependencies::default();
                     let deps = world
                         .get_resource::<SkillMeridianDependencies>()
@@ -903,6 +1010,7 @@ fn run_technique_action<T: Component>(
                     let ctx = build_npc_skill_scoring_context(cultivation, wounds, bb_ref);
 
                     match select_technique(
+                        technique_registry,
                         known,
                         cultivation,
                         deps,
@@ -997,1980 +1105,5 @@ fn set_action_state(
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem};
-    use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
-    use crate::cultivation::meridian::severed::{
-        MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
-    };
-    use crate::npc::lifecycle::NpcArchetype;
-
-    /// 创建一个有 N 条经脉已开的 MeridianSystem（方便测试）。
-    fn meridian_sys_with_opened(ids: &[MeridianId]) -> MeridianSystem {
-        let mut sys = MeridianSystem::default();
-        for id in ids {
-            let m = sys.get_mut(*id);
-            m.opened = true;
-            m.integrity = 1.0;
-            m.throughput_current = 1.0;
-        }
-        sys
-    }
-
-    /// 全 12 正经已开的 MeridianSystem。
-    fn full_regular_meridians() -> MeridianSystem {
-        use MeridianId::*;
-        meridian_sys_with_opened(&[
-            Lung,
-            LargeIntestine,
-            Stomach,
-            Spleen,
-            Heart,
-            SmallIntestine,
-            Bladder,
-            Kidney,
-            Pericardium,
-            TripleEnergizer,
-            Gallbladder,
-            Liver,
-        ])
-    }
-
-    /// 全 20 条经脉已开的 MeridianSystem。
-    fn full_all_meridians() -> MeridianSystem {
-        use MeridianId::*;
-        meridian_sys_with_opened(&[
-            Lung,
-            LargeIntestine,
-            Stomach,
-            Spleen,
-            Heart,
-            SmallIntestine,
-            Bladder,
-            Kidney,
-            Pericardium,
-            TripleEnergizer,
-            Gallbladder,
-            Liver,
-            Ren,
-            Du,
-            Chong,
-            Dai,
-            YinQiao,
-            YangQiao,
-            YinWei,
-            YangWei,
-        ])
-    }
-
-    fn empty_deps() -> SkillMeridianDependencies {
-        SkillMeridianDependencies::default()
-    }
-
-    fn default_ctx() -> NpcSkillScoringContext {
-        NpcSkillScoringContext {
-            hp_ratio: 1.0,
-            qi_ratio: 1.0,
-            target_distance: 3.0,
-            target_hp_ratio: 1.0,
-            has_active_buff: false,
-            in_combat: true,
-        }
-    }
-
-    // === assign_npc_techniques: archetype coverage ===
-
-    #[test]
-    fn assign_commoner_returns_empty() {
-        let sys = MeridianSystem::default();
-        let deps = empty_deps();
-        let kt =
-            assign_npc_techniques(NpcArchetype::Commoner, Realm::Awaken, &sys, &deps, None, 42);
-        assert!(kt.entries.is_empty(), "commoner should have no techniques");
-    }
-
-    #[test]
-    fn assign_beast_returns_empty() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        let kt = assign_npc_techniques(NpcArchetype::Beast, Realm::Condense, &sys, &deps, None, 42);
-        assert!(kt.entries.is_empty(), "beast should have no techniques");
-    }
-
-    #[test]
-    fn assign_skull_fiend_returns_empty() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        let kt =
-            assign_npc_techniques(NpcArchetype::SkullFiend, Realm::Void, &sys, &deps, None, 42);
-        assert!(
-            kt.entries.is_empty(),
-            "skull fiend should have no techniques"
-        );
-    }
-
-    #[test]
-    fn assign_fuya_returns_empty() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        let kt = assign_npc_techniques(NpcArchetype::Fuya, Realm::Spirit, &sys, &deps, None, 42);
-        assert!(kt.entries.is_empty(), "fuya should have no techniques");
-    }
-
-    #[test]
-    fn assign_zombie_returns_empty() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        let kt = assign_npc_techniques(NpcArchetype::Zombie, Realm::Awaken, &sys, &deps, None, 42);
-        assert!(kt.entries.is_empty(), "zombie should have no techniques");
-    }
-
-    #[test]
-    fn assign_rogue_awaken_returns_1_to_3() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        // Run multiple seeds to hit different counts
-        for seed in 0..50u64 {
-            let kt =
-                assign_npc_techniques(NpcArchetype::Rogue, Realm::Awaken, &sys, &deps, None, seed);
-            assert!(
-                !kt.entries.is_empty() && kt.entries.len() <= 3,
-                "rogue awaken should have 1-3 techniques, got {} (seed={})",
-                kt.entries.len(),
-                seed
-            );
-            for entry in &kt.entries {
-                assert!(
-                    entry.proficiency >= 0.2 && entry.proficiency <= 0.7,
-                    "rogue proficiency should be 0.2-0.7, got {} for {} (seed={})",
-                    entry.proficiency,
-                    entry.id,
-                    seed
-                );
-                assert!(entry.active, "assigned techniques should be active");
-            }
-        }
-    }
-
-    #[test]
-    fn assign_disciple_returns_2_to_6() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..50u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::Disciple,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed * 7,
-            );
-            assert!(
-                kt.entries.len() >= 2 && kt.entries.len() <= 6,
-                "disciple Condense should have 2-6 techniques (base 2-4 + heal + buff), got {} (seed={})",
-                kt.entries.len(),
-                seed
-            );
-            for entry in &kt.entries {
-                assert!(
-                    entry.proficiency >= 0.3 && entry.proficiency <= 0.8,
-                    "disciple proficiency should be 0.3-0.8, got {}",
-                    entry.proficiency
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn assign_guardian_relic_returns_3_to_7() {
-        let sys = full_all_meridians();
-        let deps = empty_deps();
-        for seed in 0..50u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::GuardianRelic,
-                Realm::Spirit,
-                &sys,
-                &deps,
-                None,
-                seed * 13,
-            );
-            assert!(
-                kt.entries.len() >= 3 && kt.entries.len() <= 7,
-                "guardian relic Spirit should have 3-7 techniques (base 3-5 + heal + buff), got {} (seed={})",
-                kt.entries.len(),
-                seed
-            );
-            for entry in &kt.entries {
-                assert!(
-                    entry.proficiency >= 0.6 && entry.proficiency <= 0.9,
-                    "guardian relic proficiency should be 0.6-0.9, got {}",
-                    entry.proficiency
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn assign_daoxiang_returns_1_to_3() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..50u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::Daoxiang,
-                Realm::Induce,
-                &sys,
-                &deps,
-                None,
-                seed * 17,
-            );
-            assert!(
-                !kt.entries.is_empty() && kt.entries.len() <= 3,
-                "daoxiang Induce should have 1-3 techniques (base 1-2 + heal), got {} (seed={})",
-                kt.entries.len(),
-                seed
-            );
-            for entry in &kt.entries {
-                assert!(
-                    entry.proficiency >= 0.1 && entry.proficiency <= 0.4,
-                    "daoxiang proficiency should be 0.1-0.4, got {}",
-                    entry.proficiency
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn assign_zhinian_returns_2_to_5() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..50u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::Zhinian,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed * 19,
-            );
-            assert!(
-                kt.entries.len() >= 2 && kt.entries.len() <= 5,
-                "zhinian Condense should have 2-5 techniques (base 2-3 + heal + buff), got {} (seed={})",
-                kt.entries.len(),
-                seed
-            );
-            for entry in &kt.entries {
-                assert!(
-                    entry.proficiency >= 0.3 && entry.proficiency <= 0.6,
-                    "zhinian proficiency should be 0.3-0.6, got {}",
-                    entry.proficiency
-                );
-            }
-        }
-    }
-
-    // === assign_npc_techniques: realm gating ===
-
-    #[test]
-    fn realm_too_low_excludes_techniques() {
-        // Awaken NPC should not get Induce+ techniques
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..100u64 {
-            let kt =
-                assign_npc_techniques(NpcArchetype::Rogue, Realm::Awaken, &sys, &deps, None, seed);
-            for entry in &kt.entries {
-                let def = technique_definition(&entry.id).expect("valid technique");
-                let required = parse_realm(def.required_realm).unwrap();
-                assert!(
-                    realm_rank(required) <= realm_rank(Realm::Awaken),
-                    "Awaken NPC should not have technique {} requiring {:?}",
-                    entry.id,
-                    def.required_realm
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn no_meridians_opened_returns_empty_for_meridian_gated_techniques() {
-        // MeridianSystem default = all closed
-        let sys = MeridianSystem::default();
-        let deps = empty_deps();
-        // Even Induce rogue — techniques requiring meridians should be excluded
-        let kt = assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, 42);
-        for entry in &kt.entries {
-            let def = technique_definition(&entry.id).expect("valid technique");
-            assert!(
-                def.required_meridians.is_empty(),
-                "technique {} requires meridians but NPC has none opened — should have been filtered",
-                entry.id
-            );
-        }
-    }
-
-    // === assign_npc_techniques: P1.4 NPC utility skill injection ===
-
-    #[test]
-    fn assign_induce_rogue_always_has_heal_basic() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..100u64 {
-            let kt =
-                assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, seed);
-            assert!(
-                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
-                "Induce+ Rogue should always have npc.heal_basic (seed={})",
-                seed
-            );
-        }
-    }
-
-    #[test]
-    fn assign_condense_rogue_always_has_heal_and_buff() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..100u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::Rogue,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed,
-            );
-            assert!(
-                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
-                "Condense+ Rogue should always have npc.heal_basic (seed={})",
-                seed
-            );
-            let has_buff = kt
-                .entries
-                .iter()
-                .any(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense");
-            assert!(
-                has_buff,
-                "Condense+ Rogue should always have npc.buff_speed or npc.buff_defense (seed={})",
-                seed
-            );
-        }
-    }
-
-    #[test]
-    fn assign_awaken_rogue_never_has_npc_utility_skills() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..100u64 {
-            let kt =
-                assign_npc_techniques(NpcArchetype::Rogue, Realm::Awaken, &sys, &deps, None, seed);
-            for entry in &kt.entries {
-                assert!(
-                    !entry.id.starts_with("npc."),
-                    "Awaken NPC should not have NPC utility skill {}, got it at seed={}",
-                    entry.id,
-                    seed
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn assign_npc_utility_skills_no_duplicates() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..200u64 {
-            let kt = assign_npc_techniques(
-                NpcArchetype::Disciple,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed,
-            );
-            let ids: Vec<&str> = kt.entries.iter().map(|e| e.id.as_str()).collect();
-            let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
-            assert_eq!(
-                ids.len(),
-                unique.len(),
-                "no duplicate technique IDs should exist, got {:?} (seed={})",
-                ids,
-                seed
-            );
-        }
-    }
-
-    #[test]
-    fn assign_npc_heal_blocked_when_meridians_closed() {
-        let sys = MeridianSystem::default();
-        let deps = empty_deps();
-        for seed in 0..50u64 {
-            let kt =
-                assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, seed);
-            assert!(
-                !kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
-                "npc.heal_basic requires Spleen+Kidney meridians — should not appear with all closed (seed={})",
-                seed
-            );
-        }
-    }
-
-    #[test]
-    fn assign_buff_is_speed_or_defense_deterministic_per_seed() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for seed in 0..100u64 {
-            let a = assign_npc_techniques(
-                NpcArchetype::Rogue,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed,
-            );
-            let b = assign_npc_techniques(
-                NpcArchetype::Rogue,
-                Realm::Condense,
-                &sys,
-                &deps,
-                None,
-                seed,
-            );
-            let buff_a: Vec<&str> = a
-                .entries
-                .iter()
-                .filter(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense")
-                .map(|e| e.id.as_str())
-                .collect();
-            let buff_b: Vec<&str> = b
-                .entries
-                .iter()
-                .filter(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense")
-                .map(|e| e.id.as_str())
-                .collect();
-            assert_eq!(
-                buff_a, buff_b,
-                "same seed should pick same buff variant (seed={})",
-                seed
-            );
-        }
-    }
-
-    #[test]
-    fn assign_all_combat_archetypes_get_heal_at_induce() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for archetype in [
-            NpcArchetype::Rogue,
-            NpcArchetype::Disciple,
-            NpcArchetype::GuardianRelic,
-            NpcArchetype::Daoxiang,
-            NpcArchetype::Zhinian,
-        ] {
-            let kt = assign_npc_techniques(archetype, Realm::Induce, &sys, &deps, None, 42);
-            assert!(
-                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
-                "{:?} at Induce should have npc.heal_basic",
-                archetype
-            );
-        }
-    }
-
-    #[test]
-    fn assign_non_combat_archetypes_never_get_npc_skills() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for archetype in [
-            NpcArchetype::Commoner,
-            NpcArchetype::Beast,
-            NpcArchetype::SkullFiend,
-            NpcArchetype::Fuya,
-            NpcArchetype::Zombie,
-        ] {
-            let kt = assign_npc_techniques(archetype, Realm::Void, &sys, &deps, None, 42);
-            assert!(
-                kt.entries.is_empty(),
-                "{:?} should have no techniques even at Void",
-                archetype
-            );
-        }
-    }
-
-    // === assign_npc_techniques: determinism ===
-
-    #[test]
-    fn assign_techniques_deterministic() {
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-        for archetype in [
-            NpcArchetype::Rogue,
-            NpcArchetype::Disciple,
-            NpcArchetype::GuardianRelic,
-            NpcArchetype::Daoxiang,
-            NpcArchetype::Zhinian,
-        ] {
-            let a = assign_npc_techniques(archetype, Realm::Condense, &sys, &deps, None, 12345);
-            let b = assign_npc_techniques(archetype, Realm::Condense, &sys, &deps, None, 12345);
-            assert_eq!(
-                a, b,
-                "same seed should produce identical techniques for {:?}",
-                archetype
-            );
-        }
-    }
-
-    // === select_technique: basic ===
-
-    #[test]
-    fn select_technique_with_available_returns_some() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(result.is_some(), "should select a technique");
-        let sel = result.unwrap();
-        assert_eq!(sel.technique_id, "sword.cleave");
-        assert_eq!(sel.target, SkillTarget::NearestEnemy);
-    }
-
-    #[test]
-    fn select_technique_inactive_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: false,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(result.is_none(), "inactive technique should be excluded");
-    }
-
-    #[test]
-    fn select_technique_on_cooldown_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let mut cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        cooldowns.set(entity, "sword.cleave", 200); // on CD until tick 200
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(result.is_none(), "technique on cooldown should be excluded");
-    }
-
-    #[test]
-    fn select_technique_cooldown_expired_available() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let mut cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        cooldowns.set(entity, "sword.cleave", 100); // expired at tick 100
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(result.is_some(), "expired cooldown should allow technique");
-    }
-
-    #[test]
-    fn select_technique_general_pool_excludes_heal_but_heal_channel_keeps_it() {
-        // #3 回归锁：通用功法池(category_filter=None)必须排除 Heal——Heal 有专属
-        // NpcHealScorer→NpcHealAction(filter=Some(Heal)) 通道。若漏出到通用池，
-        // category_weight(Heal) 即便为 0 也被 .max(0.001) 抬成非零权重，NPC 满血时
-        // 仍有概率用「通用功法回合」self-cast 治疗，抢占进攻。Defense 早已被排除，Heal 此前漏排。
-        assert_eq!(
-            technique_definition("npc.heal_basic").map(|d| d.category),
-            Some(SkillCategory::Heal),
-            "前置假设：npc.heal_basic 必须是 Heal 类别"
-        );
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "npc.heal_basic".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        // 通用池：唯一候选是 heal → 被排除 → 候选空 → None（确定性，不依赖加权 roll）。
-        let general = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            general.is_none(),
-            "通用功法池必须排除 Heal，唯一 heal 候选时应返回 None，实得 {general:?}"
-        );
-
-        // 专属 heal 通道(filter=Some(Heal))：本修复不得误伤，仍须能选中 heal。
-        let heal_channel = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            Some(SkillCategory::Heal),
-        );
-        assert_eq!(
-            heal_channel.map(|s| s.technique_id),
-            Some("npc.heal_basic".to_string()),
-            "Heal 专属通道(filter=Some(Heal))必须仍能选中 heal，修复只动通用池"
-        );
-    }
-
-    #[test]
-    fn select_technique_general_pool_picks_attack_over_leaked_heal() {
-        // 通用池同时含 attack+heal 且 heal 熟练度远高时，heal 被排除 → 结果必为 attack
-        // （确定性：候选集只剩 sword.cleave，与加权 roll 无关）。
-        let known = KnownTechniques {
-            entries: vec![
-                KnownTechnique {
-                    id: "npc.heal_basic".to_string(),
-                    proficiency: 0.9,
-                    active: true,
-                },
-                KnownTechnique {
-                    id: "sword.cleave".to_string(),
-                    proficiency: 0.1,
-                    active: true,
-                },
-            ],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(7);
-
-        let sel = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        )
-        .expect("attack 功法仍在通用池，应可选");
-        assert_eq!(
-            sel.technique_id, "sword.cleave",
-            "通用池排除 heal 后只剩 attack，即便 heal 熟练度更高也必须选 attack"
-        );
-        assert_eq!(sel.target, SkillTarget::NearestEnemy);
-    }
-
-    #[test]
-    fn select_technique_qi_insufficient_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "burst_meridian.beng_quan".to_string(), // qi_cost = 0.4
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 0.1, // insufficient
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "technique with qi_cost > qi_current should be excluded"
-        );
-    }
-
-    #[test]
-    fn select_technique_severed_meridian_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "woliu.burst".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("woliu.burst", vec![MeridianId::Lung]);
-
-        let mut severed = MeridianSeveredPermanent::default();
-        severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 50);
-
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            Some(&severed),
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "technique with SEVERED dependent meridian should be excluded"
-        );
-    }
-
-    // === select_technique: dugu-poison opened=false gate (skill-gate-001) ===
-
-    /// dugu 毒将经脉 opened 设为 false 但不写入 MeridianSeveredPermanent；
-    /// 传入 meridian_sys=Some 时，select_technique 应拒绝该功法。
-    #[test]
-    fn select_technique_dugu_poisoned_meridian_closed_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "woliu.burst".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("woliu.burst", vec![MeridianId::Lung]);
-
-        // Simulate dugu_poison_tick effect: Lung closed via opened=false, no SEVERED component
-        let mut meridian_sys = meridian_sys_with_opened(&[
-            MeridianId::LargeIntestine,
-            MeridianId::Stomach,
-            MeridianId::Spleen,
-            MeridianId::Heart,
-            MeridianId::SmallIntestine,
-        ]);
-        // Lung is left at default (opened=false) — simulates dugu poison closing it
-        {
-            let lung = meridian_sys.get_mut(MeridianId::Lung);
-            lung.opened = false;
-            lung.flow_capacity = 0.0;
-        }
-
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None, // no MeridianSeveredPermanent — dugu does NOT insert this
-            Some(&meridian_sys),
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "dugu-poisoned NPC with Lung closed (opened=false, no SEVERED component) must not \
-             be able to cast woliu.burst — expected None but got Some"
-        );
-    }
-
-    /// 经脉 opened=true 时（无毒），select_technique 应正常选出功法（happy path）。
-    #[test]
-    fn select_technique_meridian_open_allows_technique() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "woliu.burst".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("woliu.burst", vec![MeridianId::Lung]);
-
-        // Lung is open
-        let meridian_sys = meridian_sys_with_opened(&[MeridianId::Lung]);
-
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            Some(&meridian_sys),
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_some(),
-            "NPC with Lung open should be able to cast woliu.burst"
-        );
-        assert_eq!(result.unwrap().technique_id, "woliu.burst");
-    }
-
-    /// MeridianSystem 传 None 时（向后兼容），select_technique 不做 opened 检查，
-    /// 行为与修复前相同（仍可通过 SEVERED 途径拦截）。
-    #[test]
-    fn select_technique_no_meridian_sys_skips_opened_check() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "woliu.burst".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("woliu.burst", vec![MeridianId::Lung]);
-
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        // No meridian_sys — opened check is skipped, skill is selectable
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None, // no meridian_sys → no opened check
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_some(),
-            "without meridian_sys, select_technique should not gate on opened field"
-        );
-    }
-
-    /// has_usable_heal_technique: dugu 毒关脉后 opened=false，heal 功法应被拒绝。
-    #[test]
-    fn has_usable_heal_dugu_poisoned_meridian_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "npc.heal_basic".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        // Declare that npc.heal_basic depends on Spleen
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("npc.heal_basic", vec![MeridianId::Spleen]);
-
-        // dugu 毒把 Spleen 关掉（opened=false），但没有 MeridianSeveredPermanent
-        let mut meridian_sys = MeridianSystem::default();
-        {
-            let spleen = meridian_sys.get_mut(MeridianId::Spleen);
-            spleen.opened = false;
-            spleen.flow_capacity = 0.0;
-        }
-
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = has_usable_heal_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None, // no MeridianSeveredPermanent
-            Some(&meridian_sys),
-            &cooldowns,
-            entity,
-            100,
-        );
-        assert!(
-            !result,
-            "dugu-poisoned NPC with Spleen closed must not have usable heal — \
-             expected false but got true"
-        );
-    }
-
-    /// has_usable_heal_technique: 经脉 open 时治疗可用（happy path，含 opened 检查）。
-    #[test]
-    fn has_usable_heal_meridian_open_allows_heal() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "npc.heal_basic".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("npc.heal_basic", vec![MeridianId::Spleen]);
-
-        let meridian_sys = meridian_sys_with_opened(&[MeridianId::Spleen]);
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = has_usable_heal_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            Some(&meridian_sys),
-            &cooldowns,
-            entity,
-            100,
-        );
-        assert!(
-            result,
-            "NPC with Spleen open should have usable heal technique"
-        );
-    }
-
-    #[test]
-    fn select_technique_all_on_cooldown_returns_none() {
-        let known = KnownTechniques {
-            entries: vec![
-                KnownTechnique {
-                    id: "sword.cleave".to_string(),
-                    proficiency: 0.5,
-                    active: true,
-                },
-                KnownTechnique {
-                    id: "sword.thrust".to_string(),
-                    proficiency: 0.5,
-                    active: true,
-                },
-            ],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let mut cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        cooldowns.set(entity, "sword.cleave", 200);
-        cooldowns.set(entity, "sword.thrust", 200);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "all techniques on cooldown should return None"
-        );
-    }
-
-    #[test]
-    fn select_technique_empty_known_returns_none() {
-        let known = KnownTechniques {
-            entries: Vec::new(),
-        };
-        let cultivation = Cultivation::default();
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "empty known techniques should return None"
-        );
-    }
-
-    // === NpcCooldownMap ===
-
-    #[test]
-    fn cooldown_map_set_and_check() {
-        let mut map = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        map.set(entity, "sword.cleave", 100);
-
-        assert!(map.is_on_cooldown(entity, "sword.cleave", 50));
-        assert!(map.is_on_cooldown(entity, "sword.cleave", 99));
-        assert!(!map.is_on_cooldown(entity, "sword.cleave", 100));
-        assert!(!map.is_on_cooldown(entity, "sword.cleave", 101));
-    }
-
-    #[test]
-    fn cooldown_map_different_entities_independent() {
-        let mut map = NpcCooldownMap::default();
-        let e1 = Entity::from_raw(1);
-        let e2 = Entity::from_raw(2);
-        map.set(e1, "sword.cleave", 100);
-
-        assert!(map.is_on_cooldown(e1, "sword.cleave", 50));
-        assert!(
-            !map.is_on_cooldown(e2, "sword.cleave", 50),
-            "cooldown for e1 should not affect e2"
-        );
-    }
-
-    #[test]
-    fn cooldown_map_remove_all_for_entity() {
-        let mut map = NpcCooldownMap::default();
-        let e1 = Entity::from_raw(1);
-        let e2 = Entity::from_raw(2);
-        map.set(e1, "sword.cleave", 100);
-        map.set(e1, "sword.thrust", 200);
-        map.set(e2, "sword.cleave", 150);
-
-        map.remove_all_for(e1);
-        assert!(!map.is_on_cooldown(e1, "sword.cleave", 50));
-        assert!(!map.is_on_cooldown(e1, "sword.thrust", 50));
-        assert!(
-            map.is_on_cooldown(e2, "sword.cleave", 50),
-            "removing e1 entries should not affect e2"
-        );
-    }
-
-    #[test]
-    fn cooldown_map_overwrite() {
-        let mut map = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        map.set(entity, "sword.cleave", 100);
-        map.set(entity, "sword.cleave", 200); // overwrite
-
-        assert!(map.is_on_cooldown(entity, "sword.cleave", 150));
-        assert!(!map.is_on_cooldown(entity, "sword.cleave", 200));
-    }
-
-    #[test]
-    fn cooldown_map_empty_check() {
-        let map = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        assert!(
-            !map.is_on_cooldown(entity, "sword.cleave", 0),
-            "empty map should not report cooldown"
-        );
-    }
-
-    // === select_technique: weighted random ===
-
-    #[test]
-    fn select_technique_higher_proficiency_more_likely() {
-        let known = KnownTechniques {
-            entries: vec![
-                KnownTechnique {
-                    id: "sword.cleave".to_string(),
-                    proficiency: 0.01, // very low
-                    active: true,
-                },
-                KnownTechnique {
-                    id: "sword.thrust".to_string(),
-                    proficiency: 0.99, // very high
-                    active: true,
-                },
-            ],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let mut thrust_count = 0;
-        for tick in 0..1000u64 {
-            if let Some(sel) = select_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                3.0,
-                tick,
-                &default_ctx(),
-                None,
-            ) {
-                if sel.technique_id == "sword.thrust" {
-                    thrust_count += 1;
-                }
-            }
-        }
-        // sword.thrust with 0.99 should be selected much more than sword.cleave with 0.01
-        assert!(
-            thrust_count > 800,
-            "high proficiency technique should be selected >80% of the time, got {}/1000",
-            thrust_count
-        );
-    }
-
-    // === meridian_deps_satisfied ===
-
-    #[test]
-    fn meridian_deps_satisfied_no_deps() {
-        let def = technique_definition("sword.cleave").unwrap();
-        let sys = MeridianSystem::default();
-        let deps = empty_deps();
-        assert!(
-            meridian_deps_satisfied(def, &sys, &deps),
-            "technique with no meridian deps should pass"
-        );
-    }
-
-    #[test]
-    fn meridian_deps_satisfied_with_opened() {
-        let def = technique_definition("zhenmai.parry").unwrap(); // requires Lung
-        let sys = meridian_sys_with_opened(&[MeridianId::Lung]);
-        let deps = empty_deps();
-        assert!(
-            meridian_deps_satisfied(def, &sys, &deps),
-            "technique with opened required meridian should pass"
-        );
-    }
-
-    #[test]
-    fn meridian_deps_not_satisfied_when_closed() {
-        let def = technique_definition("zhenmai.parry").unwrap(); // requires Lung
-        let sys = MeridianSystem::default(); // all closed
-        let deps = empty_deps();
-        assert!(
-            !meridian_deps_satisfied(def, &sys, &deps),
-            "technique with closed required meridian should fail"
-        );
-    }
-
-    // === assign_npc_techniques: all archetypes x all realms ===
-
-    #[test]
-    fn assign_all_archetypes_all_realms_valid() {
-        let all_archetypes = [
-            NpcArchetype::Zombie,
-            NpcArchetype::Commoner,
-            NpcArchetype::Rogue,
-            NpcArchetype::Beast,
-            NpcArchetype::Disciple,
-            NpcArchetype::GuardianRelic,
-            NpcArchetype::Daoxiang,
-            NpcArchetype::Zhinian,
-            NpcArchetype::Fuya,
-            NpcArchetype::SkullFiend,
-        ];
-        let all_realms = [
-            Realm::Awaken,
-            Realm::Induce,
-            Realm::Condense,
-            Realm::Solidify,
-            Realm::Spirit,
-            Realm::Void,
-        ];
-        let sys = full_all_meridians();
-        let deps = empty_deps();
-
-        for archetype in all_archetypes {
-            for realm in all_realms {
-                let kt = assign_npc_techniques(archetype, realm, &sys, &deps, None, 42);
-                for entry in &kt.entries {
-                    assert!(
-                        entry.proficiency >= 0.0 && entry.proficiency <= 1.0,
-                        "{:?} x {:?}: proficiency {} out of range",
-                        archetype,
-                        realm,
-                        entry.proficiency
-                    );
-                    assert!(entry.active);
-                    // Verify technique exists
-                    assert!(
-                        technique_definition(&entry.id).is_some(),
-                        "{:?} x {:?}: technique {} not found in definitions",
-                        archetype,
-                        realm,
-                        entry.id
-                    );
-                    // Verify realm requirement met
-                    let def = technique_definition(&entry.id).unwrap();
-                    if let Some(required) = parse_realm(def.required_realm) {
-                        assert!(
-                            realm_rank(required) <= realm_rank(realm),
-                            "{:?} x {:?}: technique {} requires {:?} but NPC is {:?}",
-                            archetype,
-                            realm,
-                            entry.id,
-                            def.required_realm,
-                            realm
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // === parse_realm ===
-
-    #[test]
-    fn parse_realm_all_variants() {
-        assert_eq!(parse_realm("Awaken"), Some(Realm::Awaken));
-        assert_eq!(parse_realm("Induce"), Some(Realm::Induce));
-        assert_eq!(parse_realm("Condense"), Some(Realm::Condense));
-        assert_eq!(parse_realm("Solidify"), Some(Realm::Solidify));
-        assert_eq!(parse_realm("Spirit"), Some(Realm::Spirit));
-        assert_eq!(parse_realm("Void"), Some(Realm::Void));
-        assert_eq!(parse_realm("invalid"), None);
-        assert_eq!(parse_realm(""), None);
-    }
-
-    // === category_weight ===
-
-    #[test]
-    fn category_weight_heal_scales_with_missing_hp() {
-        let ctx_full = NpcSkillScoringContext {
-            hp_ratio: 1.0,
-            ..default_ctx()
-        };
-        let ctx_half = NpcSkillScoringContext {
-            hp_ratio: 0.5,
-            ..default_ctx()
-        };
-        let ctx_low = NpcSkillScoringContext {
-            hp_ratio: 0.3,
-            ..default_ctx()
-        };
-        let ctx_zero = NpcSkillScoringContext {
-            hp_ratio: 0.0,
-            ..default_ctx()
-        };
-
-        let w_full = category_weight(SkillCategory::Heal, &ctx_full);
-        let w_half = category_weight(SkillCategory::Heal, &ctx_half);
-        let w_low = category_weight(SkillCategory::Heal, &ctx_low);
-        let w_zero = category_weight(SkillCategory::Heal, &ctx_zero);
-
-        assert!(
-            w_full < f32::EPSILON,
-            "full HP should yield ~0 heal weight, got {w_full}"
-        );
-        assert!(
-            w_half > w_full,
-            "half HP should yield higher heal weight than full"
-        );
-        assert!(
-            w_low > w_half,
-            "low HP should yield higher heal weight than half"
-        );
-        assert!(
-            (w_zero - 0.9).abs() < f32::EPSILON,
-            "zero HP should yield 0.9 heal weight, got {w_zero}"
-        );
-    }
-
-    #[test]
-    fn category_weight_buff_in_combat_no_active() {
-        let ctx = NpcSkillScoringContext {
-            has_active_buff: false,
-            in_combat: true,
-            ..default_ctx()
-        };
-        assert!(
-            (category_weight(SkillCategory::Buff, &ctx) - 0.6).abs() < f32::EPSILON,
-            "buff in combat without active buff should be 0.6"
-        );
-    }
-
-    #[test]
-    fn category_weight_buff_already_buffed() {
-        let ctx = NpcSkillScoringContext {
-            has_active_buff: true,
-            in_combat: true,
-            ..default_ctx()
-        };
-        assert!(
-            (category_weight(SkillCategory::Buff, &ctx) - 0.05).abs() < f32::EPSILON,
-            "buff with active buff should be 0.05"
-        );
-    }
-
-    #[test]
-    fn category_weight_buff_out_of_combat() {
-        let ctx = NpcSkillScoringContext {
-            has_active_buff: false,
-            in_combat: false,
-            ..default_ctx()
-        };
-        assert!(
-            (category_weight(SkillCategory::Buff, &ctx) - 0.05).abs() < f32::EPSILON,
-            "buff out of combat should be 0.05"
-        );
-    }
-
-    #[test]
-    fn category_weight_attack_constant() {
-        let ctx = default_ctx();
-        assert!(
-            (category_weight(SkillCategory::Attack, &ctx) - 0.8).abs() < f32::EPSILON,
-            "attack weight should be 0.8"
-        );
-    }
-
-    #[test]
-    fn category_weight_control_constant() {
-        let ctx = default_ctx();
-        assert!(
-            (category_weight(SkillCategory::Control, &ctx) - 0.4).abs() < f32::EPSILON,
-            "control weight should be 0.4"
-        );
-    }
-
-    #[test]
-    fn category_weight_defense_zero() {
-        let ctx = default_ctx();
-        assert!(
-            category_weight(SkillCategory::Defense, &ctx) < f32::EPSILON,
-            "defense weight should be 0.0"
-        );
-    }
-
-    #[test]
-    fn select_technique_defense_excluded() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.parry".to_string(),
-                proficiency: 0.9,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-        assert!(
-            result.is_none(),
-            "Defense category techniques should be excluded from select_technique"
-        );
-    }
-
-    #[test]
-    fn select_technique_low_qi_filters_high_cost() {
-        let known = KnownTechniques {
-            entries: vec![
-                KnownTechnique {
-                    id: "sword.cleave".to_string(), // qi_cost = 0.0
-                    proficiency: 0.5,
-                    active: true,
-                },
-                KnownTechnique {
-                    id: "woliu.heart".to_string(), // qi_cost = 50.0
-                    proficiency: 0.5,
-                    active: true,
-                },
-            ],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let low_qi_ctx = NpcSkillScoringContext {
-            qi_ratio: 0.1,
-            ..default_ctx()
-        };
-
-        let mut cleave_selected = false;
-        let mut heart_selected = false;
-        for tick in 0..500u64 {
-            if let Some(sel) = select_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                3.0,
-                tick,
-                &low_qi_ctx,
-                None,
-            ) {
-                match sel.technique_id.as_str() {
-                    "sword.cleave" => cleave_selected = true,
-                    "woliu.heart" => heart_selected = true,
-                    _ => {}
-                }
-            }
-        }
-
-        assert!(
-            cleave_selected,
-            "low qi_cost technique should be selectable at low qi_ratio"
-        );
-        assert!(
-            !heart_selected,
-            "high qi_cost technique should be filtered at qi_ratio < 0.15"
-        );
-    }
-
-    // === category_filter: select_technique with filter ===
-
-    #[test]
-    fn select_technique_category_filter_heal_only() {
-        let known = KnownTechniques {
-            entries: vec![
-                KnownTechnique {
-                    id: "sword.cleave".to_string(),
-                    proficiency: 0.5,
-                    active: true,
-                },
-                KnownTechnique {
-                    id: "zhenmai.neutralize".to_string(),
-                    proficiency: 0.5,
-                    active: true,
-                },
-            ],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            Some(SkillCategory::Heal),
-        );
-        let sel = result.expect("with Heal filter, zhenmai.neutralize should be selectable");
-        assert_eq!(sel.technique_id, "zhenmai.neutralize");
-        assert_eq!(
-            sel.target,
-            SkillTarget::SelfCast,
-            "Heal should route to SelfCast"
-        );
-    }
-
-    #[test]
-    fn select_technique_category_filter_returns_none_when_no_match() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            Some(SkillCategory::Heal),
-        );
-        assert!(
-            result.is_none(),
-            "no Heal techniques available, should return None"
-        );
-    }
-
-    #[test]
-    fn select_technique_category_filter_defense_selectable_when_explicit() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.parry".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-
-        let result = select_technique(
-            &known,
-            &cultivation,
-            &deps,
-            None,
-            None,
-            &cooldowns,
-            entity,
-            3.0,
-            100,
-            &default_ctx(),
-            Some(SkillCategory::Defense),
-        );
-        let sel = result.expect("Defense filter should override the default Defense exclusion");
-        assert_eq!(sel.technique_id, "sword.parry");
-        assert_eq!(
-            sel.target,
-            SkillTarget::NearestEnemy,
-            "Defense should route to NearestEnemy"
-        );
-    }
-
-    // === has_usable_heal_technique ===
-
-    #[test]
-    fn has_usable_heal_with_heal_technique() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "zhenmai.neutralize".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        assert!(
-            has_usable_heal_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                100
-            ),
-            "NPC with active heal technique should have usable heal"
-        );
-    }
-
-    #[test]
-    fn has_usable_heal_without_heal_technique() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        assert!(
-            !has_usable_heal_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                100
-            ),
-            "NPC with only Attack techniques should not have usable heal"
-        );
-    }
-
-    #[test]
-    fn has_usable_heal_on_cooldown() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "zhenmai.neutralize".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let mut cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        cooldowns.set(entity, "zhenmai.neutralize", 200);
-        assert!(
-            !has_usable_heal_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                100
-            ),
-            "heal technique on cooldown should not be usable"
-        );
-    }
-
-    #[test]
-    fn has_usable_heal_inactive_technique() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "zhenmai.neutralize".to_string(),
-                proficiency: 0.5,
-                active: false,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        assert!(
-            !has_usable_heal_technique(
-                &known,
-                &cultivation,
-                &deps,
-                None,
-                None,
-                &cooldowns,
-                entity,
-                100
-            ),
-            "inactive heal technique should not be usable"
-        );
-    }
-
-    #[test]
-    fn has_usable_heal_insufficient_qi() {
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "zhenmai.neutralize".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 0.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let deps = empty_deps();
-        let cooldowns = NpcCooldownMap::default();
-        let entity = Entity::from_raw(1);
-        let def = technique_definition("zhenmai.neutralize").unwrap();
-        if def.qi_cost > 0.0 {
-            assert!(
-                !has_usable_heal_technique(
-                    &known,
-                    &cultivation,
-                    &deps,
-                    None,
-                    None,
-                    &cooldowns,
-                    entity,
-                    100
-                ),
-                "heal technique should not be usable with 0 qi when qi_cost > 0"
-            );
-        }
-    }
-
-    // === NpcCooldownMap cleanup on death ===
-
-    #[test]
-    fn cooldown_map_remove_all_for_clears_entity_entries() {
-        let mut map = NpcCooldownMap::default();
-        let npc_a = Entity::from_raw(10);
-        let npc_b = Entity::from_raw(20);
-        map.set(npc_a, "sword.cleave", 200);
-        map.set(npc_a, "sword.thrust", 300);
-        map.set(npc_b, "woliu.burst", 200);
-
-        assert_eq!(map.len(), 3, "should have 3 entries before cleanup");
-
-        map.remove_all_for(npc_a);
-
-        assert_eq!(
-            map.len(),
-            1,
-            "only npc_b's entry should remain after removing npc_a"
-        );
-        assert!(
-            !map.is_on_cooldown(npc_a, "sword.cleave", 100),
-            "npc_a cleave cooldown should be removed"
-        );
-        assert!(
-            !map.is_on_cooldown(npc_a, "sword.thrust", 100),
-            "npc_a thrust cooldown should be removed"
-        );
-        assert!(
-            map.is_on_cooldown(npc_b, "woliu.burst", 100),
-            "npc_b burst cooldown should remain intact"
-        );
-    }
-
-    #[test]
-    fn cooldown_map_remove_all_for_noop_on_unknown_entity() {
-        let mut map = NpcCooldownMap::default();
-        let npc_a = Entity::from_raw(10);
-        let npc_b = Entity::from_raw(20);
-        map.set(npc_a, "sword.cleave", 200);
-
-        map.remove_all_for(npc_b);
-
-        assert_eq!(
-            map.len(),
-            1,
-            "removing unknown entity should not affect existing entries"
-        );
-    }
-}
+#[path = "technique_tests.rs"]
+mod tests;

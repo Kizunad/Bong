@@ -8,9 +8,11 @@
 //! 化虚渡劫为特殊流程（§3.2）：不走本 system 的 try_breakthrough，而是
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
+use std::collections::HashMap;
+
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Entity, Event, EventReader, EventWriter,
-    Events, Position, Query, Res, ResMut, Username,
+    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Component, Entity, Event,
+    EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
 };
 
 use crate::combat::components::StatusEffects;
@@ -35,6 +37,7 @@ use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, 
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::meridian_open::MIN_ZONE_QI_TO_OPEN;
+use super::overload::FREEZE_FACTOR;
 use super::tick::CultivationClock;
 
 pub const RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
@@ -186,6 +189,11 @@ pub enum BreakthroughError {
     RolledFailure {
         severity: f64,
     }, // 骰子输了
+    /// review r2 major-2 收口：目标实体成功解析出一个真实（非 humanoid 兜底）
+    /// `BodyPlan`，但该 plan 未声明 `meridian_profile`——fail-closed 拒绝突破，
+    /// 不静默借用 humanoid 1/3/6/12/16/20 曲线（见
+    /// `body_plan::MeridianProfileMissingError` 文档）。
+    RaceProfileIncomplete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,6 +243,9 @@ fn breakthrough_error_message(error: &BreakthroughError) -> String {
         BreakthroughError::LedgerUnavailable => "突破未成：真元账本未就绪，仪式暂缓。".to_string(),
         BreakthroughError::RolledFailure { severity } => {
             format!("突破失败：气机反噬，伤势强度 {severity:.2}。")
+        }
+        BreakthroughError::RaceProfileIncomplete => {
+            "突破未成：此身构型的经脉档案不完整，无法判定突破配额。".to_string()
         }
     }
 }
@@ -308,9 +319,19 @@ pub fn add_pending_material_bonus(cultivation: &mut Cultivation, magnitude: f64)
     cultivation.pending_material_bonus
 }
 
-fn breakthrough_precondition_error(
+/// 按目标实体的 `MeridianProfile` 判定突破前置条件（配额 / 子配额 / qi 消耗）——
+/// plan-race-system-v1 P1 对抗审查 M2/M3：非 humanoid 构型（P1 合成样本 / P5 whale
+/// 等）走本函数即可拿到正确判定，不再假设 humanoid 曲线。
+///
+/// P5 换轨：production 消费点（`breakthrough_system` / `try_breakthrough_with_profile`）
+/// 均已改走本函数——原先"调用方拿不到实体时"的零参 humanoid 保底包装
+/// `breakthrough_precondition_error` 因此不再有调用点，已随本轮换轨移除；
+/// `try_breakthrough_with_env_season_bonus`（既有测试/调用点用的 humanoid 便捷入口）
+/// 显式传入 humanoid profile 调用本函数，行为 bit-for-bit 不变。
+pub(crate) fn breakthrough_precondition_error_for_profile(
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
+    profile: &crate::body_plan::MeridianProfile,
 ) -> Option<BreakthroughError> {
     let next = match cultivation.realm {
         Realm::Awaken => Realm::Induce,
@@ -320,7 +341,8 @@ fn breakthrough_precondition_error(
         Realm::Spirit => return Some(BreakthroughError::RequiresTribulation),
         Realm::Void => return Some(BreakthroughError::AtMaxRealm),
     };
-    let need = next.required_meridians();
+    let req = profile.realm_requirements[next.rank() as usize - 1];
+    let need = req.total as usize;
     let have = meridians.opened_count();
     if have < need {
         return Some(BreakthroughError::NotEnoughMeridians { need, have });
@@ -328,38 +350,19 @@ fn breakthrough_precondition_error(
 
     let regular_have = meridians.regular_opened_count();
     let extraordinary_have = meridians.extraordinary_opened_count();
-    match next {
-        Realm::Induce if regular_have < 3 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 3,
-                have: regular_have,
-            });
-        }
-        Realm::Condense if regular_have < 6 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 6,
-                have: regular_have,
-            });
-        }
-        Realm::Solidify if regular_have < 12 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 12,
-                have: regular_have,
-            });
-        }
-        Realm::Spirit if regular_have < 12 => {
-            return Some(BreakthroughError::NotEnoughRegularMeridians {
-                need: 12,
-                have: regular_have,
-            });
-        }
-        Realm::Spirit if extraordinary_have < 4 => {
-            return Some(BreakthroughError::NotEnoughExtraordinaryMeridians {
-                need: 4,
-                have: extraordinary_have,
-            });
-        }
-        _ => {}
+    let regular_need = req.regular_min as usize;
+    let extraordinary_need = req.extraordinary_min as usize;
+    if regular_have < regular_need {
+        return Some(BreakthroughError::NotEnoughRegularMeridians {
+            need: regular_need,
+            have: regular_have,
+        });
+    }
+    if extraordinary_have < extraordinary_need {
+        return Some(BreakthroughError::NotEnoughExtraordinaryMeridians {
+            need: extraordinary_need,
+            have: extraordinary_have,
+        });
     }
 
     let cost = breakthrough_qi_cost(next);
@@ -411,6 +414,21 @@ fn breakthrough_environment_error(
 pub trait RollSource {
     fn roll_unit(&mut self) -> f64;
 }
+
+/// break review finding（major-1）：突破 roll 流跨 Update 持久化所需的每实体容器。
+///
+/// 历史上 `breakthrough_system` 每个 Update 都用固定种子重建 `XorshiftRoll`，导致
+/// 一次双连发若被 socket 读批拆到两个 tick，两条请求各自消费 r1（=0.8597…）——
+/// Solidify→Spirit 的成功率顶到全态夏季也只有 0.75075 < r1，拆批就永远过不去。
+/// 本组件把 roll 流状态存到实体上，随每笔真实尝试推进；同 tick 与 1/tick 拆批的
+/// 请求都消费到**连续**的 roll 值，任意拆批双连发都收敛（findings 的确定性控制见
+/// 下方 `breakthrough_roll_state_*` 单测）。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BreakthroughRollState(pub u64);
+
+/// 突破 roll 流种子（历史上每 Update 重建 XorshiftRoll 用的同一常量，行为保持向后
+/// 兼容：新玩家首笔请求仍消费 r1=0.8597…）。
+pub const BREAKTHROUGH_ROLL_SEED: u64 = 0x9e3779b97f4a7c15;
 
 /// 默认 roll：PRNG 的简单 xorshift（可重现，无需引 rand 依赖）。
 pub struct XorshiftRoll(pub u64);
@@ -476,12 +494,47 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
     season: Option<Season>,
     roll: &mut R,
 ) -> Result<BreakthroughSuccess, BreakthroughError> {
+    let profile = crate::body_plan::humanoid_plan_static()
+        .meridian_profile
+        .as_ref()
+        .expect(
+            "humanoid body plan must declare meridian_profile from plan-race-system-v1 P1 \
+             onward — validate_body_plan should have rejected a humanoid plan missing it",
+        );
+    try_breakthrough_with_profile(
+        cultivation,
+        meridians,
+        material_bonus,
+        env_bonus,
+        season,
+        profile,
+        roll,
+    )
+}
+
+/// plan-race-system-v1 P5 —— 按**目标实体**解析出的 `body_plan::MeridianProfile` 尝试
+/// 突破，供非 humanoid 战斗构型（whale 等易形/种族玩家）走通突破链路。调用方经
+/// [`crate::body_plan::meridian_profile_for_target`] 解析出 `profile` 后传入——不再
+/// 无条件绑死 humanoid 曲线。`try_breakthrough_with_env_season_bonus` 是本函数的
+/// humanoid 保底包装（换轨前后 bit-for-bit 一致，见其函数体），既有调用点无需改动。
+#[allow(clippy::too_many_arguments)]
+pub fn try_breakthrough_with_profile<R: RollSource>(
+    cultivation: &mut Cultivation,
+    meridians: &mut MeridianSystem,
+    material_bonus: f64,
+    env_bonus: f64,
+    season: Option<Season>,
+    profile: &crate::body_plan::MeridianProfile,
+    roll: &mut R,
+) -> Result<BreakthroughSuccess, BreakthroughError> {
     let from = cultivation.realm;
-    if let Some(error) = breakthrough_precondition_error(cultivation, meridians) {
+    if let Some(error) =
+        breakthrough_precondition_error_for_profile(cultivation, meridians, profile)
+    {
         return Err(error);
     }
     let next = next_realm(from).expect("precondition check rejects max realm");
-    let need = next.required_meridians();
+    let need = profile.realm_requirements[next.rank() as usize - 1].total as usize;
     let have = meridians.opened_count();
     let cost = breakthrough_qi_cost(next);
 
@@ -538,7 +591,7 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
         // 给 integrity 最高 2 条经脉上裂痕
         let mut targets: Vec<_> = meridians.iter_mut().filter(|m| m.opened).collect();
         targets
-            .sort_by(|a, b| (b.rate_tier + b.capacity_tier).cmp(&(a.rate_tier + a.capacity_tier)));
+            .sort_by_key(|meridian| std::cmp::Reverse(meridian.rate_tier + meridian.capacity_tier));
         for m in targets.into_iter().take(2) {
             m.cracks.push(MeridianCrack {
                 severity,
@@ -548,10 +601,10 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
             });
             m.integrity = (m.integrity - severity * 0.2).max(0.0);
         }
-        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，每次加 severity * 10.0（即 1.0..9.0）。
+        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，与过载路径使用同一冻结系数。
         // 无 cap 时多次失败可致 qi_max_frozen ≥ qi_max → 有效上限归零 → 玩家永久废人。
         // 与 overload.rs 对齐：冻结量不超过 qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO (0.5)。
-        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * 10.0)
+        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * FREEZE_FACTOR)
             .min(cultivation.qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO);
         cultivation.qi_max_frozen = Some(new_frozen);
         cultivation.composure = (cultivation.composure - 0.3).max(0.0);
@@ -634,11 +687,19 @@ pub(crate) struct BreakthroughResources<'w> {
     spirit_eye_used_events: Option<ResMut<'w, Events<SpiritEyeUsedForBreakthroughEvent>>>,
     skill_xp_events: Option<ResMut<'w, Events<SkillXpGain>>>,
     qi_account: Option<ResMut<'w, WorldQiAccount>>,
+    /// plan-race-system-v1 P5 —— 突破配额换轨：按 `req.entity` 解析目标实体的
+    /// `body_plan::MeridianProfile`（`crate::body_plan::meridian_profile_for_target`），
+    /// 不再无条件绑死 humanoid 曲线。缺失时（大量既有单测未插入这两个资源）优雅退化
+    /// 到 humanoid，行为 bit-for-bit 不变。
+    body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
+#[allow(clippy::type_complexity)] // players Query carries 5 optional/owned token tuple elements
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
+    mut commands: Commands,
     mut requests: EventReader<BreakthroughRequest>,
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
@@ -647,6 +708,7 @@ pub fn breakthrough_system(
         &mut MeridianSystem,
         &mut LifeRecord,
         Option<&NpcMarker>,
+        Option<&mut BreakthroughRollState>,
     )>,
     mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
@@ -656,10 +718,14 @@ pub fn breakthrough_system(
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut resources: BreakthroughResources,
 ) {
-    let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
+    // fix review finding major-1：roll 流不再每 Update 重建，而是按实体持久（组件
+    // BreakthroughRollState），同 tick 与拆批到多个 Update 的请求都消费**连续**的
+    // roll 值——Solidify→Spirit 双连发在 1/tick 拆批下也收敛（r1 失败后 next tick 的
+    // r2 必胜）。roll_streams 是本 Update 内的实体级续接缓冲。
+    let mut roll_streams: HashMap<Entity, u64> = HashMap::new();
     let now = clock.tick;
     for req in requests.read() {
-        let Ok((mut cultivation, mut meridians, mut life, npc_marker)) =
+        let Ok((mut cultivation, mut meridians, mut life, npc_marker, roll_state)) =
             players.get_mut(req.entity)
         else {
             // §15.2 可观察性：静默丢请求 = 玩家永远不知道为什么没反应。
@@ -680,6 +746,52 @@ pub fn breakthrough_system(
         }
         let character_id = life.character_id.clone();
         let username = usernames.get(req.entity).ok().map(|name| name.0.clone());
+
+        // plan-race-system-v1 P5 换轨：突破配额（need）按目标实体解析出的 body plan
+        // 派生，不再无条件绑死 humanoid 曲线——whale 等非人构型走此系统时用自己的
+        // `MeridianProfile.realm_requirements`。`BeastKind` 不查（本系统查询要求携带
+        // `Cultivation`/`MeridianSystem`/`LifeRecord`，携带这三者的 NPC 是"修士"身份，
+        // 不是纯兽类 fauna，与既有 `resolve_meridian_topology_for_target` 消费点同款
+        // 简化——见 `npc::brain::actions_life::cultivate_action_system`）。
+        //
+        // review r2 major-2 收口：resolve **成功**但 plan 缺 `meridian_profile` 时
+        // `meridian_profile_for_target` 返回 `Err`——fail-closed 直接拒绝本次突破，
+        // 不落入下面借 humanoid 曲线顶上的旧行为（resolve 本身失败/资源缺失仍在该函数
+        // 内部退化到 humanoid，不受影响，见其文档）。
+        let profile = match crate::body_plan::meridian_profile_for_target(
+            req.entity,
+            crate::body_plan::BodyPlanPurpose::Intrinsic,
+            crate::body_plan::BodyPlanResolveInputs {
+                cultivation: Some(&cultivation),
+                beast_kind: None,
+                morph_state: None,
+            },
+            resources.body_plans.as_deref(),
+            resources.races.as_deref(),
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][cultivation] breakthrough rejected entity={:?} fail-closed: {error}",
+                    req.entity
+                );
+                if let Some(narrations) = resources.pending_narrations.as_deref_mut() {
+                    if let Some(username) = username.as_deref() {
+                        narrations.push_player(
+                            username,
+                            breakthrough_error_message(&BreakthroughError::RaceProfileIncomplete),
+                            NarrationStyle::SystemWarning,
+                        );
+                    }
+                }
+                outcomes.send(BreakthroughOutcome {
+                    entity: req.entity,
+                    from,
+                    result: Err(BreakthroughError::RaceProfileIncomplete),
+                });
+                continue;
+            }
+        };
 
         // plan §3.1：material_bonus = req.material_bonus（手动传入，默认 0）
         //   ⊕ 服用突破辅助丹药挂在 StatusEffects 的 BreakthroughBoost buff 聚合值。
@@ -732,15 +844,24 @@ pub fn breakthrough_system(
         });
         let ledger_error = if zone_error.is_none()
             && (resources.qi_account.is_none() || zone_snapshot.is_none())
-            && breakthrough_precondition_error(&cultivation, &meridians).is_none()
+            && breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile)
+                .is_none()
         {
             Some(BreakthroughError::LedgerUnavailable)
         } else {
             None
         };
 
+        // 本 Update 内实体级续接：先查本 Update 已消费到的 roll 状态，否则读持久组件
+        // （无组件则用固定种子，向后兼容：新玩家首笔请求仍消费 r1）。
+        let entity_roll = roll_streams
+            .get(&req.entity)
+            .copied()
+            .unwrap_or_else(|| roll_state.map_or(BREAKTHROUGH_ROLL_SEED, |state| state.0));
+        let mut roll = XorshiftRoll(entity_roll);
+
         let res = zone_error
-            .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
+            .or_else(|| breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile))
             .or(ledger_error)
             .map_or_else(
                 || {
@@ -762,12 +883,13 @@ pub fn breakthrough_system(
                     let cultivation_before = cultivation.clone();
                     let meridians_before = meridians.clone();
                     let before_qi = cultivation.qi_current.max(0.0);
-                    let result = try_breakthrough_with_env_season_bonus(
+                    let result = try_breakthrough_with_profile(
                         &mut cultivation,
                         &mut meridians,
                         material_bonus,
                         env_bonus,
                         Some(season),
+                        profile,
                         &mut roll,
                     );
                     let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
@@ -796,6 +918,10 @@ pub fn breakthrough_system(
                 },
                 Err,
             );
+
+        // 消费点（try_breakthrough 内部）只在本 Update 真正突破尝试时推进 roll；因前置错误
+        // 拒绝的请求不推进（roll 保持原值，写入同值无害）。持久化到组件跨 Update 续接。
+        roll_streams.insert(req.entity, roll.0);
 
         match &res {
             Ok(success) => {
@@ -951,6 +1077,14 @@ pub fn breakthrough_system(
             result: res,
         });
     }
+
+    // 把每个实体本 Update 消费后的 roll 流状态写回组件（deferred Commands 可见性：
+    // 同 Update 内靠 roll_streams 续接，下一 Update 靠组件续接）。
+    for (entity, roll_state) in roll_streams.drain() {
+        commands
+            .entity(entity)
+            .insert(BreakthroughRollState(roll_state));
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -1030,1283 +1164,5 @@ fn block_pos_from_position(position: &Position) -> BlockPos {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cultivation::components::MeridianId;
-    use crate::npc::spawn::NpcMarker;
-    use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
-    use crate::schema::common::NarrationScope;
-    use crate::schema::vfx_event::VfxEventPayloadV1;
-    use crate::world::karma::KarmaWeightStore;
-    use crate::world::zone::ZoneRegistry;
-    use valence::prelude::{App, Events, Update, Username};
-
-    struct FixedRoll(f64);
-    impl RollSource for FixedRoll {
-        fn roll_unit(&mut self) -> f64 {
-            self.0
-        }
-    }
-
-    #[test]
-    fn qi_max_for_realm_matches_worldview_table_exactly() {
-        // plan-npc-realm-distribution-v1 §8.1 #2 决议：qi_max_for_realm 的六个输出
-        // 必须与 worldview §三:195-203 权威表逐一相等（10/40/150/540/2100/10700）。
-        // 严禁与 combat_power.rs:61 test-only fixture（10/30/60/120/200/400）混淆
-        // ——那是完全不同的一套非正典数值，本测试专门守住不能被悄悄换成那套。
-        assert_eq!(qi_max_for_realm(Realm::Awaken), 10.0, "醒灵进入时 qi_max");
-        assert_eq!(qi_max_for_realm(Realm::Induce), 40.0, "引气进入时 qi_max");
-        assert_eq!(
-            qi_max_for_realm(Realm::Condense),
-            150.0,
-            "凝脉进入时 qi_max"
-        );
-        assert_eq!(
-            qi_max_for_realm(Realm::Solidify),
-            540.0,
-            "固元进入时 qi_max"
-        );
-        assert_eq!(qi_max_for_realm(Realm::Spirit), 2100.0, "通灵进入时 qi_max");
-        assert_eq!(qi_max_for_realm(Realm::Void), 10700.0, "化虚进入时 qi_max");
-    }
-
-    #[test]
-    fn qi_max_for_realm_strictly_increasing_across_all_realm_transitions() {
-        // 状态转换饱和覆盖：六境界依 rank 严格递增，不允许任何一档打平或倒退。
-        let ordered = [
-            Realm::Awaken,
-            Realm::Induce,
-            Realm::Condense,
-            Realm::Solidify,
-            Realm::Spirit,
-            Realm::Void,
-        ];
-        for pair in ordered.windows(2) {
-            let (prev, next) = (pair[0], pair[1]);
-            assert!(
-                qi_max_for_realm(prev) < qi_max_for_realm(next),
-                "{:?}({}) 必须严格小于 {:?}({})",
-                prev,
-                qi_max_for_realm(prev),
-                next,
-                qi_max_for_realm(next)
-            );
-        }
-    }
-
-    fn setup_for_induce() -> (Cultivation, MeridianSystem) {
-        let mut c = Cultivation {
-            qi_current: 100.0,
-            qi_max: 100.0,
-            composure: 1.0,
-            realm: Realm::Awaken,
-            ..Default::default()
-        };
-        c.realm = Realm::Awaken;
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 3);
-        (c, m)
-    }
-
-    fn open_regular(meridians: &mut MeridianSystem, count: usize) {
-        for id in MeridianId::REGULAR.iter().take(count) {
-            meridians.get_mut(*id).opened = true;
-        }
-    }
-
-    fn open_extraordinary(meridians: &mut MeridianSystem, count: usize) {
-        for id in MeridianId::EXTRAORDINARY.iter().take(count) {
-            meridians.get_mut(*id).opened = true;
-        }
-    }
-
-    #[test]
-    fn breakthrough_actor_account_id_uses_stable_life_record_id() {
-        let player_life = LifeRecord::new("player_a");
-        let npc_life = LifeRecord::new("npc_a");
-
-        assert_eq!(
-            breakthrough_actor_account_id(Some(&player_life), false)
-                .expect("player life record with character_id should produce an account id"),
-            QiAccountId::player("player_a"),
-            "player breakthrough ledger id must come from stable LifeRecord.character_id"
-        );
-        assert_eq!(
-            breakthrough_actor_account_id(Some(&npc_life), true)
-                .expect("npc life record with character_id should produce an account id"),
-            QiAccountId::npc("npc_a"),
-            "npc breakthrough ledger id must come from stable LifeRecord.character_id"
-        );
-    }
-
-    #[test]
-    fn breakthrough_actor_account_id_rejects_missing_or_blank_id() {
-        let blank_life = LifeRecord::new("   ");
-
-        assert!(
-            matches!(
-                breakthrough_actor_account_id(None, true),
-                Err(BreakthroughLedgerError::MissingStableActorId { is_npc: true })
-            ),
-            "npc breakthrough ledger id must reject missing LifeRecord instead of falling back to unstable Entity ids"
-        );
-        assert!(
-            matches!(
-                breakthrough_actor_account_id(Some(&blank_life), false),
-                Err(BreakthroughLedgerError::MissingStableActorId { is_npc: false })
-            ),
-            "player breakthrough ledger id must reject blank LifeRecord.character_id"
-        );
-    }
-
-    #[test]
-    fn credit_active_breakthrough_cost_handles_boundaries() {
-        let mut ledger = WorldQiAccount::default();
-        let from = QiAccountId::player("player_a");
-        // plan-zone-qi-economy-v1 P0 §8.1 决议 #1：目标是独立待分配池，不是
-        // zone:<name>（那个 key 会被 dormant regen 整体覆写，credit 进去等于蒸发）。
-        let pending_pool = crate::qi_physics::pending_inflow_account();
-
-        credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 0.0)
-            .expect("zero breakthrough cost should be a no-op");
-        assert_eq!(
-            ledger.balance(&pending_pool),
-            0.0,
-            "zero breakthrough cost should not create pending pool balance"
-        );
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone("spawn")),
-            0.0,
-            "zero breakthrough cost must never touch the zone:<name> ledger account"
-        );
-        assert!(
-            ledger.transfers().is_empty(),
-            "zero breakthrough cost should not append a transfer audit"
-        );
-
-        let err = credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), -1.0)
-            .expect_err("negative breakthrough cost must be rejected");
-        assert!(
-            matches!(
-                err,
-                BreakthroughLedgerError::QiPhysics(QiPhysicsError::InvalidAmount {
-                    field: "transfer.amount",
-                    ..
-                })
-            ),
-            "negative breakthrough cost should surface the QiPhysics invalid amount error; got {err:?}"
-        );
-
-        credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 8.0)
-            .expect("positive breakthrough cost should credit the pending inflow pool");
-        assert_eq!(
-            ledger.balance(&pending_pool),
-            8.0,
-            "first positive breakthrough cost should create the pending pool account and \
-             credit the spent qi"
-        );
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone("spawn")),
-            0.0,
-            "positive breakthrough cost must still never touch the zone:<name> ledger account \
-             (dormant regen owns that key and overwrites it wholesale from zone.spirit_qi)"
-        );
-        let transfer = ledger
-            .transfers()
-            .last()
-            .expect("positive breakthrough cost should append one transfer audit");
-        assert_eq!(
-            transfer.from, from,
-            "breakthrough audit transfer must preserve the stable actor account as source"
-        );
-        assert_eq!(
-            transfer.to, pending_pool,
-            "breakthrough audit transfer must target the independent pending inflow pool"
-        );
-        assert_eq!(
-            transfer.reason,
-            QiTransferReason::Breakthrough,
-            "breakthrough audit transfer must use the dedicated reason"
-        );
-        assert_eq!(
-            transfer.amount, 8.0,
-            "breakthrough audit transfer amount must equal the spent qi"
-        );
-    }
-
-    #[test]
-    fn awaken_to_induce_always_succeeds_with_roll_zero() {
-        let (mut c, mut m) = setup_for_induce();
-        let out = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
-        assert_eq!(out.to, Realm::Induce);
-        assert_eq!(c.realm, Realm::Induce);
-    }
-
-    #[test]
-    fn awaken_to_induce_fails_with_high_roll() {
-        let (mut c, mut m) = setup_for_induce();
-        // base 0.9 * integrity 1.0 * composure 1.0 * completeness 1.0 = 0.9 → roll 0.99 fails
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.99)).unwrap_err();
-        assert!(matches!(err, BreakthroughError::RolledFailure { .. }));
-        assert_eq!(c.realm, Realm::Awaken);
-        // qi 已扣
-        assert!(c.qi_current < 100.0);
-    }
-
-    #[test]
-    fn breakthrough_season_modifier_matches_four_phases() {
-        assert_eq!(season_success_modifier(Season::Summer), 1.05);
-        assert_eq!(season_success_modifier(Season::Winter), 0.95);
-        assert_eq!(season_success_modifier(Season::SummerToWinter), 0.85);
-        assert_eq!(season_success_modifier(Season::WinterToSummer), 0.85);
-    }
-
-    #[test]
-    fn breakthrough_in_xizhuan_phase_has_lower_success_rate() {
-        let summer = compute_success_rate_with_env_and_season_bonus(
-            Realm::Induce,
-            1.0,
-            1.0,
-            1.0,
-            0.0,
-            0.0,
-            Season::Summer,
-        );
-        let xizhuan = compute_success_rate_with_env_and_season_bonus(
-            Realm::Induce,
-            1.0,
-            1.0,
-            1.0,
-            0.0,
-            0.0,
-            Season::SummerToWinter,
-        );
-
-        assert!(xizhuan < summer);
-        assert!((xizhuan - 0.765).abs() < 1e-9);
-    }
-
-    #[test]
-    fn spirit_to_void_is_gated_by_tribulation() {
-        let mut c = Cultivation {
-            realm: Realm::Spirit,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        for id in MeridianId::REGULAR
-            .iter()
-            .chain(MeridianId::EXTRAORDINARY.iter())
-        {
-            m.get_mut(*id).opened = true;
-        }
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-        assert_eq!(err, BreakthroughError::RequiresTribulation);
-    }
-
-    #[test]
-    fn breakthrough_error_message_covers_all_error_variants() {
-        let cases = [
-            (
-                BreakthroughError::AtMaxRealm,
-                "突破未成：你已抵达当前最高境界。",
-            ),
-            (
-                BreakthroughError::RequiresTribulation,
-                "突破未成：通灵至化虚必须先走渡虚劫。",
-            ),
-            (
-                BreakthroughError::NotEnoughMeridians { need: 16, have: 15 },
-                "突破未成：需先打通 16 条经脉（当前 15）。",
-            ),
-            (
-                BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 8 },
-                "突破未成：需先打通 12 条正经（当前 8）。",
-            ),
-            (
-                BreakthroughError::NotEnoughExtraordinaryMeridians { need: 4, have: 3 },
-                "突破未成：需先打通 4 条奇经（当前 3）。",
-            ),
-            (
-                BreakthroughError::NotEnoughQi {
-                    need: 100.0,
-                    have: 42.5,
-                },
-                "突破未成：真元不足（需 100.0，当前 42.5）。",
-            ),
-            (
-                BreakthroughError::ZoneTooWeak {
-                    need: 0.8,
-                    have: 0.4,
-                },
-                "突破未成：此地灵气不足（需 0.80，当前 0.40）。",
-            ),
-            (
-                BreakthroughError::EnvInsufficient {
-                    need: 0.7,
-                    have: 0.3,
-                    in_spirit_eye: true,
-                },
-                "突破未成：灵眼扰动未稳（需 0.70，当前 0.30）。",
-            ),
-            (
-                BreakthroughError::EnvInsufficient {
-                    need: 0.7,
-                    have: 0.3,
-                    in_spirit_eye: false,
-                },
-                "突破未成：固元须在灵气浓处或灵眼内（需 0.70，当前 0.30）。",
-            ),
-            (
-                BreakthroughError::LedgerUnavailable,
-                "突破未成：真元账本未就绪，仪式暂缓。",
-            ),
-            (
-                BreakthroughError::RolledFailure { severity: 0.75 },
-                "突破失败：气机反噬，伤势强度 0.75。",
-            ),
-        ];
-
-        for (error, expected) in cases {
-            assert_eq!(
-                breakthrough_error_message(&error),
-                expected,
-                "expected stable breakthrough error text for {error:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn breakthrough_system_pushes_system_warning_on_precondition_error() {
-        let mut app = App::new();
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(PendingGameplayNarrations::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_systems(Update, breakthrough_system);
-        let player = app
-            .world_mut()
-            .spawn((
-                Cultivation::default(),
-                MeridianSystem::default(),
-                LifeRecord::default(),
-                Username("Azure".to_string()),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let narrations = app
-            .world_mut()
-            .resource_mut::<PendingGameplayNarrations>()
-            .drain();
-        assert_eq!(narrations.len(), 1);
-        assert_eq!(narrations[0].scope, NarrationScope::Player);
-        assert_eq!(narrations[0].target.as_deref(), Some("Azure"));
-        assert_eq!(narrations[0].style, NarrationStyle::SystemWarning);
-        assert!(
-            narrations[0].text.contains("突破未成"),
-            "expected system warning to include breakthrough failure reason, actual text={}",
-            narrations[0].text
-        );
-    }
-
-    #[test]
-    fn material_bonus_capped_at_30_percent() {
-        let r = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.0, 5.0);
-        let r_cap = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.0, 0.30);
-        assert!((r - r_cap).abs() < 1e-9);
-    }
-
-    #[test]
-    fn pending_material_bonus_accumulates_and_caps_at_30_percent() {
-        let mut c = Cultivation::default();
-        assert!((add_pending_material_bonus(&mut c, 0.12) - 0.12).abs() < 1e-9);
-        assert!((add_pending_material_bonus(&mut c, 0.50) - 0.30).abs() < 1e-9);
-        assert!((c.pending_material_bonus - 0.30).abs() < 1e-9);
-    }
-
-    #[test]
-    fn completeness_bounded() {
-        // 超额很多不会无限放大
-        let r = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.3, 0.0);
-        assert!(r <= 1.0);
-    }
-
-    #[test]
-    fn void_breakthrough_returns_max_realm_error() {
-        let mut c = Cultivation {
-            realm: Realm::Void,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-        assert_eq!(err, BreakthroughError::AtMaxRealm);
-    }
-
-    #[test]
-    fn pending_material_bonus_is_consumed_on_real_attempt() {
-        let (mut c, mut m) = setup_for_induce();
-        c.pending_material_bonus = 0.12;
-
-        let out = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
-
-        let expected = compute_success_rate(Realm::Induce, 1.0, 1.0, 1.0, 0.12);
-        assert!((out.success_rate - expected).abs() < 1e-9);
-        assert_eq!(c.pending_material_bonus, 0.0);
-    }
-
-    #[test]
-    fn pending_material_bonus_is_preserved_when_preconditions_fail() {
-        let mut c = Cultivation {
-            qi_current: 1.0,
-            pending_material_bonus: 0.12,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 3);
-
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-
-        assert!(matches!(err, BreakthroughError::NotEnoughQi { .. }));
-        assert!((c.pending_material_bonus - 0.12).abs() < 1e-9);
-    }
-
-    #[test]
-    fn induce_requires_three_regular_meridians_not_extraordinary_padding() {
-        let mut c = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: 100.0,
-            qi_max: 100.0,
-            composure: 1.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_extraordinary(&mut m, 3);
-
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-
-        assert_eq!(
-            err,
-            BreakthroughError::NotEnoughRegularMeridians { need: 3, have: 0 }
-        );
-        assert_eq!(c.realm, Realm::Awaken);
-        assert_eq!(c.qi_current, 100.0);
-    }
-
-    #[test]
-    fn solidify_requires_all_twelve_regular_meridians() {
-        let mut c = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 500.0,
-            qi_max: 500.0,
-            composure: 1.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 10);
-        open_extraordinary(&mut m, 6);
-
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-
-        assert_eq!(
-            err,
-            BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 10 }
-        );
-        assert_eq!(c.realm, Realm::Condense);
-        assert_eq!(c.qi_current, 500.0);
-    }
-
-    #[test]
-    fn spirit_rejects_before_structure_when_total_meridians_are_too_few() {
-        let mut c = Cultivation {
-            realm: Realm::Solidify,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            composure: 1.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 12);
-        open_extraordinary(&mut m, 3);
-
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-
-        assert_eq!(
-            err,
-            BreakthroughError::NotEnoughMeridians { need: 16, have: 15 }
-        );
-        assert_eq!(c.realm, Realm::Solidify);
-        assert_eq!(c.qi_current, 1000.0);
-    }
-
-    #[test]
-    fn spirit_rejects_extraordinary_padding_without_regular_foundation() {
-        let mut c = Cultivation {
-            realm: Realm::Solidify,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            composure: 1.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 8);
-        open_extraordinary(&mut m, 8);
-
-        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
-
-        assert_eq!(
-            err,
-            BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 8 }
-        );
-        assert_eq!(c.realm, Realm::Solidify);
-        assert_eq!(c.qi_current, 1000.0);
-    }
-
-    #[test]
-    fn spirit_allows_twelve_regular_and_four_extraordinary_meridians() {
-        let mut c = Cultivation {
-            realm: Realm::Solidify,
-            qi_current: 1000.0,
-            qi_max: 1000.0,
-            composure: 1.0,
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 12);
-        open_extraordinary(&mut m, 4);
-
-        let out = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
-
-        assert_eq!(out.to, Realm::Spirit);
-        assert_eq!(c.realm, Realm::Spirit);
-    }
-
-    #[test]
-    fn breakthrough_rejects_when_zone_qi_too_weak() {
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (mut cultivation, meridians) = setup_for_induce();
-        cultivation.pending_material_bonus = 0.12;
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::default(),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let outcomes = app.world().resource::<Events<BreakthroughOutcome>>();
-        let outcome = outcomes.iter_current_update_events().next().unwrap();
-        assert!(matches!(
-            outcome.result,
-            Err(BreakthroughError::ZoneTooWeak { .. })
-        ));
-        let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(cultivation.qi_current, 100.0);
-        assert!((cultivation.pending_material_bonus - 0.12).abs() < 1e-9);
-    }
-
-    #[test]
-    fn breakthrough_system_without_ledger_does_not_consume_qi() {
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (cultivation, meridians) = setup_for_induce();
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::new("player_a"),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let outcomes = app.world().resource::<Events<BreakthroughOutcome>>();
-        let outcome = outcomes.iter_current_update_events().next().unwrap();
-        assert!(matches!(
-            outcome.result,
-            Err(BreakthroughError::LedgerUnavailable)
-        ));
-        let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(cultivation.realm, Realm::Awaken);
-        assert_eq!(cultivation.qi_current, 100.0);
-    }
-
-    #[test]
-    fn breakthrough_success_credits_cost_to_pending_inflow_pool_not_zone_ledger() {
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (cultivation, meridians) = setup_for_induce();
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::new("player_a"),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(
-            cultivation.realm,
-            Realm::Induce,
-            "successful breakthrough should advance the player realm"
-        );
-        assert_eq!(
-            cultivation.qi_current, 92.0,
-            "successful breakthrough should spend exactly 8 qi from the player"
-        );
-        let ledger = app.world().resource::<WorldQiAccount>();
-        let pending_pool = crate::qi_physics::pending_inflow_account();
-        assert_eq!(
-            ledger.balance(&pending_pool),
-            8.0,
-            "successful breakthrough should credit the spent 8 qi to the independent pending \
-             inflow pool"
-        );
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone("spawn")),
-            0.0,
-            "successful breakthrough must never touch the zone:<name> ledger account (that key \
-             is owned/overwritten wholesale by dormant regen from zone.spirit_qi)"
-        );
-        let transfer = ledger
-            .transfers()
-            .last()
-            .expect("breakthrough should leave a QiTransfer audit");
-        assert_eq!(
-            transfer.reason,
-            QiTransferReason::Breakthrough,
-            "successful breakthrough audit should use the dedicated reason"
-        );
-        assert_eq!(
-            transfer.from,
-            QiAccountId::player("player_a"),
-            "successful breakthrough audit should use stable player id as source"
-        );
-        assert_eq!(
-            transfer.to, pending_pool,
-            "successful breakthrough audit should target the independent pending inflow pool"
-        );
-        assert_eq!(
-            transfer.amount, 8.0,
-            "successful breakthrough audit amount should match spent qi"
-        );
-    }
-
-    #[test]
-    fn breakthrough_and_meridian_open_preserve_total_observed_qi_conservation() {
-        // plan-zone-qi-economy-v1 P0 §10.3 — 开脉→突破全链路总量不变的端到端守恒对拍。
-        // total_observed() = player_qi + zone_qi + container_qi + ledger_qi（含待分配池）。
-        // 消耗 → 待分配池等额升，player_qi 等额降，total_observed() 必须严格不变
-        // （无天道时代衰减，era_decay=0）。
-        use crate::qi_physics::{assert_conservation, summarize_world_qi};
-
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (cultivation, meridians) = setup_for_induce();
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::new("player_a"),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        let before = summarize_world_qi(app.world_mut());
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(
-            cultivation.realm,
-            Realm::Induce,
-            "sanity: breakthrough must actually succeed for this conservation test to be \
-             meaningful (spent qi must leave the player)"
-        );
-
-        let after = summarize_world_qi(app.world_mut());
-        assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
-            panic!(
-                "breakthrough must conserve total_observed qi (player_qi + zone_qi + \
-                 container_qi + ledger_qi) with zero era decay — got drift: {error} \
-                 (before={before:?}, after={after:?}); a mismatch here means spent qi is \
-                 vanishing (not reaching the pending inflow pool) or being double-counted"
-            )
-        });
-        assert!(
-            (before.total_observed() - after.total_observed()).abs() < 1e-9,
-            "explicit total_observed equality check (belt-and-suspenders alongside \
-             assert_conservation): before={}, after={}",
-            before.total_observed(),
-            after.total_observed()
-        );
-    }
-
-    #[test]
-    fn breakthrough_failure_also_credits_cost_to_pending_inflow_pool_not_zone_ledger() {
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (mut cultivation, meridians) = setup_for_induce();
-        cultivation.composure = 0.0;
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::new("player_a"),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(
-            cultivation.realm,
-            Realm::Awaken,
-            "failed breakthrough should keep the player in the original realm"
-        );
-        assert_eq!(
-            cultivation.qi_current, 92.0,
-            "failed breakthrough should still spend exactly 8 qi"
-        );
-        let ledger = app.world().resource::<WorldQiAccount>();
-        let pending_pool = crate::qi_physics::pending_inflow_account();
-        assert_eq!(
-            ledger.balance(&pending_pool),
-            8.0,
-            "failed breakthrough should still credit spent qi to the independent pending \
-             inflow pool"
-        );
-        assert_eq!(
-            ledger.balance(&QiAccountId::zone("spawn")),
-            0.0,
-            "failed breakthrough must never touch the zone:<name> ledger account either"
-        );
-        let transfer = ledger
-            .transfers()
-            .last()
-            .expect("failed breakthrough should leave a QiTransfer audit");
-        assert_eq!(
-            transfer.reason,
-            QiTransferReason::Breakthrough,
-            "failed breakthrough audit should use the dedicated reason"
-        );
-        assert_eq!(
-            transfer.to, pending_pool,
-            "failed breakthrough audit should target the independent pending inflow pool"
-        );
-        assert_eq!(
-            transfer.amount, 8.0,
-            "failed breakthrough audit amount should match spent qi"
-        );
-    }
-
-    #[test]
-    fn npc_breakthrough_emits_vfx() {
-        let mut app = App::new();
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(ZoneRegistry::fallback());
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (cultivation, meridians) = setup_for_induce();
-        let npc = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::new("npc_42v0"),
-                Position::new([8.0, 66.0, 8.0]),
-                NpcMarker,
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: npc,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
-        let ids = vfx_events
-            .iter_current_update_events()
-            .filter_map(|event| match &event.payload {
-                VfxEventPayloadV1::SpawnParticle { event_id, .. } => Some(event_id.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        assert!(ids.contains(&"bong:breakthrough_pillar"));
-    }
-
-    #[test]
-    fn breakthrough_fail_emits_vfx() {
-        let mut app = App::new();
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
-        app.insert_resource(CultivationClock { tick: 10 });
-        app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<BreakthroughRequest>();
-        app.add_event::<BreakthroughOutcome>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<SkillCapChanged>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
-        app.add_systems(Update, breakthrough_system);
-
-        let (mut cultivation, meridians) = setup_for_induce();
-        cultivation.composure = 0.0;
-        let player = app
-            .world_mut()
-            .spawn((
-                cultivation,
-                meridians,
-                LifeRecord::default(),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughRequest {
-            entity: player,
-            material_bonus: 0.0,
-        });
-        app.update();
-
-        let events = app.world().resource::<Events<VfxEventRequest>>();
-        let emitted = events
-            .iter_current_update_events()
-            .find(|event| {
-                matches!(
-                    &event.payload,
-                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
-                        if event_id == gameplay_vfx::BREAKTHROUGH_FAIL
-                )
-            })
-            .expect("rolled breakthrough failure should emit breakthrough_fail vfx");
-        match &emitted.payload {
-            VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
-                assert_eq!(event_id, gameplay_vfx::BREAKTHROUGH_FAIL);
-            }
-            other => panic!("expected SpawnParticle, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn guyuan_requires_high_qi_or_spirit_eye() {
-        let mut zones = ZoneRegistry::fallback();
-        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.6;
-        let position = Position::new([8.0, 66.0, 8.0]);
-
-        let err = breakthrough_environment_error(
-            &position,
-            DimensionKind::Overworld,
-            Some(&zones),
-            None,
-            Realm::Condense,
-        )
-        .expect("low qi outside spirit eye should reject guyuan");
-
-        assert_eq!(
-            err,
-            BreakthroughError::EnvInsufficient {
-                need: MIN_ZONE_QI_TO_GUYUAN,
-                have: 0.6,
-                in_spirit_eye: false,
-            }
-        );
-    }
-
-    #[test]
-    fn spirit_eye_bonus_raises_guyuan_success_rate() {
-        let base = compute_success_rate_with_env_bonus(Realm::Solidify, 1.0, 1.0, 1.0, 0.0, 0.0);
-        let boosted = compute_success_rate_with_env_bonus(
-            Realm::Solidify,
-            1.0,
-            1.0,
-            1.0,
-            0.0,
-            SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS,
-        );
-
-        assert!(boosted > base);
-    }
-
-    #[test]
-    fn spirit_eye_bonus_is_gated_to_guyuan_breakthrough() {
-        assert_eq!(
-            spirit_eye_env_bonus_for(Realm::Condense, Some(false)),
-            SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS
-        );
-        assert_eq!(
-            spirit_eye_env_bonus_for(Realm::Condense, Some(true)),
-            BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS
-        );
-        assert_eq!(spirit_eye_env_bonus_for(Realm::Solidify, Some(false)), 0.0);
-        assert_eq!(spirit_eye_env_bonus_for(Realm::Induce, Some(false)), 0.0);
-        assert_eq!(spirit_eye_env_bonus_for(Realm::Condense, None), 0.0);
-    }
-
-    /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。
-    #[test]
-    fn skill_cap_for_realm_matches_plan_section_four() {
-        assert_eq!(skill_cap_for_realm(Realm::Awaken), 3);
-        assert_eq!(skill_cap_for_realm(Realm::Induce), 5);
-        assert_eq!(skill_cap_for_realm(Realm::Condense), 7);
-        assert_eq!(skill_cap_for_realm(Realm::Solidify), 8);
-        assert_eq!(skill_cap_for_realm(Realm::Spirit), 9);
-        assert_eq!(skill_cap_for_realm(Realm::Void), 10);
-    }
-
-    fn setup_rapid_breakthrough_karma_app(now: u64) -> App {
-        let mut app = App::new();
-        app.insert_resource(CultivationClock { tick: now });
-        app.insert_resource(KarmaWeightStore::default());
-        app.insert_resource(ZoneRegistry::fallback());
-        app.add_event::<BreakthroughOutcome>();
-        app.add_systems(Update, rapid_breakthrough_karma_mark_system);
-        app
-    }
-
-    fn breakthrough_success_outcome(entity: Entity) -> BreakthroughOutcome {
-        BreakthroughOutcome {
-            entity,
-            from: Realm::Awaken,
-            result: Ok(BreakthroughSuccess {
-                to: Realm::Induce,
-                success_rate: 1.0,
-                used_qi: 0.0,
-            }),
-        }
-    }
-
-    #[test]
-    fn rapid_breakthrough_success_marks_hidden_karma_weight() {
-        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
-        let mut app = setup_rapid_breakthrough_karma_app(now);
-        let mut life = LifeRecord::new("offline:Azure");
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Awaken,
-            tick: now - 100,
-        });
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Induce,
-            tick: now,
-        });
-        let entity = app
-            .world_mut()
-            .spawn((
-                life,
-                Username("Azure".to_string()),
-                Position::new([8.8, 66.2, 8.1]),
-            ))
-            .id();
-
-        app.world_mut()
-            .send_event(breakthrough_success_outcome(entity));
-        app.update();
-
-        let weights = app.world().resource::<KarmaWeightStore>();
-        let entry = weights
-            .entry_for_player("Azure")
-            .expect("rapid breakthroughs should mark hidden karma weight");
-        assert_eq!(entry.weight, RAPID_BREAKTHROUGH_KARMA_WEIGHT_DELTA);
-        assert_eq!(entry.zone.as_deref(), Some("spawn"));
-        assert_eq!(entry.last_position, [8, 66, 8]);
-        assert_eq!(entry.last_tick, now);
-    }
-
-    #[test]
-    fn old_breakthrough_success_outside_window_does_not_mark_karma() {
-        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
-        let mut app = setup_rapid_breakthrough_karma_app(now);
-        let mut life = LifeRecord::new("offline:Azure");
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Awaken,
-            tick: now - RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS - 1,
-        });
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Induce,
-            tick: now,
-        });
-        let entity = app
-            .world_mut()
-            .spawn((
-                life,
-                Username("Azure".to_string()),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut()
-            .send_event(breakthrough_success_outcome(entity));
-        app.update();
-
-        let weights = app.world().resource::<KarmaWeightStore>();
-        assert!(weights.entry_for_player("Azure").is_none());
-    }
-
-    #[test]
-    fn failed_breakthrough_outcome_does_not_mark_karma() {
-        let now = RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS + 100;
-        let mut app = setup_rapid_breakthrough_karma_app(now);
-        let mut life = LifeRecord::new("offline:Azure");
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Awaken,
-            tick: now - 100,
-        });
-        life.push(BiographyEntry::BreakthroughSucceeded {
-            realm: Realm::Induce,
-            tick: now,
-        });
-        let entity = app
-            .world_mut()
-            .spawn((
-                life,
-                Username("Azure".to_string()),
-                Position::new([8.0, 66.0, 8.0]),
-            ))
-            .id();
-
-        app.world_mut().send_event(BreakthroughOutcome {
-            entity,
-            from: Realm::Awaken,
-            result: Err(BreakthroughError::RolledFailure { severity: 0.2 }),
-        });
-        app.update();
-
-        let weights = app.world().resource::<KarmaWeightStore>();
-        assert!(weights.entry_for_player("Azure").is_none());
-    }
-
-    // ───────────────────────────────────────────────────────────────────────
-    // qi_max_frozen cap: 突破失败不能永久废人
-    // ───────────────────────────────────────────────────────────────────────
-
-    /// 单次失败：qi_max_frozen 精确加上 severity * 10.0，且不超过 qi_max * 0.5。
-    #[test]
-    fn single_breakthrough_failure_freezes_qi_within_cap() {
-        let (mut c, mut m) = setup_for_induce();
-        // 强制失败：roll > base_success_rate(Induce)=0.90
-        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
-
-        // severity = (1.0 - success_rate).clamp(0.1, 0.9)
-        // success_rate = base × composure × integrity × completeness = 0.90 × 1.0 × 1.0 × 1.0 = 0.90
-        // severity = 0.10, freeze_add = 0.10 * 10.0 = 1.0
-        // cap = qi_max(100.0) * 0.5 = 50.0 → 1.0 < 50.0, no clamping
-        let frozen = c
-            .qi_max_frozen
-            .expect("qi_max_frozen should be Some after failure");
-        assert!(
-            (frozen - 1.0).abs() < 1e-9,
-            "期望 qi_max_frozen = 1.0（severity=0.10 × 10.0），实际 = {frozen}"
-        );
-        let effective = c.qi_max - frozen;
-        assert!(
-            effective > 0.0,
-            "期望有效 qi_max > 0 以防玩家废人，实际 effective_qi_max = {effective}"
-        );
-    }
-
-    /// 连续多次失败，qi_max_frozen 不超过 qi_max * 0.5 的硬上限。
-    #[test]
-    fn repeated_breakthrough_failures_frozen_capped_at_half_qi_max() {
-        let qi_max = 100.0;
-        let mut c = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: qi_max,
-            qi_max,
-            composure: 0.0, // composure=0 → success_rate 极低 → severity 接近 0.9
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 3);
-
-        // 失败 20 次：无 cap 时 severity≈0.9, freeze_add≈9.0, 2 次即超 qi_max=100 × 0.5=50
-        for _ in 0..20 {
-            // qi_current 须 ≥ breakthrough_qi_cost(Induce)=8.0，补满避免 NotEnoughQi 前置错误
-            c.qi_current = qi_max;
-            let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
-        }
-
-        let frozen = c
-            .qi_max_frozen
-            .expect("qi_max_frozen should be Some after repeated failures");
-        let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
-
-        assert!(
-            frozen <= cap,
-            "期望 qi_max_frozen ≤ {cap}（qi_max×0.5，防废人），实际 qi_max_frozen = {frozen}"
-        );
-
-        let effective_qi_max = c.qi_max - frozen;
-        assert!(
-            effective_qi_max > 0.0,
-            "期望有效真元上限 > 0（玩家不应被永久废），实际 effective_qi_max = {effective_qi_max}"
-        );
-    }
-
-    /// 验证 cap 边界：pre-existing frozen 接近 cap 时，再叠一次不会超过 cap。
-    #[test]
-    fn breakthrough_failure_does_not_exceed_cap_when_already_near_cap() {
-        let qi_max = 100.0;
-        // 预填到接近 cap（40/100 = 0.4 × qi_max，距 0.5×qi_max=50 还差 10）
-        let mut c = Cultivation {
-            realm: Realm::Awaken,
-            qi_current: qi_max,
-            qi_max,
-            composure: 0.0, // severity 接近 0.9 → freeze_add 接近 9.0，足够触碰 cap
-            qi_max_frozen: Some(40.0),
-            ..Default::default()
-        };
-        let mut m = MeridianSystem::default();
-        open_regular(&mut m, 3);
-
-        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
-
-        let frozen = c
-            .qi_max_frozen
-            .expect("qi_max_frozen should be Some after failure");
-        let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
-
-        assert!(
-            frozen <= cap + 1e-9,
-            "期望 qi_max_frozen ≤ {cap}（cap = qi_max×0.5），实际 qi_max_frozen = {frozen}（超 cap）"
-        );
-        // 有效上限仍须 > 0
-        let effective = c.qi_max - frozen;
-        assert!(
-            effective >= qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO) - 1e-9,
-            "期望有效 qi_max ≥ qi_max×0.5={cap}，实际 = {effective}"
-        );
-    }
-
-    /// 成功突破不应修改 qi_max_frozen。
-    #[test]
-    fn successful_breakthrough_does_not_change_qi_max_frozen() {
-        let (mut c, mut m) = setup_for_induce();
-        c.qi_max_frozen = Some(5.0); // 预存冻结，验证成功路径不碰它
-
-        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
-
-        assert_eq!(
-            c.qi_max_frozen,
-            Some(5.0),
-            "期望成功突破不修改 qi_max_frozen（仍为 5.0），实际 = {:?}",
-            c.qi_max_frozen
-        );
-    }
-}
+#[path = "breakthrough_tests.rs"]
+mod tests;

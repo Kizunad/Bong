@@ -11,7 +11,4 @@ public final class MovementKeyRouter {
         }
         return null;
     }
-
-    public void reset() {
-    }
 }

@@ -52,7 +52,7 @@ public final class SkillBarConfigHandler implements ServerDataHandler {
             if (v >= 0) cooldowns[i] = v;
         }
 
-        SkillBarStore.replace(SkillBarConfig.of(entries, cooldowns));
+        SkillBarStore.replace(SkillBarConfig.of(entries, cooldowns, readString(payload, "dash_skill_id")));
         return ServerDataDispatch.handled(envelope.type(),
             "Applied skillbar_config (" + countNonNull(entries) + " bound slots)");
     }

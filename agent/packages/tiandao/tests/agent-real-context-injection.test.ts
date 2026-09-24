@@ -32,15 +32,26 @@ function capturedUserPrompt(messages: CapturedMessage[][]): string {
   return userMessage?.content ?? "";
 }
 
-function makeAgent(recipe = CALAMITY_RECIPE): TiandaoAgent {
+function makeAgent(recipe = CALAMITY_RECIPE, nowMs = 30_000): TiandaoAgent {
   return new TiandaoAgent({
     name: recipe.agentName,
     skillFile: recipe.agentName === "mutation" ? "mutation.md" : "calamity.md",
     recipe,
     intervalMs: 0,
-    now: () => 30_000,
+    now: () => nowMs,
     tools: [],
   });
+}
+
+function createTimedChatSignal(ts: number, raw: string): ChatSignal {
+  return {
+    ts,
+    player: "offline:Kiz",
+    raw,
+    sentiment: -0.7,
+    intent: "complaint",
+    influence_weight: 0.8,
+  };
 }
 
 describe("TiandaoAgent 真 impl 上下文注入守护", () => {
@@ -49,6 +60,7 @@ describe("TiandaoAgent 真 impl 上下文注入守护", () => {
     const agent = makeAgent();
     const signals: ChatSignal[] = [
       {
+        ts: 30,
         player: "offline:Kiz",
         raw: "灵气太少了，洞府外又抢不到药草",
         sentiment: -0.7,
@@ -67,6 +79,19 @@ describe("TiandaoAgent 真 impl 上下文注入守护", () => {
     expect(prompt).toContain("offline:Kiz");
     expect(prompt).toContain("灵气太少了，洞府外又抢不到药草");
     expect(prompt).toContain("intent=complaint");
+  });
+
+  it("setChatSignals 不把 301 秒前的低流量旧聊天注入真实 LLM user message", async () => {
+    const { client, capturedMessages } = makeCaptureClient();
+    const agent = makeAgent(CALAMITY_RECIPE, 1_000_000);
+    const expiredRaw = "三百零一秒前的旧抱怨";
+
+    agent.setChatSignals([createTimedChatSignal(699, expiredRaw)]);
+    await agent.tick(client, "test-model", createTestWorldState());
+
+    const prompt = capturedUserPrompt(capturedMessages);
+    expect(prompt).not.toContain("## 近期民意");
+    expect(prompt).not.toContain(expiredRaw);
   });
 
   it("setNpcDeathEvents 注入后，离屏战死汇总进入 LLM user message", async () => {

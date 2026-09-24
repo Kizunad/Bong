@@ -100,7 +100,7 @@ pub fn build_balance_report(
         total_stay = total_stay.saturating_add(current_tick.saturating_sub(state.entered_at));
         count = count.saturating_add(1);
     }
-    let halfstep_avg_stay_ticks = if count > 0 { total_stay / count } else { 0 };
+    let halfstep_avg_stay_ticks = total_stay.checked_div(count).unwrap_or(0);
 
     // in-game 月换算（TICKS_PER_MONTH = 30 * 24 * 3600 * 20）
     let halfstep_avg_stay_months = halfstep_avg_stay_ticks as f64 / TICKS_PER_MONTH as f64;

@@ -19,7 +19,7 @@ use crate::inventory::{
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
-use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack};
+use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack, WorldQiAccount};
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
     DuguPoisonStateV1,
@@ -194,6 +194,7 @@ pub fn resolve_infuse_dugu_poison_intents(
     )>,
     mut disrupted_events: EventWriter<DuguObfuscationDisruptedEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
@@ -207,17 +208,24 @@ pub fn resolve_infuse_dugu_poison_intents(
 
         let (position, current_dimension, life_record) =
             locations.get(intent.infuser).unwrap_or((None, None, None));
-        let accepted = release_qi_amount_to_zone(
-            intent.infuser,
+        let release = release_qi_amount_to_zone(
+            &mut cultivation,
             DUGU_INFUSE_COST,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dugu_infuse_poison",
         );
-        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
+        if let Err(error) = release {
+            tracing::warn!(
+                ?error,
+                "[bong][dugu] poison infusion qi release failed closed"
+            );
+            continue;
+        }
         let expires_at_tick = clock.tick.saturating_add(DUGU_INFUSION_TTL_TICKS);
         let disrupted_until = clock.tick.saturating_add(DUGU_EXPOSURE_TICKS);
         commands.entity(intent.infuser).insert((
@@ -437,6 +445,7 @@ pub fn resolve_self_antidote_intent(
     mut inventories: Query<&mut PlayerInventory>,
     mut result_events: EventWriter<AntidoteResultEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
@@ -472,20 +481,29 @@ pub fn resolve_self_antidote_intent(
             continue;
         }
 
-        if consume_item_instance_once(&mut inventory, intent.antidote_instance_id).is_err() {
+        let mut staged_inventory = inventory.clone();
+        if consume_item_instance_once(&mut staged_inventory, intent.antidote_instance_id).is_err() {
             continue;
         }
-        let accepted = release_qi_amount_to_zone(
-            intent.target,
+        let release = release_qi_amount_to_zone(
+            &mut cultivation,
             SELF_ANTIDOTE_QI_COST,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dugu_self_antidote",
         );
-        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
+        if let Err(error) = release {
+            tracing::warn!(
+                ?error,
+                "[bong][dugu] self-antidote qi release failed closed"
+            );
+            continue;
+        }
+        *inventory = staged_inventory;
 
         let roll = intent
             .roll_override
@@ -529,15 +547,28 @@ pub fn can_infuse_dugu(
         && pending.is_none()
 }
 
+/// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json
+/// meridian_profile.dugu_injection`（见 `body_plan::types::DuguInjectionEntry` 文档，
+/// 与 `combat::baomai_v4::dead_armor::meridian_to_body_part` 方向相反、语义不同，不是
+/// 其逆映射），本函数改为查询 `body_plan::dugu_injection_channel`。签名保持
+/// `BodyPart -> MeridianId` 不变（既有调用点/测试无需改写），humanoid 全 8 部位数值
+/// bit-for-bit 与退役前私表一致——panic 仅在 humanoid.json 数据被破坏（缺条目 / 该
+/// channel 无法逆映射回 legacy 枚举）时触发，属数据完整性 bug 而非正常运行时分支。
 pub fn body_part_to_meridian(body_part: BodyPart) -> MeridianId {
-    match body_part {
-        BodyPart::Head => MeridianId::Du,
-        BodyPart::Chest => MeridianId::Heart,
-        BodyPart::Back => MeridianId::Du,
-        BodyPart::Abdomen => MeridianId::Spleen,
-        BodyPart::ArmL | BodyPart::ArmR => MeridianId::LargeIntestine,
-        BodyPart::LegL | BodyPart::LegR => MeridianId::Bladder,
-    }
+    let plan = crate::body_plan::humanoid_plan_static();
+    let part_id = crate::body_plan::legacy_body_part_to_id(body_part);
+    let channel = crate::body_plan::dugu_injection_channel(plan, &part_id).unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json meridian_profile.dugu_injection missing \
+             entry for body_part {part_id} — data integrity bug"
+        )
+    });
+    channel.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json dugu_injection channel {channel} has no \
+             legacy MeridianId mapping — data integrity bug"
+        )
+    })
 }
 
 pub fn recompute_qi_max(meridians: &MeridianSystem) -> f64 {
@@ -658,7 +689,7 @@ fn resolve_shoot_needle_skill(
     let now_tick = clock.tick;
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(QI_NEEDLE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -710,7 +741,7 @@ fn resolve_infuse_dugu_poison_skill(
     let now_tick = clock.tick;
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(DUGU_INFUSE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -781,6 +812,14 @@ mod tests {
 
     use valence::prelude::{App, Events, Position, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
+    use crate::player::state::canonical_player_id;
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -819,6 +858,7 @@ mod tests {
 
     fn inventory_with_jie_gu_rui(instance_id: u64) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(5),
             containers: vec![ContainerState {
@@ -864,7 +904,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -897,6 +937,9 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，毒蛊 qi 扣减在 release 中止后才执行。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exposure")),
             ))
             .id();
 
@@ -936,7 +979,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -960,6 +1003,8 @@ mod tests {
             .spirit_qi;
 
         // Pitfall-b: entity must have CurrentDimension so find_zone succeeds.
+        // LifeRecord 是 R5 P0b qi_flow 契约的身份前提（#1931/#1941）：无 canonical 身份的
+        // release 会被 fail-closed 拒绝（InvalidActorIdentity），与 zone credit 无关。
         let infuser = app
             .world_mut()
             .spawn((
@@ -975,6 +1020,7 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("dugu-infuse-zone-credit")),
             ))
             .id();
 
@@ -1027,7 +1073,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1054,6 +1100,9 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，infusion 在扣除 qi 前被中止。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exact")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -1087,7 +1136,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1168,9 +1217,10 @@ mod tests {
     /// This validates the system degrades gracefully rather than panicking.
     #[test]
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 400 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1200,6 +1250,10 @@ mod tests {
                 },
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity）。无 CurrentDimension 的
+                // 溢出路由场景仍需身份成立——补上与生产一致的 canonical 身份。
+                LifeRecord::new(canonical_player_id("dugu-infuse-nodim")),
                 // No CurrentDimension intentionally.
             ))
             .id();
@@ -1716,7 +1770,7 @@ mod tests {
 
     #[test]
     fn antidote_success_removes_poison_without_restoring_capacity() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1742,6 +1796,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 扣减在事务内被中止。
+                LifeRecord::new(canonical_player_id("dugu-antidote-success")),
                 inventory,
             ))
             .id();
@@ -1765,7 +1822,7 @@ mod tests {
 
     #[test]
     fn antidote_failure_severs_meridian_without_near_death() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1791,6 +1848,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 在断脉前被中止。
+                LifeRecord::new(canonical_player_id("dugu-failure-sever")),
                 inventory,
             ))
             .id();
@@ -1820,7 +1880,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 50 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1866,6 +1926,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 契约（#1931）：release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity），扣减与 zone 入账均不产生。
+                LifeRecord::new(canonical_player_id("dugu-antidote-zone")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -1921,10 +1984,11 @@ mod tests {
     /// QS-003 boundary: antidote with qi_current exactly at cost (boundary, should succeed).
     #[test]
     fn antidote_qi_exactly_at_cost_deducts_correctly_with_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 60 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1958,6 +2022,9 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                // R5 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，缺省会
+                // fail closed 于 InvalidActorIdentity，antidote 永远不会扣费生效。
+                LifeRecord::new(canonical_player_id("dugu-qi-exact-cost-boundary")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -1993,7 +2060,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 70 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();

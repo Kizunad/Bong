@@ -42,6 +42,46 @@ class ScenarioEnv:
             )
         return Bot(username, host=self.host, port=self.port)
 
+    def lookup_character_id(self, username: str) -> str:
+        """反查 server 侧当前角色的完整 character_id（`offline:<user>:<uuid>`）。
+
+        运行时 lifecycle.character_id 是复合形式（`player_character_id` = canonical id +
+        `player_core.current_char_id` uuid），且任何 S2C payload 都不下发该 uuid——
+        duo_she 客户端 UI 尚未接线，黑盒客户端无法自行构造合法 target_id。
+        本查询仅用于**构造输入**（同 fixture raster 由 harness 提供），断言面仍是纯协议黑盒。
+        """
+        import sqlite3
+
+        candidates = [
+            os.environ.get("BONG_SERVER_DB"),
+            os.path.join("data", "bong.db"),
+            os.path.join("server", "data", "bong.db"),
+        ]
+        tried = []
+        for path in candidates:
+            if not path or not os.path.isfile(path):
+                continue
+            tried.append(path)
+            try:
+                connection = sqlite3.connect(path, timeout=10.0)
+                try:
+                    row = connection.execute(
+                        "SELECT current_char_id FROM player_core WHERE username = ?1",
+                        (username,),
+                    ).fetchone()
+                finally:
+                    connection.close()
+            except sqlite3.Error as error:
+                raise RuntimeError(
+                    f"lookup_character_id(`{username}`) 读 {path} 失败: {error}"
+                ) from error
+            if row is not None:
+                return f"offline:{username}:{row[0]}"
+        raise RuntimeError(
+            f"lookup_character_id(`{username}`) 查不到 player_core 行——"
+            f"尝试过 {tried or [p for p in candidates if p]}"
+        )
+
 
 def validate_scenario_module(name: str, module: object) -> None:
     """校验场景模块契约（DESCRIPTION/MODULES/run），缺失抛 RuntimeError。"""
@@ -87,7 +127,10 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", help="跑全部场景（默认行为，显式起见）")
     parser.add_argument(
         "--run-tag",
-        default=os.environ.get("BOT_E2E_RUN_TAG", str(os.getpid() % 100000)),
+        default=(
+            os.environ.get("BOT_E2E_RUN_TAG")
+            or os.environ.get("NORTH_RIFT_RUN_TAG", str(os.getpid() % 100000))
+        ),
         help="用户名区分段（同一 server 反复跑时避免脏状态叠加），≤5 字符",
     )
     args = parser.parse_args()
@@ -96,7 +139,11 @@ def main() -> int:
 
     if args.list:
         for name, module in scenarios.items():
-            print(f"{name:44} modules={','.join(module.MODULES):20} {module.DESCRIPTION}")
+            default = "default" if getattr(module, "DEFAULT_ENABLED", True) else "dedicated"
+            print(
+                f"{name:44} modules={','.join(module.MODULES):20} "
+                f"mode={default:9} {module.DESCRIPTION}"
+            )
         return 0
 
     selected = args.scenario or list(scenarios)
@@ -108,7 +155,7 @@ def main() -> int:
     if not check_server_reachable(args.host, args.port, timeout=5.0):
         print(
             f"server {args.host}:{args.port} 不可达——先起 server"
-            "（bash scripts/bot-e2e.sh 会自动起，或手动 cd server && cargo run）",
+            "（bash scripts/bot-e2e.sh 会自动起，或手动 scripts/build-token.sh cargo run）",
             file=sys.stderr,
         )
         return 2
@@ -118,6 +165,27 @@ def main() -> int:
     for name in selected:
         module = scenarios[name]
         print(f"\n=== scenario: {name} ===\n    {module.DESCRIPTION}")
+        default_enabled = getattr(module, "DEFAULT_ENABLED", True)
+        required_env = getattr(module, "REQUIRED_ENV", None)
+        run_in_all_when_env = getattr(module, "RUN_IN_ALL_WHEN_ENV", None)
+        enabled_by_env = (
+            run_in_all_when_env is not None
+            and os.environ.get(run_in_all_when_env) == "1"
+        )
+        if args.scenario is None and not default_enabled and not enabled_by_env:
+            reason = (
+                f"专用场景；常规 --all 仅在 {run_in_all_when_env}=1 时执行"
+                if run_in_all_when_env is not None
+                else "专用场景；常规 --all 不执行（需显式 --scenario）"
+            )
+            results.append((name, "SKIP", reason))
+            print(f"    SKIP: {reason}")
+            continue
+        if args.scenario is not None and required_env is not None and os.environ.get(required_env) != "1":
+            reason = f"专用场景；显式 --scenario 需 {required_env}=1"
+            results.append((name, "ERROR", reason))
+            print(f"    ERROR: {reason}")
+            continue
         started = time.monotonic()
         try:
             module.run(env)
@@ -135,8 +203,12 @@ def main() -> int:
     print("\n===== bot e2e summary =====")
     for name, status, _ in results:
         print(f"  {status:5}  {name}")
-    failed = [r for r in results if r[1] != "PASS"]
-    print(f"  total={len(results)} pass={len(results) - len(failed)} fail={len(failed)}")
+    failed = [result for result in results if result[1] in {"FAIL", "ERROR"}]
+    passed = [result for result in results if result[1] == "PASS"]
+    skipped = [result for result in results if result[1] == "SKIP"]
+    print(
+        f"  total={len(results)} pass={len(passed)} skip={len(skipped)} fail={len(failed)}"
+    )
     return 1 if failed else 0
 
 

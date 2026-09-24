@@ -60,8 +60,6 @@ public final class MockInventoryData {
             // Hotbar
             .hotbar(0, InventoryItem.create("ningmai_powder", "凝脉散", 1, 1, 0.3, "uncommon", "外敷经脉，缓解走火入魔"))
             .hotbar(1, InventoryItem.create("huiyuan_pill_forbidden", "回元丹(禁药)", 1, 1, 0.2, "legendary", "禁药版回元丹，极速回复真元但有反噬"))
-            .hotbar(2, InventoryItem.createFull(6, "fengling_bone_coin", "封灵骨币", 1, 1, 0.1, "rare",
-                "刻有封灵阵法的骨质钱币", 24, 1.0, 1.0))
             // 骨币改用物品格表达（不再占底栏计数）。灵石不是正式设定，唯一硬通货是封灵骨币。
             .gridItem(InventoryItem.createFull(7, "fengling_bone_coin", "封灵骨币", 1, 1, 0.1, "rare",
                 "刻有封灵阵法的骨质钱币", 57, 1.0, 1.0), 2, 0)

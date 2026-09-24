@@ -66,6 +66,7 @@ mod tests {
     #[test]
     fn tsy_drain_death_has_no_attacker() {
         use crate::cultivation::tick::CultivationClock;
+        use crate::qi_physics::WorldQiAccount;
         use crate::world::dimension::DimensionKind;
         use crate::world::tsy::DimensionAnchor;
         use crate::world::tsy::TsyPresence;
@@ -74,6 +75,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
         app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
         // 一个浅层 tsy zone，启用 drain
         let mut zones = ZoneRegistry::fallback();
         zones

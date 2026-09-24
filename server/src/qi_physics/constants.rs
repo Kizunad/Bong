@@ -48,6 +48,9 @@ pub const QI_TSY_DRAIN_NONLINEAR_EXPONENT: f64 = 1.5;
 pub const QI_TSY_REFERENCE_POOL: f64 = 100.0;
 /// plan-tsy-zone-v1：TSY 抽取基准速率（点 / tick）。
 pub const QI_TSY_BASE_DRAIN_PER_TICK: f64 = 0.5;
+/// plan-void-actions-v1：引爆区域投入的真元六个月后回流的 runtime tick 数。
+/// 回流期限属于真元物理参数，统一由 qi_physics 归口，业务 action 只引用此常量。
+pub const QI_EXPLODE_ZONE_RETURN_TICKS: u64 = 6 * 30 * 24 * 60 * 60 * 20;
 /// plan-zhenfa-content-v2 P0：单颗散真元珠可封存并释放的真元量。
 pub const QI_SCATTER_BEAD_CAPACITY: f64 = 3.0;
 /// plan-zhenfa-content-v2 P0：凡阶组网阵提供的聚灵容量加成。

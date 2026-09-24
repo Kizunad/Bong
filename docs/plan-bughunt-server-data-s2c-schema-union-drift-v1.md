@@ -48,6 +48,7 @@
 3. 先补代表性高价值 payload 的 TypeBox wrapper、sample 与 `ServerDataV1` union：`craft_session_state`、`craft_outcome`、`loot_container_open`、`technique_proficiency_update`、`pill_buff_status`、`anqi_hud`、`dugu_v2_skill_cast`、`zhenmai_hud`、`tutorial_coffin_pos`。
 4. 根据 parity guard 输出继续收敛相邻缺口；不要一次性承诺补完整个 S2C schema 宇宙，也不要把没有生产路径的历史残留强行纳入。
 5. 重建 `@bong/schema` dist/generated，确保 `agent/packages/schema/generated/server-data-v1.json` 和必要的单项 schema 文件能看到新增 type。
+6. 作为 master M-16 的 Agent production batch，补齐 inventory accepted/rejected action receipt 的 TypeBox wrapper、正反 sample、`ServerDataV1`/`SCHEMA_REGISTRY` membership、单项 generated schema 与 committed dist；accepted 固定 request identity/result revision/instance/from/to/authoritative item view，rejected 固定 request correlation/reason/instance/from/to。记录冻结 SHA、registry-derived membership、freshness 与 runtime import evidence供 R6 P4 消费；本 plan 不改 Rust/proto/Java。
 
 ## 7. 验证计划
 
@@ -56,6 +57,7 @@
 3. 修复后运行：`cd agent && npm run build -w @bong/schema`，确保 dist export 与 generated schema 同步。
 4. 修复后运行：`bash scripts/smoke-law-engine.sh`，确认 source-of-truth smoke 不再假绿。
 5. 抽查 `agent/packages/schema/generated/server-data-v1.json` 包含代表性新增 type；删除任一新增 schema/union entry 时 freshness 或 parity gate 应失败。
+6. M-16 receipt 对 accepted/rejected 各执行 required-field、wrong-type、missing correlation、authoritative item view/理由边界正反样本；source→union→registry→generated→dist→clean runtime import 任一层删除都必须撞红，并在 handoff 记录冻结 SHA。
 
 ## 8. 对抗复核记录
 

@@ -8,8 +8,8 @@
 //! 实例不属于该玩家背包 / 模板未注册 / 模板无 `readable_scroll_spec`。
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Position, Query,
-    RemovedComponents, UniqueId, Username,
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Events, Position,
+    Query, RemovedComponents, UniqueId, Username,
 };
 
 use crate::combat::events::DeathEvent;
@@ -110,13 +110,131 @@ pub fn emit_scroll_open(
     }
 }
 
+/// Dispatch an admitted `ScrollReadRequest` through the scroll domain service.
+///
+/// Inventory lookup and scroll resolution stay beside the scroll wire emitter;
+/// the C2S session router only selects this typed service operation.
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch_scroll_read_open(
+    player: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    registry: &ItemRegistry,
+    clients: &mut Query<(&Username, &mut Client)>,
+    positions: &Query<&Position>,
+    unique_ids: &Query<&UniqueId>,
+    commands: &mut Commands,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    let Ok(inventory) = inventories.get(player) else {
+        tracing::warn!(
+            "[bong][network] client_request scroll_read_request rejected: entity={player:?} has no PlayerInventory"
+        );
+        return;
+    };
+    match resolve_scroll_read_request(inventory, registry, instance_id) {
+        Ok(resolution) => {
+            tracing::info!(
+                "[bong][network] client_request scroll_read_request entity={player:?} instance_id={instance_id}"
+            );
+            let anim_id = resolution.anim_id.clone();
+            emit_scroll_open(player, resolution.into_payload(), clients);
+            if let Ok(position) = positions.get(player) {
+                if let Some(vfx_events) = vfx_events.as_mut() {
+                    vfx_events.send(VfxEventRequest::new(
+                        position.get(),
+                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                            event_id: SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
+                            origin: [position.get().x, position.get().y, position.get().z],
+                            direction: None,
+                            color: Some(SCROLL_OPEN_GLOW_COLOR.to_string()),
+                            strength: Some(SCROLL_OPEN_GLOW_STRENGTH),
+                            count: Some(SCROLL_OPEN_GLOW_COUNT),
+                            duration_ticks: Some(SCROLL_OPEN_GLOW_DURATION_TICKS),
+                        },
+                    ));
+                }
+            }
+            if let Some(anim_id) = anim_id {
+                commands.entity(player).insert(ScrollReading {
+                    anim_id: anim_id.clone(),
+                });
+                if let (Ok(position), Ok(unique_id)) =
+                    (positions.get(player), unique_ids.get(player))
+                {
+                    if let Some(vfx_events) = vfx_events.as_mut() {
+                        vfx_events.send(VfxEventRequest::new(
+                            position.get(),
+                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                                target_player: unique_id.0.to_string(),
+                                anim_id,
+                                priority: SCROLL_READ_ANIM_PRIORITY,
+                                fade_in_ticks: Some(SCROLL_READ_ANIM_FADE_IN_TICKS),
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network] client_request scroll_read_request rejected: entity={player:?} instance_id={instance_id} reason={reason:?}"
+            );
+        }
+    }
+}
+
+/// Close an admitted `ScrollReadClosed` request using the marker as source of truth.
+pub fn dispatch_scroll_read_close(
+    player: Entity,
+    reading_q: &Query<&ScrollReading>,
+    positions: &Query<&Position>,
+    unique_ids: &Query<&UniqueId>,
+    commands: &mut Commands,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if let Ok(reading) = reading_q.get(player) {
+        let anim_id = reading.anim_id.clone();
+        if let (Ok(position), Ok(unique_id)) = (positions.get(player), unique_ids.get(player)) {
+            if let Some(vfx_events) = vfx_events.as_mut() {
+                vfx_events.send(VfxEventRequest::new(
+                    position.get(),
+                    crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id,
+                        fade_out_ticks: Some(
+                            crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
+                        ),
+                    },
+                ));
+            }
+        }
+        commands.entity(player).remove::<ScrollReading>();
+        tracing::debug!(
+            "[bong][network] client_request scroll_read_closed entity={player:?} anim stopped"
+        );
+    } else {
+        tracing::debug!(
+            "[bong][network] client_request scroll_read_closed entity={player:?} (no ScrollReading marker, no-op)"
+        );
+    }
+}
+
+const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
+const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
+const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
+const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
+const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
+const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
+const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
+
 /// plan-scroll-reading-v1 P2 — 玩家正在阅读残卷的持续标记 component。
 ///
 /// **专属 marker 而非 status（§8.1 #4 决议）**：读卷不属于战斗 `StatusEffects`
 /// 体系（无 qi/duration 语义），且需要在死亡时区分"死前是否在读卷"——照抄
 /// `combat::shield_block::ShieldBlock` 用独立 component 做真相源的模式（而非
 /// `has_active_status` 判定，理由同 `cleanup_shield_on_death` 顶部注释：death_arbiter_tick
-/// 的 `enter_near_death` 会无条件清空 status_effects，专属 component 不受影响）。
+/// 的 `clear_death_combat_state` 会无条件清空 status_effects，专属 component 不受影响）。
 ///
 /// 存储循环动画 id 快照（而非重新查 `readable_scroll_spec`），因为关屏 / 死亡两条清理
 /// 路径都只需要"当时播的是哪个动画"这一件事，不需要重新解析物品模板。
@@ -213,6 +331,7 @@ mod tests {
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -245,6 +364,7 @@ mod tests {
 
     fn base_template(id: &str, category: ItemCategory) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category,
@@ -270,6 +390,7 @@ mod tests {
             shield_spec: None,
             shelflife_profile: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 

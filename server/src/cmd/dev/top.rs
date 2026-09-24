@@ -2,7 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Position, Query, Res, Update};
+use valence::prelude::{App, Client, EventReader, IntoSystemConfigs, Position, Query, Res, Update};
 
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
 
@@ -18,7 +18,11 @@ impl Command for TopCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_command::<TopCmd>().add_systems(Update, handle_top);
+    app.add_command::<TopCmd>().add_systems(
+        Update,
+        // fix-spec-1901-v2 §4.2 — 直接写 `Position`，纳入统一移动 commit set。
+        handle_top.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
 }
 
 pub fn target_top_y(current: valence::prelude::DVec3, terrain: Option<&TerrainProvider>) -> f64 {

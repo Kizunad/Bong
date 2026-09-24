@@ -1,0 +1,9 @@
+# 采药刀 (HerbSickle / cai_yao_dao) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+sickle_blade   = { elements = ["blade_arc_", "blade_edge_", "blade_tip_"], must_show_in = ["FRONT", "3/4", "SIDE_R"], min_px = 120 }
+rope_binding   = { elements = ["binding_wrap_", "binding_fringe_", "cord_tie_"], must_show_in = ["FRONT", "3/4", "SIDE_R"], min_px = 150 }
+wooden_handle  = { elements = ["handle_body_", "handle_butt_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 250 }

@@ -3,7 +3,7 @@
 > **一句话主题**：新增 5 变种世界散布 LootCrate（骨扎皮箱/符封遗匣/锈铁行军箱/藤蚀腐木箱/残灰陶瓮，bbmodel 资产已产出），**镜像供应棺全链路**（refresh tick 自动散布 + `ExternalContainer` 会话开箱 + 超时碎裂进冷却重刷），零新 proto——把"搜打撤捡箱子"体验从剑冢单 zone 扩展到全世界，按 zone 危险度分变种分品质。
 
 **状态**：骨架（skeleton）。升 active 前按 docs/CLAUDE.md §五 收口 §8。
-**资产**：5 个 bbmodel 生成器已落地 `scripts/models/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验，黑盒测试 `test_gen_loot_crates.py` 11 例），`local_models/lootcrate/LootCrate*.bbmodel` 供 Blockbench 手调，真渲染总览 `scripts/models/render_loot_crates_all.png`（三视图示意拼版为 `loot_crates_preview_all.png`）。
+**资产**：5 个 bbmodel 生成器已落地 `modelScript/generators/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验，黑盒测试 `test_gen_loot_crates.py` 11 例），`modelScript/models/lootcrate/LootCrate*.bbmodel` 供 Blockbench 手调，真渲染总览 `modelScript/out/render_loot_crates_all.png`（跑生成器即出，不入库）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
@@ -24,9 +24,11 @@
 
 **留白**：全世界通用的、按 zone 分变种/分品质的散布 lootcrate 不存在；supply_coffin loot 表是硬编 Rust。本 plan 填这块，并把 loot 定义迁到数据文件。
 
+> **2026-07-18 诊断补充**：早期玩法诊断（三路 Explore 实证）确认本 plan 是「世界内容密度」的主抓手——"捡箱子"体验目前只有剑冢 supply_coffin + 新手圈 SurfaceStash 两处，玩家离开出生圈后探索奖励密度骤降。与同批骨架 [[plan-first-technique-grant-v1]]（招式残卷分布梯度）、[[plan-ancient-relic-payoff-v1]]（遗物管线）存在 loot 表协调点，见 §8 #8/#9。
+
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
-- **进料**：`ExternalContainerRegistry`/`ExternalContainer`（容器抽象，与 supply_coffin/placeable-containers 共用）；`TerrainProvider::query_surface`（地表吸附）；`ZoneRegistry`（分布配置按 zone）；`loot_pools.json` + `LootPoolRegistry`（`world/loot_pool.rs:21-94`）；`scripts/models/export_container_assets.py`（bbmodel→client geo/texture 导出管线）。
+- **进料**：`ExternalContainerRegistry`/`ExternalContainer`（容器抽象，与 supply_coffin/placeable-containers 共用）；`TerrainProvider::query_surface`（地表吸附）；`ZoneRegistry`（分布配置按 zone）；`loot_pools.json` + `LootPoolRegistry`（`world/loot_pool.rs:21-94`）；`modelScript/exporters/export_container_assets.py`（bbmodel→client geo/texture 导出管线）。
 - **出料**：loot 进 `PlayerInventory`（复用 `pack_loot_into_grid`）；开箱/碎裂 emit 既有音效/粒子事件；`SupplyCoffinOpened` 类事件供天道 narration（可选）。
 - **共享类型 / event**：`ExternalContainerKind` 加 `LootCrate { variant: LootCrateVariant }`（不复用 SupplyCoffin 变体——lifecycle 分支语义不同档）；**C2S 复用 `SupplyCoffinOpenReq`(87) 或泛化前缀**（见 §8 #1）；S2C 复用 `LootContainerOpen`(119)/`LootContainerClose`(121)。**零新 proto oneof**。
 - **跨仓库契约**：wire 零改动；client 仅新增实体渲染注册（EntityKind **169~173**，紧接 DEAD_DROP_BOX=168）+ 资源包资产。`entity_model.rs:655` 的 server↔client raw_id 契约测试同步扩展。
@@ -57,7 +59,7 @@
 
 - `BongEntityModelKind.java` 追加 5 enum（raw_id 169~173，textureState `intact`）+ 5 个 renderer + `BongEntityRenderBootstrap` deferred 注册。
 - 资产管线：`export_container_assets.py` 的 CONTAINERS 元组加 5 项 → `assets/bong/{geo,textures/entity}`；**重打包资源包 zip + 同步 `resourcepack.rs` sha1/size**（CI 红线）。
-- bbmodel 源以 `local_models/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
+- bbmodel 源以 `modelScript/models/lootcrate/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
 - **测试**：raw_id 对齐（双端契约测试）；资源包构建 CI。
 
 ## P3 视听 + 平衡 ⬜
@@ -89,6 +91,8 @@
 5. **supply_coffin loot 硬编迁移**：顺手把 supply_coffin 三档 loot 迁 `loot_pools.json`（统一数据驱动）还是留原样——倾向留原样，本 plan 不动它（防 scope 蔓延），只登记后续待办。
 6. **天道叙事**：开高价值箱是否 emit 事件进天道 narration 信号（低优先）。
 7. **P4 皮肤资产形态**：程序化 nine-patch（零新贴图）够不够五套主题的质感，还是 gen-image 批产 GUI 纹理（进资源包，吃 sha1 同步）；`loot_container_open` payload 是否已带足 source_kind/variant 字段（不足则 server 补字段，wire 变更连 samples/.proto 一起改）。
+8. **（2026-07-18 追加）低危变种的招式残卷权重**：现状 8 种招式残卷全部压在深层 TSY pool——新手拿到第一招后（[[plan-first-technique-grant-v1]]），第 2-3 招在野外无获取梯度。P1 设计 `lootcrate_bone_lash`/`lootcrate_vine_chest` pool 时是否给低阶招式残卷小权重（如 3-5%），让世界散布箱承担"浅层招式梯度"职责；权重表与 TSY 深层的稀有度阶差要拉开（不稀释深层动机）。
+9. **（2026-07-18 追加）talisman 变种的遗物钩子**：`lootcrate_talisman`（宗门遗产）是否挂 `AncientRelicPool` 的极低概率入口（远低于 TSY 首入 1%，如 0.1%）——复用 [[plan-ancient-relic-payoff-v1]] 的注册与消费管线零重复实现；前提是不动 TSY 99/1 铁律的稀缺叙事（倾向：v1 不挂，登记待 relic-payoff 落地后再议）。
 
 ## §10（升 active 时补）
 

@@ -66,6 +66,10 @@ public final class HalfStepRechallengeStore {
         snapshot = State.NONE;
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     /** 测试用重置。 */
     public static void resetForTests() {
         snapshot = State.NONE;

@@ -50,6 +50,7 @@ use crate::combat::status::has_active_status;
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{GameTick, MovementController};
 use crate::npc::perf::NpcPerfProbe;
+use crate::npc::scenario::PassiveTarget;
 use crate::npc::spawn::NpcMarker;
 use crate::world::dimension::OverworldLayer;
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
@@ -68,7 +69,22 @@ const NODE_REACH_XZ: f64 = 0.65;
 /// A* goal tolerance in blocks (XZ only). The NPC is a ground mob — it
 /// considers the destination "reached" when it's within this many blocks
 /// horizontally, regardless of Y difference (player may be jumping/flying).
-const GOAL_REACH_XZ: i32 = 2;
+pub const GOAL_REACH_XZ: i32 = 2;
+
+/// `from` 当前位置是否已在 `to` 的**到达容差内**（floored 坐标 Chebyshev-[`GOAL_REACH_XZ`]，
+/// 忽略 Y）——即 navigator 会判"已到达、无法再靠近"（对拍 [`compute_path`] 的 start-in-tolerance
+/// 首分支）。
+///
+/// 近战 brain（如噬元鼠咬击）用它判"够得着了就动手"：navigator 的实际停距受子方块偏心 +
+/// NODE_REACH 收尾放大（对角可停在 ~3.5–4 格外），纯欧氏攻击半径闭合不了；用同一 floored
+/// Chebyshev 判据才能既"鼠贴到极限就咬"又"还在路上不早咬"。
+///
+/// **注意**：判据是 `from` 的**当前**位置，不是 [`ComputedPath::reached_goal`]——后者只表示
+/// "A* 找到了通往目标的路（目标可达）"，鼠可能还在起点数十格外，拿它当"已到达"会导致隔空咬。
+pub fn within_goal_reach_xz(from: DVec3, to: DVec3) -> bool {
+    (from.x.floor() as i32).abs_diff(to.x.floor() as i32) <= GOAL_REACH_XZ as u32
+        && (from.z.floor() as i32).abs_diff(to.z.floor() as i32) <= GOAL_REACH_XZ as u32
+}
 
 /// Max Y-step the navigator considers walkable between adjacent blocks.
 /// Vanilla MC uses 1.0 (one block); we allow 1 for more natural movement.
@@ -296,6 +312,7 @@ pub fn navigator_tick_system(
             Option<&StatusEffects>,
             Option<&EntityLayerId>,
             Option<&NpcLodTier>,
+            Option<&PassiveTarget>,
         ),
         With<NpcMarker>,
     >,
@@ -327,8 +344,16 @@ pub fn navigator_tick_system(
         status_effects,
         npc_layer,
         lod_tier,
+        passive_target,
     ) in &mut npcs
     {
+        // A passive scenario target is damageable but stationary by contract.
+        // Do this before idle ground snapping too: its Position must remain exactly
+        // where the command spawned it while the lifecycle test is running.
+        if passive_target.is_some() {
+            continue;
+        }
+
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
         // this tick. Navigator must not interfere.
         let movement_ctrl = movement_ctrl.cloned().unwrap_or_default();
@@ -508,7 +533,11 @@ fn snap_idle_position_to_ground(
 }
 
 pub(crate) fn should_repath_in_bucket(entity: Entity, tick: u32, force: bool) -> bool {
-    force || (entity.index().wrapping_add(tick) % NAVIGATOR_REPATH_BUCKET_COUNT == 0)
+    force
+        || entity
+            .index()
+            .wrapping_add(tick)
+            .is_multiple_of(NAVIGATOR_REPATH_BUCKET_COUNT)
 }
 
 // ---------------------------------------------------------------------------

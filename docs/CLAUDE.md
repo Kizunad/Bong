@@ -186,9 +186,9 @@ Agent(
 for pr_n in [PR-1..PR-N]:
     result = Agent(...subagent, prompt 含本 PR 范围 + 必读 §10.1 多轮 + 测试要求...)
     pr_url = parse(result)
-    # 等 CR review（§6.5）
-    while gh pr checks pr_url == "pending":
-        ScheduleWakeup(1200, "等 CR PR #N")
+    # 等 Kody 自动 review（§6.5）——Kody 出的是评论不是 check run
+    while not kody_comment_for_current_head(pr_url):
+        ScheduleWakeup(1200, "等 Kody PR #N")
     if has_review_issues:
         Agent(...修复 subagent...)  # 修复也用独立 subagent
         重等
@@ -205,26 +205,36 @@ for pr_n in [PR-1..PR-N]:
 - subagent 只负责**实施 + 提 PR**，**不等 review**（subagent 是 single-call，没有跨调用 ScheduleWakeup 能力；等待逻辑归主线）
 - 主线 merge 命令简单不消耗 context，主线亲自做
 
-### 6.5 CodeRabbit ScheduleWakeup 等待协议
+### 6.5 Kody review 等待协议
 
-CodeRabbit 是 GitHub Actions check run，`gh pr checks <PR>` 看状态：
+PR 创建时以及 push 新提交后由 Kody 自动 review。流程不发送 `/review`、`/review-next` 或 `@kody start-review`；如果 review 发现问题，修复并 push 后通常会自动增量 review，需要明确启动新一轮时才在 PR 根评论发送 `@kody review --force`。
 
-| 状态 | 含义 | 动作 |
-|------|------|------|
-| `pass` | review 通过 | 进 merge |
-| `pending` | 仍在跑（典型 ~20 min） | `ScheduleWakeup delaySeconds=1200` 等下回合 |
-| `fail` | 不通过 | 按 skills/consume-plan/SKILL.md step 7 严重性桶处理 |
+**Kody 不是 check run，`gh pr checks` 里看不到它**——它通过 PR issue 评论给出总结，通过行内 review 评论给出具体问题。
+
+#### 判"这一轮审的是不是当前 HEAD"
+
+只比时间戳不够：旧 HEAD 的延迟评论可能落在新 push 之后。行内评论优先使用 `original_commit_id` 对拍当前 HEAD，不能使用 GitHub 可能改写过的 `commit_id`，并用 `--paginate` 拉取完整评论：
+
+```bash
+HEAD=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
+
+gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
+  | jq -r --arg h "$HEAD" '.[]
+      | select(.original_commit_id == $h)
+      | "\(.created_at)  \(.path):\(.line // .original_line)"'
+```
+
+当前 HEAD 仍有对应的 Kody 行内意见时，必须处理后再合并。Kody 的 clean 总结可能不携带 SHA；这类结果不能伪造精确 SHA 绑定，需要确定性复审时，修复并 push 后发送 `@kody review --force`。
 
 **等待节奏硬约束**：
 
-- **禁止 sleep loop / busy poll**——必须 `ScheduleWakeup`
-- 每回合 1200s（20 min，对齐 CR 单回合典型耗时）
-- 最多 3 回合 = 总 60 min 卡死才停交人工
-- 修完 review 意见**必须重新等 CR re-review**，不自行判定"我修好了应该过"（对齐 memory `feedback_wait_coderabbit_approve.md`）
-- 多 PR 场景每个 PR 各自走完整等待协议，前一个未 APPROVED/收敛不开下一个
-
+- **禁止 sleep loop / busy poll**，使用当前 harness 提供的真实等待机制（Claude 使用 `ScheduleWakeup`）。
+- 每回合 1200s（20 min），最多 3 回合；仍无 Kody 反馈就停交人工，不自动 merge。
+- 修完 review 意见必须重新等待 Kody re-review，不能自行判定"我修好了应该过"。
+- CodeRabbit 已由 `.coderabbit.yaml` 关闭自动触发，不在默认等待范围内；确实需要第二双眼睛时才按需评论 `@coderabbitai review`。
+- 多 PR 场景每个 PR 各自走完整等待协议，前一个未收敛不开下一个。
 ### 6.6 §10 章节模板
 
-新立 plan 的 §10 章节按本指南 §六 各小节顺序写（建筑多轮 / 多 PR / subagent / CR 等待），最末加一节 **§10.N 单次 consume-plan 全自动到 merge**，重申"用户提交 `/consume-plan` 后即可下班，醒来看 plan 是否在 finished_plans/"。
+新立 plan 的 §10 章节按本指南 §六 各小节顺序写（建筑多轮 / 多 PR / subagent / Kody 等待），最末加一节 **§10.N 单次 consume-plan 全自动到 merge**，重申"用户提交 `/consume-plan` 后即可下班，醒来看 plan 是否在 finished_plans/"。
 
 可参考 `docs/plan-dandao-path-v1.md` §10（2026-05-18 首次实践）作为模板，复制结构 + 按本 plan 实际范围替换具体内容。

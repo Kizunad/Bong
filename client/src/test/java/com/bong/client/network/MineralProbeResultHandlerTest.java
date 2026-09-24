@@ -6,7 +6,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -158,9 +161,8 @@ public class MineralProbeResultHandlerTest {
     }
 
     @Test
-    void handle_playerNullNoOpReturnedNotThrown_forFoundKind() {
-        // 在 headless 测试 JVM 里 MinecraftClient.getInstance() 返回 null（或 player==null）。
-        // handler 应返回 noOp 而非抛 NullPointerException。
+    void handle_foundBuildsFeedbackSpecWithoutClientState() {
+        // handler 不应读取 MinecraftClient；即使 headless，也必须产出完整反馈 spec。
         String json = """
             {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":30,"display_name_zh":"铁矿"}
             """;
@@ -168,16 +170,26 @@ public class MineralProbeResultHandlerTest {
             .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
             .envelope();
 
-        // 预期：no-op 或 noOp（取决于 mc == null），绝不 throw
-        assertDoesNotThrow(() -> {
-            ServerDataDispatch dispatch = new MineralProbeResultHandler().handle(envelope);
-            assertNotNull(dispatch,
-                "handle() 在 headless 下应返回非 null dispatch，实际 null");
-        }, "handle() 在 headless 下 kind=found 不应抛出任何异常");
+        ServerDataDispatch dispatch = assertDoesNotThrow(
+            () -> new MineralProbeResultHandler().handle(envelope),
+            "handle() 在 headless 下 kind=found 不应访问 MinecraftClient 或抛出异常"
+        );
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("found 必须生成结构化 feedback spec，而不是丢弃 HUD/SFX 意图")
+        );
+        assertTrue(dispatch.handled(), "found feedback dispatch 必须标记 handled");
+        assertEquals("「铁矿」灵脉 · 余 30 缕", feedback.actionbarText(),
+            "found spec 必须保留原 actionbar 文案");
+        assertEquals(0xFCD34D, feedback.actionbarColor(),
+            "remaining=30 必须保留 moderate 琥珀色");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.AMETHYST_CHIME, feedback.soundEffect(),
+            "found 必须保留 amethyst chime");
+        assertEquals(0.3f, feedback.volume(), "found 音量必须保持 0.3");
+        assertEquals(1.4f, feedback.pitch(), "found 音高必须保持 1.4");
     }
 
     @Test
-    void handle_playerNullNoOpReturnedNotThrown_forDeniedKind() {
+    void handle_deniedBuildsFeedbackSpecWithoutClientState() {
         String json = """
             {"v":1,"type":"mineral_probe_result","kind":"denied","denial_reason":"out_of_range"}
             """;
@@ -185,11 +197,55 @@ public class MineralProbeResultHandlerTest {
             .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
             .envelope();
 
-        assertDoesNotThrow(() -> {
-            ServerDataDispatch dispatch = new MineralProbeResultHandler().handle(envelope);
-            assertNotNull(dispatch,
-                "handle() 在 headless 下应返回非 null dispatch，实际 null");
-        }, "handle() 在 headless 下 kind=denied 不应抛出任何异常");
+        ServerDataDispatch dispatch = assertDoesNotThrow(
+            () -> new MineralProbeResultHandler().handle(envelope),
+            "handle() 在 headless 下 kind=denied 不应访问 MinecraftClient 或抛出异常"
+        );
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("denied 必须生成结构化 feedback spec，而不是丢弃 HUD/SFX 意图")
+        );
+        assertTrue(dispatch.handled(), "denied feedback dispatch 必须标记 handled");
+        assertEquals("神识探之不及", feedback.actionbarText(),
+            "denied spec 必须保留 denial_reason 对应文案");
+        assertEquals(0x9CA3AF, feedback.actionbarColor(),
+            "denied spec 必须保留灰色 actionbar");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.NOTE_BLOCK_BASS, feedback.soundEffect(),
+            "denied 必须保留 bass 音效");
+        assertEquals(0.2f, feedback.volume(), "denied 音量必须保持 0.2");
+        assertEquals(0.6f, feedback.pitch(), "denied 音高必须保持 0.6");
+    }
+
+    @Test
+    void handle_foundBuildsSparseFeedbackColor() {
+        String json = """
+            {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":9}
+            """;
+        ServerDataEnvelope envelope = ServerDataEnvelope
+            .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
+            .envelope();
+
+        MineralProbeFeedbackSpec feedback = new MineralProbeResultHandler()
+            .handle(envelope)
+            .mineralProbeFeedback()
+            .orElseThrow(() -> new AssertionError("found=9 必须生成 feedback spec"));
+
+        assertEquals("「灵脉」灵脉 · 余 9 缕", feedback.actionbarText(),
+            "缺 display_name_zh 时必须保留原灵脉兜底文案");
+        assertEquals(0xF87171, feedback.actionbarColor(),
+            "remaining=9 的 found spec 必须使用 sparse 赤色");
+    }
+
+    @Test
+    void handlerSourceDoesNotTouchClientHudOrSound() throws IOException {
+        String source = Files.readString(Path.of(
+            "src/main/java/com/bong/client/network/MineralProbeResultHandler.java"));
+
+        assertFalse(source.contains("MinecraftClient"),
+            "MineralProbeResultHandler 只能解析并生成 spec，不得访问 MinecraftClient");
+        assertFalse(source.contains("setOverlayMessage"),
+            "MineralProbeResultHandler 不得直接落 actionbar，必须交给 applyDispatch");
+        assertFalse(source.contains("playSound"),
+            "MineralProbeResultHandler 不得直接播放 SFX，必须交给 applyDispatch");
     }
 
     @Test
@@ -207,56 +263,68 @@ public class MineralProbeResultHandlerTest {
         });
     }
 
-    // ─── buildFoundText / buildDeniedText：overlay Text 内容断言 ─────────────────
+    // ─── feedback spec 文案与颜色断言 ─────────────────────────────────────────
 
     @Test
-    void buildFoundText_containsNameAndRemaining() {
-        // buildFoundText 返回的 Text 字面内容应含矿名和余量（plan P0 Found 显示规格）
-        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText("赤铜矿脉", 30);
-        String str = text.getString();
-        assertTrue(str.contains("赤铜矿脉"),
-            "Found overlay text 应包含矿名 '赤铜矿脉'，实际=" + str);
-        assertTrue(str.contains("30"),
-            "Found overlay text 应包含余量 '30'，实际=" + str);
+    void foundSpec_containsNameAndRemaining() {
+        MineralProbeFeedbackSpec feedback = foundFeedback("赤铜矿脉", 30);
+        assertTrue(feedback.actionbarText().contains("赤铜矿脉"),
+            "Found spec 文案应包含矿名 '赤铜矿脉'，实际=" + feedback.actionbarText());
+        assertTrue(feedback.actionbarText().contains("30"),
+            "Found spec 文案应包含余量 '30'，实际=" + feedback.actionbarText());
     }
 
     @Test
-    void buildFoundText_nullName_fallsBackToDefault() {
-        // displayNameZh 为 null 时退回 "灵脉" 兜底
-        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText(null, 5);
-        String str = text.getString();
-        assertTrue(str.contains("灵脉"),
-            "displayNameZh=null 时 Found overlay 应含兜底 '灵脉'，实际=" + str);
+    void foundSpec_nullName_fallsBackToDefault() {
+        MineralProbeFeedbackSpec feedback = foundFeedback(null, 5);
+        assertTrue(feedback.actionbarText().contains("灵脉"),
+            "displayNameZh=null 时 Found spec 应含兜底 '灵脉'，实际=" + feedback.actionbarText());
     }
 
     @Test
-    void buildFoundText_aboveAbundantThreshold_hasAbundantColor() {
+    void foundSpec_aboveAbundantThreshold_hasAbundantColor() {
         // remaining=100 → COLOR_ABUNDANT=0x6EE7B7
-        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText("玉髓", 100);
-        // Text.style().getColor() 为 TextColor 对象，.getRgb() 取整数颜色
-        var color = text.getStyle().getColor();
-        assertNotNull(color, "Found text 颜色不应为 null");
-        assertEquals(0x6EE7B7, color.getRgb(),
-            "remaining=100 Found overlay 颜色应为 COLOR_ABUNDANT=0x6EE7B7，实际=0x" + Integer.toHexString(color.getRgb()));
+        MineralProbeFeedbackSpec feedback = foundFeedback("玉髓", 100);
+        assertEquals(0x6EE7B7, feedback.actionbarColor(),
+            "remaining=100 Found spec 颜色应为 COLOR_ABUNDANT=0x6EE7B7，实际=0x"
+                + Integer.toHexString(feedback.actionbarColor()));
     }
 
     @Test
-    void buildDeniedText_containsDenialMessage() {
-        // buildDeniedText 返回的 Text 内容应含对应文案（plan P0 Denied 显示规格）
-        net.minecraft.text.Text text = MineralProbeResultHandler.buildDeniedText("realm_too_low");
-        String str = text.getString();
-        assertEquals("神识未及，凝脉方可感矿脉", str,
-            "Denied overlay text=realm_too_low 应为 '神识未及，凝脉方可感矿脉'，实际=" + str);
+    void deniedSpec_containsDenialMessage() {
+        MineralProbeFeedbackSpec feedback = deniedFeedback("realm_too_low");
+        assertEquals("神识未及，凝脉方可感矿脉", feedback.actionbarText(),
+            "Denied spec text=realm_too_low 应为 '神识未及，凝脉方可感矿脉'，实际=" + feedback.actionbarText());
     }
 
     @Test
-    void buildDeniedText_hasGrayColor() {
+    void deniedSpec_hasGrayColor() {
         // Denied overlay 颜色应为 COLOR_DENIED=0x9CA3AF
-        net.minecraft.text.Text text = MineralProbeResultHandler.buildDeniedText("out_of_range");
-        var color = text.getStyle().getColor();
-        assertNotNull(color, "Denied text 颜色不应为 null");
-        assertEquals(0x9CA3AF, color.getRgb(),
-            "Denied overlay 颜色应为 COLOR_DENIED=0x9CA3AF（灰字），实际=0x" + Integer.toHexString(color.getRgb()));
+        MineralProbeFeedbackSpec feedback = deniedFeedback("out_of_range");
+        assertEquals(0x9CA3AF, feedback.actionbarColor(),
+            "Denied spec 颜色应为 COLOR_DENIED=0x9CA3AF（灰字），实际=0x"
+                + Integer.toHexString(feedback.actionbarColor()));
+    }
+
+    private static MineralProbeFeedbackSpec foundFeedback(String displayNameZh, int remainingUnits) {
+        String nameField = displayNameZh == null ? "" : ",\"display_name_zh\":\"" + displayNameZh + "\"";
+        String json = "{\"v\":1,\"type\":\"mineral_probe_result\",\"kind\":\"found\""
+            + ",\"remaining_units\":" + remainingUnits + nameField + "}";
+        ServerDataEnvelope envelope = ServerDataEnvelope
+            .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
+            .envelope();
+        return new MineralProbeResultHandler().handle(envelope).mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("found 必须生成 feedback spec"));
+    }
+
+    private static MineralProbeFeedbackSpec deniedFeedback(String reason) {
+        String json = "{\"v\":1,\"type\":\"mineral_probe_result\",\"kind\":\"denied\","
+            + "\"denial_reason\":\"" + reason + "\"}";
+        ServerDataEnvelope envelope = ServerDataEnvelope
+            .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
+            .envelope();
+        return new MineralProbeResultHandler().handle(envelope).mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("denied 必须生成 feedback spec"));
     }
 
     // ─── colorByAbundance 三档边界完整覆盖（参数化概要）────────────────────────

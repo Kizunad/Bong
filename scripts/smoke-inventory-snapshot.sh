@@ -23,17 +23,17 @@ fi
 echo ""
 echo "=== [2/4] Server targeted checks ==="
 cd "$ROOT/server"
-if cargo test inventory_snapshot_emit >/tmp/bong-server-inventory.log 2>&1; then pass "cargo test inventory_snapshot_emit"; else tail -40 /tmp/bong-server-inventory.log; fail "cargo test inventory_snapshot_emit"; fi
+if "$ROOT/scripts/build-token.sh" cargo test inventory_snapshot_emit >/tmp/bong-server-inventory.log 2>&1; then pass "cargo test inventory_snapshot_emit"; else tail -40 /tmp/bong-server-inventory.log; fail "cargo test inventory_snapshot_emit"; fi
 
 echo ""
 echo "=== [3/4] Client targeted checks ==="
 cd "$ROOT/client"
-if JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "*AuthoritativeInspectOpenTest" >/tmp/bong-client-authoritative-open.log 2>&1; then pass "AuthoritativeInspectOpenTest"; else tail -40 /tmp/bong-client-authoritative-open.log; fail "AuthoritativeInspectOpenTest"; fi
+if JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH "$ROOT/scripts/build-token.sh" gradle test --tests "*AuthoritativeInspectOpenTest" >/tmp/bong-client-authoritative-open.log 2>&1; then pass "AuthoritativeInspectOpenTest"; else tail -40 /tmp/bong-client-authoritative-open.log; fail "AuthoritativeInspectOpenTest"; fi
 
 echo ""
 echo "=== [4/4] Broader build gates ==="
 cd "$ROOT/server"
-if cargo check >/tmp/bong-server-check.log 2>&1 && cargo test >/tmp/bong-server-test.log 2>&1; then
+if "$ROOT/scripts/build-token.sh" cargo check >/tmp/bong-server-check.log 2>&1 && "$ROOT/scripts/build-token.sh" cargo test >/tmp/bong-server-test.log 2>&1; then
     pass "server check + test"
 else
     tail -40 /tmp/bong-server-check.log || true
@@ -42,7 +42,7 @@ else
 fi
 
 cd "$ROOT/client"
-if JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build >/tmp/bong-client-build.log 2>&1; then
+if JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH "$ROOT/scripts/build-token.sh" gradle test build >/tmp/bong-client-build.log 2>&1; then
     pass "client test build"
 else
     tail -40 /tmp/bong-client-build.log

@@ -16,32 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EdgeFeedbackHudPlannerTest {
 
     @Test
-    void healthyPlayerHasNoPulses() {
-        CombatHudState full = CombatHudState.create(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none());
-        List<HudRenderCommand> cmds = EdgeFeedbackHudPlanner.buildCommands(
-            full, DefenseWindowState.idle(), CastState.idle(), 0L, 1920, 1080);
-        assertTrue(cmds.isEmpty(), "no pulses at 100% HP: " + cmds);
-    }
-
-    @Test
-    void lowHpEmitsPulseVignette() {
-        CombatHudState low = CombatHudState.create(0.25f, 0.5f, 0.5f, DerivedAttrFlags.none());
-        List<HudRenderCommand> cmds = EdgeFeedbackHudPlanner.buildCommands(
-            low, DefenseWindowState.idle(), CastState.idle(), 0L, 1920, 1080);
-        assertEquals(1, cmds.size());
-        assertTrue(cmds.get(0).isEdgeVignette());
-    }
-
-    @Test
-    void criticalHpEmitsStrongerPulse() {
-        CombatHudState crit = CombatHudState.create(0.05f, 0.5f, 0.5f, DerivedAttrFlags.none());
-        List<HudRenderCommand> cmds = EdgeFeedbackHudPlanner.buildCommands(
-            crit, DefenseWindowState.idle(), CastState.idle(), 200L, 1920, 1080);
-        assertEquals(1, cmds.size());
-        assertTrue(cmds.get(0).isEdgeVignette());
-    }
-
-    @Test
     void defenseWindowAddsFourEdgeFlash() {
         CombatHudState full = CombatHudState.create(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none());
         DefenseWindowState dw = DefenseWindowState.active(200, 0L, 200L);

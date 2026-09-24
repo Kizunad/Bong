@@ -22,5 +22,6 @@
     "yaw_degrees": {
       "type": "number"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "8fea125eef3dc779c518c11027c9b9585a75fbfd462762aed85a3879558c634f"
 }

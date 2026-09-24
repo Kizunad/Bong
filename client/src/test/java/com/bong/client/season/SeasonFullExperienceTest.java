@@ -19,6 +19,7 @@ import java.util.OptionalInt;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SeasonFullExperienceTest {
@@ -61,6 +62,40 @@ class SeasonFullExperienceTest {
 
         assertEquals(SeasonState.Phase.SUMMER, result.transition().from());
         assertEquals(SeasonState.Phase.SUMMER_TO_WINTER, result.transition().to());
+    }
+
+    @Test
+    void disconnectClearDropsDerivedSeasonPresentationAndFreshSnapshotStartsCleanly() {
+        SeasonVisualController.tick(new SeasonState(SeasonState.Phase.WINTER, 250L, 1_000L, 0L), 10L);
+        SeasonBreakthroughOverlayHud.trigger(
+            SeasonBreakthroughOverlay.breakthroughProfile(
+                new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 0L, 1_000L, 0L),
+                true,
+                0L
+            ),
+            1_000L
+        );
+        assertFalse(SeasonBreakthroughOverlayHud.buildCommands(2_000L).isEmpty(),
+            "old server breakthrough pulse must be observable before disconnect cleanup");
+
+        SeasonVisualController.clearOnDisconnect();
+
+        assertNull(ZoneAtmosphereRenderer.currentSeasonOverrideForTests(),
+            "disconnect cleanup must remove the old server atmosphere override");
+        assertEquals(SeasonState.Phase.SUMMER, MusicStateMachine.instance().seasonModifierForTests().phase(),
+            "disconnect cleanup must restore the neutral music season modifier");
+        assertEquals(0.0, MusicStateMachine.instance().seasonModifierForTests().progress(), 1e-6,
+            "disconnect cleanup must restore neutral music progress");
+        assertTrue(SeasonBreakthroughOverlayHud.buildCommands(2_000L).isEmpty(),
+            "disconnect cleanup must remove the old server breakthrough HUD pulse");
+
+        SeasonVisualController.SeasonTickResult fresh = SeasonVisualController.tick(
+            new SeasonState(SeasonState.Phase.SUMMER_TO_WINTER, 500L, 1_000L, 0L),
+            20L
+        );
+        assertNull(fresh.transition(),
+            "the first fresh-server season snapshot must not fabricate a transition from the prior server");
+        assertEquals(SeasonState.Phase.SUMMER_TO_WINTER, ZoneAtmosphereRenderer.currentSeasonOverrideForTests().phase());
     }
 
     @Test

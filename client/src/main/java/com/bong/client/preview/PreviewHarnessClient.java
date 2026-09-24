@@ -26,6 +26,7 @@ public final class PreviewHarnessClient {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-preview");
     private static final String ENV_ENABLED = "BONG_PREVIEW_HARNESS";
     private static final String ENV_CONFIG = "BONG_PREVIEW_CONFIG";
+    private static final String ENV_SVG_HUD_PREVIEW = "BONG_SVG_HUD_PREVIEW";
     private static final String DEFAULT_CONFIG_FILE = "preview-harness.json";
 
     private PreviewHarnessClient() {}
@@ -53,7 +54,7 @@ public final class PreviewHarnessClient {
 
         PreviewSession session;
         try {
-            session = new PreviewSession(config);
+            session = new PreviewSession(config, "1".equals(System.getenv(ENV_SVG_HUD_PREVIEW)));
         } catch (RuntimeException e) {
             LOGGER.error("[preview] 创建 session 失败（输出目录无法创建？）", e);
             return;

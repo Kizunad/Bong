@@ -1,0 +1,64 @@
+# dagger_reverse_grip_switch —— 「这条动作应该看得出什么」的人写清单。
+#
+# 这条是 `dagger_grip_switch` 的回程，2026-09-01 新增。存在理由是个系统层的账：
+# one-shot emote 的 stopTick 混出会把 rightItem 拉回 0，"换完握就一直反握"在单条 emote
+# 里表达不了。要么加一层保持性的持握状态层，要么**把回程也做成一招** —— 用户选了后者，
+# 握法状态由"当前播的是哪一条"承载。
+#
+# 因此本条最要紧的两件事：① 真的把刀转回正握；② 两端与正向那条**逐轴焊死**，
+# 否则来回切的时候衔接处会跳，而这种跳只有连着播才看得见。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+name = "匕首换握归位（反握 → 正握）"
+beats = "t0 反握胸前架（θ=180，= 正向那条的收势） → t2 反向预备 −12° → t3 起转 → t4 刃过横指向右外侧 → t5 转过大半、拳同时沉下 → t6 到位略过冲 → t8 正握低架（θ=0，= 正向那条的起手）"
+
+[[feature]]
+key = "it_starts_in_a_reversed_grip"
+check = "grip_angle_at"
+tick = 0.0
+value = 180
+tol = 12.0
+
+[[feature]]
+key = "it_ends_in_a_forward_grip"
+check = "grip_angle_at"
+tick = 8.0
+value = 0
+tol = 8.0
+
+[[feature]]
+key = "it_is_genuinely_half_turned_at_the_midpoint"
+check = "grip_angle_at"
+tick = 4.0
+value = -102     # 与正向那条走**同一条走廊**：过半程时刃横指向玩家右外侧，不横穿身前
+tol = 15.0
+
+[[feature]]
+key = "it_lands_on_the_forward_guard_of_its_partner"
+check = "grip_at"
+tick = 8.0
+value = [-3.7, 13.1, -5.7]   # = dagger_grip_switch t0 的握把位置。两条来回切不该跳
+tol = 0.6
+
+[[feature]]
+key = "it_starts_on_the_reversed_guard_of_its_partner"
+check = "grip_at"
+tick = 0.0
+value = [-5.3, 20.3, -8.0]   # = dagger_grip_switch t8 的握把位置
+tol = 0.6
+
+[[feature]]
+key = "it_reads_as_turning_the_knife_not_swinging_it"
+check = "grip_travel_max"
+value = 13.0     # 握把跨度（实测 9.5px）。参照：一次完整挥砍 15.1px
+
+[[feature]]
+key = "the_blade_sweeps_a_visible_arc"
+check = "tip_travel_min"
+value = 22.0     # 半圈自转必然让刀尖扫过一个半圆（实测 31.6px）
+
+[[feature]]
+key = "never_lifts_into_the_torch_pose"
+check = "tip_below"
+value = 26.0     # 下巴线（实测最高 21.6）

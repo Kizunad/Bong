@@ -64,5 +64,6 @@
     "ok": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "764424c385fd3718f23628d15f810202401c173a9cabb074256d64d14d1d8962"
 }

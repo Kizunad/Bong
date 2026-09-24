@@ -117,6 +117,12 @@ public final class ServerDataRouter {
         handlers.put("player_state", playerStateHandler);
         handlers.put("ui_open", uiOpenHandler);
         handlers.put("cultivation_detail", cultivationDetailHandler);
+        // plan-race-system-v1 P2b — 动态部位/经脉面板布局元数据（BodyPlanLayoutStore 按 body_plan_id 缓存）
+        handlers.put("body_plan_layout", new BodyPlanLayoutHandler());
+        // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMetaStore 缓存，装备格/功法条目置灰用）
+        handlers.put("race_gate_meta", new RaceGateMetaHandler());
+        // plan-race-system-v1 PR-5b — 易形状态表（MorphStateStore 缓存，渲染 mixin 消费）
+        handlers.put("morph_state", new MorphStateHandler());
         handlers.put("qi_color_observed", qiColorObservedHandler);
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);

@@ -111,6 +111,69 @@ public class WeaponEquippedHandlerTest {
         assertEquals(1.0f, WeaponEquippedStore.get("main_hand").durabilityRatio(), 1e-5);
     }
 
+    @Test
+    void rejectedMalformedUpdateKeepsLastAuthoritativeEquipment() {
+        WeaponEquippedHandler handler = new WeaponEquippedHandler();
+        handler.handle(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"main_hand",
+             "weapon":{"instance_id":1,"template_id":"iron_sword",
+                       "weapon_kind":"sword","durability_current":100.0,
+                       "durability_max":100.0,"quality_tier":0}}
+            """));
+
+        ServerDataRouter.RouteResult rejected = ServerDataRouter.createDefault().route(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"main_hand",
+             "weapon":{"instance_id":2,"template_id":"tool_mining_pickaxe",
+                       "durability_current":100.0,"durability_max":100.0,"quality_tier":0}}
+            """));
+
+        assertTrue(rejected.isNoOp(),
+            "缺 weapon_kind 的迟到/损坏 payload 必须安全拒绝，不能部分应用为 tool 或清空当前装备");
+        assertEquals("iron_sword", WeaponEquippedStore.get("main_hand").templateId(),
+            "拒绝 payload 后必须保留最后一份完整权威快照，等待 server 后续 snapshot 收敛");
+    }
+
+    @Test
+    void nonObjectWeaponCannotMasqueradeAsUnequip() {
+        equipMainHandSword();
+
+        for (String invalidWeapon : new String[] {"\"corrupt\"", "[]", "42", "true"}) {
+            ServerDataRouter.RouteResult rejected = ServerDataRouter.createDefault().route(parseEnvelope("""
+                {"v":1,"type":"weapon_equipped","slot":"main_hand","weapon":%s}
+                """.formatted(invalidWeapon)));
+
+            assertTrue(rejected.isNoOp(),
+                "非 object/null 的 weapon=" + invalidWeapon + " 必须拒绝，不能伪装成权威卸下");
+            assertEquals("iron_sword", WeaponEquippedStore.get("main_hand").templateId(),
+                "拒绝 weapon=" + invalidWeapon + " 后主手权威状态必须保持不变");
+        }
+    }
+
+    @Test
+    void missingOrUnsupportedSlotCannotClearAnyEquipment() {
+        equipMainHandSword();
+
+        for (String slotField : new String[] {"", ",\"slot\":null", ",\"slot\":[]", ",\"slot\":\"head\""}) {
+            ServerDataRouter.RouteResult rejected = ServerDataRouter.createDefault().route(parseEnvelope(
+                "{\"v\":1,\"type\":\"weapon_equipped\"" + slotField + ",\"weapon\":null}"
+            ));
+
+            assertTrue(rejected.isNoOp(),
+                "缺失、非字符串或不支持的 slot 必须拒绝，不能默认清空 main_hand；case=" + slotField);
+            assertEquals("iron_sword", WeaponEquippedStore.get("main_hand").templateId(),
+                "拒绝非法 slot 后主手权威状态必须保持不变；case=" + slotField);
+        }
+    }
+
+    private static void equipMainHandSword() {
+        new WeaponEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"main_hand",
+             "weapon":{"instance_id":1,"template_id":"iron_sword",
+                       "weapon_kind":"sword","durability_current":100.0,
+                       "durability_max":100.0,"quality_tier":0}}
+            """));
+    }
+
     // ---- plan-shield-block-v1 §P3：盾牌装备路径 -------------------------
 
     @Test

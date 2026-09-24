@@ -77,7 +77,7 @@ impl LifeOutcome {
 /// match regenerate_or_terminate(&lifespan, &lifecycle, cause) {
 ///     LifeOutcome::Revive { .. } => {
 ///         luck_pool::spend_fortune(&mut lifecycle); // 实际扣减
-///         lifecycle.enter_near_death(now_tick);
+///         lifecycle.await_revival_decision(crate::combat::components::RevivalDecision::Fortune { chance: 1.0 }, now_tick);
 ///     }
 ///     LifeOutcome::Terminate { reason } => {
 ///         terminate_lifecycle(...);

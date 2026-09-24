@@ -48,5 +48,6 @@
       "const": "surface_stash",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "77f6957fe29a802a43a3b4f8d8024f002dc8f21570befe6770b26e0ceec15145"
 }

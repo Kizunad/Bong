@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "morph_state",
+  "mode": "full",
+  "entries": [
+    {
+      "entity_id": 42,
+      "model_kind": 1,
+      "form_race_id": "whale",
+      "form_body_plan_id": "whale",
+      "active": true
+    }
+  ]
+}

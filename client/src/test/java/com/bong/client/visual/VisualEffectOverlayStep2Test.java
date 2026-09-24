@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 覆盖 plan-vfx-v1 §3.2 第二批 HUD 叠色 + §4 灵压 jitter：
- *   MEDITATION_CALM / POISON_TINT / FROSTBITE / NEAR_DEATH_VIGNETTE / PRESSURE_JITTER。
+ *   MEDITATION_CALM / POISON_TINT / FROSTBITE / PRESSURE_JITTER。
  */
 public class VisualEffectOverlayStep2Test {
     private static final HudTextHelper.WidthMeasurer FIXED_WIDTH = text -> text == null ? 0 : text.length() * 6;
@@ -53,19 +53,6 @@ public class VisualEffectOverlayStep2Test {
         // 同 profile 的两层应共享颜色
         assertEquals(tint.color(), vignette.color());
         assertEquals(VisualEffectProfile.FROSTBITE.baseColor(), tint.color() & 0x00FFFFFF);
-    }
-
-    @Test
-    void nearDeathVignetteOnlyNoScreenTint() {
-        List<HudRenderCommand> commands = buildCommandsAt("near_death_vignette", 1.0, 20_000L, 500L, 500L);
-        assertEquals(1, commands.size());
-        HudRenderCommand command = commands.get(0);
-        assertTrue(command.isEdgeVignette());
-        assertFalse(command.isScreenTint());
-        // 纯黑
-        assertEquals(0x000000, command.color() & 0x00FFFFFF);
-        int alpha = (command.color() >>> 24) & 0xFF;
-        assertTrue(alpha > 0 && alpha <= VisualEffectProfile.NEAR_DEATH_VIGNETTE.maxAlpha());
     }
 
     @Test

@@ -6,14 +6,16 @@
 //!
 //! 守恒红线：stored_qi 只读展示，不二次扣 qi。
 
-use valence::prelude::{Client, Entity, Query, Res, Username, With};
+use valence::prelude::{Client, Entity, Query, Res, Username};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, SwordBondHudStateV1};
 use crate::sword_path::bond::SwordBondComponent;
 
@@ -29,7 +31,7 @@ type SwordBondClientItem<'a> = (
 /// 无 [`SwordBondComponent`] 的玩家发送 active=false（不漏发，client store 会重置）。
 pub fn emit_sword_bond_hud_state_payloads(
     clock: Res<CombatClock>,
-    mut clients: Query<SwordBondClientItem<'_>, With<Client>>,
+    mut clients: Query<SwordBondClientItem<'_>, AmbientServerDataClientFilter>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;

@@ -1,8 +1,8 @@
 //! Preview 装饰加载器（plan-worldgen-snapshot-v1 §2.2-2.4）。
 //!
-//! 启动期（更准确：第一次 Update tick）读 `worldgen/preview/decorations.json` →
+//! 启动期（更准确：第一次 Update tick）读 `server/assets/preview/decorations.json` →
 //! 调用 `ChunkLayer::set_block` 摆方块。仅在 `BONG_PREVIEW_MODE=1` 激活；JSON
-//! 路径默认 `worldgen/preview/decorations.json`，可被 `BONG_PREVIEW_DECORATIONS`
+//! 路径默认 `server/assets/preview/decorations.json`，可被 `BONG_PREVIEW_DECORATIONS`
 //! env 覆盖。
 //!
 //! 支持两类装饰（plan §2.2 第三类 boundary_marker 留 v2 plan，AABB 点阵 spawn
@@ -21,9 +21,9 @@ use valence::prelude::*;
 use valence::text::IntoText;
 
 /// 相对 server cwd（`server/` 目录）的默认装饰 JSON 路径。
-/// CI / 本地 `cargo run` 都从 `server/` 起跑，对应 repo 内 worldgen/preview/。
+/// CI / 本地经 `scripts/build-token.sh cargo run` 从 `server/` 起跑，对应 repo 内 assets/preview/。
 /// 想换路径用 `BONG_PREVIEW_DECORATIONS=/abs/path.json` env override。
-const DEFAULT_PATH: &str = "../worldgen/preview/decorations.json";
+const DEFAULT_PATH: &str = "assets/preview/decorations.json";
 const MAX_PILLAR_HEIGHT: u32 = 64;
 const MAX_SIGN_LINES: usize = 4;
 
@@ -60,11 +60,16 @@ pub fn load_from_path(path: &PathBuf) -> Result<DecorationsConfig, String> {
     serde_json::from_str(&body).map_err(|e| format!("parse {} 失败: {e}", path.display()))
 }
 
-/// env-driven 路径解析（默认 worldgen/preview/decorations.json）。
+/// env-driven 路径解析（默认 assets/preview/decorations.json）。
 pub fn resolve_path() -> PathBuf {
-    std::env::var("BONG_PREVIEW_DECORATIONS")
+    resolve_path_from(std::env::var("BONG_PREVIEW_DECORATIONS").ok().as_deref())
+}
+
+/// 按可选 override 解析路径；生产入口与测试都复用这层纯逻辑。
+fn resolve_path_from(override_path: Option<&str>) -> PathBuf {
+    override_path
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_PATH))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_PATH))
 }
 
 /// 把 block name 字符串映射到 [`BlockState`]。当前只覆盖装饰常用几种；不识别
@@ -287,23 +292,13 @@ mod tests {
 
     #[test]
     fn resolve_path_default() {
-        // SAFETY: 单测内 manipulate env
-        unsafe {
-            std::env::remove_var("BONG_PREVIEW_DECORATIONS");
-        }
-        let path = resolve_path();
-        assert_eq!(path, PathBuf::from("../worldgen/preview/decorations.json"));
+        let path = resolve_path_from(None);
+        assert_eq!(path, PathBuf::from("assets/preview/decorations.json"));
     }
 
     #[test]
     fn resolve_path_env_override() {
-        unsafe {
-            std::env::set_var("BONG_PREVIEW_DECORATIONS", "/tmp/custom.json");
-        }
-        let path = resolve_path();
+        let path = resolve_path_from(Some("/tmp/custom.json"));
         assert_eq!(path, PathBuf::from("/tmp/custom.json"));
-        unsafe {
-            std::env::remove_var("BONG_PREVIEW_DECORATIONS");
-        }
     }
 }

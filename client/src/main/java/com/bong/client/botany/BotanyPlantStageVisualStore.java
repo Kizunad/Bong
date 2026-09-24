@@ -28,4 +28,8 @@ public final class BotanyPlantStageVisualStore {
     public static void clear() {
         VISUALS.clear();
     }
+
+    public static void clearOnDisconnect() {
+        clear();
+    }
 }

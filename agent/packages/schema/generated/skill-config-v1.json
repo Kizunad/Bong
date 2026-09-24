@@ -2,5 +2,6 @@
   "type": "object",
   "patternProperties": {
     "^(.*)$": {}
-  }
+  },
+  "x-bong-typebox-source-sha256": "5a1118e15a3cb8f65c9aa3329fc97a418c75d62c6c7e8692d58c53373e332807"
 }

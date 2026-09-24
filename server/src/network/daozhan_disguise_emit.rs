@@ -165,7 +165,10 @@ pub fn periodic_daozhan_disguise_sync_system(
     mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
     daozhan_q: DaoZhanStateQuery<'_, '_>,
 ) {
-    if clock.tick % DAOZHAN_DISGUISE_SYNC_INTERVAL_TICKS != 0 {
+    if !clock
+        .tick
+        .is_multiple_of(DAOZHAN_DISGUISE_SYNC_INTERVAL_TICKS)
+    {
         return;
     }
 

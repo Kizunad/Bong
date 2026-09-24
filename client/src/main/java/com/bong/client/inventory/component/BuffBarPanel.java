@@ -1,7 +1,10 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.combat.inspect.StatusPanelExtension;
+import com.bong.client.combat.StatusEffectIcons;
 import com.bong.client.combat.store.StatusEffectStore;
+import com.bong.client.util.TextureProbe;
+import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -9,11 +12,11 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Tarkov 背包检视界面内的 buff/状态效果横条 —— 补足"背包打开时看不到 buff"的缺口。
@@ -23,8 +26,8 @@ import java.util.Locale;
  * 时面板收起为 0×0，不占位、不留灰色空壳（HUD 沉浸原则：没有状态就不常驻显示）。
  *
  * <p>渲染走手绘 {@link BaseComponent#draw} 模式，与同目录 {@link StatusBarsPanel}/
- * {@link BottomInfoBar} 一致；视觉语言（sourceColor 边框 + kind 区分色块 + 层数角标 +
- * 底部剩余时间比例条）对齐 HUD 侧 {@code StatusEffectHudPlanner}。
+ * {@link BottomInfoBar} 一致；通过 {@link StatusEffectIcons} 与 HUD 共用具体状态的 PNG，
+ * 保留来源色边框、层数角标和有限时长的剩余比例条。
  *
  * <p>Tooltip 同样走手绘悬浮框，而非 owo 原生 {@code .tooltip()}——本面板不是由多个
  * owo 子组件拼成（每个 buff 槽只是同一个 draw() 调用里画的一块矩形，没有对应的
@@ -41,7 +44,7 @@ public class BuffBarPanel extends BaseComponent {
     private static final int STACK_BADGE_COLOR = 0xFFFFE080;
     private static final int REMAINING_BAR_COLOR = 0xFFFFFFFF;
     private static final int NEGATIVE_REMAINING_BAR_COLOR = 0xFFFF4040;
-    // 与 HUD 顶栏 StatusEffectHudPlanner 相同的 30s 归一化上限，视觉语言对齐。
+    // 背包条的有限时长按 30 秒归一化；持续效果不显示倒计时条。
     private static final long REMAINING_BAR_CAP_MS = 30_000L;
     private static final int TOOLTIP_BG_OUTER = 0xEE111122;
     private static final int TOOLTIP_BG_INNER = 0xEE1A1A2A;
@@ -75,16 +78,28 @@ public class BuffBarPanel extends BaseComponent {
         ctx.fill(sx, sy, sx + SLOT_SIZE, sy + SLOT_SIZE, e.sourceColor());
         // 内部底色
         ctx.fill(sx + 1, sy + 1, sx + SLOT_SIZE - 1, sy + SLOT_SIZE - 1, TRACK_BG);
-        // kind 区分色块 —— buff 图标资源尚未成套，用色块+字符区分类型，与 sourceColor 边框互补。
-        ctx.fill(sx + 2, sy + 2, sx + SLOT_SIZE - 2, sy + SLOT_SIZE - 2, kindTint(e.kind()));
-        String glyph = kindGlyph(e.kind());
-        int gw = tr.getWidth(glyph);
-        ctx.drawTextWithShadow(tr, Text.literal(glyph),
-            sx + (SLOT_SIZE - gw) / 2, sy + (SLOT_SIZE - tr.fontHeight) / 2, 0xFFFFFFFF);
+        String texture = StatusEffectIcons.textureFor(e.id());
+        if (TextureProbe.exists(texture)) {
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+            try {
+                int size = SLOT_SIZE - 4;
+                ctx.drawTexture(new Identifier(texture), sx + 2, sy + 2,
+                    size, size, 0, 0, 1, 1, 1, 1);
+            } finally {
+                RenderSystem.disableBlend();
+            }
+        } else {
+            // 未知状态也不能被误称为“毒”：降级时显示它自己的名称首字。
+            String name = e.displayName();
+            String glyph = name.isBlank() ? "?" : name.substring(0, name.offsetByCodePoints(0, 1));
+            ctx.drawTextWithShadow(tr, Text.literal(glyph),
+                sx + (SLOT_SIZE - tr.getWidth(glyph)) / 2, sy + (SLOT_SIZE - tr.fontHeight) / 2, 0xFFFFFFFF);
+        }
         // 剩余时间比例条（底部 2px）
         float norm = remainingNorm(e.remainingMs());
         int barW = Math.max(0, Math.round((SLOT_SIZE - 4) * norm));
-        if (barW > 0) {
+        if (barW > 0 && !e.indefinite()) {
             int barColor = isNegativeKind(e.kind()) ? NEGATIVE_REMAINING_BAR_COLOR : REMAINING_BAR_COLOR;
             ctx.fill(sx + 2, sy + SLOT_SIZE - 3, sx + 2 + barW, sy + SLOT_SIZE - 1, barColor);
         }
@@ -186,62 +201,9 @@ public class BuffBarPanel extends BaseComponent {
             || kind == StatusEffectStore.Kind.DEBUFF;
     }
 
-    static String kindGlyph(StatusEffectStore.Kind kind) {
-        return switch (kind) {
-            case DOT -> "毒";
-            case CONTROL -> "控";
-            case BUFF -> "增";
-            case DEBUFF -> "减";
-            case UNKNOWN -> "?";
-        };
-    }
-
-    static int kindTint(StatusEffectStore.Kind kind) {
-        return switch (kind) {
-            case DOT -> 0x80E04040;
-            case CONTROL -> 0x80B060FF;
-            case BUFF -> 0x8060D060;
-            case DEBUFF -> 0x80FFA030;
-            case UNKNOWN -> 0x80808080;
-        };
-    }
-
-    /**
-     * 拼装悬浮 tooltip 文案——复用 {@link StatusPanelExtension#tooltipFor} 的名字/来源/驱散难度行，
-     * 只把其中"剩余: X.Xs"那一行换成本面板专属的 60 秒进位格式（&ge;60s 显示 "Xm Ys"）。刻意不去
-     * 改共享函数 {@code StatusPanelExtension.formatMs}——那是 HUD 等其它调用方也在用的稳定契约，
-     * 改了会连带影响 HUD 侧的显示。
-     */
+    /** 状态详情与背包条使用同一份持续时间、来源和驱散信息。 */
     static String tooltipText(StatusEffectStore.Effect e) {
-        String base = StatusPanelExtension.tooltipFor(e);
-        String[] lines = base.split("\n", -1);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            if (line.startsWith("剩余: ")) {
-                line = "剩余: " + formatRemaining(e.remainingMs());
-            }
-            if (i > 0) sb.append('\n');
-            sb.append(line);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * &lt;60s → "X.Xs"；&ge;60s → "Xm Ys"（分钟数不补零，如 "1m 5s"）。
-     * 用 floor 而非四舍五入取十分位，避免 59950~59999ms 这类边界被舍入显示成 "60.0s"
-     * ——逻辑上仍属于 &lt;60s 档，却打出一个和下一档格式撞脸的文案。
-     */
-    static String formatRemaining(long ms) {
-        long clamped = Math.max(0L, ms);
-        if (clamped < 60_000L) {
-            double tenths = Math.floor(clamped / 100.0) / 10.0;
-            return String.format(Locale.ROOT, "%.1fs", tenths);
-        }
-        long totalSeconds = clamped / 1000L;
-        long minutes = totalSeconds / 60L;
-        long seconds = totalSeconds % 60L;
-        return minutes + "m " + seconds + "s";
+        return StatusPanelExtension.tooltipFor(e);
     }
 
     // ─── 测试专用访问器 ───────────────────────────────────────────────

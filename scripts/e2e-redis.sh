@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="task-13"
 SCRIPT_TAG="e2e-redis"
@@ -17,17 +18,36 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
+# CI can have a slower SQLite/Redis shutdown path after the 100-NPC proof. Keep
+# the default lifecycle helper contract at 10s, but give this disposable E2E
+# transaction a bounded 30s graceful window before identity-safe KILL fallback.
+E2E_SERVER_STOP_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+E2E_SERVER_STOP_KILL_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
+TIANDAO_TIMEOUT_SECONDS="${BONG_E2E_TIANDAO_TIMEOUT_SECONDS:-120}"
+TIANDAO_KILL_GRACE_SECONDS="${BONG_E2E_TIANDAO_KILL_GRACE_SECONDS:-5}"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
 REDIS_SUB_LOG="$RUN_DIR/redis-sub.log"
 TIANDAO_LOG="$RUN_DIR/tiandao.log"
+NORTH_RIFT_SERVER_LOG="$RUN_DIR/north-rift-preview-server.log"
+NORTH_RIFT_BOT_LOG="$RUN_DIR/north-rift-preview-bot.log"
 
 PASS=0
 FAIL=0
 CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
+SERVER_PGID=""
+SERVER_OWNER_STARTTIME=""
+SERVER_OWNER_EXECUTABLE_IDENTITY=""
+SERVER_AUTHORITY_UNCERTAIN=0
+SERVER_STARTUP_CONTROL_FD=""
+SERVER_STARTUP_READY_FD=""
+NORTH_RIFT_DB_STASH=""
+PERSISTENCE_TRANSACTION_ACTIVE=0
+PERSISTENCE_STASH_READY=0
 REDIS_SUB_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
@@ -47,7 +67,7 @@ write_manifest() {
   local status="$1"
   local stage_name="$2"
   local message="$3"
-  printf "task=%s\nscript=%s\nrun_id=%s\nrun_label=%s\nstatus=%s\nstage=%s\nmessage=%s\ntimestamp=%s\nfiles:\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n" \
+  printf "task=%s\nscript=%s\nrun_id=%s\nrun_label=%s\nstatus=%s\nstage=%s\nmessage=%s\ntimestamp=%s\nfiles:\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n- %s\n" \
     "$TASK_ID" \
     "$SCRIPT_TAG" \
     "$RUN_ID" \
@@ -63,7 +83,9 @@ write_manifest() {
     "$REDIS_LOG" \
     "$SERVER_LOG" \
     "$REDIS_SUB_LOG" \
-    "$TIANDAO_LOG" >"$MANIFEST_FILE"
+    "$TIANDAO_LOG" \
+    "$NORTH_RIFT_SERVER_LOG" \
+    "$NORTH_RIFT_BOT_LOG" >"$MANIFEST_FILE"
 }
 
 finalize_failure() {
@@ -104,7 +126,9 @@ wait_for_pattern() {
 probe_redis() {
   (
     cd "$ROOT/agent/packages/tiandao"
-    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
+    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" \
+      timeout --signal=TERM --kill-after=2s 10s \
+      node --input-type=module <<'NODE'
 import Redis from "ioredis";
 
 const IORedis = Redis.default ?? Redis;
@@ -828,22 +852,260 @@ ensure_redis() {
   finalize_failure "redis" "Redis provider '$REDIS_PROVIDER' did not become healthy within 30s"
 }
 
-# 递归杀整棵进程树。SERVER_PID 是子 shell，直接 kill 只杀 shell 本身，
-# cargo run / bong-server 会变孤儿继续占 25565（实测 bash 不向子进程转发 SIGTERM），
-# 拖垮后续需要该端口的 stage（如 bot-e2e）。
+# The production helper lives in the lifecycle library so its child-enumeration
+# fail-closed contract is executable-testable without running the full e2e.
 kill_tree() {
-  local pid="$1"
-  local child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$child"
+  bong_server_kill_tree "$@"
+}
+
+port_open() {
+  bong_server_port_is_open "$@"
+}
+
+resolve_server_cargo_target() {
+  bong_scoped_cargo_target "$1"
+}
+
+start_server_process_group() {
+  local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
+  local actual_pgid="" artifact_dir="" build_helper="" built_binary="" build_timeout="" cargo_target owner_pid=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
+  local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
+
+  supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
+  build_helper="$ROOT/scripts/lib/bong-pre-handshake-build.py"
+  build_token="$ROOT/scripts/build-token.sh"
+  local server_directory="$ROOT/server"
+  # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
+  if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
+    [ "$test_override_mode" = "1" ] || {
+      echo "FAIL: e2e supervisor test overrides require an explicit harness mode" >&2
+      return 2
+    }
+    supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"
+    build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"
+    server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"
+  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_BUILD_TOKEN:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
+    echo "FAIL: e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1" >&2
+    return 2
+  fi
+  SERVER_PID=""
+  SERVER_PGID=""
+  SERVER_OWNER_STARTTIME=""
+  SERVER_OWNER_EXECUTABLE_IDENTITY=""
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  # No process authority exists during the isolated build phase. This keeps a
+  # preview persistence stash recoverable when compilation fails or times out.
+  SERVER_AUTHORITY_UNCERTAIN=0
+
+  server_directory="$(readlink -f -- "$server_directory")" || {
+    echo "FAIL: server directory does not resolve to a real directory" >&2
+    return 2
+  }
+  [ -d "$server_directory" ] || {
+    echo "FAIL: server directory is not a directory: $server_directory" >&2
+    return 2
+  }
+  cargo_target="$(resolve_server_cargo_target "$server_directory")" || {
+    echo "FAIL: CARGO_TARGET_DIR could not be resolved" >&2
+    return 2
+  }
+  build_timeout="${BONG_E2E_BUILD_TIMEOUT_SECONDS:-600}"
+  [[ "$build_timeout" =~ ^[1-9][0-9]*$ ]] || {
+    echo "FAIL: BONG_E2E_BUILD_TIMEOUT_SECONDS must be a positive integer" >&2
+    return 2
+  }
+  artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/bong-e2e-prebuilt.XXXXXXXX")" || return 1
+  chmod 700 -- "$artifact_dir"
+  built_binary="$artifact_dir/bong-server"
+  if ! env \
+    PATH="$RUST_PATH" \
+    python3 "$build_helper" \
+      "$server_directory" "$cargo_target" "$build_token" "$build_timeout" "$built_binary" \
+      >>"$log_file" 2>&1; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
+    echo "FAIL: release server build failed or exceeded ${build_timeout}s" >&2
+    return 1
+  fi
+  [ -f "$built_binary" ] || {
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
+    echo "FAIL: successful release build did not produce $built_binary" >&2
+    return 1
+  }
+
+  # From coproc creation until COMMITTED, startup may own an unpublishable
+  # process group. Fail closed until the complete pinned authority is committed.
+  SERVER_AUTHORITY_UNCERTAIN=1
+  coproc BONG_SERVER_SUPERVISOR {
+    exec env \
+      PATH="$RUST_PATH" \
+      CARGO_TARGET_DIR="$cargo_target" \
+      BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
+      BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
+      BONG_PREVIEW_MODE="$preview_mode" \
+      python3 "$supervisor" "$server_directory" "$built_binary" \
+      2>>"$log_file"
+  }
+  owner_pid=""
+  ready_fd="${BONG_SERVER_SUPERVISOR[0]}"
+  control_fd="${BONG_SERVER_SUPERVISOR[1]}"
+  SERVER_STARTUP_READY_FD="$ready_fd"
+  SERVER_STARTUP_CONTROL_FD="$control_fd"
+
+  if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
+    || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    # Do not wait on an unpinned startup PID: it can outlive a failed protocol
+    # transaction and is never authority. The supervisor receives EOF and rolls
+    # its own private group back.
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor did not publish startup rollback readiness" >&2
+    return 1
+  fi
+  # READY means the supervisor has copied the token-pinned private artifact.
+  rm -f -- "$built_binary"
+  rmdir -- "$artifact_dir" 2>/dev/null || true
+  # READY is emitted by the post-setsid supervisor itself and carries that exact
+  # PID, avoiding Bash coproc wrapper ambiguity. The following identity snapshot
+  # still pins starttime, executable inode, and PGID before C is sent.
+  owner_pid="${ready_line#READY pid=}"
+  [[ "$owner_pid" =~ ^[0-9]+$ ]] || {
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor readiness line carried an invalid owner PID" >&2
+    return 1
+  }
+
+  for _ in $(seq 1 500); do
+    if bong_server_process_is_running "$owner_pid"; then
+      actual_pgid="$(ps -o pgid= -p "$owner_pid" 2>/dev/null || true)"
+      actual_pgid="${actual_pgid//[[:space:]]/}"
+      if [ "$actual_pgid" = "$owner_pid" ]; then
+        owner_snapshot="$(bong_server_process_starttime_and_group "$owner_pid" 2>/dev/null || true)"
+        read -r owner_starttime actual_pgid <<< "$owner_snapshot"
+        owner_executable_identity="$(
+          bong_server_process_executable_identity "$owner_pid" 2>/dev/null || true
+        )"
+        if [ "$actual_pgid" = "$owner_pid" ] \
+          && [[ "$owner_starttime" =~ ^[0-9]+$ ]] \
+          && [[ "$owner_executable_identity" =~ ^[0-9]+:[0-9]+$ ]]; then
+          if ! printf C >&"$control_fd"; then
+            break
+          fi
+          # C is one-way control. Close the write end immediately so no process
+          # can mistake a still-open control channel for uncommitted authority.
+          exec {control_fd}>&-
+          control_fd=""
+          SERVER_STARTUP_CONTROL_FD=""
+          if [ -n "${BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK:-}" ]; then
+            "$BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK" "$owner_pid"
+          fi
+          if IFS= read -r -t 5 -u "$ready_fd" committed_line \
+            && [ "$committed_line" = COMMITTED ]; then
+            if [ -n "${BONG_E2E_TEST_AFTER_ACK_HOOK:-}" ]; then
+              "$BONG_E2E_TEST_AFTER_ACK_HOOK" "$owner_pid"
+            fi
+            if bong_server_pinned_process_group_status \
+              "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+              exec {ready_fd}<&-
+              SERVER_STARTUP_READY_FD=""
+              SERVER_PID="$owner_pid"
+              SERVER_PGID="$actual_pgid"
+              SERVER_OWNER_STARTTIME="$owner_starttime"
+              SERVER_OWNER_EXECUTABLE_IDENTITY="$owner_executable_identity"
+              SERVER_AUTHORITY_UNCERTAIN=0
+              return 0
+            fi
+          fi
+          break
+        fi
+      fi
+    else
+      break
+    fi
+    sleep 0.01
   done
-  kill "$pid" 2>/dev/null || true
-  # SIGTERM 被忽略/卡 syscall 时兜底 SIGKILL，保证端口真正释放
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  kill -9 "$pid" 2>/dev/null || true
+
+  # Never publish partial authority. If the full pre-C candidate still pins, its
+  # owner-bound stop helper may clean it. A changed/dead/uninspectable candidate
+  # is deliberately left for diagnosis: numeric PGID teardown would be unsafe.
+  [ -n "$control_fd" ] && exec {control_fd}>&-
+  exec {ready_fd}<&-
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  if [ -n "$owner_starttime" ] && [ -n "$owner_executable_identity" ] \
+    && [ -n "$actual_pgid" ] \
+    && bong_server_pinned_process_group_status \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+    if bong_server_stop_owned_process_group_and_release_port \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid" 25565; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+  fi
+  # A bounded wait reaps a normal rollback/cleanup owner without accidentally
+  # turning an unpinned PID into authority. Never wait indefinitely here.
+  if [ "$cleanup_status" -eq 0 ]; then
+    echo "FAIL: server supervisor commit acknowledgement failed; pinned rollback completed" >&2
+  else
+    echo "FAIL: server supervisor commit acknowledgement failed; authority was not published" >&2
+  fi
+  return 1
+}
+
+stop_server() {
+  local pid="$SERVER_PID" pgid="$SERVER_PGID"
+  local owner_starttime="$SERVER_OWNER_STARTTIME"
+  local owner_executable_identity="$SERVER_OWNER_EXECUTABLE_IDENTITY"
+  local stop_status
+
+  if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then
+    echo "FAIL: server process-group authority is uncertain; refusing teardown or restore" >&2
+    return 1
+  fi
+
+  if [ -n "$pid" ] || [ -n "$pgid" ] \
+    || [ -n "$owner_starttime" ] || [ -n "$owner_executable_identity" ]; then
+    if [ -z "$pid" ] || [ -z "$pgid" ] \
+      || [ -z "$owner_starttime" ] || [ -z "$owner_executable_identity" ]; then
+      echo "FAIL: incomplete server process-group authority (pid=${pid:-missing}, pgid=${pgid:-missing})" >&2
+      return 1
+    fi
+    local graceful_stop_seconds="${E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+    local kill_stop_seconds="${E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
+    if bong_server_stop_owned_process_group_and_release_port \
+        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565 \
+        "$graceful_stop_seconds" "$kill_stop_seconds"; then
+      SERVER_PID=""
+      SERVER_PGID=""
+      SERVER_OWNER_STARTTIME=""
+      SERVER_OWNER_EXECUTABLE_IDENTITY=""
+      SERVER_AUTHORITY_UNCERTAIN=0
+      return 0
+    else
+      stop_status=$?
+    fi
+    echo "FAIL: server process group stop did not complete (status=$stop_status, graceful=${graceful_stop_seconds}s, kill=${kill_stop_seconds}s)" >&2
+    return "$stop_status"
+  fi
+  # Outside a READY transaction there are no stashed developer bytes to expose:
+  # an empty PID remains an ordinary no-op. Restore authorization is stricter and
+  # requires fresh shared-port evidence for this cleanup invocation.
+  if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+    bong_server_confirm_port_released 25565
+    return $?
+  fi
+  return 0
 }
 
 cleanup() {
@@ -852,9 +1114,27 @@ cleanup() {
     wait "$REDIS_SUB_PID" 2>/dev/null || true
   fi
 
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill_tree "$SERVER_PID"
-    wait "$SERVER_PID" 2>/dev/null || true
+  STOP_SERVER_CONFIRMED=0
+  if stop_server; then
+    STOP_SERVER_CONFIRMED=1
+  else
+    echo "FAIL: preview server did not stop/release port; persistence restore is forbidden" >&2
+  fi
+
+  # 持久化 transaction 覆盖 stash → 专用 preview 停服 → restore 的整段。
+  # cleanup 绝不能先解锁：必须先停服，再还原；还原/完成失败则留下 durable
+  # handoff marker，之后的 e2e 会 fail closed 而不是覆盖开发者存档。
+  if [ "$PERSISTENCE_TRANSACTION_ACTIVE" -eq 1 ]; then
+    if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+      if bong_server_finalize_preview_persistence_after_stop \
+        "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" "$STOP_SERVER_CONFIRMED"; then
+        PERSISTENCE_STASH_READY=0
+      fi
+    else
+      # No stash path was committed: pre-manifest/stale failure, safe to clear.
+      bong_server_persistence_transaction_complete || bong_server_persistence_transaction_release
+    fi
+    PERSISTENCE_TRANSACTION_ACTIVE=0
   fi
 
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
@@ -877,21 +1157,24 @@ echo "log_file: $LOG_FILE"
 
 echo ""
 CURRENT_STAGE="pre-cleanup"
-echo "=== [$TASK_ID][$SCRIPT_TAG][0/7] Pre-cleanup ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][0/8] Pre-cleanup ==="
 bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 pass "pre-cleanup complete"
 
 echo ""
 CURRENT_STAGE="redis"
-echo "=== [$TASK_ID][$SCRIPT_TAG][1/7] Redis provider ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][1/8] Redis provider ==="
 ensure_redis
 echo "[redis] provider: $REDIS_PROVIDER"
 pass "redis ready"
 
 echo ""
 CURRENT_STAGE="schema"
-echo "=== [$TASK_ID][$SCRIPT_TAG][2/7] Schema build ==="
-if (cd "$ROOT/agent/packages/schema" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
+echo "=== [$TASK_ID][$SCRIPT_TAG][2/8] Schema build ==="
+if (
+  cd "$ROOT/agent/packages/schema" &&
+    PATH="$NODE_BIN:$PATH" timeout --signal=TERM --kill-after=5s 300s npm run build
+) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
   finalize_failure "schema" "schema build failed; see $REDIS_LOG"
@@ -899,21 +1182,12 @@ fi
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [$TASK_ID][$SCRIPT_TAG][3/7] Server startup ==="
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # NPC perf v1：e2e 默认恢复 100 rogue seed，并用 TickRateProbe 日志作为
-  # CI 回归门禁。低负载调试可手动覆盖 BONG_ROGUE_SEED_COUNT=0。
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-100}"
-  # CI 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体）。
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  cd "$ROOT/server"
-  cargo run --release
-) >"$SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
+echo "=== [$TASK_ID][$SCRIPT_TAG][3/8] Server startup ==="
+if ! start_server_process_group "$SERVER_LOG" 0; then
+  finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
+fi
 
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+if wait_for_pattern "$SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
   pass "server world bootstrap"
 else
   finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
@@ -927,7 +1201,7 @@ fi
 
 echo ""
 CURRENT_STAGE="proof"
-echo "=== [$TASK_ID][$SCRIPT_TAG][4/7] Redis channel proof subscriber ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][4/8] Redis channel proof subscriber ==="
 start_redis_subscriber
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[task-13\\]\\[redis-sub\\] subscribed" 30; then
   pass "redis subscriber ready"
@@ -937,11 +1211,57 @@ fi
 
 echo ""
 CURRENT_STAGE="tiandao"
-echo "=== [$TASK_ID][$SCRIPT_TAG][5/7] Non-mock Tiandao one-tick closure ==="
-(
+echo "=== [$TASK_ID][$SCRIPT_TAG][5/8] Non-mock Tiandao one-tick closure ==="
+if ! [[ "$TIANDAO_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  finalize_failure \
+    "tiandao" \
+    "BONG_E2E_TIANDAO_TIMEOUT_SECONDS must be a positive integer; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if ! [[ "$TIANDAO_KILL_GRACE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  finalize_failure \
+    "tiandao" \
+    "BONG_E2E_TIANDAO_KILL_GRACE_SECONDS must be a positive integer; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+  finalize_failure \
+    "tiandao" \
+    "required timeout command is unavailable; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+TIANDAO_TSX="$NODE_BIN/tsx"
+if [ ! -x "$TIANDAO_TSX" ]; then
+  finalize_failure \
+    "tiandao" \
+    "workspace tsx executable is missing: $TIANDAO_TSX; run npm ci in $ROOT/agent; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+TIANDAO_STARTED_AT="$(date +%s)"
+TIANDAO_EXIT=0
+if (
   cd "$RUN_DIR"
-  PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" npx tsx "$ROOT/agent/packages/tiandao/src/task-13-one-tick.ts"
+  PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" \
+    timeout \
+    --signal=TERM \
+    --kill-after="${TIANDAO_KILL_GRACE_SECONDS}s" \
+    "${TIANDAO_TIMEOUT_SECONDS}s" \
+    "$TIANDAO_TSX" "$ROOT/agent/packages/tiandao/src/task-13-one-tick.ts"
 ) >"$TIANDAO_LOG" 2>&1
+then
+  TIANDAO_EXIT=0
+else
+  TIANDAO_EXIT=$?
+fi
+TIANDAO_ELAPSED_SECONDS=$(( $(date +%s) - TIANDAO_STARTED_AT ))
+echo "[tiandao] command=$TIANDAO_TSX exit=$TIANDAO_EXIT elapsed=${TIANDAO_ELAPSED_SECONDS}s timeout=${TIANDAO_TIMEOUT_SECONDS}s log=$TIANDAO_LOG run_dir=$RUN_DIR"
+
+if [ "$TIANDAO_EXIT" -eq 124 ] || [ "$TIANDAO_EXIT" -eq 137 ]; then
+  finalize_failure \
+    "tiandao" \
+    "Non-mock Tiandao timed out (exit=$TIANDAO_EXIT, elapsed=${TIANDAO_ELAPSED_SECONDS}s, limit=${TIANDAO_TIMEOUT_SECONDS}s); command=$TIANDAO_TSX; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if [ "$TIANDAO_EXIT" -ne 0 ]; then
+  finalize_failure \
+    "tiandao" \
+    "Non-mock Tiandao exited with code $TIANDAO_EXIT after ${TIANDAO_ELAPSED_SECONDS}s; command=$TIANDAO_TSX; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
 
 if wait_for_pattern "$TIANDAO_LOG" "\\[tiandao\\] connected to Redis at" 60; then
   pass "tiandao connected"
@@ -963,7 +1283,7 @@ fi
 
 echo ""
 CURRENT_STAGE="anchors"
-echo "=== [$TASK_ID][$SCRIPT_TAG][6/7] Cross-process anchors ==="
+echo "=== [$TASK_ID][$SCRIPT_TAG][6/8] Cross-process anchors ==="
 if wait_for_pattern "$REDIS_SUB_LOG" "channel=bong:world_state" 45; then
   pass "world_state proof"
 else
@@ -1002,6 +1322,161 @@ else
   finalize_failure "anchors" "missing typed narration anchor in $TIANDAO_LOG"
 fi
 
+echo ""
+CURRENT_STAGE="north-rift-preview"
+echo "=== [$TASK_ID][$SCRIPT_TAG][7/8] North-rift dedicated preview bot ==="
+# `/preview_tp` 的 consumer 只在 BONG_PREVIEW_MODE=1 注册，同时会把已加入
+# client 的 ViewDistance 提到 32。绝不能把该 env 塞进常规 bot --all server：
+# 先在上面的普通 release server 完成 100 NPC TPS gate，再完整停服；这里只另起
+# 一个无 rogue seed 的专用 release server，运行唯一 north-rift bot 后立即清理。
+run_north_rift_preview() {
+  # The lifecycle lock spans ordinary-server stop through persistence restore.
+  # Production start/dev-reload use the same lock, so neither can open
+  # server/data while the preview transaction has moved its SQLite snapshot.
+  if ! stop_server; then
+    finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
+  fi
+
+  # Recheck under the lifecycle lock immediately before transaction begin. A
+  # listener with no PID authority is unsafe and must leave developer data intact.
+  if ! bong_server_confirm_port_released 25565; then
+    finalize_failure "north-rift-preview" "port 25565 is occupied before persistence stash; refusing to move live SQLite files"
+  fi
+
+  # 优雅关服（SIGTERM → AppExit → Last）现在真正可达，上面 stop_server 会让
+  # 普通 e2e server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的
+  # spirit_qi）刷进 server/data/bong.db。但下面这台专用 preview server 与
+  # 普通 server 共用同一个相对 cwd 持久化路径，而 terrain_north_rift_scorch_
+  # zone_identity 场景断言的是 zones.json 的 pristine 权威身份数值——必须先
+  # 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
+  # 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
+  NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
+  if ! bong_server_persistence_transaction_begin "$ROOT/server/data"; then
+    finalize_failure "north-rift-preview" "failed to acquire exclusive server/data persistence transaction (or an unrecovered handoff exists)"
+  fi
+  PERSISTENCE_TRANSACTION_ACTIVE=1
+  if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    # Helper creates the durable stash-path marker only after V3 manifest publish
+    # and validation, before its first move. A pre-publish/stale failure remains
+    # unready and cleanup only clears ACTIVE without touching that leaf.
+    if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ]; then
+      PERSISTENCE_STASH_READY=1
+    fi
+    finalize_failure "north-rift-preview" "failed to atomically publish and stash local server/data/bong.db before dedicated preview server"
+  fi
+  PERSISTENCE_STASH_READY=1
+
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  NORTH_RIFT_OPERATOR="B${NORTH_RIFT_RUN_TAG}NRift"
+  export BONG_OPERATORS="$NORTH_RIFT_OPERATOR"
+  export BONG_OPERATORS_ALLOW_OFFLINE=1
+  if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
+    unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
+    finalize_failure \
+      "north-rift-preview" \
+      "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
+
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  NORTH_RIFT_PORT_READY=0
+  NORTH_RIFT_LISTENER_INSPECTION_FAILED=0
+  for _ in $(seq 1 50); do
+    if bong_server_owned_process_group_owns_ipv4_listener \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+      listener_status=0
+    else
+      listener_status=$?
+    fi
+    if [ "$listener_status" -ne 0 ] && [ "$listener_status" -ne 1 ]; then
+      NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
+      break
+    fi
+    if [ "$listener_status" -eq 0 ] && port_open 25565; then
+      if bong_server_owned_process_group_owns_ipv4_listener \
+          "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+          "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+        NORTH_RIFT_PORT_READY=1
+        break
+      else
+        listener_status=$?
+      fi
+      if [ "$listener_status" -ne 1 ]; then
+        NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
+        break
+      fi
+    fi
+    if ! bong_server_pinned_process_group_status \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID"; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
+    if [ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 1 ]; then
+      listener_failure="dedicated preview server listener ownership became uninspectable"
+    else
+      listener_failure="dedicated preview server did not prove ownership of port 25565"
+    fi
+    finalize_failure \
+      "north-rift-preview" \
+      "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
+  fi
+
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  # review finding：run tag 在父 shell 产生后必须进入子进程环境 —— 仅作普通 shell
+  # 变量时子进程看不到。放进环境赋值前缀（并保留 --run-tag CLI 直传），run_scenarios.py
+  # 无论走 CLI 还是环境默认都能拿到本次 run 的隔离段。
+  if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+    NORTH_RIFT_RUN_TAG="$NORTH_RIFT_RUN_TAG" \
+    timeout --signal=TERM --kill-after=5s 300s \
+    python3 "$ROOT/scripts/bot/run_scenarios.py" \
+      --host 127.0.0.1 \
+      --port 25565 \
+      --run-tag "$NORTH_RIFT_RUN_TAG" \
+      --scenario terrain_north_rift_scorch_zone_identity \
+      >"$NORTH_RIFT_BOT_LOG" 2>&1; then
+    pass "north-rift preview_tp zone_info + ambient_zone bot"
+  else
+    tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
+    tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
+  fi
+
+  if ! stop_server; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview bot passed but server did not release port 25565"
+  fi
+
+  if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server; durable handoff will remain"
+  fi
+  if ! bong_server_persistence_transaction_complete; then
+    finalize_failure "north-rift-preview" "restored local server/data/bong.db but could not clear the durable persistence handoff"
+  fi
+  PERSISTENCE_STASH_READY=0
+  PERSISTENCE_TRANSACTION_ACTIVE=0
+  pass "north-rift dedicated preview server cleanup"
+}
+
+if ! bong_server_with_preview_persistence_lock run_north_rift_preview; then
+  finalize_failure "north-rift-preview" "failed to hold lifecycle exclusion through north-rift preview persistence transaction"
+fi
+
 CURRENT_STAGE="summary"
 echo ""
 echo "=== [$TASK_ID][$SCRIPT_TAG] Evidence paths ==="
@@ -1013,6 +1488,8 @@ echo "  redis: $REDIS_LOG"
 echo "  server: $SERVER_LOG"
 echo "  redis-sub: $REDIS_SUB_LOG"
 echo "  tiandao: $TIANDAO_LOG"
+echo "  north-rift preview server: $NORTH_RIFT_SERVER_LOG"
+echo "  north-rift preview bot: $NORTH_RIFT_BOT_LOG"
 
 echo ""
 echo "=== [$TASK_ID][$SCRIPT_TAG] Result ==="

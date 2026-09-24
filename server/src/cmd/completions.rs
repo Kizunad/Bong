@@ -29,7 +29,7 @@ use valence::protocol::packets::play::{CommandSuggestionsS2c, RequestCommandComp
 use valence::protocol::VarInt;
 use valence::text::Text;
 
-use crate::cultivation::known_techniques::TECHNIQUE_DEFINITIONS;
+use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::inventory::ItemRegistry;
 use crate::world::zone::ZoneRegistry;
 
@@ -61,7 +61,7 @@ impl Candidate {
 pub enum CompletionSource {
     /// `ItemRegistry` 全部 template id（tooltip = display_name）
     ItemTemplates,
-    /// `TECHNIQUE_DEFINITIONS` 48 功法 id（tooltip = display_name）
+    /// `TechniqueRegistry` 全部功法 id（tooltip = display_name）
     Techniques,
     /// 20 经脉 canonical id（12 正经 + 奇经八脉）
     Meridians,
@@ -69,6 +69,8 @@ pub enum CompletionSource {
     Realms,
     /// `ZoneRegistry` zone name
     Zones,
+    /// 固定名称的 dev 实机测试场景。
+    Scenes,
 }
 
 /// 路由表：`(命令路径字面量, 参数在命令中的词序, 数据源)`。
@@ -93,6 +95,7 @@ pub const ROUTES: &[(&[&str], usize, CompletionSource)] = &[
     (&["meridian", "open"], 2, CompletionSource::Meridians),
     (&["realm", "set"], 2, CompletionSource::Realms),
     (&["zone_qi", "set"], 2, CompletionSource::Zones),
+    (&["scene"], 1, CompletionSource::Scenes),
 ];
 
 /// 20 经脉 canonical id — 与 `dev::meridian::parse_meridian_id` 的主拼写一致
@@ -189,6 +192,7 @@ pub fn parse_completion_query(text: &str) -> Option<CompletionQuery> {
 fn candidates_for(
     source: CompletionSource,
     items: &ItemRegistry,
+    techniques: &TechniqueRegistry,
     zones: Option<&ZoneRegistry>,
 ) -> Vec<Candidate> {
     match source {
@@ -196,9 +200,9 @@ fn candidates_for(
             .iter_templates()
             .map(|t| Candidate::with_tooltip(t.id.clone(), t.display_name.clone()))
             .collect(),
-        CompletionSource::Techniques => TECHNIQUE_DEFINITIONS
+        CompletionSource::Techniques => techniques
             .iter()
-            .map(|d| Candidate::with_tooltip(d.id, d.display_name))
+            .map(|d| Candidate::with_tooltip(d.id.clone(), d.display_name.clone()))
             .collect(),
         CompletionSource::Meridians => MERIDIAN_COMPLETION_IDS
             .iter()
@@ -217,6 +221,10 @@ fn candidates_for(
                     .collect()
             })
             .unwrap_or_default(),
+        CompletionSource::Scenes => super::dev::scene::SCENES
+            .iter()
+            .map(|scene| Candidate::with_tooltip(scene.name, scene.description))
+            .collect(),
     }
 }
 
@@ -234,13 +242,21 @@ pub fn filter_candidates(mut candidates: Vec<Candidate>, partial: &str) -> Vec<C
 /// 所有 `add_command` 在 App 构建期完成，PostStartup 时命令图已定型；改动触发
 /// `Res<CommandRegistry>` change detection，valence `update_command_tree` 自动
 /// 向全体在线客户端重发命令树（后进玩家走 `Added<Client>` 路径天然拿到）。
-pub fn mark_ask_server_arguments(mut registry: ResMut<CommandRegistry>) {
+pub fn mark_ask_server_arguments(
+    mut registry: ResMut<CommandRegistry>,
+    scene_access: Option<Res<super::dev::scene::TestSceneAccess>>,
+) {
     let marked = mark_routes_ask_server(&mut registry);
-    if marked < ROUTES.len() {
+    let expected = ROUTES
+        .iter()
+        .filter(|(_, _, source)| *source != CompletionSource::Scenes || scene_access.is_some())
+        .count();
+    if marked < expected {
         // 打出具体失败路径——只报数量没法定位是哪条 ROUTES 与哪个
         // assemble_graph 漂移（2026-07-06 排障实证：3/9 查无可查）。
         let unresolved: Vec<String> = ROUTES
             .iter()
+            .filter(|(_, _, source)| *source != CompletionSource::Scenes || scene_access.is_some())
             .filter(|(path, _, _)| {
                 argument_suggestion(&registry.graph, path) != Some(Some(Suggestion::AskServer))
             })
@@ -249,7 +265,7 @@ pub fn mark_ask_server_arguments(mut registry: ResMut<CommandRegistry>) {
         tracing::warn!(
             "[bong][cmd] tab completion: only {marked}/{} routes resolved in command graph — \
              unresolved: [{}] (ROUTES path out of sync with its assemble_graph literals)",
-            ROUTES.len(),
+            expected,
             unresolved.join(", ")
         );
     } else {
@@ -326,7 +342,9 @@ pub fn argument_suggestion(
 pub fn answer_command_completions(
     mut packets: EventReader<PacketEvent>,
     items: Res<ItemRegistry>,
+    techniques: Res<TechniqueRegistry>,
     zones: Option<Res<ZoneRegistry>>,
+    scene_access: Option<Res<super::dev::scene::TestSceneAccess>>,
     mut clients: Query<&mut Client>,
 ) {
     for packet in packets.read() {
@@ -336,11 +354,14 @@ pub fn answer_command_completions(
         let Some(query) = parse_completion_query(request.text.0) else {
             continue;
         };
+        if query.source == CompletionSource::Scenes && scene_access.is_none() {
+            continue;
+        }
         let Ok(mut client) = clients.get_mut(packet.client) else {
             continue;
         };
         let candidates = filter_candidates(
-            candidates_for(query.source, &items, zones.as_deref()),
+            candidates_for(query.source, &items, &techniques, zones.as_deref()),
             &query.partial,
         );
         let tooltips: Vec<Option<Text>> = candidates
@@ -369,6 +390,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::meridian::parse_meridian_id;
     use crate::cmd::dev::realm::parse_realm;
+    use crate::cultivation::known_techniques::TechniqueDefinition;
     use std::collections::HashSet;
 
     // ── parse_completion_query：路由 / 词位 / 偏移 ────────────────────
@@ -569,7 +591,12 @@ mod tests {
         // CR #829：ItemTemplates 分支（/give 主功能）专用测试 —— 锁 id→value、
         // display_name→tooltip 的映射与 iter_templates 的全量枚举。
         let items = test_item_registry(&[("qicao_grass", "气草"), ("fan_tie", "凡铁")]);
-        let out = candidates_for(CompletionSource::ItemTemplates, &items, None);
+        let out = candidates_for(
+            CompletionSource::ItemTemplates,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        );
         assert_eq!(
             out.len(),
             2,
@@ -591,8 +618,13 @@ mod tests {
     #[test]
     fn technique_source_yields_all_definitions_with_tooltips() {
         let items = ItemRegistry::from_map(Default::default());
-        let out = candidates_for(CompletionSource::Techniques, &items, None);
-        assert_eq!(out.len(), TECHNIQUE_DEFINITIONS.len());
+        let out = candidates_for(
+            CompletionSource::Techniques,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        );
+        assert_eq!(out.len(), TechniqueRegistry::load_for_tests().len());
         assert!(
             out.iter().all(|c| c.tooltip.is_some()),
             "功法候选应带 display_name tooltip"
@@ -600,16 +632,60 @@ mod tests {
     }
 
     #[test]
+    fn technique_source_consumes_runtime_only_definition() {
+        // M07：completion 必须消费注入的 runtime registry——runtime-only 招式只存在
+        // 于注入实例，若 completion 改读默认/静态 catalog 它会从 `/technique`
+        // 建议里消失并撞红。
+        let items = ItemRegistry::from_map(Default::default());
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "runtime.only".to_string(),
+            display_name: "运行时专属".to_string(),
+            grade: "common".to_string(),
+            description: "只存在于注入 registry 的 runtime-only 招式（M07 契约）。".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 1.0,
+            cast_ticks: 10,
+            cooldown_ticks: 20,
+            range: 3.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                .to_string(),
+            category: crate::cultivation::known_techniques::SkillCategory::Attack,
+            dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
+        });
+        let out = candidates_for(CompletionSource::Techniques, &items, &registry, None);
+        let runtime = out
+            .iter()
+            .find(|c| c.value == "runtime.only")
+            .unwrap_or_else(|| panic!("candidates 必须包含注入 registry 的 runtime-only 招式"));
+        assert_eq!(runtime.tooltip.as_deref(), Some("运行时专属"));
+        assert_eq!(out.len(), registry.len());
+    }
+
+    #[test]
     fn zones_source_without_registry_is_empty_not_panic() {
         let items = ItemRegistry::from_map(Default::default());
-        assert!(candidates_for(CompletionSource::Zones, &items, None).is_empty());
+        assert!(candidates_for(
+            CompletionSource::Zones,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        )
+        .is_empty());
     }
 
     #[test]
     fn zones_source_lists_registry_names() {
         let items = ItemRegistry::from_map(Default::default());
         let zones = ZoneRegistry::fallback();
-        let out = candidates_for(CompletionSource::Zones, &items, Some(&zones));
+        let out = candidates_for(
+            CompletionSource::Zones,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            Some(&zones),
+        );
         assert_eq!(
             out.len(),
             zones.zones.len(),
@@ -629,6 +705,7 @@ mod tests {
                 (
                     (*id).to_string(),
                     ItemTemplate {
+                        quick_use: false,
                         id: (*id).to_string(),
                         display_name: (*name).to_string(),
                         category: ItemCategory::Misc,
@@ -654,6 +731,7 @@ mod tests {
                         shelflife_profile: None,
                         shield_spec: None,
                         shelflife_track: None,
+                        wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                     },
                 )
             })
@@ -669,6 +747,19 @@ mod tests {
     /// 构造跑 [`answer_command_completions`] 的最小 App + mock client，
     /// 把 `text` 封成真实 `RequestCommandCompletionsC2s` wire 帧注入 PacketEvent。
     fn completion_roundtrip(text: &str, transaction_id: i32) -> Vec<SuggestionsReply> {
+        completion_roundtrip_with_registry(
+            text,
+            transaction_id,
+            TechniqueRegistry::load_for_tests(),
+        )
+    }
+
+    /// 同 [`completion_roundtrip`]，但注入调用方给定的 registry（runtime-only 契约测试用）。
+    fn completion_roundtrip_with_registry(
+        text: &str,
+        transaction_id: i32,
+        registry: TechniqueRegistry,
+    ) -> Vec<SuggestionsReply> {
         use valence::prelude::{App, Events, Update};
         use valence::protocol::{Bounded, Encode, Packet};
         use valence::testing::create_mock_client;
@@ -681,6 +772,7 @@ mod tests {
             ("fan_tie", "凡铁"),
         ]));
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(registry);
         app.add_systems(Update, answer_command_completions);
 
         let (bundle, mut helper) = create_mock_client("Alice");
@@ -756,6 +848,69 @@ mod tests {
             matches[0].1.as_deref(),
             Some("气草"),
             "候选应携带中文 display_name tooltip"
+        );
+    }
+
+    #[test]
+    fn packet_path_completion_consumes_runtime_only_registry() {
+        // M08：packet/ECS 补全路径必须消费注入的 runtime registry——runtime-only
+        // 招式只存在于注入实例；若 answer_command_completions 改读默认/静态
+        // catalog，回包会丢掉 runtime.only 并撞红。
+        use crate::cultivation::known_techniques::TechniqueDispatch;
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "runtime.only".to_string(),
+            display_name: "运行时专属".to_string(),
+            grade: "common".to_string(),
+            description: "只存在于注入 registry 的 runtime-only 招式（M08 契约）。".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 1.0,
+            cast_ticks: 10,
+            cooldown_ticks: 20,
+            range: 3.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                .to_string(),
+            category: crate::cultivation::known_techniques::SkillCategory::Attack,
+            dispatch: TechniqueDispatch::DirectGeneric,
+        });
+
+        // 注入 registry 的请求：回包必须含 runtime.only（光标落在 `/technique add` 的
+        // 参数词上，arg_index=2，所以请求文本必须是三词）。
+        let replies =
+            completion_roundtrip_with_registry("/technique add runtime", 7, registry.clone());
+        assert_eq!(
+            replies.len(),
+            1,
+            "一条命中路由的请求应恰好收到一个 CommandSuggestionsS2c 回包"
+        );
+        let (id, start, length, matches) = &replies[0];
+        assert_eq!(*id, 7, "回包必须回显请求的 transaction_id");
+        assert_eq!(
+            (*start, *length),
+            (15, 7),
+            "`/technique add ` = 15 字符，partial = `runtime` 7 字符"
+        );
+        assert!(
+            matches.iter().any(|(v, _)| v == "runtime.only"),
+            "回包候选必须包含注入 registry 的 runtime-only 招式; got {:?}",
+            matches.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            matches.len(),
+            1,
+            "只有 runtime.only 命中 runtime 前缀，不得混入默认 catalog 候选"
+        );
+
+        // 默认 registry 的同一请求：runtime.only 不存在——差异必须来自注入实例。
+        let replies = completion_roundtrip("/technique add runtime", 8);
+        assert_eq!(replies.len(), 1);
+        let (id, _, _, matches) = &replies[0];
+        assert_eq!(*id, 8);
+        assert!(
+            !matches.iter().any(|(v, _)| v == "runtime.only"),
+            "默认 registry 下回包不得出现 runtime-only 招式"
         );
     }
 

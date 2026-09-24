@@ -8,6 +8,7 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "温补真元，服后可加速恢复灵力。"
+quick_use = true
 effect = { kind = "breakthrough_bonus", magnitude = 0.12 }
 
 [[item]]
@@ -20,6 +21,7 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "教学灵泉旁偶得一粒，药性偏锋，专助醒灵境初次冲关。"
+quick_use = true
 effect = { kind = "breakthrough_bonus", magnitude = 0.18 }
 
 [[item]]
@@ -44,6 +46,7 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "战斗中温补真元，只恢复当前真元，不提升真元上限。"
+quick_use = true
 effect = { kind = "qi_recovery", magnitude = 60.0 }
 cast_duration_ms = 1500
 cooldown_ms = 6000
@@ -60,6 +63,7 @@ base_weight = 0.2
 rarity = "legendary"
 spirit_quality_initial = 1.0
 description = "禁药版回元丹，可瞬间排尽异种真元，然代价为反噬经脉。"
+quick_use = true
 effect = { kind = "contamination_cleanse", magnitude = 0.6 }
 cast_duration_ms = 2500
 cooldown_ms = 8000
@@ -74,6 +78,7 @@ base_weight = 0.2
 rarity = "legendary"
 spirit_quality_initial = 1.0
 description = "以稀有灵材炼成，可回拨十年寿元，但永久折损真元上限。"
+quick_use = true
 effect = { kind = "lifespan_extension", magnitude = 10, target = "life_extension_pill" }
 cast_duration_ms = 3000
 cooldown_ms = 12000
@@ -88,6 +93,7 @@ base_weight = 0.2
 rarity = "epic"
 spirit_quality_initial = 0.8
 description = "以空兽痕炼成，可短时抵住负灵压反吸，减轻涡流反噬。"
+quick_use = true
 effect = { kind = "anti_spirit_pressure", magnitude = 36000 }
 cast_duration_ms = 2200
 cooldown_ms = 9000
@@ -102,6 +108,7 @@ base_weight = 0.2
 rarity = "uncommon"
 spirit_quality_initial = 0.75
 description = "乌髓汁与散心草炼成的温和毒丹，少量累积毒性真元。"
+quick_use = true
 effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_wu_sui_san_xin" }
 cast_duration_ms = 1800
 cooldown_ms = 6000
@@ -129,6 +136,7 @@ base_weight = 0.2
 rarity = "uncommon"
 spirit_quality_initial = 0.78
 description = "蛛髓与赤陀粉入炉，短时激血，折一点寿元。"
+quick_use = true
 effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_chi_tuo_zhi_sui" }
 cast_duration_ms = 1800
 cooldown_ms = 6000
@@ -143,6 +151,7 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 0.82
 description = "青鳞与曼陀花毒同炼，药色发青，易生幻晕。"
+quick_use = true
 effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_qing_lin_man_tuo" }
 cast_duration_ms = 1900
 cooldown_ms = 6500
@@ -157,6 +166,7 @@ base_weight = 0.2
 rarity = "rare"
 spirit_quality_initial = 0.84
 description = "蛇胆以铁腹砂封毒，服后丹毒难消，消化负荷加重。"
+quick_use = true
 effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_tie_fu_she_dan" }
 cast_duration_ms = 2000
 cooldown_ms = 7000
@@ -171,6 +181,7 @@ base_weight = 0.2
 rarity = "epic"
 spirit_quality_initial = 0.88
 description = "玄龟壳与腐心藻久熬成丹，毒性最重，能开附毒上限。"
+quick_use = true
 effect = { kind = "poison_pill", magnitude = 0, target = "poison_pill_fu_xin_xuan_gui" }
 cast_duration_ms = 2200
 cooldown_ms = 8000

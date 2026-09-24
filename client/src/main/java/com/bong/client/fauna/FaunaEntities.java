@@ -18,11 +18,20 @@ public final class FaunaEntities {
     }
 
     public static EntityType<FaunaEntity> type(FaunaVisualKind kind) {
-        return Holder.TYPES.get(kind);
+        return (kind.deferredRegistration() ? DeferredHolder.TYPES : Holder.TYPES).get(kind);
     }
 
     public static void register() {
+        register(false);
+    }
+
+    public static void registerDeferred() {
+        register(true);
+    }
+
+    private static void register(boolean deferred) {
         for (FaunaVisualKind kind : FaunaVisualKind.values()) {
+            if (kind.deferredRegistration() != deferred) continue;
             EntityType<FaunaEntity> type = type(kind);
             int rawId = Registries.ENTITY_TYPE.getRawId(type);
             if (rawId != kind.expectedRawId()) {
@@ -59,14 +68,19 @@ public final class FaunaEntities {
     }
 
     private static final class Holder {
-        private static final Map<FaunaVisualKind, EntityType<FaunaEntity>> TYPES = buildAll();
+        private static final Map<FaunaVisualKind, EntityType<FaunaEntity>> TYPES = buildAll(false);
+    }
 
-        private static Map<FaunaVisualKind, EntityType<FaunaEntity>> buildAll() {
-            EnumMap<FaunaVisualKind, EntityType<FaunaEntity>> types = new EnumMap<>(FaunaVisualKind.class);
-            for (FaunaVisualKind kind : FaunaVisualKind.values()) {
-                types.put(kind, build(kind));
-            }
-            return Map.copyOf(types);
+    private static final class DeferredHolder {
+        private static final Map<FaunaVisualKind, EntityType<FaunaEntity>> TYPES = buildAll(true);
+    }
+
+    private static Map<FaunaVisualKind, EntityType<FaunaEntity>> buildAll(boolean deferred) {
+        EnumMap<FaunaVisualKind, EntityType<FaunaEntity>> types = new EnumMap<>(FaunaVisualKind.class);
+        for (FaunaVisualKind kind : FaunaVisualKind.values()) {
+            if (kind.deferredRegistration() != deferred) continue;
+            types.put(kind, build(kind));
         }
+        return Map.copyOf(types);
     }
 }

@@ -51,7 +51,7 @@ def _bind_and_cast(bot, slot: int, skill_id: str, target_id: int | None) -> floa
 
 
 def run(env) -> None:
-    with env.new_bot("Cast") as bot:
+    with env.new_bot("SwordAV") as bot:
         wait_for_ready(bot)
 
         bot.cmd("realm set induce")  # 覆盖 Awaken(sword) 与 Induce(beng_quan) 双前置

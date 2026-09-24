@@ -127,6 +127,7 @@ pub fn resolve_shoot_needle_intents(
             BodyPlanResolveInputs {
                 cultivation: Some(&*cultivation),
                 beast_kind: None,
+                morph_state: None,
             },
             body_plans.as_deref(),
             races.as_deref(),

@@ -53,7 +53,6 @@
 
 use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
-use super::blocks::block_from_name;
 use super::column;
 use super::nbt_registry::{DecorationAnchor, DecorationNbtRegistry, Rotation};
 use super::raster::{ColumnSample, Decoration, TerrainProvider};
@@ -518,11 +517,7 @@ fn place_decoration(
         return;
     }
 
-    let blocks: Vec<BlockState> = deco
-        .blocks
-        .iter()
-        .filter_map(|name| block_from_name(name))
-        .collect();
+    let blocks = &deco.resolved_blocks;
     if blocks.is_empty() {
         return;
     }
@@ -530,33 +525,33 @@ fn place_decoration(
 
     if is_sky_isle_bottom_flora(deco) {
         place_hanging_crystal(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         );
         return;
     }
 
     match deco.kind.as_str() {
         "tree" => place_tree(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         "shrub" => place_shrub(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         "boulder" => place_boulder(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         "crystal" => place_crystal(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         "mushroom" => place_mushroom(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
-        "flower" => place_flower(chunk, local_x, base_y, local_z, min_y, &blocks),
+        "flower" => place_flower(chunk, local_x, base_y, local_z, min_y, blocks),
         "fallen_log" => place_fallen_log(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         "grave_mound" => place_grave_mound(
-            chunk, local_x, base_y, local_z, min_y, &blocks, size, world_x, world_z,
+            chunk, local_x, base_y, local_z, min_y, blocks, size, world_x, world_z,
         ),
         // Unknown kind → primary block stump so something visible still appears.
         _ => {
@@ -1408,6 +1403,61 @@ mod nbt_stamp_tests {
         chunk.block_state(local_x as u32, local_y, local_z as u32)
     }
 
+    #[test]
+    fn manifest_resolved_blocks_flow_into_procedural_placement() {
+        use valence::prelude::{Biome, BiomeRegistry, Ident};
+
+        crate::world::terrain::blocks::initialize_default_block_catalog().unwrap();
+        let root = temp_dir("manifest_resolved_blocks");
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":1,
+            "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette":["stone"],"biome_palette":["plains"],"tiles":[],
+            "global_decoration_palette":[{
+                "global_id":1,"profile":"test","local_id":1,"name":"authored_flower",
+                "kind":"flower","blocks":["poppy","grass"],"size_range":[1,1],
+                "rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"
+            }]
+        }"#,
+        )
+        .unwrap();
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(Ident::new("plains").unwrap(), Biome::default());
+        let provider = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &biomes,
+            &DecorationNbtRegistry::empty(),
+        )
+        .expect("valid manifest decoration must lower");
+        let mut decoration = provider
+            .decoration(1)
+            .expect("global id 1 must resolve")
+            .clone();
+        decoration.resolved_blocks = vec![BlockState::GRASS];
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk,
+            3,
+            70,
+            4,
+            TEST_MIN_Y,
+            &decoration,
+            3,
+            4,
+            &DecorationNbtRegistry::empty(),
+        );
+        assert_eq!(
+            block_at(&chunk, 3, 70, 4),
+            BlockState::GRASS,
+            "placement must consume the pre-resolved state rather than re-resolving authored names"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     /// A single-block template of `block_name` at template-local origin (so anchor
     /// landing is observable by one cell).
     fn single_block_template(block_name: &str) -> StructureNbt {
@@ -1473,6 +1523,11 @@ mod nbt_stamp_tests {
             name: name.into(),
             kind: kind.into(),
             blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            resolved_blocks: vec![
+                BlockState::OAK_LOG,
+                BlockState::OAK_LEAVES,
+                BlockState::MOSS_BLOCK,
+            ],
             size_range: [3, 6],
             rarity: 0.5,
             notes: String::new(),
@@ -1815,6 +1870,7 @@ mod nbt_stamp_tests {
             DecorationAnchor::Ground,
         );
         d.blocks = vec!["poppy".into()];
+        d.resolved_blocks = vec![BlockState::POPPY];
 
         let mut chunk = make_chunk();
         place_decoration(&mut chunk, 2, 65, 2, TEST_MIN_Y, &d, 102, 202, &reg);
@@ -1945,6 +2001,7 @@ mod nbt_stamp_tests {
             DecorationAnchor::Ground,
         );
         flower.blocks = vec!["grass".into()];
+        flower.resolved_blocks = vec![BlockState::GRASS];
         let mut c3 = make_chunk();
         place_decoration(&mut c3, 1, 65, 1, TEST_MIN_Y, &flower, 11, 11, &reg);
         assert_eq!(
@@ -2067,6 +2124,11 @@ mod anti_overlap_tests {
             name: name.into(),
             kind: kind.into(),
             blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            resolved_blocks: vec![
+                BlockState::OAK_LOG,
+                BlockState::OAK_LEAVES,
+                BlockState::MOSS_BLOCK,
+            ],
             size_range: [3, 6],
             rarity: 0.5,
             notes: String::new(),
@@ -2172,6 +2234,7 @@ mod anti_overlap_tests {
         let reg = DecorationNbtRegistry::empty();
         let mut d = deco("poppy", "flower", &[], DecorationAnchor::Ground);
         d.blocks = vec!["poppy".into()];
+        d.resolved_blocks = vec![BlockState::POPPY];
         let fp = decoration_footprint(5, 5, 65, &d, 105, 205, &reg);
         assert_eq!(
             fp,
@@ -2503,6 +2566,11 @@ mod centering_tests {
             name: name.into(),
             kind: kind.into(),
             blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            resolved_blocks: vec![
+                BlockState::OAK_LOG,
+                BlockState::OAK_LEAVES,
+                BlockState::MOSS_BLOCK,
+            ],
             size_range: [3, 6],
             rarity: 0.5,
             notes: String::new(),

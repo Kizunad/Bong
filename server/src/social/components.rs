@@ -36,16 +36,12 @@ impl GuardianKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ZhenfaTrapTier {
+    #[default]
     Basic,
     Middle,
     Advanced,
-}
-
-impl Default for ZhenfaTrapTier {
-    fn default() -> Self {
-        Self::Basic
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

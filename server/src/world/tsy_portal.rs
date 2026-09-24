@@ -193,6 +193,12 @@ fn collect_instance_ids(inv: &PlayerInventory) -> Vec<u64> {
     for item in inv.hotbar.iter().flatten() {
         ids.push(item.instance_id);
     }
+    ids.extend(
+        inv.material_preparation
+            .materials
+            .iter()
+            .map(|entry| entry.item.instance_id),
+    );
     ids
 }
 
@@ -223,7 +229,8 @@ mod tests {
     };
 
     fn make_inv_with_qi_item() -> PlayerInventory {
-        let mut hb: [Option<ItemInstance>; 9] = Default::default();
+        let mut hb: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
         hb[0] = Some(ItemInstance {
             instance_id: 7,
             template_id: "bone_coin".to_string(),
@@ -247,6 +254,7 @@ mod tests {
             lingering_owner_qi: None,
         });
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
@@ -259,6 +267,7 @@ mod tests {
 
     fn empty_inv() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {

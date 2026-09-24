@@ -66,6 +66,16 @@ public final class FalseSkinHudStateStore {
         snapshot = next == null ? State.NONE : next;
     }
 
+    /**
+     * plan-bughunt-client-false-skin-cross-session-v1 — 生产态断线清理入口。server 的
+     * {@code false_skin_state} 只在 {@code Changed<FalseSkin>}/{@code RemovedComponents<FalseSkin>}
+     * 时增量发包，断线切 session 不会触发 removed 事件，新 session 若角色本身没有伪皮也
+     * 不会有任何 payload 覆盖旧快照。必须在断线时显式归零，不能复用 resetForTests()。
+     */
+    public static void clearOnDisconnect() {
+        snapshot = State.NONE;
+    }
+
     public static void resetForTests() {
         snapshot = State.NONE;
     }

@@ -41,7 +41,6 @@ pub mod dead_zone;
 pub mod death_hooks;
 pub mod dugu;
 pub mod epitaph;
-pub mod first_hit_dash;
 pub mod forging;
 pub mod full_power_strike;
 pub mod generic_talent;
@@ -58,8 +57,11 @@ pub mod lifespan;
 pub mod luck_pool;
 pub mod meridian;
 pub mod meridian_open;
+// plan-race-system-v1 P1 对抗审查 M2 —— 非人合成构型全链测试。
 pub mod neg_pressure;
 pub mod negative_zone;
+#[cfg(test)]
+mod non_humanoid_meridian_synthetic_chain_test;
 pub mod overload;
 pub mod perception;
 pub mod poison_trait;
@@ -67,12 +69,19 @@ pub mod possession;
 pub mod practice_session;
 pub mod qi_field;
 pub mod qi_zero_decay;
+pub mod race_change;
 pub mod realm_taint;
 pub mod realm_vision;
 pub mod skill_registry;
 pub mod special_talent;
 pub mod spiritual_sense;
 pub mod style_modifier;
+// plan-skill-anim-fidelity-v1 P0 —— technique cast_ticks 快照单向同步测试。
+#[cfg(test)]
+mod technique_cast_ticks_snapshot_test;
+// plan-skill-av-relink-v1 P3 —— technique 图标快照单向同步 + 映射约束测试。
+#[cfg(test)]
+mod technique_icon_snapshot_test;
 pub mod technique_mentor;
 pub mod technique_observe;
 pub mod technique_proficiency;
@@ -85,8 +94,8 @@ pub mod tribulation_balance;
 pub mod void;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or,
-    Position, Query, Res, ResMut, Update, Username, Without,
+    bevy_ecs, Added, App, Client, Commands, Component, Entity, EventReader, EventWriter,
+    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, With, Without,
 };
 
 use self::breakthrough::{
@@ -101,13 +110,15 @@ use self::color::{
     qi_color_evolution_tick, record_cultivation_session_practice_events,
     CultivationSessionPracticeEvent, PracticeLog,
 };
-use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
+use self::components::{
+    decode_persisted_cultivation, Contamination, Cultivation, Karma, MeridianSystem, QiColor,
+};
 use self::composure::composure_tick;
 use self::contamination::contamination_tick;
 use self::dead_zone::{dead_zone_silent_qi_loss_tick, DeadZoneTickHandler};
 use self::death_hooks::{
-    on_player_revived, on_player_terminated, CultivationDeathTrigger, PlayerRevived,
-    PlayerTerminated,
+    on_cultivation_revive_requested, on_player_terminated, CultivationDeathTrigger,
+    CultivationReviveRequested, PlayerRevived, PlayerTerminated,
 };
 use self::dugu::{
     dugu_poison_ambient_vfx_tick, dugu_poison_tick, expire_dugu_state,
@@ -134,7 +145,7 @@ use self::lifespan::{
 };
 use self::meridian::severed::{
     apply_severed_event_system, meridian_severed_detection_tick, MeridianSeveredEvent,
-    MeridianSeveredPermanent, SkillMeridianDependencies,
+    MeridianSeveredPermanent,
 };
 use self::meridian_open::{meridian_open_tick, MeridianOpenedEvent};
 use self::neg_pressure::tick_neg_pressure;
@@ -167,7 +178,6 @@ use self::tick::{
     prune_cultivation_session_practice_accumulator, qi_regen_and_zone_drain_tick, CultivationClock,
     CultivationSessionPracticeAccumulator,
 };
-use self::topology::MeridianTopology;
 use self::tribulation::{
     abort_du_xu_on_client_removed, dispatch_rechallenge_on_quota_opened_system,
     emit_tribulation_boundary_vfx_system, heart_demon_choice_system, heart_demon_timeout_system,
@@ -186,6 +196,7 @@ use self::tribulation::{
     TribulationOmenCloudBlocks, TribulationOriginDimension, TribulationSettled, TribulationState,
     TribulationWaveCleared,
 };
+use crate::body_plan::RaceId;
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
 use crate::persistence::{
@@ -205,39 +216,46 @@ use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tic
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
-    let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
-    crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    crate::combat::dugu_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    crate::combat::tuike_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    crate::combat::sword_basics::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    // plan-shield-block-v1 P4：盾牌格挡不依赖任何经脉（凡人物理防御）。
-    crate::combat::shield_block::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    crate::sword_path::skill_register::declare_meridian_dependencies(
-        &mut skill_meridian_dependencies,
-    );
-    crate::movement::dash_proficiency::declare_dash_meridian_dependencies(
-        &mut skill_meridian_dependencies,
-    );
-    crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut skill_meridian_dependencies);
-    // GAP-1 fix: woliu.vortex 依赖 Lung（手太阴肺经），resolver 同步加 check gate。
-    crate::combat::woliu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    // GAP-2 fix: burst_meridian.beng_quan 依赖手三阳（LargeIntestine/SmallIntestine/TripleEnergizer）。
-    crate::cultivation::burst_meridian::declare_meridian_dependencies(
-        &mut skill_meridian_dependencies,
-    );
-    // GAP-3 fix: yidao 五招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
-    crate::combat::yidao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    // GAP-4 fix: dandao 三招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
-    crate::dandao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
-    // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
-    crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    let (technique_registry, skill_registry, skill_meridian_dependencies) = {
+        let races = app
+            .world()
+            .get_resource::<crate::body_plan::RaceRegistry>()
+            .expect("body_plan::register must insert RaceRegistry before cultivation::register");
+        let techniques =
+            known_techniques::TechniqueRegistry::load_default(races).unwrap_or_else(|error| {
+                panic!("[bong][cultivation] startup rejected technique metadata: {error}")
+            });
+        let items = app
+            .world()
+            .get_resource::<crate::inventory::ItemRegistry>()
+            .expect("inventory::register must insert ItemRegistry before cultivation::register");
+        crate::inventory::validate_technique_scroll_references(items, &techniques).unwrap_or_else(
+            |error| {
+                panic!("[bong][cultivation] startup rejected technique scroll references: {error}")
+            },
+        );
+        let skills = skill_registry::init_registry();
+        let dependencies = skill_registry::init_meridian_dependencies();
+        known_techniques::validate_startup_wiring(&techniques, &skills, &dependencies)
+            .unwrap_or_else(|error| {
+                panic!("[bong][cultivation] startup rejected technique wiring: {error}")
+            });
+        crate::network::techniques_snapshot_emit::validate_techniques_snapshot_budget(&techniques)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "[bong][cultivation] startup rejected learned-technique snapshot budget: {error:?}"
+                )
+            });
+        (techniques, skills, dependencies)
+    };
 
-    app.insert_resource(MeridianTopology::standard());
+    // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
+    // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。
     app.insert_resource(CultivationClock::default());
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
-    app.insert_resource(skill_registry::init_registry());
+    app.insert_resource(technique_registry);
+    app.insert_resource(skill_registry);
     app.insert_resource(skill_meridian_dependencies);
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());
@@ -270,6 +288,7 @@ pub fn register(app: &mut App) {
     app.add_event::<ForgeOutcome>();
     app.add_event::<RealmRegressed>();
     app.add_event::<CultivationDeathTrigger>();
+    app.add_event::<CultivationReviveRequested>();
     app.add_event::<PlayerRevived>();
     app.add_event::<PlayerTerminated>();
     app.add_event::<LifespanEventEmitted>();
@@ -352,7 +371,8 @@ pub fn register(app: &mut App) {
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §4 死亡/重生钩子
-            on_player_revived,
+            on_cultivation_revive_requested
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
             on_player_terminated,
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
@@ -494,7 +514,7 @@ pub fn register(app: &mut App) {
             // plan-perception-v1.1 §4.1 server authoritative realm vision.
             push_initial_realm_vision.after(attach_cultivation_to_joined_clients),
             push_realm_vision_on_breakthrough.after(breakthrough_system),
-            push_realm_vision_on_revive.after(on_player_revived),
+            push_realm_vision_on_revive.after(on_cultivation_revive_requested),
             view_distance_ramp_system,
             push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
             cleanup_spiritual_sense_push_state,
@@ -509,7 +529,10 @@ pub fn register(app: &mut App) {
             sync_frailty_status_effects.after(process_lifespan_extension_intents),
             process_duo_she_requests
                 .after(lifespan_aging_tick)
-                .after(DuoSheIntentForwardSet),
+                .after(DuoSheIntentForwardSet)
+                // fix-spec-1901-v2 §4.2 — 夺舍会直接写玩家 `Position` /
+                // `CurrentDimension`，纳入统一移动 commit set。
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );
@@ -529,16 +552,46 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[derive(Component, Debug, Default)]
+pub struct CultivationBundleLoadFailed;
+
 type CultivationAttachFilter = (
-    Or<(Added<Client>, Added<CurrentDimension>)>,
+    Or<(
+        Added<Client>,
+        Added<CurrentDimension>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        With<CultivationAttachPending>,
+    )>,
     Without<Cultivation>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 type CultivationAttachQueryItem<'a> = (
     Entity,
     &'a Username,
     Option<&'a PlayerState>,
     Option<&'a LifespanComponent>,
+    Option<&'a CultivationAttachPending>,
 );
+
+#[derive(Debug, Clone, Copy, Component)]
+pub(crate) struct CultivationAttachPending {
+    pub(crate) next_retry_tick: u64,
+}
+
+#[derive(Debug, Clone, Component)]
+pub(crate) struct CultivationBundleTutorialHandoff {
+    pub(crate) accepted_bundle: Option<serde_json::Value>,
+}
+
+pub(crate) fn accepted_bundle_slice<T: serde::de::DeserializeOwned>(
+    accepted_bundle: &Option<serde_json::Value>,
+    key: &str,
+) -> Option<T> {
+    accepted_bundle
+        .as_ref()
+        .and_then(|bundle| bundle.get(key).cloned())
+        .and_then(|value| serde_json::from_value(value).ok())
+}
 
 fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
     match value {
@@ -553,6 +606,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
+    clock: Option<Res<CultivationClock>>,
     default_loadout: Option<Res<crate::inventory::DefaultLoadout>>,
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
@@ -563,18 +617,116 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     race_registry: Option<Res<crate::body_plan::RaceRegistry>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, restored_lifespan) in &joined_clients {
-        let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
+    let now_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    for (entity, username, player_state, restored_lifespan, pending) in &joined_clients {
+        if let Some(pending) = pending {
+            if now_tick < pending.next_retry_tick {
+                continue;
+            }
+        }
+
+        let mut canonical_id = match player_persistence
+            .as_deref()
+            .map(|persistence| load_current_character_id(persistence, username.0.as_str()))
         {
-            Ok(value) => value,
-            Err(error) => {
+            Some(Ok(Some(current_char_id))) => {
+                player_character_id(username.0.as_str(), &current_char_id)
+            }
+            Some(Ok(None)) | None => canonical_player_id(username.0.as_str()),
+            Some(Err(error)) => {
                 tracing::warn!(
-                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}",
+                    "[bong][cultivation] deferred cultivation restore for `{}`: failed to load active character id: {error}",
                     username.0,
                 );
-                None
+                commands.entity(entity).insert(CultivationAttachPending {
+                    next_retry_tick: now_tick.saturating_add(20),
+                });
+                continue;
             }
         };
+
+        let (persisted_bundle, mut cultivation_bundle_load_failed) =
+            match load_player_cultivation_bundle(&settings, username.0.as_str()) {
+                Ok(None) => (None, false),
+                Ok(Some(bundle)) => {
+                    let unknown_persisted_race = race_registry.as_deref().and_then(|registry| {
+                        bundle
+                            .get("cultivation")
+                            .and_then(|cultivation_value| cultivation_value.get("race"))
+                            .and_then(|race_value| race_value.as_str())
+                            .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
+                    });
+                    let cultivation_error = bundle
+                        .get("cultivation")
+                        .ok_or_else(|| "missing required cultivation slice".to_string())
+                        .and_then(|value| decode_persisted_cultivation(value.clone()).map(|_| ()));
+                    let life_record_error = bundle
+                        .get("life_record")
+                        .ok_or_else(|| "missing required life_record identity anchor".to_string())
+                        .and_then(|value| {
+                            serde_json::from_value::<LifeRecord>(value.clone())
+                                .map_err(|error| {
+                                    format!("invalid life_record identity anchor: {error}")
+                                })
+                                .and_then(|decoded| {
+                                    if decoded.character_id == canonical_id {
+                                        Ok(())
+                                    } else {
+                                        Err(format!(
+                                            "life_record character_id `{}` conflicts with canonical character `{}`",
+                                            decoded.character_id, canonical_id
+                                        ))
+                                    }
+                                })
+                        });
+                    if unknown_persisted_race == Some(true) {
+                        tracing::warn!(
+                            "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
+                             unknown race id in persisted `cultivation.race` is not found in \
+                             RaceRegistry — refusing every sibling slice and writeback",
+                            username.0,
+                        );
+                        (None, true)
+                    } else if let Err(error) = cultivation_error {
+                        tracing::warn!(
+                            "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
+                             {error}; refusing every sibling slice and writeback",
+                            username.0,
+                        );
+                        (None, true)
+                    } else if let Err(error) = life_record_error {
+                        tracing::error!(
+                            "[bong][cultivation] rejecting persisted cultivation bundle for `{}`: \
+                             {error}; falling back to canonical live record and refusing writeback",
+                            username.0,
+                        );
+                        (None, true)
+                    } else {
+                        (Some(bundle), false)
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: \
+                         {error}; refusing writeback for this session",
+                        username.0,
+                    );
+                    (None, true)
+                }
+            };
+
+        // plan-race-system-v1 P1a —— bundle 内嵌版本号（`persist_player_cultivation_bundle`
+        // 的 `"v"` 字段，与全局 `CURRENT_SCHEMA_VERSION`/`CURRENT_USER_VERSION` 是两套
+        // 独立版本号，只管 `cultivation_json` blob 自身的形态演进）。缺失该字段的旧存档
+        // 视为 v1（`MeridianSystem`/`MeridianSeveredPermanent` 的 `MeridianId` PascalCase
+        // 枚举名 channel id 形态）；`legacy_meridian_bundle::CURRENT_BUNDLE_VERSION`（本次
+        // 提升到 2）起 channel id 换轨为 humanoid.json 声明的 snake_case
+        // `MeridianChannelId`——两种形态字段名/嵌套结构完全相同，差异只在 id 字符串本身。
+        let bundle_version = persisted_bundle
+            .as_ref()
+            .and_then(|bundle| bundle.get("v"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
 
         let mut cultivation = Cultivation::default();
         let mut meridians = MeridianSystem::default();
@@ -582,15 +734,6 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         let mut karma = Karma::default();
         let mut practice_log = PracticeLog::default();
         let mut contamination = Contamination::default();
-        let mut canonical_id = player_persistence
-            .as_deref()
-            .and_then(|persistence| {
-                load_current_character_id(persistence, username.0.as_str())
-                    .ok()
-                    .flatten()
-            })
-            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
-            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
         let mut life_record = LifeRecord::new(canonical_id.clone());
         let mut insight_quota = InsightQuota::default();
         let mut unlocked_perceptions = UnlockedPerceptions::default();
@@ -599,101 +742,119 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             // Best-effort hydration; schema is versioned and may evolve.
             if let Some(value) = persisted_bundle.get("cultivation") {
-                match serde_json::from_value::<Cultivation>(value.clone()) {
-                    Ok(decoded) => {
-                        // plan-race-system-v1 P0 —— race 字段显式 RaceRegistry 校验：
-                        // 未知 RaceId 不静默兜底 humanoid 白得身份，而是把整份
-                        // `cultivation` bundle 按本函数既有的"解码失败"损坏路径处理
-                        // （保留上面已初始化的 `Cultivation::default()`，不只是把
-                        // race 字段单独改写成 human——一旦种族 id 在当前部署的
-                        // RaceRegistry 里找不到，说明这份存档来自不兼容的版本，
-                        // 其余字段同样不可信，整体回退比"部分接受"更安全）。
-                        // 缺失 race 字段的旧存档会经 `#[serde(default = "default_race_id")]`
-                        // 在 `serde_json::from_value` 这一步就已经落 "human"——那种
-                        // bundle 走的是下面 `None`/`Some(known race)` 分支，正常接受。
-                        match race_registry.as_deref() {
-                            Some(registry) if registry.get(&decoded.race).is_none() => {
-                                tracing::warn!(
-                                    "[bong][cultivation] rejecting persisted cultivation bundle \
-                                     for `{}`: unknown race id `{}` not found in RaceRegistry — \
-                                     falling back to default Cultivation instead of silently \
-                                     granting humanoid identity",
-                                    username.0,
-                                    decoded.race,
-                                );
-                            }
-                            _ => cultivation = decoded,
-                        }
-                    }
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "cultivation", error)
-                    }
+                // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知
+                // race id 的整份 bundle 拒载已经在上面按原始 JSON 提前判定并把
+                // `persisted_bundle` 归零成 `None`（见该处注释），本分支只在 race
+                // 已知（或缺失、经 `#[serde(default = "default_race_id")]` 落
+                // "human"）时才会执行，不再需要重复校验 `decoded.race`。
+                match decode_persisted_cultivation(value.clone()) {
+                    Ok(decoded) => cultivation = decoded,
+                    Err(error) => warn_cultivation_wire_decode(
+                        username.0.as_str(),
+                        "cultivation",
+                        error.as_str(),
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("meridians") {
-                match serde_json::from_value::<MeridianSystem>(value.clone()) {
+                match legacy_meridian_bundle::decode_meridian_system(value.clone(), bundle_version)
+                {
                     Ok(decoded) => meridians = decoded,
-                    Err(error) => warn_cultivation_decode(username.0.as_str(), "meridians", error),
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "meridians",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("qi_color") {
                 match serde_json::from_value::<QiColor>(value.clone()) {
                     Ok(decoded) => qi_color = decoded,
-                    Err(error) => warn_cultivation_decode(username.0.as_str(), "qi_color", error),
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "qi_color",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("karma") {
                 match serde_json::from_value::<Karma>(value.clone()) {
                     Ok(decoded) => karma = decoded,
-                    Err(error) => warn_cultivation_decode(username.0.as_str(), "karma", error),
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "karma",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("practice_log") {
                 match serde_json::from_value::<PracticeLog>(value.clone()) {
                     Ok(decoded) => practice_log = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "practice_log", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "practice_log",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("contamination") {
                 match serde_json::from_value::<Contamination>(value.clone()) {
                     Ok(decoded) => contamination = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "contamination", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "contamination",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("life_record") {
                 match serde_json::from_value::<LifeRecord>(value.clone()) {
                     Ok(decoded) => life_record = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "life_record", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "life_record",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_quota") {
                 match serde_json::from_value::<InsightQuota>(value.clone()) {
                     Ok(decoded) => insight_quota = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "insight_quota", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "insight_quota",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("unlocked_perceptions") {
                 match serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
                     Ok(decoded) => unlocked_perceptions = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "unlocked_perceptions", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "unlocked_perceptions",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_modifiers") {
                 match serde_json::from_value::<InsightModifiers>(value.clone()) {
                     Ok(decoded) => insight_modifiers = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "insight_modifiers", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "insight_modifiers",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
         } else if player_state.is_some() {
@@ -841,11 +1002,15 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         let mut severed_permanent = MeridianSeveredPermanent::default();
         if let Some(persisted_bundle) = persisted_bundle.as_ref() {
             if let Some(value) = persisted_bundle.get("meridian_severed") {
-                match serde_json::from_value::<MeridianSeveredPermanent>(value.clone()) {
+                match legacy_meridian_bundle::decode_meridian_severed(value.clone(), bundle_version)
+                {
                     Ok(decoded) => severed_permanent = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "meridian_severed", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "meridian_severed",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
         }
@@ -856,9 +1021,12 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             if let Some(value) = persisted_bundle.get("poison_toxicity") {
                 match serde_json::from_value::<PoisonToxicity>(value.clone()) {
                     Ok(decoded) => poison_toxicity = decoded,
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "poison_toxicity", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "poison_toxicity",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
             if let Some(value) = persisted_bundle.get("digestion_load") {
@@ -869,9 +1037,12 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                             .capacity
                             .max(DigestionLoad::for_realm(cultivation.realm).capacity);
                     }
-                    Err(error) => {
-                        warn_cultivation_decode(username.0.as_str(), "digestion_load", error)
-                    }
+                    Err(error) => warn_cultivation_decode_and_block_writeback(
+                        username.0.as_str(),
+                        "digestion_load",
+                        error,
+                        &mut cultivation_bundle_load_failed,
+                    ),
                 }
             }
         }
@@ -912,9 +1083,52 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                     username.0,
                 );
             }
+        } else if persisted_bundle.is_none() && !cultivation_bundle_load_failed {
+            // 全新角色（无持久化 bundle）首次 join：立即落盘默认 bundle。否则在首笔
+            // 周期 qi 持久化写回之前死亡并复活（combat_reincarnate）会因
+            // `player_cultivation` 无行而 fail closed——新玩家首次周期写回前死亡即
+            // 卡死死亡屏（实测）。`cultivation_bundle_load_failed` 时是拒写回会话，
+            // 保持严格不落盘。
+            if let Err(error) = crate::persistence::persist_player_cultivation_bundle(
+                &settings,
+                username.0.as_str(),
+                &cultivation,
+                &meridians,
+                &qi_color,
+                &karma,
+                &contamination,
+                &life_record,
+                &practice_log,
+                &insight_quota,
+                &unlocked_perceptions,
+                &insight_modifiers,
+                None,
+                &severed_permanent,
+                Some(&poison_toxicity),
+                Some(&digestion_load),
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist fresh-character cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+            }
         }
 
+        // plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 是本体种族的真源，join 首帧
+        // 必须与刚水合出来的 `Cultivation.race` 同步落地，否则任何只查 `IntrinsicRace`
+        // 组件（不回落 `Cultivation`）的消费点在玩家从未经历过 `RaceChange`（6a 只在
+        // 换种族事务里才 insert 本组件）时会读到组件缺失——这是本 PR 关闭的孤岛
+        // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
+        let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
         let mut entity_commands = commands.entity(entity);
+        entity_commands.remove::<CultivationAttachPending>();
+        entity_commands.insert(CultivationBundleTutorialHandoff {
+            accepted_bundle: if reincarnation.is_some() {
+                None
+            } else {
+                persisted_bundle
+            },
+        });
         entity_commands.insert((
             cultivation,
             meridians,
@@ -931,7 +1145,10 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             DuguPractice::default(),
             severed_permanent,
         ));
-        entity_commands.insert((poison_toxicity, digestion_load));
+        entity_commands.insert((poison_toxicity, digestion_load, intrinsic_race));
+        if cultivation_bundle_load_failed {
+            entity_commands.insert(CultivationBundleLoadFailed);
+        }
         // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
         // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
         // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
@@ -1017,10 +1234,485 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     }
 }
 
-fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error) {
+fn warn_cultivation_decode_and_block_writeback(
+    username: &str,
+    slice: &str,
+    error: serde_json::Error,
+    load_failed: &mut bool,
+) {
+    *load_failed = true;
     tracing::warn!(
-        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
+        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}; refusing cultivation bundle writeback for this session"
     );
+}
+
+fn warn_cultivation_wire_decode(username: &str, slice: &str, error: &str, load_failed: &mut bool) {
+    *load_failed = true;
+    tracing::warn!(
+        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}; refusing cultivation bundle writeback for this session"
+    );
+}
+
+/// plan-race-system-v1 P1a —— `cultivation_json` bundle 里 `meridians` / `meridian_severed`
+/// 两个子字段的旧存档显式迁移。
+///
+/// **为什么需要迁移而不能直接 `serde_json::from_value`**：`MeridianSystem`/
+/// `MeridianSeveredPermanent` 的容器形状（`regular`/`extraordinary` 两个 Vec 字段名、
+/// `severed_meridians`/`severed_at`/`dead_meridians` 三个字段名）迁移前后完全不变——
+/// 变的只是"经脉 channel id 用什么字符串表示"：v1（bump 前）用 `MeridianId` 闭合枚举
+/// 的 serde 默认表示（unit variant 名，PascalCase，如 `"Lung"`）；v2 起换成
+/// `body_plan::MeridianProfile`（`humanoid.json`）声明的规范 snake_case
+/// `MeridianChannelId`（如 `"lung"`）。`MeridianChannelId` 是 `#[serde(transparent)]`
+/// 包裹的裸字符串，对**任意**字符串都能"成功"反序列化——这意味着如果不做迁移，
+/// 旧存档的 `"id":"Lung"` 会被静默解析成 `MeridianChannelId("Lung")`（大小写、内容都
+/// 对不上 humanoid.json 的 `"lung"`），后续 `MeridianSystem::get`/`get_mut` 找不到这条
+/// 经脉直接 panic——不是"解析失败"而是"解析成功但语义损坏"，比崩溃更危险，必须
+/// 显式迁移拦下。
+pub(crate) mod legacy_meridian_bundle {
+    use std::collections::{HashMap, HashSet};
+
+    use serde::Deserialize;
+
+    use super::components::{Meridian, MeridianCrack, MeridianId, MeridianSystem};
+    use super::meridian::severed::{MeridianSeveredPermanent, SeveredRecord};
+
+    /// bundle 内嵌版本号阈值——`>= CURRENT_BUNDLE_VERSION` 走新形态直接反序列化，
+    /// 更旧的（含缺失 `"v"` 字段、隐式视为 1）先按 legacy 形态解码再逐条转换 channel id。
+    /// `persistence::persist_player_cultivation_bundle` 写入 bundle 时的 `"v"` 字段必须
+    /// 引用同一常量（`crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION`），
+    /// 不允许两处各自维护一份数字。
+    pub(crate) const CURRENT_BUNDLE_VERSION: i64 = 2;
+
+    #[derive(Debug, Deserialize)]
+    struct LegacyMeridian {
+        id: MeridianId,
+        opened: bool,
+        open_progress: f64,
+        flow_rate: f64,
+        flow_capacity: f64,
+        rate_tier: u8,
+        capacity_tier: u8,
+        throughput_current: f64,
+        integrity: f64,
+        #[serde(default)]
+        cracks: Vec<MeridianCrack>,
+        opened_at: u64,
+    }
+
+    impl From<LegacyMeridian> for Meridian {
+        fn from(legacy: LegacyMeridian) -> Self {
+            Meridian {
+                id: legacy.id.channel_id(),
+                opened: legacy.opened,
+                open_progress: legacy.open_progress,
+                flow_rate: legacy.flow_rate,
+                flow_capacity: legacy.flow_capacity,
+                rate_tier: legacy.rate_tier,
+                capacity_tier: legacy.capacity_tier,
+                throughput_current: legacy.throughput_current,
+                integrity: legacy.integrity,
+                cracks: legacy.cracks,
+                opened_at: legacy.opened_at,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LegacyMeridianSystem {
+        regular: Vec<LegacyMeridian>,
+        extraordinary: Vec<LegacyMeridian>,
+    }
+
+    /// 解码 `meridians` bundle 子字段。`bundle_version >= CURRENT_BUNDLE_VERSION` 时
+    /// 直接按当前 `MeridianSystem` 形态解析（新存档，channel id 已是 snake_case）；
+    /// 否则先按 v1 legacy 形态（`MeridianId` PascalCase 枚举名）解析再迁移。
+    pub fn decode_meridian_system(
+        value: serde_json::Value,
+        bundle_version: i64,
+    ) -> Result<MeridianSystem, serde_json::Error> {
+        if bundle_version >= CURRENT_BUNDLE_VERSION {
+            return serde_json::from_value(value);
+        }
+        let legacy: LegacyMeridianSystem = serde_json::from_value(value)?;
+        Ok(MeridianSystem {
+            regular: legacy.regular.into_iter().map(Meridian::from).collect(),
+            extraordinary: legacy
+                .extraordinary
+                .into_iter()
+                .map(Meridian::from)
+                .collect(),
+        })
+    }
+
+    #[derive(Debug, Default, Deserialize)]
+    struct LegacyMeridianSeveredPermanent {
+        #[serde(default)]
+        severed_meridians: HashSet<MeridianId>,
+        #[serde(default)]
+        severed_at: HashMap<MeridianId, SeveredRecord>,
+        #[serde(default)]
+        dead_meridians: HashSet<MeridianId>,
+    }
+
+    /// 解码 `meridian_severed` bundle 子字段，语义同 [`decode_meridian_system`]——
+    /// **未映射通道不删除不洗白**（§8.1 #9 决议）：v1 存档里出现的 SEVERED/死脉记录
+    /// 在本函数内 100% 覆盖 humanoid 20 条经脉（`MeridianId::channel_id` 是全函数，
+    /// 无法产出"未映射"的 legacy 条目），迁移后逐条转换、一个不丢；`meridian_mapping`
+    /// 式"部分不可逆映射"只在 P5 `RaceChange`（种族切换）场景出现，不属于本函数处理的
+    /// "同一构型内 id 表示法换代"范畴。
+    pub fn decode_meridian_severed(
+        value: serde_json::Value,
+        bundle_version: i64,
+    ) -> Result<MeridianSeveredPermanent, serde_json::Error> {
+        if bundle_version >= CURRENT_BUNDLE_VERSION {
+            return serde_json::from_value(value);
+        }
+        let legacy: LegacyMeridianSeveredPermanent = serde_json::from_value(value)?;
+        Ok(MeridianSeveredPermanent {
+            severed_meridians: legacy
+                .severed_meridians
+                .into_iter()
+                .map(MeridianId::channel_id)
+                .collect(),
+            severed_at: legacy
+                .severed_at
+                .into_iter()
+                .map(|(id, record)| (id.channel_id(), record))
+                .collect(),
+            dead_meridians: legacy
+                .dead_meridians
+                .into_iter()
+                .map(MeridianId::channel_id)
+                .collect(),
+            // plan-race-system-v1 P5/PR-6a — 休眠登记是 RaceChange 换种族才产生的新
+            // 状态，legacy v1 存档（早于本机制）没有对应字段，恒空迁移。
+            dormant_meridians: HashMap::new(),
+        })
+    }
+
+    /// 全闭合的 v1 legacy `meridians` JSON 样本（`MeridianId` PascalCase 枚举名
+    /// channel id）——供**本模块之外**（`cultivation::mod` 的持久化 e2e 测试）构造
+    /// "早于 P1 的旧存档" fixture 时复用，避免那类测试意外用上当前形态的
+    /// `MeridianSystem::default()` 掩盖迁移分支未被真正走通的问题。
+    #[cfg(test)]
+    pub(crate) fn v1_all_closed_meridian_system_sample() -> serde_json::Value {
+        fn entry(id: MeridianId) -> serde_json::Value {
+            serde_json::json!({
+                "id": format!("{id:?}"),
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_rate": 1.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+                "opened_at": 0,
+            })
+        }
+        let regular: Vec<serde_json::Value> =
+            MeridianId::REGULAR.iter().copied().map(entry).collect();
+        let extraordinary: Vec<serde_json::Value> = MeridianId::EXTRAORDINARY
+            .iter()
+            .copied()
+            .map(entry)
+            .collect();
+        serde_json::json!({ "regular": regular, "extraordinary": extraordinary })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::cultivation::components::{CrackCause, MeridianChannelId};
+        use crate::cultivation::meridian::severed::SeveredSource;
+
+        /// 真实 v1 旧存档样本（`MeridianId` PascalCase 枚举名 channel id，
+        /// `regular`/`extraordinary` 定长 12+8）——不是只测新形状的合成样本。
+        fn v1_meridian_system_sample() -> serde_json::Value {
+            let mut regular = Vec::new();
+            for id in MeridianId::REGULAR {
+                regular.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": id == MeridianId::Lung,
+                    "open_progress": if id == MeridianId::Lung { 1.0 } else { 0.3 },
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": 0,
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": 1.0,
+                    "cracks": [],
+                    "opened_at": if id == MeridianId::Lung { 42 } else { 0 },
+                }));
+            }
+            let mut extraordinary = Vec::new();
+            for id in MeridianId::EXTRAORDINARY {
+                extraordinary.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": id == MeridianId::Ren,
+                    "open_progress": if id == MeridianId::Ren { 1.0 } else { 0.0 },
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": if id == MeridianId::Ren { 2 } else { 0 },
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": if id == MeridianId::Ren { 0.6 } else { 1.0 },
+                    "cracks": [],
+                    "opened_at": if id == MeridianId::Ren { 7 } else { 0 },
+                }));
+            }
+            serde_json::json!({ "regular": regular, "extraordinary": extraordinary })
+        }
+
+        #[test]
+        fn decode_meridian_system_migrates_v1_pascal_case_ids_to_snake_case_channel_ids() {
+            let sample = v1_meridian_system_sample();
+            let decoded = decode_meridian_system(sample, 1).expect("v1 sample should migrate");
+
+            assert_eq!(decoded.regular.len(), 12);
+            assert_eq!(decoded.extraordinary.len(), 8);
+
+            let lung = decoded
+                .regular
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("lung"))
+                .expect("Lung must migrate to channel id \"lung\"");
+            assert!(lung.opened, "Lung 逐脉状态（opened）必须在迁移中原样保留");
+            assert_eq!(lung.opened_at, 42, "Lung opened_at 必须原样保留");
+
+            let ren = decoded
+                .extraordinary
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("ren"))
+                .expect("Ren must migrate to channel id \"ren\"");
+            assert!(ren.opened);
+            assert_eq!(ren.rate_tier, 2, "Ren rate_tier 必须原样保留");
+            assert_eq!(ren.integrity, 0.6, "Ren integrity 必须原样保留");
+            assert_eq!(ren.opened_at, 7);
+
+            // 逐脉状态对拍：除 Lung/Ren 外全部保持"未开、integrity=1.0"的样本基线。
+            for m in decoded.regular.iter().chain(decoded.extraordinary.iter()) {
+                if m.id == MeridianChannelId::new("lung") || m.id == MeridianChannelId::new("ren") {
+                    continue;
+                }
+                assert!(
+                    !m.opened,
+                    "channel {} 样本基线未开，迁移不应把它变成 opened=true",
+                    m.id
+                );
+                assert_eq!(
+                    m.integrity, 1.0,
+                    "channel {} integrity 样本基线应保持 1.0",
+                    m.id
+                );
+            }
+        }
+
+        #[test]
+        fn decode_meridian_system_v2_bundle_parses_directly_without_migration() {
+            let fresh = MeridianSystem::default();
+            let json = serde_json::to_value(&fresh).expect("serialize fresh MeridianSystem");
+            let decoded = decode_meridian_system(json, CURRENT_BUNDLE_VERSION)
+                .expect("v2 bundle should parse directly");
+            assert_eq!(decoded.regular.len(), fresh.regular.len());
+            assert_eq!(decoded.extraordinary.len(), fresh.extraordinary.len());
+            assert_eq!(decoded.regular[0].id, fresh.regular[0].id);
+        }
+
+        #[test]
+        fn decode_meridian_system_missing_version_defaults_to_legacy_path() {
+            // bundle_version 参数由调用方从 `"v"` 字段推导，缺失时上游约定 unwrap_or(1)
+            // ——本测试直接传 1 模拟"旧存档完全没有 v 字段"的路径,不经调用方那层。
+            let sample = v1_meridian_system_sample();
+            assert!(decode_meridian_system(sample, 1).is_ok());
+        }
+
+        #[test]
+        fn decode_meridian_severed_migrates_v1_pascal_case_ids() {
+            let sample = serde_json::json!({
+                "severed_meridians": ["Lung", "Heart"],
+                "severed_at": {
+                    "Lung": { "at_tick": 100, "source": "CombatWound" },
+                    "Heart": { "at_tick": 200, "source": "TribulationFail" },
+                },
+                "dead_meridians": ["Lung"],
+            });
+            let decoded =
+                decode_meridian_severed(sample, 1).expect("v1 severed sample should migrate");
+
+            assert!(decoded.is_severed(MeridianChannelId::new("lung")));
+            assert!(decoded.is_severed(MeridianChannelId::new("heart")));
+            assert!(
+                !decoded.is_severed(MeridianChannelId::new("kidney")),
+                "未在旧样本中出现的经脉不应被迁移函数意外标记为 SEVERED"
+            );
+            assert!(
+                decoded.is_dead(MeridianChannelId::new("lung")),
+                "Lung 的 dead 标记必须在迁移中保留"
+            );
+            assert!(
+                !decoded.is_dead(MeridianChannelId::new("heart")),
+                "Heart 只 SEVERED 不 dead，迁移不应误将其升级为死脉"
+            );
+
+            let lung_record = decoded
+                .record_for(MeridianChannelId::new("lung"))
+                .expect("Lung severed_at record must migrate");
+            assert_eq!(lung_record.at_tick, 100);
+            assert_eq!(lung_record.source, SeveredSource::CombatWound);
+
+            let heart_record = decoded
+                .record_for(MeridianChannelId::new("heart"))
+                .expect("Heart severed_at record must migrate");
+            assert_eq!(heart_record.at_tick, 200);
+            assert_eq!(heart_record.source, SeveredSource::TribulationFail);
+        }
+
+        #[test]
+        fn decode_meridian_severed_v2_bundle_parses_directly_without_migration() {
+            let mut permanent = MeridianSeveredPermanent::default();
+            permanent.insert(
+                MeridianId::Kidney.channel_id(),
+                SeveredSource::OverloadTear,
+                55,
+            );
+            let json = serde_json::to_value(&permanent).expect("serialize");
+            let decoded = decode_meridian_severed(json, CURRENT_BUNDLE_VERSION)
+                .expect("v2 bundle should parse directly");
+            assert_eq!(decoded, permanent);
+        }
+
+        #[test]
+        fn decode_meridian_severed_empty_v1_sample_is_valid() {
+            let sample = serde_json::json!({
+                "severed_meridians": [],
+                "severed_at": {},
+                "dead_meridians": [],
+            });
+            let decoded =
+                decode_meridian_severed(sample, 1).expect("empty v1 sample should migrate");
+            assert_eq!(decoded.severed_count(), 0);
+        }
+
+        /// plan-race-system-v1 P1 对抗审查 MINOR ③：`LegacyMeridian` 的标量字段（除
+        /// `cracks` 外）均无 `#[serde(default)]`——缺失任一必填标量字段的 v1 存档条目
+        /// 必须被拒绝而不是静默补零/静默丢弃该经脉（那会悄悄伪造一条"从未存在过"的
+        /// 经脉状态）。本用例逐个删掉 `opened_at`/`flow_rate` 验证两者都触发拒绝。
+        #[test]
+        fn decode_meridian_system_rejects_legacy_entry_missing_required_scalar_field() {
+            // "opened_at" 字段缺失（其余标量字段齐全）。
+            let entry_missing_opened_at = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_rate": 1.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+            });
+            let broken = serde_json::json!({
+                "regular": [entry_missing_opened_at],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken, 1).is_err(),
+                "缺 opened_at 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
+
+            // "flow_rate" 字段缺失（其余标量字段齐全）。
+            let entry_missing_flow_rate = serde_json::json!({
+                "id": "Lung",
+                "opened": false,
+                "open_progress": 0.0,
+                "flow_capacity": 10.0,
+                "rate_tier": 0,
+                "capacity_tier": 0,
+                "throughput_current": 0.0,
+                "integrity": 1.0,
+                "cracks": [],
+                "opened_at": 0,
+            });
+            let broken2 = serde_json::json!({
+                "regular": [entry_missing_flow_rate],
+                "extraordinary": [],
+            });
+            assert!(
+                decode_meridian_system(broken2, 1).is_err(),
+                "缺 flow_rate 的 legacy meridian 条目必须被拒绝，不能静默补 0"
+            );
+        }
+
+        #[test]
+        fn decode_meridian_system_rejects_malformed_legacy_json() {
+            let broken = serde_json::json!({ "regular": "not an array" });
+            assert!(decode_meridian_system(broken, 1).is_err());
+        }
+
+        /// `CrackCause` 走 legacy `Meridian.cracks` 字段——确认迁移路径下 crack 列表
+        /// （含 cause 枚举）本身也被正确保留，不只是顶层标量字段。
+        #[test]
+        fn decode_meridian_system_preserves_cracks_through_migration() {
+            let mut regular = Vec::new();
+            for id in MeridianId::REGULAR {
+                let cracks = if id == MeridianId::Lung {
+                    serde_json::json!([{
+                        "severity": 0.4,
+                        "healing_progress": 0.1,
+                        "cause": "Overload",
+                        "created_at": 10,
+                    }])
+                } else {
+                    serde_json::json!([])
+                };
+                regular.push(serde_json::json!({
+                    "id": format!("{id:?}"),
+                    "opened": false,
+                    "open_progress": 0.0,
+                    "flow_rate": 1.0,
+                    "flow_capacity": 10.0,
+                    "rate_tier": 0,
+                    "capacity_tier": 0,
+                    "throughput_current": 0.0,
+                    "integrity": 1.0,
+                    "cracks": cracks,
+                    "opened_at": 0,
+                }));
+            }
+            let extraordinary: Vec<serde_json::Value> = MeridianId::EXTRAORDINARY
+                .iter()
+                .map(|id| {
+                    serde_json::json!({
+                        "id": format!("{id:?}"),
+                        "opened": false,
+                        "open_progress": 0.0,
+                        "flow_rate": 1.0,
+                        "flow_capacity": 10.0,
+                        "rate_tier": 0,
+                        "capacity_tier": 0,
+                        "throughput_current": 0.0,
+                        "integrity": 1.0,
+                        "cracks": [],
+                        "opened_at": 0,
+                    })
+                })
+                .collect();
+            let sample = serde_json::json!({ "regular": regular, "extraordinary": extraordinary });
+
+            let decoded = decode_meridian_system(sample, 1).expect("sample should migrate");
+            let lung = decoded
+                .regular
+                .iter()
+                .find(|m| m.id == MeridianChannelId::new("lung"))
+                .unwrap();
+            assert_eq!(lung.cracks.len(), 1);
+            assert_eq!(lung.cracks[0].severity, 0.4);
+            assert_eq!(lung.cracks[0].cause, CrackCause::Overload);
+        }
+    }
 }
 
 fn emit_skill_caps_on_realm_regressed(
@@ -1063,6 +1755,9 @@ mod tests {
 
     use crate::body_plan::{RaceId, RaceRegistry};
     use crate::combat::components::Lifecycle;
+    use crate::cultivation::components::{
+        encode_persisted_cultivation, ActorQiIdentity, ActorQiKind, ColorKind, ContamSource,
+    };
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
@@ -1075,6 +1770,76 @@ mod tests {
     use valence::prelude::App;
     use valence::testing::create_mock_client;
 
+    #[test]
+    fn cultivation_wire_accepts_valid_snapshot_and_preserves_non_qi_fields() {
+        let value = serde_json::json!({
+            "realm": "Solidify",
+            "qi_current": 4.0,
+            "qi_max": 10.0,
+            "qi_max_frozen": 2.0,
+            "last_qi_zero_at": 99,
+            "pending_material_bonus": 1.5,
+            "composure": 0.6,
+            "composure_recover_rate": 0.002,
+            "race": "human"
+        });
+
+        let decoded = decode_persisted_cultivation(value).expect("valid wire should hydrate");
+        assert_eq!(decoded.realm, Realm::Solidify);
+        assert_eq!(decoded.qi_snapshot().current, 4.0);
+        assert_eq!(decoded.qi_snapshot().max, 10.0);
+        assert_eq!(decoded.qi_snapshot().frozen, Some(2.0));
+        assert_eq!(decoded.last_qi_zero_at, Some(99));
+        assert_eq!(decoded.pending_material_bonus, 1.5);
+        assert_eq!(decoded.composure, 0.6);
+        assert_eq!(decoded.race, RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    }
+
+    #[test]
+    fn cultivation_wire_defaults_missing_legacy_race_to_human() {
+        let value = serde_json::json!({
+            "realm": "Awaken",
+            "qi_current": 0.0,
+            "qi_max": 10.0,
+            "qi_max_frozen": null,
+            "last_qi_zero_at": null,
+            "pending_material_bonus": 0.0,
+            "composure": 1.0,
+            "composure_recover_rate": 0.001
+        });
+
+        let decoded = decode_persisted_cultivation(value).expect("legacy wire should hydrate");
+        assert_eq!(decoded.race, RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    }
+
+    #[test]
+    fn cultivation_wire_rejects_every_invalid_qi_snapshot() {
+        let invalid_qi = [
+            (-1.0, 10.0, None),
+            (11.0, 10.0, None),
+            (1.0, -1.0, None),
+            (1.0, 10.0, Some(5.000_001)),
+        ];
+
+        for (current, max, frozen) in invalid_qi {
+            let value = serde_json::json!({
+                "realm": "Awaken",
+                "qi_current": current,
+                "qi_max": max,
+                "qi_max_frozen": frozen,
+                "last_qi_zero_at": null,
+                "pending_material_bonus": 0.0,
+                "composure": 1.0,
+                "composure_recover_rate": 0.001,
+                "race": "human"
+            });
+            assert!(
+                decode_persisted_cultivation(value).is_err(),
+                "invalid snapshot current={current} max={max} frozen={frozen:?} must fail closed"
+            );
+        }
+    }
+
     fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
         let temp_root = std::env::temp_dir().join(format!(
             "bong-cultivation-{test_name}-{}-{}",
@@ -1085,11 +1850,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         (settings, temp_root)
@@ -1124,6 +1885,43 @@ mod tests {
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
     }
 
+    /// plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 曾经零处 insert（6a 只在
+    /// `RaceChange` 换种族事务里才写它）。首次 join（无持久化 bundle,新角色）也必须
+    /// 在同一帧拿到 `IntrinsicRace`,且必须与同批插入的 `Cultivation.race` 一致——
+    /// 这是本 PR 关闭的孤岛核心断言。
+    #[test]
+    fn joined_client_receives_intrinsic_race_matching_cultivation_race_on_first_join() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("FreshJoiner");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(entity)
+            .expect("joined client should receive Cultivation");
+        let intrinsic_race = app
+            .world()
+            .get::<crate::body_plan::IntrinsicRace>(entity)
+            .expect(
+                "joined client should receive IntrinsicRace on first join (no RaceChange needed)",
+            );
+
+        assert_eq!(
+            intrinsic_race.0, cultivation.race,
+            "IntrinsicRace must mirror the freshly-hydrated Cultivation.race"
+        );
+        assert_eq!(
+            intrinsic_race.0,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "brand-new character with no persisted bundle must default to the human race"
+        );
+    }
+
     #[test]
     fn joined_client_defaults_to_awaken_lifespan_cap() {
         let mut app = App::new();
@@ -1150,6 +1948,85 @@ mod tests {
             .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+    }
+
+    #[test]
+    fn joined_client_marks_any_corrupt_known_sibling_and_preserves_durable_bundle() {
+        let (settings, root) = temp_persistence_settings("corrupt-sibling-writeback-guard");
+        let username = "CorruptSibling";
+        let life_record = LifeRecord::new(canonical_player_id(username));
+        crate::persistence::persist_player_cultivation_bundle(
+            &settings,
+            username,
+            &Cultivation {
+                realm: Realm::Spirit,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            &life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation bundle should succeed");
+
+        let connection =
+            rusqlite::Connection::open(settings.db_path()).expect("fixture sqlite should open");
+        let baseline_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                rusqlite::params![username],
+                |row| row.get(0),
+            )
+            .expect("seeded cultivation bundle should query");
+        let mut corrupt_bundle: serde_json::Value =
+            serde_json::from_str(&baseline_json).expect("seeded bundle should be valid JSON");
+        corrupt_bundle["karma"] = serde_json::json!({ "weight": "not-a-number" });
+        let corrupt_json =
+            serde_json::to_string(&corrupt_bundle).expect("corrupt fixture should serialize");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![corrupt_json, username],
+            )
+            .expect("corrupt sibling fixture should persist");
+        drop(connection);
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<CultivationBundleLoadFailed>(entity)
+                .is_some(),
+            "a corrupt known sibling must mark the whole cultivation bundle non-writable"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().realm,
+            Realm::Spirit,
+            "valid siblings may hydrate for play, but the marker must prevent default fallback writeback"
+        );
+        let durable_after = crate::persistence::load_player_cultivation_bundle(&settings, username)
+            .expect("durable bundle should remain readable")
+            .expect("durable bundle row must remain");
+        assert_eq!(
+            durable_after["karma"], corrupt_bundle["karma"],
+            "join-time hydration must not overwrite a corrupt sibling with its default value"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1217,7 +2094,7 @@ mod tests {
 
     fn terminated_life_record(character_id: &str) -> LifeRecord {
         let mut record = LifeRecord::new(character_id.to_string());
-        record.push(BiographyEntry::NearDeath {
+        record.push(BiographyEntry::Death {
             cause: "old_test_wound".to_string(),
             tick: 40,
         });
@@ -1501,8 +2378,8 @@ mod tests {
         let canonical_id = crate::player::state::player_character_id("Azure", &raw_id);
 
         let mut life_record = LifeRecord::new(canonical_id.clone());
-        // 关键：只有 NearDeath，没有 Terminated —— 角色仍然"活着"。
-        life_record.push(BiographyEntry::NearDeath {
+        // 只有死亡记录而未终结，重连不能创建新角色。
+        life_record.push(BiographyEntry::Death {
             cause: "close_call".to_string(),
             tick: 10,
         });
@@ -1606,11 +2483,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1679,11 +2552,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1741,11 +2610,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1802,11 +2667,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1880,11 +2741,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1943,11 +2800,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -1999,11 +2852,11 @@ mod tests {
                     last_revive_tick: None,
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: None,
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: None,
                     state: crate::combat::components::LifecycleState::Alive,
+                    ..Lifecycle::default()
                 },
             ))
             .id();
@@ -2184,6 +3037,504 @@ mod tests {
         .expect("seeding cultivation bundle with a custom race should succeed");
     }
 
+    fn seed_cultivation_bundle_with_qi_and_life_record(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+        life_record: &LifeRecord,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm: Realm::Condense,
+                qi_current,
+                qi_max,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation qi snapshot should succeed");
+    }
+
+    fn seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+        life_record: &LifeRecord,
+        tutorial_state: &crate::world::spawn_tutorial::TutorialState,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm: Realm::Condense,
+                qi_current,
+                qi_max,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            Some(tutorial_state),
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation and tutorial snapshots should succeed");
+    }
+
+    fn seed_cultivation_bundle_with_qi(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+    ) {
+        let life_record = LifeRecord::new(canonical_player_id(username));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            settings,
+            username,
+            qi_current,
+            qi_max,
+            &life_record,
+        );
+    }
+
+    #[test]
+    fn joined_clients_reject_conflicting_persisted_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-conflicting-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "Canonical")
+                .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("Canonical", &raw_character_id);
+        let conflicting_life_record = LifeRecord::new(canonical_player_id("OtherPlayer"));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "Canonical",
+            4.0,
+            12.0,
+            &conflicting_life_record,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Canonical");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("rejected bundle must still attach a canonical LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("rejected bundle must still attach a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("rejected bundle must still attach a safe cultivation state");
+        assert_eq!(
+            life_record.character_id, canonical_id,
+            "the persisted OtherPlayer record must never become Canonical's live identity"
+        );
+        assert_eq!(
+            death_registry.char_id, canonical_id,
+            "DeathRegistry must share the same canonical identity as LifeRecord"
+        );
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "the conflicting identity anchor must reject the whole bundle, including its persisted qi"
+        );
+        assert_eq!(
+            ActorQiIdentity::from_life_record(life_record, ActorQiKind::Player)
+                .expect("canonical live LifeRecord must make one valid actor identity")
+                .account(),
+            crate::qi_physics::ledger::QiAccountId::player(canonical_id),
+            "the only live actor qi claim after rejection must be canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_persisted_bundle_missing_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-missing-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "MissingAnchor")
+                .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("MissingAnchor", &raw_character_id);
+        let life_record = LifeRecord::new(canonical_id.clone());
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "MissingAnchor",
+            4.0,
+            12.0,
+            &life_record,
+        );
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to remove the required identity anchor");
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                rusqlite::params!["MissingAnchor"],
+                |row| row.get(0),
+            )
+            .expect("seeded bundle should exist before removing its identity anchor");
+        let mut bundle: serde_json::Value = serde_json::from_str(cultivation_json.as_str())
+            .expect("seeded cultivation bundle must be valid JSON before mutation");
+        bundle
+            .as_object_mut()
+            .expect("cultivation bundle must be a JSON object")
+            .remove("life_record")
+            .expect("fixture must remove an existing life_record identity anchor");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![
+                    serde_json::to_string(&bundle)
+                        .expect("mutated cultivation bundle must remain serializable"),
+                    "MissingAnchor"
+                ],
+            )
+            .expect("removing the identity anchor should update the persisted bundle");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("MissingAnchor");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let live_life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("missing persisted identity must still produce a canonical live LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("missing persisted identity must still produce a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("missing persisted identity must still produce a safe cultivation state");
+        assert_eq!(
+            live_life_record.character_id, canonical_id,
+            "a bundle without LifeRecord must not invent a second identity from its other slices"
+        );
+        assert_eq!(
+            death_registry.char_id, canonical_id,
+            "DeathRegistry must bind the same canonical identity after rejecting the bundle"
+        );
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "a bundle without its required identity anchor must not restore its persisted qi"
+        );
+        assert_eq!(
+            ActorQiIdentity::from_life_record(live_life_record, ActorQiKind::Player)
+                .expect("canonical live LifeRecord must make one valid actor identity")
+                .account(),
+            crate::qi_physics::ledger::QiAccountId::player(canonical_id),
+            "the live actor qi claim after missing-anchor rejection must remain canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_defer_when_active_character_lookup_fails_then_retry() {
+        let (settings, root) = temp_persistence_settings("defer-active-character-lookup");
+        let life_record = LifeRecord::new(canonical_player_id("DeferredIdentity"));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "DeferredIdentity",
+            4.0,
+            12.0,
+            &life_record,
+        );
+        let failed_db_path = root.join("active-character-lookup-failure");
+        std::fs::create_dir_all(&failed_db_path)
+            .expect("fixture path must be a directory so SQLite opening it fails");
+        let failing_persistence = crate::player::state::PlayerStatePersistence::with_db_path(
+            root.join("players"),
+            &failed_db_path,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(failing_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("DeferredIdentity");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "a failed active-character lookup must defer rather than attach persisted qi under the account fallback identity"
+        );
+        assert!(
+            app.world()
+                .get::<CultivationAttachPending>(entity)
+                .is_some(),
+            "the failed lookup must leave a retry marker for a later tick"
+        );
+
+        app.world_mut()
+            .insert_resource(player_state_persistence_for(&settings, &root));
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 20 });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("the retry must attach cultivation after active-character lookup succeeds");
+        assert_eq!(cultivation.qi_current, 4.0);
+        assert_eq!(cultivation.qi_max, 12.0);
+        assert!(
+            app.world()
+                .get::<CultivationAttachPending>(entity)
+                .is_none(),
+            "a successful retry must clear the pending marker"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_malformed_persisted_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-malformed-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id = crate::player::state::rotate_current_character_id(
+            &player_persistence,
+            "MalformedAnchor",
+        )
+        .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("MalformedAnchor", &raw_character_id);
+        let life_record = LifeRecord::new(canonical_id.clone());
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "MalformedAnchor",
+            4.0,
+            12.0,
+            &life_record,
+        );
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to corrupt the identity anchor");
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                rusqlite::params!["MalformedAnchor"],
+                |row| row.get(0),
+            )
+            .expect("seeded bundle should exist before corrupting its identity anchor");
+        let mut bundle: serde_json::Value = serde_json::from_str(cultivation_json.as_str())
+            .expect("seeded cultivation bundle must be valid JSON before mutation");
+        bundle
+            .as_object_mut()
+            .expect("cultivation bundle must be a JSON object")
+            .insert(
+                "life_record".to_string(),
+                serde_json::json!("not-a-life-record"),
+            );
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![
+                    serde_json::to_string(&bundle)
+                        .expect("mutated cultivation bundle must remain serializable"),
+                    "MalformedAnchor"
+                ],
+            )
+            .expect("corrupting the identity anchor should update the persisted bundle");
+        drop(connection);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("MalformedAnchor");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let live_life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("malformed persisted identity must still produce a canonical live LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("malformed persisted identity must still produce a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("malformed persisted identity must still attach a safe cultivation state");
+        assert_eq!(live_life_record.character_id, canonical_id);
+        assert_eq!(death_registry.char_id, canonical_id);
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "a malformed LifeRecord must reject the whole bundle, including persisted qi_current=4"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tutorial_restore_consumes_the_same_validated_cultivation_bundle_decision() {
+        let (settings, root) = temp_persistence_settings("tutorial-uses-validated-bundle");
+        let accepted_life_record = LifeRecord::new(canonical_player_id("AcceptedTutorial"));
+        let mut accepted_tutorial = crate::world::spawn_tutorial::TutorialState::new(17);
+        accepted_tutorial.trigger(crate::world::spawn_tutorial::TutorialHook::CoffinOpened);
+        seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+            &settings,
+            "AcceptedTutorial",
+            4.0,
+            12.0,
+            &accepted_life_record,
+            &accepted_tutorial,
+        );
+
+        let rejected_life_record = LifeRecord::new(canonical_player_id("SomeoneElse"));
+        let mut rejected_tutorial = crate::world::spawn_tutorial::TutorialState::new(29);
+        rejected_tutorial.trigger(crate::world::spawn_tutorial::TutorialHook::CoffinOpened);
+        seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+            &settings,
+            "RejectedTutorial",
+            4.0,
+            12.0,
+            &rejected_life_record,
+            &rejected_tutorial,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(crate::world::spawn_tutorial::TutorialTelemetry::default());
+        app.add_systems(
+            Update,
+            attach_cultivation_to_joined_clients
+                .before(crate::world::spawn_tutorial::attach_tutorial_state_to_joined_clients),
+        );
+        app.add_systems(
+            Update,
+            crate::world::spawn_tutorial::attach_tutorial_state_to_joined_clients,
+        );
+
+        let (accepted_bundle, _accepted_helper) = create_mock_client("AcceptedTutorial");
+        let accepted_entity = app.world_mut().spawn(accepted_bundle).id();
+        let (rejected_bundle, _rejected_helper) = create_mock_client("RejectedTutorial");
+        let rejected_entity = app.world_mut().spawn(rejected_bundle).id();
+        app.update();
+        app.update();
+
+        let accepted_state = app
+            .world()
+            .get::<crate::world::spawn_tutorial::TutorialState>(accepted_entity)
+            .expect("accepted bundle must restore tutorial through the cultivation handoff");
+        assert_eq!(accepted_state, &accepted_tutorial);
+
+        let rejected_state = app
+            .world()
+            .get::<crate::world::spawn_tutorial::TutorialState>(rejected_entity)
+            .expect("rejected bundle must still attach a fresh tutorial state");
+        assert_eq!(
+            rejected_state.entered_at_tick, 0,
+            "rejected bundle must not restore persisted tutorial_state from a second SQLite read"
+        );
+        assert!(
+            !rejected_state.has(crate::world::spawn_tutorial::TutorialHook::CoffinOpened),
+            "rejected bundle must reject all sibling slices, including tutorial_state"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_restore_validated_non_default_cultivation_qi_snapshot() {
+        let (settings, root) = temp_persistence_settings("restore-validated-cultivation-qi");
+        seed_cultivation_bundle_with_qi(&settings, "RestoredQi", 4.0, 12.0);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("RestoredQi");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("joined client should receive persisted cultivation");
+        assert_eq!(cultivation.realm, Realm::Condense);
+        assert_eq!(cultivation.qi_current, 4.0);
+        assert_eq!(cultivation.qi_max, 12.0);
+        assert_eq!(cultivation.qi_max_frozen, None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_invalid_persisted_cultivation_qi_without_partial_restore() {
+        for (test_name, qi_current, qi_max) in [
+            ("negative-current", -1.0, 12.0),
+            ("current-over-max", 13.0, 12.0),
+        ] {
+            let (settings, root) = temp_persistence_settings(test_name);
+            let username = format!("InvalidQi-{}", test_name.replace('-', ""));
+            seed_cultivation_bundle_with_qi(&settings, &username, qi_current, qi_max);
+
+            let mut app = App::new();
+            app.insert_resource(settings);
+            app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+            let (client_bundle, _helper) = create_mock_client(&username);
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.update();
+
+            let cultivation = app
+                .world()
+                .get::<Cultivation>(entity)
+                .expect("joined client should still receive a safe default cultivation");
+            assert_eq!(
+                cultivation,
+                &Cultivation::default(),
+                "invalid persisted qi current={qi_current} max={qi_max} must be rejected before any live field is restored"
+            );
+
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
     /// 手写 SQL 插入模拟"race 字段加入前"的旧存档形状：`persist_player_cultivation_bundle`
     /// 恒序列化完整 `Cultivation`（`race` 字段总在场），无法产出缺 race 字段的 bundle，
     /// 所以这里绕开它直接拼一份不含 "race" key 的 JSON 落库。
@@ -2192,11 +3543,12 @@ mod tests {
         username: &str,
         realm: Realm,
     ) {
-        let mut cultivation_value = serde_json::to_value(Cultivation {
-            realm,
-            ..Default::default()
-        })
-        .expect("Cultivation must serialize to JSON");
+        let mut cultivation_value =
+            serde_json::to_value(encode_persisted_cultivation(&Cultivation {
+                realm,
+                ..Default::default()
+            }))
+            .expect("persisted cultivation must serialize to JSON");
         cultivation_value
             .as_object_mut()
             .expect("Cultivation serializes to a JSON object")
@@ -2205,7 +3557,13 @@ mod tests {
         let bundle = serde_json::json!({
             "v": 1,
             "cultivation": cultivation_value,
-            "meridians": MeridianSystem::default(),
+            // plan-race-system-v1 P1a：本 fixture 显式标 "v":1（race 字段加入前的旧
+            // 存档），`meridians` 必须同样是真实 v1 legacy 形状（`MeridianId`
+            // PascalCase 枚举名 channel id）而不是 `MeridianSystem::default()`（那是
+            // *当前* snake_case 形态）——否则会静默触发本模块的 legacy 迁移分支解析
+            // 失败又静默 fallback 回默认值，恰好凑出同一个值掩盖了问题，而不是真的
+            // 走通迁移路径。
+            "meridians": legacy_meridian_bundle::v1_all_closed_meridian_system_sample(),
             "qi_color": QiColor::default(),
             "karma": Karma::default(),
             "contamination": Contamination::default(),
@@ -2278,6 +3636,194 @@ mod tests {
              was persisted alongside it but must NOT survive) — proving this is bundle-level \
              corrupted-path handling, not a narrow 'only overwrite the race field' patch that \
              would silently keep the rest of an untrusted bundle"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// plan-race-system-v1 bughunt major-2：未知 race 的 bundle 里 sibling slice 全部
+    /// 塞进明显偏离默认值的数据（经脉全开/带毒/带污染/带洞察额度……），用来证明拒载
+    /// 覆盖的不只是 `Cultivation` 一个组件——旧实现只回退 `cultivation`，其余约 12 个
+    /// slice 会原样水合，相当于"醒灵即刻全通经脉 + 满毒素抗性表"的白嫖突破后门。
+    #[test]
+    fn joined_clients_reject_persisted_bundle_with_unknown_race_resets_every_sibling_slice() {
+        let (settings, root) =
+            temp_persistence_settings("reject-unknown-race-full-bundle-rollback");
+        let username = "ChimeraGhoul";
+
+        let mut poisoned_meridians = MeridianSystem::default();
+        for meridian in poisoned_meridians
+            .regular
+            .iter_mut()
+            .chain(poisoned_meridians.extraordinary.iter_mut())
+        {
+            meridian.opened = true;
+            meridian.open_progress = 1.0;
+        }
+        let poisoned_qi_color = QiColor {
+            is_chaotic: true,
+            is_hunyuan: true,
+            ..Default::default()
+        };
+        let poisoned_karma = Karma { weight: 999.0 };
+        let poisoned_contamination = Contamination {
+            entries: vec![ContamSource {
+                amount: 50.0,
+                color: ColorKind::Sharp,
+                meridian_id: None,
+                attacker_id: Some("intruder".to_string()),
+                introduced_at: 1,
+            }],
+        };
+        let mut poisoned_practice_log = PracticeLog::default();
+        poisoned_practice_log
+            .weights
+            .insert(ColorKind::Sharp, 12345.0);
+        let mut poisoned_insight_quota = InsightQuota {
+            used_this_realm: 9,
+            ..Default::default()
+        };
+        poisoned_insight_quota
+            .fired_triggers
+            .push("stolen_trigger".to_string());
+        let mut poisoned_unlocked_perceptions = UnlockedPerceptions::default();
+        poisoned_unlocked_perceptions
+            .set
+            .insert("stolen_perception".to_string());
+        let poisoned_insight_modifiers = InsightModifiers {
+            qi_regen_mul: 7.0,
+            ..InsightModifiers::new()
+        };
+        let poisoned_severed = MeridianSeveredPermanent::default();
+        let poisoned_poison_toxicity = PoisonToxicity {
+            level: 88.0,
+            source_history: Vec::new(),
+            last_dose_tick: 1,
+            last_decay_tick: 0,
+            ..Default::default()
+        };
+        let poisoned_digestion_load = DigestionLoad {
+            current: 500.0,
+            capacity: 1.0,
+            decay_rate: 0.0,
+            digest_lock_until_tick: None,
+            ..Default::default()
+        };
+
+        crate::persistence::persist_player_cultivation_bundle(
+            &settings,
+            username,
+            &Cultivation {
+                realm: Realm::Solidify,
+                race: RaceId::new("nonexistent"),
+                ..Default::default()
+            },
+            &poisoned_meridians,
+            &poisoned_qi_color,
+            &poisoned_karma,
+            &poisoned_contamination,
+            &LifeRecord::new(canonical_player_id(username)),
+            &poisoned_practice_log,
+            &poisoned_insight_quota,
+            &poisoned_unlocked_perceptions,
+            &poisoned_insight_modifiers,
+            None,
+            &poisoned_severed,
+            Some(&poisoned_poison_toxicity),
+            Some(&poisoned_digestion_load),
+        )
+        .expect("seeding a poisoned unknown-race bundle should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(race_registry_with_only_human());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let world = app.world();
+        assert_eq!(
+            world.get::<Cultivation>(entity).unwrap().race,
+            RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            "cultivation slice must reset"
+        );
+        let live_meridians = world
+            .get::<MeridianSystem>(entity)
+            .expect("meridians must still attach");
+        assert!(
+            live_meridians
+                .regular
+                .iter()
+                .chain(live_meridians.extraordinary.iter())
+                .all(|m| !m.opened),
+            "meridians sibling slice must reset to the closed default, not inherit the \
+             poisoned all-opened bundle from the rejected unknown-race save — a chimera that \
+             never validated a race would otherwise wake up with every meridian already open"
+        );
+        let live_qi_color = world.get::<QiColor>(entity).unwrap();
+        assert!(
+            !live_qi_color.is_chaotic && !live_qi_color.is_hunyuan,
+            "qi_color sibling slice must reset to default (is_chaotic=false, is_hunyuan=false), \
+             not inherit the poisoned is_chaotic=true/is_hunyuan=true, 实测 {live_qi_color:?}"
+        );
+        assert_eq!(
+            world.get::<Karma>(entity).unwrap().weight,
+            0.0,
+            "karma sibling slice must reset to default (weight=0.0), not the poisoned 999.0"
+        );
+        assert!(
+            world
+                .get::<Contamination>(entity)
+                .unwrap()
+                .entries
+                .is_empty(),
+            "contamination sibling slice must reset to empty, not inherit the poisoned entry"
+        );
+        assert!(
+            world.get::<PracticeLog>(entity).unwrap().weights.is_empty(),
+            "practice_log sibling slice must reset to default, not inherit the poisoned weights"
+        );
+        let live_insight_quota = world.get::<InsightQuota>(entity).unwrap();
+        assert_eq!(
+            live_insight_quota.used_this_realm, 0,
+            "insight_quota sibling slice must reset to default"
+        );
+        assert!(
+            live_insight_quota.fired_triggers.is_empty(),
+            "insight_quota.fired_triggers must reset to empty, not inherit the stolen trigger"
+        );
+        assert!(
+            world
+                .get::<UnlockedPerceptions>(entity)
+                .unwrap()
+                .set
+                .is_empty(),
+            "unlocked_perceptions sibling slice must reset to empty, not inherit the stolen \
+             perception"
+        );
+        assert_eq!(
+            world.get::<InsightModifiers>(entity).unwrap().qi_regen_mul,
+            InsightModifiers::new().qi_regen_mul,
+            "insight_modifiers sibling slice must reset to default, not the poisoned 7.0x"
+        );
+        let live_poison_toxicity = world
+            .get::<PoisonToxicity>(entity)
+            .expect("poison_toxicity must still attach");
+        assert_eq!(
+            live_poison_toxicity.level, 0.0,
+            "poison_toxicity sibling slice must reset to default (level=0.0), not the poisoned \
+             88.0"
+        );
+        let live_digestion_load = world
+            .get::<DigestionLoad>(entity)
+            .expect("digestion_load must still attach");
+        assert_ne!(
+            live_digestion_load.current, 500.0,
+            "digestion_load sibling slice must reset to the realm default, not inherit the \
+             poisoned current=500.0"
         );
 
         let _ = std::fs::remove_dir_all(root);

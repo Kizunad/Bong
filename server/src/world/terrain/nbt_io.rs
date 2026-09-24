@@ -32,14 +32,28 @@
 //! below exercises every public entry point regardless.
 #![allow(dead_code)]
 
-use std::io::{self, Read, Write};
-use std::path::Path;
+#[cfg(windows)]
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
+use std::io::{self, ErrorKind, Read, Write};
+use std::mem::size_of;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use valence::nbt::{from_binary, to_binary, Compound, List, Value};
-use valence::prelude::{BlockState, PropName, PropValue};
+use valence::prelude::BlockState;
 
 /// MC 1.20.1 structure DataVersion. Must match
 /// `scripts/nbt/nbt_builder.py::StructureBuilder.DATA_VERSION`.
@@ -49,6 +63,11 @@ pub const DATA_VERSION: i32 = 3465;
 /// bare (uncompressed) NBT is rejected so we never silently mis-parse a file
 /// written by a non-conforming tool.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Maximum compressed bytes admitted for one structure input.
+pub const MAX_COMPRESSED_NBT_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum decompressed NBT payload admitted for one structure input.
+pub const MAX_DECOMPRESSED_NBT_BYTES: usize = 32 * 1024 * 1024;
 
 /// Errors surfaced by [`read_structure_nbt`] / [`write_structure_nbt`].
 #[derive(Debug)]
@@ -62,6 +81,10 @@ pub enum NbtIoError {
     Malformed(String),
     /// NBT binary decode/encode error from `valence_nbt`.
     Nbt(String),
+    /// The compressed input exceeded the per-file admission limit.
+    CompressedPayloadTooLarge { limit: usize },
+    /// The decompressed NBT payload exceeded the per-file admission limit.
+    DecompressedPayloadTooLarge { limit: usize },
 }
 
 impl std::fmt::Display for NbtIoError {
@@ -75,6 +98,14 @@ impl std::fmt::Display for NbtIoError {
             ),
             NbtIoError::Malformed(msg) => write!(f, "malformed structure nbt: {msg}"),
             NbtIoError::Nbt(msg) => write!(f, "nbt codec error: {msg}"),
+            NbtIoError::CompressedPayloadTooLarge { limit } => write!(
+                f,
+                "compressed structure nbt exceeds the {limit}-byte per-file limit"
+            ),
+            NbtIoError::DecompressedPayloadTooLarge { limit } => write!(
+                f,
+                "decompressed structure nbt exceeds the {limit}-byte per-file limit"
+            ),
         }
     }
 }
@@ -132,22 +163,16 @@ impl PaletteEntry {
         PaletteEntry { name, properties }
     }
 
-    /// Lower this palette entry into a runtime [`BlockState`], applying any
-    /// properties valence recognises. Returns `None` when the bare block name
-    /// is unknown to `block_from_name` (the caller decides whether to warn and
-    /// skip or treat it as fatal).
-    pub fn block_state(&self) -> Option<BlockState> {
-        let mut state = super::blocks::block_from_name(self.bare_name())?;
-        for (prop_name, prop_val) in &self.properties {
-            if let (Some(pn), Some(pv)) =
-                (PropName::from_str(prop_name), PropValue::from_str(prop_val))
-            {
-                if state.get(pn).is_some() {
-                    state = state.set(pn, pv);
-                }
-            }
-        }
-        Some(state)
+    /// Lower this palette entry through the shared strict catalog/property
+    /// validator. Unknown blocks, namespaces, properties, and invalid values are
+    /// returned to the caller instead of being silently dropped.
+    pub fn block_state(&self) -> Result<BlockState, super::blocks::BlockStateResolveError> {
+        super::blocks::block_state_with_properties(
+            &self.name,
+            self.properties
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
     }
 }
 
@@ -179,44 +204,565 @@ pub struct StructureNbt {
     pub entities: Vec<Compound>,
 }
 
+const MAX_PALETTE_INDEX_EXAMPLES: usize = 8;
+
+fn resident_palette_entry_bytes(entry: &PaletteEntry) -> usize {
+    entry.name.capacity()
+        + entry.properties.capacity() * size_of::<(String, String)>()
+        + entry
+            .properties
+            .iter()
+            .map(|(key, value)| key.capacity() + value.capacity())
+            .sum::<usize>()
+}
+
+fn resident_block_entry_bytes(entry: &StructureBlockEntry) -> usize {
+    entry
+        .block_nbt
+        .as_ref()
+        .map(resident_compound_bytes)
+        .unwrap_or_default()
+}
+
+fn resident_compound_bytes(compound: &Compound) -> usize {
+    compound
+        .iter()
+        .map(|(key, value)| {
+            size_of::<(String, Value)>() + key.capacity() + resident_value_bytes(value)
+        })
+        .sum()
+}
+
+fn resident_list_bytes(list: &List) -> usize {
+    match list {
+        List::End => 0,
+        List::Byte(values) => values.capacity() * size_of::<i8>(),
+        List::Short(values) => values.capacity() * size_of::<i16>(),
+        List::Int(values) => values.capacity() * size_of::<i32>(),
+        List::Long(values) => values.capacity() * size_of::<i64>(),
+        List::Float(values) => values.capacity() * size_of::<f32>(),
+        List::Double(values) => values.capacity() * size_of::<f64>(),
+        List::ByteArray(values) => {
+            values.capacity() * size_of::<Vec<i8>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i8>())
+                    .sum::<usize>()
+        }
+        List::String(values) => {
+            values.capacity() * size_of::<String>()
+                + values.iter().map(String::capacity).sum::<usize>()
+        }
+        List::List(values) => {
+            values.capacity() * size_of::<List>()
+                + values.iter().map(resident_list_bytes).sum::<usize>()
+        }
+        List::Compound(values) => {
+            values.capacity() * size_of::<Compound>()
+                + values.iter().map(resident_compound_bytes).sum::<usize>()
+        }
+        List::IntArray(values) => {
+            values.capacity() * size_of::<Vec<i32>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i32>())
+                    .sum::<usize>()
+        }
+        List::LongArray(values) => {
+            values.capacity() * size_of::<Vec<i64>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i64>())
+                    .sum::<usize>()
+        }
+    }
+}
+
+fn resident_value_bytes(value: &Value) -> usize {
+    match value {
+        Value::Byte(_)
+        | Value::Short(_)
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Float(_)
+        | Value::Double(_) => 0,
+        Value::ByteArray(values) => values.capacity() * size_of::<i8>(),
+        Value::String(value) => value.capacity(),
+        Value::List(value) => resident_list_bytes(value),
+        Value::Compound(value) => resident_compound_bytes(value),
+        Value::IntArray(values) => values.capacity() * size_of::<i32>(),
+        Value::LongArray(values) => values.capacity() * size_of::<i64>(),
+    }
+}
+
 impl StructureNbt {
-    /// Collect every bare palette block name (namespace stripped) that does NOT
-    /// resolve through `blocks::block_from_name`. An empty result means the
-    /// whole palette is renderable; a non-empty result lists the offending
-    /// names so callers can fail loudly instead of silently dropping blocks
-    /// during a stamp.
-    ///
-    /// This is the runtime mirror of the `AUTHORED_STRUCTURE_BLOCKS` dual-pin
-    /// test in `blocks.rs`: it enforces the same "every authored palette block
-    /// must be resolvable" contract on data actually loaded from disk.
+    /// Conservative accounting of owned resident storage used by one template.
+    /// Vec/String capacities are counted so the startup aggregate budget covers
+    /// allocation slack, not only logical payload lengths.
+    pub fn resident_memory_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.palette.capacity() * size_of::<PaletteEntry>()
+            + self
+                .palette
+                .iter()
+                .map(resident_palette_entry_bytes)
+                .sum::<usize>()
+            + self.blocks.capacity() * size_of::<StructureBlockEntry>()
+            + self
+                .blocks
+                .iter()
+                .map(resident_block_entry_bytes)
+                .sum::<usize>()
+            + self.entities.capacity() * size_of::<Compound>()
+            + self
+                .entities
+                .iter()
+                .map(resident_compound_bytes)
+                .sum::<usize>()
+    }
+
     pub fn unresolved_palette_blocks(&self) -> Vec<String> {
         self.palette
             .iter()
-            .filter(|entry| super::blocks::block_from_name(entry.bare_name()).is_none())
-            .map(|entry| entry.name.clone())
+            .filter_map(|entry| {
+                entry
+                    .block_state()
+                    .err()
+                    .map(|error| format!("{}: {error}", entry.name))
+            })
             .collect()
     }
+
+    pub fn palette_diagnostics(&self) -> Vec<String> {
+        let mut diagnostics = self.unresolved_palette_blocks();
+        let mut invalid_count = 0usize;
+        let mut examples = Vec::new();
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            let state = usize::try_from(block.state).ok();
+            if state.is_some_and(|state| state < self.palette.len()) {
+                continue;
+            }
+            invalid_count += 1;
+            if examples.len() < MAX_PALETTE_INDEX_EXAMPLES {
+                examples.push(format!(
+                    "block #{} at {:?} references palette state {}",
+                    block_index + 1,
+                    block.pos,
+                    block.state
+                ));
+            }
+        }
+        if invalid_count > 0 {
+            diagnostics.push(format!(
+                "{invalid_count} block(s) reference invalid palette states (palette length {}); first {}: {}",
+                self.palette.len(),
+                examples.len(),
+                examples.join(", ")
+            ));
+        }
+        diagnostics
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK: std::cell::RefCell<
+        Option<Box<dyn FnOnce()>>,
+    > = std::cell::RefCell::new(None);
+    static OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK: std::cell::RefCell<
+        Option<Box<dyn FnOnce()>>,
+    > = std::cell::RefCell::new(None);
+}
+
+/// Open an authored input without following its final path component and admit
+/// only a regular file. Directory-tree callers must additionally verify the
+/// opened object remains under their frozen trusted root.
+pub(crate) fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    options.custom_flags(0o400_000 | 0o4_000); // O_NOFOLLOW | O_NONBLOCK.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    options.custom_flags(0x0000_0100 | 0x0000_0004); // O_NOFOLLOW | O_NONBLOCK.
+    #[cfg(windows)]
+    options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT.
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(open_error) => {
+            if std::fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.file_type().is_file())
+            {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "{} must be a regular file, not a symlink or special node (open failed: {open_error})",
+                        path.display()
+                    ),
+                ));
+            }
+            return Err(open_error);
+        }
+    };
+    #[cfg(test)]
+    OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!(
+                "{} must be a regular file, not a symlink or special node",
+                path.display()
+            ),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(test)]
+pub(crate) fn set_open_regular_file_before_open_test_hook(hook: impl FnOnce() + 'static) {
+    OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn set_open_regular_file_after_open_test_hook(hook: impl FnOnce() + 'static) {
+    OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(unix)]
+fn descriptor_open_path(file: &File) -> PathBuf {
+    let fd = file.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    let link = format!("/proc/self/fd/{fd}");
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let link = format!("/dev/fd/{fd}");
+    PathBuf::from(link)
+}
+
+#[cfg(unix)]
+fn descriptor_path(file: &File) -> io::Result<PathBuf> {
+    let link = descriptor_open_path(file);
+    std::fs::read_link(&link).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to resolve opened descriptor {}: {error}",
+                link.display()
+            ),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn descriptor_path(file: &File) -> io::Result<PathBuf> {
+    type Dword = u32;
+    type Handle = *mut std::ffi::c_void;
+    unsafe extern "system" {
+        fn GetFinalPathNameByHandleW(
+            hFile: Handle,
+            lpszFilePath: *mut u16,
+            cchFilePath: Dword,
+            dwFlags: Dword,
+        ) -> Dword;
+    }
+
+    const VOLUME_NAME_DOS: Dword = 0;
+    let handle = file.as_raw_handle() as Handle;
+    let mut buffer = vec![0_u16; 512];
+    loop {
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as Dword,
+                VOLUME_NAME_DOS,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if (length as usize) < buffer.len() {
+            return Ok(PathBuf::from(OsString::from_wide(
+                &buffer[..length as usize],
+            )));
+        }
+        buffer.resize(buffer.len() * 2, 0);
+    }
+}
+
+#[cfg(unix)]
+fn open_directory_no_follow(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    options.custom_flags(0o400_000); // O_NOFOLLOW.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    options.custom_flags(0x0000_0100); // O_NOFOLLOW.
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(open_error) => {
+            if std::fs::symlink_metadata(path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!(
+                        "{} must be a real directory, not a symlink (open failed: {open_error})",
+                        path.display()
+                    ),
+                ));
+            }
+            return Err(open_error);
+        }
+    };
+    if !file.metadata()?.is_dir() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} must be a directory", path.display()),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_regular_file_from_root(path: &Path, trusted_root: &Path) -> io::Result<File> {
+    let relative = path.strip_prefix(trusted_root).map_err(|_| {
+        io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} is not beneath trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        )
+    })?;
+    let components = relative.components().collect::<Vec<_>>();
+    let Some((final_component, parent_components)) = components.split_last() else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} must name a file below trusted root", path.display()),
+        ));
+    };
+    if !matches!(final_component, std::path::Component::Normal(_))
+        || parent_components
+            .iter()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("{} contains an unsafe path component", path.display()),
+        ));
+    }
+
+    let mut directory = open_directory_no_follow(trusted_root)?;
+    for component in parent_components {
+        let next = descriptor_open_path(&directory).join(component.as_os_str());
+        directory = open_directory_no_follow(&next)?;
+    }
+    let final_path = descriptor_open_path(&directory).join(final_component.as_os_str());
+    open_regular_file_no_follow(&final_path)
+}
+
+pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> io::Result<File> {
+    let canonical_path = std::fs::canonicalize(path)?;
+    if !canonical_path.starts_with(trusted_root) {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} resolves outside trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        ));
+    }
+
+    #[cfg(any(unix, windows))]
+    let expected = std::fs::metadata(&canonical_path)?;
+    // Capture the containing directory identity before open. On platforms
+    // without `/proc/self/fd`, this is the only check that can prove the
+    // *opened* object still lives under the trusted root after an ancestor swap:
+    // the final identity comparison proves the same object was opened, but a
+    // file moved outside the root keeps its identity, so the containing
+    // directory's identity must also survive admission.
+    #[cfg(any(unix, windows))]
+    let expected_parent = std::fs::metadata(
+        canonical_path
+            .parent()
+            .expect("canonical asset path must have a parent directory"),
+    )?;
+    #[cfg(test)]
+    OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let file = {
+        #[cfg(unix)]
+        {
+            let open_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            open_regular_file_from_root(&open_path, trusted_root)?
+        }
+        #[cfg(not(unix))]
+        {
+            open_regular_file_no_follow(path)?
+        }
+    };
+    #[cfg(any(unix, windows))]
+    {
+        let actual = descriptor_path(&file)?;
+        if !actual.starts_with(trusted_root) {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!(
+                    "{} resolves outside trusted root {}",
+                    path.display(),
+                    trusted_root.display()
+                ),
+            ));
+        }
+    }
+    let admitted_path = std::fs::canonicalize(path)?;
+    if !admitted_path.starts_with(trusted_root) {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} resolves outside trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        ));
+    }
+    // Non-Linux descriptor-location revalidation: the identity comparison below
+    // proves the original object was opened, but not that an ancestor still
+    // places it beneath the trusted root. Compare the containing directory
+    // captured before open with the directory the *original path* now resolves
+    // through. A final component may legitimately be replaced after open (the
+    // admitted bytes are read from the opened descriptor, never re-opened by
+    // path), but an ancestor swap leaves a recreated or symlinked directory
+    // behind and is rejected here. (Linux `/proc/self/fd` covers the same
+    // contract by re-reading the descriptor's own resolved location.)
+    #[cfg(any(unix, windows))]
+    {
+        let admitted_parent = std::fs::metadata(
+            path.parent()
+                .expect("asset path must have a parent directory"),
+        )?;
+        #[cfg(unix)]
+        let matches = (expected_parent.dev(), expected_parent.ino())
+            == (admitted_parent.dev(), admitted_parent.ino());
+        #[cfg(windows)]
+        let matches = (
+            expected_parent.volume_serial_number(),
+            expected_parent.file_index(),
+        ) == (
+            admitted_parent.volume_serial_number(),
+            admitted_parent.file_index(),
+        );
+        if !matches {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
+    }
+    #[cfg(unix)]
+    {
+        let actual = file.metadata()?;
+        if (expected.dev(), expected.ino()) != (actual.dev(), actual.ino()) {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
+    }
+    #[cfg(windows)]
+    {
+        let actual = file.metadata()?;
+        if (expected.volume_serial_number(), expected.file_index())
+            != (actual.volume_serial_number(), actual.file_index())
+        {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
+    }
+    Ok(file)
+}
+
+pub(crate) fn read_structure_nbt_file(file: File) -> Result<StructureNbt, NbtIoError> {
+    let length = file.metadata()?.len();
+    if length > MAX_COMPRESSED_NBT_BYTES as u64 {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: MAX_COMPRESSED_NBT_BYTES,
+        });
+    }
+    let mut raw = Vec::new();
+    file.take((MAX_COMPRESSED_NBT_BYTES + 1) as u64)
+        .read_to_end(&mut raw)?;
+    if raw.len() > MAX_COMPRESSED_NBT_BYTES {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: MAX_COMPRESSED_NBT_BYTES,
+        });
+    }
+    read_structure_nbt_bytes(&raw)
 }
 
 /// Read a gzip-compressed structure `.nbt` file from disk.
 ///
 /// Rejects bare (uncompressed) NBT with [`NbtIoError::NotGzip`].
 pub fn read_structure_nbt(path: &Path) -> Result<StructureNbt, NbtIoError> {
-    let raw = std::fs::read(path)?;
-    read_structure_nbt_bytes(&raw)
+    read_structure_nbt_file(open_regular_file_no_follow(path)?)
 }
 
 /// Read a structure from in-memory file bytes (the contents of a `.nbt` file,
 /// gzip header included). Used by [`read_structure_nbt`] and tests that load
 /// fixtures via `include_bytes!`.
 pub fn read_structure_nbt_bytes(file_bytes: &[u8]) -> Result<StructureNbt, NbtIoError> {
+    read_structure_nbt_bytes_with_limits(
+        file_bytes,
+        MAX_COMPRESSED_NBT_BYTES,
+        MAX_DECOMPRESSED_NBT_BYTES,
+    )
+}
+
+fn read_structure_nbt_bytes_with_limits(
+    file_bytes: &[u8],
+    compressed_limit: usize,
+    decompressed_limit: usize,
+) -> Result<StructureNbt, NbtIoError> {
     if file_bytes.len() < 2 || file_bytes[0..2] != GZIP_MAGIC {
         return Err(NbtIoError::NotGzip);
     }
 
-    let mut decoder = GzDecoder::new(file_bytes);
+    if file_bytes.len() > compressed_limit {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: compressed_limit,
+        });
+    }
+
+    let decoder = GzDecoder::new(file_bytes);
     let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)?;
+    decoder
+        .take((decompressed_limit + 1) as u64)
+        .read_to_end(&mut decompressed)?;
+    if decompressed.len() > decompressed_limit {
+        return Err(NbtIoError::DecompressedPayloadTooLarge {
+            limit: decompressed_limit,
+        });
+    }
 
     let mut slice: &[u8] = &decompressed;
     let (root, _root_name): (Compound, String) =
@@ -224,7 +770,6 @@ pub fn read_structure_nbt_bytes(file_bytes: &[u8]) -> Result<StructureNbt, NbtIo
 
     structure_from_compound(&root)
 }
-
 /// Write a structure to a gzip-compressed `.nbt` file, producing bytes that
 /// `scripts/nbt/nbt_builder.py::load_structure` can read.
 pub fn write_structure_nbt(structure: &StructureNbt, path: &Path) -> Result<(), NbtIoError> {
@@ -459,6 +1004,7 @@ mod tests {
     use super::*;
     use crate::world::terrain::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
     use std::path::PathBuf;
+    use valence::prelude::{PropName, PropValue};
 
     /// The 11 authored `.nbt` assets, loaded at compile time so the round-trip
     /// pins run without touching the filesystem.
@@ -526,6 +1072,223 @@ mod tests {
             .parent()
             .expect("server dir has a parent")
             .to_path_buf()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_under_root_rejects_symlinked_ancestor_escape() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_ancestor_escape_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        let external = base.join("external");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        std::fs::remove_dir(&nested).unwrap();
+        symlink(&external, &nested).unwrap();
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an opened descriptor outside the frozen root must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("resolves outside trusted root"),
+            "ancestor escape diagnostic must identify the trust-boundary violation: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn open_under_root_rejects_target_swap_between_identity_capture_and_open() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_target_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("template.nbt");
+        let replacement = root.join("replacement.nbt");
+        std::fs::write(&path, b"original").unwrap();
+        std::fs::write(&replacement, b"replacement").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+        let hook_path = path.clone();
+        let hook_replacement = replacement.clone();
+        set_open_regular_file_before_open_test_hook(move || {
+            std::fs::remove_file(&hook_path).unwrap();
+            std::fs::rename(&hook_replacement, &hook_path).unwrap();
+        });
+
+        let error = open_regular_file_under_root(&path, &trusted_root)
+            .expect_err("target identity swap during admission must fail closed");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(error
+            .to_string()
+            .contains("changed during trusted-root admission"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// The double-swap escape: the target is *moved* (same inode) outside the root
+    /// and the ancestor swapped to a symlink pointing at it, then the ancestor is
+    /// swapped *back* before the post-open re-canonicalize. Every path-based
+    /// containment re-check and even the pre-open identity capture then see a
+    /// consistent in-range picture; only comparing the opened descriptor's own
+    /// identity against the re-canonicalized path (Linux `/proc/self/fd`, or the
+    /// non-Linux fd↔path identity branch) rejects the admission.
+    #[cfg(windows)]
+    #[test]
+    fn windows_trusted_root_rejects_reparse_point_even_when_target_is_inside_root() {
+        use std::os::windows::fs::symlink_file;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_windows_reparse_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("target.nbt");
+        let reparse = root.join("reparse.nbt");
+        std::fs::write(&target, b"inside trusted root").unwrap();
+        symlink_file(&target, &reparse).unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        let error = open_regular_file_under_root(&reparse, &trusted_root)
+            .expect_err("a reparse-point input must be rejected even when its target is in-root");
+        assert!(
+            matches!(
+                error.kind(),
+                ErrorKind::InvalidInput | ErrorKind::PermissionDenied
+            ),
+            "Windows reparse-point admission must fail closed, got {error:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_under_root_rejects_ancestor_swap_restored_before_recheck() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_double_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("template.nbt"), b"original").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        // After the descriptor is opened through the trusted parent directory,
+        // move the original file and parent inode outside the root, briefly expose
+        // the external file through an ancestor symlink, then restore the original
+        // parent inode and hard-link the same external file beneath it. Path and
+        // inode checks now all see an apparently valid in-root state; only the
+        // descriptor's own final location can reject the admission.
+        let moved = base.join("moved");
+        let saved_parent = base.join("saved_parent");
+        std::fs::create_dir_all(&moved).unwrap();
+        let hook_nested = nested.clone();
+        let hook_moved = moved.clone();
+        let hook_saved_parent = saved_parent.clone();
+        set_open_regular_file_after_open_test_hook(move || {
+            std::fs::rename(
+                hook_nested.join("template.nbt"),
+                hook_moved.join("template.nbt"),
+            )
+            .unwrap();
+            std::fs::rename(&hook_nested, &hook_saved_parent).unwrap();
+            symlink(&hook_moved, &hook_nested).unwrap();
+            std::fs::remove_file(&hook_nested).unwrap();
+            std::fs::rename(&hook_saved_parent, &hook_nested).unwrap();
+            std::fs::hard_link(
+                hook_moved.join("template.nbt"),
+                hook_nested.join("template.nbt"),
+            )
+            .unwrap();
+        });
+
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an opened descriptor relocated outside the root must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        let message = error.to_string();
+        assert!(
+            message.contains("resolves outside trusted root")
+                || message.contains("changed during trusted-root admission"),
+            "descriptor-location violation must be diagnosed, got: {message}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_under_root_rejects_ancestor_swap_before_directory_open() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_ancestor_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        let external = base.join("external");
+        let saved_parent = base.join("saved_parent");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(nested.join("template.nbt"), b"inside").unwrap();
+        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        let hook_nested = nested.clone();
+        let hook_external = external.clone();
+        let hook_saved_parent = saved_parent.clone();
+        set_open_regular_file_before_open_test_hook(move || {
+            std::fs::rename(&hook_nested, &hook_saved_parent).unwrap();
+            symlink(&hook_external, &hook_nested).unwrap();
+        });
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an ancestor symlink introduced during admission must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("real directory")
+                || error.to_string().contains("outside trusted root"),
+            "ancestor symlink diagnostic must identify the trust-boundary violation: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
     }
 
     // ── ① round-trip pin × 11: read → write → read structurally equal AND the
@@ -781,6 +1544,107 @@ mod tests {
         }
     }
 
+    #[test]
+    fn compressed_payload_limit_rejects_before_gzip_decode() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+        let bytes = write_structure_nbt_bytes(&structure).expect("write gzip fixture");
+        let limit = bytes.len() - 1;
+
+        match read_structure_nbt_bytes_with_limits(&bytes, limit, MAX_DECOMPRESSED_NBT_BYTES) {
+            Err(NbtIoError::CompressedPayloadTooLarge { limit: actual }) => {
+                assert_eq!(
+                    actual, limit,
+                    "diagnostic must report the active compressed limit"
+                )
+            }
+            other => panic!(
+                "compressed payload above the active limit must fail before decoding; got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn decompressed_payload_limit_rejects_before_nbt_parse() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+        let bytes = write_structure_nbt_bytes(&structure).expect("write gzip fixture");
+
+        match read_structure_nbt_bytes_with_limits(&bytes, MAX_COMPRESSED_NBT_BYTES, 1) {
+            Err(NbtIoError::DecompressedPayloadTooLarge { limit }) => {
+                assert_eq!(limit, 1, "diagnostic must report the active decompressed limit")
+            }
+            other => panic!(
+                "decompressed payload above the active limit must fail before NBT parsing; got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn resident_memory_accounting_reaches_nested_nbt_values() {
+        let base = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+
+        let mut nested = Compound::new();
+        nested.insert("leaf", Value::String("resident payload".into()));
+        nested.insert("bytes", Value::ByteArray(vec![1, 2, 3, 4]));
+        nested.insert("ints", Value::IntArray(vec![5, 6, 7]));
+        nested.insert("longs", Value::LongArray(vec![8, 9]));
+        nested.insert(
+            "lists",
+            Value::List(List::List(vec![List::Compound(vec![nested.clone()])])),
+        );
+
+        let with_nested_values = StructureNbt {
+            blocks: vec![StructureBlockEntry {
+                block_nbt: Some(nested),
+                ..base.blocks[0].clone()
+            }],
+            ..base.clone()
+        };
+
+        assert!(
+            with_nested_values.resident_memory_bytes() > base.resident_memory_bytes(),
+            "resident-memory accounting must include recursively owned compound, list, string, and array storage"
+        );
+    }
+
     // ── ④ empty structure (0 blocks) round-trips ────────────────────────────
 
     #[test]
@@ -918,8 +1782,8 @@ mod tests {
             let unresolved = parsed.unresolved_palette_blocks();
             assert!(
                 unresolved.is_empty(),
-                "{name}: palette blocks not resolvable via block_from_name: {unresolved:?}. \
-                 Add each bare name to AUTHORED_STRUCTURE_BLOCKS and block_from_name."
+                "{name}: palette entries not resolvable via the canonical block catalog: {unresolved:?}. \
+                 Add each bare name to AUTHORED_STRUCTURE_BLOCKS and block_catalog.toml."
             );
         }
     }
@@ -950,7 +1814,7 @@ mod tests {
         assert!(
             missing.is_empty(),
             "asset palette blocks not in AUTHORED_STRUCTURE_BLOCKS pin: {missing:?}. \
-             Update blocks.rs::AUTHORED_STRUCTURE_BLOCKS and block_from_name."
+             Update blocks.rs::AUTHORED_STRUCTURE_BLOCKS and block_catalog.toml."
         );
     }
 
@@ -975,12 +1839,85 @@ mod tests {
             entities: vec![],
         };
         let unresolved = structure.unresolved_palette_blocks();
-        assert_eq!(
-            unresolved,
-            vec!["minecraft:totally_not_a_real_block".to_string()],
-            "illegal palette block must be flagged by unresolved_palette_blocks; \
-             known 'minecraft:stone' must not appear"
+        assert_eq!(unresolved.len(), 1);
+        assert!(
+            unresolved[0].contains("minecraft:totally_not_a_real_block")
+                && unresolved[0].contains("unknown catalog block"),
+            "illegal palette block must include its exact startup validation reason; \
+             known 'minecraft:stone' must not appear: {unresolved:?}"
         );
+    }
+
+    #[test]
+    fn palette_diagnostics_reject_negative_and_upper_bound_state_indices() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [3, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![
+                StructureBlockEntry {
+                    pos: [0, 0, 0],
+                    state: 0,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [1, 0, 0],
+                    state: -1,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [2, 0, 0],
+                    state: 1,
+                    block_nbt: None,
+                },
+            ],
+            entities: vec![],
+        };
+
+        let diagnostics = structure.palette_diagnostics();
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "invalid state indices must be summarized into one bounded diagnostic: {diagnostics:?}"
+        );
+        let summary = &diagnostics[0];
+        assert!(
+            summary.contains("2 block(s)")
+                && summary.contains("block #2")
+                && summary.contains("[1, 0, 0]")
+                && summary.contains("state -1")
+                && summary.contains("block #3")
+                && summary.contains("[2, 0, 0]")
+                && summary.contains("state 1")
+                && summary.contains("palette length 1"),
+            "summary must retain count and bounded actionable examples: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn palette_diagnostics_bounds_examples_for_large_invalid_block_lists() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![],
+            blocks: (0..10_000)
+                .map(|index| StructureBlockEntry {
+                    pos: [index, 0, 0],
+                    state: -1,
+                    block_nbt: None,
+                })
+                .collect(),
+            entities: vec![],
+        };
+
+        let diagnostics = structure.palette_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("10000 block(s)"));
+        assert!(diagnostics[0].contains("first 8"));
+        assert!(!diagnostics[0].contains("block #9"));
     }
 
     #[test]

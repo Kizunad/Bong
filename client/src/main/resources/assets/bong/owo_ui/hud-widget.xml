@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <templates>
+        <template name="content">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+            </flow-layout>
+        </template>
+    </templates>
+</owo-ui>

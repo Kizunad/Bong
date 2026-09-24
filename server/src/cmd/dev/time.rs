@@ -12,14 +12,21 @@ pub const MAX_ADVANCE_TICKS: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeCmd {
+    Now,
     Advance { ticks: u64 },
 }
 
 impl Command for TimeCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
+        let time = graph.root().literal("time").id();
+
         graph
-            .root()
-            .literal("time")
+            .at(time)
+            .literal("now")
+            .with_executable(|_| TimeCmd::Now);
+
+        graph
+            .at(time)
             .literal("advance")
             .argument("ticks")
             .with_parser::<u32>()
@@ -48,9 +55,15 @@ pub fn handle_time(
     mut clients: Query<&mut Client>,
 ) {
     for event in events.read() {
-        let TimeCmd::Advance { ticks } = event.result;
         let Ok(mut client) = clients.get_mut(event.executor) else {
             continue;
+        };
+        let ticks = match event.result {
+            TimeCmd::Now => {
+                client.send_chat_message(format!("[dev] time now: {}", clock.tick));
+                continue;
+            }
+            TimeCmd::Advance { ticks } => ticks,
         };
         if ticks == 0 {
             client.send_chat_message("[dev] time advance 0: no-op");
@@ -100,13 +113,53 @@ mod tests {
     }
 
     fn send(app: &mut App, player: valence::prelude::Entity, ticks: u64) {
+        send_result(app, player, TimeCmd::Advance { ticks });
+    }
+
+    fn send_result(app: &mut App, player: valence::prelude::Entity, result: TimeCmd) {
         app.world_mut()
             .resource_mut::<Events<CommandResultEvent<TimeCmd>>>()
             .send(CommandResultEvent {
-                result: TimeCmd::Advance { ticks },
+                result,
                 executor: player,
                 modifiers: Default::default(),
             });
+    }
+
+    #[test]
+    fn time_now_reports_authoritative_tick_without_mutation() {
+        use valence::protocol::packets::play::GameMessageS2c;
+        use valence::testing::create_mock_client;
+
+        let mut app = setup_app();
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+
+        send_result(&mut app, player, TimeCmd::Now);
+        run_update(&mut app);
+
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("time now chat should flush to the mock client");
+        }
+        let chat = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(chat, vec!["[dev] time now: 10"]);
+        assert_eq!(app.world().resource::<CultivationClock>().tick, 10);
+        assert_eq!(app.world().resource::<GameTick>().0, 10);
     }
 
     #[test]

@@ -1,0 +1,45 @@
+[[recipes]]
+id = "workbench.shield.bone_shield"
+category = "armor_craft"
+display_name = "骨盾"
+qi_cost = 0.0
+time_sec = 55
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 6
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "bone_shield"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shield.wooden_shield"
+category = "armor_craft"
+display_name = "木盾"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 4
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.output]
+template_id = "wooden_shield"
+count = 1
+
+[recipes.requirements]

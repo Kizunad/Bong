@@ -39,10 +39,6 @@
               {
                 "const": "barrier",
                 "type": "string"
-              },
-              {
-                "const": "legacy_assign",
-                "type": "string"
               }
             ]
           },
@@ -54,5 +50,6 @@
         }
       }
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "5e450d75ecfe5be6f2024ffcef342b65a2a8ba8043898f6098d29a1c49c3e4ea"
 }

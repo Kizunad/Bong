@@ -47,8 +47,11 @@ INCLUDE_PREFIXES=(
   "bong/textures/particle"
   "bong-client/textures/hud/effects"
   "bong-client/textures/gui/skill"
+  "bong/textures/gui/skill"
   "bong/atmosphere"
   "bong/audio_recipes"
+  "bong/sounds"
+  "bong/sounds.json"
 )
 
 should_include() {
@@ -76,8 +79,15 @@ while IFS= read -r -d '' file; do
     rel="$file"
   fi
   should_include "$rel" || continue
+  executable=0
+  [[ -x "$file" ]] && executable=1
   mkdir -p "$TMP/assets/$(dirname "$rel")"
   cp "$file" "$TMP/assets/$rel"
+  if (( executable )); then
+    chmod 0755 "$TMP/assets/$rel"
+  else
+    chmod 0644 "$TMP/assets/$rel"
+  fi
 done < <(find "$ASSETS_ROOT" -type f -print0)
 
 cat >"$TMP/pack.mcmeta" <<JSON
@@ -89,6 +99,8 @@ cat >"$TMP/pack.mcmeta" <<JSON
 }
 JSON
 
+# pack.mcmeta 不是从资产树复制的，也要固定权限，避免 umask 进入 ZIP external_attr。
+chmod 0644 "$TMP/pack.mcmeta"
 find "$TMP" -exec touch -h -t "$BUILD_EPOCH" {} +
 rm -f "$OUT" "$SHA1_OUT" "$MANIFEST_OUT"
 (
@@ -118,17 +130,24 @@ manifest_out = Path(sys.argv[7])
 subpacks = [
     ("mineral", ["minecraft/blockstates", "minecraft/models", "minecraft/textures/block", "minecraft/atlases", "bong/blockstates", "bong/textures/block"]),
     ("entity-model", ["bong/geo", "bong/animations", "bong/models", "bong/textures/entity", "bong/textures/item", "bong/textures/armor"]),
-    ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill"]),
-    ("audio", ["bong/atmosphere", "bong/audio_recipes"]),
+    ("vfx", ["bong/particles", "bong/textures/particle", "bong-client/textures/hud/effects", "bong-client/textures/gui/skill", "bong/textures/gui/skill"]),
+    ("audio", ["bong/atmosphere", "bong/audio_recipes", "bong/sounds", "bong/sounds.json"]),
 ]
+
+_RUNTIME_SUFFIXES = {".png", ".json", ".ogg", ".obj", ".mtl"}
 
 def count_files(prefixes: list[str]) -> int:
     total = 0
     for prefix in prefixes:
         base = assets_root / prefix
+        # 前缀既可能是目录（rglob 展开），也可能直接指向单个文件（如 bong/sounds.json）。
+        if base.is_file():
+            if base.suffix.lower() in _RUNTIME_SUFFIXES:
+                total += 1
+            continue
         if not base.exists():
             continue
-        total += sum(1 for p in base.rglob("*") if p.is_file() and p.suffix.lower() in {".png", ".json", ".ogg", ".obj", ".mtl"})
+        total += sum(1 for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _RUNTIME_SUFFIXES)
     return total
 
 manifest = {

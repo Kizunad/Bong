@@ -56,5 +56,6 @@
       "minLength": 1,
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "45675cfa53d5851f79b79be55c5b68f1f2d566a5f3aa53f8ec5ac891541666c5"
 }

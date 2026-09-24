@@ -1,13 +1,12 @@
 package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
-import com.bong.client.combat.TreasureEquippedStore;
-import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.combat.RepairClientIntentSink;
+import com.bong.client.combat.screen.RepairScreenFactory;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
@@ -17,13 +16,6 @@ public final class InspectScreenBootstrap {
     private InspectScreenBootstrap() {}
 
     public static void register() {
-        // 不在 JOIN 时清空 store —— 否则会与网络线程并发处理的 inventory_snapshot
-        // 形成竞态：JOIN callback 经 client.execute 排队到主线程，期间快照已经到达
-        // 并写入 store；queued task 一执行就把刚到的权威数据 reset 回 loading 态。
-        // disconnect 已经清空，重新连接前 store 是 empty / revision=-1，不需要再清。
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
-            client.execute(InspectScreenBootstrap::clearInventorySnapshot)
-        );
         BongClient.LOGGER.info("Registered inspect screen bootstrap via vanilla E inventory interception");
     }
 
@@ -56,13 +48,6 @@ public final class InspectScreenBootstrap {
         return !(currentScreen instanceof InspectScreen);
     }
 
-    static void clearInventorySnapshot() {
-        InventoryStateStore.clearOnDisconnect();
-        WeaponEquippedStore.clearOnDisconnect();
-        TreasureEquippedStore.clearOnDisconnect();
-        QiColorObservedStore.clear();
-    }
-
     static void requestQiColorInspectForCrosshairTarget(MinecraftClient client) {
         QiColorObservedStore.clear();
         String target = crosshairEntityTarget(client);
@@ -91,5 +76,24 @@ public final class InspectScreenBootstrap {
 
     static InspectScreen createScreen(InventoryModel snapshot) {
         return new InspectScreen(snapshot);
+    }
+
+    /**
+     * 由应用层组装养护界面的生产依赖，避免 InspectScreen 直接依赖网络设施。
+     */
+    static void openRepairScreen(MinecraftClient client, com.bong.client.inventory.model.InventoryItem item) {
+        if (client == null || item == null || item.instanceId() == 0L) return;
+        int sx = 0;
+        int sy = 64;
+        int sz = 0;
+        if (client.player != null) {
+            sx = (int) Math.floor(client.player.getX());
+            sy = (int) Math.floor(client.player.getY());
+            sz = (int) Math.floor(client.player.getZ());
+        }
+        // 组合根持有生产 transport，工厂本身只接收抽象 sink。
+        RepairScreenFactory factory = new RepairScreenFactory(RepairClientIntentSink.production());
+        client.setScreen(factory.create(
+            item.displayName(), (float) item.durability(), item.instanceId(), sx, sy, sz));
     }
 }

@@ -1,6 +1,6 @@
 //! 医道治疗算子（plan-yidao-v1）。
 //!
-//! 本模块只放纯物理公式：接经、排异、急救、续命、群体接经的数值边界。
+//! 本模块只放纯物理公式：接经、排异、群体接经的数值边界。
 //! ECS 读写、schema 与表现事件留在 `combat::yidao`。
 
 use crate::cultivation::components::Realm;
@@ -9,7 +9,6 @@ use super::{finite_non_negative, QiPhysicsError};
 
 pub const PEACE_COLOR_CONTAM_PURGE_MULTIPLIER: f64 = 3.0;
 pub const PEACE_COLOR_CAST_TIME_MULTIPLIER: f64 = 0.8;
-pub const PEACE_COLOR_LIFE_KARMA_MULTIPLIER: f64 = 0.9;
 pub const PEACE_COLOR_MASS_CAP_BONUS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,24 +26,6 @@ pub struct ContamPurgeOutcome {
     pub residual_total: f64,
     pub post_cast_natural_purge_multiplier: f64,
     pub post_cast_duration_ticks: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EmergencyStabilizeOutcome {
-    pub qi_cost: f64,
-    pub hp_restore: f32,
-    pub dying_window_ticks: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LifeExtendOutcome {
-    pub qi_cost: f64,
-    pub medic_karma_delta: f64,
-    pub medic_qi_max_loss_ratio: f64,
-    pub patient_qi_max_loss_ratio: f64,
-    pub patient_realm_regress_chance: f64,
-    pub revive_hp_fraction: f32,
-    pub window_ticks: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -107,45 +88,6 @@ pub fn contam_purge(
         residual_total: (contamination_total - purge_amount).max(0.0),
         post_cast_natural_purge_multiplier: if mastery >= 1.0 { 2.0 } else { 1.0 },
         post_cast_duration_ticks: (30.0 * 20.0 * mastery).round() as u64,
-    })
-}
-
-pub fn emergency_stabilize(
-    medic_qi_max: f64,
-    patient_hp_max: f32,
-    mastery: f64,
-) -> Result<EmergencyStabilizeOutcome, QiPhysicsError> {
-    let medic_qi_max = finite_non_negative(medic_qi_max, "medic_qi_max")?;
-    let mastery = mastery_unit(mastery)?;
-    let patient_hp_max =
-        finite_non_negative(f64::from(patient_hp_max), "patient_hp_max")?.max(1.0) as f32;
-    let restore_fraction = lerp(0.3, 0.5, mastery) as f32;
-    Ok(EmergencyStabilizeOutcome {
-        qi_cost: medic_qi_max * lerp(0.3, 0.1, mastery),
-        hp_restore: patient_hp_max * restore_fraction,
-        dying_window_ticks: (lerp(60.0, 90.0, mastery) * 20.0).round() as u64,
-    })
-}
-
-pub fn life_extend(
-    medic_qi_max: f64,
-    mastery: f64,
-    peace_color: bool,
-) -> Result<LifeExtendOutcome, QiPhysicsError> {
-    let medic_qi_max = finite_non_negative(medic_qi_max, "medic_qi_max")?;
-    let mastery = mastery_unit(mastery)?;
-    let mut karma = lerp(5.0, 2.5, mastery);
-    if peace_color {
-        karma *= PEACE_COLOR_LIFE_KARMA_MULTIPLIER;
-    }
-    Ok(LifeExtendOutcome {
-        qi_cost: medic_qi_max * lerp(1.5, 1.0, mastery),
-        medic_karma_delta: karma,
-        medic_qi_max_loss_ratio: 0.10,
-        patient_qi_max_loss_ratio: 0.10,
-        patient_realm_regress_chance: lerp(0.5, 0.25, mastery),
-        revive_hp_fraction: 0.5,
-        window_ticks: (lerp(30.0, 60.0, mastery) * 20.0).round() as u64,
     })
 }
 
@@ -250,32 +192,6 @@ mod tests {
     }
 
     #[test]
-    fn emergency_stabilize_scales_hp_and_window() {
-        let out = emergency_stabilize(80.0, 120.0, 100.0).unwrap();
-        assert_eq!(out.qi_cost, 8.0);
-        assert_eq!(out.hp_restore, 60.0);
-        assert_eq!(out.dying_window_ticks, 1800);
-    }
-
-    #[test]
-    fn emergency_stabilize_rejects_non_finite_patient_hp_max() {
-        let err = emergency_stabilize(80.0, f32::NAN, 50.0).unwrap_err();
-        assert!(
-            matches!(err, QiPhysicsError::InvalidAmount { field, .. } if field == "patient_hp_max")
-        );
-    }
-
-    #[test]
-    fn life_extend_keeps_permanent_costs_and_reduces_karma_by_mastery() {
-        let out = life_extend(200.0, 100.0, true).unwrap();
-        assert_eq!(out.qi_cost, 200.0);
-        assert_eq!(out.medic_karma_delta, 2.25);
-        assert_eq!(out.medic_qi_max_loss_ratio, 0.10);
-        assert_eq!(out.patient_qi_max_loss_ratio, 0.10);
-        assert_eq!(out.patient_realm_regress_chance, 0.25);
-    }
-
-    #[test]
     fn mass_repair_is_void_only_and_uses_density_threshold() {
         let blocked = mass_meridian_repair(9.0, Realm::Spirit, 100.0, false).unwrap();
         assert_eq!(blocked.capacity, 0);
@@ -288,7 +204,7 @@ mod tests {
 
     #[test]
     fn invalid_mastery_is_rejected() {
-        let err = life_extend(100.0, 101.0, false).unwrap_err();
+        let err = yidao_cast_ticks(100, 101.0, false).unwrap_err();
         assert!(matches!(
             err,
             QiPhysicsError::InvalidAmount {

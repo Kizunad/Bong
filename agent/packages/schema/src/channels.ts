@@ -95,11 +95,10 @@ export const CHANNELS = {
    */
   HALFSTEP_RECHALLENGE: "bong:tribulation/halfstep_rechallenge",
 
-  /** Server → Agent: 化虚四类世界级 action 公告（plan-void-actions-v1） */
+  /** Server → Agent: 化虚三类世界级 action 公告（plan-void-actions-v1） */
   VOID_ACTION_SUPPRESS_TSY: "bong:void_action/suppress_tsy",
   VOID_ACTION_EXPLODE_ZONE: "bong:void_action/explode_zone",
   VOID_ACTION_BARRIER: "bong:void_action/barrier",
-  VOID_ACTION_LEGACY_ASSIGN: "bong:void_action/legacy_assign",
 
   /** Server → Agent: NPC 生成事件（plan-npc-ai-v1 §6） */
   NPC_SPAWN: "bong:npc/spawn",
@@ -385,6 +384,9 @@ export const CHANNELS = {
   /** Server → Agent: 垂死大能遭遇事件（appeared / dan_received / betrayal / dead_*，agent narration） */
   ELDER_ENCOUNTER: "bong:elder_encounter",
 
+  /** Server → Agent: 已提交的垂死大能终态队列（RPUSH + processing list ACK）。 */
+  ELDER_ENCOUNTER_DURABLE: "bong:elder_encounter:durable",
+
   // ─── 我流虚蚀（plan-combat-skill-feedback-bridges-v1 P3） ────────────────────
   /** Server → Agent: 虚蚀阶段推进事件（我流虚蚀整链激活，agent narration） */
   VOID_EROSION_EVENT: "bong:void_erosion_event",
@@ -440,7 +442,6 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.VOID_ACTION_SUPPRESS_TSY,
   CHANNELS.VOID_ACTION_EXPLODE_ZONE,
   CHANNELS.VOID_ACTION_BARRIER,
-  CHANNELS.VOID_ACTION_LEGACY_ASSIGN,
   CHANNELS.NPC_SPAWN,
   CHANNELS.NPC_DEATH,
   CHANNELS.FACTION_EVENT,

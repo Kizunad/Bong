@@ -18,18 +18,17 @@ public record DeathCinematicState(
     String zoneKind,
     boolean tsyDeath,
     long rebirthWeakenedTicks,
-    boolean skipPredeath,
     long receivedAtMillis
 ) {
     public static final DeathCinematicState INACTIVE = new DeathCinematicState(
-        false, "", Phase.PREDEATH, 0L, 1L, 0L, 1L,
+        false, "", Phase.ROLL, 0L, 1L, 0L, 1L,
         new Roll(0.0, 0.0, 0.0, RollResult.PENDING),
-        List.of(), false, 0, "", false, 0L, false, 0L
+        List.of(), false, 0, "", false, 0L, 0L
     );
 
     public DeathCinematicState {
         characterId = characterId == null ? "" : characterId;
-        phase = phase == null ? Phase.PREDEATH : phase;
+        phase = phase == null ? Phase.ROLL : phase;
         phaseTick = Math.max(0L, phaseTick);
         phaseDurationTicks = Math.max(1L, phaseDurationTicks);
         totalElapsedTicks = Math.max(0L, totalElapsedTicks);
@@ -71,7 +70,6 @@ public record DeathCinematicState(
             zoneKind,
             tsyDeath,
             rebirthWeakenedTicks,
-            skipPredeath,
             receivedAtMillis
         );
     }
@@ -79,8 +77,6 @@ public record DeathCinematicState(
     private PhasePosition phasePosition(long elapsedTicks) {
         long remaining = Math.max(0L, elapsedTicks);
         Phase[] phases = {
-            Phase.PREDEATH,
-            Phase.DEATH_MOMENT,
             Phase.ROLL,
             Phase.INSIGHT_OVERLAY,
             Phase.DARKNESS,
@@ -95,14 +91,12 @@ public record DeathCinematicState(
             }
             remaining -= duration;
         }
-        return new PhasePosition(Phase.REBIRTH, Math.max(0L, durations[5]), Math.max(1L, durations[5]));
+        return new PhasePosition(Phase.REBIRTH, Math.max(0L, durations[3]), Math.max(1L, durations[3]));
     }
 
     private long[] phaseDurations() {
         boolean shortened = deathNumber >= 2 && !finalDeath;
         return new long[] {
-            skipPredeath ? 0L : 60L,
-            skipPredeath ? 0L : 20L,
             shortened ? 40L : 80L,
             shortened ? 60L : 120L,
             40L,
@@ -116,8 +110,6 @@ public record DeathCinematicState(
     }
 
     public enum Phase {
-        PREDEATH("predeath"),
-        DEATH_MOMENT("death_moment"),
         ROLL("roll"),
         INSIGHT_OVERLAY("insight_overlay"),
         DARKNESS("darkness"),
@@ -137,7 +129,7 @@ public record DeathCinematicState(
             for (Phase phase : values()) {
                 if (phase.wireName.equals(wireName)) return phase;
             }
-            return PREDEATH;
+            return ROLL;
         }
     }
 

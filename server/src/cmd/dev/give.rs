@@ -5,6 +5,7 @@ use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, BlockPos, Client, EventReader, Events, Query, Res, ResMut, Update};
 
+use crate::combat::CombatClock;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
@@ -51,6 +52,7 @@ pub fn handle_give(
     mut events: EventReader<CommandResultEvent<GiveCmd>>,
     registry: Res<ItemRegistry>,
     mineral_registry: Option<Res<MineralRegistry>>,
+    clock: Option<Res<CombatClock>>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut players: Query<(&mut PlayerInventory, &mut Client)>,
     mut mineral_drops: Option<ResMut<Events<MineralDropEvent>>>,
@@ -96,8 +98,15 @@ pub fn handle_give(
             }
         }
 
-        match add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, id, *count, 0)
-        {
+        let current_tick = clock.as_deref().map_or(0, |clock| clock.tick);
+        match add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            id,
+            *count,
+            current_tick,
+        ) {
             Ok(receipt) => {
                 client.send_chat_message(format!(
                     "[dev] gave {} x{} revision={}",
@@ -124,6 +133,7 @@ mod tests {
 
     fn test_template(id: &str) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
@@ -149,6 +159,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -162,6 +173,7 @@ mod tests {
 
     fn inventory(rows: u8, cols: u8) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -234,6 +246,35 @@ mod tests {
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert!(inv.containers[0].items.is_empty());
         assert_eq!(inv.revision, InventoryRevision(0));
+    }
+
+    #[test]
+    fn give_uses_authoritative_combat_clock_for_freshness_creation_tick() {
+        use crate::shelflife::DecayTrack;
+
+        let mut template = test_template("fresh_food");
+        template.shelflife_profile = Some("fresh_food_v1".to_string());
+        template.shelflife_track = Some(DecayTrack::Spoil);
+        let mut app = setup_app(ItemRegistry::from_map(HashMap::from([(
+            template.id.clone(),
+            template,
+        )])));
+        app.insert_resource(CombatClock { tick: 1234 });
+        let player = spawn_player(&mut app, inventory(2, 4));
+
+        send(&mut app, player, "fresh_food", 1);
+        run_update(&mut app);
+
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        let freshness = inv.containers[0].items[0]
+            .instance
+            .freshness
+            .as_ref()
+            .expect("template shelflife profile should attach Freshness");
+        assert_eq!(
+            freshness.created_at_tick, 1234,
+            "dev give must anchor new freshness to CombatClock.tick, not tick 0"
+        );
     }
 
     #[test]

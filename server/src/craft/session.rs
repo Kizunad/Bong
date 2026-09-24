@@ -4,20 +4,25 @@
 //!   * **单任务**：玩家同时只允许一个 CraftSession 存在，新 start 必须先 cancel
 //!   * **in-game 时间推进**：只有 `tick_session` 显式推进时才走，玩家下线
 //!     （inventory 关闭）时调用方不调用 tick，自动暂停
-//!   * **守恒律**：qi_cost 一次性走 `qi_physics::ledger::QiTransfer`
-//!     （Crafting reason），**禁止** `cultivation.qi_current -= cost` 直接扣
+//!   * **守恒律**：qi_cost 一次性走 `qi_physics::ledger::transfer_external_qi_to_ledger`
+//!     （Crafting reason），把 ECS 真元权威转入持久待分配池
 //!
 //! §5 决策门：
 //!   * #3 = B：取消任务返还材料 70%（向下取整），qi 不退
 //!   * #4 = A：玩家死亡 → 走 cancel 路径，PlayerDied 作为 reason
 //!   * #6 = B：requirements 软 gate，但 `start_craft` 内做硬校验防作弊
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
 
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
 use crate::inventory::{bump_revision, ContainerState, ItemInstance, PlayerInventory};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
-use crate::qi_physics::QiPhysicsError;
+use crate::qi_physics::ledger::{
+    pending_inflow_account, transfer_external_qi_to_ledger, QiAccountId, QiTransferReason,
+    WorldQiAccount,
+};
+use crate::skill::components::SkillSet;
+use crate::skill::curve::effective_lv;
 
 use super::events::{CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartedEvent};
 use super::recipe::{CraftRecipe, RecipeId};
@@ -30,14 +35,10 @@ pub const CANCEL_REFUND_RATIO: f64 = 0.7;
 /// 单次手搓批量上限。client UI 与 schema 同步使用同一个语义上限。
 pub const MAX_CRAFT_QUANTITY: u32 = 64;
 
-/// `start_craft` 的"ledger 与 cultivation 视图失同步"严格判定阈值。
-/// 浮点容差 — 1e-9 远大于 transfer 路径任何累积误差，但小到能捕获语义性 desync。
-const QI_SYNC_EPSILON: f64 = 1e-9;
-
 /// 玩家进行中的手搓任务。
 /// 玩家只允许同时挂 1 个 CraftSession（单任务）。`remaining_ticks` 由
 /// `tick_session` 在玩家在线时推进；为 0 时调用 `finalize_craft`。
-#[derive(Debug, Clone, Component, PartialEq)]
+#[derive(Debug, Clone, Component, PartialEq, Serialize, Deserialize)]
 pub struct CraftSession {
     pub recipe_id: RecipeId,
     /// 起手 tick 时戳（统计 / UI 显示用）
@@ -76,15 +77,8 @@ pub enum StartCraftError {
         required: ColorKind,
         current: ColorKind,
     },
-    /// **ledger 与 cultivation state view 失同步** — 调用方应先调用
-    /// `qi_physics` 的 sync system 把 player 账户镜像到 cultivation.qi_current
-    /// 后再 retry。当前 craft 模块不主动 set_balance（避免 inflate ledger
-    /// 总数），改由调用方负责状态同步以保守恒律。
-    LedgerOutOfSync {
-        player_balance: f64,
-        cultivation_qi_current: f64,
-        required: f64,
-    },
+    /// 技能等级不足。
+    SkillTooLow { required: u8, current: u8 },
     /// ledger 内部错误（transfer 失败等）
     LedgerError(String),
     /// 批量数量必须 >= 1。
@@ -119,7 +113,7 @@ pub struct StartCraftSuccess {
 pub struct CancelCraftOutcome {
     pub event: CraftFailedEvent,
     /// 70% 返还材料：(template_id, refund_count)。0 数量不写入。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加回 inventory。
+    /// 调用方需要负责真实返还（入包或落地兜底）。
     pub refund_manifest: Vec<(String, u32)>,
 }
 
@@ -128,7 +122,7 @@ pub struct CancelCraftOutcome {
 pub struct FinalizeCraftOutcome {
     pub event: CraftCompletedEvent,
     /// 产出：(template_id, count)。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加进 inventory。
+    /// 调用方需要负责真实写入 inventory。
     pub output_manifest: (String, u32),
 }
 
@@ -228,7 +222,6 @@ pub struct StartCraftRequest<'a> {
     pub player_id: &'a str,
     pub recipe_id: &'a RecipeId,
     pub current_tick: u64,
-    pub zone_id: &'a str,
     pub quantity: u32,
 }
 
@@ -241,6 +234,8 @@ pub struct StartCraftDeps<'a> {
     pub qi_color: &'a QiColor,
     pub ledger: &'a mut WorldQiAccount,
     pub existing_session: Option<&'a CraftSession>,
+    /// 玩家技能状态；缺失时所有技能等级按 0 处理。
+    pub skill_set: Option<&'a SkillSet>,
     /// plan-workbench-recipes-v1 §P2.4：玩家 3 格内是否有制作台。
     /// `true` = 有（或不需要），`false` = 没有。
     /// 对 station=None 的配方此字段被忽略。
@@ -258,8 +253,8 @@ pub struct StartCraftDeps<'a> {
 /// 6. qi 足够（cultivation.qi_current ≥ qi_cost）
 ///
 /// 副作用阶段（成功必经）：
-/// 7. ledger transfer player → zone（reason = Crafting），同时
-///    `cultivation.qi_current -= qi_cost`（守恒律一致性）
+/// 7. 把 ECS 玩家真元原子转入 durable pending inflow（reason = Crafting），再提交
+///    `cultivation.qi_current -= qi_cost`；player ledger 账户不做长期镜像
 /// 8. 扣材料
 /// 9. 构造 CraftSession + CraftStartedEvent
 pub fn start_craft(
@@ -301,6 +296,25 @@ pub fn start_craft(
         return Err(StartCraftError::StationOutOfRange);
     }
 
+    if let Some(min) = recipe.requirements.skill_lv_min {
+        let current = deps
+            .skill_set
+            .and_then(|set| set.skills.values().map(|entry| entry.lv).max())
+            .map(|real_lv| {
+                effective_lv(
+                    real_lv,
+                    crate::cultivation::breakthrough::skill_cap_for_realm(deps.cultivation.realm),
+                )
+            })
+            .unwrap_or(0);
+        if current < min {
+            return Err(StartCraftError::SkillTooLow {
+                required: min,
+                current,
+            });
+        }
+    }
+
     if let Some(min) = recipe.requirements.realm_min {
         let cur = deps.cultivation.realm;
         if (cur as u8) < (min as u8) {
@@ -326,7 +340,10 @@ pub fn start_craft(
     let mut deficits = Vec::new();
     for (template, need) in &recipe.materials {
         let total_need = need.saturating_mul(request.quantity);
-        let have = count_template_in_inventory(deps.inventory, template);
+        let have = deps
+            .inventory
+            .material_preparation
+            .count(recipe.id.as_str(), template);
         if have < total_need {
             deficits.push(MaterialDeficit {
                 template_id: template.clone(),
@@ -349,45 +366,16 @@ pub fn start_craft(
 
     // ===== 副作用阶段 =====
     let from = QiAccountId::player(request.player_id);
-    let to = QiAccountId::zone(request.zone_id);
+    let to = pending_inflow_account();
     if total_qi_cost > 0.0 {
-        // 守恒律：调用方必须先把 cultivation.qi_current **严格** sync 到
-        // ledger.player(id)（待 qi_physics::sync_player_qi_to_ledger system
-        // 接入后由 ECS hook 自动同步）。本函数**不**主动 set_balance，避免
-        // ad-hoc 注入导致 sum(ledger) inflate 破坏全局守恒律。
-        //
-        // 如果 ledger.balance(player) ≠ cultivation.qi_current，说明视图失同步：
-        // - balance < cult：出过 cultivation 增量没镜像到 ledger（如 regen）
-        // - balance > cult：ledger 收到了 cultivation 没扣的 outflow
-        // 两种情况都属 desync，调用方需要先 sync 再 retry。
-        let player_balance = deps.ledger.balance(&from);
-        if (player_balance - deps.cultivation.qi_current).abs() > QI_SYNC_EPSILON {
-            return Err(StartCraftError::LedgerOutOfSync {
-                player_balance,
-                cultivation_qi_current: deps.cultivation.qi_current,
-                required: total_qi_cost,
-            });
-        }
-        // 视图严格一致后，验证余额够付（外层 cultivation_qi_current >= qi_cost
-        // 已校验，sync 一致后 player_balance 也保证 >= qi_cost；fail-safe）
-        if player_balance < total_qi_cost {
-            return Err(StartCraftError::LedgerOutOfSync {
-                player_balance,
-                cultivation_qi_current: deps.cultivation.qi_current,
-                required: total_qi_cost,
-            });
-        }
-
-        let transfer = QiTransfer::new(
-            from.clone(),
-            to.clone(),
+        transfer_external_qi_to_ledger(
+            deps.ledger,
+            from,
+            to,
             total_qi_cost,
             QiTransferReason::Crafting,
         )
-        .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
-        deps.ledger
-            .transfer(transfer)
-            .map_err(|e: QiPhysicsError| StartCraftError::LedgerError(e.to_string()))?;
+        .map_err(|error| StartCraftError::LedgerError(error.to_string()))?;
 
         deps.cultivation.qi_current -= total_qi_cost;
         if deps.cultivation.qi_current < 0.0 {
@@ -400,10 +388,12 @@ pub fn start_craft(
     let mut consumed = Vec::with_capacity(recipe.materials.len());
     for (template, need) in &recipe.materials {
         let total_need = need.saturating_mul(request.quantity);
-        consume_materials_from_inventory(deps.inventory, template, total_need)
-            .expect("materials checked above");
+        deps.inventory
+            .material_preparation
+            .consume(template, total_need);
         consumed.push((template.clone(), total_need));
     }
+    bump_revision(deps.inventory);
 
     let session = CraftSession {
         recipe_id: recipe.id.clone(),
@@ -444,7 +434,7 @@ pub fn tick_session(session: &mut CraftSession, amount: u64) -> bool {
 }
 
 /// 计算取消时的返还清单（材料 70% 向下取整）。
-/// 不动 inventory / 不扣 qi；调用方按返还清单执行 `add_item_to_player_inventory`。
+/// 不动 inventory / 不扣 qi；调用方按返还清单执行真实返还。
 pub fn cancel_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -484,7 +474,7 @@ pub fn cancel_craft(
 }
 
 /// 完成手搓 — 计算产出 manifest + 完成事件。
-/// 不动 inventory；调用方按 output_manifest 执行 `add_item_to_player_inventory`。
+/// 不动 inventory；调用方按 output_manifest 执行真实产出写入。
 pub fn finalize_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -509,1413 +499,5 @@ pub fn finalize_craft(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use super::super::events::{InsightTrigger, UnlockEventSource};
-    use super::super::recipe::{CraftCategory, CraftRequirements, CraftStationKind, UnlockSource};
-    use super::*;
-    use crate::cultivation::components::Cultivation;
-    use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-    };
-    use crate::qi_physics::ledger::QiAccountId;
-    use valence::prelude::App;
-
-    fn make_inventory(items: &[(&str, u32)]) -> PlayerInventory {
-        let placed: Vec<PlacedItemState> = items
-            .iter()
-            .enumerate()
-            .map(|(idx, (template, n))| PlacedItemState {
-                row: idx as u8,
-                col: 0,
-                instance: ItemInstance {
-                    instance_id: idx as u64 + 1,
-                    template_id: (*template).into(),
-                    display_name: (*template).into(),
-                    grid_w: 1,
-                    grid_h: 1,
-                    weight: 1.0,
-                    rarity: ItemRarity::Common,
-                    description: String::new(),
-                    stack_count: *n,
-                    spirit_quality: 0.0,
-                    durability: 1.0,
-                    freshness: None,
-                    mineral_id: None,
-                    charges: None,
-                    forge_quality: None,
-                    forge_color: None,
-                    forge_side_effects: Vec::new(),
-                    forge_achieved_tier: None,
-                    alchemy: None,
-                    lingering_owner_qi: None,
-                },
-            })
-            .collect();
-        PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: InventoryRevision(1),
-            containers: vec![ContainerState {
-                quick_access: false,
-                id: "main_pack".into(),
-                name: "main".into(),
-                rows: 16,
-                cols: 1,
-                items: placed,
-                owner_instance_id: None,
-            }],
-            equipped: HashMap::new(),
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 100.0,
-        }
-    }
-
-    fn simple_recipe(id: &str) -> CraftRecipe {
-        CraftRecipe {
-            id: RecipeId::new(id),
-            category: CraftCategory::Misc,
-            display_name: id.into(),
-            materials: vec![("herb_a".into(), 2), ("iron_needle".into(), 3)],
-            qi_cost: 5.0,
-            time_ticks: 100,
-            output: ("test_pill".into(), 1),
-            requirements: CraftRequirements::default(),
-            unlock_sources: vec![UnlockSource::Scroll {
-                item_template: "scroll_x".into(),
-            }],
-            station: None,
-        }
-    }
-
-    fn ok_deps_for_player<'a>(
-        registry: &'a CraftRegistry,
-        unlock: &'a RecipeUnlockState,
-        inventory: &'a mut PlayerInventory,
-        cultivation: &'a mut Cultivation,
-        color: &'a QiColor,
-        ledger: &'a mut WorldQiAccount,
-    ) -> StartCraftDeps<'a> {
-        StartCraftDeps {
-            registry,
-            unlock_state: unlock,
-            inventory,
-            cultivation,
-            qi_color: color,
-            ledger,
-            existing_session: None,
-            has_nearby_workbench: true, // 默认近处有制作台（手搓配方不需要）
-        }
-    }
-
-    fn make_world() -> (
-        CraftRegistry,
-        RecipeUnlockState,
-        Cultivation,
-        QiColor,
-        WorldQiAccount,
-    ) {
-        let mut registry = CraftRegistry::new();
-        registry.register(simple_recipe("a")).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let cultivation = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        // 模拟未来 qi_physics::sync_player_qi_to_ledger system —— 把
-        // cultivation.qi_current 镜像到 ledger.player 账户后才能 start_craft
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cultivation.qi_current)
-            .unwrap();
-        (registry, unlock, cultivation, color, ledger)
-    }
-
-    fn caster_entity() -> Entity {
-        // 在测试 App 内 spawn empty 拿 entity id（其他 fn 不需要真 App）
-        let mut app = App::new();
-        app.world_mut().spawn_empty().id()
-    }
-
-    // ============= 材料统计 =============
-
-    #[test]
-    fn count_template_aggregates_containers_and_hotbar() {
-        let mut inv = make_inventory(&[("herb_a", 5), ("herb_a", 3), ("iron_needle", 2)]);
-        // hotbar 内再放 4 个 herb_a
-        inv.hotbar[0] = Some(ItemInstance {
-            instance_id: 99,
-            template_id: "herb_a".into(),
-            display_name: "herb_a".into(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 1.0,
-            rarity: ItemRarity::Common,
-            description: String::new(),
-            stack_count: 4,
-            spirit_quality: 0.0,
-            durability: 1.0,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: None,
-            forge_color: None,
-            forge_side_effects: Vec::new(),
-            forge_achieved_tier: None,
-            alchemy: None,
-            lingering_owner_qi: None,
-        });
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5 + 3 + 4);
-        assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
-        assert_eq!(count_template_in_inventory(&inv, "absent"), 0);
-    }
-
-    #[test]
-    fn consume_materials_drains_in_order_and_drops_empty_stacks() {
-        let mut inv = make_inventory(&[("herb_a", 5), ("herb_a", 3)]);
-        consume_materials_from_inventory(&mut inv, "herb_a", 6).unwrap();
-        // 第一个 stack 被吃完移除，第二个剩 2
-        let remaining: Vec<_> = inv.containers[0]
-            .items
-            .iter()
-            .map(|p| p.instance.stack_count)
-            .collect();
-        assert_eq!(remaining, vec![2]);
-    }
-
-    #[test]
-    fn consume_materials_bumps_revision_when_inventory_changes() {
-        let mut inv = make_inventory(&[("herb_a", 5)]);
-        let before = inv.revision;
-
-        consume_materials_from_inventory(&mut inv, "herb_a", 2).unwrap();
-
-        assert!(
-            inv.revision.0 > before.0,
-            "craft material consumption must bump inventory revision so client snapshots cannot look stale"
-        );
-    }
-
-    #[test]
-    fn consume_materials_zero_count_is_noop() {
-        let mut inv = make_inventory(&[("herb_a", 5)]);
-        let before = inv.revision;
-
-        consume_materials_from_inventory(&mut inv, "herb_a", 0).unwrap();
-
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-        assert_eq!(
-            inv.revision, before,
-            "zero-count material consumption should not bump revision"
-        );
-    }
-
-    #[test]
-    fn consume_materials_returns_err_on_underflow() {
-        let mut inv = make_inventory(&[("herb_a", 1)]);
-        let err = consume_materials_from_inventory(&mut inv, "herb_a", 5).unwrap_err();
-        assert_eq!(err.template_id, "herb_a");
-        assert_eq!(err.need, 4);
-    }
-
-    // ============= start_craft =============
-
-    #[test]
-    fn start_craft_happy_path_writes_ledger_and_session() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let caster = caster_entity();
-
-        let result = start_craft(
-            StartCraftRequest {
-                caster,
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 1000,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        // session 形态
-        assert_eq!(result.session.recipe_id.as_str(), "a");
-        assert_eq!(result.session.started_at_tick, 1000);
-        assert_eq!(result.session.remaining_ticks, 100);
-        assert_eq!(result.session.qi_paid, 5.0);
-
-        // 材料扣减
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 3);
-        assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 2);
-
-        // qi 守恒：cultivation 扣 5，ledger zone 余额 +5
-        assert_eq!(cult.qi_current, 45.0);
-        let zone_balance = ledger.balance(&QiAccountId::zone("spawn"));
-        assert_eq!(zone_balance, 5.0);
-
-        // 守恒律观察：qi_paid 与 ledger transfer 等同
-        assert_eq!(result.session.qi_paid, 5.0);
-        assert_eq!(result.event.qi_paid, 5.0);
-    }
-
-    #[test]
-    fn start_craft_batch_reserves_all_materials_and_qi_upfront() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 1000,
-                zone_id: "spawn",
-                quantity: 3,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        assert_eq!(result.session.quantity_total, 3);
-        assert_eq!(result.session.completed_count, 0);
-        assert_eq!(result.session.qi_paid, 15.0);
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 2);
-        assert_eq!(count_template_in_inventory(&inv, "iron_needle"), 1);
-        assert_eq!(cult.qi_current, 35.0);
-        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 15.0);
-    }
-
-    #[test]
-    fn start_craft_rejects_quantity_above_limit_before_cost_checks() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 8), ("iron_needle", 10)]);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 1000,
-                zone_id: "spawn",
-                quantity: MAX_CRAFT_QUANTITY + 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            StartCraftError::QuantityTooLarge {
-                requested: MAX_CRAFT_QUANTITY + 1,
-                max: MAX_CRAFT_QUANTITY,
-            }
-        );
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 8);
-        assert_eq!(cult.qi_current, 50.0);
-    }
-
-    #[test]
-    fn start_craft_rejects_unknown_recipe() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("missing"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(err, StartCraftError::UnknownRecipe(_)));
-    }
-
-    #[test]
-    fn start_craft_rejects_locked_recipe() {
-        let (registry, _unlock, mut cult, color, mut ledger) = make_world();
-        let unlock = RecipeUnlockState::new(); // 空 unlock state
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(err, StartCraftError::NotUnlocked(_)));
-        // 失败时无副作用：材料仍在
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    }
-
-    #[test]
-    fn start_craft_baseline_workbench_passes_unlock_gate_with_empty_state() {
-        // 基线常显豁免（unlock::BASELINE_RECIPES）：制作台自身配方对空 unlock
-        // state 的新玩家必须直接可做 —— 不经材料发现、不经三渠道。
-        let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
-        let unlock = RecipeUnlockState::new(); // 从未解锁过任何配方
-        let mut inv = make_inventory(&[("spirit_wood", 4), ("iron_ingot", 2), ("shu_gu", 2)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
-
-        let mut deps =
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
-        // 制作台自身是手搓配方（station: None），附近没有制作台也必须能做 ——
-        // 否则"造第一张制作台"死锁。
-        deps.has_nearby_workbench = false;
-
-        let success = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("craft.tool.workbench"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            deps,
-        )
-        .unwrap_or_else(|err| {
-            panic!(
-                "期望基线豁免让空 unlock state 玩家直接开工制作台，因为它是 workbench \
-                 配方树的入口配方；实际报错 {err:?}"
-            )
-        });
-        assert_eq!(
-            success.session.recipe_id,
-            RecipeId::new("craft.tool.workbench")
-        );
-        // 材料照常扣除（豁免只绕 unlock 门，不绕材料校验）
-        assert_eq!(count_template_in_inventory(&inv, "spirit_wood"), 0);
-        assert_eq!(count_template_in_inventory(&inv, "iron_ingot"), 0);
-        assert_eq!(count_template_in_inventory(&inv, "shu_gu"), 0);
-    }
-
-    #[test]
-    fn start_craft_baseline_exemption_does_not_leak_to_other_workbench_recipes() {
-        // 对照组：同一注册表里其他空源配方（如石镐）对空 unlock state 仍应 NotUnlocked
-        // —— 豁免名单精确到 craft.tool.workbench，不是放开整棵 workbench 树。
-        let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
-        let unlock = RecipeUnlockState::new();
-        let mut inv = make_inventory(&[("stone_chunk", 3), ("wood_handle", 1)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("workbench.tool.stone_pickaxe"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, StartCraftError::NotUnlocked(_)),
-            "期望石镐对空 unlock state 仍 NotUnlocked（基线豁免只覆盖制作台自身），\
-             实际={err:?}"
-        );
-    }
-
-    #[test]
-    fn start_craft_rejects_when_session_already_exists() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let existing = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 5.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let mut deps =
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
-        deps.existing_session = Some(&existing);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            deps,
-        )
-        .unwrap_err();
-        assert_eq!(err, StartCraftError::AlreadyHasSession);
-    }
-
-    #[test]
-    fn start_craft_rejects_missing_materials_with_full_deficit_list() {
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 1)]); // need 2 + iron_needle 3
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        match err {
-            StartCraftError::MissingMaterials(deficits) => {
-                assert_eq!(deficits.len(), 2);
-                let herb = deficits.iter().find(|d| d.template_id == "herb_a").unwrap();
-                assert_eq!(herb.have, 1);
-                assert_eq!(herb.need, 2);
-                let iron = deficits
-                    .iter()
-                    .find(|d| d.template_id == "iron_needle")
-                    .unwrap();
-                assert_eq!(iron.have, 0);
-                assert_eq!(iron.need, 3);
-            }
-            other => panic!("expected MissingMaterials, got {other:?}"),
-        }
-        // 失败时不扣材料
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 1);
-    }
-
-    #[test]
-    fn start_craft_rejects_insufficient_qi() {
-        let (registry, unlock, mut _ignored, color, mut ledger) = make_world();
-        let mut cult = Cultivation {
-            qi_current: 2.0, // recipe 要 5
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::InsufficientQi {
-                have: 2.0,
-                need: 5.0
-            }
-        ));
-        // 失败时不扣材料
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    }
-
-    #[test]
-    fn start_craft_rejects_realm_too_low() {
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("a");
-        recipe.requirements.realm_min = Some(Realm::Solidify);
-        registry.register(recipe).unwrap();
-
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            realm: Realm::Awaken,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::RealmTooLow {
-                required: Realm::Solidify,
-                current: Realm::Awaken
-            }
-        ));
-    }
-
-    #[test]
-    fn start_craft_rejects_qi_color_mismatch() {
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("a");
-        recipe.requirements.qi_color_min = Some((ColorKind::Insidious, 0.05));
-        registry.register(recipe).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor {
-            main: ColorKind::Mellow, // 不是 Insidious
-            ..Default::default()
-        };
-        let mut ledger = WorldQiAccount::default();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::QiColorMismatch {
-                required: ColorKind::Insidious,
-                current: ColorKind::Mellow
-            }
-        ));
-    }
-
-    #[test]
-    fn start_craft_zero_qi_recipe_skips_ledger_transfer() {
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("a");
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let mut cult = Cultivation {
-            qi_current: 0.0, // 零 qi 也能起手
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-        assert_eq!(result.session.qi_paid, 0.0);
-        // ledger 无 transfer 落地
-        assert_eq!(ledger.transfers().len(), 0);
-        assert_eq!(cult.qi_current, 0.0);
-    }
-
-    // ============= tick_session =============
-
-    #[test]
-    fn tick_session_decrements_remaining() {
-        let mut session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 100,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 5.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let done = tick_session(&mut session, 30);
-        assert!(!done);
-        assert_eq!(session.remaining_ticks, 70);
-    }
-
-    #[test]
-    fn tick_session_completes_at_zero() {
-        let mut session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 5,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let done = tick_session(&mut session, 5);
-        assert!(done);
-        assert_eq!(session.remaining_ticks, 0);
-    }
-
-    #[test]
-    fn tick_session_overshoot_clamps_to_zero() {
-        let mut session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 5,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let done = tick_session(&mut session, 100);
-        assert!(done);
-        assert_eq!(session.remaining_ticks, 0);
-    }
-
-    #[test]
-    fn tick_session_with_zero_amount_is_noop() {
-        let mut session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let done = tick_session(&mut session, 0);
-        assert!(!done);
-        assert_eq!(session.remaining_ticks, 50);
-    }
-
-    #[test]
-    fn tick_session_already_complete_is_idempotent() {
-        let mut session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 0,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let done = tick_session(&mut session, 50);
-        assert!(done);
-        assert_eq!(session.remaining_ticks, 0);
-    }
-
-    // ============= cancel_craft =============
-
-    #[test]
-    fn cancel_craft_returns_70pct_floor() {
-        let recipe = simple_recipe("a"); // herb_a×2, iron_needle×3
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 5.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let outcome = cancel_craft(
-            &session,
-            &recipe,
-            caster_entity(),
-            CraftFailureReason::PlayerCancelled,
-        );
-        // herb_a: floor(2 * 0.7) = 1
-        // iron_needle: floor(3 * 0.7) = 2
-        let map: HashMap<&str, u32> = outcome
-            .refund_manifest
-            .iter()
-            .map(|(t, n)| (t.as_str(), *n))
-            .collect();
-        assert_eq!(map.get("herb_a"), Some(&1));
-        assert_eq!(map.get("iron_needle"), Some(&2));
-        assert_eq!(outcome.event.material_returned, 3);
-        assert_eq!(outcome.event.qi_refunded, 0.0); // §5 决策门 #3
-    }
-
-    #[test]
-    fn cancel_craft_filters_zero_refund_entries() {
-        let mut recipe = simple_recipe("a");
-        recipe.materials = vec![("herb_a".into(), 1)]; // floor(1 * 0.7) = 0
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let outcome = cancel_craft(
-            &session,
-            &recipe,
-            caster_entity(),
-            CraftFailureReason::PlayerCancelled,
-        );
-        assert!(outcome.refund_manifest.is_empty());
-        assert_eq!(outcome.event.material_returned, 0);
-    }
-
-    #[test]
-    fn cancel_craft_batch_refunds_unfinished_quantity() {
-        let recipe = simple_recipe("a"); // herb_a×2, iron_needle×3
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 15.0,
-            quantity_total: 3,
-            completed_count: 1,
-        };
-        let outcome = cancel_craft(
-            &session,
-            &recipe,
-            caster_entity(),
-            CraftFailureReason::PlayerCancelled,
-        );
-        let map: HashMap<&str, u32> = outcome
-            .refund_manifest
-            .iter()
-            .map(|(t, n)| (t.as_str(), *n))
-            .collect();
-        // 剩余 2 件：herb_a floor(2*2*0.7)=2；iron_needle floor(3*2*0.7)=4
-        assert_eq!(map.get("herb_a"), Some(&2));
-        assert_eq!(map.get("iron_needle"), Some(&4));
-        assert_eq!(outcome.event.material_returned, 6);
-    }
-
-    #[test]
-    fn cancel_craft_propagates_player_died_reason() {
-        let recipe = simple_recipe("a");
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 5.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let outcome = cancel_craft(
-            &session,
-            &recipe,
-            caster_entity(),
-            CraftFailureReason::PlayerDied,
-        );
-        assert_eq!(outcome.event.reason, CraftFailureReason::PlayerDied);
-    }
-
-    #[test]
-    fn cancel_craft_propagates_internal_error_reason() {
-        let recipe = simple_recipe("a");
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 0,
-            remaining_ticks: 50,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 0.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let outcome = cancel_craft(
-            &session,
-            &recipe,
-            caster_entity(),
-            CraftFailureReason::InternalError,
-        );
-        assert_eq!(outcome.event.reason, CraftFailureReason::InternalError);
-    }
-
-    // ============= finalize_craft =============
-
-    #[test]
-    fn finalize_craft_returns_output_manifest() {
-        let mut recipe = simple_recipe("a");
-        recipe.output = ("eclipse_needle_iron".into(), 3);
-        let session = CraftSession {
-            recipe_id: RecipeId::new("a"),
-            started_at_tick: 100,
-            remaining_ticks: 0,
-            total_ticks: 100,
-            owner_player_id: "offline:Alice".into(),
-            qi_paid: 5.0,
-            quantity_total: 1,
-            completed_count: 0,
-        };
-        let outcome = finalize_craft(&session, &recipe, caster_entity(), 200);
-        assert_eq!(outcome.event.completed_at_tick, 200);
-        assert_eq!(outcome.event.output_template, "eclipse_needle_iron");
-        assert_eq!(outcome.event.output_count, 3);
-        assert_eq!(outcome.output_manifest, ("eclipse_needle_iron".into(), 3));
-    }
-
-    // ============= 守恒律端到端 =============
-
-    #[test]
-    fn start_craft_ledger_amount_matches_session_qi_paid() {
-        // 守恒律观察值断言 — qi_paid 必须等同 ledger transfer amount
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        // 找最近一次 transfer
-        let last_transfer = ledger
-            .transfers()
-            .last()
-            .expect("ledger should have transfer");
-        assert_eq!(last_transfer.amount, result.session.qi_paid);
-        assert_eq!(last_transfer.reason, QiTransferReason::Crafting);
-        assert_eq!(last_transfer.from, QiAccountId::player("offline:Alice"));
-        assert_eq!(last_transfer.to, QiAccountId::zone("spawn"));
-    }
-
-    #[test]
-    fn start_craft_unlock_via_insight_then_run() {
-        // 集成：先用 insight 解锁，然后 start_craft 跑通
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("a");
-        recipe.unlock_sources = vec![UnlockSource::Insight {
-            trigger: InsightTrigger::Breakthrough,
-        }];
-        registry.register(recipe).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        let recipe_ref = registry.get(&RecipeId::new("a")).unwrap();
-        let outcome = super::super::unlock::unlock_via_insight(
-            &mut unlock,
-            "offline:Alice",
-            recipe_ref,
-            InsightTrigger::Breakthrough,
-        );
-        assert!(matches!(
-            outcome,
-            super::super::unlock::UnlockOutcome::Newly {
-                source: UnlockEventSource::Insight {
-                    trigger: InsightTrigger::Breakthrough
-                }
-            }
-        ));
-
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        // sync ledger to cultivation（模拟 sync system 行为）
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
-            .unwrap();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let success = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-        assert_eq!(success.session.qi_paid, 5.0);
-    }
-
-    // ============= 守恒 / ledger sync 不变量 =============
-
-    #[test]
-    fn ledger_player_balance_aligned_with_cultivation_after_start() {
-        // 不变量：start_craft 完成后，player 账户的 ledger 余额 ==
-        // cultivation.qi_current_post（即扣完后的 state view）。
-        // 前提：调用方已 sync 过 ledger.player(id) = cultivation.qi_current
-        // （make_world helper 已在 setup 阶段执行）。
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let qi_before = cult.qi_current;
-        let zone_before = ledger.balance(&QiAccountId::zone("spawn"));
-
-        start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        // recipe.qi_cost = 5.0（make_world / simple_recipe）
-        let qi_paid = 5.0_f64;
-        assert_eq!(cult.qi_current, qi_before - qi_paid);
-        let player_after = ledger.balance(&QiAccountId::player("offline:Alice"));
-        assert_eq!(
-            player_after, cult.qi_current,
-            "player ledger balance must mirror cultivation.qi_current after transfer"
-        );
-        let zone_after = ledger.balance(&QiAccountId::zone("spawn"));
-        assert_eq!(
-            zone_after,
-            zone_before + qi_paid,
-            "zone account must gain exactly qi_cost"
-        );
-    }
-
-    #[test]
-    fn start_craft_with_synced_ledger_does_not_inflate_player_balance() {
-        // 不变量：当调用方先把 ledger.player(id) 同步到 cultivation.qi_current 后，
-        // start_craft **不会**额外注入余额到 player 账户（防 set_balance leak）。
-        // post 状态：player_balance == cult.qi_current_post == pre - qi_cost。
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let player_pre = ledger.balance(&QiAccountId::player("offline:Alice"));
-        assert_eq!(player_pre, 50.0, "make_world should sync ledger to 50.0");
-
-        start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        let player_post = ledger.balance(&QiAccountId::player("offline:Alice"));
-        // post == pre - qi_cost（5.0）
-        assert!((player_pre - player_post - 5.0).abs() < 1e-9);
-        assert_eq!(player_post, cult.qi_current);
-    }
-
-    #[test]
-    fn ledger_total_conservation_after_start_craft() {
-        // 守恒律：ledger 内部总量在 start_craft 前后相等
-        // （player → zone 的 transfer 是账内移动，不增减总数）。
-        // cultivation.qi_current 是 ledger.player 的 view，不参与 ledger.total()。
-        let (registry, unlock, mut cult, color, mut ledger) = make_world();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let ledger_total_before = ledger.total();
-
-        start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap();
-
-        let ledger_total_after = ledger.total();
-        assert!(
-            (ledger_total_before - ledger_total_after).abs() < 1e-9,
-            "ledger.total() before {ledger_total_before} must equal after {ledger_total_after}"
-        );
-    }
-
-    #[test]
-    fn start_craft_rejects_when_ledger_out_of_sync() {
-        // 守恒律强制：调用方未 sync ledger.player 到 cultivation.qi_current 时，
-        // start_craft 必须 fail-fast（避免 ad-hoc set_balance 注入）。
-        let mut registry = CraftRegistry::new();
-        registry.register(simple_recipe("a")).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        // 故意**不** sync ledger — player 账户余额 0
-        let mut ledger = WorldQiAccount::default();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::LedgerOutOfSync {
-                player_balance: 0.0,
-                cultivation_qi_current: 50.0,
-                required: 5.0,
-            }
-        ));
-        // 失败时无副作用：cultivation 不动 / 材料不动
-        assert_eq!(cult.qi_current, 50.0);
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    }
-
-    #[test]
-    fn start_craft_rejects_ledger_overshoot_relative_to_cultivation() {
-        // 严格 sync 校验：即使 ledger.balance(player) > qi_cost 但 ≠
-        // cultivation.qi_current，也属于 desync 必须 reject。
-        // 防止"ledger 凭空多 200 但 cultivation 只 50"误算守恒。
-        let mut registry = CraftRegistry::new();
-        registry.register(simple_recipe("a")).unwrap();
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("a"));
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        // ledger 余额 200 > cultivation 50：明显 desync（不应当通过）
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 200.0)
-            .unwrap();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("a"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            StartCraftError::LedgerOutOfSync {
-                player_balance: 200.0,
-                cultivation_qi_current: 50.0,
-                required: 5.0,
-            }
-        ));
-        // 失败时无副作用：余额 / 材料 / cultivation 不动
-        assert_eq!(cult.qi_current, 50.0);
-        assert_eq!(ledger.balance(&QiAccountId::player("offline:Alice")), 200.0);
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    }
-
-    #[test]
-    fn start_craft_rejects_empty_source_recipe_before_material_discovery() {
-        // plan-craft-material-discovery：空 unlock_sources 不再"默认解锁"。
-        // 即使背包里有原料、其它前置都满足，未经材料发现写入 unlock_state 前
-        // start_craft 必须 reject（材料发现解锁由 craft_emit 系统在 tick 中完成）。
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("default_unlocked");
-        recipe.unlock_sources = vec![];
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-
-        let unlock = RecipeUnlockState::new();
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("default_unlocked"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        )
-        .expect_err("empty-source recipe must be locked until material-discovery unlock");
-        assert!(
-            matches!(err, StartCraftError::NotUnlocked(_)),
-            "期望 NotUnlocked（空源配方需先经材料发现解锁），实际={err:?}"
-        );
-        // reject 不应扣材料
-        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
-    }
-
-    #[test]
-    fn start_craft_allows_empty_source_recipe_after_material_unlock() {
-        // 材料发现解锁后（unlock_state 已写入），空源配方应正常可造。
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("default_unlocked");
-        recipe.unlock_sources = vec![];
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-
-        let mut unlock = RecipeUnlockState::new();
-        // 模拟 apply_material_discovery_unlock 已把该配方解锁
-        unlock.unlock("offline:Alice", RecipeId::new("default_unlocked"));
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
-
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("default_unlocked"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
-        );
-        assert!(result.is_ok(), "材料发现解锁后空源配方应可造: {result:?}");
-    }
-
-    // ============= station validation =============
-
-    #[test]
-    fn start_craft_handcraft_passes_without_nearby_workbench() {
-        // station: None = 手搓配方，不需要制作台
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("handcraft");
-        recipe.station = None;
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("handcraft"));
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
-
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("handcraft"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            StartCraftDeps {
-                registry: &registry,
-                unlock_state: &unlock,
-                inventory: &mut inv,
-                cultivation: &mut cult,
-                qi_color: &color,
-                ledger: &mut ledger,
-                existing_session: None,
-                has_nearby_workbench: false, // 附近没有制作台
-            },
-        );
-        assert!(
-            result.is_ok(),
-            "handcraft recipe (station: None) must succeed even without nearby workbench: {result:?}"
-        );
-    }
-
-    #[test]
-    fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
-        // station: Some(Workbench) 且 has_nearby_workbench: false → StationOutOfRange
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("wb_tool");
-        recipe.station = Some(CraftStationKind::Workbench);
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("wb_tool"));
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
-
-        let err = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("wb_tool"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            StartCraftDeps {
-                registry: &registry,
-                unlock_state: &unlock,
-                inventory: &mut inv,
-                cultivation: &mut cult,
-                qi_color: &color,
-                ledger: &mut ledger,
-                existing_session: None,
-                has_nearby_workbench: false, // 附近没有制作台
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            StartCraftError::StationOutOfRange,
-            "workbench recipe must fail with StationOutOfRange when no workbench is nearby"
-        );
-        // 失败时不扣材料
-        assert_eq!(
-            count_template_in_inventory(&inv, "herb_a"),
-            5,
-            "materials must not be consumed on StationOutOfRange rejection"
-        );
-    }
-
-    #[test]
-    fn start_craft_workbench_recipe_passes_with_nearby_workbench() {
-        // station: Some(Workbench) 且 has_nearby_workbench: true → 正常通过
-        let mut registry = CraftRegistry::new();
-        let mut recipe = simple_recipe("wb_tool2");
-        recipe.station = Some(CraftStationKind::Workbench);
-        recipe.qi_cost = 0.0;
-        registry.register(recipe).unwrap();
-
-        let mut unlock = RecipeUnlockState::new();
-        unlock.unlock("offline:Alice", RecipeId::new("wb_tool2"));
-        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
-        let mut cult = Cultivation {
-            qi_current: 50.0,
-            qi_max: 80.0,
-            ..Default::default()
-        };
-        let color = QiColor::default();
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
-            .unwrap();
-
-        let result = start_craft(
-            StartCraftRequest {
-                caster: caster_entity(),
-                player_id: "offline:Alice",
-                recipe_id: &RecipeId::new("wb_tool2"),
-                current_tick: 0,
-                zone_id: "spawn",
-                quantity: 1,
-            },
-            StartCraftDeps {
-                registry: &registry,
-                unlock_state: &unlock,
-                inventory: &mut inv,
-                cultivation: &mut cult,
-                qi_color: &color,
-                ledger: &mut ledger,
-                existing_session: None,
-                has_nearby_workbench: true, // 附近有制作台
-            },
-        );
-        assert!(
-            result.is_ok(),
-            "workbench recipe must succeed when workbench is nearby: {result:?}"
-        );
-    }
-}
+#[path = "session_tests.rs"]
+mod tests;

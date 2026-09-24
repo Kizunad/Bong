@@ -15,14 +15,14 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+    ColorKind, Contamination, Cultivation, MeridianChannelId, MeridianId, MeridianSystem, QiColor,
+    Realm,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, enforce_severed_state, MeridianSeveredEvent,
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
@@ -55,9 +55,28 @@ const MULTIPOINT_ANIM_ID: &str = "bong:zhenmai_multipoint";
 const HARDEN_ANIM_ID: &str = "bong:zhenmai_harden";
 const SEVER_CHAIN_ANIM_ID: &str = "bong:zhenmai_sever_chain";
 
-const PARRY_PARTICLE_ID: &str = "bong:jiemai_burst_blood";
-const NEUTRALIZE_PARTICLE_ID: &str = "bong:jiemai_neutralize_dust";
-const SEVER_FLASH_PARTICLE_ID: &str = "bong:jiemai_sever_flash";
+// ─── plan-skill-anim-fidelity-v1 P5 —— 5 招专属粒子（借用解除）────────────────────
+//
+// 去复用前：5 招挤在 3 个 `bong:jiemai_*` id 上（multipoint 借 parry、harden 借
+// neutralize），且 client 侧三者**全部注册到剑气 `SwordQiSlashPlayer`**——真脉招式
+// 在旁观者眼里全是剑气斩弧，五招互不可辨。现改为 5 个专属 id → `ZhenmaiPulsePlayer`
+// （金脉短脉冲 + 穴位点）。
+//
+// 注意 `bong:jiemai_sever_flash` 并非就此消失：被动断脉叙事仍由
+// `network/meridian_severed_emit.rs` 发射该 id，client 注册保留。
+pub(crate) const PARRY_PARTICLE_ID: &str = "bong:zhenmai_parry_flash";
+pub(crate) const NEUTRALIZE_PARTICLE_ID: &str = "bong:zhenmai_neutralize_dust";
+pub(crate) const MULTIPOINT_PARTICLE_ID: &str = "bong:zhenmai_multipoint_ring";
+pub(crate) const HARDEN_PARTICLE_ID: &str = "bong:zhenmai_harden_shell";
+pub(crate) const SEVER_SNAP_PARTICLE_ID: &str = "bong:zhenmai_sever_snap";
+
+/// 金脉色系（plan §P5.1 ①）：anchor `#D4AF6A`，明度阶梯与招式烈度同序
+/// （harden 最沉 → sever 最亮），保证同族可认 + 逐招可辨。
+pub(crate) const PARRY_PARTICLE_COLOR: &str = "#D4AF6A";
+pub(crate) const NEUTRALIZE_PARTICLE_COLOR: &str = "#C9A05C";
+pub(crate) const MULTIPOINT_PARTICLE_COLOR: &str = "#E0C27E";
+pub(crate) const HARDEN_PARTICLE_COLOR: &str = "#B8944F";
+pub(crate) const SEVER_SNAP_PARTICLE_COLOR: &str = "#F2D68A";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,7 +107,7 @@ impl ZhenmaiSkillId {
         }
     }
 
-    fn audio_recipe(self) -> &'static str {
+    pub(crate) fn audio_recipe(self) -> &'static str {
         match self {
             Self::Parry => "zhenmai_parry_thud",
             Self::Neutralize => "zhenmai_neutralize_hiss",
@@ -105,6 +124,50 @@ impl ZhenmaiSkillId {
             Self::MultiPoint => MULTIPOINT_ANIM_ID,
             Self::HardenMeridian => HARDEN_ANIM_ID,
             Self::SeverChain => SEVER_CHAIN_ANIM_ID,
+        }
+    }
+
+    /// 专属粒子 event_id（plan §P5.2 接线矩阵；client `ZhenmaiPulsePlayer`）。
+    pub(crate) fn particle_id(self) -> &'static str {
+        match self {
+            Self::Parry => PARRY_PARTICLE_ID,
+            Self::Neutralize => NEUTRALIZE_PARTICLE_ID,
+            Self::MultiPoint => MULTIPOINT_PARTICLE_ID,
+            Self::HardenMeridian => HARDEN_PARTICLE_ID,
+            Self::SeverChain => SEVER_SNAP_PARTICLE_ID,
+        }
+    }
+
+    /// 金脉色系逐招 hex（plan §P5.1 ① 明度阶梯）。
+    pub(crate) fn particle_color(self) -> &'static str {
+        match self {
+            Self::Parry => PARRY_PARTICLE_COLOR,
+            Self::Neutralize => NEUTRALIZE_PARTICLE_COLOR,
+            Self::MultiPoint => MULTIPOINT_PARTICLE_COLOR,
+            Self::HardenMeridian => HARDEN_PARTICLE_COLOR,
+            Self::SeverChain => SEVER_SNAP_PARTICLE_COLOR,
+        }
+    }
+
+    /// 粒子强度（沿用去复用前的逐招取值，本阶段不动表现强度）。
+    fn particle_strength(self) -> f32 {
+        match self {
+            Self::Parry => 0.8,
+            Self::Neutralize => 0.55,
+            Self::MultiPoint => 0.7,
+            Self::HardenMeridian => 0.45,
+            Self::SeverChain => 1.0,
+        }
+    }
+
+    /// Line 短脉冲数（穴位点数由 client `ZhenmaiPulsePlayer` 按形态自持）。
+    fn particle_count(self) -> u16 {
+        match self {
+            Self::Parry => 8,
+            Self::Neutralize => 10,
+            Self::MultiPoint => 16,
+            Self::HardenMeridian => 8,
+            Self::SeverChain => 18,
         }
     }
 }
@@ -288,17 +351,24 @@ pub struct JiemaiBackfireBloodSpray {
     pub tick: u64,
 }
 
+/// 真脉一招施法完成 → 音效解耦事件（Pattern A）。
+///
+/// cast 逻辑只发本事件，由 `network::audio_trigger::emit_zhenmai_v2_audio_triggers`
+/// 读它、经 `ZhenmaiSkillId::audio_recipe` 映射发 `PlaySoundRecipeRequest`——
+/// 与 sword_path / baomai / woliu / tuike 同一套架构（cast 不再内联发声）。
+///
+/// **纯 cosmetic**：只承载「哪招在哪响」，不带任何战斗 / 真元语义，消费端也只发音效。
+#[derive(Debug, Clone, Copy, Event, PartialEq)]
+pub struct ZhenmaiSkillCastEvent {
+    pub caster: Entity,
+    pub skill: ZhenmaiSkillId,
+    /// **施法时刻**捕获的权威音源坐标（cast 现场的 caster 位置，无 `Position` 时为原点）。
+    /// 消费端必须无条件用它，**不得改读实时 `Position`**——那会让音源随跨帧消费与玩家后续
+    /// 移动 / 传送漂移（回归门 `zhenmai_audio_uses_cast_time_center_not_live_position`）。
+    pub cast_center: DVec3,
+}
+
 pub fn register(app: &mut App) {
-    if let Some(mut dependencies) = app
-        .world_mut()
-        .get_resource_mut::<SkillMeridianDependencies>()
-    {
-        declare_meridian_dependencies(&mut dependencies);
-    } else {
-        let mut dependencies = SkillMeridianDependencies::default();
-        declare_meridian_dependencies(&mut dependencies);
-        app.insert_resource(dependencies);
-    }
     app.add_event::<LocalNeutralizeEvent>();
     app.add_event::<MultiPointBackfireEvent>();
     app.add_event::<MeridianHardenEvent>();
@@ -306,6 +376,7 @@ pub fn register(app: &mut App) {
     app.add_event::<BackfireAmplificationActiveEvent>();
     app.add_event::<ParrySuccessEvent>();
     app.add_event::<JiemaiBackfireBloodSpray>();
+    app.add_event::<ZhenmaiSkillCastEvent>();
     app.add_event::<QiTransfer>();
     app.add_systems(
         Update,
@@ -508,7 +579,7 @@ fn resolve_parry(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, PARRY_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if is_control_locked(world, caster) {
@@ -545,19 +616,11 @@ fn resolve_parry(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        PARRY_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Parry);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::Parry,
-        PARRY_PARTICLE_ID,
-        "#B6172F",
-        0.8,
-        8,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::Parry);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 1,
@@ -571,7 +634,7 @@ fn resolve_neutralize(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, NEUTRALIZE_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, NEUTRALIZE_SKILL_ID) {
@@ -615,19 +678,11 @@ fn resolve_neutralize(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        NEUTRALIZE_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::Neutralize);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::Neutralize,
-        NEUTRALIZE_PARTICLE_ID,
-        "#9CA3AF",
-        0.55,
-        10,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::Neutralize);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 4,
@@ -641,7 +696,7 @@ fn resolve_multipoint(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, MULTIPOINT_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if world.get::<MultiPointActive>(caster).is_some() {
@@ -678,19 +733,11 @@ fn resolve_multipoint(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        MULTIPOINT_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::MultiPoint);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::MultiPoint,
-        PARRY_PARTICLE_ID,
-        "#9B1C31",
-        0.7,
-        16,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::MultiPoint);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 6,
@@ -704,7 +751,7 @@ fn resolve_harden(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, HARDEN_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, HARDEN_SKILL_ID) {
@@ -764,19 +811,11 @@ fn resolve_harden(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        HARDEN_SKILL_ID,
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     record_practice(world, caster, ZhenmaiSkillId::HardenMeridian);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::HardenMeridian,
-        NEUTRALIZE_PARTICLE_ID,
-        "#C7A94B",
-        0.45,
-        8,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::HardenMeridian);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: 5,
@@ -790,7 +829,7 @@ fn resolve_sever_chain(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if skill_on_cooldown(world, caster, slot, now_tick) {
+    if skill_on_cooldown(world, caster, SEVER_CHAIN_SKILL_ID, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_meridian_dependencies(world, caster, SEVER_CHAIN_SKILL_ID) {
@@ -866,19 +905,11 @@ fn resolve_sever_chain(
     set_skill_cooldown(
         world,
         caster,
-        slot,
+        SEVER_CHAIN_SKILL_ID,
         now_tick.saturating_add(SEVER_CHAIN_COOLDOWN_TICKS),
     );
     record_practice(world, caster, ZhenmaiSkillId::SeverChain);
-    emit_skill_feedback(
-        world,
-        caster,
-        ZhenmaiSkillId::SeverChain,
-        SEVER_FLASH_PARTICLE_ID,
-        "#F4C542",
-        1.0,
-        18,
-    );
+    emit_skill_feedback(world, caster, ZhenmaiSkillId::SeverChain);
     CastResult::Started {
         cooldown_ticks: SEVER_CHAIN_COOLDOWN_TICKS,
         anim_duration_ticks: 8,
@@ -962,7 +993,7 @@ fn multipoint_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;
@@ -1008,7 +1039,7 @@ fn harden_duration_tick(
             continue;
         }
         if clock.tick > active.started_at_tick
-            && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
+            && (clock.tick - active.started_at_tick).is_multiple_of(TICKS_PER_SECOND)
         {
             if let Some(mut cultivation) = cultivation {
                 let before = cultivation.qi_current;
@@ -1077,22 +1108,22 @@ fn now_tick(world: &bevy_ecs::world::World) -> u64 {
 fn skill_on_cooldown(
     world: &bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
 ) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn set_skill_cooldown(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     until_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, until_tick);
+        bindings.set_cooldown(skill_id, until_tick);
     }
 }
 
@@ -1316,12 +1347,16 @@ fn contamination_for_meridian(
     caster: Entity,
     meridian_id: MeridianId,
 ) -> f64 {
+    // plan-race-system-v1 P6b review BLOCKER 收口：`ContamSource.meridian_id` 已换轨
+    // 为通用 `MeridianChannelId`——本 skill（震脉 v2 排毒，humanoid-only 玩法，配置走
+    // legacy `MeridianId`）比较前先把入参归一化到 channel id 再匹配。
+    let channel = meridian_id.channel_id();
     world
         .get::<Contamination>(caster)
         .map(|c| {
             c.entries
                 .iter()
-                .filter(|entry| entry.meridian_id == Some(meridian_id))
+                .filter(|entry| entry.meridian_id.as_ref() == Some(&channel))
                 .map(|entry| entry.amount.max(0.0))
                 .sum()
         })
@@ -1334,13 +1369,14 @@ fn reduce_contamination_for_meridian(
     meridian_id: MeridianId,
     amount: f64,
 ) -> f64 {
+    let channel = meridian_id.channel_id();
     let Some(mut contamination) = world.get_mut::<Contamination>(caster) else {
         return 0.0;
     };
     let mut remaining = amount.max(0.0);
     let mut removed = 0.0;
     for entry in &mut contamination.entries {
-        if entry.meridian_id != Some(meridian_id) {
+        if entry.meridian_id.as_ref() != Some(&channel) {
             continue;
         }
         if remaining <= f64::EPSILON {
@@ -1367,12 +1403,24 @@ fn is_meridian_severed(
         .is_some_and(|severed| severed.is_severed(meridian_id))
 }
 
+/// plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
+/// 仍是 legacy `MeridianId`（zhenmai_v2 内部依赖表尚未迁移）——humanoid 20 条经脉均可
+/// 逆映射回 `MeridianId`。
+fn meridian_channel_id_to_legacy(channel_id: &MeridianChannelId) -> MeridianId {
+    channel_id.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][combat][zhenmai_v2] channel id {channel_id} has no legacy MeridianId \
+             mapping — zhenmai_v2 cannot represent non-humanoid channels yet"
+        )
+    })
+}
+
 fn first_open_meridian(world: &bevy_ecs::world::World, caster: Entity) -> Option<MeridianId> {
     world.get::<MeridianSystem>(caster).and_then(|meridians| {
         meridians
             .iter()
             .find(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-            .map(|meridian| meridian.id)
+            .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
     })
 }
 
@@ -1383,7 +1431,7 @@ fn open_meridians(world: &bevy_ecs::world::World, caster: Entity) -> Vec<Meridia
             meridians
                 .iter()
                 .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-                .map(|meridian| meridian.id)
+                .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
                 .collect()
         })
         .unwrap_or_default()
@@ -1443,15 +1491,16 @@ fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: Zh
     });
 }
 
-fn emit_skill_feedback(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    skill: ZhenmaiSkillId,
-    particle_id: &str,
-    color: &str,
-    strength: f32,
-    count: u16,
-) {
+/// 发一招的完整 AV（PlayAnim + SpawnParticle + 音效事件）。
+///
+/// 粒子 id / 颜色 / 强度 / 数量全部由 `skill` 自持（`ZhenmaiSkillId::particle_*`），
+/// 不再由调用点各传各的——P5 去复用前 5 个调用点分别硬传 3 个共享 id，正是
+/// 「multipoint 借 parry、harden 借 neutralize」这类静默复用的滋生处。
+///
+/// 音效**不再内联发 `PlaySoundRecipeRequest`**（plan-fpv-cast-av-v1 P5 emit 架构统一）：
+/// 这里只发 `ZhenmaiSkillCastEvent`，由 `network::audio_trigger::emit_zhenmai_v2_audio_triggers`
+/// 独立系统消费（Pattern A），使「招式实际发出哪条 recipe」可被 emit-path 集成测试锁住。
+fn emit_skill_feedback(world: &mut bevy_ecs::world::World, caster: Entity, skill: ZhenmaiSkillId) {
     let origin = world
         .get::<Position>(caster)
         .map(|position| position.get())
@@ -1474,26 +1523,19 @@ fn emit_skill_feedback(
     world.send_event(VfxEventRequest::new(
         origin,
         VfxEventPayloadV1::SpawnParticle {
-            event_id: particle_id.to_string(),
+            event_id: skill.particle_id().to_string(),
             origin: [origin.x, origin.y + 1.0, origin.z],
             direction: Some([0.0, 0.1, 0.0]),
-            color: Some(color.to_string()),
-            strength: Some(strength),
-            count: Some(count),
+            color: Some(skill.particle_color().to_string()),
+            strength: Some(skill.particle_strength()),
+            count: Some(skill.particle_count()),
             duration_ticks: Some(20),
         },
     ));
-    world.send_event(PlaySoundRecipeRequest {
-        recipe_id: skill.audio_recipe().to_string(),
-        instance_id: 0,
-        pos: Some([origin.x as i32, origin.y as i32, origin.z as i32]),
-        flag: None,
-        volume_mul: 1.0,
-        pitch_shift: 0.0,
-        recipient: AudioRecipient::Radius {
-            origin,
-            radius: 32.0,
-        },
+    world.send_event(ZhenmaiSkillCastEvent {
+        caster,
+        skill,
+        cast_center: origin,
     });
 }
 
@@ -1502,962 +1544,5 @@ fn rejected(reason: CastRejectReason) -> CastResult {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::combat::components::{WoundKind, Wounds};
-    use crate::cultivation::components::{ContamSource, MeridianSystem};
-    use crate::skill::config::SkillConfig;
-    use valence::prelude::{App, Events, GameMode};
-
-    fn all_realms() -> [Realm; 6] {
-        [
-            Realm::Awaken,
-            Realm::Induce,
-            Realm::Condense,
-            Realm::Solidify,
-            Realm::Spirit,
-            Realm::Void,
-        ]
-    }
-
-    fn app_with_events() -> App {
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 100 });
-        let mut dependencies = SkillMeridianDependencies::default();
-        declare_meridian_dependencies(&mut dependencies);
-        app.insert_resource(dependencies);
-        app.add_event::<crate::combat::events::DefenseIntent>();
-        app.add_event::<SkillXpGain>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<PlaySoundRecipeRequest>();
-        app.add_event::<LocalNeutralizeEvent>();
-        app.add_event::<MeridianSeveredEvent>();
-        app.add_event::<MeridianSeveredVoluntaryEvent>();
-        app.add_event::<BackfireAmplificationActiveEvent>();
-        app
-    }
-
-    fn caster(app: &mut App, realm: Realm, qi: f64) -> Entity {
-        let mut meridians = MeridianSystem::default();
-        for id in MeridianId::ALL {
-            meridians.get_mut(id).opened = true;
-        }
-        app.world_mut()
-            .spawn((
-                Username("Azure".to_string()),
-                Cultivation {
-                    realm,
-                    qi_current: qi,
-                    qi_max: qi.max(100.0),
-                    ..Default::default()
-                },
-                meridians,
-                Wounds::default(),
-                Contamination::default(),
-                PracticeLog::default(),
-                SkillBarBindings::default(),
-                MeridianSeveredPermanent::default(),
-            ))
-            .id()
-    }
-
-    fn configure_sever_chain(
-        app: &mut App,
-        entity: Entity,
-        meridian: MeridianId,
-        kind: ZhenmaiAttackKind,
-    ) {
-        let mut store = SkillConfigStore::default();
-        store.set_config(
-            canonical_player_id("Azure").as_str(),
-            SEVER_CHAIN_SKILL_ID,
-            SkillConfig::new(BTreeMap::from([
-                ("meridian_id".to_string(), serde_json::json!(meridian)),
-                (
-                    "backfire_kind".to_string(),
-                    serde_json::json!(kind.as_str()),
-                ),
-            ])),
-        );
-        app.world_mut().insert_resource(store);
-        assert_eq!(
-            configured_sever_chain(app.world(), entity),
-            Some((meridian, kind))
-        );
-    }
-
-    fn mark_severed(app: &mut App, entity: Entity, meridian: MeridianId) {
-        app.world_mut()
-            .get_mut::<MeridianSeveredPermanent>(entity)
-            .unwrap()
-            .insert(meridian, SeveredSource::VoluntarySever, 99);
-    }
-
-    #[test]
-    fn declare_meridian_dependencies_registers_all_five_skills() {
-        let mut dependencies = SkillMeridianDependencies::default();
-        declare_meridian_dependencies(&mut dependencies);
-
-        assert!(dependencies.is_declared(PARRY_SKILL_ID));
-        assert!(dependencies.is_declared(NEUTRALIZE_SKILL_ID));
-        assert!(dependencies.is_declared(MULTIPOINT_SKILL_ID));
-        assert!(dependencies.is_declared(HARDEN_SKILL_ID));
-        assert!(dependencies.is_declared(SEVER_CHAIN_SKILL_ID));
-        assert_eq!(dependencies.lookup(PARRY_SKILL_ID), &[MeridianId::Lung]);
-    }
-
-    #[test]
-    fn parry_profile_awaken_matches_low_realm_cost() {
-        let p = parry_profile(Realm::Awaken, 0);
-        assert_eq!(p.k_drain, 0.05);
-        assert_eq!(p.self_damage, 8.0);
-    }
-
-    #[test]
-    fn parry_profile_void_keeps_clamp_and_low_self_damage() {
-        let p = parry_profile(Realm::Void, 100);
-        assert_eq!(p.k_drain, 0.5);
-        assert_eq!(p.self_damage, 3.0);
-        assert_eq!(p.window_ms, 250);
-    }
-
-    #[test]
-    fn parry_window_scales_linearly() {
-        assert_eq!(parry_window_ms(0), 100);
-        assert_eq!(parry_window_ms(50), 175);
-        assert_eq!(parry_window_ms(100), 250);
-    }
-
-    #[test]
-    fn parry_qi_cost_has_no_realm_gate() {
-        for realm in all_realms() {
-            assert_eq!(parry_qi_cost_for_realm(realm), Some(PARRY_QI_COST));
-        }
-    }
-
-    #[test]
-    fn neutralize_profile_realm_table_matches_plan() {
-        assert_eq!(
-            neutralize_profile(Realm::Awaken, 0).qi_per_contam_percent,
-            18.0
-        );
-        assert_eq!(neutralize_profile(Realm::Induce, 0).max_percent, 2.0);
-        assert_eq!(neutralize_profile(Realm::Condense, 0).max_percent, 4.0);
-        assert_eq!(
-            neutralize_profile(Realm::Solidify, 0).qi_per_contam_percent,
-            12.0
-        );
-        assert_eq!(neutralize_profile(Realm::Spirit, 0).max_percent, 10.0);
-        assert_eq!(
-            neutralize_profile(Realm::Void, 0).qi_per_contam_percent,
-            8.0
-        );
-    }
-
-    #[test]
-    fn multipoint_profile_realm_table_matches_plan() {
-        assert_eq!(multipoint_profile(Realm::Awaken, 0).points, 3);
-        assert_eq!(multipoint_profile(Realm::Induce, 0).points, 4);
-        assert_eq!(multipoint_profile(Realm::Condense, 0).points, 5);
-        assert_eq!(multipoint_profile(Realm::Solidify, 0).points, 6);
-        assert_eq!(multipoint_profile(Realm::Spirit, 0).points, 7);
-        assert_eq!(multipoint_profile(Realm::Void, 0).points, 8);
-    }
-
-    #[test]
-    fn harden_profile_void_allows_two_meridians() {
-        let profile = harden_profile(Realm::Void, 0);
-        assert_eq!(profile.max_meridians, 2);
-        assert_eq!(profile.damage_multiplier, 0.20);
-    }
-
-    #[test]
-    fn sever_chain_only_spirit_and_void_gain_amplification() {
-        assert!(!sever_chain_profile(Realm::Awaken).grants_amplification);
-        assert!(sever_chain_profile(Realm::Spirit).grants_amplification);
-        assert!(sever_chain_profile(Realm::Void).grants_amplification);
-    }
-
-    #[test]
-    fn sever_chain_void_breaks_normal_drain_clamp() {
-        let profile = sever_chain_profile(Realm::Void);
-        assert_eq!(profile.k_drain, 1.5);
-        assert!(profile.k_drain > NORMAL_DRAIN_CLAMP);
-    }
-
-    #[test]
-    fn style_weight_matrix_matches_zhenmai_axis() {
-        assert_eq!(style_weight(ZhenmaiAttackKind::RealYuan), 0.5);
-        assert_eq!(style_weight(ZhenmaiAttackKind::PhysicalCarrier), 0.7);
-        assert_eq!(style_weight(ZhenmaiAttackKind::Array), 0.2);
-        assert_eq!(style_weight(ZhenmaiAttackKind::TaintedYuan), 0.0);
-    }
-
-    #[test]
-    fn tainted_yuan_reflection_is_zero_without_immunity() {
-        assert_eq!(
-            reflected_qi(100.0, 1.5, ZhenmaiAttackKind::TaintedYuan),
-            0.0
-        );
-    }
-
-    #[test]
-    fn reflected_qi_uses_beta_and_weight() {
-        assert!((reflected_qi(100.0, 0.5, ZhenmaiAttackKind::PhysicalCarrier) - 21.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn backfire_transfer_uses_collision_reason() {
-        let transfer = backfire_transfer(
-            QiAccountId::player("attacker"),
-            QiAccountId::player("defender"),
-            12.0,
-        )
-        .unwrap();
-        assert_eq!(transfer.amount, 12.0);
-        assert_eq!(transfer.reason, QiTransferReason::Collision);
-    }
-
-    #[test]
-    fn attack_kind_maps_qi_needle_to_tainted_yuan() {
-        assert_eq!(
-            attack_kind_for_source(AttackSource::QiNeedle, WoundKind::Pierce),
-            ZhenmaiAttackKind::TaintedYuan
-        );
-    }
-
-    #[test]
-    fn attack_kind_maps_piercing_melee_to_physical_carrier() {
-        assert_eq!(
-            attack_kind_for_source(AttackSource::Melee, WoundKind::Pierce),
-            ZhenmaiAttackKind::PhysicalCarrier
-        );
-    }
-
-    #[test]
-    fn multipoint_contact_increments_count_and_reflects() {
-        let mut active = MultiPointActive {
-            started_at_tick: 1,
-            expires_at_tick: 10,
-            points: 5,
-            k_drain: 0.2,
-            qi_per_second: 1.0,
-            contact_count: 0,
-            self_damage_per_contact: 1.0,
-        };
-        let reflected = multipoint_contact(&mut active, 50.0, ZhenmaiAttackKind::RealYuan);
-        assert_eq!(active.contact_count, 1);
-        assert!((reflected - 3.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn amplification_active_requires_kind_and_tick() {
-        let active = BackfireAmplification {
-            meridian_id: MeridianId::Lung,
-            attack_kind: ZhenmaiAttackKind::Array,
-            started_at_tick: 10,
-            expires_at_tick: 30,
-            k_drain: 1.5,
-            incoming_damage_multiplier: 0.5,
-        };
-        assert!(active.active_for(ZhenmaiAttackKind::Array, 29));
-        assert!(!active.active_for(ZhenmaiAttackKind::Array, 30));
-        assert!(!active.active_for(ZhenmaiAttackKind::RealYuan, 20));
-    }
-
-    #[test]
-    fn apply_reflected_qi_drains_attacker_pool() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Void, 100.0);
-        let drained = apply_reflected_qi(app.world_mut(), entity, 30.0);
-        assert_eq!(drained, 30.0);
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            70.0
-        );
-    }
-
-    #[test]
-    fn apply_reflected_qi_clamps_at_zero() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Void, 12.0);
-        let drained = apply_reflected_qi(app.world_mut(), entity, 30.0);
-        assert_eq!(drained, 12.0);
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            0.0
-        );
-    }
-
-    #[test]
-    fn apply_self_damage_clamps_health() {
-        let mut wounds = Wounds {
-            health_current: 5.0,
-            ..Default::default()
-        };
-        let applied = apply_self_damage(&mut wounds, 8.0);
-        assert_eq!(applied, 5.0);
-        assert_eq!(wounds.health_current, 0.0);
-    }
-
-    #[test]
-    fn apply_self_damage_to_entity_skips_creative_mode() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Void, 100.0);
-        app.world_mut().entity_mut(entity).insert((
-            GameMode::Creative,
-            Wounds {
-                health_current: 12.0,
-                ..Default::default()
-            },
-        ));
-
-        let applied = apply_self_damage_to_entity(app.world_mut(), entity, 8.0);
-
-        assert_eq!(applied, 0.0);
-        assert_eq!(
-            app.world().get::<Wounds>(entity).unwrap().health_current,
-            12.0
-        );
-    }
-
-    #[test]
-    fn resolve_parry_spends_qi_opens_defense_and_records_xp() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Induce, 20.0);
-        assert!(matches!(
-            resolve_parry(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            12.0
-        );
-        assert!(!app
-            .world()
-            .resource::<Events<crate::combat::events::DefenseIntent>>()
-            .is_empty());
-        assert!(!app.world().resource::<Events<SkillXpGain>>().is_empty());
-    }
-
-    #[test]
-    fn resolve_parry_rejects_insufficient_qi() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Induce, 3.0);
-        assert_eq!(
-            resolve_parry(app.world_mut(), entity, 0, None),
-            CastResult::Rejected {
-                reason: CastRejectReason::QiInsufficient
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_parry_rejects_declared_severed_meridian() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Induce, 20.0);
-        mark_severed(&mut app, entity, MeridianId::Lung);
-
-        assert_eq!(
-            resolve_parry(app.world_mut(), entity, 0, None),
-            CastResult::Rejected {
-                reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_neutralize_removes_contam_with_realm_cap() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Condense, 100.0);
-        app.world_mut().entity_mut(entity).insert(Contamination {
-            entries: vec![ContamSource {
-                amount: 10.0,
-                color: ColorKind::Insidious,
-                meridian_id: Some(MeridianId::Lung),
-                attacker_id: None,
-                introduced_at: 1,
-            }],
-        });
-        assert!(matches!(
-            resolve_neutralize(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        let contam = app.world().get::<Contamination>(entity).unwrap();
-        assert_eq!(contam.entries[0].amount, 6.0);
-    }
-
-    #[test]
-    fn resolve_neutralize_keeps_other_meridian_contamination() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Condense, 100.0);
-        app.world_mut().entity_mut(entity).insert(Contamination {
-            entries: vec![
-                ContamSource {
-                    amount: 6.0,
-                    color: ColorKind::Insidious,
-                    meridian_id: Some(MeridianId::Lung),
-                    attacker_id: None,
-                    introduced_at: 1,
-                },
-                ContamSource {
-                    amount: 5.0,
-                    color: ColorKind::Turbid,
-                    meridian_id: Some(MeridianId::Heart),
-                    attacker_id: None,
-                    introduced_at: 1,
-                },
-            ],
-        });
-
-        assert!(matches!(
-            resolve_neutralize(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        let contam = app.world().get::<Contamination>(entity).unwrap();
-        assert!(contam
-            .entries
-            .iter()
-            .any(|entry| entry.meridian_id == Some(MeridianId::Heart) && entry.amount == 5.0));
-    }
-
-    #[test]
-    fn resolve_multipoint_inserts_active_component() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Solidify, 100.0);
-        assert!(matches!(
-            resolve_multipoint(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        let active = app.world().get::<MultiPointActive>(entity).unwrap();
-        assert_eq!(active.points, 6);
-    }
-
-    #[test]
-    fn resolve_multipoint_rejects_declared_severed_meridian() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Solidify, 100.0);
-        mark_severed(&mut app, entity, MeridianId::Lung);
-
-        assert_eq!(
-            resolve_multipoint(app.world_mut(), entity, 0, None),
-            CastResult::Rejected {
-                reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_harden_inserts_selected_meridian_component() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Void, 100.0);
-        assert!(matches!(
-            resolve_harden(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        let active = app.world().get::<MeridianHardenActive>(entity).unwrap();
-        assert_eq!(active.meridians.len(), 2);
-    }
-
-    #[test]
-    fn resolve_sever_chain_writes_permanent_severed_and_amplification() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Void, 200.0);
-        configure_sever_chain(
-            &mut app,
-            entity,
-            MeridianId::Du,
-            ZhenmaiAttackKind::PhysicalCarrier,
-        );
-        assert_eq!(
-            resolve_sever_chain(app.world_mut(), entity, 0, None),
-            CastResult::Started {
-                cooldown_ticks: SEVER_CHAIN_COOLDOWN_TICKS,
-                anim_duration_ticks: 8
-            }
-        );
-        assert!(app
-            .world()
-            .get::<MeridianSeveredPermanent>(entity)
-            .unwrap()
-            .is_severed(MeridianId::Du));
-        assert!(app.world().get::<BackfireAmplification>(entity).is_some());
-    }
-
-    #[test]
-    fn resolve_sever_chain_below_spirit_still_severs_without_amplification() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Condense, 50.0);
-        configure_sever_chain(
-            &mut app,
-            entity,
-            MeridianId::Ren,
-            ZhenmaiAttackKind::RealYuan,
-        );
-        assert!(matches!(
-            resolve_sever_chain(app.world_mut(), entity, 0, None),
-            CastResult::Started { .. }
-        ));
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            0.0
-        );
-        assert!(app.world().get::<BackfireAmplification>(entity).is_none());
-    }
-
-    #[test]
-    fn resolve_sever_chain_below_spirit_still_requires_qi_cost() {
-        let mut app = app_with_events();
-        let entity = caster(&mut app, Realm::Condense, 49.0);
-        configure_sever_chain(
-            &mut app,
-            entity,
-            MeridianId::Ren,
-            ZhenmaiAttackKind::RealYuan,
-        );
-
-        assert_eq!(
-            resolve_sever_chain(app.world_mut(), entity, 0, None),
-            CastResult::Rejected {
-                reason: CastRejectReason::QiInsufficient
-            }
-        );
-        assert!(!app
-            .world()
-            .get::<MeridianSeveredPermanent>(entity)
-            .unwrap()
-            .is_severed(MeridianId::Ren));
-    }
-
-    // ── qi conservation tests (BUG-QP-02) ──────────────────────────────────────
-
-    fn app_with_tick_systems() -> App {
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 100 });
-        app.insert_resource(ZoneRegistry::fallback());
-        app.add_event::<QiTransfer>();
-        app.add_event::<MeridianHardenEvent>();
-        app.add_systems(
-            valence::prelude::Update,
-            (multipoint_duration_tick, harden_duration_tick),
-        );
-        app
-    }
-
-    // ── spend_qi (world-path) ──────────────────────────────────────────────────
-
-    #[test]
-    fn spend_qi_emits_release_to_zone_when_registry_present() {
-        let mut app = app_with_events();
-        app.add_event::<QiTransfer>();
-        // Use an empty zone so all 10.0 qi fits (spirit_qi=0.0 → zone_current=0.0, room=50.0).
-        let mut registry = ZoneRegistry::fallback();
-        registry.zones[0].spirit_qi = 0.0;
-        app.insert_resource(registry);
-        let entity = caster(&mut app, Realm::Condense, 50.0);
-        app.world_mut().entity_mut(entity).insert((
-            Position::new([0.0, 64.0, 0.0]),
-            CurrentDimension(DimensionKind::Overworld),
-        ));
-
-        let ok = spend_qi(app.world_mut(), entity, 10.0);
-
-        assert!(ok, "spend_qi should succeed when qi is sufficient");
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            40.0,
-            "qi_current should be reduced by the spent amount"
-        );
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            !transfers.is_empty(),
-            "spend_qi must emit a QiTransfer event; none found — ledger leak detected"
-        );
-        assert!(
-            transfers
-                .iter()
-                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
-            "QiTransfer reason must be ReleaseToZone; got {:?}",
-            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
-        );
-        // Total conserved: sum of all ReleaseToZone transfer amounts must equal 10.0.
-        let total: f64 = transfers
-            .iter()
-            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
-            .map(|t| t.amount)
-            .sum();
-        assert!(
-            (total - 10.0).abs() < 1e-6,
-            "total transferred qi must equal the drained amount (conservation); expected 10.0, got {total}"
-        );
-    }
-
-    /// 部分饱和守恒（CodeRabbit #693）：zone 仅剩 room=10 但 spend 30 →
-    /// accepted=10 入 zone 账户、overflow=20 显式入 overflow 账户，绝不静默丢弃。
-    /// 两类 ReleaseToZone 之和必须 == 30（扣减量全额入账，不蒸发）。
-    #[test]
-    fn spend_qi_partial_saturation_routes_overflow_not_discard() {
-        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-        use crate::qi_physics::ledger::QiAccountKind;
-        let mut app = app_with_events();
-        app.add_event::<QiTransfer>();
-        // 期望值从常量推导（容量/spend 调整后测试不失真）。
-        let initial_spirit_qi = 0.8;
-        let spend_amount = 30.0;
-        // room = (1.0 - spirit_qi) * CAP；accepted = min(room, spend)，overflow = 剩余。
-        let expected_zone = ((1.0 - initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY).min(spend_amount);
-        let expected_overflow = spend_amount - expected_zone;
-        let mut registry = ZoneRegistry::fallback();
-        registry.zones[0].spirit_qi = initial_spirit_qi;
-        app.insert_resource(registry);
-        let entity = caster(&mut app, Realm::Condense, 50.0);
-        app.world_mut().entity_mut(entity).insert((
-            Position::new([0.0, 64.0, 0.0]),
-            CurrentDimension(DimensionKind::Overworld),
-        ));
-
-        let ok = spend_qi(app.world_mut(), entity, spend_amount);
-        assert!(ok, "spend_qi should succeed (qi 50 >= {spend_amount})");
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let releases: Vec<_> = reader
-            .read(events)
-            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
-            .collect();
-        let zone_sum: f64 = releases
-            .iter()
-            .filter(|t| t.to.kind == QiAccountKind::Zone)
-            .map(|t| t.amount)
-            .sum();
-        let overflow_sum: f64 = releases
-            .iter()
-            .filter(|t| t.to.kind == QiAccountKind::Overflow)
-            .map(|t| t.amount)
-            .sum();
-        assert!(
-            (zone_sum - expected_zone).abs() < 1e-6,
-            "zone 仅接受 room={expected_zone}（spirit_qi {initial_spirit_qi}→1.0），实际入 zone 账户 {zone_sum}"
-        );
-        assert!(
-            (overflow_sum - expected_overflow).abs() < 1e-6,
-            "饱和溢出 {expected_overflow} 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
-        );
-        let total: f64 = releases.iter().map(|t| t.amount).sum();
-        assert!(
-            (total - spend_amount).abs() < 1e-6,
-            "守恒：ReleaseToZone 总量应 == spend {spend_amount}（zone {expected_zone} + overflow {expected_overflow}），实际 {total}（#693）"
-        );
-    }
-
-    /// 最大边界（zone 满，room=0）：spirit_qi=1.0 时 spend_qi 全额走 overflow 账户。
-    /// 断言 Zone 账户得 0、Overflow 账户得 spend、总量 == spend，防 capped fallback 回归。
-    #[test]
-    fn spend_qi_zone_full_routes_all_to_overflow() {
-        use crate::qi_physics::ledger::QiAccountKind;
-        let mut app = app_with_events();
-        app.add_event::<QiTransfer>();
-        let spend_amount = 10.0;
-        // spirit_qi=1.0 → zone_current=CAP, room=0：accepted=0 → 全额 overflow fallback。
-        let mut registry = ZoneRegistry::fallback();
-        registry.zones[0].spirit_qi = 1.0;
-        app.insert_resource(registry);
-        let entity = caster(&mut app, Realm::Condense, 50.0);
-        app.world_mut().entity_mut(entity).insert((
-            Position::new([0.0, 64.0, 0.0]),
-            CurrentDimension(DimensionKind::Overworld),
-        ));
-
-        let ok = spend_qi(app.world_mut(), entity, spend_amount);
-        assert!(ok, "spend_qi should succeed (qi 50 >= {spend_amount})");
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let releases: Vec<_> = reader
-            .read(events)
-            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
-            .collect();
-        let zone_sum: f64 = releases
-            .iter()
-            .filter(|t| t.to.kind == QiAccountKind::Zone)
-            .map(|t| t.amount)
-            .sum();
-        let overflow_sum: f64 = releases
-            .iter()
-            .filter(|t| t.to.kind == QiAccountKind::Overflow)
-            .map(|t| t.amount)
-            .sum();
-        assert!(
-            zone_sum.abs() < 1e-6,
-            "zone 满（room=0）应 0 入 zone 账户，实际 {zone_sum}"
-        );
-        assert!(
-            (overflow_sum - spend_amount).abs() < 1e-6,
-            "zone 满时全额 {spend_amount} 必须入 overflow 账户（非空转账），实际 {overflow_sum}"
-        );
-        let total: f64 = releases.iter().map(|t| t.amount).sum();
-        assert!(
-            (total - spend_amount).abs() < 1e-6,
-            "守恒：zone 满时 ReleaseToZone 总量应 == spend {spend_amount}（全 overflow），实际 {total}"
-        );
-    }
-
-    #[test]
-    fn spend_qi_falls_back_to_overflow_when_no_zone_registry() {
-        let mut app = app_with_events();
-        app.add_event::<QiTransfer>();
-        // Deliberately do NOT insert ZoneRegistry.
-        let entity = caster(&mut app, Realm::Condense, 30.0);
-
-        let ok = spend_qi(app.world_mut(), entity, 5.0);
-
-        assert!(ok);
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            25.0
-        );
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            !transfers.is_empty(),
-            "spend_qi must emit an overflow QiTransfer when no ZoneRegistry is present"
-        );
-        // The fallback uses ReleaseToZone reason on the overflow account.
-        assert!(
-            transfers
-                .iter()
-                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
-            "overflow transfer should still use ReleaseToZone reason"
-        );
-    }
-
-    #[test]
-    fn spend_qi_returns_false_and_emits_nothing_when_insufficient() {
-        let mut app = app_with_events();
-        app.add_event::<QiTransfer>();
-        app.insert_resource(ZoneRegistry::fallback());
-        let entity = caster(&mut app, Realm::Condense, 3.0);
-
-        let ok = spend_qi(app.world_mut(), entity, 10.0);
-
-        assert!(!ok, "spend_qi should return false when qi is insufficient");
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            3.0,
-            "qi_current must be unchanged on failure"
-        );
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            transfers.is_empty(),
-            "no QiTransfer event should be emitted when spend_qi fails"
-        );
-    }
-
-    // ── multipoint_duration_tick (system-path) ─────────────────────────────────
-
-    #[test]
-    fn multipoint_tick_emits_qi_transfer_every_second() {
-        let mut app = app_with_tick_systems();
-        // CombatClock tick=100. Buff started at tick=0 → first drain at tick=TICKS_PER_SECOND.
-        // We set CombatClock to exactly TICKS_PER_SECOND so the drain fires.
-        app.insert_resource(CombatClock {
-            tick: TICKS_PER_SECOND,
-        });
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 50.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                MultiPointActive {
-                    started_at_tick: 0,
-                    expires_at_tick: TICKS_PER_SECOND * 10,
-                    points: 3,
-                    k_drain: 0.3,
-                    qi_per_second: 5.0,
-                    contact_count: 0,
-                    self_damage_per_contact: 0.0,
-                },
-                Position::new([0.0, 64.0, 0.0]),
-                CurrentDimension(DimensionKind::Overworld),
-            ))
-            .id();
-
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
-        assert!(
-            cultivation.qi_current < 50.0,
-            "qi_current must decrease after multipoint tick; was 50.0, now {}",
-            cultivation.qi_current
-        );
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            !transfers.is_empty(),
-            "multipoint_duration_tick must emit QiTransfer on each per-second drain; none found"
-        );
-        assert!(
-            transfers
-                .iter()
-                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
-            "per-second drain must emit ReleaseToZone transfer; got {:?}",
-            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn multipoint_tick_emits_no_transfer_before_first_second() {
-        let mut app = app_with_tick_systems();
-        // Buff started at tick=0, clock at tick=5 (< TICKS_PER_SECOND) — no drain fires.
-        app.insert_resource(CombatClock { tick: 5 });
-
-        app.world_mut().spawn((
-            Cultivation {
-                realm: Realm::Condense,
-                qi_current: 50.0,
-                qi_max: 100.0,
-                ..Default::default()
-            },
-            MultiPointActive {
-                started_at_tick: 0,
-                expires_at_tick: TICKS_PER_SECOND * 10,
-                points: 3,
-                k_drain: 0.3,
-                qi_per_second: 5.0,
-                contact_count: 0,
-                self_damage_per_contact: 0.0,
-            },
-            Position::new([0.0, 64.0, 0.0]),
-            CurrentDimension(DimensionKind::Overworld),
-        ));
-
-        app.update();
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            transfers.is_empty(),
-            "no QiTransfer should be emitted when drain has not fired yet; got {} events",
-            transfers.len()
-        );
-    }
-
-    // ── harden_duration_tick (system-path) ────────────────────────────────────
-
-    #[test]
-    fn harden_tick_emits_qi_transfer_every_second() {
-        let mut app = app_with_tick_systems();
-        app.insert_resource(CombatClock {
-            tick: TICKS_PER_SECOND,
-        });
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 60.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                MeridianHardenActive {
-                    started_at_tick: 0,
-                    expires_at_tick: TICKS_PER_SECOND * 10,
-                    meridians: vec![MeridianId::Lung],
-                    damage_multiplier: 0.5,
-                    qi_per_second: 4.0,
-                },
-                Position::new([0.0, 64.0, 0.0]),
-                CurrentDimension(DimensionKind::Overworld),
-            ))
-            .id();
-
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
-        assert!(
-            cultivation.qi_current < 60.0,
-            "qi_current must decrease after harden tick; was 60.0, now {}",
-            cultivation.qi_current
-        );
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            !transfers.is_empty(),
-            "harden_duration_tick must emit QiTransfer on each per-second drain; none found"
-        );
-        assert!(
-            transfers
-                .iter()
-                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
-            "per-second drain must emit ReleaseToZone transfer; got {:?}",
-            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn harden_tick_emits_no_transfer_when_buff_expires() {
-        let mut app = app_with_tick_systems();
-        // Clock at the expiry tick — buff is removed, no drain fires.
-        let expires = TICKS_PER_SECOND * 3;
-        app.insert_resource(CombatClock { tick: expires });
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 60.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                MeridianHardenActive {
-                    started_at_tick: 0,
-                    expires_at_tick: expires,
-                    meridians: vec![MeridianId::Lung],
-                    damage_multiplier: 0.5,
-                    qi_per_second: 4.0,
-                },
-                Position::new([0.0, 64.0, 0.0]),
-                CurrentDimension(DimensionKind::Overworld),
-            ))
-            .id();
-
-        app.update();
-
-        // Component should be removed (expired).
-        assert!(
-            app.world().get::<MeridianHardenActive>(entity).is_none(),
-            "MeridianHardenActive must be removed when buff expires"
-        );
-        // qi_current unchanged — removal path skips drain.
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().qi_current,
-            60.0,
-            "qi must not be drained on expiry tick"
-        );
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let transfers: Vec<_> = reader.read(events).collect();
-        assert!(
-            transfers.is_empty(),
-            "no QiTransfer should be emitted on buff expiry (no drain); got {} events",
-            transfers.len()
-        );
-    }
-}
+#[path = "zhenmai_v2_tests.rs"]
+mod tests;

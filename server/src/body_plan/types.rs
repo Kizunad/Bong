@@ -118,6 +118,63 @@ impl std::fmt::Display for RaceId {
     }
 }
 
+/// plan-race-system-v1 P3a —— 装备 / 功法种族三档匹配门（决议 §8.1 #5/#6）。
+///
+/// 三档语义：`Any` 全通用（不看种族）；`Humanoid` 人形通用（判据 = 判定域 BodyPlan 的
+/// `is_humanoid` 字段，不做种族名单硬编码）；`Species` 种族专属（精确 `RaceId` 白名单）。
+///
+/// `Species` 携带 `&'static [&'static str]`（而非 `&'static [RaceId]`）——`RaceId` 内部是
+/// `String`，无法出现在 `const` 数组字面量里（`String::from` 不是 const fn），而
+/// [`TechniqueDefinition`]（`known_techniques.rs`）的 48 条定义是 `Copy` + `const` 数组，
+/// 本类型必须能在同一 const 上下文构造。比对用 [`RaceGate::allows`]，内部按
+/// `RaceId::as_str()` 做字符串比较，语义与「`&'static [RaceId]`」完全等价。owned 场景
+/// （`ItemTemplate` TOML 运行时加载）用 [`RaceGateOwned`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RaceGate {
+    #[default]
+    Any,
+    Humanoid,
+    Species(&'static [&'static str]),
+}
+
+impl RaceGate {
+    /// 判定给定身份（`race_id` + 判定域 `is_humanoid`）是否通过本门。
+    pub fn allows(&self, race_id: &RaceId, is_humanoid: bool) -> bool {
+        match self {
+            RaceGate::Any => true,
+            RaceGate::Humanoid => is_humanoid,
+            RaceGate::Species(allowed) => allowed.iter().any(|id| *id == race_id.as_str()),
+        }
+    }
+}
+
+/// [`RaceGate`] 的 owned / serde 形态——`ItemTemplate.wearer_race`（TOML 运行时加载，
+/// P3b）等场景用。wire 形状为 tagged struct `{kind: "any"|"humanoid"|"species", species:
+/// [...]}`（`kind` 用 string tag 而非 proto enum，避免枚举前缀 noOp——见
+/// `plan-wire-format-bridge-v1` 教训；`species` 仅 `kind="species"` 时携带）；
+/// serde 内部标签枚举对未知 `kind` 天然拒绝反序列化（fail-closed，非静默兜底 `Any`），
+/// 与 `PartConsequence`（同文件）同一惯例。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RaceGateOwned {
+    #[default]
+    Any,
+    Humanoid,
+    Species {
+        species: Vec<RaceId>,
+    },
+}
+
+impl RaceGateOwned {
+    pub fn allows(&self, race_id: &RaceId, is_humanoid: bool) -> bool {
+        match self {
+            RaceGateOwned::Any => true,
+            RaceGateOwned::Humanoid => is_humanoid,
+            RaceGateOwned::Species { species } => species.contains(race_id),
+        }
+    }
+}
+
 /// 部位受击后果语义（决议 §P0）——枚举化现有「腿伤减速 / 头伤眩晕 / 臂伤六维」的隐性分类，
 /// 非人形部位挂同一枚举（如鲸尾鳍 = `Locomotion`）。
 ///
@@ -241,14 +298,107 @@ pub enum HitGeometry {
     },
 }
 
-/// 经脉构型档案占位——P1 起填充 `channels: Vec<ChannelDef>` / `topology_edges` /
-/// `realm_requirements: [RealmMeridianReq; 6]`（见 plan §P1）。P0 仅锁定
-/// `BodyPlan.meridian_profile: Option<MeridianProfile>` 的存在性语义：humanoid.json
-/// 缺省该字段 = `None`（合法），显式提供 `{}` = `Some(MeridianProfile::default())`
-/// （同样合法）——两条路径各有一条 pin 测试（见 `registry.rs` 测试）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// 经脉 family（沿用现有 12 正经 / 8 奇经二分——`realm_requirements` 子配额与
+/// `MeridianSystem.regular`/`extraordinary` 分桶依据，见 `MeridianSystem::for_profile`）。
+/// 与 `cultivation::components::MeridianFamily` 是两个独立类型——后者是 `MeridianId`
+/// 的既有派生便捷方法（服务 legacy 桥接），本类型是 body_plan JSON schema 的权威定义，
+/// 刻意不互相依赖以避免制造循环耦合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeridianFamily {
+    Regular,
+    Extraordinary,
+}
+
+/// 经脉在特定玩法场景里的语义角色标签（plan §P4 决议 —— `FormAnchor` = 易形前置检查
+/// 关注的经脉；本类型 P1a 只声明枚举 + 序列化，尚无消费点，供 humanoid.json 提前给
+/// Ren/Du 标注，P4 落地"易形前置＝本体 profile 内全部 form_anchor 已通且未断"时直接
+/// 消费，不必再改一次 schema）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelRole {
+    FormAnchor,
+}
+
+/// 单条经脉声明（`MeridianProfile.channels`）。
+///
+/// `body_part` 承接 `combat::baomai_v4::dead_armor::meridian_to_body_part` 私表的数据
+/// （channel → 可选体表部位，`None` = 无可命中体表映射，如 6 条排除的奇经——见该函数
+/// 文档）——本字段是 plan §P1 "经脉↔部位映射数据化"目标里**数据落地**的部分；
+/// `dead_armor` 自身改为消费本字段（而非维护私表）与 `cultivation::dugu` 的另一张
+/// **方向相反、语义不同**的私表（`body_part_to_meridian: BodyPart -> MeridianId`，
+/// 体表命中→"排异注入哪条经脉"，多对一且值域不覆盖全部 20 条经脉，不是本字段的逆
+/// 映射）留待后续 P1 消费点改造子阶段——P1a 范围只到"数据在 humanoid.json 里有唯一
+/// 权威来源"，两张私表各自的运行时改造不在本次交付。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MeridianProfile {}
+pub struct ChannelDef {
+    pub id: crate::cultivation::components::MeridianChannelId,
+    pub family: MeridianFamily,
+    #[serde(default)]
+    pub body_part: Option<BodyPartId>,
+    #[serde(default)]
+    pub roles: Vec<ChannelRole>,
+}
+
+/// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表的数据
+/// 落地（体表命中部位 → 排异毒素累积到哪条经脉，多对一、代表性映射，方向与值域都与
+/// [`ChannelDef::body_part`] 不同——**不是**其逆函数，见 `ChannelDef` 文档的说明）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguInjectionEntry {
+    pub body_part: BodyPartId,
+    pub channel: crate::cultivation::components::MeridianChannelId,
+}
+
+/// 经脉拓扑边——无向，声明一次即代表双向相邻（替换 `cultivation::topology::
+/// MeridianTopology::standard()` 的单张全局 Rust 图；P1a 只交付数据 + 校验，
+/// `topology.rs` 及其消费点`meridian_open`/NPC 选招在后续 P1 子阶段改为读取本字段）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopologyEdge {
+    pub from: crate::cultivation::components::MeridianChannelId,
+    pub to: crate::cultivation::components::MeridianChannelId,
+}
+
+/// 单一境界的经脉配额声明（§8.1 #8 "公式即数据"决议——每种构型在自己的
+/// `realm_requirements` 里直接声明各境界所需 channel 总数与正/奇子配额，不设全局换算
+/// 公式）。数组下标与 `cultivation::components::Realm::rank()` 对齐：
+/// `realm_requirements[realm.rank() as usize - 1]`（rank 1..=6 对应 醒灵..化虚）。
+/// `regular_min`/`extraordinary_min` 为 0 表示该境界不对相应 family 设子配额下限
+/// （只受 `total` 约束）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealmMeridianReq {
+    pub total: u8,
+    #[serde(default)]
+    pub regular_min: u8,
+    #[serde(default)]
+    pub extraordinary_min: u8,
+}
+
+/// 经脉构型档案——`channels`（每条经脉的 id/family/体部映射/角色标签）+
+/// `topology_edges`（拓扑邻接，替换 `MeridianTopology::standard()` 单张全局图）+
+/// `realm_requirements`（六境界配额曲线，替换 `Realm::required_meridians` /
+/// `breakthrough::breakthrough_precondition_error` 的硬编码 match，见 plan §P1）。
+///
+/// P0 仅锁定 `BodyPlan.meridian_profile: Option<MeridianProfile>` 的存在性语义；
+/// **P1a 起本类型不再是空占位**——`validate_body_plan` 现在要求 `is_humanoid == true`
+/// 的 plan 必须提供 `Some(meridian_profile)`（humanoid.json 缺省该字段不再合法，见
+/// `validate.rs`），非人形 plan（P0 现存的测试 fixture）仍可留 `None`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeridianProfile {
+    pub channels: Vec<ChannelDef>,
+    #[serde(default)]
+    pub topology_edges: Vec<TopologyEdge>,
+    pub realm_requirements: [RealmMeridianReq; 6],
+    /// plan-race-system-v1 P1b —— `cultivation::dugu::body_part_to_meridian` 私表数据
+    /// （见 [`DuguInjectionEntry`]）。`#[serde(default)]` 空数组对非人形 plan / 未接入
+    /// dugu 玩法的构型是合法状态（`resolve::dugu_injection_channel` 返回 `None`）。
+    #[serde(default)]
+    pub dugu_injection: Vec<DuguInjectionEntry>,
+}
 
 /// 单个种族/构型的完整身体定义。`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据
 /// （不做名单硬编码）；易形配对不在本结构体内——唯一真源是 `races.json` 全局
@@ -306,326 +456,5 @@ impl BodyPlan {
             .iter()
             .filter(move |def| predicate(&def.consequence))
             .map(|def| &def.id)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn body_plan_id_display_and_accessors_round_trip() {
-        let id = BodyPlanId::new("humanoid");
-        assert_eq!(id.as_str(), "humanoid");
-        assert_eq!(id.to_string(), "humanoid");
-        assert_eq!(BodyPlanId::from("humanoid"), id);
-        assert_eq!(BodyPlanId::from("humanoid".to_string()), id);
-    }
-
-    #[test]
-    fn body_part_id_display_and_accessors_round_trip() {
-        let id = BodyPartId::new("head");
-        assert_eq!(id.as_str(), "head");
-        assert_eq!(id.to_string(), "head");
-        assert_eq!(BodyPartId::from("head"), id);
-    }
-
-    #[test]
-    fn race_id_display_and_accessors_round_trip() {
-        let id = RaceId::new("human");
-        assert_eq!(id.as_str(), "human");
-        assert_eq!(id.to_string(), "human");
-        assert_eq!(RaceId::from("human".to_string()), id);
-    }
-
-    #[test]
-    fn part_consequence_serde_pin_every_variant() {
-        let cases: [(PartConsequence, &str); 4] = [
-            (PartConsequence::Locomotion, r#"{"kind":"locomotion"}"#),
-            (PartConsequence::Sensory, r#"{"kind":"sensory"}"#),
-            (
-                PartConsequence::Manipulator { main_hand: true },
-                r#"{"kind":"manipulator","main_hand":true}"#,
-            ),
-            (PartConsequence::Core, r#"{"kind":"core"}"#),
-        ];
-        for (value, expected_json) in cases {
-            let serialized = serde_json::to_string(&value).expect("serialize");
-            assert_eq!(
-                serialized, expected_json,
-                "PartConsequence {value:?} 序列化形状漂移"
-            );
-            let deserialized: PartConsequence =
-                serde_json::from_str(expected_json).expect("deserialize");
-            assert_eq!(deserialized, value, "PartConsequence 反序列化往返不一致");
-        }
-    }
-
-    #[test]
-    fn part_consequence_manipulator_main_hand_false_variant() {
-        let value = PartConsequence::Manipulator { main_hand: false };
-        let serialized = serde_json::to_string(&value).expect("serialize");
-        assert_eq!(serialized, r#"{"kind":"manipulator","main_hand":false}"#);
-    }
-
-    #[test]
-    fn part_consequence_rejects_unknown_kind() {
-        let err = serde_json::from_str::<PartConsequence>(r#"{"kind":"unknown_kind"}"#)
-            .expect_err("unknown kind must fail closed, not silently default");
-        assert!(err.to_string().contains("unknown_kind") || err.to_string().contains("kind"));
-    }
-
-    #[test]
-    fn height_band_assignment_referenced_part_ids_every_variant() {
-        let single = HeightBandAssignment::Single {
-            part: BodyPartId::new("head"),
-        };
-        assert_eq!(single.referenced_part_ids(), vec![&BodyPartId::new("head")]);
-
-        let split_with_center = HeightBandAssignment::LateralSplitWithCenter {
-            left: BodyPartId::new("arm_l"),
-            right: BodyPartId::new("arm_r"),
-            center: BodyPartId::new("chest"),
-        };
-        assert_eq!(
-            split_with_center.referenced_part_ids(),
-            vec![
-                &BodyPartId::new("arm_l"),
-                &BodyPartId::new("arm_r"),
-                &BodyPartId::new("chest"),
-            ]
-        );
-
-        let split = HeightBandAssignment::LateralSplit {
-            left: BodyPartId::new("leg_l"),
-            right: BodyPartId::new("leg_r"),
-        };
-        assert_eq!(
-            split.referenced_part_ids(),
-            vec![&BodyPartId::new("leg_l"), &BodyPartId::new("leg_r")]
-        );
-    }
-
-    #[test]
-    fn hit_geometry_height_bands_serde_round_trip() {
-        let geometry = HitGeometry::HeightBands {
-            aabb: StandingAabbSpec {
-                half_width: 0.3,
-                height: 1.8,
-            },
-            bands: vec![HeightBand {
-                min_rel_y: 0.88,
-                assignment: HeightBandAssignment::Single {
-                    part: BodyPartId::new("head"),
-                },
-            }],
-            lateral_threshold: 0.19,
-        };
-        let json = serde_json::to_value(&geometry).expect("serialize");
-        assert_eq!(json["mode"], "height_bands");
-        let round_tripped: HitGeometry = serde_json::from_value(json).expect("deserialize");
-        assert_eq!(round_tripped, geometry);
-    }
-
-    #[test]
-    fn hit_geometry_part_boxes_serde_round_trip() {
-        let geometry = HitGeometry::PartBoxes {
-            boxes: vec![PartBox {
-                part_id: BodyPartId::new("skull"),
-                offset: [0.0, 1.5, 0.0],
-                half_extents: [0.3, 0.3, 0.3],
-                priority: 10,
-            }],
-        };
-        let json = serde_json::to_value(&geometry).expect("serialize");
-        assert_eq!(json["mode"], "part_boxes");
-        let round_tripped: HitGeometry = serde_json::from_value(json).expect("deserialize");
-        assert_eq!(round_tripped, geometry);
-    }
-
-    #[test]
-    fn meridian_profile_missing_field_defaults_to_none_present_field_is_some() {
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[serde(default)]
-            meridian_profile: Option<MeridianProfile>,
-        }
-        let missing: Wrapper =
-            serde_json::from_str("{}").expect("missing field should deserialize");
-        assert_eq!(missing.meridian_profile, None);
-
-        let present: Wrapper = serde_json::from_str(r#"{"meridian_profile":{}}"#)
-            .expect("present empty object should deserialize");
-        assert_eq!(present.meridian_profile, Some(MeridianProfile::default()));
-    }
-
-    #[test]
-    fn intrinsic_race_component_equality() {
-        let a = IntrinsicRace(RaceId::new("human"));
-        let b = IntrinsicRace(RaceId::new("human"));
-        let c = IntrinsicRace(RaceId::new("beast_common"));
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-    }
-
-    // ───────────────────── BodyPlan::consequence_for / parts_matching ─────────────────────
-
-    fn plan_with_four_consequence_kinds() -> BodyPlan {
-        BodyPlan {
-            id: "fixture_consequences".into(),
-            display_name: "四类后果测试构型".to_string(),
-            is_humanoid: false,
-            parts: vec![
-                BodyPartDef {
-                    id: "tail_fin".into(),
-                    damage_mul: 0.6,
-                    contam_mul: 0.7,
-                    bleed_mul: 1.0,
-                    consequence: PartConsequence::Locomotion,
-                },
-                BodyPartDef {
-                    id: "skull".into(),
-                    damage_mul: 2.0,
-                    contam_mul: 1.5,
-                    bleed_mul: 1.5,
-                    consequence: PartConsequence::Sensory,
-                },
-                BodyPartDef {
-                    id: "left_pincer".into(),
-                    damage_mul: 0.7,
-                    contam_mul: 0.8,
-                    bleed_mul: 0.8,
-                    consequence: PartConsequence::Manipulator { main_hand: true },
-                },
-                BodyPartDef {
-                    id: "right_pincer".into(),
-                    damage_mul: 0.7,
-                    contam_mul: 0.8,
-                    bleed_mul: 0.8,
-                    consequence: PartConsequence::Manipulator { main_hand: false },
-                },
-                BodyPartDef {
-                    id: "carapace".into(),
-                    damage_mul: 1.0,
-                    contam_mul: 1.0,
-                    bleed_mul: 1.0,
-                    consequence: PartConsequence::Core,
-                },
-            ],
-            hit_geometry: HitGeometry::PartBoxes { boxes: vec![] },
-            equip_slots: vec![],
-            meridian_profile: None,
-            mutation_slot_mapping: HashMap::new(),
-        }
-    }
-
-    #[test]
-    fn consequence_for_finds_every_declared_part_by_id() {
-        let plan = plan_with_four_consequence_kinds();
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("tail_fin")),
-            Some(&PartConsequence::Locomotion)
-        );
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("skull")),
-            Some(&PartConsequence::Sensory)
-        );
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("left_pincer")),
-            Some(&PartConsequence::Manipulator { main_hand: true })
-        );
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("right_pincer")),
-            Some(&PartConsequence::Manipulator { main_hand: false })
-        );
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("carapace")),
-            Some(&PartConsequence::Core)
-        );
-    }
-
-    #[test]
-    fn consequence_for_returns_none_for_unknown_part_id() {
-        let plan = plan_with_four_consequence_kinds();
-        assert_eq!(
-            plan.consequence_for(&BodyPartId::new("does_not_exist")),
-            None,
-            "未知 part id 必须显式返回 None，调用方自行决定无后果策略，而不是猜一个默认后果"
-        );
-    }
-
-    #[test]
-    fn consequence_for_returns_none_on_empty_parts() {
-        let mut plan = plan_with_four_consequence_kinds();
-        plan.parts.clear();
-        assert_eq!(plan.consequence_for(&BodyPartId::new("tail_fin")), None);
-    }
-
-    #[test]
-    fn parts_matching_locomotion_finds_only_tail_fin() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Locomotion))
-            .collect();
-        assert_eq!(found, vec![&BodyPartId::new("tail_fin")]);
-    }
-
-    #[test]
-    fn parts_matching_manipulator_main_hand_true_finds_only_left_pincer() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Manipulator { main_hand: true }))
-            .collect();
-        assert_eq!(found, vec![&BodyPartId::new("left_pincer")]);
-    }
-
-    #[test]
-    fn parts_matching_manipulator_main_hand_false_finds_only_right_pincer() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Manipulator { main_hand: false }))
-            .collect();
-        assert_eq!(found, vec![&BodyPartId::new("right_pincer")]);
-    }
-
-    #[test]
-    fn parts_matching_sensory_finds_only_skull() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Sensory))
-            .collect();
-        assert_eq!(found, vec![&BodyPartId::new("skull")]);
-    }
-
-    #[test]
-    fn parts_matching_core_finds_only_carapace() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Core))
-            .collect();
-        assert_eq!(found, vec![&BodyPartId::new("carapace")]);
-    }
-
-    #[test]
-    fn parts_matching_no_match_yields_empty_iterator() {
-        let plan = plan_with_four_consequence_kinds();
-        let found: Vec<&BodyPartId> = plan.parts_matching(|_| false).collect();
-        assert!(found.is_empty());
-    }
-
-    #[test]
-    fn parts_matching_preserves_declaration_order() {
-        // humanoid.json 声明双腿为 leg_l 后 leg_r（parts 数组序）；parts_matching 必须
-        // 保持这个声明顺序，不做隐式排序——`arm_wound`/`leg_wound` 的调用方依赖这一点
-        // 做"取最重伤"归约时结果与遍历顺序无关，但顺序本身仍需可预期以便调试。
-        let plan = crate::body_plan::humanoid_plan_static();
-        let legs: Vec<&BodyPartId> = plan
-            .parts_matching(|c| matches!(c, PartConsequence::Locomotion))
-            .collect();
-        assert_eq!(
-            legs,
-            vec![&BodyPartId::new("leg_l"), &BodyPartId::new("leg_r")],
-            "humanoid.json 的 parts 数组顺序必须是 leg_l 在前"
-        );
     }
 }

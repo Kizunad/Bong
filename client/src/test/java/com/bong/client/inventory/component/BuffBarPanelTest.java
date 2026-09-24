@@ -1,8 +1,13 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.combat.store.StatusEffectStore;
+import com.bong.client.combat.inspect.StatusPanelExtension;
+import com.bong.client.combat.StatusEffectIcons;
+import com.bong.client.network.ServerDataRouter;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -15,6 +20,34 @@ import static org.junit.jupiter.api.Assertions.*;
  * 同一约束——见各自类头注释）。
  */
 class BuffBarPanelTest {
+    @AfterEach void cleanup() { StatusEffectStore.clear(); }
+
+    @Test
+    void indefiniteBleedingSnapshotKeepsItsSourceIconAndNoNumericCountdown() {
+        String json = """
+            {"v":1,"type":"status_snapshot","effects":[
+              {"id":"bleeding","name":"流血","kind":"dot","stacks":1,
+               "remaining_ms":%d,"source_color":-65536,"source_label":"灰烬蛛","dispel":1}
+            ]}
+            """.formatted(StatusEffectStore.INDEFINITE_REMAINING_MS);
+        var result = ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+        assertFalse(result.isParseError(), result.logMessage());
+        var wound = StatusEffectStore.snapshot().get(0);
+        String tooltip = BuffBarPanel.tooltipText(wound);
+        assertTrue(tooltip.contains("来源: 灰烬蛛"), "不能将实际攻击者改写成丹药");
+        assertTrue(tooltip.contains("持续"));
+        assertFalse(tooltip.contains("剩余:"), "无到期时间不能显示巨大的分钟数");
+        assertTrue(StatusEffectIcons.textureFor(wound.id()).endsWith("/bleeding.png"),
+            "持续伤害按具体效果选择图标，流血不能标成毒");
+
+        long now = System.currentTimeMillis();
+        StatusEffectStore.presentation(now, 8);
+        var later = StatusEffectStore.presentation(now + 60_000, 8);
+        assertEquals(StatusEffectStore.INDEFINITE_REMAINING_MS, later.items().get(0).remainingMs());
+        StatusEffectStore.replace(List.of(), now + 60_000);
+        assertTrue(StatusEffectStore.presentation(now + 61_000, 8).items().isEmpty(),
+            "持续状态仍须在服务端清除后退出");
+    }
 
     private static StatusEffectStore.Effect effect(
         String id, String name, StatusEffectStore.Kind kind, int stacks, long remainingMs
@@ -176,69 +209,45 @@ class BuffBarPanelTest {
         assertFalse(BuffBarPanel.isNegativeKind(StatusEffectStore.Kind.UNKNOWN));
     }
 
-    // ─── kind 字符/色块——每个 enum 变体各一条专属 case ─────────────────────
-
-    @Test
-    void kindGlyphCoversAllFiveVariants() {
-        assertEquals("毒", BuffBarPanel.kindGlyph(StatusEffectStore.Kind.DOT));
-        assertEquals("控", BuffBarPanel.kindGlyph(StatusEffectStore.Kind.CONTROL));
-        assertEquals("增", BuffBarPanel.kindGlyph(StatusEffectStore.Kind.BUFF));
-        assertEquals("减", BuffBarPanel.kindGlyph(StatusEffectStore.Kind.DEBUFF));
-        assertEquals("?", BuffBarPanel.kindGlyph(StatusEffectStore.Kind.UNKNOWN));
-    }
-
-    @Test
-    void kindTintCoversAllFiveVariantsWithDistinctColors() {
-        int[] tints = {
-            BuffBarPanel.kindTint(StatusEffectStore.Kind.DOT),
-            BuffBarPanel.kindTint(StatusEffectStore.Kind.CONTROL),
-            BuffBarPanel.kindTint(StatusEffectStore.Kind.BUFF),
-            BuffBarPanel.kindTint(StatusEffectStore.Kind.DEBUFF),
-            BuffBarPanel.kindTint(StatusEffectStore.Kind.UNKNOWN),
-        };
-        assertEquals(5, java.util.Set.of(tints[0], tints[1], tints[2], tints[3], tints[4]).size(),
-            "五种 kind 的色块须互不相同，否则背包界面里分不清 buff 类型");
-    }
-
     // ─── 剩余时间格式化：<60s 一位小数秒；>=60s 分+秒 ─────────────────────
 
     @Test
     void formatRemainingUnderOneMinuteShowsOneDecimalSeconds() {
-        assertEquals("0.0s", BuffBarPanel.formatRemaining(0L));
-        assertEquals("4.5s", BuffBarPanel.formatRemaining(4_500L));
-        assertEquals("0.1s", BuffBarPanel.formatRemaining(150L));
+        assertEquals("0.0s", StatusPanelExtension.formatRemaining(0L));
+        assertEquals("4.5s", StatusPanelExtension.formatRemaining(4_500L));
+        assertEquals("0.1s", StatusPanelExtension.formatRemaining(150L));
     }
 
     @Test
     void formatRemainingNegativeClampsToZero() {
-        assertEquals("0.0s", BuffBarPanel.formatRemaining(-1_000L), "防御性：负值不应打出负数秒");
+        assertEquals("0.0s", StatusPanelExtension.formatRemaining(-1_000L), "防御性：负值不应打出负数秒");
     }
 
     @Test
     void formatRemainingJustUnderOneMinuteDoesNotRoundUpToSixtySeconds() {
         // 59999ms 若用四舍五入的 %.1f 直接格式化会显示 "60.0s"（和下一档格式撞脸）；
         // 用 floor 取十分位后应稳定落在 <60s 档内。
-        assertEquals("59.9s", BuffBarPanel.formatRemaining(59_999L));
+        assertEquals("59.9s", StatusPanelExtension.formatRemaining(59_999L));
     }
 
     @Test
     void formatRemainingAtOneMinuteBoundarySwitchesToMinuteSecondFormat() {
-        assertEquals("1m 0s", BuffBarPanel.formatRemaining(60_000L), "恰好 60000ms 属于 >=60s 档");
+        assertEquals("1m 0s", StatusPanelExtension.formatRemaining(60_000L), "恰好 60000ms 属于 >=60s 档");
     }
 
     @Test
     void formatRemainingAboveOneMinuteShowsMinutesAndSeconds() {
-        assertEquals("1m 5s", BuffBarPanel.formatRemaining(65_000L));
-        assertEquals("2m 30s", BuffBarPanel.formatRemaining(150_000L));
+        assertEquals("1m 5s", StatusPanelExtension.formatRemaining(65_000L));
+        assertEquals("2m 30s", StatusPanelExtension.formatRemaining(150_000L));
     }
 
     @Test
     void formatRemainingManyMinutesDoesNotOverflowToHours() {
         // 无更高档位（小时）——规格只要求分+秒，长时长仍以分钟数线性增长表示。
-        assertEquals("10m 0s", BuffBarPanel.formatRemaining(600_000L));
+        assertEquals("10m 0s", StatusPanelExtension.formatRemaining(600_000L));
     }
 
-    // ─── tooltip 文案拼接：复用 StatusPanelExtension.tooltipFor，仅替换剩余时间行 ───
+    // ─── tooltip 与其它状态详情使用同一份语义 ───
 
     @Test
     void tooltipTextIncludesNameStacksSourceAndDispelDifficulty() {
@@ -251,14 +260,12 @@ class BuffBarPanelTest {
     }
 
     @Test
-    void tooltipTextReplacesSecondsOnlyRemainingWithMinuteSecondFormat() {
-        // tooltipFor 共享函数的剩余行永远只有秒（"剩余: 90.0s"），本面板须把它换成 "1m 30s"，
-        // 且不改共享函数本身（HUD 等其它调用方的行为不受影响，见 StatusPanelExtensionTest）。
+    void tooltipTextUsesMinuteSecondFormat() {
         StatusEffectStore.Effect e = effect("slow", "迟缓", StatusEffectStore.Kind.DEBUFF, 1, 90_000L);
         String text = BuffBarPanel.tooltipText(e);
         assertTrue(text.contains("剩余: 1m 30s"),
             () -> "长效 buff 的 tooltip 剩余行须显示分+秒格式，实际=" + text);
-        assertFalse(text.contains("90.0s"), "不应残留共享函数原本的纯秒格式");
+        assertFalse(text.contains("90.0s"), "长时长应显示分秒");
     }
 
     @Test

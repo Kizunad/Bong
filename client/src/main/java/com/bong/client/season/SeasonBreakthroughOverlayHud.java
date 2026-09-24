@@ -50,8 +50,13 @@ public final class SeasonBreakthroughOverlayHud {
         );
     }
 
-    static void resetForTests() {
+    /** Clears the active session pulse without changing HUD renderer registration. */
+    public static void clearOnDisconnect() {
         activePulse = ActivePulse.empty();
+    }
+
+    static void resetForTests() {
+        clearOnDisconnect();
     }
 
     private static int scaleAlpha(int argb, double scale) {

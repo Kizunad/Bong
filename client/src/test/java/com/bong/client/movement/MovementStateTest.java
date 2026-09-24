@@ -19,6 +19,7 @@ class MovementStateTest {
             MovementState.Action.NONE,
             MovementState.ZoneKind.NORMAL,
             0,
+            0,
             1.8,
             80,
             100,

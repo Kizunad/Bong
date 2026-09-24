@@ -22,6 +22,10 @@ public final class ForgeOutcomeStore {
         lastOutcome = next == null ? Snapshot.empty() : next;
     }
 
+    public static void clearOnDisconnect() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         lastOutcome = Snapshot.empty();
     }

@@ -538,6 +538,191 @@ describe("Arbiter", () => {
     ]);
   });
 
+  it("redacts names adjacent to Han prose at every narration scope", () => {
+    const state = createTestWorldState();
+    state.players[0] = {
+      ...state.players[0],
+      name: "张三",
+    };
+
+    const result = runMerge(
+      [
+        {
+          source: "era",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "broadcast",
+                text: "张三向着血谷疾驰而去",
+                style: "era_decree",
+              },
+              {
+                scope: "broadcast",
+                text: "此地有张三坐镇",
+                style: "system_warning",
+              },
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "血谷疾驰而去者乃张三",
+                style: "perception",
+              },
+              {
+                scope: "player",
+                target: "offline:test-player",
+                text: "张三已在谷口停步",
+                style: "perception",
+              },
+            ],
+            reasoning: "Han-boundary redaction",
+          },
+        },
+      ],
+      state,
+    );
+
+    expect(result.narrations).toEqual([
+      {
+        scope: "broadcast",
+        text: "某修士向着血谷疾驰而去",
+        style: "era_decree",
+      },
+      {
+        scope: "zone",
+        target: "starter_zone",
+        text: "此地有某修士坐镇",
+        style: "system_warning",
+      },
+      {
+        scope: "zone",
+        target: "starter_zone",
+        text: "血谷疾驰而去者乃某修士",
+        style: "perception",
+      },
+      {
+        scope: "player",
+        target: "offline:test-player",
+        text: "某修士已在谷口停步",
+        style: "perception",
+      },
+    ]);
+  });
+
+  it("redacts repeated names and ASCII names next to Han prose", () => {
+    const state = createTestWorldState();
+    state.players[0] = {
+      ...state.players[0],
+      name: "Kiz",
+    };
+
+    const result = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "Kiz向着血谷疾驰，玩家Kiz也在谷口；Kiz 在此",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "mixed-script redaction",
+          },
+        },
+      ],
+      state,
+    );
+
+    expect(result.narrations[0]?.text).toBe(
+      "某修士向着血谷疾驰，玩家某修士也在谷口；某修士 在此",
+    );
+  });
+
+  it("keeps names embedded in longer tokens and preserves one-character names", () => {
+    const state = createTestWorldState();
+    state.players[0] = {
+      ...state.players[0],
+      name: "TestPlayer",
+    };
+
+    const embedded = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "TestPlayerX 才是真正的对手",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "embedded-name guard",
+          },
+        },
+      ],
+      state,
+    );
+    expect(embedded.narrations[0]?.text).toBe("TestPlayerX 才是真正的对手");
+
+    const supplementaryLetter = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "TestPlayer𐐀abc 才是真正的对手",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "supplementary-letter boundary guard",
+          },
+        },
+      ],
+      state,
+    );
+    expect(supplementaryLetter.narrations[0]?.text).toBe(
+      "TestPlayer𐐀abc 才是真正的对手",
+    );
+
+    state.players[0] = {
+      ...state.players[0],
+      uuid: "offline:single",
+      name: "a",
+    };
+    const shortName = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "此地有a坐镇",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "single-character-name policy",
+          },
+        },
+      ],
+      state,
+    );
+    expect(shortName.narrations[0]?.text).toBe("此地有a坐镇");
+  });
+
   it("keeps du-xu and era broadcasts but drops unknown direct perception targets", () => {
     const result = runMerge([
       {

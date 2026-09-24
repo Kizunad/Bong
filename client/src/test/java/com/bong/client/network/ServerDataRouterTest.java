@@ -27,6 +27,11 @@ public class ServerDataRouterTest {
             "player_state",
             "ui_open",
             "cultivation_detail",
+            "body_plan_layout",
+            // plan-race-system-v1 P3c — 种族门元数据表（装备格/功法条目置灰）。
+            "race_gate_meta",
+            // plan-race-system-v1 PR-5b — 易形状态表（渲染 mixin 消费）。
+            "morph_state",
             "qi_color_observed",
             "inventory_snapshot",
             "inventory_event",
@@ -194,6 +199,31 @@ public class ServerDataRouterTest {
             // 到专属 bong:halfstep_rechallenge channel（JSON），不再经 ServerDataRouter 路由。
             // BongNetworkHandler.registerHalfStepRechallengeChannel() 负责接收和解析。
         ), router.registeredTypes());
+    }
+
+    @Test
+    void routesMineralProbeResultAsPureFeedbackDispatch() {
+        String json = """
+            {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":51,"display_name_zh":"赤铜矿脉"}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(
+            json,
+            json.getBytes(StandardCharsets.UTF_8).length
+        );
+
+        assertFalse(result.isParseError(), "mineral_probe_result 应通过纯路由解析");
+        assertTrue(result.isHandled(), "合法矿脉回执应返回 handled dispatch");
+        ServerDataDispatch dispatch = result.dispatch();
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("router 应返回 feedback spec，不应在 route 中触碰 HUD/SFX")
+        );
+        assertEquals("「赤铜矿脉」灵脉 · 余 51 缕", feedback.actionbarText(),
+            "route 不得改写 found 文案");
+        assertEquals(0x6EE7B7, feedback.actionbarColor(),
+            "route 不得改写丰度颜色");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.AMETHYST_CHIME, feedback.soundEffect(),
+            "route 不得改写 found 音效意图");
     }
 
     /**

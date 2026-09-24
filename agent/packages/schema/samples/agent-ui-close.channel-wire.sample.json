@@ -1,0 +1,22 @@
+{
+  "channel": "bong:agent_ui_close",
+  "cases": [
+    {
+      "name": "replaced",
+      "request_id": "req-wire-replaced",
+      "payload_utf8": "{\"request_id\":\"req-wire-replaced\"}"
+    },
+    {
+      "name": "session_expired",
+      "request_id": "req-wire-expired",
+      "reason": "session_expired",
+      "payload_utf8": "{\"request_id\":\"req-wire-expired\",\"reason\":\"session_expired\"}"
+    },
+    {
+      "name": "invalid_button_id",
+      "request_id": "req-wire-invalid",
+      "reason": "invalid_button_id",
+      "payload_utf8": "{\"request_id\":\"req-wire-invalid\",\"reason\":\"invalid_button_id\"}"
+    }
+  ]
+}

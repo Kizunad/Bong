@@ -586,10 +586,13 @@ fn resonance_death_ends_lock() {
     use crate::combat::components::LifecycleState;
 
     // Simulate death check.
-    let dead_state = LifecycleState::NearDeath;
+    let dead_state = LifecycleState::AwaitingRevival;
     let alive_state = LifecycleState::Alive;
 
-    assert_ne!(dead_state, alive_state, "NearDeath should not equal Alive");
+    assert_ne!(
+        dead_state, alive_state,
+        "AwaitingRevival should not equal Alive"
+    );
 
     // In the system, state != Alive triggers Death end reason.
     let mut app = app_at_tick(100);

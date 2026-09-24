@@ -243,6 +243,7 @@ mod tests {
 
     fn template(id: &str, category: ItemCategory, grid_w: u8, grid_h: u8) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category,
@@ -268,6 +269,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -345,6 +347,7 @@ mod tests {
                     hotbar: Default::default(),
                     bone_coins: 0,
                     max_weight: 50.0,
+                    material_preparation: Default::default(),
                     triggered_treasures: Vec::new(),
                 },
                 Cultivation {

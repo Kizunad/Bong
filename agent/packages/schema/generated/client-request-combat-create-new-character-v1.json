@@ -14,5 +14,6 @@
       "const": "combat_create_new_character",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "1b3cff46f80055f180d5c2bfd67fc27daba94fd6c7dfa46067b20ea56d5f0bef"
 }

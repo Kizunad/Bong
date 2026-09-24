@@ -21,6 +21,10 @@ public final class FreshnessStore {
         return ENTRIES.get(itemUuid);
     }
 
+    public static void clearOnDisconnect() {
+        ENTRIES.clear();
+    }
+
     public static void clearForTests() {
         ENTRIES.clear();
     }

@@ -16,7 +16,31 @@ import {
   validateNarrationV1Contract,
 } from "@bong/schema";
 
-const { AGENT_NARRATE, ELDER_ENCOUNTER } = CHANNELS;
+const {
+  AGENT_NARRATE,
+  ELDER_ENCOUNTER,
+  ELDER_ENCOUNTER_DURABLE,
+} = CHANNELS;
+export const ELDER_ENCOUNTER_DURABLE_PROCESSING = `${ELDER_ENCOUNTER_DURABLE}:processing`;
+export const ELDER_ENCOUNTER_DURABLE_DEAD_LETTER = `${ELDER_ENCOUNTER_DURABLE}:dead_letter`;
+export const DURABLE_QUEUE_READ_TIMEOUT_SECONDS = 1;
+export const ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS =
+  DURABLE_QUEUE_READ_TIMEOUT_SECONDS * 1000 + 500;
+export const MAX_DURABLE_RECOVERY_BATCH = 100;
+
+export const DURABLE_NARRATION_DEDUPE_TTL_SECONDS = 24 * 60 * 60;
+export const MAX_SEEN_DURABLE_EVENT_IDS = 1024;
+export const SEEN_DURABLE_EVENT_ID_TTL_MS = 5 * 60 * 1000;
+
+const DURABLE_NARRATION_DEDUPE_PREFIX = "bong:dedupe:elder_encounter:";
+const PUBLISH_DURABLE_NARRATION_SCRIPT = `
+local claimed = redis.call("SET", KEYS[1], "1", "NX", "EX", ARGV[3])
+if not claimed then
+  return 0
+end
+redis.call("PUBLISH", ARGV[1], ARGV[2])
+return 1
+`;
 
 // ── 接口定义 ────────────────────────────────────────────────────────────────
 
@@ -27,6 +51,57 @@ export interface ElderEncounterNarrationRuntimeClient {
   unsubscribe(): Promise<unknown>;
   disconnect(): void;
   publish(channel: string, message: string): Promise<number>;
+  eval?(script: string, numKeys: number, ...args: Array<string | number>): Promise<unknown>;
+}
+
+export interface ElderEncounterDurableQueueClient {
+  blmove(
+    source: string,
+    destination: string,
+    sourceSide: "LEFT" | "RIGHT",
+    destinationSide: "LEFT" | "RIGHT",
+    timeoutSeconds: number,
+  ): Promise<string | null>;
+  lrem(key: string, count: number, value: string): Promise<number>;
+  lmove(
+    source: string,
+    destination: string,
+    sourceSide: "LEFT" | "RIGHT",
+    destinationSide: "LEFT" | "RIGHT",
+  ): Promise<string | null>;
+  disconnect(): void;
+}
+
+export type DurablePayloadOutcome = "ack" | "retry" | "dead-letter";
+
+class UnrecoverableDurablePayloadError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "UnrecoverableDurablePayloadError";
+  }
+}
+
+function isUnrecoverableDurablePayloadError(
+  error: unknown,
+): error is UnrecoverableDurablePayloadError {
+  return error instanceof UnrecoverableDurablePayloadError;
+}
+
+function moveProcessingPayload(
+  queue: ElderEncounterDurableQueueClient,
+  destination: string,
+  destinationSide: "LEFT" | "RIGHT",
+): Promise<string | null> {
+  return queue.lmove(
+    ELDER_ENCOUNTER_DURABLE_PROCESSING,
+    destination,
+    "RIGHT",
+    destinationSide,
+  );
+}
+
+function unrecoverable(reason: string): UnrecoverableDurablePayloadError {
+  return new UnrecoverableDurablePayloadError(reason);
 }
 
 export interface ElderEncounterNarrationRuntimeLogger {
@@ -37,6 +112,7 @@ export interface ElderEncounterNarrationRuntimeLogger {
 export interface ElderEncounterNarrationRuntimeConfig {
   sub: ElderEncounterNarrationRuntimeClient;
   pub: ElderEncounterNarrationRuntimeClient;
+  durableQueue?: ElderEncounterDurableQueueClient;
   logger?: ElderEncounterNarrationRuntimeLogger;
 }
 
@@ -52,8 +128,11 @@ export interface ElderEncounterNarrationRuntimeStats {
 export class ElderEncounterNarrationRuntime {
   private readonly sub: ElderEncounterNarrationRuntimeClient;
   private readonly pub: ElderEncounterNarrationRuntimeClient;
+  private readonly durableQueue?: ElderEncounterDurableQueueClient;
   private readonly logger: ElderEncounterNarrationRuntimeLogger;
   private connected = false;
+  private durableWorker?: Promise<void>;
+  private stopDurableWorker = false;
 
   readonly stats: ElderEncounterNarrationRuntimeStats = {
     received: 0,
@@ -62,6 +141,7 @@ export class ElderEncounterNarrationRuntime {
     ignored: 0,
   };
 
+  private readonly seenDurableEventIds = new Map<string, number>();
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel !== ELDER_ENCOUNTER) return;
     void this.handlePayload(message);
@@ -70,6 +150,7 @@ export class ElderEncounterNarrationRuntime {
   constructor(config: ElderEncounterNarrationRuntimeConfig) {
     this.sub = config.sub;
     this.pub = config.pub;
+    this.durableQueue = config.durableQueue;
     this.logger = config.logger ?? console;
   }
 
@@ -79,25 +160,54 @@ export class ElderEncounterNarrationRuntime {
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
-    this.logger.info(`[elder-encounter-runtime] subscribed to ${ELDER_ENCOUNTER}`);
+    this.stopDurableWorker = false;
+    if (this.durableQueue !== undefined) {
+      await this.recoverDurableQueue();
+      this.durableWorker = this.runDurableQueueWorker();
+    }
+    const durableStatus =
+      this.durableQueue === undefined
+        ? ""
+        : ` and durable queue ${ELDER_ENCOUNTER_DURABLE}`;
+    this.logger.info(
+      `[elder-encounter-runtime] subscribed to ${ELDER_ENCOUNTER}${durableStatus}`,
+    );
   }
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    this.stopDurableWorker = true;
     this.sub.off?.("message", this.onMessage);
     await this.sub.unsubscribe();
+    await this.durableWorker;
+    this.durableWorker = undefined;
     this.sub.disconnect();
+    this.durableQueue?.disconnect();
     this.pub.disconnect();
   }
 
-  async handlePayload(message: string): Promise<void> {
+  private async recoverDurableQueue(): Promise<void> {
+    const queue = this.durableQueue;
+    if (queue === undefined) return;
+
+    for (let moved = 0; moved < MAX_DURABLE_RECOVERY_BATCH; moved += 1) {
+      const recovered = await moveProcessingPayload(queue, ELDER_ENCOUNTER_DURABLE, "LEFT");
+      if (recovered === null) return;
+    }
+    this.logger.warn(
+      `[elder-encounter-runtime] durable recovery reached limit ${MAX_DURABLE_RECOVERY_BATCH}; leaving remaining processing entries for the next activation`,
+    );
+  }
+
+  async handlePayload(message: string, durable = false): Promise<boolean> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(message);
     } catch (error) {
       this.stats.rejectedContract += 1;
       this.logger.warn("[elder-encounter-runtime] non-JSON payload:", error);
-      return;
+      if (durable) throw unrecoverable("payload is not valid JSON");
+      return false;
     }
 
     const validation = validateElderEncounterEventV1Contract(parsed);
@@ -107,14 +217,27 @@ export class ElderEncounterNarrationRuntime {
         "[elder-encounter-runtime] ElderEncounterEventV1 contract rejected:",
         validation.errors.join("; "),
       );
-      return;
+      if (durable) throw unrecoverable("ElderEncounterEventV1 contract rejected");
+      return false;
     }
 
     const payload = parsed as ElderEncounterEventV1;
+    if (durable && payload.event_id === undefined) {
+      this.stats.rejectedContract += 1;
+      this.logger.warn(
+        "[elder-encounter-runtime] durable queue payload is missing event_id",
+      );
+      throw unrecoverable("durable payload is missing event_id");
+    }
+    if (payload.event_id !== undefined && this.isRecentlySeen(payload.event_id)) {
+      this.stats.ignored += 1;
+      return true;
+    }
     const narration = this.renderNarration(payload);
     if (narration === null) {
       this.stats.ignored += 1;
-      return;
+      if (durable) throw unrecoverable("no narration renderer for event_kind");
+      return false;
     }
 
     this.stats.received += 1;
@@ -127,14 +250,127 @@ export class ElderEncounterNarrationRuntime {
         "[elder-encounter-runtime] NarrationV1 contract rejected:",
         envValidation.errors.join("; "),
       );
-      return;
+      if (durable) throw unrecoverable("NarrationV1 contract rejected");
+      return false;
     }
 
     try {
-      await this.pub.publish(AGENT_NARRATE, JSON.stringify(envelope));
-      this.stats.published += 1;
+      const published = await this.publishNarration(payload, JSON.stringify(envelope));
+      if (published) {
+        this.stats.published += 1;
+      } else {
+        this.stats.ignored += 1;
+      }
+      return true;
     } catch (error) {
+      if (durable && error instanceof Error && error.message === "durable elder narration requires Redis EVAL support") {
+        throw unrecoverable(error.message);
+      }
       this.logger.warn("[elder-encounter-runtime] publish failed:", error);
+      return false;
+    }
+  }
+
+  private async processDurablePayloadOutcome(payload: string): Promise<DurablePayloadOutcome> {
+    try {
+      return (await this.handlePayload(payload, true)) ? "ack" : "retry";
+    } catch (error) {
+      if (isUnrecoverableDurablePayloadError(error)) {
+        this.logger.warn(
+          "[elder-encounter-runtime] durable payload dead-lettered:",
+          error.message,
+        );
+        return "dead-letter";
+      }
+      this.logger.warn("[elder-encounter-runtime] durable payload failed:", error);
+      return "retry";
+    }
+  }
+
+  async processDurablePayload(payload: string): Promise<boolean> {
+    return (await this.processDurablePayloadOutcome(payload)) === "ack";
+  }
+
+  private async runDurableQueueWorker(): Promise<void> {
+    const queue = this.durableQueue;
+    if (queue === undefined) return;
+
+    while (!this.stopDurableWorker) {
+      try {
+        const payload = await queue.blmove(
+          ELDER_ENCOUNTER_DURABLE,
+          ELDER_ENCOUNTER_DURABLE_PROCESSING,
+          "LEFT",
+          "RIGHT",
+          DURABLE_QUEUE_READ_TIMEOUT_SECONDS,
+        );
+        if (payload === null) continue;
+
+        const outcome = await this.processDurablePayloadOutcome(payload);
+        if (outcome === "ack") {
+          await queue.lrem(ELDER_ENCOUNTER_DURABLE_PROCESSING, 1, payload);
+        } else if (outcome === "retry") {
+          await moveProcessingPayload(queue, ELDER_ENCOUNTER_DURABLE, "LEFT");
+        } else {
+          await moveProcessingPayload(
+            queue,
+            ELDER_ENCOUNTER_DURABLE_DEAD_LETTER,
+            "RIGHT",
+          );
+        }
+      } catch (error) {
+        this.logger.warn("[elder-encounter-runtime] durable queue worker failed:", error);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+  }
+
+  private async publishNarration(
+    payload: ElderEncounterEventV1,
+    envelopeJson: string,
+  ): Promise<boolean> {
+    if (payload.event_id === undefined) {
+      await this.pub.publish(AGENT_NARRATE, envelopeJson);
+      return true;
+    }
+    if (this.pub.eval === undefined) {
+      throw new Error("durable elder narration requires Redis EVAL support");
+    }
+
+    const result = await this.pub.eval(
+      PUBLISH_DURABLE_NARRATION_SCRIPT,
+      1,
+      `${DURABLE_NARRATION_DEDUPE_PREFIX}${payload.event_id}`,
+      AGENT_NARRATE,
+      envelopeJson,
+      DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+    );
+    const published = result === 1 || result === "1";
+    if (published) {
+      this.rememberDurableEventId(payload.event_id);
+    }
+    return published;
+  }
+
+  private isRecentlySeen(eventId: string): boolean {
+    const seenAt = this.seenDurableEventIds.get(eventId);
+    if (seenAt === undefined) return false;
+    if (Date.now() - seenAt >= SEEN_DURABLE_EVENT_ID_TTL_MS) {
+      this.seenDurableEventIds.delete(eventId);
+      return false;
+    }
+    this.seenDurableEventIds.delete(eventId);
+    this.seenDurableEventIds.set(eventId, seenAt);
+    return true;
+  }
+
+  private rememberDurableEventId(eventId: string): void {
+    this.seenDurableEventIds.delete(eventId);
+    this.seenDurableEventIds.set(eventId, Date.now());
+    while (this.seenDurableEventIds.size > MAX_SEEN_DURABLE_EVENT_IDS) {
+      const oldest = this.seenDurableEventIds.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.seenDurableEventIds.delete(oldest);
     }
   }
 

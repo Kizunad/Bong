@@ -570,6 +570,7 @@ mod tests {
     #[test]
     fn configured_zone_recipe_overrides_name_fallback() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "custom_audio_zone",
                 [0.0, 60.0, 0.0],
@@ -594,6 +595,7 @@ mod tests {
     #[test]
     fn zone_change_emits_ambient() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone(
                     "spawn",
@@ -630,8 +632,36 @@ mod tests {
     }
 
     #[test]
+    fn relocated_north_rift_keeps_production_ambient_zone_identity() {
+        let mut app = setup_app(ZoneRegistry::load());
+        let (entity, mut helper) =
+            spawn_client(&mut app, "north-rift-listener", [2000.0, 74.0, -7800.0]);
+
+        app.update();
+        flush_packets(&mut app);
+        let scorch = collect_ambient(&mut helper);
+        assert_eq!(scorch.len(), 1);
+        assert_eq!(scorch[0].zone_name, "north_waste_east_scorch");
+        assert_eq!(
+            scorch[0].ambient_recipe_id, "ambient_wilderness",
+            "the scorch has no dedicated recipe yet; this pin covers zone identity, not new audio"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([2000.0, 74.0, -7300.0]));
+        app.update();
+        flush_packets(&mut app);
+        let rift = collect_ambient(&mut helper);
+        assert_eq!(rift.len(), 1);
+        assert_eq!(rift[0].zone_name, "rift_mouth_north_002");
+        assert_eq!(rift[0].ambient_recipe_id, "ambient_wilderness");
+    }
+
+    #[test]
     fn unknown_zone_uses_wilderness_not_spawn_recipe() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "spawn",
                 [0.0, 60.0, 0.0],
@@ -712,6 +742,7 @@ mod tests {
     #[test]
     fn tsy_dimension_triggers_ambient() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "tsy_lingxu_01_deep",
                 [0.0, 60.0, 0.0],

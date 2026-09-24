@@ -8,5 +8,6 @@
       "const": "Sphere",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "dce6cddde764315ae4837663431a2a3c3bc6843c591c9709fa3bf0d61972513d"
 }

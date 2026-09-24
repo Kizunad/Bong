@@ -79,4 +79,9 @@ public final class LingtianSessionStore {
     public static void replace(Snapshot s) {
         snapshot = s;
     }
+
+    /** 断线时仅清除当前会话快照。 */
+    public static void clearOnDisconnect() {
+        snapshot = Snapshot.empty();
+    }
 }

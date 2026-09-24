@@ -1,4 +1,4 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
@@ -45,9 +45,30 @@ use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
 use super::yidao::{HealerNpcAiStateV1, YidaoHudStateV1};
 use crate::cultivation::components::ColorKind;
 use crate::skill::config::SkillConfigSnapshot;
+/// 角色终结时截取的属性；缺失字段表示没有可靠记录，不把缺失伪装成零。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TerminationSummaryV1 {
+    pub character_name: String,
+    pub realm: String,
+    pub death_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub years_lived: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qi_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_max: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meridians_open: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub techniques_learned: Option<u32>,
+}
+
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
+pub(crate) const ANQI_HUD_ECHO_COUNT_MAX: u32 = i32::MAX as u32;
+pub(crate) const ANQI_HUD_QI_PAYLOAD_MAX: f64 = 3.4028234e38;
+pub(crate) const ANQI_HUD_TICK_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -153,6 +174,9 @@ pub enum ServerDataType {
     InventoryEvent,
     DroppedLootSync,
     RemainsSync,
+    BodyPlanLayout,
+    RaceGateMeta,
+    MorphState,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -341,11 +365,15 @@ pub enum ServerDataPayloadV1 {
         ui: Option<String>,
         xml: String,
     },
-    /// 经脉详细快照。20 条经脉以 SoA(parallel arrays) 布局，顺序与 `MeridianId` 判别式一致
-    /// (Lung=0..Liver=11, Ren=12..YangWei=19)。保持 ≤ MAX_PAYLOAD_BYTES 预算。
+    /// 经脉详细快照。经脉以 SoA(parallel arrays) 布局，长度随实体 `MeridianProfile`
+    /// 变化（plan-race-system-v1 P1c——不再假设恰好 20 条 TCM 经脉）；`channel_ids[i]`
+    /// 是第 i 条经脉的 snake_case channel id，与 `opened`/`flow_rate`/... 等数组下标
+    /// 一一对应。保持 ≤ MAX_PAYLOAD_BYTES 预算。
     CultivationDetail {
         /// 境界字面量（Awaken/Induce/Condense/Solidify/Spirit/Void，与 `Realm` 判别式对齐）。
         realm: String,
+        /// 每条经脉的 channel id（snake_case），与其余并行数组同序、同长。
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -366,9 +394,26 @@ pub enum ServerDataPayloadV1 {
         qi_color_chaotic: bool,
         qi_color_hunyuan: bool,
         practice_weights: Vec<PracticeWeightV1>,
-        /// 当前冲脉目标的数组下标（0..19，与 opened/open_progress 等并行数组一致）。
+        /// 当前冲脉目标的 channel id（snake_case，与 `channel_ids` 同形态）。
         /// None 表示未设定目标。
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
+        /// plan-race-system-v1 P2a — 实体本体（`BodyPlanPurpose::Intrinsic`）的
+        /// `body_plan_id`，供 client 按 id 寻址 `BodyPlanLayout` 缓存。
+        body_plan_id: String,
+        /// plan-race-system-v1 P3b（决议 §8.1 身份快照 bullet）—— 身份快照五字段：
+        /// client gate 判定（装备置灰等）的权威真源，不靠猜 / 不靠 `BodyPlanLayoutV1`
+        /// 的 `is_humanoid` 元数据（那只供渲染）。未易形（P4 `MorphState` 落地前恒定，
+        /// 见 `body_plan::resolve` 模块文档）时 `form_*` 三字段 = 对应本体字段。
+        /// 本体种族 id。
+        race_id: String,
+        /// 当前形态种族 id（未易形时 = `race_id`）。
+        form_race_id: String,
+        /// 当前形态 body plan id（未易形时 = `body_plan_id`）。
+        form_body_plan_id: String,
+        /// 本体是否人形。
+        intrinsic_is_humanoid: bool,
+        /// 当前形态是否人形（未易形时 = `intrinsic_is_humanoid`）。
+        form_is_humanoid: bool,
     },
     QiColorObserved(QiColorObservedV1),
     InventorySnapshot(Box<InventorySnapshotV1>),
@@ -377,6 +422,15 @@ pub enum ServerDataPayloadV1 {
     /// plan-remains-suite P0 — 世界内遗骸容器快照（join 时 + 内容变化时广播，照
     /// `DroppedLootSync` 的内容 diff 节流套路，见 `network::remains_sync_emit`）。
     RemainsSync(Vec<RemainsEntryV1>),
+    /// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据（见
+    /// `BodyPlanLayoutV1` 文档）。
+    BodyPlanLayout(BodyPlanLayoutV1),
+    /// plan-race-system-v1 P3c — 种族门元数据表（item wearer_race + technique
+    /// required_race），join 首帧一次性下发，client 缓存后离线判置灰（见
+    /// `RaceGateMetaV1` 文档）。
+    RaceGateMeta(RaceGateMetaV1),
+    /// plan-race-system-v1 P4 —— 易形状态快照（见 `MorphStateV1` 文档）。
+    MorphState(MorphStateV1),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -479,6 +533,7 @@ pub enum ServerDataPayloadV1 {
         final_words: String,
         epilogue: String,
         archetype_suggestion: String,
+        summary: Option<TerminationSummaryV1>,
     },
     RiftPortalState(RiftPortalStateV1),
     RiftPortalRemoved(RiftPortalRemovedV1),
@@ -769,19 +824,318 @@ pub struct FactionWarStateV1 {
     pub loser_group: Option<u16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnqiHudKindV1 {
+    Echo,
+    Aim,
+    Charge,
+    Abrasion,
+    Multishot,
+}
+
+impl AnqiHudKindV1 {
+    pub const ALL: [Self; 5] = [
+        Self::Echo,
+        Self::Aim,
+        Self::Charge,
+        Self::Abrasion,
+        Self::Multishot,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Echo => "echo",
+            Self::Aim => "aim",
+            Self::Charge => "charge",
+            Self::Abrasion => "abrasion",
+            Self::Multishot => "multishot",
+        }
+    }
+
+    fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+}
+
+impl Serialize for AnqiHudKindV1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AnqiHudKindV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_wire_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown anqi_hud kind `{value}`")))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnqiHudBoundedIntegerVisitor {
+    field: &'static str,
+    maximum: u64,
+}
+
+impl AnqiHudBoundedIntegerVisitor {
+    fn validate<E>(self, value: u64) -> Result<u64, E>
+    where
+        E: serde::de::Error,
+    {
+        if value <= self.maximum {
+            Ok(value)
+        } else {
+            Err(E::custom(format!(
+                "anqi_hud {} must be <= {}, got {value}",
+                self.field, self.maximum
+            )))
+        }
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for AnqiHudBoundedIntegerVisitor {
+    type Value = u64;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "a non-negative integer no greater than {} for anqi_hud {}",
+            self.maximum, self.field
+        )
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.validate(value)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let value = u64::try_from(value).map_err(|_| {
+            E::custom(format!(
+                "anqi_hud {} must be non-negative, got {value}",
+                self.field
+            ))
+        })?;
+        self.validate(value)
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > self.maximum as f64
+        {
+            return Err(E::custom(format!(
+                "anqi_hud {} must be an integral number in 0..={}, got {value}",
+                self.field, self.maximum
+            )));
+        }
+        Ok(value as u64)
+    }
+}
+
+fn deserialize_anqi_hud_bounded_integer<'de, D>(
+    deserializer: D,
+    field: &'static str,
+    maximum: u64,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(AnqiHudBoundedIntegerVisitor { field, maximum })
+}
+
+fn validate_anqi_hud_echo_count(value: u32) -> Result<(), String> {
+    if value <= ANQI_HUD_ECHO_COUNT_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud echo_count must be <= {ANQI_HUD_ECHO_COUNT_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_echo_count<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_echo_count(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u32(*value)
+}
+
+fn deserialize_anqi_hud_echo_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_anqi_hud_bounded_integer(
+        deserializer,
+        "echo_count",
+        u64::from(ANQI_HUD_ECHO_COUNT_MAX),
+    )?;
+    u32::try_from(value).map_err(D::Error::custom)
+}
+
+fn validate_anqi_hud_unit_interval(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud progress must be finite in 0..=1, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_container(value: &str) -> Result<(), String> {
+    let is_known = value.is_empty()
+        || [
+            crate::qi_physics::AnqiContainerKind::HandSlot,
+            crate::qi_physics::AnqiContainerKind::Quiver,
+            crate::qi_physics::AnqiContainerKind::PocketPouch,
+            crate::qi_physics::AnqiContainerKind::Fenglinghe,
+        ]
+        .into_iter()
+        .any(|container| container.as_wire_str() == value);
+    if is_known {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_container must be empty or a canonical container wire tag, got `{value}`"
+        ))
+    }
+}
+
+fn validate_anqi_hud_qi_payload(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=ANQI_HUD_QI_PAYLOAD_MAX).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud abrasion_qi_payload must be finite in 0..={ANQI_HUD_QI_PAYLOAD_MAX}, got {value}"
+        ))
+    }
+}
+
+fn validate_anqi_hud_tick(value: u64) -> Result<(), String> {
+    if value <= ANQI_HUD_TICK_MAX {
+        Ok(())
+    } else {
+        Err(format!(
+            "anqi_hud tick must be <= {ANQI_HUD_TICK_MAX}, got {value}"
+        ))
+    }
+}
+
+fn serialize_anqi_hud_unit_interval<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_unit_interval(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_unit_interval<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_unit_interval(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_container<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_container(value).map_err(S::Error::custom)?;
+    serializer.serialize_str(value)
+}
+
+fn deserialize_anqi_hud_container<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_anqi_hud_container(&value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_qi_payload<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_qi_payload(*value).map_err(S::Error::custom)?;
+    serializer.serialize_f64(*value)
+}
+
+fn deserialize_anqi_hud_qi_payload<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_anqi_hud_qi_payload(value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+fn serialize_anqi_hud_tick<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    validate_anqi_hud_tick(*value).map_err(S::Error::custom)?;
+    serializer.serialize_u64(*value)
+}
+
+fn deserialize_anqi_hud_tick<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_anqi_hud_bounded_integer(deserializer, "tick", ANQI_HUD_TICK_MAX)
+}
+
 /// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 状态推送（server → client）。
-///
-/// `kind` 取值："echo" | "aim" | "charge" | "abrasion"
 /// 守恒红线：全部字段只读自 ECS Event，不重算真元，不扣 qi。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnqiHudV1 {
-    pub kind: String,
+    pub kind: AnqiHudKindV1,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_echo_count",
+        deserialize_with = "deserialize_anqi_hud_echo_count"
+    )]
     pub echo_count: u32,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub aim_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_unit_interval",
+        deserialize_with = "deserialize_anqi_hud_unit_interval"
+    )]
     pub charge_progress: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_container",
+        deserialize_with = "deserialize_anqi_hud_container"
+    )]
     pub abrasion_container: String,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_qi_payload",
+        deserialize_with = "deserialize_anqi_hud_qi_payload"
+    )]
     pub abrasion_qi_payload: f64,
+    #[serde(
+        serialize_with = "serialize_anqi_hud_tick",
+        deserialize_with = "deserialize_anqi_hud_tick"
+    )]
     pub tick: u64,
 }
 
@@ -1257,6 +1611,8 @@ enum ServerDataPayloadWireV1 {
     },
     CultivationDetail {
         realm: String,
+        #[serde(default)]
+        channel_ids: Vec<String>,
         opened: Vec<bool>,
         flow_rate: Vec<f64>,
         flow_capacity: Vec<f64>,
@@ -1281,7 +1637,21 @@ enum ServerDataPayloadWireV1 {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         practice_weights: Vec<PracticeWeightV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        target_meridian: Option<u8>,
+        target_meridian: Option<String>,
+        #[serde(default)]
+        body_plan_id: String,
+        // plan-race-system-v1 P3b — 身份快照五字段（见 `ServerDataPayloadV1::CultivationDetail`
+        // 同名字段文档）；`#[serde(default)]` 保证老 sample/客户端零改动继续过验。
+        #[serde(default)]
+        race_id: String,
+        #[serde(default)]
+        form_race_id: String,
+        #[serde(default)]
+        form_body_plan_id: String,
+        #[serde(default)]
+        intrinsic_is_humanoid: bool,
+        #[serde(default)]
+        form_is_humanoid: bool,
     },
     QiColorObserved {
         #[serde(flatten)]
@@ -1300,6 +1670,18 @@ enum ServerDataPayloadWireV1 {
     },
     RemainsSync {
         remains: Vec<RemainsEntryV1>,
+    },
+    BodyPlanLayout {
+        #[serde(flatten)]
+        layout: BodyPlanLayoutV1,
+    },
+    RaceGateMeta {
+        #[serde(flatten)]
+        meta: RaceGateMetaV1,
+    },
+    MorphState {
+        #[serde(flatten)]
+        state: MorphStateV1,
     },
     BotanyHarvestProgress {
         session_id: String,
@@ -1506,6 +1888,8 @@ enum ServerDataPayloadWireV1 {
         final_words: String,
         epilogue: String,
         archetype_suggestion: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<TerminationSummaryV1>,
     },
     RiftPortalState {
         #[serde(flatten)]
@@ -1920,6 +2304,214 @@ pub struct RemainsEntryV1 {
     pub bone_coins: u64,
 }
 
+/// plan-race-system-v1 P3a — `RaceGate` 的 wire 形状（与 proto `bong.RaceGate` /
+/// TS `RaceGateV1` 精确对应）：扁平结构，`kind` 恒为必填字符串标签，`species` 恒为
+/// 必填数组（`kind != "species"` 时恒为空，而非省略字段）。
+///
+/// 与 `body_plan::types::RaceGateOwned`（内部标签枚举，`Any`/`Humanoid` 变体序列化
+/// 时**不**携带 `species` 字段）刻意区分为两份形状——`RaceGateOwned` 服务
+/// `ItemTemplate` TOML 等 Rust 内部消费场景的人体工学；本类型服务需要与
+/// proto flat message 字段级 1:1 对应的 wire 场景（prost message 恒有全部字段，
+/// 无法表达"某变体缺某字段"）。两者互转见
+/// `proto_convert::{race_gate_owned_to_proto, race_gate_owned_from_proto}`
+/// （直接对接 prost `bong::RaceGate`，本类型只用于 JSON sample pin 测试 +
+/// 未来挂载 payload 字段时的手写镜像）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateWireV1 {
+    pub kind: String,
+    pub species: Vec<String>,
+}
+
+/// 未知 `kind` 解码错误——fail-closed，调用方必须拒绝而非兜底 `Any`（决议 §8.1 #5/#6）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaceGateWireUnknownKind(pub String);
+
+impl std::fmt::Display for RaceGateWireUnknownKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown RaceGate wire kind {:?} — refusing to decode",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RaceGateWireUnknownKind {}
+
+impl RaceGateWireV1 {
+    pub fn from_owned(gate: &crate::body_plan::RaceGateOwned) -> Self {
+        use crate::body_plan::RaceGateOwned;
+        match gate {
+            RaceGateOwned::Any => RaceGateWireV1 {
+                kind: "any".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Humanoid => RaceGateWireV1 {
+                kind: "humanoid".to_string(),
+                species: Vec::new(),
+            },
+            RaceGateOwned::Species { species } => RaceGateWireV1 {
+                kind: "species".to_string(),
+                species: species.iter().map(|id| id.as_str().to_string()).collect(),
+            },
+        }
+    }
+
+    pub fn try_into_owned(
+        &self,
+    ) -> Result<crate::body_plan::RaceGateOwned, RaceGateWireUnknownKind> {
+        use crate::body_plan::{RaceGateOwned, RaceId};
+        match self.kind.as_str() {
+            "any" => Ok(RaceGateOwned::Any),
+            "humanoid" => Ok(RaceGateOwned::Humanoid),
+            "species" => Ok(RaceGateOwned::Species {
+                species: self
+                    .species
+                    .iter()
+                    .map(|s| RaceId::new(s.clone()))
+                    .collect(),
+            }),
+            other => Err(RaceGateWireUnknownKind(other.to_string())),
+        }
+    }
+}
+
+/// plan-race-system-v1 P3c — 种族门元数据表的单条目：`id`（item template_id 或
+/// technique skill_id）→ `gate`（该条目的种族门）。恒只装非 `Any` 条目
+/// （`Any` 是默认，client 表里查不到即恒放行）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaEntryV1 {
+    pub id: String,
+    pub gate: RaceGateWireV1,
+}
+
+/// plan-race-system-v1 P3c — 静态种族门元数据表（`ServerDataPayloadV1::RaceGateMeta`）。
+///
+/// 两张表都只装 **非 `Any`** 条目（`Any` 是默认，client 缺省即 `Any`，省流量）：
+/// - `item_wearer_race`：item template_id → `wearer_race`，**装备门**判定域用
+///   **当前形态身份**（`form_race_id` / `form_is_humanoid`）。
+/// - `technique_required_race`：technique skill_id → `required_race`，**功法门**
+///   （习得 / 施放）判定域用**本体身份**（`race_id` / `intrinsic_is_humanoid`）。
+///
+/// 两域不同轴（决议 §8.1 #5/#6）：装备看形态、功法看本体。join 首帧一次性下发
+/// （`network::cultivation_detail_emit::emit_race_gate_meta_payloads`，`LastSentRaceGateMeta`
+/// 防重发），内容静态（与玩家身份无关），client 换身份时不需重发——client 用
+/// `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RaceGateMetaV1 {
+    #[serde(default)]
+    pub item_wearer_race: Vec<RaceGateMetaEntryV1>,
+    #[serde(default)]
+    pub technique_required_race: Vec<RaceGateMetaEntryV1>,
+}
+
+/// plan-race-system-v1 P4 —— 单个实体的易形状态快照（proto field 142 `morph_state`）。
+///
+/// `active = false` 专用于 `mode = "delta"` 广播——实体解除易形时下发一条
+/// `active=false` 的 entry，client 收到即从本地易形态缓存里删除该 entity_id（不携带
+/// 完整字段语义，`model_kind`/`form_race_id`/`form_body_plan_id` 在 `active=false`
+/// 时恒为空/0，仅 `entity_id`/`active` 有意义）。`mode = "full"`（join / 周期 sync）时
+/// 只包含当前处于 `MorphState` 的实体，`active` 恒为 `true`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateEntryV1 {
+    /// Valence entity id（client 通过 MC entity id 定位实体，与 `daozhan_disguise` 同惯例）。
+    pub entity_id: i32,
+    pub model_kind: u32,
+    pub form_race_id: String,
+    pub form_body_plan_id: String,
+    pub active: bool,
+}
+
+/// plan-race-system-v1 P4 —— `ServerDataPayloadV1::MorphState` 载荷。
+///
+/// `mode`："full"（join 首帧全量替换 + 周期 sync）| "delta"（易形解除瞬间半径广播，
+/// 只携带发生变化的 entity，`active=false` 表示删除）。本 PR 只保证 payload 能被
+/// `proto_min` bot 解码（PR-5b 负责 client 渲染消费）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MorphStateV1 {
+    // 注：本结构体刻意不携带独立 `v` 字段——`v` 由外层 `ServerDataV1.v`（信封版本号）
+    // 提供，`#[serde(flatten)]` 进 `ServerDataPayloadWireV1::MorphState` 时若本结构体
+    // 也声明 `v` 会与外层字段名撞车（`RaceGateMetaV1` 同一惯例，同理无 `v` 字段）。
+    // proto `bong::MorphState.v` 字段是 proto message 自身的 schema 版本号，由
+    // `proto_convert::server_data_to_proto_payload` 直接常量填 `1`，不经由本结构体。
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub entries: Vec<MorphStateEntryV1>,
+}
+
+/// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的坐标点，归一化到 `[0,1]`（原点 =
+/// 布局画布左上角）。同一类型既用作磁盘 `layouts/*.json` 的数据源，也直接是
+/// wire payload 的字段（无独立域模型/wire 模型两份拷贝，仿 `RemainsEntryV1` 先例）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPoint2V1 {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// 单个部位的剪影多边形（顶点归一化坐标，按声明顺序首尾相连）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanSilhouettePartV1 {
+    pub part_id: String,
+    pub polygon: Vec<BodyPlanPoint2V1>,
+}
+
+/// 部位锚点（伤口红点位 / 状态图标定位点）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartAnchorV1 {
+    pub part_id: String,
+    pub point: BodyPlanPoint2V1,
+}
+
+/// 单条经脉的多段折线路径（替代 client `BodyInspectComponent.MERIDIAN_PATHS` 硬编码）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanMeridianPathV1 {
+    pub channel_id: String,
+    pub points: Vec<BodyPlanPoint2V1>,
+}
+
+/// server 部位 id → client 展示段 id 映射（替代
+/// `network::wounds_snapshot_emit::body_part_wire` 的硬编码 match）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanPartDisplayMappingV1 {
+    pub server_part_id: String,
+    pub display_segment_id: String,
+}
+
+/// plan-race-system-v1 P2a — 动态部位 / 经脉面板布局元数据。以 `body_plan_id` 为
+/// 主键，随 `cultivation_detail` 首帧下发；实体 body_plan 变化（真实换 race）时重发，
+/// 易形不触发（P4 语义）。
+///
+/// `hud_anchors`（P2 major 修复）—— **可选的第二套锚点组**，专供 mini HUD
+/// （`MiniBodyHudPlanner`，30×75 粗网格，宽高比 0.40）使用，与 `anchors`
+/// （`BodyInspectComponent`，168×236 精细画布，宽高比 0.71）分离：两个消费者画布
+/// 比例不同，均匀缩放同一套 `anchors` 会在 mini HUD 上产生 4-6px 像素漂移，违反 plan
+/// 「首版渲染与现状像素级一致」红线。humanoid.json 把 `hud_anchors` 原样抽取自
+/// `MiniBodyHudPlanner` 改造前的硬编码表（逐值相等，见 `layout.rs` 底部 pin 测试）；
+/// 未来非人 plan 可不配（留空 `Vec::new()`），此时 client 回退到用 `anchors` 缩放推导
+/// （`locatePart` 换轨逻辑，非人形没有另一份权威像素表可抽取，缩放推导是唯一选择）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPlanLayoutV1 {
+    pub body_plan_id: String,
+    pub silhouette: Vec<BodyPlanSilhouettePartV1>,
+    pub anchors: Vec<BodyPlanPartAnchorV1>,
+    pub meridian_paths: Vec<BodyPlanMeridianPathV1>,
+    pub part_display_map: Vec<BodyPlanPartDisplayMappingV1>,
+    #[serde(default)]
+    pub hud_anchors: Vec<BodyPlanPartAnchorV1>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RiftPortalKindV1 {
@@ -2266,6 +2858,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2282,8 +2875,15 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Ok(Self::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2300,6 +2900,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             }),
             ServerDataPayloadWireV1::QiColorObserved { observed } => {
                 Ok(Self::QiColorObserved(observed))
@@ -2312,6 +2918,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
             ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
+            ServerDataPayloadWireV1::BodyPlanLayout { layout } => Ok(Self::BodyPlanLayout(layout)),
+            ServerDataPayloadWireV1::RaceGateMeta { meta } => Ok(Self::RaceGateMeta(meta)),
+            ServerDataPayloadWireV1::MorphState { state } => Ok(Self::MorphState(state)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -2504,11 +3113,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Ok(Self::TerminateScreen {
                 visible,
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             }),
             ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
             ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
@@ -2860,6 +3471,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::CultivationDetail {
                 realm,
+                channel_ids,
                 opened,
                 flow_rate,
                 flow_capacity,
@@ -2876,8 +3488,15 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_hunyuan,
                 practice_weights,
                 target_meridian,
+                body_plan_id,
+                race_id,
+                form_race_id,
+                form_body_plan_id,
+                intrinsic_is_humanoid,
+                form_is_humanoid,
             } => Self::CultivationDetail {
                 realm: realm.clone(),
+                channel_ids: channel_ids.clone(),
                 opened: opened.clone(),
                 flow_rate: flow_rate.clone(),
                 flow_capacity: flow_capacity.clone(),
@@ -2893,7 +3512,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 qi_color_chaotic: *qi_color_chaotic,
                 qi_color_hunyuan: *qi_color_hunyuan,
                 practice_weights: practice_weights.clone(),
-                target_meridian: *target_meridian,
+                target_meridian: target_meridian.clone(),
+                body_plan_id: body_plan_id.clone(),
+                race_id: race_id.clone(),
+                form_race_id: form_race_id.clone(),
+                form_body_plan_id: form_body_plan_id.clone(),
+                intrinsic_is_humanoid: *intrinsic_is_humanoid,
+                form_is_humanoid: *form_is_humanoid,
             },
             ServerDataPayloadV1::QiColorObserved(observed) => Self::QiColorObserved {
                 observed: observed.clone(),
@@ -2909,6 +3534,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::RemainsSync(remains) => Self::RemainsSync {
                 remains: remains.clone(),
+            },
+            ServerDataPayloadV1::BodyPlanLayout(layout) => Self::BodyPlanLayout {
+                layout: layout.clone(),
+            },
+            ServerDataPayloadV1::RaceGateMeta(meta) => Self::RaceGateMeta { meta: meta.clone() },
+            ServerDataPayloadV1::MorphState(state) => Self::MorphState {
+                state: state.clone(),
             },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
@@ -3122,11 +3754,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Self::TerminateScreen {
                 visible: *visible,
                 final_words: final_words.clone(),
                 epilogue: epilogue.clone(),
                 archetype_suggestion: archetype_suggestion.clone(),
+                summary: summary.clone(),
             },
             ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
                 state: state.clone(),
@@ -3607,6 +4241,9 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
             Self::RemainsSync(..) => ServerDataType::RemainsSync,
+            Self::BodyPlanLayout(..) => ServerDataType::BodyPlanLayout,
+            Self::RaceGateMeta(..) => ServerDataType::RaceGateMeta,
+            Self::MorphState(..) => ServerDataType::MorphState,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -3770,6 +4407,9 @@ impl ServerDataPayloadV1 {
             Self::InventoryEvent(..) => false,
             Self::DroppedLootSync(..) => false,
             Self::RemainsSync(..) => false,
+            Self::BodyPlanLayout(..) => false,
+            Self::RaceGateMeta(..) => false,
+            Self::MorphState(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
@@ -3895,2070 +4535,5 @@ impl ServerDataPayloadV1 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::network::agent_bridge::payload_type_label;
-    use crate::schema::movement::{MovementActionRequestV1, MovementActionV1, MovementZoneKindV1};
-    use crate::schema::poison_trait::{PoisonOverdoseSeverityV1, PoisonSideEffectTagV1};
-
-    /// Catches wire-vs-label drift like the QuickSlotConfig "snake_case" bug
-    /// (would have routed `quick_slot_config` while client expected `quickslot_config`).
-    #[test]
-    fn hud_payload_wire_type_matches_label() {
-        use crate::schema::combat_hud::*;
-        let cases: Vec<ServerDataPayloadV1> = vec![
-            ServerDataPayloadV1::CombatHudState(CombatHudStateV1 {
-                hp_percent: 1.0,
-                qi_percent: 1.0,
-                stamina_percent: 1.0,
-                derived: DerivedAttrFlagsV1::default(),
-            }),
-            ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 { wounds: vec![] }),
-            ServerDataPayloadV1::DefenseWindow(DefenseWindowV1 {
-                duration_ms: 200,
-                started_at_ms: 0,
-                expires_at_ms: 200,
-            }),
-            ServerDataPayloadV1::CastSync(CastSyncV1 {
-                phase: CastPhaseV1::Idle,
-                slot: 0,
-                duration_ms: 0,
-                started_at_ms: 0,
-                outcome: CastOutcomeV1::None,
-            }),
-            ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
-                slots: vec![None; 9],
-                cooldown_until_ms: vec![0; 9],
-            }),
-            ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
-                slots: vec![None; 9],
-                cooldown_until_ms: vec![0; 9],
-            }),
-            ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
-            ServerDataPayloadV1::SkillConfigSnapshot(SkillConfigSnapshot {
-                configs: Default::default(),
-            }),
-            ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default()),
-            ServerDataPayloadV1::DerivedAttrsSync(DerivedAttrsSyncV1 {
-                flying: false,
-                flying_qi_remaining: 0.0,
-                flying_force_descent_at_ms: 0,
-                phasing: false,
-                phasing_until_ms: 0,
-                tribulation_locked: false,
-                tribulation_stage: String::new(),
-                throughput_peak_norm: 0.0,
-                tuike_layers: 0,
-                vortex_active: false,
-            }),
-            ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
-                channel: EventChannelV1::Combat,
-                priority: EventPriorityV1::P1Important,
-                source_tag: String::new(),
-                text: "x".to_string(),
-                color: 0,
-                created_at_ms: 0,
-            }),
-            ServerDataPayloadV1::VortexState(VortexFieldStateV1 {
-                caster: "entity:1".to_string(),
-                active: true,
-                center: [0.0, 64.0, 0.0],
-                radius: 1.5,
-                delta: 0.25,
-                env_qi_at_cast: 0.9,
-                maintain_remaining_ticks: 80,
-                intercepted_count: 1,
-                active_skill_id: "woliu.hold".to_string(),
-                charge_progress: 1.0,
-                cooldown_until_ms: 0,
-                backfire_level: String::new(),
-                turbulence_radius: 1.0,
-                turbulence_intensity: 0.5,
-                turbulence_until_ms: 0,
-            }),
-            ServerDataPayloadV1::FalseSkinState(FalseSkinStateV1 {
-                target_id: "offline:Azure".to_string(),
-                kind: Some(crate::schema::tuike::FalseSkinKindV1::SpiderSilk),
-                layers_remaining: 1,
-                contam_capacity_per_layer: 10.0,
-                absorbed_contam: 3.0,
-                equipped_at_tick: 7,
-                layers: Vec::new(),
-            }),
-            ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
-                entity_id: 1,
-                kind: RiftPortalKindV1::MainRift,
-                direction: RiftPortalDirectionV1::Exit,
-                family_id: "tsy_lingxu_01".to_string(),
-                world_pos: [0.0, 64.0, 0.0],
-                trigger_radius: 2.0,
-                current_extract_ticks: 160,
-                activation_window_end: None,
-            }),
-            ServerDataPayloadV1::RiftPortalRemoved(RiftPortalRemovedV1 { entity_id: 1 }),
-            ServerDataPayloadV1::ExtractStarted(ExtractStartedV1 {
-                player_id: "offline:Kiz".to_string(),
-                portal_entity_id: 1,
-                portal_kind: RiftPortalKindV1::MainRift,
-                required_ticks: 160,
-                at_tick: 10,
-            }),
-            ServerDataPayloadV1::ExtractProgress(ExtractProgressV1 {
-                player_id: "offline:Kiz".to_string(),
-                portal_entity_id: 1,
-                elapsed_ticks: 5,
-                required_ticks: 160,
-            }),
-            ServerDataPayloadV1::ExtractCompleted(ExtractCompletedV1 {
-                player_id: "offline:Kiz".to_string(),
-                portal_kind: RiftPortalKindV1::MainRift,
-                family_id: "tsy_lingxu_01".to_string(),
-                exit_world_pos: [0.0, 64.0, 0.0],
-                at_tick: 170,
-            }),
-            ServerDataPayloadV1::ExtractAborted(ExtractAbortedV1 {
-                player_id: "offline:Kiz".to_string(),
-                reason: ExtractAbortedReasonV1::PortalOccupied,
-            }),
-            ServerDataPayloadV1::ExtractFailed(ExtractFailedV1 {
-                player_id: "offline:Kiz".to_string(),
-                reason: ExtractFailedReasonV1::SpiritQiDrained,
-            }),
-            ServerDataPayloadV1::TsyCollapseStartedIpc(TsyCollapseStartedIpcV1 {
-                family_id: "tsy_lingxu_01".to_string(),
-                at_tick: 100,
-                remaining_ticks: 600,
-                collapse_tear_entity_ids: vec![2, 3, 4],
-            }),
-            ServerDataPayloadV1::ContainerState(ContainerStateV1 {
-                entity_id: 42,
-                visual_entity_id: Some(2048),
-                kind: ContainerKindV1::StoragePouch,
-                family_id: "tsy_lingxu_01".to_string(),
-                world_pos: [8.0, 64.0, -4.0],
-                locked: None,
-                depleted: false,
-                searched_by_player_id: None,
-            }),
-            ServerDataPayloadV1::SearchStarted(SearchStartedV1 {
-                player_id: "offline:Kiz".to_string(),
-                container_entity_id: 42,
-                required_ticks: 200,
-                at_tick: 100,
-            }),
-            ServerDataPayloadV1::SearchProgress(SearchProgressV1 {
-                player_id: "offline:Kiz".to_string(),
-                container_entity_id: 42,
-                elapsed_ticks: 20,
-                required_ticks: 200,
-            }),
-            ServerDataPayloadV1::SearchCompleted(SearchCompletedV1 {
-                player_id: "offline:Kiz".to_string(),
-                container_entity_id: 42,
-                family_id: "tsy_lingxu_01".to_string(),
-                loot_preview: vec![LootPreviewItemV1 {
-                    template_id: "bone_coin".to_string(),
-                    display_name: "骨币".to_string(),
-                    stack_count: 3,
-                }],
-                at_tick: 300,
-            }),
-            ServerDataPayloadV1::SearchAborted(SearchAbortedV1 {
-                player_id: "offline:Kiz".to_string(),
-                container_entity_id: 42,
-                reason: SearchAbortReasonV1::Cancelled,
-                at_tick: 150,
-            }),
-            ServerDataPayloadV1::TribulationBroadcast(TribulationBroadcastV1::active(
-                "Kiz", "warn", 12.0, -34.0, 60_000,
-            )),
-            ServerDataPayloadV1::TribulationState(TribulationStateV1 {
-                active: true,
-                char_id: "offline:Kiz".to_string(),
-                actor_name: "Kiz".to_string(),
-                kind: "du_xu".to_string(),
-                phase: "wave".to_string(),
-                world_x: 12.0,
-                world_z: -34.0,
-                wave_current: 2,
-                wave_total: 5,
-                started_tick: 120,
-                phase_started_tick: 2_400,
-                next_wave_tick: 2_700,
-                failed: false,
-                half_step_on_success: false,
-                participants: vec!["offline:Kiz".to_string()],
-                result: None,
-            }),
-            ServerDataPayloadV1::AscensionQuota(AscensionQuotaV1::new(1, 3)),
-            ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
-                offer_id: "heart_demon:1:100".to_string(),
-                trigger_id: "heart_demon:1:100".to_string(),
-                trigger_label: "心魔劫临身".to_string(),
-                realm_label: "渡虚劫 · 心魔".to_string(),
-                composure: 0.5,
-                quota_remaining: 1,
-                quota_total: 1,
-                expires_at_ms: 1_700_000_000_000,
-                choices: vec![HeartDemonOfferChoiceV1 {
-                    choice_id: "heart_demon_choice_0".to_string(),
-                    category: "Composure".to_string(),
-                    title: "守本心".to_string(),
-                    effect_summary: "回复少量当前真元".to_string(),
-                    flavor: "你把呼吸压回丹田。".to_string(),
-                    style_hint: "稳妥".to_string(),
-                }],
-            }),
-            ServerDataPayloadV1::BurstMeridianEvent(BurstMeridianEventV1 {
-                skill: "beng_quan".to_string(),
-                caster: "offline:Kiz".to_string(),
-                target: Some("entity:42".to_string()),
-                tick: 12,
-                overload_ratio: 1.5,
-                integrity_snapshot: 0.9,
-            }),
-            ServerDataPayloadV1::BreakthroughCinematic(BreakthroughCinematicS2cV1 {
-                actor_id: "offline:Kiz".to_string(),
-                phase: "apex".to_string(),
-                phase_tick: 0,
-                phase_duration_ticks: 80,
-                realm_from: "Condense".to_string(),
-                realm_to: "Solidify".to_string(),
-                result: "success".to_string(),
-                interrupted: false,
-                world_pos: [12.0, 64.0, -8.0],
-                visible_radius_blocks: 1024.0,
-                global: false,
-                distant_billboard: true,
-                particle_density: 2.2,
-                intensity: 0.78,
-                season_overlay: "adaptive".to_string(),
-                style: "golden_core".to_string(),
-                at_tick: 2400,
-            }),
-            ServerDataPayloadV1::FullPowerChargingState(FullPowerChargingStateV1 {
-                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
-                active: true,
-                qi_committed: 150.0,
-                target_qi: 600.0,
-                started_tick: 12,
-            }),
-            ServerDataPayloadV1::FullPowerRelease(FullPowerReleaseV1 {
-                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
-                target_uuid: Some("00000000-0000-0000-0000-000000000002".to_string()),
-                qi_released: 600.0,
-                tick: 24,
-                hit_position: Some([8.0, 66.0, 8.0]),
-            }),
-            ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
-                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
-                active: true,
-                started_tick: 24,
-                recovery_at_tick: 1224,
-            }),
-            ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
-                observer: "offline:Kiz".to_string(),
-                observed: "offline:Azure".to_string(),
-                main: ColorKind::Intricate,
-                secondary: Some(ColorKind::Heavy),
-                is_chaotic: false,
-                is_hunyuan: false,
-                realm_diff: 2,
-            }),
-            ServerDataPayloadV1::PoisonDoseEvent(PoisonDoseEventV1 {
-                v: 1,
-                player_entity_id: 7,
-                dose_amount: 5.0,
-                side_effect_tag: PoisonSideEffectTagV1::QiFocusDrift2h,
-                poison_level_after: 17.0,
-                digestion_after: 50.0,
-                at_tick: 100,
-            }),
-            ServerDataPayloadV1::PoisonOverdoseEvent(PoisonOverdoseEventV1 {
-                v: 1,
-                player_entity_id: 7,
-                severity: PoisonOverdoseSeverityV1::Moderate,
-                overflow: 30.0,
-                lifespan_penalty_years: 1.0,
-                micro_tear_probability: 0.1,
-                at_tick: 120,
-            }),
-            ServerDataPayloadV1::PoisonTraitState(PoisonTraitStateV1 {
-                v: 1,
-                player_entity_id: 7,
-                poison_toxicity: 17.0,
-                digestion_current: 50.0,
-                digestion_capacity: 100.0,
-                toxicity_tier_unlocked: false,
-            }),
-            ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![BotanyPlantV2RenderProfileV1 {
-                plant_id: "ying_yuan_gu".to_string(),
-                base_mesh_ref: "red_mushroom".to_string(),
-                tint_rgb: 0xFFA040,
-                tint_rgb_secondary: None,
-                model_overlay: super::super::botany::BotanyModelOverlayV1::Emissive,
-            }]),
-            ServerDataPayloadV1::GatheringSession {
-                session_id: "gathering:herb:offline-kiz".to_string(),
-                progress_ticks: 20,
-                total_ticks: 40,
-                target_name: "凝脉草".to_string(),
-                target_type: GatheringTargetTypeV1::Herb,
-                quality_hint: GatheringQualityHintV1::FineLikely,
-                tool_used: Some("hoe_iron".to_string()),
-                interrupted: false,
-                completed: false,
-            },
-            ServerDataPayloadV1::GatheringSession {
-                session_id: "mining:10:64:10:FanTie".to_string(),
-                progress_ticks: 60,
-                total_ticks: 60,
-                target_name: "凡铁矿".to_string(),
-                target_type: GatheringTargetTypeV1::Ore,
-                quality_hint: GatheringQualityHintV1::Perfect,
-                tool_used: Some("pickaxe_iron".to_string()),
-                interrupted: false,
-                completed: true,
-            },
-            ServerDataPayloadV1::GatheringSession {
-                session_id: "lumber:offline-kiz:1".to_string(),
-                progress_ticks: 0,
-                total_ticks: 50,
-                target_name: "灵木".to_string(),
-                target_type: GatheringTargetTypeV1::Wood,
-                quality_hint: GatheringQualityHintV1::Normal,
-                tool_used: None,
-                interrupted: true,
-                completed: false,
-            },
-            ServerDataPayloadV1::GatheringSession {
-                session_id: "gathering:herb:fine".to_string(),
-                progress_ticks: 40,
-                total_ticks: 40,
-                target_name: "优良凝脉草".to_string(),
-                target_type: GatheringTargetTypeV1::Herb,
-                quality_hint: GatheringQualityHintV1::Fine,
-                tool_used: Some("hoe_copper".to_string()),
-                interrupted: false,
-                completed: true,
-            },
-            ServerDataPayloadV1::GatheringSession {
-                session_id: "lumber:perfect-possible".to_string(),
-                progress_ticks: 45,
-                total_ticks: 50,
-                target_name: "灵木".to_string(),
-                target_type: GatheringTargetTypeV1::Wood,
-                quality_hint: GatheringQualityHintV1::PerfectPossible,
-                tool_used: Some("axe_copper".to_string()),
-                interrupted: false,
-                completed: false,
-            },
-            ServerDataPayloadV1::RealmVisionParams(RealmVisionParamsV1 {
-                fog_start: 30.0,
-                fog_end: 60.0,
-                fog_color_rgb: 0xB8B0A8,
-                fog_shape: super::super::realm_vision::FogShapeV1::Cylinder,
-                vignette_alpha: 0.55,
-                tint_color_argb: 0x0FF0EDE8,
-                particle_density: 0.0,
-                transition_ticks: 100,
-                server_view_distance_chunks: 4,
-                post_fx_sharpen: 0.0,
-            }),
-            ServerDataPayloadV1::SpiritualSenseTargets(SpiritualSenseTargetsV1 {
-                generation: 1,
-                entries: vec![super::super::realm_vision::SenseEntryV1 {
-                    kind: super::super::realm_vision::SenseKindV1::LivingQi,
-                    x: 8.0,
-                    y: 64.0,
-                    z: -4.0,
-                    intensity: 0.75,
-                }],
-            }),
-            ServerDataPayloadV1::HealerNpcAiState(HealerNpcAiStateV1 {
-                healer_id: "npc:doctor".to_string(),
-                active_action: "triage".to_string(),
-                queue_len: 2,
-                reputation: 12,
-                retreating: false,
-            }),
-            ServerDataPayloadV1::YidaoHudState(YidaoHudStateV1 {
-                healer_id: "npc:doctor".to_string(),
-                reputation: 12,
-                peace_mastery: 48.0,
-                karma: 3.5,
-                active_skill: Some(crate::schema::yidao::YidaoSkillIdV1::MeridianRepair),
-                patient_ids: vec!["offline:Kiz".to_string()],
-                patient_hp_percent: Some(0.75),
-                patient_contam_total: Some(1.25),
-                severed_meridian_count: 1,
-                contract_count: 2,
-                mass_preview_count: 0,
-            }),
-            ServerDataPayloadV1::MovementState(MovementStateV1 {
-                current_speed_multiplier: 0.75,
-                stamina_cost_active: true,
-                movement_action: MovementActionV1::Dashing,
-                zone_kind: MovementZoneKindV1::Normal,
-                dash_cooldown_remaining_ticks: 40,
-                hitbox_height_blocks: 1.8,
-                stamina_current: 85.0,
-                stamina_max: 100.0,
-                low_stamina: false,
-                last_action_tick: Some(120),
-                rejected_action: Some(MovementActionRequestV1::Dash),
-            }),
-            ServerDataPayloadV1::CoffinState(CoffinStateV1 {
-                in_coffin: true,
-                lifespan_rate_multiplier: 0.9,
-                coffin_grade: Some(CoffinGradeV1::Mundane),
-            }),
-            // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
-            ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {
-                v: 1,
-                player_id: "offline:Kiz".to_string(),
-                recipes: vec![],
-                ts: 1234567,
-            })),
-            ServerDataPayloadV1::CraftSessionState(CraftSessionStateV1 {
-                v: 1,
-                player_id: "offline:Kiz".to_string(),
-                active: false,
-                recipe_id: None,
-                elapsed_ticks: 0,
-                total_ticks: 0,
-                completed_count: 0,
-                total_count: 0,
-                ts: 1234567,
-            }),
-            ServerDataPayloadV1::CraftOutcome(CraftOutcomeV1::Completed {
-                v: 1,
-                player_id: "offline:Kiz".to_string(),
-                recipe_id: "craft.example.eclipse_needle.iron".to_string(),
-                output_template: "eclipse_needle_iron".to_string(),
-                output_count: 3,
-                completed_at_tick: 5000,
-                ts: 1234567,
-            }),
-            ServerDataPayloadV1::RecipeUnlocked(RecipeUnlockedV1 {
-                v: 1,
-                player_id: "offline:Kiz".to_string(),
-                recipe_id: "craft.example.fake_skin.light".to_string(),
-                source: crate::schema::craft::UnlockEventSourceV1::Insight {
-                    trigger: crate::schema::craft::InsightTriggerV1::NearDeath,
-                },
-                unlocked_at_tick: 8000,
-                ts: 1234567,
-            }),
-            ServerDataPayloadV1::WorkbenchOpen {
-                entity_id: 42,
-                position: [1, 64, -2],
-            },
-            // F9 跨层修复：出生引导棺权威坐标广播 wire tag pin。
-            ServerDataPayloadV1::TutorialCoffinPos {
-                position: [0, 69, 0],
-            },
-            ServerDataPayloadV1::CombatEventFloater(CombatEventFloaterV1 {
-                events: vec![CombatEventFloaterEntryV1 {
-                    kind: "hit".to_string(),
-                    amount: 5.0,
-                    text: "5".to_string(),
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                    outgoing: false,
-                }],
-            }),
-            ServerDataPayloadV1::KnockbackSync(KnockbackSyncV1 {
-                distance_blocks: 4.0,
-                velocity_blocks_per_tick: 0.8,
-                duration_ticks: 5,
-                kinetic_energy: 22.4,
-                collision_damage: Some(3.0),
-                chain_depth: 2,
-                block_broken: true,
-            }),
-            ServerDataPayloadV1::TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1 {
-                technique_id: "sword.cleave".to_string(),
-                proficiency: 0.42,
-                gain: 0.008,
-            }),
-            ServerDataPayloadV1::PillBuffStatus(PillBuffStatusV1 {
-                buff_id: "huo_xue_dan".to_string(),
-                remaining_ticks: 3000,
-                effect_multiplier: 1.0,
-            }),
-            // ─── plan-exploration-probe-return-v1 P0 ────────────────
-            ServerDataPayloadV1::MineralProbeResult(MineralProbeResultV1 {
-                kind: "found".to_string(),
-                mineral_id: Some("chi_tong_ore".to_string()),
-                remaining_units: Some(23),
-                display_name_zh: Some("赤铜矿脉".to_string()),
-                denial_reason: None,
-            }),
-            // ─── plan-exploration-probe-return-v1 P1: FreshnessUpdate wire/label guard ──
-            ServerDataPayloadV1::FreshnessUpdate(FreshnessUpdateV1 {
-                item_uuid: "42".to_string(),
-                freshness: 0.75,
-                profile_name: "test_decay".to_string(),
-            }),
-            // ─── plan-exploration-probe-return-v1 P2: InsightOffer wire/label guard ─────
-            ServerDataPayloadV1::InsightOffer(InsightOfferV1 {
-                offer_id: "insight:1:100".to_string(),
-                trigger_id: "insight:1:100".to_string(),
-                character_id: "offline:Kiz".to_string(),
-                choices: vec![crate::schema::cultivation::InsightChoiceV1 {
-                    category: "Qi".to_string(),
-                    effect_kind: "qi_max".to_string(),
-                    magnitude: 0.05,
-                    flavor_text: "气海微扩张。".to_string(),
-                    narrator_voice: None,
-                    alignment: None,
-                    cost_kind: None,
-                    cost_magnitude: None,
-                    cost_flavor: None,
-                }],
-            }),
-            // ─── plan-agent-ui-data-v1 P0: Agent UI wire/label guard ─────────
-            ServerDataPayloadV1::AgentUiRequest(AgentUiRequestPayloadV1 {
-                request_id: "agent-ui-req".to_string(),
-                target_player: "offline:Kiz".to_string(),
-                xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
-                timeout_ticks: 600,
-            }),
-            ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
-                request_id: "agent-ui-req".to_string(),
-                reason: Some("invalid_button_id".to_string()),
-            }),
-            // ─── plan-halfstep-rechallenge-integration-v1 P0 wire/label guard ─────
-            ServerDataPayloadV1::HalfStepRechallenge(HalfStepRechallengeV1 {
-                active: true,
-                char_id: "offline:Kiz".to_string(),
-                rechallenge_window_until: 50_000,
-                at_tick: 1_000,
-            }),
-            // ─── plan-inventory-hint-panel-v1 P0 wire/label guard ─────
-            ServerDataPayloadV1::InventoryMoveRejected(InventoryMoveRejectedV1 {
-                reason: "worn_cap_full".to_string(),
-                required_realm: None,
-                slot: Some("chest".to_string()),
-                cap: Some(3),
-            }),
-            // ─── plan-scroll-reading-v1 P0 wire/label guard ─────
-            ServerDataPayloadV1::ScrollOpen {
-                scroll_id: "scroll_meridian_primer".to_string(),
-                title: "《经脉浅述·残卷》".to_string(),
-                body_pages: vec!["第一页".to_string(), "第二页".to_string()],
-            },
-        ];
-
-        for payload in cases {
-            let label = payload_type_label(payload.payload_type());
-            let envelope = ServerDataV1::new(payload);
-            let bytes = serde_json::to_vec(&envelope).expect("serialize");
-            let value: serde_json::Value = serde_json::from_slice(&bytes).expect("decode");
-            let wire_type = value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            assert_eq!(
-                wire_type, label,
-                "wire type {wire_type} does not match payload_type_label {label}"
-            );
-        }
-    }
-
-    // ─── plan-scroll-reading-v1 P0：ScrollOpen serde pin + TS↔Rust sample 对拍 ───
-
-    /// TS 端 sample（TypeBox source of truth）必须反序列化为 ScrollOpen 且字段全等。
-    #[test]
-    fn scroll_open_ts_sample_deserializes_in_rust() {
-        let json = include_str!(
-            "../../../agent/packages/schema/samples/server-data.scroll-open.sample.json"
-        );
-        let envelope: ServerDataV1 = serde_json::from_str(json)
-            .unwrap_or_else(|e| panic!("scroll-open sample should deserialize: {e}"));
-        match envelope.payload {
-            ServerDataPayloadV1::ScrollOpen {
-                scroll_id,
-                title,
-                body_pages,
-            } => {
-                assert_eq!(scroll_id, "scroll_meridian_primer");
-                assert_eq!(title, "《经脉浅述·残卷》");
-                assert_eq!(
-                    body_pages.len(),
-                    3,
-                    "sample 应有 3 页正文，得到 {}",
-                    body_pages.len()
-                );
-            }
-            other => panic!("expected ScrollOpen, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn scroll_open_roundtrip() {
-        let payload = ServerDataPayloadV1::ScrollOpen {
-            scroll_id: "scroll_meridian_primer".to_string(),
-            title: "《经脉浅述·残卷》".to_string(),
-            body_pages: vec!["第一页".to_string(), "第二页".to_string()],
-        };
-        let envelope = ServerDataV1::new(payload);
-        let bytes = serde_json::to_vec(&envelope).expect("ScrollOpen serializes");
-        let decoded: ServerDataV1 =
-            serde_json::from_slice(&bytes).expect("ScrollOpen round-trip deserializes");
-        match decoded.payload {
-            ServerDataPayloadV1::ScrollOpen {
-                scroll_id,
-                title,
-                body_pages,
-            } => {
-                assert_eq!(scroll_id, "scroll_meridian_primer");
-                assert_eq!(title, "《经脉浅述·残卷》");
-                assert_eq!(body_pages, vec!["第一页".to_string(), "第二页".to_string()]);
-            }
-            other => panic!("expected ScrollOpen after round-trip, got {other:?}"),
-        }
-    }
-
-    /// 边界：body_pages 为空数组——wire 层不校验（校验在 TOML 解析层 `parse_readable_scroll_spec`），
-    /// 但 serde 本身必须允许空数组反序列化（不是 wire 契约拒绝的形状）。
-    #[test]
-    fn scroll_open_wire_accepts_empty_body_pages() {
-        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","title":"t","body_pages":[]}"#;
-        let envelope: ServerDataV1 =
-            serde_json::from_str(json).expect("empty body_pages array should deserialize");
-        match envelope.payload {
-            ServerDataPayloadV1::ScrollOpen { body_pages, .. } => {
-                assert!(body_pages.is_empty());
-            }
-            other => panic!("expected ScrollOpen, got {other:?}"),
-        }
-    }
-
-    /// 缺失 title 字段应反序列化失败。
-    #[test]
-    fn scroll_open_rejects_missing_title() {
-        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","body_pages":["p1"]}"#;
-        let result: Result<ServerDataV1, _> = serde_json::from_str(json);
-        assert!(
-            result.is_err(),
-            "scroll_open without title should fail deserialization"
-        );
-    }
-
-    /// 额外字段被拒绝（deny_unknown_fields）。
-    #[test]
-    fn scroll_open_rejects_extra_fields() {
-        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","title":"t","body_pages":["p1"],"extra":true}"#;
-        let result: Result<ServerDataV1, _> = serde_json::from_str(json);
-        assert!(
-            result.is_err(),
-            "scroll_open with extra field should fail deserialization (deny_unknown_fields)"
-        );
-    }
-
-    #[test]
-    fn social_server_data_wire_uses_single_envelope_version() {
-        let envelope =
-            ServerDataV1::new(ServerDataPayloadV1::SocialExposure(SocialExposureEventV1 {
-                v: 1,
-                actor: "char:alice".to_string(),
-                kind: super::super::social::ExposureKindV1::Chat,
-                witnesses: vec!["char:bob".to_string()],
-                tick: 42,
-                zone: Some("spawn".to_string()),
-            }));
-        let value = serde_json::to_value(&envelope).expect("serialize social exposure");
-        assert_eq!(value["v"], 1);
-        assert_eq!(value["type"], "social_exposure");
-        assert_eq!(value["kind"], "chat");
-        assert!(
-            value.get("event_v").is_none(),
-            "server_data payload must not duplicate nested event version"
-        );
-    }
-
-    #[test]
-    fn social_server_data_deserializes_without_nested_event_version() {
-        let json = include_str!(
-            "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
-        );
-        let payload: ServerDataV1 = serde_json::from_str(json).expect("social renown sample");
-
-        match payload.payload {
-            ServerDataPayloadV1::SocialRenownDelta(event) => {
-                assert_eq!(event.v, 1);
-                assert_eq!(event.char_id, "char:steve");
-                assert_eq!(event.tags_added[0].tag, "kept_pact");
-            }
-            other => panic!("expected SocialRenownDelta, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn cultivation_detail_roundtrip_and_size_budget() {
-        let payload = ServerDataV1::new(ServerDataPayloadV1::CultivationDetail {
-            realm: "Induce".to_string(),
-            opened: vec![true; 20],
-            flow_rate: vec![1.5; 20],
-            flow_capacity: vec![10.25; 20],
-            integrity: vec![0.87; 20],
-            open_progress: vec![1.0; 20],
-            cracks_count: vec![0; 20],
-            contamination_total: 0.0,
-            lifespan: Some(LifespanPreviewV1 {
-                years_lived: 42.0,
-                cap_by_realm: 200,
-                remaining_years: 158.0,
-                death_penalty_years: 10,
-                tick_rate_multiplier: 1.0,
-                is_wind_candle: false,
-            }),
-            recent_skill_milestones_summary: "t82000:skill:herbalism:lv3".to_string(),
-            skill_milestones: vec![SkillMilestoneSnapshotV1 {
-                skill: "herbalism".to_string(),
-                new_lv: 3,
-                achieved_at: 82_000,
-                narration: "你摘得百草渐熟，今已识八分。".to_string(),
-                total_xp_at: 550,
-            }],
-            qi_color_main: ColorKind::Intricate,
-            qi_color_secondary: Some(ColorKind::Heavy),
-            qi_color_chaotic: false,
-            qi_color_hunyuan: false,
-            practice_weights: vec![PracticeWeightV1 {
-                color: ColorKind::Intricate,
-                weight: 42.0,
-                ratio: 0.7,
-            }],
-            target_meridian: Some(4),
-        });
-        let bytes = payload
-            .to_json_bytes_checked()
-            .expect("cultivation_detail must fit MAX_PAYLOAD_BYTES");
-        assert!(
-            bytes.len() <= super::super::common::MAX_PAYLOAD_BYTES,
-            "over budget: {} bytes",
-            bytes.len()
-        );
-        let back: ServerDataV1 = serde_json::from_slice(&bytes).expect("roundtrip");
-        match back.payload {
-            ServerDataPayloadV1::CultivationDetail {
-                opened,
-                flow_rate,
-                lifespan,
-                recent_skill_milestones_summary,
-                skill_milestones,
-                qi_color_main,
-                qi_color_secondary,
-                practice_weights,
-                target_meridian,
-                ..
-            } => {
-                assert_eq!(opened.len(), 20);
-                assert_eq!(flow_rate.len(), 20);
-                assert_eq!(flow_rate[0], 1.5);
-                assert_eq!(lifespan.unwrap().death_penalty_years, 10);
-                assert_eq!(
-                    recent_skill_milestones_summary,
-                    "t82000:skill:herbalism:lv3"
-                );
-                assert_eq!(skill_milestones.len(), 1);
-                assert_eq!(skill_milestones[0].skill, "herbalism");
-                assert_eq!(qi_color_main, ColorKind::Intricate);
-                assert_eq!(qi_color_secondary, Some(ColorKind::Heavy));
-                assert_eq!(practice_weights[0].color, ColorKind::Intricate);
-                assert_eq!(practice_weights[0].weight, 42.0);
-                assert_eq!(target_meridian, Some(4));
-            }
-            other => panic!("expected CultivationDetail, got {other:?}"),
-        }
-    }
-
-    /// plan-remains-suite P0 — remains_sync 双端 sample 对拍：字段值必须与
-    /// agent/packages/schema/samples/server-data.remains-sync.sample.json 完全一致，
-    /// 改 schema 必须连同 sample 一起改。
-    #[test]
-    fn remains_sync_sample_pins_wire_shape() {
-        let json = include_str!(
-            "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
-        );
-        let payload: ServerDataV1 =
-            serde_json::from_str(json).expect("remains-sync sample should deserialize");
-        match payload.payload {
-            ServerDataPayloadV1::RemainsSync(remains) => {
-                assert_eq!(remains.len(), 1, "sample 固定 1 条 entry");
-                let entry = &remains[0];
-                assert_eq!(entry.remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
-                assert_eq!(entry.world_pos, [8.5, 66.0, 8.5]);
-                assert_eq!(entry.dimension, "minecraft:overworld");
-                assert_eq!(entry.display_name, "遗骸");
-                assert_eq!(entry.item_count, 3);
-                assert_eq!(entry.bone_coins, 12);
-            }
-            other => panic!("expected RemainsSync, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn remains_sync_rejects_entry_unknown_field() {
-        let json = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "remains_sync",
-            "remains": [{
-                "remains_id": "x",
-                "world_pos": [0.0, 64.0, 0.0],
-                "dimension": "minecraft:overworld",
-                "display_name": "遗骸",
-                "item_count": 1,
-                "bone_coins": 0,
-                "unexpected": true
-            }]
-        });
-
-        assert!(
-            serde_json::from_value::<ServerDataV1>(json).is_err(),
-            "RemainsEntryV1 额外字段应被 deny_unknown_fields 拒绝"
-        );
-    }
-
-    #[test]
-    fn remains_sync_rejects_entry_missing_remains_id() {
-        let json = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "remains_sync",
-            "remains": [{
-                "world_pos": [0.0, 64.0, 0.0],
-                "dimension": "minecraft:overworld",
-                "display_name": "遗骸",
-                "item_count": 1,
-                "bone_coins": 0
-            }]
-        });
-
-        assert!(
-            serde_json::from_value::<ServerDataV1>(json).is_err(),
-            "RemainsEntryV1 缺 remains_id 应反序列化失败"
-        );
-    }
-
-    #[test]
-    fn deserialize_server_data_samples() {
-        let samples = [
-            include_str!("../../../agent/packages/schema/samples/server-data.welcome.sample.json"),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.heartbeat.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.narration.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.zone-info.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.event-alert.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.player-state.sample.json"
-            ),
-            include_str!("../../../agent/packages/schema/samples/server-data.ui-open.sample.json"),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.inventory-snapshot.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.inventory-event.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.dropped-loot-sync.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.gathering-session.active.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.gathering-session.completed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.gathering-session.interrupted.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.botany-skill.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-furnace.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-session.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-forecast.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-outcome-resolved.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-recipe-book.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.alchemy-contamination.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.death-screen.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-xp-gain.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-lv-up.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-cap-changed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-scroll-used.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-snapshot.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skillbar-config.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.techniques-snapshot.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.skill-config-snapshot.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.rift-portal-state.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.rift-portal-removed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.extract-started.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.extract-progress.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.extract-completed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.extract-aborted.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.extract-failed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.tsy-collapse-started-ipc.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.forge-station.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.forge-session.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.forge-outcome-perfect.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.forge-outcome-flawed.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.forge-blueprint-book.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.tribulation-broadcast.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.tribulation-state.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.ascension-quota.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.heart-demon-offer.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.burst-meridian-event.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.social-anonymity.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.social-exposure.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.social-pact.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.social-feud.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.social-renown-delta.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.sparring-invite.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.trade-offer.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.realm-vision-params.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.movement-state.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.spirit-treasure-state.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.agent-ui-request.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.agent-ui-close.sample.json"
-            ),
-            // plan-coffin-tiers-v1 P0 charge #7：四档 + no-grade serde pin samples
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.coffin-state-mundane.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.coffin-state-jade.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.coffin-state-stone.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.coffin-state-bronze.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.coffin-state-no-grade.sample.json"
-            ),
-            include_str!(
-                "../../../agent/packages/schema/samples/server-data.scroll-open.sample.json"
-            ),
-        ];
-
-        for json in samples {
-            let payload: ServerDataV1 =
-                serde_json::from_str(json).expect("sample should deserialize into ServerDataV1");
-
-            let reserialized = serde_json::to_string(&payload)
-                .expect("deserialized ServerDataV1 should serialize back to JSON");
-            let roundtrip: ServerDataV1 = serde_json::from_str(&reserialized)
-                .expect("serialized ServerDataV1 should deserialize again");
-
-            let payload_value =
-                serde_json::to_value(&payload).expect("payload should convert to JSON value");
-            let roundtrip_value =
-                serde_json::to_value(&roundtrip).expect("roundtrip should convert to JSON value");
-
-            assert_eq!(
-                payload_value, roundtrip_value,
-                "roundtrip must preserve typed payload content"
-            );
-        }
-    }
-
-    #[test]
-    fn player_state_requires_spirit_qi_max() {
-        let json = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "player_state",
-            "realm": "Solidify",
-            "spirit_qi": 78.0,
-            "karma": 0.2,
-            "composite_power": 0.35,
-            "breakdown": {
-                "combat": 0.2,
-                "wealth": 0.4,
-                "social": 0.65,
-                "karma": 0.2,
-                "territory": 0.1
-            },
-            "zone": "blood_valley"
-        });
-
-        assert!(
-            serde_json::from_value::<ServerDataV1>(json).is_err(),
-            "player_state 缺 spirit_qi_max 必须反序列化失败；否则 HUD 真元条会退回 100 分母"
-        );
-    }
-
-    #[test]
-    fn player_state_rejects_zero_spirit_qi_max() {
-        let json = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "player_state",
-            "realm": "Solidify",
-            "spirit_qi": 78.0,
-            "spirit_qi_max": 0.0,
-            "karma": 0.2,
-            "composite_power": 0.35,
-            "breakdown": {
-                "combat": 0.2,
-                "wealth": 0.4,
-                "social": 0.65,
-                "karma": 0.2,
-                "territory": 0.1
-            },
-            "zone": "blood_valley"
-        });
-
-        assert!(
-            serde_json::from_value::<ServerDataV1>(json).is_err(),
-            "player_state spirit_qi_max=0 必须拒绝；proto3 缺 scalar tag 会退成 0，不能进 HUD fallback"
-        );
-    }
-
-    // ─── plan-coffin-tiers-v1 P0 charge #7：CoffinGradeV1/CoffinStateV1 serde pin ────
-
-    #[test]
-    fn coffin_grade_v1_all_variants_serde_roundtrip() {
-        // 每个 enum 变体至少一条专属正例
-        let cases: &[(&str, CoffinGradeV1)] = &[
-            ("\"mundane\"", CoffinGradeV1::Mundane),
-            ("\"jade\"", CoffinGradeV1::Jade),
-            ("\"stone\"", CoffinGradeV1::Stone),
-            ("\"bronze\"", CoffinGradeV1::Bronze),
-        ];
-        for (json_str, expected) in cases {
-            let parsed: CoffinGradeV1 = serde_json::from_str(json_str)
-                .unwrap_or_else(|e| panic!("{json_str} should parse as CoffinGradeV1: {e}"));
-            assert_eq!(
-                parsed, *expected,
-                "CoffinGradeV1 from {json_str} should equal {expected:?}"
-            );
-            let reserialized =
-                serde_json::to_string(&parsed).expect("CoffinGradeV1 should serialize back");
-            assert_eq!(
-                reserialized, *json_str,
-                "CoffinGradeV1::{expected:?} roundtrip should produce {json_str}"
-            );
-        }
-    }
-
-    #[test]
-    fn coffin_grade_v1_rejects_unknown_variant() {
-        // 反例：未知 variant 必须失败
-        let result = serde_json::from_str::<CoffinGradeV1>("\"diamond\"");
-        assert!(
-            result.is_err(),
-            "unknown grade 'diamond' should fail to deserialize"
-        );
-    }
-
-    #[test]
-    fn coffin_state_v1_all_grades_serde_pin() {
-        // 四档 + None（出棺）serde 正例
-        let cases: &[(&str, Option<CoffinGradeV1>, bool, f64)] = &[
-            ("mundane", Some(CoffinGradeV1::Mundane), true, 0.9),
-            ("jade", Some(CoffinGradeV1::Jade), true, 0.7),
-            ("stone", Some(CoffinGradeV1::Stone), true, 0.5),
-            ("bronze", Some(CoffinGradeV1::Bronze), true, 0.3),
-        ];
-        for (grade_str, expected_grade, in_coffin, multiplier) in cases {
-            let json = serde_json::json!({
-                "in_coffin": in_coffin,
-                "lifespan_rate_multiplier": multiplier,
-                "coffin_grade": grade_str
-            });
-            let state: CoffinStateV1 = serde_json::from_value(json.clone())
-                .unwrap_or_else(|e| panic!("grade={grade_str} json={json} should parse: {e}"));
-            assert_eq!(
-                state.coffin_grade, *expected_grade,
-                "grade={grade_str}: parsed coffin_grade should equal {expected_grade:?}"
-            );
-            assert_eq!(state.in_coffin, *in_coffin);
-            assert!((state.lifespan_rate_multiplier - multiplier).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn coffin_state_v1_none_grade_serde_pin() {
-        // None（出棺）：coffin_grade 字段缺失 → None（向后兼容）
-        let json = serde_json::json!({
-            "in_coffin": false,
-            "lifespan_rate_multiplier": 1.0
-        });
-        let state: CoffinStateV1 =
-            serde_json::from_value(json).expect("no-grade CoffinStateV1 should parse");
-        assert_eq!(
-            state.coffin_grade, None,
-            "missing coffin_grade should parse as None (向后兼容旧 payload)"
-        );
-        // 序列化时 skip_serializing_if = None → 字段不出现在 JSON
-        let reserialized =
-            serde_json::to_value(state).expect("CoffinStateV1 should serialize to JSON value");
-        assert!(
-            reserialized.get("coffin_grade").is_none(),
-            "coffin_grade=None should be omitted during serialization, got {reserialized}"
-        );
-    }
-
-    #[test]
-    fn coffin_state_v1_deny_unknown_fields_standalone() {
-        // standalone 反序列化：deny_unknown_fields 拒绝多余字段
-        let json = serde_json::json!({
-            "in_coffin": true,
-            "lifespan_rate_multiplier": 0.9,
-            "unknown_field": "oops"
-        });
-        let result = serde_json::from_value::<CoffinStateV1>(json);
-        assert!(
-            result.is_err(),
-            "CoffinStateV1 standalone deny_unknown_fields should reject extra fields"
-        );
-    }
-
-    #[test]
-    fn gathering_session_rejects_invalid_enum_values() {
-        let invalid_quality =
-            include_str!("../../../agent/packages/schema/samples/server-data.gathering-session.invalid-quality.sample.json");
-        assert!(
-            serde_json::from_str::<ServerDataV1>(invalid_quality).is_err(),
-            "invalid gathering_session quality_hint sample should fail to deserialize"
-        );
-
-        let invalid_target = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "gathering_session",
-            "session_id": "gathering:bad-target",
-            "progress_ticks": 10,
-            "total_ticks": 40,
-            "target_name": "测试采集物",
-            "target_type": "invalid_type",
-            "quality_hint": "normal",
-            "interrupted": false,
-            "completed": false
-        });
-        assert!(
-            serde_json::from_value::<ServerDataV1>(invalid_target).is_err(),
-            "invalid gathering_session target_type should fail to deserialize"
-        );
-    }
-
-    #[test]
-    fn deserialize_zone_info_defaults_missing_status() {
-        let value = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "zone_info",
-            "zone": "blood_valley",
-            "spirit_qi": -0.42,
-            "danger_level": 3,
-            "active_events": ["beast_tide"]
-        });
-
-        let payload: ServerDataV1 = serde_json::from_value(value).expect("deserialize zone_info");
-        match payload.payload {
-            ServerDataPayloadV1::ZoneInfo { status, .. } => {
-                assert_eq!(status, ZoneStatusV1::Normal);
-            }
-            other => panic!("expected ZoneInfo, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn serialize_zone_info_includes_status() {
-        let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
-            zone: "blood_valley".to_string(),
-            spirit_qi: -0.42,
-            danger_level: 3,
-            status: ZoneStatusV1::Collapsed,
-            active_events: Some(vec!["realm_collapse".to_string()]),
-            perception_text: Some("灵气几近断绝，此地有不祥预感".to_string()),
-        });
-
-        let value: serde_json::Value = serde_json::from_slice(
-            &payload
-                .to_json_bytes_checked()
-                .expect("zone_info should serialize"),
-        )
-        .expect("zone_info JSON should decode");
-
-        assert_eq!(value["status"], "collapsed");
-        assert_eq!(value["perception_text"], "灵气几近断绝，此地有不祥预感");
-    }
-
-    #[test]
-    fn ascension_quota_defaults_new_world_qi_fields_for_legacy_payloads() {
-        let payload: AscensionQuotaV1 =
-            serde_json::from_str(r#"{"occupied_slots":1,"quota_limit":3,"available_slots":2}"#)
-                .expect("legacy ascension quota payload should deserialize");
-
-        assert_eq!(payload, AscensionQuotaV1::new(1, 3));
-    }
-
-    #[test]
-    fn rejects_unknown_server_data_version() {
-        let json = r#"{"v":99,"type":"welcome","message":"hello"}"#;
-        let error = serde_json::from_str::<ServerDataV1>(json)
-            .expect_err("unknown server_data version should be rejected");
-
-        assert!(
-            error.to_string().contains("ServerDataV1.v must be"),
-            "unexpected server_data version error: {error}"
-        );
-    }
-
-    #[test]
-    fn container_kind_v1_surface_stash_wire() {
-        use crate::network::tsy_container_search_emit::container_kind_wire;
-        use crate::world::tsy_container::ContainerKind;
-
-        assert_eq!(
-            container_kind_wire(ContainerKind::SurfaceStash),
-            ContainerKindV1::SurfaceStash,
-            "ContainerKind::SurfaceStash should map to ContainerKindV1::SurfaceStash"
-        );
-    }
-
-    #[test]
-    fn container_kind_v1_serde_pin_with_surface_stash() {
-        let json = serde_json::to_string(&ContainerKindV1::SurfaceStash)
-            .expect("ContainerKindV1::SurfaceStash should serialize");
-        assert_eq!(
-            json, "\"surface_stash\"",
-            "ContainerKindV1::SurfaceStash serde should produce \"surface_stash\", got {json}"
-        );
-        let round: ContainerKindV1 = serde_json::from_str(&json).expect("should deserialize back");
-        assert_eq!(round, ContainerKindV1::SurfaceStash);
-    }
-
-    #[test]
-    fn technique_proficiency_update_rejects_missing_gain() {
-        let missing_gain = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "technique_proficiency_update",
-            "update": {
-                "technique_id": "sword.cleave",
-                "proficiency": 0.42
-            }
-        });
-        assert!(
-            serde_json::from_value::<ServerDataV1>(missing_gain).is_err(),
-            "technique_proficiency_update missing 'gain' should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn technique_proficiency_update_rejects_unknown_field() {
-        let unknown_field = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "technique_proficiency_update",
-            "update": {
-                "technique_id": "sword.cleave",
-                "proficiency": 0.42,
-                "gain": 0.008,
-                "unexpected": true
-            }
-        });
-        assert!(
-            serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
-            "technique_proficiency_update with unknown field should fail due to deny_unknown_fields"
-        );
-    }
-
-    #[test]
-    fn pill_buff_status_v1_serde_pin() {
-        let original = PillBuffStatusV1 {
-            buff_id: "huo_xue_dan".to_string(),
-            remaining_ticks: 3000,
-            effect_multiplier: 1.0,
-        };
-        let json = serde_json::to_string(&original).expect("PillBuffStatusV1 should serialize");
-        let back: PillBuffStatusV1 =
-            serde_json::from_str(&json).expect("PillBuffStatusV1 should deserialize");
-        assert_eq!(
-            original, back,
-            "PillBuffStatusV1 roundtrip must be lossless"
-        );
-
-        let envelope = ServerDataV1::new(ServerDataPayloadV1::PillBuffStatus(original.clone()));
-        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
-        let round: ServerDataV1 =
-            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
-        match round.payload {
-            ServerDataPayloadV1::PillBuffStatus(status) => {
-                assert_eq!(
-                    status, original,
-                    "envelope roundtrip must preserve PillBuffStatusV1"
-                );
-            }
-            other => panic!("expected PillBuffStatus, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn pill_buff_status_v1_rejects_unknown_field() {
-        let unknown_field = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "pill_buff_status",
-            "buff_id": "tie_bi_san",
-            "remaining_ticks": 600,
-            "effect_multiplier": 1.2,
-            "unexpected": true
-        });
-        assert!(
-            serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
-            "PillBuffStatusV1 with unknown field should fail due to deny_unknown_fields"
-        );
-    }
-
-    #[test]
-    fn pill_buff_status_v1_rejects_missing_buff_id() {
-        let missing = serde_json::json!({
-            "v": SERVER_DATA_VERSION,
-            "type": "pill_buff_status",
-            "remaining_ticks": 600,
-            "effect_multiplier": 1.2
-        });
-        assert!(
-            serde_json::from_value::<ServerDataV1>(missing).is_err(),
-            "PillBuffStatusV1 missing 'buff_id' should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn pill_buff_status_v1_zero_ticks_roundtrips() {
-        let zero = PillBuffStatusV1 {
-            buff_id: "expired_buff".to_string(),
-            remaining_ticks: 0,
-            effect_multiplier: 0.0,
-        };
-        let json =
-            serde_json::to_string(&zero).expect("zero-tick PillBuffStatusV1 should serialize");
-        let back: PillBuffStatusV1 =
-            serde_json::from_str(&json).expect("zero-tick should deserialize");
-        assert_eq!(zero, back);
-    }
-
-    // ─── plan-supply-coffin-loot-ui P1：外部容器 S2C tests ──────────
-
-    fn sample_placed_item() -> super::super::inventory::PlacedInventoryItemV1 {
-        super::super::inventory::PlacedInventoryItemV1 {
-            container_id: "ext_42".to_string(),
-            row: 0,
-            col: 1,
-            item: super::super::inventory::InventoryItemViewV1 {
-                instance_id: 100,
-                item_id: "iron_sword".to_string(),
-                display_name: "铁剑".to_string(),
-                grid_width: 1,
-                grid_height: 2,
-                weight: 2.5,
-                rarity: super::super::inventory::ItemRarityV1::Common,
-                description: String::new(),
-                stack_count: 1,
-                spirit_quality: 0.0,
-                durability: 1.0,
-                freshness: None,
-                freshness_current: None,
-                mineral_id: None,
-                scroll_kind: None,
-                scroll_skill_id: None,
-                scroll_xp_grant: None,
-                charges: None,
-                forge_quality: None,
-                forge_color: None,
-                forge_side_effects: vec![],
-                forge_achieved_tier: None,
-                alchemy: None,
-                lingering_owner_qi: None,
-            },
-        }
-    }
-
-    #[test]
-    fn loot_container_open_serde_roundtrip() {
-        let original = LootContainerOpenV1 {
-            session_id: 42,
-            source_kind: LootContainerSourceKindV1::SupplyCoffin {
-                grade: "common".to_string(),
-            },
-            rows: 3,
-            cols: 4,
-            placed_items: vec![sample_placed_item()],
-            timeout_wall_secs: 1716872400,
-        };
-        let json = serde_json::to_string(&original).expect("LootContainerOpenV1 should serialize");
-        let back: LootContainerOpenV1 =
-            serde_json::from_str(&json).expect("LootContainerOpenV1 should deserialize");
-        assert_eq!(
-            original, back,
-            "LootContainerOpenV1 roundtrip must be lossless"
-        );
-    }
-
-    #[test]
-    fn loot_container_open_envelope_roundtrip() {
-        let payload = ServerDataPayloadV1::LootContainerOpen(LootContainerOpenV1 {
-            session_id: 7,
-            source_kind: LootContainerSourceKindV1::SupplyCoffin {
-                grade: "rare".to_string(),
-            },
-            rows: 4,
-            cols: 5,
-            placed_items: vec![],
-            timeout_wall_secs: 1716872500,
-        });
-        let envelope = ServerDataV1::new(payload.clone());
-        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
-        let round: ServerDataV1 =
-            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
-        assert_eq!(
-            round.payload.payload_type(),
-            ServerDataType::LootContainerOpen,
-            "deserialized type must be LootContainerOpen"
-        );
-    }
-
-    #[test]
-    fn loot_container_open_empty_items_roundtrips() {
-        let open = LootContainerOpenV1 {
-            session_id: 0,
-            source_kind: LootContainerSourceKindV1::SupplyCoffin {
-                grade: "precious".to_string(),
-            },
-            rows: 5,
-            cols: 6,
-            placed_items: vec![],
-            timeout_wall_secs: 0,
-        };
-        let json = serde_json::to_string(&open)
-            .expect("LootContainerOpenV1 with empty items should serialize");
-        let back: LootContainerOpenV1 = serde_json::from_str(&json)
-            .expect("LootContainerOpenV1 with empty items should deserialize");
-        assert!(
-            back.placed_items.is_empty(),
-            "empty placed_items must survive roundtrip"
-        );
-    }
-
-    #[test]
-    fn loot_container_update_serde_roundtrip() {
-        let original = LootContainerUpdateV1 {
-            session_id: 42,
-            placed_items: vec![sample_placed_item()],
-        };
-        let json =
-            serde_json::to_string(&original).expect("LootContainerUpdateV1 should serialize");
-        let back: LootContainerUpdateV1 =
-            serde_json::from_str(&json).expect("LootContainerUpdateV1 should deserialize");
-        assert_eq!(
-            original, back,
-            "LootContainerUpdateV1 roundtrip must be lossless"
-        );
-    }
-
-    #[test]
-    fn loot_container_close_all_reasons_roundtrip() {
-        let reasons = [
-            LootContainerCloseReasonV1::Timeout,
-            LootContainerCloseReasonV1::Distance,
-            LootContainerCloseReasonV1::PlayerClosed,
-            LootContainerCloseReasonV1::CoffinDestroyed,
-            LootContainerCloseReasonV1::ContainerDestroyed,
-        ];
-        for reason in reasons {
-            let close = LootContainerCloseV1 {
-                session_id: 99,
-                reason: reason.clone(),
-            };
-            let json =
-                serde_json::to_string(&close).expect("LootContainerCloseV1 should serialize");
-            let back: LootContainerCloseV1 =
-                serde_json::from_str(&json).expect("LootContainerCloseV1 should deserialize");
-            assert_eq!(
-                close, back,
-                "LootContainerCloseV1 roundtrip must be lossless for reason {reason:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn loot_container_close_envelope_roundtrip() {
-        let payload = ServerDataPayloadV1::LootContainerClose(LootContainerCloseV1 {
-            session_id: 5,
-            reason: LootContainerCloseReasonV1::Timeout,
-        });
-        let envelope = ServerDataV1::new(payload);
-        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
-        let round: ServerDataV1 =
-            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
-        assert_eq!(
-            round.payload.payload_type(),
-            ServerDataType::LootContainerClose,
-            "deserialized type must be LootContainerClose"
-        );
-    }
-
-    #[test]
-    fn loot_container_source_kind_supply_coffin_wire_format() {
-        let kind = LootContainerSourceKindV1::SupplyCoffin {
-            grade: "common".to_string(),
-        };
-        let json = serde_json::to_string(&kind)
-            .expect("LootContainerSourceKindV1::SupplyCoffin should serialize");
-        assert!(
-            json.contains("\"supply_coffin\""),
-            "source_kind wire should use snake_case tag, got: {json}"
-        );
-        assert!(
-            json.contains("\"grade\":\"common\""),
-            "source_kind wire should contain grade field, got: {json}"
-        );
-    }
-
-    #[test]
-    fn loot_container_source_kind_storage_crate_wire_format() {
-        let kind = LootContainerSourceKindV1::StorageCrate { is_herb: true };
-        let json = serde_json::to_string(&kind)
-            .expect("LootContainerSourceKindV1::StorageCrate should serialize");
-        assert!(
-            json.contains("\"storage_crate\""),
-            "source_kind wire should use snake_case tag, got: {json}"
-        );
-        assert!(
-            json.contains("\"is_herb\":true"),
-            "source_kind wire should contain is_herb field, got: {json}"
-        );
-        let back: LootContainerSourceKindV1 =
-            serde_json::from_str(&json).expect("StorageCrate source_kind should deserialize");
-        assert_eq!(
-            kind, back,
-            "StorageCrate source_kind must roundtrip without losing is_herb"
-        );
-    }
-
-    #[test]
-    fn loot_container_source_kind_dead_drop_wire_format() {
-        let kind = LootContainerSourceKindV1::DeadDrop;
-        let json = serde_json::to_string(&kind)
-            .expect("LootContainerSourceKindV1::DeadDrop should serialize");
-        assert_eq!(
-            json, "\"dead_drop\"",
-            "unit source_kind wire should be the snake_case tag"
-        );
-        let back: LootContainerSourceKindV1 =
-            serde_json::from_str(&json).expect("DeadDrop source_kind should deserialize");
-        assert_eq!(kind, back, "DeadDrop source_kind must roundtrip");
-    }
-
-    #[test]
-    fn loot_container_close_reason_wire_values() {
-        let cases = [
-            (LootContainerCloseReasonV1::Timeout, "\"timeout\""),
-            (LootContainerCloseReasonV1::Distance, "\"distance\""),
-            (
-                LootContainerCloseReasonV1::PlayerClosed,
-                "\"player_closed\"",
-            ),
-            (
-                LootContainerCloseReasonV1::CoffinDestroyed,
-                "\"coffin_destroyed\"",
-            ),
-            (
-                LootContainerCloseReasonV1::ContainerDestroyed,
-                "\"container_destroyed\"",
-            ),
-        ];
-        for (reason, expected) in cases {
-            let json = serde_json::to_string(&reason)
-                .expect("LootContainerCloseReasonV1 variant should serialize");
-            assert_eq!(
-                json, expected,
-                "LootContainerCloseReasonV1::{reason:?} wire value mismatch"
-            );
-        }
-    }
-
-    #[test]
-    fn payload_type_label_matches_for_loot_container_types() {
-        assert_eq!(
-            payload_type_label(ServerDataType::LootContainerOpen),
-            "loot_container_open"
-        );
-        assert_eq!(
-            payload_type_label(ServerDataType::LootContainerUpdate),
-            "loot_container_update"
-        );
-        assert_eq!(
-            payload_type_label(ServerDataType::LootContainerClose),
-            "loot_container_close"
-        );
-    }
-
-    #[test]
-    fn loot_container_open_rejects_missing_session_id() {
-        let json = r#"{"source_kind":{"kind":"supply_coffin","grade":"common"},"rows":3,"cols":4,"placed_items":[],"timeout_wall_secs":0}"#;
-        assert!(
-            serde_json::from_str::<LootContainerOpenV1>(json).is_err(),
-            "LootContainerOpenV1 missing session_id should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn loot_container_close_rejects_missing_reason() {
-        let json = r#"{"session_id":1}"#;
-        assert!(
-            serde_json::from_str::<LootContainerCloseV1>(json).is_err(),
-            "LootContainerCloseV1 missing reason should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn loot_container_close_rejects_unknown_reason() {
-        let json = r#"{"session_id":1,"reason":"alien_abduction"}"#;
-        assert!(
-            serde_json::from_str::<LootContainerCloseV1>(json).is_err(),
-            "LootContainerCloseV1 unknown reason should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn loot_container_open_rejects_missing_placed_items() {
-        let json = r#"{"session_id":1,"source_kind":{"kind":"supply_coffin","grade":"rare"},"rows":5,"cols":4,"timeout_wall_secs":100}"#;
-        assert!(
-            serde_json::from_str::<LootContainerOpenV1>(json).is_err(),
-            "LootContainerOpenV1 missing placed_items should fail deserialization"
-        );
-    }
-
-    #[test]
-    fn loot_container_update_rejects_missing_session_id() {
-        let json = r#"{"placed_items":[]}"#;
-        assert!(
-            serde_json::from_str::<LootContainerUpdateV1>(json).is_err(),
-            "LootContainerUpdateV1 missing session_id should fail deserialization"
-        );
-    }
-
-    // ─── plan-offscreen-war-v1 P9：FactionWarState payload 测试 ─────────────
-
-    #[test]
-    fn faction_war_state_v1_roundtrips_with_outcome() {
-        // 有 winner/loser 的 Settling 阶段 payload 完整无损 roundtrip。
-        let payload = FactionWarStateV1 {
-            war_id: 42,
-            zone: "残灰谷".to_string(),
-            region_descriptor: "残灰谷一带散修".to_string(),
-            phase: "settling".to_string(),
-            groups: vec![0, 1],
-            enlist_count: 3,
-            mercenary_count: 1,
-            intercept_count: 0,
-            spectate_count: 2,
-            winner_group: Some(0),
-            loser_group: Some(1),
-        };
-        let json = serde_json::to_string(&payload).expect("FactionWarStateV1 should serialize");
-        let back: FactionWarStateV1 =
-            serde_json::from_str(&json).expect("FactionWarStateV1 should deserialize");
-        assert_eq!(
-            payload, back,
-            "FactionWarStateV1 roundtrip must be lossless"
-        );
-        // winner_group/loser_group Some 时 JSON 应包含这两个字段
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(
-            v.get("winner_group").is_some(),
-            "winner_group should be in JSON when Some"
-        );
-        assert!(
-            v.get("loser_group").is_some(),
-            "loser_group should be in JSON when Some"
-        );
-    }
-
-    #[test]
-    fn faction_war_state_v1_roundtrips_without_outcome() {
-        // 无 winner/loser 的 Skirmish 阶段：winner_group/loser_group 字段应被 skip_serializing。
-        let payload = FactionWarStateV1 {
-            war_id: 7,
-            zone: "残灰谷".to_string(),
-            region_descriptor: "残灰谷一带散修".to_string(),
-            phase: "skirmish".to_string(),
-            groups: vec![0, 1],
-            enlist_count: 1,
-            mercenary_count: 0,
-            intercept_count: 0,
-            spectate_count: 0,
-            winner_group: None,
-            loser_group: None,
-        };
-        let json = serde_json::to_string(&payload).expect("serialize");
-        let back: FactionWarStateV1 = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(
-            payload, back,
-            "FactionWarStateV1 no-outcome roundtrip must be lossless"
-        );
-        // None 时 JSON 不含 winner_group/loser_group（skip_serializing_if）
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(
-            v.get("winner_group").is_none(),
-            "winner_group should be absent when None"
-        );
-        assert!(
-            v.get("loser_group").is_none(),
-            "loser_group should be absent when None"
-        );
-    }
-
-    #[test]
-    fn faction_war_state_wire_type_label_is_faction_war_state() {
-        // payload_type_label → "faction_war_state"（历史 wire label 兼容）
-        let label = payload_type_label(ServerDataType::FactionWarState);
-        assert_eq!(
-            label, "faction_war_state",
-            "期望 FactionWarState 的 label 为 'faction_war_state'（历史 wire label），实际 {label}"
-        );
-    }
-
-    #[test]
-    fn faction_war_state_serializes_type_field_as_faction_war_state() {
-        // wire type tag "faction_war_state" 保持历史兼容。
-        // ServerDataV1 用 #[serde(flatten)]，所以 type + fields 全在顶层（无 "payload" 嵌套）。
-        let inner = FactionWarStateV1 {
-            war_id: 1,
-            zone: "血谷".to_string(),
-            region_descriptor: "血谷一带散修".to_string(),
-            phase: "emerging".to_string(),
-            groups: vec![2, 3],
-            enlist_count: 0,
-            mercenary_count: 0,
-            intercept_count: 0,
-            spectate_count: 0,
-            winner_group: None,
-            loser_group: None,
-        };
-        let wrapper = ServerDataV1::new(ServerDataPayloadV1::FactionWarState(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        // payload 字段 flatten 到顶层，type 字段在顶层
-        assert_eq!(
-            v["type"],
-            serde_json::json!("faction_war_state"),
-            "期望 wire type = 'faction_war_state'（守恒：payload 零真元，reframe b 零宗门），实际 {}",
-            v["type"]
-        );
-        // 守恒红线：不含任何真元字段名（qi 在字段名中不应出现）
-        assert!(
-            !json.contains("\"qi\"") && !json.contains("_qi\"") && !json.contains("\"qi_"),
-            "期望 faction_war_state JSON 不含 qi 字段（零真元），实际 JSON: {json}"
-        );
-        // reframe b：region_descriptor 含「散修」
-        assert!(
-            v["region_descriptor"]
-                .as_str()
-                .unwrap_or("")
-                .contains("散修"),
-            "期望 region_descriptor 含「散修」（匿名散修描述符），实际 {}",
-            v["region_descriptor"]
-        );
-    }
-
-    // ─── plan-combat-skill-feedback-bridges-v1 P4：AnqiHud schema pin ─
-
-    #[test]
-    fn anqi_hud_v1_roundtrip() {
-        let original = crate::schema::server_data::AnqiHudV1 {
-            kind: "abrasion".to_string(),
-            echo_count: 3,
-            aim_progress: 0.5,
-            charge_progress: 0.25,
-            abrasion_container: "quiver".to_string(),
-            abrasion_qi_payload: 12.5,
-            tick: 999,
-        };
-        let json = serde_json::to_string(&original).expect("AnqiHudV1 应能序列化");
-        let back: crate::schema::server_data::AnqiHudV1 =
-            serde_json::from_str(&json).expect("AnqiHudV1 应能反序列化");
-        assert_eq!(
-            original, back,
-            "AnqiHudV1 JSON roundtrip 必须无损；JSON={json}"
-        );
-    }
-
-    #[test]
-    fn anqi_hud_payload_type_label_is_anqi_hud() {
-        let label = payload_type_label(ServerDataType::AnqiHud);
-        assert_eq!(
-            label, "anqi_hud",
-            "期望 AnqiHud 的 label 为 'anqi_hud'（client 路由键），实际 {label}"
-        );
-    }
-
-    #[test]
-    fn anqi_hud_wire_type_serializes_correctly() {
-        let inner = crate::schema::server_data::AnqiHudV1 {
-            kind: "echo".to_string(),
-            echo_count: 5,
-            aim_progress: 0.0,
-            charge_progress: 0.0,
-            abrasion_container: String::new(),
-            abrasion_qi_payload: 0.0,
-            tick: 42,
-        };
-        let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize AnqiHud wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            v["type"],
-            serde_json::json!("anqi_hud"),
-            "期望 wire type = 'anqi_hud'（client 路由键），实际 {}",
-            v["type"]
-        );
-        assert_eq!(
-            v["kind"],
-            serde_json::json!("echo"),
-            "期望 kind = 'echo'，实际 {}",
-            v["kind"]
-        );
-        assert_eq!(
-            v["echo_count"],
-            serde_json::json!(5u32),
-            "期望 echo_count = 5，实际 {}",
-            v["echo_count"]
-        );
-        // 守恒红线：echo payload 不含 qi 字段（只读）
-        assert!(
-            !json.contains("\"qi_") || json.contains("abrasion_qi_payload"),
-            "echo payload 不应包含真元计算字段"
-        );
-    }
-
-    // ─── 震脉 v2 HUD S2C：schema pin（字段须与 client ZhenmaiHudServerDataHandler 逐一对齐） ─
-
-    #[test]
-    fn zhenmai_hud_v1_roundtrip() {
-        let original = crate::schema::server_data::ZhenmaiHudV1 {
-            skill_id: "sever_chain".to_string(),
-            meridian_id: "Heart".to_string(),
-            contam_removed: 0.0,
-            remaining_points: 0,
-            damage_reduction: 0.0,
-            k_drain: 1.5,
-            duration_ms: 60_000,
-            tick: 999,
-        };
-        let json = serde_json::to_string(&original).expect("ZhenmaiHudV1 应能序列化");
-        let back: crate::schema::server_data::ZhenmaiHudV1 =
-            serde_json::from_str(&json).expect("ZhenmaiHudV1 应能反序列化");
-        assert_eq!(
-            original, back,
-            "ZhenmaiHudV1 JSON roundtrip 必须无损；JSON={json}"
-        );
-    }
-
-    #[test]
-    fn zhenmai_hud_payload_type_label_is_zhenmai_hud() {
-        let label = payload_type_label(ServerDataType::ZhenmaiHud);
-        assert_eq!(
-            label, "zhenmai_hud",
-            "期望 ZhenmaiHud 的 label 为 'zhenmai_hud'（client ServerDataRouter 路由键），实际 {label}"
-        );
-    }
-
-    #[test]
-    fn zhenmai_hud_wire_emits_client_contract_fields() {
-        // 字段名/类型须与 client ZhenmaiHudServerDataHandler.readString/readDouble/readDuration 对齐。
-        let inner = crate::schema::server_data::ZhenmaiHudV1 {
-            skill_id: "neutralize".to_string(),
-            meridian_id: "Lung".to_string(),
-            contam_removed: 2.5,
-            remaining_points: 0,
-            damage_reduction: 0.0,
-            k_drain: 0.0,
-            duration_ms: 0,
-            tick: 64,
-        };
-        let wrapper = ServerDataV1::new(ServerDataPayloadV1::ZhenmaiHud(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize ZhenmaiHud wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            v["type"],
-            serde_json::json!("zhenmai_hud"),
-            "wire type 须为 client 路由键 'zhenmai_hud'，实际 {}",
-            v["type"]
-        );
-        // client switch(skill_id) 的判别键
-        assert_eq!(
-            v["skill_id"],
-            serde_json::json!("neutralize"),
-            "skill_id 须为 client switch 键 'neutralize'，实际 {}",
-            v["skill_id"]
-        );
-        // client readString("meridian_id")
-        assert_eq!(v["meridian_id"], serde_json::json!("Lung"));
-        // client readDouble("contam_removed", 0.0)
-        assert_eq!(v["contam_removed"], serde_json::json!(2.5));
-        // 契约字段全部在场（即使为零值，flatten 不 skip → client readX 各有所依）
-        for field in [
-            "skill_id",
-            "meridian_id",
-            "contam_removed",
-            "remaining_points",
-            "damage_reduction",
-            "k_drain",
-            "duration_ms",
-            "tick",
-        ] {
-            assert!(
-                v.get(field).is_some(),
-                "ZhenmaiHud wire 须含 client 契约字段 '{field}'；实际 JSON={json}"
-            );
-        }
-    }
-
-    #[test]
-    fn zhenmai_hud_harden_wire_damage_reduction_is_reduction_not_passthrough() {
-        // 契约语义 pin：client ZhenmaiHudPlanner.appendHarden 把 damage_reduction 当作
-        // 「减伤比例」渲染（value1*100 → 「减伤X%」、条形填充 = value1，1.0=全免）。
-        // 因此 wire 的 damage_reduction 必须是减伤比例（reduction），而不是 server 内部
-        // HardenProfile.damage_multiplier 的「伤害通过率」（passthrough）。
-        // bridge 负责转换 reduction = 1 - passthrough（见 zhenmai_v2_event_bridge.rs harden 分支）；
-        // 本 pin 锁住 wire 形态：harden 场景下 damage_reduction 是 [0,1] 的减伤比例。
-        // 例：Spirit 境 passthrough=0.35 → wire damage_reduction=0.65（实际减伤 65%）。
-        let inner = crate::schema::server_data::ZhenmaiHudV1 {
-            skill_id: "harden".to_string(),
-            meridian_id: "Heart".to_string(),
-            contam_removed: 0.0,
-            remaining_points: 0,
-            damage_reduction: 0.65,
-            k_drain: 0.0,
-            duration_ms: 1_000,
-            tick: 70,
-        };
-        let wrapper = ServerDataV1::new(ServerDataPayloadV1::ZhenmaiHud(inner));
-        let json = serde_json::to_string(&wrapper).expect("serialize harden ZhenmaiHud wrapper");
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["skill_id"], serde_json::json!("harden"));
-        let reduction = v["damage_reduction"]
-            .as_f64()
-            .expect("damage_reduction 须为数值");
-        assert!(
-            (reduction - 0.65).abs() < 1e-4,
-            "harden wire damage_reduction 须为减伤比例 0.65（client 渲染「减伤65%」），\
-             不是 passthrough multiplier 0.35；实际 {reduction}（JSON={json}）"
-        );
-        assert!(
-            (0.0..=1.0).contains(&reduction),
-            "damage_reduction 须落在减伤比例区间 [0,1]，实际 {reduction}"
-        );
-    }
-}
+#[path = "server_data_tests.rs"]
+mod tests;

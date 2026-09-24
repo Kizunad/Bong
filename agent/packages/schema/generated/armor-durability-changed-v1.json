@@ -81,5 +81,6 @@
     "broken": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "f14aa4e209bcb1273a9dbc1bb85e2ccf9ccdc64194c6c2a187b46f7ceac21b0f"
 }

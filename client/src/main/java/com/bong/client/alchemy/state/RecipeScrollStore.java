@@ -78,6 +78,10 @@ public final class RecipeScrollStore {
         snapshot = next == null ? Snapshot.defaults() : next;
     }
 
+    public static void clearOnDisconnect() {
+        snapshot = Snapshot.empty();
+    }
+
     public static void resetForTests() {
         snapshot = Snapshot.defaults();
     }

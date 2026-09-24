@@ -33,7 +33,7 @@ class GatheringProgressHandlerTest {
         assertEquals("mine-1", GatheringSessionStore.snapshot().sessionId());
         assertEquals("矿脉", GatheringSessionStore.snapshot().displayTargetName());
         assertEquals(0.42, GatheringSessionStore.snapshot().progressRatio(), 0.0001);
-        List<HudRenderCommand> commands = GatheringProgressHud.buildCommands(WIDTH, 320, 240, System.currentTimeMillis());
+        List<HudRenderCommand> commands = GatheringProgressHud.buildCommands(GatheringSessionStore.presentation(), WIDTH, 320, 240, System.currentTimeMillis());
         assertFalse(commands.isEmpty());
         assertTrue(commands.stream().anyMatch(command -> command.isText() && command.text().contains("矿脉")));
     }
@@ -49,12 +49,12 @@ class GatheringProgressHandlerTest {
         assertEquals("wood-1", GatheringSessionStore.snapshot().sessionId());
         assertEquals("青纹灵木", GatheringSessionStore.snapshot().displayTargetName());
         assertEquals(0.25, GatheringSessionStore.snapshot().progressRatio(), 0.0001);
-        List<HudRenderCommand> commands = GatheringProgressHud.buildCommands(WIDTH, 320, 240, System.currentTimeMillis());
+        List<HudRenderCommand> commands = GatheringProgressHud.buildCommands(GatheringSessionStore.presentation(), WIDTH, 320, 240, System.currentTimeMillis());
         assertTrue(commands.stream().anyMatch(command -> command.isText() && command.text().contains("青纹灵木")));
     }
 
     @Test
-    void completedMiningProgressClearsOnlyMatchingSession() {
+    void terminalProgressAnimatesOnlyMatchingSession() {
         route("""
             {"v":1,"type":"mining_progress","session_id":"mine-1","ore_pos":[1,64,2],
              "progress":0.4,"interrupted":false,"completed":false}
@@ -75,8 +75,10 @@ class GatheringProgressHandlerTest {
              "progress":1.0,"interrupted":false,"completed":true,"detail":"青纹灵木"}
             """);
 
-        assertTrue(GatheringSessionStore.snapshot().isEmpty());
-        assertTrue(GatheringProgressHud.buildCommands(WIDTH, 320, 240, System.currentTimeMillis()).isEmpty());
+        assertTrue(GatheringSessionStore.snapshot().completed());
+        long completedAt = GatheringSessionStore.presentation().session().updatedAtMillis();
+        assertFalse(GatheringProgressHud.buildCommands(GatheringSessionStore.presentation(), WIDTH, 320, 240, completedAt).isEmpty());
+        assertTrue(GatheringProgressHud.buildCommands(GatheringSessionStore.presentation(), WIDTH, 320, 240, completedAt + 1000).isEmpty());
     }
 
     @Test
@@ -101,7 +103,7 @@ class GatheringProgressHandlerTest {
         GatheringSessionStore.clearOnDisconnect();
 
         assertTrue(GatheringSessionStore.snapshot().isEmpty());
-        assertTrue(GatheringProgressHud.buildCommands(WIDTH, 320, 240, System.currentTimeMillis()).isEmpty());
+        assertTrue(GatheringProgressHud.buildCommands(GatheringSessionStore.presentation(), WIDTH, 320, 240, System.currentTimeMillis()).isEmpty());
     }
 
     private static ServerDataRouter.RouteResult route(String json) {

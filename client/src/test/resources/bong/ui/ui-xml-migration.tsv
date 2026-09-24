@@ -1,0 +1,25 @@
+# path	class_name	current_host	current_style	target_host	target_style	status
+agentui/AgentUiScreen.java	AgentUiScreen	OWO	XML_MODEL	OWO	OWO_XML_TEMPLATE	NORMALIZE_XML_TEMPLATE
+alchemy/AlchemyScreen.java	AlchemyScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+combat/screen/DeathScreen.java	DeathScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+combat/screen/RepairScreen.java	RepairScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+combat/screen/TerminateScreen.java	TerminateScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
+insight/InsightOfferScreen.java	InsightOfferScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+inventory/InspectScreen.java	InspectScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+inventory/LootContainerScreen.java	LootContainerScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+lingtian/LingtianActionScreen.java	LingtianActionScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+npc/NpcDialogueScreen.java	NpcDialogueScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+npc/NpcInspectScreen.java	NpcInspectScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+npc/NpcTradeScreen.java	NpcTradeScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+processing/ProcessingActionScreen.java	ProcessingActionScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+scroll/ScrollReadScreen.java	ScrollReadScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
+social/SparringInviteScreen.java	SparringInviteScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+social/TradeOfferScreen.java	TradeOfferScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+ui/DynamicXmlScreen.java	DynamicXmlScreen	OWO	XML_MODEL	OWO	OWO_XML_TEMPLATE	NORMALIZE_XML_TEMPLATE
+menu/MainMenuScreen.java	MainMenuScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE

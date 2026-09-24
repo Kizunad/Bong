@@ -1,5 +1,7 @@
 package com.bong.client.animation;
 
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonConfiguration;
+import dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.api.layered.KeyframeAnimationPlayer;
 import dev.kosmx.playerAnim.api.layered.ModifierLayer;
@@ -8,6 +10,7 @@ import dev.kosmx.playerAnim.core.data.KeyframeAnimation;
 import dev.kosmx.playerAnim.core.util.Ease;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -53,8 +56,8 @@ public final class BongAnimationPlayer {
      *  避免 fade 最后一帧和 removeLayer 撞在同一 tick 上。 */
     private static final int REMOVAL_SAFETY_MARGIN_TICKS = 1;
 
-    /** 嵌套 Map：玩家 UUID → (动画 id → 当前激活的 ModifierLayer)。 */
-    private static final Map<UUID, Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>>> ACTIVE_LAYERS =
+    /** 嵌套 Map：玩家 UUID → (动画 id → 其原始 AnimationStack 上的当前激活层)。 */
+    private static final Map<UUID, Map<Identifier, ActiveLayer>> ACTIVE_LAYERS =
         new HashMap<>();
 
     /**
@@ -129,41 +132,131 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        KeyframeAnimation anim = BongAnimationRegistry.get(animId);
+        FpvResolution resolution = resolveFpvContent(pid, animId);
+
+        KeyframeAnimation anim = BongAnimationRegistry.get(resolution.contentId());
         if (anim == null) {
             return false;
         }
 
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
-        // Phase 1 默认 THIRD_PERSON_MODEL：ItemInHandRendererMixin 只在此模式下 cancel
-        // vanilla 手/物品渲染并走动画管线；VANILLA 模式空手能看见、持物就被 vanilla 独立
-        // item 渲染路径盖掉（实测 2026-04-14）。
-        // 若某个动画在 TPP 下看起来臃肿（全上半身），未来可按 id 切换成 VANILLA。
-        framePlayer.setFirstPersonMode(
-            dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode.THIRD_PERSON_MODEL
-        );
+        applyFirstPersonRendering(framePlayer, resolution.useFpvArms());
 
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
+        Map<Identifier, ActiveLayer> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
-        ModifierLayer<KeyframeAnimationPlayer> existing = perPlayer.get(animId);
-        if (existing != null) {
-            // 同 id 重触发：在现有层上淡入替换，连击时这条路径保证平滑过渡——
-            // 不新增 AnimationStack 条目，避免同 animId 叠 N 层
-            existing.replaceAnimationWithFade(
+        ActiveLayer existing = perPlayer.get(animId);
+        if (existing != null && existing.stack == stack) {
+            // 同 id 重触发：在同一层上淡入替换，连击时这条路径保证平滑过渡——
+            // 不新增 AnimationStack 条目，避免同 animId 叠 N 层。
+            existing.layer.replaceAnimationWithFade(
                 AbstractFadeModifier.standardFadeIn(Math.max(0, fadeInTicks), Ease.INOUTSINE),
                 framePlayer
             );
             return true;
         }
+        if (existing != null) {
+            // UUID 可能在重建玩家实体后复用；新 AnimationStack 必须取得自己的层，
+            // 旧 stack 的层同时摘除，避免 ownership 指向已经替换的玩家栈。
+            removeLayer(existing.stack, existing.layer, "替换 player stack");
+        }
 
-        // 首次：新建层，插进玩家的 AnimationStack，并挂上 fade-in modifier
+        // 首次或 replacement stack：新建层，插进目标 AnimationStack，并挂上 fade-in modifier
         ModifierLayer<KeyframeAnimationPlayer> layer = new ModifierLayer<>(framePlayer);
         if (fadeInTicks > 0) {
             layer.addModifierLast(AbstractFadeModifier.standardFadeIn(fadeInTicks, Ease.INOUTSINE));
         }
         stack.addAnimLayer(priority, layer);
-        perPlayer.put(animId, layer);
+        perPlayer.put(animId, new ActiveLayer(stack, layer));
         return true;
+    }
+
+    /**
+     * 第一人称渲染配置（plan-fpv-cast-av-v1 路线 A，§8.1 #1 真机拍板）。
+     *
+     * <p>始终用 {@link FirstPersonMode#THIRD_PERSON_MODEL}：库 {@code ItemInHandRendererMixin}
+     * 在此模式下整段 cancel vanilla 第一人称手/物渲染，改由模型渲染、受 {@link FirstPersonConfiguration}
+     * 门控（player-anim 1.0.2-rc1 无 {@code ENABLED} 值，此为库原生第一人称正路）。库默认 config 的
+     * {@code showRightArm/showLeftArm=false} 会隐藏手臂——这正是出厂第一人称只见持物无手臂的根因。
+     *
+     * @param useFpvArms true（本地玩家 + 命中 {@code _fpv} 变体）→ 开双臂 + 双手持物；
+     *                   false（无变体 / 远端玩家）→ 库默认 config（隐藏手臂，出厂行为不变）
+     */
+    static void applyFirstPersonRendering(KeyframeAnimationPlayer framePlayer, boolean useFpvArms) {
+        if (useFpvArms) {
+            framePlayer
+                .setFirstPersonConfiguration(
+                    new FirstPersonConfiguration()
+                        .setShowRightArm(true)
+                        .setShowLeftArm(true)
+                        .setShowRightItem(true)
+                        .setShowLeftItem(true))
+                .setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        } else {
+            framePlayer.setFirstPersonMode(FirstPersonMode.THIRD_PERSON_MODEL);
+        }
+    }
+
+    /**
+     * {@link #resolveFpvContent} 结果：要播的动画 id（原招或 {@code _fpv} 变体）+ 是否开
+     * 第一人称双臂。作为 {@link #playOnStack} 内 FPV 分支逻辑的可测契约（plan §P1）。
+     */
+    record FpvResolution(Identifier contentId, boolean useFpvArms) {
+    }
+
+    /**
+     * FPV 内容解析（plan-fpv-cast-av-v1 P1，纯逻辑可测 seam）：本地玩家播 {@code <id>} 时
+     * 优先取 {@code <id>_fpv} 变体（贴脸视角专调姿态，见 docs/player-animation-conventions.md §16）
+     * —— 命中则 {@code (变体 id, useFpvArms=true)}（路线 A，§8.1 #1：THIRD_PERSON_MODEL +
+     * FirstPersonConfiguration 开双臂/持物）；无变体或远端玩家 → {@code (原 id, false)}（TPV 动画
+     * + 库默认 config，第一人称隐藏手臂，出厂行为）。**远端玩家渲染分支零变化**（FPV 只影响本地
+     * 玩家，plan §P1 硬约束）。
+     *
+     * <p>本地玩家判定经 {@link #localPlayerPredicate} seam 注入——生产 = MinecraftClient 当前玩家，
+     * 单测经 {@link #setLocalPlayerPredicateForTest} 驱动本分支（headless 下
+     * {@code MinecraftClient.getInstance()==null}，否则此 wiring 永不被自动化测试覆盖）。
+     */
+    static FpvResolution resolveFpvContent(UUID pid, Identifier animId) {
+        if (localPlayerPredicate.isLocal(pid)) {
+            Identifier fpvId = fpvVariantId(animId);
+            if (BongAnimationRegistry.contains(fpvId)) {
+                return new FpvResolution(fpvId, true);
+            }
+        }
+        return new FpvResolution(animId, false);
+    }
+
+    /** 本地玩家判定 seam（{@link #resolveFpvContent}）。生产默认 = MinecraftClient 当前玩家。 */
+    @FunctionalInterface
+    interface LocalPlayerPredicate {
+        boolean isLocal(UUID pid);
+    }
+
+    /**
+     * 生产实现：仅真实客户端上、UUID == 当前本地玩家时为 true。单测 / 无 client 环境
+     * （{@code getInstance()==null} 或无 player）返回 false——故 {@code _fpv} 变体路径默认只在
+     * 真实客户端本地玩家上触发，远端玩家路径与既有 playOnStack 单测均不受影响。
+     */
+    private static boolean isLocalPlayerFromClient(UUID pid) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        return mc != null && mc.player != null && mc.player.getUuid().equals(pid);
+    }
+
+    /** 当前生效的本地玩家判定（默认生产实现，单测可注入）。 */
+    private static LocalPlayerPredicate localPlayerPredicate =
+        BongAnimationPlayer::isLocalPlayerFromClient;
+
+    /**
+     * 测试钩子：注入本地玩家判定，驱动 {@link #resolveFpvContent} 的 FPV 变体分支
+     * （headless 下真实 MinecraftClient 恒 null，该分支否则不可自动化回归）。用后必须
+     * {@link #resetForTest} 复位，防跨测试污染。
+     */
+    static void setLocalPlayerPredicateForTest(LocalPlayerPredicate predicate) {
+        localPlayerPredicate = predicate;
+    }
+
+    /** {@code <ns>:<path>} → {@code <ns>:<path>_fpv}（本地玩家第一人称变体查找 id，plan §P1）。 */
+    static Identifier fpvVariantId(Identifier animId) {
+        return new Identifier(animId.getNamespace(), animId.getPath() + "_fpv");
     }
 
     /** 便捷重载：默认 fade-out。 */
@@ -194,39 +287,74 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer = ACTIVE_LAYERS.get(pid);
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(pid);
         if (perPlayer == null) {
             return false;
         }
-        ModifierLayer<KeyframeAnimationPlayer> layer = perPlayer.remove(animId);
-        if (layer == null) {
+        ActiveLayer active = perPlayer.get(animId);
+        if (active == null || active.stack != stack) {
             return false;
+        }
+        perPlayer.remove(animId);
+        if (perPlayer.isEmpty()) {
+            ACTIVE_LAYERS.remove(pid);
         }
         if (fadeOutTicks > 0) {
             // fade 到 null 等价于淡出到默认姿态
-            layer.replaceAnimationWithFade(
+            active.layer.replaceAnimationWithFade(
                 AbstractFadeModifier.standardFadeIn(fadeOutTicks, Ease.INOUTSINE),
                 null
             );
             // fade 完成后再摘层，避免 fade 过程中 AnimationStack 突然没了这条
-            // 引用导致渲染瞬间跳帧
+            // 引用导致渲染瞬间跳帧。层必须从自己的原始 stack 移除。
             PENDING_REMOVALS.add(new PendingRemoval(
-                stack, layer, fadeOutTicks + REMOVAL_SAFETY_MARGIN_TICKS
+                active.stack, active.layer, fadeOutTicks + REMOVAL_SAFETY_MARGIN_TICKS
             ));
         } else {
-            // 无淡出：立刻摘层，保持 AnimationStack 清洁
-            try {
-                stack.removeLayer(layer);
-            } catch (RuntimeException ex) {
-                LOGGER.warn("[bong/anim] 立即 removeLayer 抛错（可忽略）: {}", ex.toString());
-            }
+            // 无淡出：立刻从层自己的原始 stack 摘除，保持 AnimationStack 清洁。
+            removeLayer(active.stack, active.layer, "立即");
         }
         return true;
     }
 
+    /**
+     * 断线时终结旧会话的 PlayerAnimator 绑定。
+     *
+     * <p>静态缓存同时持有旧 player 的 {@link AnimationStack} 和延迟淡出层；只清 Map/List 会让
+     * 旧 stack 继续持有层，且 pending closure 保留到下一次 tick。断线时不需要淡出，因此逐一从
+     * 各自的原始 stack 立即摘除，再清空会话数据。{@link #initialized}、tick hook 与本地玩家
+     * 判定 seam 都是客户端进程级 wiring，必须保留。
+     */
+    public static void clearOnDisconnect() {
+        synchronized (ACTIVE_LAYERS) {
+            for (Map<Identifier, ActiveLayer> perPlayer : ACTIVE_LAYERS.values()) {
+                for (ActiveLayer active : perPlayer.values()) {
+                    removeLayer(active.stack, active.layer, "断线 active");
+                }
+            }
+            ACTIVE_LAYERS.clear();
+        }
+        synchronized (PENDING_REMOVALS) {
+            for (PendingRemoval pending : PENDING_REMOVALS) {
+                removeLayer(pending.stack, pending.layer, "断线 pending");
+            }
+            PENDING_REMOVALS.clear();
+        }
+    }
+
+    /** 测试/诊断用：指定 stack 上的动画层是否仍处于 PlayerAnimator active 状态。 */
+    static boolean isActiveOnStack(AnimationStack stack, UUID playerId, Identifier animId) {
+        if (stack == null || playerId == null || animId == null) {
+            return false;
+        }
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(playerId);
+        ActiveLayer active = perPlayer == null ? null : perPlayer.get(animId);
+        return active != null && active.stack == stack && active.layer.isActive();
+    }
+
     /** 测试/诊断用：玩家当前正在播的动画 id 集合。 */
     public static java.util.Set<Identifier> activeAnimations(UUID playerId) {
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer = ACTIVE_LAYERS.get(playerId);
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(playerId);
         return perPlayer == null ? java.util.Set.of() : java.util.Set.copyOf(perPlayer.keySet());
     }
 
@@ -252,7 +380,7 @@ public final class BongAnimationPlayer {
         PENDING_REMOVALS.add(new PendingRemoval(stack, layer, ticks));
     }
 
-    /** 测试钩子：清零 pending 队列，防止跨测试污染。 */
+    /** 测试钩子：清零 pending 队列 + 复位本地玩家判定 seam，防止跨测试污染。 */
     static void resetForTest() {
         synchronized (PENDING_REMOVALS) {
             PENDING_REMOVALS.clear();
@@ -260,6 +388,7 @@ public final class BongAnimationPlayer {
         synchronized (ACTIVE_LAYERS) {
             ACTIVE_LAYERS.clear();
         }
+        localPlayerPredicate = BongAnimationPlayer::isLocalPlayerFromClient;
     }
 
     /** 每 client tick 扣 1；到 0 的从 AnimationStack 摘除并出队。 */
@@ -274,17 +403,33 @@ public final class BongAnimationPlayer {
                 p.remainingTicks--;
                 if (p.remainingTicks <= 0) {
                     it.remove();
-                    try {
-                        p.stack.removeLayer(p.layer);
-                    } catch (RuntimeException ex) {
-                        // player 卸载 / stack GC → 悬空引用；log 一次后丢弃
-                        LOGGER.warn(
-                            "[bong/anim] 延迟 removeLayer 抛错（可能玩家已卸载）: {}",
-                            ex.toString()
-                        );
-                    }
+                    removeLayer(p.stack, p.layer, "延迟");
                 }
             }
+        }
+    }
+
+    /** 统一容错摘层：world 卸载期间旧 stack 可能已失效，清理不得导致客户端崩溃。 */
+    private static void removeLayer(
+        AnimationStack stack,
+        ModifierLayer<KeyframeAnimationPlayer> layer,
+        String context
+    ) {
+        try {
+            stack.removeLayer(layer);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("[bong/anim] {} removeLayer 抛错（可忽略）: {}", context, ex.toString());
+        }
+    }
+
+    /** 活跃动画层及其所属 stack，供断线时从原始 stack 物理摘除。 */
+    private static final class ActiveLayer {
+        final AnimationStack stack;
+        final ModifierLayer<KeyframeAnimationPlayer> layer;
+
+        ActiveLayer(AnimationStack stack, ModifierLayer<KeyframeAnimationPlayer> layer) {
+            this.stack = stack;
+            this.layer = layer;
         }
     }
 

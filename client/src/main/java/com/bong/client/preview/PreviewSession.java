@@ -1,6 +1,7 @@
 package com.bong.client.preview;
 
 import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.hud.svg.SvgHudPreviewHarness;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.util.ScreenshotRecorder;
@@ -38,6 +39,7 @@ public final class PreviewSession {
 
     private final PreviewConfig config;
     private final File outDir;
+    private final boolean svgHudPreview;
 
     private Phase phase = Phase.WAIT_WORLD;
     private int phaseTicks = 0;
@@ -50,7 +52,13 @@ public final class PreviewSession {
     private int chunksReadyAtPhaseTick = -1;
 
     public PreviewSession(PreviewConfig config) {
+        this(config, false);
+    }
+
+    /** 由 preview harness 注入的 fixture 开关，状态机不读取进程环境。 */
+    public PreviewSession(PreviewConfig config, boolean svgHudPreview) {
         this.config = config;
+        this.svgHudPreview = svgHudPreview;
         this.outDir = new File(config.outputDir()).getAbsoluteFile();
         if (!outDir.exists() && !outDir.mkdirs()) {
             throw new IllegalStateException(
@@ -128,10 +136,12 @@ public final class PreviewSession {
             return;
         }
         // 关 HUD 避免聊天/toast 字遮挡
-        client.options.hudHidden = true;
+        // SVG 截图 fixture 需要保留真实 HUD；普通地形预览仍隐藏 HUD 避免遮挡。
+        client.options.hudHidden = !svgHudPreview;
         if (client.getToastManager() != null) {
             client.getToastManager().clear();
         }
+        SvgHudPreviewHarness.selectShot(shot.name());
         // 走 server-side authoritative tp（/preview_tp 原生命令）—— 避免
         // multi-player anti-cheat 把 client.setPos 远距离 force-sync 回原位。
         // server 收到 brigadier 命令后 cmd::dev::preview_tp::handle_preview_tp

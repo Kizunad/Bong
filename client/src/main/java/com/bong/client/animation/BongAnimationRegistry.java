@@ -171,8 +171,17 @@ public final class BongAnimationRegistry {
         return PlayerAnimationRegistry.getAnimation(id);
     }
 
+    /**
+     * 清掉上一连接运行时注入的 inline 动画。
+     *
+     * <p>Java fallback、资源包动画 registry 和资源 reload wiring 都是进程级资源，必须保留。</p>
+     */
+    public static void clearOnDisconnect() {
+        INLINE_ANIMATIONS.clear();
+    }
+
     /** 测试钩子：清掉 inline 源，避免跨测试污染。 */
     static void clearInlineForTest() {
-        INLINE_ANIMATIONS.clear();
+        clearOnDisconnect();
     }
 }

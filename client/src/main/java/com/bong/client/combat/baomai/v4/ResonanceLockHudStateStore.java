@@ -42,6 +42,11 @@ public final class ResonanceLockHudStateStore {
         CURRENT.set(State.UNLOCKED);
     }
 
+
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     // ── nested types ──────────────────────────────────────────────────────────
 
     public static final class State {

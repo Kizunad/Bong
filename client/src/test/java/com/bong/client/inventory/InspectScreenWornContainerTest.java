@@ -1,6 +1,5 @@
 package com.bong.client.inventory;
 
-import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.network.ClientRequestProtocol;
@@ -20,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * plan-tarkov-backpack-v1 P3 —— InspectScreen 穿戴背包件视图相关行为单测。
  *
- * <p>覆盖：装备槽双击计时状态转换（同槽窗内/超窗/异槽/首次）、拖入穿戴背包件视图走
+ * <p>覆盖：拖入穿戴背包件视图走
  * {@code sendInventoryMove}（断言 type=inventory_move_intent，<b>非</b> external_container_move，
  * 且 from/to payload 结构正确）。</p>
  */
@@ -41,51 +40,6 @@ public class InspectScreenWornContainerTest {
         );
     }
 
-    // ── 双击计时状态转换（交付物 #2 / 测试清单：窗内同槽触发 / 超窗不触发 / 异槽不触发） ──
-
-    @Test
-    void doubleClickTriggersWhenSameSlotWithinWindow() {
-        // 同槽、间隔 100ms（< 400ms 窗口）→ 双击成立。
-        assertTrue(InspectScreen.isEquipDoubleClick(
-                EquipSlotType.CHEST, 1_000L, EquipSlotType.CHEST, 1_100L),
-            "同槽且间隔 100ms（< 400ms 窗口）应判为双击");
-    }
-
-    @Test
-    void doubleClickDoesNotTriggerWhenOutsideWindow() {
-        // 同槽但间隔 500ms（> 400ms 窗口）→ 非双击。
-        assertFalse(InspectScreen.isEquipDoubleClick(
-                EquipSlotType.CHEST, 1_000L, EquipSlotType.CHEST, 1_500L),
-            "同槽但间隔 500ms（> 400ms 窗口）不应判为双击");
-    }
-
-    @Test
-    void doubleClickBoundaryAtExactlyWindowStillTriggers() {
-        // 恰好 400ms（== 窗口上界）→ 双击成立（off-by-one 边界，<= 窗口）。
-        assertTrue(InspectScreen.isEquipDoubleClick(
-                EquipSlotType.CHEST, 1_000L, EquipSlotType.CHEST, 1_400L),
-            "恰好 400ms（窗口上界，<=）应判为双击");
-        // 401ms（窗口外 1ms）→ 非双击。
-        assertFalse(InspectScreen.isEquipDoubleClick(
-                EquipSlotType.CHEST, 1_000L, EquipSlotType.CHEST, 1_401L),
-            "401ms（超窗 1ms）不应判为双击");
-    }
-
-    @Test
-    void doubleClickDoesNotTriggerWhenDifferentSlot() {
-        // 异槽（上次 CHEST，本次 HEAD），即使在窗内 → 非双击。
-        assertFalse(InspectScreen.isEquipDoubleClick(
-                EquipSlotType.CHEST, 1_000L, EquipSlotType.HEAD, 1_100L),
-            "异槽即使窗内也不应判为双击");
-    }
-
-    @Test
-    void doubleClickDoesNotTriggerOnFirstClick() {
-        // 首次点击（lastSlot=null）→ 非双击，无论时间。
-        assertFalse(InspectScreen.isEquipDoubleClick(
-                null, 0L, EquipSlotType.CHEST, 50L),
-            "首次点击（无上次槽）不应判为双击");
-    }
 
     // ── 拖入穿戴背包件视图发包路线（交付物 #1/#4：sendInventoryMove，非 sendExternalContainerMove） ──
 
@@ -146,5 +100,31 @@ public class InspectScreenWornContainerTest {
         assertFalse(body.contains("external_container_move"));
         assertTrue(body.contains("\"from\":{\"kind\":\"container\",\"container_id\":\"pack_1007\""),
             "拖出来源应是 pack_1007 容器，实际 payload = " + body);
+    }
+
+    @Test
+    void unequipPouchToBodyPocketDispatchesEquipToContainerMove() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem pouch = InventoryItem.createFull(
+            7001L, "grass_pouch", "小草包", 2, 2, 0.3, "common", "", 1, 0.0, 1.0);
+
+        // 卸下胸部 worn 层的小草包到贴身口袋，必须保持 inventory_move_intent 路由。
+        screen.dispatchMoveIntent(
+            pouch,
+            new ClientRequestProtocol.EquipLoc("chest", "worn"),
+            new ClientRequestProtocol.ContainerLoc("body_pocket", 0, 0),
+            false
+        );
+
+        assertEquals(1, sent.size(), "卸包应发出且仅发出一条 move intent");
+        String body = sent.get(0).body();
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":7001,"
+                + "\"from\":{\"kind\":\"equip\",\"slot\":\"chest\",\"state\":\"worn\"},"
+                + "\"to\":{\"kind\":\"container\",\"container_id\":\"body_pocket\",\"row\":0,\"col\":0}}",
+            body,
+            "卸包必须发送 EquipLoc(chest,worn) → ContainerLoc(body_pocket,0,0)"
+        );
     }
 }

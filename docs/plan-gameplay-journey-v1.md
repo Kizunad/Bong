@@ -357,7 +357,7 @@
 - plan-multi-life-v1 ⏳ active-design (~8%；LifespanCapTable 复用就绪，character_lifecycle::regenerate_or_terminate / per-life luck_pool 全未实装)
 - plan-tsy-raceout-v1 ⏳ active-design (~10%；CollapseStarted 事件已存在，3s 撤离 / 单裂口 1 人 / 允许 PVP 未闭环)
 - plan-lifespan-v1 ✅ finished (2026-05-03，PR #117 commit 3bc94b4f 归档)
-- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 ⏳ active-design（2026-05-08，4 类化虚 action 决策门收口）
+- plan-void-quota-v1 ✅ finished；plan-void-actions-v1 ✅ finished（三类化虚 action，退役的传承 action 已从代码、协议和文档删除）
 
 ---
 
@@ -892,16 +892,15 @@ P5 渡劫死亡或寿元耗尽后的多周目机制：
 
 不再以"突破"为驱动(没有更高境界)，改为：
 
-1. **道统传承**：功法残篇/法宝/坐标信息→可在死前指定继承人(死信箱/NPC 中介/亡者博物馆刻名)
-2. **世界镇压**：化虚者可消耗大量真元"镇压"某个坍缩渊(延缓塌缩) / "引爆"某个区域(强行升灵气然后爆) / 阻挡道伥扩散
-3. **天道博弈**：参与运维博弈(`plan-tribulation-v1` 后续阶段) — 帮天道刷异变兽 / 反向欺天阵抵抗
-4. **传记书写**：一生记录是亡者博物馆永久公开页面 → "名留青史" = 后来者可在馆中读到你
+1. **世界镇压**：化虚者可消耗大量真元"镇压"某个坍缩渊(延缓塌缩) / "引爆"某个区域(强行升灵气然后爆) / 阻挡道伥扩散
+2. **天道博弈**：参与运维博弈(`plan-tribulation-v1` 后续阶段) — 帮天道刷异变兽 / 反向欺天阵抵抗
+3. **传记书写**：一生记录是亡者博物馆永久公开页面 → "名留青史" = 后来者可在馆中读到你
 
 ### 接入面
 
-- server：cultivation::Realm::Void ✅ / lifespan ✅；**缺**：化虚专属"世界镇压"action(派生 `plan-void-actions-v1`)
+- server：cultivation::Realm::Void ✅ / lifespan ✅；化虚专属"世界镇压"action（`plan-void-actions-v1` ✅）
 - agent：tiandao 是否能为化虚者生成长期连续叙事？需测试(plan-narrative-v1 收尾)
-- client：化虚 HUD ✅(realm-vision-void)；**缺**：道统传承 UI(死信箱+继承人选择，并入 plan-niche-defense-v1 或派生)
+- client：化虚 HUD ✅(realm-vision-void)；三类 action UI 已接入，退役的传承 UI 不再保留
 - worldgen：无新需求
 
 ### 100h 边界判定
@@ -1410,7 +1409,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
 | 40 | `plan-void-quota-v1` | ✅ finished（2026-05-08；`AscensionQuota` 已改世界灵气预算 + 绝壁劫真死） | cultivation-canonical-align-v1 ✅, tribulation-v1 ✅, qi-physics-v1 ✅ | §N.0 + O.3 |
-| 41 | `plan-void-actions-v1` | ⏳ active-design（2026-05-08；4 类化虚 action 血肉 + 决策门收口） | tribulation-v1, void-quota-v1 ✅ | §N 化虚专属 action |
+| 41 | `plan-void-actions-v1` | ✅ finished（2026-05-09；三类化虚 action 已落地，退役传承 action 已删除） | tribulation-v1, void-quota-v1 ✅ | §N 化虚专属 action |
 | 42 | `plan-multi-life-v1` | ⏳ active-design (~8%；LifespanCapTable 复用就绪，character_lifecycle::regenerate_or_terminate / per-life luck_pool 全未实装) | death-lifecycle ✅, lifespan-v1 ✅ (PR #117), tsy-loot ✅, spawn-tutorial ✅ | §M.3 多周目 + O.4；引用 lifespan-v1 §2 不另维护 |
 
 #### 层 G：终极验收
@@ -1696,7 +1695,7 @@ graph TD
                         ✅ → niche-defense-v1 (3w) — 已 finished (2026-05-05 PR #130 commit e08e2efc)
                             ✅ → tribulation-v1 (4w) — finished
                                 ✅ → void-quota-v1 (2w) — finished（世界灵气预算公式 + 绝壁劫）
-                                    ⏳ → void-actions-v1 (2w) — active-design（4 类化虚 action）
+                                    ✅ → void-actions-v1 (2w) — 三类化虚 action 已落地
                                         🆕 → §H 终极验收 内联 (4w 含 100h 实测)
     ───────────────────────────────────────
     剩临界路径 ≈ 15 周（约 4 个月，前 16 周已实际跑完）

@@ -26,5 +26,6 @@
     "missed": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "3575f932d3b8aa09784d16211330888c096156fb107449ec86b20810f46e820c"
 }

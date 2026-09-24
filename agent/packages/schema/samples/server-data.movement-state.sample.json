@@ -6,6 +6,7 @@
   "movement_action": "dashing",
   "zone_kind": "normal",
   "dash_cooldown_remaining_ticks": 40,
+  "dash_cooldown_total_ticks": 40,
   "hitbox_height_blocks": 1.8,
   "stamina_current": 85,
   "stamina_max": 100,

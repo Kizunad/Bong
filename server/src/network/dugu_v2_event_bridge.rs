@@ -327,7 +327,7 @@ mod tests {
             particle_id: "bong:dugu_taint_pulse",
             sound_recipe_id: "dugu_needle_hiss",
             hud_hint: "蚀针",
-            icon_texture: "bong:textures/gui/skill/dugu_eclipse.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png",
         }
     }
 

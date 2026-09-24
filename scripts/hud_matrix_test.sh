@@ -26,4 +26,4 @@ if ! grep -q 'version "17\.' <<< "$JAVA_VERSION_OUTPUT"; then
 fi
 
 cd "$ROOT_DIR/client"
-./gradlew --no-daemon test --tests "com.bong.client.hud.HudImmersionMatrixTest"
+"$ROOT_DIR/scripts/build-token.sh" gradle --no-daemon test --tests "com.bong.client.hud.HudImmersionMatrixTest"

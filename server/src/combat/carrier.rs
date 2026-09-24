@@ -16,6 +16,7 @@ use crate::combat::components::{
 };
 use crate::combat::decay::{hit_qi_ratio, CarrierGrade};
 use crate::combat::events::CombatEvent;
+use crate::combat::guard_log::GuardLogDedup;
 use crate::combat::projectile::{
     residual_qi_after_miss, segment_point_distance, AnqiProjectileFlight, ProjectileDespawnReason,
     QiProjectile,
@@ -209,6 +210,29 @@ pub struct CarrierChargedEvent {
     pub tick: u64,
 }
 
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能开始（`begin_charge_carrier`
+/// 成功插入 `CarrierCharging` 时发出）。纯观察事件：驱动循环蓄力段动画
+/// `anqi_charge_carrier_loop` 的 PlayAnim（vfx_animation_trigger 消费），不参与
+/// 任何数值结算。
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeBeganEvent {
+    pub carrier: Entity,
+    pub tick: u64,
+}
+
+/// plan-skill-anim-fidelity-v1 P2 后半 —— 封骨充能结束（`finish_charge` **全部**
+/// 退出路径，含密封失败 / 密封量≈0 早退分支）。循环动画停止路径的权威信号
+/// （§8.1 #3 红线：任何退出路径都必须停循环段，`CarrierChargedEvent` 在早退
+/// 分支不发出、不能兜底）：
+/// - `full_charge=true` 充能完成 → StopAnim(循环段) + PlayAnim(release 收势)
+/// - `full_charge=false` 移动打断 → 仅 StopAnim（打断不奖励收势）
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct CarrierChargeEndedEvent {
+    pub carrier: Entity,
+    pub full_charge: bool,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct CarrierImpactEvent {
     pub attacker: Entity,
@@ -241,9 +265,12 @@ pub struct InjectProfile {
 }
 
 pub fn register(app: &mut App) {
+    app.init_resource::<GuardLogDedup>();
     app.add_event::<ChargeCarrierIntent>();
     app.add_event::<ThrowCarrierIntent>();
     app.add_event::<CarrierChargedEvent>();
+    app.add_event::<CarrierChargeBeganEvent>();
+    app.add_event::<CarrierChargeEndedEvent>();
     app.add_event::<CarrierImpactEvent>();
     app.add_event::<ProjectileDespawnedEvent>();
     app.add_systems(
@@ -271,7 +298,7 @@ pub fn register_skills(registry: &mut SkillRegistry) {
 pub fn resolve_anqi_charge_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = world
@@ -280,7 +307,7 @@ pub fn resolve_anqi_charge_skill(
         .unwrap_or_default();
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(ANQI_CHARGE_SKILL_ID, now_tick))
     {
         return CastResult::Rejected {
             reason: CastRejectReason::OnCooldown,
@@ -333,7 +360,10 @@ pub fn resolve_anqi_charge_skill(
     });
     if let Some(mut bindings) = world.get_mut::<crate::combat::components::SkillBarBindings>(caster)
     {
-        bindings.set_cooldown(slot, now_tick.saturating_add(CHARGE_DURATION_TICKS));
+        bindings.set_cooldown(
+            ANQI_CHARGE_SKILL_ID,
+            now_tick.saturating_add(CHARGE_DURATION_TICKS),
+        );
     }
     CastResult::Started {
         cooldown_ticks: CHARGE_DURATION_TICKS,
@@ -400,6 +430,7 @@ fn begin_charge_carrier(
     mut commands: Commands,
     mut actors: Query<BeginChargeActor<'_>>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    mut began_events: EventWriter<CarrierChargeBeganEvent>,
 ) {
     for intent in intents.read() {
         let Ok((entity, mut cultivation, _qi_color, lifecycle, position, inventory, charging)) =
@@ -439,6 +470,12 @@ fn begin_charge_carrier(
             started_at_tick: intent.issued_at_tick.max(clock.tick),
             start_pos: position.get(),
         });
+        // P2 后半：充能开始 → 循环蓄力段动画信号（纯观察，AV 消费在
+        // vfx_animation_trigger::emit_anqi_visual_triggers）。
+        began_events.send(CarrierChargeBeganEvent {
+            carrier: entity,
+            tick: clock.tick,
+        });
     }
 }
 
@@ -446,7 +483,7 @@ fn lifecycle_allows_charge(lifecycle: Option<&Lifecycle>) -> bool {
     !lifecycle.is_some_and(|lifecycle| {
         matches!(
             lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::Terminated
+            LifecycleState::AwaitingRevival | LifecycleState::Terminated
         )
     })
 }
@@ -470,6 +507,7 @@ fn find_chargeable_hand(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn charge_carrier_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
@@ -477,6 +515,7 @@ fn charge_carrier_tick(
     mut commands: Commands,
     mut actors: Query<ChargingActor<'_>>,
     mut events: EventWriter<CarrierChargedEvent>,
+    mut ended_events: EventWriter<CarrierChargeEndedEvent>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for (entity, mut cultivation, qi_color, position, mut inventory, mut store, charging) in
@@ -501,6 +540,7 @@ fn charge_carrier_tick(
                 false,
                 (elapsed as f32 / CHARGE_DURATION_TICKS as f32).clamp(0.0, 1.0),
                 &mut events,
+                &mut ended_events,
             );
             continue;
         }
@@ -535,6 +575,7 @@ fn charge_carrier_tick(
             true,
             1.0,
             &mut events,
+            &mut ended_events,
         );
     }
 }
@@ -556,7 +597,15 @@ fn finish_charge(
     full_charge: bool,
     progress_ratio: f32,
     events: &mut EventWriter<CarrierChargedEvent>,
+    ended_events: &mut EventWriter<CarrierChargeEndedEvent>,
 ) {
+    // P2 后半：充能结束信号在**所有**退出路径发出（循环动画停止路径红线
+    // §8.1 #3——早退分支无 CarrierChargedEvent，循环段必须由本事件停止）。
+    ended_events.send(CarrierChargeEndedEvent {
+        carrier: entity,
+        full_charge,
+        tick,
+    });
     let total_deducted = if full_charge {
         charging.qi_target
     } else {
@@ -721,12 +770,13 @@ fn transform_equipped_item(
 fn carry_decay_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
-    mut actors: Query<(&mut PlayerInventory, &mut CarrierStore)>,
+    mut stores: Query<(Entity, &mut CarrierStore)>,
+    mut inventories: Query<&mut PlayerInventory>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;
     }
-    for (mut inventory, mut store) in &mut actors {
+    for (entity, mut store) in &mut stores {
         let mut expired = Vec::new();
         for (instance_id, imprint) in &mut store.imprints_by_instance {
             if imprint.bond_kind != BondKind::HandheldCarrier {
@@ -743,9 +793,16 @@ fn carry_decay_tick(
                 expired.push(*instance_id);
             }
         }
-        for instance_id in expired {
-            store.imprints_by_instance.remove(&instance_id);
-            degrade_equipped_instance(&mut inventory, &registry, instance_id);
+        if expired.is_empty() {
+            continue;
+        }
+        for instance_id in &expired {
+            store.imprints_by_instance.remove(instance_id);
+        }
+        if let Ok(mut inventory) = inventories.get_mut(entity) {
+            for instance_id in expired {
+                degrade_equipped_instance(&mut inventory, &registry, instance_id);
+            }
         }
     }
 }
@@ -777,34 +834,88 @@ fn degrade_equipped_instance(
     transform_equipped_item(inventory, registry, slot, material_template)
 }
 
+type ThrowCarrierActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static mut PlayerInventory,
+        &'static mut CarrierStore,
+        Option<&'static mut Stamina>,
+        Option<&'static UniqueId>,
+    ),
+>;
+
 fn throw_carrier_intents(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut intents: EventReader<ThrowCarrierIntent>,
-    mut actors: Query<(
-        &Position,
-        &mut PlayerInventory,
-        &mut CarrierStore,
-        Option<&mut Stamina>,
-    )>,
+    mut actors: ThrowCarrierActorQuery<'_, '_>,
+    // 护栏 guard info! 按 (carrier, reason) 去重：e2e 场景只需一条关联标记，
+    // 而任意连接可反复发 throw_carrier 空手请求——若每条都写 info 日志，
+    // 无操作请求就被转换成无界日志输出。去重经共享资源 GuardLogDedup 按 tick
+    // 窗口过期：窗口内每个 carrier×reason 至多一条（输出不随请求量增长），
+    // 窗口外自动剪除（内存不随历史玩家无限增长）。review findings [major]：
+    // 客户端可控抛射请求制造无界 info 日志路径 / dedup 表随历史玩家无限增长。
+    mut guard_log: ResMut<GuardLogDedup>,
 ) {
     for intent in intents.read() {
-        let Ok((position, mut inventory, mut store, stamina)) = actors.get_mut(intent.thrower)
+        let Ok((position, mut inventory, mut store, stamina, unique_id)) =
+            actors.get_mut(intent.thrower)
         else {
             continue;
         };
+        let wire_id = entity_wire_id(unique_id, intent.thrower);
         let Some(item) = inventory
             .equipped
             .get(intent.slot.equip_key())
             .and_then(|s| s.held.as_ref())
         else {
+            // e2e 空手护栏的正向证据：消费者系统（throw_carrier_intents）在「手槽
+            // 无载体」早退处发信号。carrier=player:{uuid} 是该 bot 的线缆 id，场景
+            // 用它把这条日志归属到自己的请求——不再依赖不唯一的 payload 字节数
+            // （review findings [major]：throw 场景缺消费者信号 / 日志相关性）。
+            // 系统未注册时此日志不出现，场景据此区分「护栏走了」与「消费者断线」。
+            // 每个 (carrier, no_carrier_item) 只在窗口内发一次：场景只需一条，
+            // 恶意客户端反复请求不能把 info 日志喂成无界输出（review finding
+            // [major]）。
+            if guard_log.should_emit(&wire_id, "no_carrier_item", clock.tick) {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_carrier_item",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
+            // 与上同构：手槽有非暗器物品（新手村 fixture 主手通常是 iron_sword）
+            // 但无 anqi 印记——空手护栏的另一条实测路径。去重语义同上。
+            if guard_log.should_emit(&wire_id, "no_anqi_imprint", clock.tick) {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_anqi_imprint",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let dir = normalized_dir(intent.dir_unit);
-        if dir.length_squared() <= f64::EPSILON {
+        // bughunt-20260726 carrier-throw-dir-nan-leak：`intent.dir_unit` 来自
+        // C2S `ClientRequestV1::ThrowCarrier` 的 `[f32; 3]`，plain serde_json
+        // 反序列化对越界字面量（如 JSON `1e40`）会 `as f32` 饱和成
+        // `f32::INFINITY`，没有 parse 错误、没有范围校验。`normalized_dir` 对
+        // (inf,0,0) 算出 `length_squared()=inf`（不是 NaN，`inf<=EPSILON` 为
+        // false）从而跳过零向量早退，再 `normalize()` 内部 `inf * (1/inf)` =
+        // `inf * 0.0` = NaN——`dir` 变成 (NaN,0,0)。此时 `NaN <= EPSILON`
+        // 同样恒为 false（IEEE-754 NaN 比较全假），下面原有的零向量守卫被
+        // 绕过而非触发，NaN 就此流入 velocity/spawn_pos，产生一个永不消亡、
+        // 每 tick 写 NaN 位置的幽灵投射物（`projectile_tick_system` 里
+        // `traveled > max_distance`、`qi_payload <= EPSILON` 两个退出判定
+        // 全部因 NaN 比较恒假而失效）。显式拒绝非有限 `dir`，与零向量共用
+        // 同一条 `continue` 分支（沿用既有守卫的既有语义，两者是同一处
+        // "退化输入" 早退，不新引入行为分支）。
+        if !dir.is_finite() || dir.length_squared() <= f64::EPSILON {
             continue;
         }
         if let Some(mut stamina) = stamina {
@@ -912,6 +1023,35 @@ fn projectile_tick_system(
         let current = position.get();
         let next = current + flight.velocity * dt;
         let traveled = next.distance(flight.spawn_pos) as f32;
+        // bughunt-20260726 carrier-throw-dir-nan-leak：防御性兜底。`dir` 现在
+        // 已在 `throw_carrier_intents` 里被拒绝非有限值，本分支正常情况下
+        // 不会触发；但保留它是为了防止任何未来直接构造
+        // `AnqiProjectileFlight`（绕开 throw_carrier_intents）的生产者重新
+        // 引入非有限 velocity/position 时，制造出同样的永生 NaN 实体——
+        // `traveled > flight.max_distance` 和上面的 `qi_payload <= EPSILON`
+        // 两个退出判定在 NaN 面前都会因 IEEE-754 比较恒假而失效，只有显式
+        // `is_finite()` 检查能兜底。用 `current`（本 tick 前最后一个已知
+        // 有限位置）而非 `next`/`traveled` 本身作为 despawn 的 `pos`：避免
+        // 把 NaN 传进 `emit_projectile_despawn` 的距离/衰减计算——NaN 落点
+        // 会让 `ZoneRegistry::find_zone` 的 AABB 比较恒假从而找不到任何
+        // zone，把真元错误地转入 overflow 账户（真元本身不会凭空消失，但
+        // 会丢失真实落点归属，且 NaN 还会被序列化进
+        // `ProjectileDespawnedEvent.pos` 传给下游 Redis 桥接消费者）。
+        if !next.is_finite() || !traveled.is_finite() {
+            emit_projectile_despawn(
+                &mut commands,
+                &mut despawned,
+                ProjectileDespawnArgs {
+                    projectile_entity,
+                    projectile: &projectile,
+                    flight: &flight,
+                    reason: ProjectileDespawnReason::OutOfRange,
+                    pos: current,
+                    tick: clock.tick,
+                },
+            );
+            continue;
+        }
         if traveled > flight.max_distance {
             emit_projectile_despawn(
                 &mut commands,
@@ -929,13 +1069,32 @@ fn projectile_tick_system(
         }
 
         let mut hit: Option<(Entity, f32)> = None;
-        for (target_entity, target_pos, _, _, _, _, _) in &mut targets {
+        for (target_entity, target_pos, _, _, _, target_cultivation, _) in &mut targets {
             if projectile.owner == Some(target_entity) {
                 continue;
             }
+            // plan-race-system-v1 P5/PR-6c —— 粗筛半径按目标当前 body_plan 动态派生
+            // （`body_plan::geometry::bounding_radius`），替换写死的 humanoid 专属
+            // `0.3`（`STANDING_HALF_WIDTH`）：whale 等横长非人构型的真实体积远大于
+            // 人形，固定 0.3 会让弹道在肉眼可见的"打中了"情况下被判定为未命中。
+            // humanoid 目标：`bounding_radius` 对 `HeightBands` 原样吐出
+            // `aabb.half_width`（0.3），与换轨前 bit-for-bit 相同，不回归。
+            let target_body_plan = resolve_body_plan_for_target(
+                target_entity,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation: target_cultivation,
+                    beast_kind: None,
+                    morph_state: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            );
+            let target_radius =
+                crate::body_plan::geometry::bounding_radius(&target_body_plan.hit_geometry);
             let distance_to_segment =
                 segment_point_distance(current, next, target_pos.get() + DVec3::new(0.0, 1.0, 0.0));
-            if distance_to_segment <= f64::from(0.3 + flight.hitbox_inflation) {
+            if distance_to_segment <= f64::from(flight.hitbox_inflation) + target_radius {
                 hit = Some((
                     target_entity,
                     target_pos.get().distance(flight.spawn_pos) as f32,
@@ -983,6 +1142,7 @@ fn projectile_tick_system(
                 BodyPlanResolveInputs {
                     cultivation,
                     beast_kind: None,
+                    morph_state: None,
                 },
                 body_plan_registry.as_deref(),
                 race_registry.as_deref(),
@@ -1375,1196 +1535,5 @@ fn release_account_to_zone(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::body_plan::BodyPartId;
-    use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
-    use valence::prelude::{App, Events, Position, Update};
-
-    fn template(id: &str, name: &str, max_stack_count: u32) -> ItemTemplate {
-        ItemTemplate {
-            id: id.to_string(),
-            display_name: name.to_string(),
-            category: ItemCategory::Misc,
-            placeable: None,
-            max_stack_count,
-            grid_w: 1,
-            grid_h: 1,
-            base_weight: 0.2,
-            rarity: ItemRarity::Uncommon,
-            spirit_quality_initial: 1.0,
-            description: name.to_string(),
-            effect: None,
-            cast_duration_ms: 0,
-            cooldown_ms: 0,
-            weapon_spec: None::<WeaponSpec>,
-            forge_station_spec: None,
-            blueprint_scroll_spec: None,
-            inscription_scroll_spec: None,
-            technique_scroll_spec: None,
-            readable_scroll_spec: None,
-            recipe_fragment_spec: None,
-            container_spec: None,
-            shelflife_profile: None,
-            shield_spec: None,
-            shelflife_track: None,
-        }
-    }
-
-    fn registry() -> ItemRegistry {
-        ItemRegistry::from_map(HashMap::from([
-            (
-                ANQI_MATERIAL_TEMPLATE_ID.to_string(),
-                template(ANQI_MATERIAL_TEMPLATE_ID, "异变兽骨", 16),
-            ),
-            (
-                ANQI_CHARGED_TEMPLATE_ID.to_string(),
-                template(ANQI_CHARGED_TEMPLATE_ID, "封元异变兽骨", 1),
-            ),
-        ]))
-    }
-
-    fn item(instance_id: u64, template_id: &str) -> ItemInstance {
-        ItemInstance {
-            instance_id,
-            template_id: template_id.to_string(),
-            display_name: template_id.to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.2,
-            rarity: ItemRarity::Uncommon,
-            description: template_id.to_string(),
-            stack_count: 1,
-            spirit_quality: 1.0,
-            durability: 1.0,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: None,
-            forge_color: None,
-            forge_side_effects: Vec::new(),
-            forge_achieved_tier: None,
-            alchemy: None,
-            lingering_owner_qi: None,
-        }
-    }
-
-    fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
-        use crate::inventory::SlotContents;
-        let mut equipped = HashMap::new();
-        equipped.insert(
-            EQUIP_SLOT_MAIN_HAND.to_string(),
-            SlotContents::held_single(item(7, template_id)),
-        );
-        PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: InventoryRevision(1),
-            containers: Vec::new(),
-            equipped,
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 45.0,
-        }
-    }
-
-    fn charge_app() -> App {
-        use crate::world::zone::ZoneRegistry;
-
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 0 });
-        app.insert_resource(registry());
-        app.insert_resource(ZoneRegistry::default());
-        app.add_event::<ChargeCarrierIntent>();
-        app.add_event::<CarrierChargedEvent>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(Update, (begin_charge_carrier, charge_carrier_tick));
-        app
-    }
-
-    fn spawn_charge_actor(app: &mut App) -> Entity {
-        app.world_mut()
-            .spawn((
-                Cultivation {
-                    qi_current: 100.0,
-                    qi_max: 200.0,
-                    ..Default::default()
-                },
-                Position::new([0.0, 66.0, 0.0]),
-                inventory_with_main_hand(ANQI_MATERIAL_TEMPLATE_ID),
-                CarrierStore::default(),
-            ))
-            .id()
-    }
-
-    #[test]
-    fn default_qi_target_caps_at_thirty_percent_or_eighty() {
-        assert_eq!(
-            default_qi_target(&Cultivation {
-                qi_max: 150.0,
-                ..Default::default()
-            }),
-            45.0
-        );
-        assert_eq!(
-            default_qi_target(&Cultivation {
-                qi_max: 540.0,
-                ..Default::default()
-            }),
-            80.0
-        );
-    }
-
-    #[test]
-    fn transform_charged_carrier_is_non_stackable_and_bumps_revision() {
-        let registry = registry();
-        let mut inventory = inventory_with_main_hand(ANQI_MATERIAL_TEMPLATE_ID);
-
-        assert!(transform_equipped_item(
-            &mut inventory,
-            &registry,
-            CarrierSlot::MainHand,
-            ANQI_CHARGED_TEMPLATE_ID
-        ));
-
-        let item = inventory
-            .equipped
-            .get(EQUIP_SLOT_MAIN_HAND)
-            .unwrap()
-            .held
-            .as_ref()
-            .unwrap();
-        assert_eq!(item.template_id, ANQI_CHARGED_TEMPLATE_ID);
-        assert_eq!(item.stack_count, 1);
-        assert_eq!(inventory.revision.0, 2);
-    }
-
-    #[test]
-    fn begin_charge_channels_prepaid_qi_into_carrier_account() {
-        let mut app = charge_app();
-        let actor = spawn_charge_actor(&mut app);
-
-        app.world_mut().send_event(ChargeCarrierIntent {
-            carrier: actor,
-            slot: Some(CarrierSlot::MainHand),
-            qi_target: Some(60.0),
-            issued_at_tick: 0,
-        });
-        app.update();
-
-        let cultivation = app.world().get::<Cultivation>(actor).unwrap();
-        assert!((cultivation.qi_current - 70.0).abs() < f64::EPSILON);
-
-        let transfers = app.world().resource::<Events<QiTransfer>>();
-        let transfer = transfers
-            .iter_current_update_events()
-            .find(|transfer| {
-                transfer.reason == QiTransferReason::Channeling
-                    && transfer.to == carrier_qi_account(actor, 7)
-            })
-            .expect("暗器开始充能扣 prepaid_qi 后必须把真元封入 carrier container");
-        assert_eq!(
-            transfer.from,
-            QiAccountId::player(format!("entity:{actor:?}"))
-        );
-        assert!((transfer.amount - 30.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn interrupted_charge_releases_unsealed_prepaid_qi_to_zone() {
-        let mut app = charge_app();
-        let actor = spawn_charge_actor(&mut app);
-        app.world_mut()
-            .resource_mut::<crate::world::zone::ZoneRegistry>()
-            .find_zone_mut("spawn")
-            .unwrap()
-            .spirit_qi = 0.0;
-
-        app.world_mut().send_event(ChargeCarrierIntent {
-            carrier: actor,
-            slot: Some(CarrierSlot::MainHand),
-            qi_target: Some(60.0),
-            issued_at_tick: 0,
-        });
-        app.update();
-
-        app.world_mut()
-            .entity_mut(actor)
-            .insert(Position::new([2.0, 66.0, 0.0]));
-        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS / 2;
-        app.update();
-
-        assert!(
-            app.world().get::<CarrierCharging>(actor).is_none(),
-            "移动中断后 CarrierCharging 必须结束"
-        );
-        let store = app.world().get::<CarrierStore>(actor).unwrap();
-        let imprint = store
-            .imprints_by_instance
-            .get(&7)
-            .expect("半程中断应保留已封入暗器的部分真元");
-        assert!((imprint.qi_amount - 15.0).abs() < f32::EPSILON);
-
-        let transfers = app.world().resource::<Events<QiTransfer>>();
-        let transfer = transfers
-            .iter_current_update_events()
-            .find(|transfer| {
-                transfer.reason == QiTransferReason::ReleaseToZone
-                    && transfer.from == carrier_qi_account(actor, 7)
-            })
-            .expect("移动中断时未封存的 prepaid_qi 必须释放回 zone，不能吞真元");
-        assert_eq!(transfer.to, QiAccountId::zone("spawn".to_string()));
-        assert!((transfer.amount - 15.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn projectile_hit_despawns_without_damage_or_impact_on_creative_target() {
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 10 });
-        app.add_event::<CombatEvent>();
-        app.add_event::<CarrierImpactEvent>();
-        app.add_event::<ProjectileDespawnedEvent>();
-        app.add_systems(Update, projectile_tick_system);
-
-        app.world_mut().spawn((
-            Position::new([0.0, 65.0, 0.0]),
-            QiProjectile {
-                owner: None,
-                qi_payload: 20.0,
-            },
-            AnqiProjectileFlight {
-                carrier_kind: CarrierKind::BoneChip,
-                qi_color: ColorKind::Sharp,
-                carrier_grade: CarrierKind::BoneChip.grade(),
-                spawn_pos: DVec3::new(0.0, 65.0, 0.0),
-                prev_pos: DVec3::new(0.0, 65.0, 0.0),
-                velocity: DVec3::new(20.0, 0.0, 0.0),
-                max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
-                hitbox_inflation: ANQI_HITBOX_INFLATION,
-            },
-        ));
-        let target = app
-            .world_mut()
-            .spawn((
-                Position::new([0.5, 64.0, 0.0]),
-                Wounds::default(),
-                Contamination::default(),
-                GameMode::Creative,
-            ))
-            .id();
-        let before = app
-            .world()
-            .entity(target)
-            .get::<Wounds>()
-            .unwrap()
-            .health_current;
-
-        app.update();
-
-        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
-        assert_eq!(wounds.health_current, before);
-        assert!(wounds.entries.is_empty());
-        assert!(app.world().resource::<Events<CombatEvent>>().is_empty());
-        assert!(app
-            .world()
-            .resource::<Events<CarrierImpactEvent>>()
-            .is_empty());
-        assert_eq!(
-            app.world()
-                .resource::<Events<ProjectileDespawnedEvent>>()
-                .len(),
-            1
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #2）— 投射命中部位几何化 pin
-    // ══════════════════════════════════════════════════════════════════════════
-
-    /// 构造一发沿 X 轴飞行、经过给定绝对 Y 高度的暗器投射，命中站在原点的目标。
-    /// `flight_y` 决定投射穿过目标 hitbox 时的高度，从而驱动 `classify_body_part`
-    /// 落到不同部位——用来证明命中部位不再恒为 `BodyPart::Chest`。
-    fn projectile_hit_body_part_at_height(flight_y: f64) -> crate::body_plan::BodyPartId {
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 10 });
-        app.add_event::<CombatEvent>();
-        app.add_event::<CarrierImpactEvent>();
-        app.add_event::<ProjectileDespawnedEvent>();
-        app.add_systems(Update, projectile_tick_system);
-
-        app.world_mut().spawn((
-            Position::new([-1.0, flight_y, 0.0]),
-            QiProjectile {
-                owner: None,
-                qi_payload: 20.0,
-            },
-            AnqiProjectileFlight {
-                carrier_kind: CarrierKind::BoneChip,
-                qi_color: ColorKind::Sharp,
-                carrier_grade: CarrierKind::BoneChip.grade(),
-                spawn_pos: DVec3::new(-1.0, flight_y, 0.0),
-                prev_pos: DVec3::new(-1.0, flight_y, 0.0),
-                velocity: DVec3::new(20.0, 0.0, 0.0),
-                max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
-                hitbox_inflation: ANQI_HITBOX_INFLATION,
-            },
-        ));
-        // 目标 `Position` 是脚底坐标（`classify_body_part` 的 `target_feet_position`
-        // 约定，见 `raycast.rs::standing_humanoid_aabb`）；无 `GameMode` 组件即视为
-        // 可被伤害（`is_damageable` 默认 true）。
-        let target = app
-            .world_mut()
-            .spawn((
-                Position::new([0.0, 0.0, 0.0]),
-                Wounds::default(),
-                Contamination::default(),
-            ))
-            .id();
-
-        app.update();
-
-        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
-        assert_eq!(
-            wounds.entries.len(),
-            1,
-            "flight_y={flight_y} 应命中目标产生恰好一条 Wound，实测 {} 条 —— \
-             若为 0 说明本次高度没有几何相交，测试几何参数需要调整",
-            wounds.entries.len()
-        );
-        let combat_events: Vec<_> = app
-            .world()
-            .resource::<Events<CombatEvent>>()
-            .iter_current_update_events()
-            .collect();
-        assert_eq!(combat_events.len(), 1);
-        // `Wound.location`（`BodyPartId`）与 `CombatEvent.body_part`（legacy `BodyPart`，
-        // 边界①转换）必须是同一次 `classify_body_part` 调用结果——humanoid 部位全部能
-        // 干净转换回 legacy，转换失败（非人形，本测试不涉及）会走 Chest 占位而非本断言
-        // 覆盖的路径。
-        assert_eq!(
-            wounds.entries[0].location,
-            crate::body_plan::legacy_body_part_to_id(combat_events[0].body_part),
-            "Wound.location 与 CombatEvent.body_part 必须是同一个 classify_body_part \
-             调用结果，实测 Wound={:?} CombatEvent={:?} 不一致",
-            wounds.entries[0].location,
-            combat_events[0].body_part
-        );
-        wounds.entries[0].location.clone()
-    }
-
-    #[test]
-    fn projectile_hit_at_head_height_classifies_head_not_chest() {
-        // 目标脚底 y=0，头部阈值 rel_y>0.88 → y>1.584；投射沿 y=1.65 平飞穿过目标中心线
-        // （命中判定半径 0.3+0.4=0.7，|1.65-1.0|=0.65 留够浮点误差余量）。
-        let part = projectile_hit_body_part_at_height(1.65);
-        assert_eq!(
-            part,
-            BodyPartId::new("head"),
-            "投射沿头部高度（y=1.65，脚底 y=0）飞行应命中 head，实测 {part:?} —— \
-             若又是 chest 说明 P2 旁路清理被回退成硬编胸口了"
-        );
-    }
-
-    #[test]
-    fn projectile_hit_at_leg_height_classifies_leg_not_chest() {
-        // 腿部阈值 rel_y<=0.53 → y<=0.954；投射沿 y=0.5 平飞穿过目标中心线
-        // （|0.5-1.0|=0.5，同样留够命中半径 0.7 的浮点误差余量）。
-        let part = projectile_hit_body_part_at_height(0.5);
-        assert!(
-            part == BodyPartId::new("leg_l") || part == BodyPartId::new("leg_r"),
-            "投射沿腿部高度（y=0.5，脚底 y=0）飞行应命中 leg_l/leg_r，实测 {part:?} —— \
-             若是 chest 说明命中部位仍是恒定胸口而非按弹道几何算出"
-        );
-    }
-
-    #[test]
-    fn projectile_hit_at_chest_height_still_classifies_chest() {
-        // 对照组：胸口高度（rel_y≈0.556，在 0.55~0.88 之间且 lateral 落在阈值内）仍应判 Chest，
-        // 证明这不是"再也不会出现 Chest"而是"部位随几何真实变化，胸口只是其中一种可能"。
-        let part = projectile_hit_body_part_at_height(1.0);
-        assert_eq!(
-            part,
-            BodyPartId::new("chest"),
-            "投射沿胸口高度（y=1.0，脚底 y=0）飞行应命中 chest，实测 {part:?}"
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // plan-race-system-v1 P0 review r3（blocker+major 收口）—— carrier 投射物对
-    // PartBoxes 目标改用弹道线段真求交（`body_plan::geometry::raycast_part_boxes`），
-    // 取代此前"已知命中点 + classify_part_boxes_point 就近回退"的语义缺陷（盒间空隙
-    // 会被伪造成有效命中）。以下测试全部走真实 `projectile_tick_system`
-    // 生产系统（不直接调用几何纯函数），合成非人形 PartBoxes 构型 + 真实
-    // BodyPlanRegistry/RaceRegistry，覆盖：①前后部位遮挡（近盒挡远盒）②平移后仍
-    // 正确命中 ③射线穿过空隙时跳过 Wound 构造但伤害/事件仍照常结算。
-    // ══════════════════════════════════════════════════════════════════════════
-    mod partboxes_carrier_production_integration_tests {
-        use super::*;
-        use crate::body_plan::race_registry::RaceEntry;
-        use crate::body_plan::types::{BodyPartDef, HitGeometry, PartBox, PartConsequence};
-        use crate::body_plan::{BodyPlanRegistry, RaceRegistry};
-        use crate::cultivation::components::Cultivation;
-        use std::collections::HashMap as StdHashMap;
-
-        /// 双盒合成构型：`near_part`/`far_part` 沿局部 +X（=世界 +X，target yaw=0 时
-        /// 局部系与世界系重合）前后排列，`near_part` 更靠近射线起点。
-        fn two_box_plan(near_part: &str, far_part: &str) -> crate::body_plan::BodyPlan {
-            crate::body_plan::BodyPlan {
-                id: format!("test_carrier_two_box_{near_part}_{far_part}").into(),
-                display_name: "测试用 carrier 双盒构型".to_string(),
-                is_humanoid: false,
-                parts: vec![
-                    BodyPartDef {
-                        id: near_part.into(),
-                        damage_mul: 1.0,
-                        contam_mul: 1.0,
-                        bleed_mul: 1.0,
-                        consequence: PartConsequence::Core,
-                    },
-                    BodyPartDef {
-                        id: far_part.into(),
-                        damage_mul: 1.0,
-                        contam_mul: 1.0,
-                        bleed_mul: 1.0,
-                        consequence: PartConsequence::Core,
-                    },
-                ],
-                hit_geometry: HitGeometry::PartBoxes {
-                    boxes: vec![
-                        // 局部 offset y=1.0 对齐粗筛 capsule 判定用的 target_center
-                        // （`target_pos + (0,1,0)`），确保粗筛与精细求交在同一高度。
-                        PartBox {
-                            part_id: near_part.into(),
-                            offset: [0.0, 1.0, 0.0],
-                            half_extents: [0.3, 0.3, 0.3],
-                            priority: 0,
-                        },
-                        PartBox {
-                            part_id: far_part.into(),
-                            offset: [1.5, 1.0, 0.0],
-                            half_extents: [0.3, 0.3, 0.3],
-                            priority: 0,
-                        },
-                    ],
-                },
-                equip_slots: vec![],
-                meridian_profile: None,
-                mutation_slot_mapping: StdHashMap::new(),
-            }
-        }
-
-        /// 空隙构型：唯一的盒偏移远离射线路径（局部 x=5.0，射线只走到 x≈2.0 就结束），
-        /// 粗筛 capsule（只判定到 target_center 点的距离，与盒位置无关）仍会命中，
-        /// 但精细 PartBoxes 求交必须落空。
-        fn gap_plan(part_id: &str) -> crate::body_plan::BodyPlan {
-            crate::body_plan::BodyPlan {
-                id: format!("test_carrier_gap_{part_id}").into(),
-                display_name: "测试用 carrier 空隙构型".to_string(),
-                is_humanoid: false,
-                parts: vec![BodyPartDef {
-                    id: part_id.into(),
-                    damage_mul: 1.0,
-                    contam_mul: 1.0,
-                    bleed_mul: 1.0,
-                    consequence: PartConsequence::Core,
-                }],
-                hit_geometry: HitGeometry::PartBoxes {
-                    boxes: vec![PartBox {
-                        part_id: part_id.into(),
-                        offset: [5.0, 1.0, 0.0],
-                        half_extents: [0.3, 0.3, 0.3],
-                        priority: 0,
-                    }],
-                },
-                equip_slots: vec![],
-                meridian_profile: None,
-                mutation_slot_mapping: StdHashMap::new(),
-            }
-        }
-
-        fn registries_for(plan: crate::body_plan::BodyPlan) -> (BodyPlanRegistry, RaceRegistry) {
-            let plan_id = plan.id.clone();
-            let body_plans = BodyPlanRegistry::from_plans(vec![plan])
-                .expect("synthetic carrier plan must validate");
-            let races = RaceRegistry::from_parts_for_test(
-                vec![RaceEntry {
-                    id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
-                    display_name: "carrier PartBoxes 测试替身".to_string(),
-                    body_plan_id: plan_id,
-                    beast_kinds: vec![],
-                }],
-                vec![],
-                &body_plans,
-            )
-            .expect("races fixture must validate");
-            (body_plans, races)
-        }
-
-        /// 组装最小 App：合成 registries + `projectile_tick_system` + 一发沿世界 +X
-        /// 飞行的投射物 + 一个携带 `Cultivation::default()`（race 解析到合成 plan）的
-        /// 目标。`target_feet` 允许任意平移，验证生产链路的世界→局部变换真的用了
-        /// 目标的实际位置，而不是隐式假设原点。
-        fn run_projectile_at_target(
-            plan: crate::body_plan::BodyPlan,
-            target_feet: DVec3,
-        ) -> (Wounds, Vec<CombatEvent>, Vec<ProjectileDespawnedEvent>) {
-            let (body_plans, races) = registries_for(plan);
-            let mut app = App::new();
-            app.insert_resource(CombatClock { tick: 900 });
-            app.insert_resource(body_plans);
-            app.insert_resource(races);
-            app.add_event::<CombatEvent>();
-            app.add_event::<CarrierImpactEvent>();
-            app.add_event::<ProjectileDespawnedEvent>();
-            app.add_systems(Update, projectile_tick_system);
-
-            // 射线沿世界 +X：spawn 于 target 局部 x=-3（射线起点），一 tick 内飞抵
-            // 局部 x=+2（速度 100，dt=1/20s，单 tick 位移 5.0 blocks），覆盖两盒
-            // 构型的 near(x∈[-0.3,0.3])/far(x∈[1.2,1.8]) 与空隙构型的射线终点(x=2)
-            // 均落在 gap 盒(x∈[4.7,5.3])之外。
-            let spawn_pos = target_feet + DVec3::new(-3.0, 1.0, 0.0);
-            app.world_mut().spawn((
-                Position::new([spawn_pos.x, spawn_pos.y, spawn_pos.z]),
-                QiProjectile {
-                    owner: None,
-                    qi_payload: 20.0,
-                },
-                AnqiProjectileFlight {
-                    carrier_kind: CarrierKind::BoneChip,
-                    qi_color: ColorKind::Sharp,
-                    carrier_grade: CarrierKind::BoneChip.grade(),
-                    spawn_pos,
-                    prev_pos: spawn_pos,
-                    velocity: DVec3::new(100.0, 0.0, 0.0),
-                    max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
-                    hitbox_inflation: ANQI_HITBOX_INFLATION,
-                },
-            ));
-            let target = app
-                .world_mut()
-                .spawn((
-                    Position::new([target_feet.x, target_feet.y, target_feet.z]),
-                    Wounds::default(),
-                    Contamination::default(),
-                    Cultivation::default(),
-                ))
-                .id();
-
-            app.update();
-
-            let wounds = app.world().entity(target).get::<Wounds>().unwrap().clone();
-            let combat_events: Vec<CombatEvent> = app
-                .world()
-                .resource::<Events<CombatEvent>>()
-                .iter_current_update_events()
-                .cloned()
-                .collect();
-            let despawns: Vec<ProjectileDespawnedEvent> = app
-                .world()
-                .resource::<Events<ProjectileDespawnedEvent>>()
-                .iter_current_update_events()
-                .cloned()
-                .collect();
-            (wounds, combat_events, despawns)
-        }
-
-        #[test]
-        fn near_box_occludes_far_box_at_origin() {
-            let plan = two_box_plan("near_plate", "far_plate");
-            let (wounds, _events, _despawns) =
-                run_projectile_at_target(plan, DVec3::new(0.0, 64.0, 0.0));
-            assert_eq!(
-                wounds.entries.len(),
-                1,
-                "PartBoxes 真求交应恰好命中一个部位，实测 {:?}",
-                wounds.entries
-            );
-            assert_eq!(
-                wounds.entries[0].location,
-                BodyPartId::new("near_plate"),
-                "两盒都在射线路径上时，near_plate（离投射起点更近）必须遮挡 far_plate，\
-                 实测命中 {:?}",
-                wounds.entries[0].location
-            );
-        }
-
-        #[test]
-        fn near_box_occludes_far_box_after_target_translation() {
-            // 与上一测试几何完全相同，唯一变量是目标整体平移到远离原点的坐标——
-            // 证明生产链路的世界→局部变换用的是目标实际位置，不是隐式硬编码原点。
-            let plan = two_box_plan("near_plate", "far_plate");
-            let (wounds, _events, _despawns) =
-                run_projectile_at_target(plan, DVec3::new(437.0, 64.0, -812.0));
-            assert_eq!(wounds.entries.len(), 1);
-            assert_eq!(
-                wounds.entries[0].location,
-                BodyPartId::new("near_plate"),
-                "平移后仍应命中 near_plate（局部系不变性在生产链路中成立），实测 {:?}",
-                wounds.entries[0].location
-            );
-        }
-
-        #[test]
-        fn ray_through_partboxes_gap_skips_wound_but_still_applies_damage() {
-            let plan = gap_plan("shell");
-            let (wounds, combat_events, despawns) =
-                run_projectile_at_target(plan, DVec3::new(0.0, 64.0, 0.0));
-
-            assert!(
-                wounds.entries.is_empty(),
-                "弹道穿过 PartBoxes 空隙必须跳过 Wound 构造，不伪造命中部位，实测 {:?}",
-                wounds.entries
-            );
-            assert!(
-                wounds.health_current < Wounds::default().health_max,
-                "即便跳过 Wound 构造，粗筛已确认的真实物理接触仍应照常结算伤害（health_current \
-                 应低于满血），实测 {}",
-                wounds.health_current
-            );
-            assert_eq!(
-                combat_events.len(),
-                1,
-                "空隙命中仍应发出恰好一条 CombatEvent（伤害/事件照常结算），实测 {combat_events:?}"
-            );
-            assert_eq!(
-                combat_events[0].body_part,
-                crate::combat::components::BodyPart::Chest,
-                "空隙命中的 CombatEvent.body_part 应落回 Chest 占位（显式 fallback，非静默默认）"
-            );
-            assert_eq!(
-                despawns.len(),
-                1,
-                "空隙命中仍应作为 HitTarget 消耗投射物（despawn 恰好一次），实测 {despawns:?}"
-            );
-            assert_eq!(despawns[0].reason, ProjectileDespawnReason::HitTarget);
-        }
-    }
-
-    #[test]
-    fn natural_decay_uses_half_life_curve() {
-        let mut imprint = CarrierImprint {
-            carrier_kind: CarrierKind::YibianShougu,
-            qi_amount: 40.0,
-            qi_amount_initial: 40.0,
-            qi_color: ColorKind::Solid,
-            source_realm: Realm::Condense,
-            half_life_min: 120.0,
-            decay_started_at_tick: 0,
-            bond_kind: BondKind::HandheldCarrier,
-            injection_kind: None,
-        };
-        let elapsed_min = 120.0;
-        let half_lives = elapsed_min / imprint.half_life_min;
-        imprint.qi_amount = imprint.qi_amount_initial * 0.5_f32.powf(half_lives);
-        assert!((imprint.qi_amount - 20.0).abs() <= 0.001);
-    }
-
-    #[test]
-    fn profile_splits_yibian_bone_half_wound_half_contam() {
-        let profile = anqi_carrier_profile(CarrierKind::YibianShougu);
-        assert_eq!(profile.wound_ratio, 0.5);
-        assert_eq!(profile.contam_ratio, 0.5);
-    }
-
-    #[test]
-    fn carrier_charge_qi_uses_artifact_resonance_efficiency() {
-        assert_eq!(carrier_sealed_qi_amount(50.0, None), 50.0);
-        assert!((carrier_sealed_qi_amount(50.0, Some(0.0)) - 40.0).abs() <= 0.001);
-        assert!((carrier_sealed_qi_amount(50.0, Some(1.0)) - 60.0).abs() <= 0.001);
-    }
-
-    // ── qc-P0 守恒测试：projectile_miss_qi_release_system ──────────────────────────
-
-    /// 辅助：构建带 ZoneRegistry + QiTransfer 事件的 App 并注册 miss-release 系统。
-    fn miss_release_app() -> App {
-        use crate::qi_physics::ledger::QiTransfer;
-        use crate::world::zone::ZoneRegistry;
-
-        let mut app = App::new();
-        app.add_event::<ProjectileDespawnedEvent>();
-        app.add_event::<QiTransfer>();
-        app.insert_resource(ZoneRegistry::default()); // 含默认 spawn zone
-        app.add_systems(Update, projectile_miss_qi_release_system);
-        app
-    }
-
-    fn spawn_entity(app: &mut App) -> Entity {
-        app.world_mut().spawn_empty().id()
-    }
-
-    fn make_despawn_event(
-        projectile: Entity,
-        owner: Option<Entity>,
-        residual_qi: f32,
-        reason: ProjectileDespawnReason,
-    ) -> ProjectileDespawnedEvent {
-        // spawn zone 在 DEFAULT_SPAWN_BOUNDS_MIN = [-128, 64, -128] 到 [128, 80, 128]
-        // 落点 [0, 66, 0] 在 spawn zone 内。
-        ProjectileDespawnedEvent {
-            owner,
-            projectile,
-            reason,
-            distance: 5.0,
-            qi_evaporated: 0.7 * residual_qi / 0.3,
-            residual_qi,
-            pos: [0.0, 66.0, 0.0],
-            tick: 10,
-        }
-    }
-
-    #[test]
-    fn miss_despawn_residual_goes_to_zone_qi_increases() {
-        // 期望：OutOfRange despawn，residual_qi=3.0 → spawn zone.spirit_qi 上升，
-        // 因为真元从投射物归还到 zone（player cast 时已扣，此处归还 zone）。
-        let mut app = miss_release_app();
-        let projectile = spawn_entity(&mut app);
-
-        let zone_before = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        app.world_mut().send_event(make_despawn_event(
-            projectile,
-            None,
-            3.0, // residual_qi
-            ProjectileDespawnReason::OutOfRange,
-        ));
-        app.update();
-
-        let zone_after = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        assert!(
-            zone_after > zone_before,
-            "期望 miss despawn 后 spawn zone.spirit_qi 上升（真元归还 zone），\
-             实际 before={zone_before:.6} after={zone_after:.6}"
-        );
-    }
-
-    #[test]
-    fn hit_target_despawn_does_not_release_to_zone() {
-        // 期望：HitTarget despawn residual_qi=0.0（由 carrier.rs:924 保证）→
-        // miss-release 系统门控 ε 后不触发 zone 更新。
-        let mut app = miss_release_app();
-        let projectile = spawn_entity(&mut app);
-
-        let zone_before = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        app.world_mut().send_event(make_despawn_event(
-            projectile,
-            None,
-            0.0, // HitTarget 已置 residual_qi=0.0
-            ProjectileDespawnReason::HitTarget,
-        ));
-        app.update();
-
-        let zone_after = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        assert_eq!(
-            zone_before, zone_after,
-            "期望 HitTarget despawn 不改变 zone.spirit_qi（residual=0，无双重释放），\
-             实际 before={zone_before:.6} after={zone_after:.6}"
-        );
-    }
-
-    #[test]
-    fn zero_residual_is_noop() {
-        // 期望：residual_qi=0 → 不更新 zone，不 emit QiTransfer。
-        use crate::qi_physics::ledger::QiTransfer;
-
-        let mut app = miss_release_app();
-        let projectile = spawn_entity(&mut app);
-
-        let zone_before = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        app.world_mut().send_event(make_despawn_event(
-            projectile,
-            None,
-            0.0,
-            ProjectileDespawnReason::NaturalDecay,
-        ));
-        app.update();
-
-        let zone_after = app
-            .world()
-            .resource::<crate::world::zone::ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi;
-
-        assert_eq!(
-            zone_before, zone_after,
-            "residual=0 时 zone.spirit_qi 应不变（期望 noop），实际改变了"
-        );
-
-        let transfers = app.world().resource::<Events<QiTransfer>>();
-        assert!(
-            transfers.is_empty(),
-            "residual=0 时不应 emit QiTransfer，实际 emit 了 {} 条",
-            transfers.len()
-        );
-    }
-
-    #[test]
-    fn no_zone_at_position_routes_to_overflow_transfer() {
-        // 期望：落点在 spawn zone 范围外（无 zone 覆盖）→
-        // 仍 emit QiTransfer（overflow 路径），真元不蒸发。
-        use crate::qi_physics::ledger::QiTransfer;
-
-        let mut app = miss_release_app();
-        let projectile = spawn_entity(&mut app);
-
-        // 落点 [9999, 66, 9999] 不在任何注册 zone 内
-        app.world_mut().send_event(ProjectileDespawnedEvent {
-            owner: None,
-            projectile,
-            reason: ProjectileDespawnReason::OutOfRange,
-            distance: 80.0,
-            qi_evaporated: 7.0,
-            residual_qi: 3.0,
-            pos: [9999.0, 66.0, 9999.0],
-            tick: 10,
-        });
-        app.update();
-
-        let transfers = app.world().resource::<Events<QiTransfer>>();
-        assert!(
-            !transfers.is_empty(),
-            "落点无 zone 时仍须 emit overflow QiTransfer（真元不蒸发），实际无 transfer"
-        );
-    }
-
-    #[test]
-    fn conservation_invariant_residual_equals_transfer_total() {
-        // 期望：residual_qi = Σ transfer.amount（守恒等式）。
-        // zone 有足够容量吸收全部 residual。
-        use crate::qi_physics::ledger::QiTransfer;
-
-        let mut app = miss_release_app();
-        let projectile = spawn_entity(&mut app);
-        let residual: f32 = 5.0;
-
-        app.world_mut().send_event(make_despawn_event(
-            projectile,
-            None,
-            residual,
-            ProjectileDespawnReason::HitBlock,
-        ));
-        app.update();
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let mut reader = events.get_reader();
-        let total: f64 = reader.read(events).map(|t| t.amount).sum();
-
-        assert!(
-            (total - f64::from(residual)).abs() < 1e-9,
-            "守恒不变式：transfer 总量应等于 residual_qi（期望 {residual}），实际 {total}"
-        );
-    }
-
-    // ── 经脉门测试：charge_carrier meridian gate ─────────────────────────────────────
-
-    /// 验证 anqi.charge_carrier 在 SkillMeridianDependencies 中已声明肺经依赖。
-    /// 断肺经 → charge 被通用 check_meridian_dependencies 拦截（worldview §四:286）。
-    #[test]
-    fn charge_carrier_declared_in_skill_meridian_dependencies_with_lung() {
-        use crate::cultivation::meridian::severed::SkillMeridianDependencies;
-
-        let mut deps = SkillMeridianDependencies::default();
-        crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
-
-        assert!(
-            deps.is_declared(ANQI_CHARGE_SKILL_ID),
-            "期望 anqi.charge_carrier 已在 SkillMeridianDependencies 声明（plan-meridian-severed-v1 §3 强约束），\
-             实际未声明 → 断肺经的玩家仍可充能"
-        );
-        let declared = deps.lookup(ANQI_CHARGE_SKILL_ID);
-        assert!(
-            declared.contains(&MeridianId::Lung),
-            "期望 charge_carrier 依赖 MeridianId::Lung（肺经，真元注入暗器的主导引脉），\
-             实际声明的依赖为 {declared:?}"
-        );
-    }
-
-    /// 验证 resolve_anqi_charge_skill 在施法前检查经脉门：肺经 SEVERED → 返回 MeridianSevered。
-    #[test]
-    fn charge_carrier_cast_rejected_when_lung_severed() {
-        use crate::combat::components::SkillBarBindings;
-        use crate::cultivation::components::Cultivation;
-        use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        let mut severed = MeridianSeveredPermanent::default();
-        severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 1);
-
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 100.0,
-                    qi_max: 200.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-                severed,
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
-                }
-            ),
-            "期望肺经 SEVERED 时 resolve_anqi_charge_skill 返回 \
-             CastRejectReason::MeridianSevered(Some(Lung))（真元无法经肺经注入暗器），\
-             实际返回 {result:?}"
-        );
-    }
-
-    /// 验证 resolve_anqi_charge_skill 在肺经完好（无 SEVERED component）时正常施法。
-    #[test]
-    fn charge_carrier_cast_allowed_when_lung_intact() {
-        use crate::combat::components::SkillBarBindings;
-        use crate::cultivation::components::Cultivation;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        // 无 MeridianSeveredPermanent component → 肺经视为 INTACT，充能应通过经脉门
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 100.0,
-                    qi_max: 200.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        // qi_target > 0 且无经脉阻断 → 应进入 Started（充能 intent 已 emit）
-        assert!(
-            matches!(result, CastResult::Started { .. }),
-            "期望肺经完好时 resolve_anqi_charge_skill 返回 CastResult::Started（经脉门放行），\
-             实际返回 {result:?}"
-        );
-    }
-
-    // ── qi 门测试：resolve_anqi_charge_skill 真元不足时提前拒绝 ────────────────────
-
-    /// 核心回归：qi_current=0 时 resolve 必须拒绝，而非启动冷却又无充能效果。
-    #[test]
-    fn charge_carrier_rejected_when_qi_current_is_zero() {
-        use crate::combat::components::SkillBarBindings;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        // qi_max=300 → qi_target=(300*0.3).min(80)=80; qi_current=0 < 80 → 应拒绝
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 0.0,
-                    qi_max: 300.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::QiInsufficient
-                }
-            ),
-            "期望 qi_current=0 时 resolve_anqi_charge_skill 返回 QiInsufficient（\
-             阻止空冷却 bug），实际返回 {result:?}"
-        );
-    }
-
-    /// 边界：qi_current 正好等于 qi_target 时应允许施法（临界 >= 等号成立）。
-    #[test]
-    fn charge_carrier_allowed_when_qi_current_exactly_equals_qi_target() {
-        use crate::combat::components::SkillBarBindings;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        // qi_max=200 → qi_target=(200*0.3) f32 ≈ 60.000004（非整数 60，f32 0.3 不精确）。
-        // qi_current 取**真实** qi_target 值以精确测「==」临界，避免硬编码 60.0 因 f32 imprecision
-        // 被 guard 误判 < 而拒绝（workflow agent 原测试 bug）。
-        let cult_for_target = Cultivation {
-            qi_max: 200.0,
-            ..Default::default()
-        };
-        let qi_target_val = f64::from(default_qi_target(&cult_for_target));
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: qi_target_val,
-                    qi_max: 200.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(result, CastResult::Started { .. }),
-            "期望 qi_current 精确等于 qi_target({qi_target_val}) 时允许充能（\
-             临界 >= 成立），实际返回 {result:?}"
-        );
-    }
-
-    /// 边界：qi_current 比 qi_target 少 1 时必须拒绝。
-    #[test]
-    fn charge_carrier_rejected_when_qi_current_one_below_qi_target() {
-        use crate::combat::components::SkillBarBindings;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        // qi_max=200 → qi_target=60; qi_current=59 < 60 → 应拒绝
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 59.0,
-                    qi_max: 200.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::QiInsufficient
-                }
-            ),
-            "期望 qi_current=59 < qi_target=60 时返回 QiInsufficient（单位以下拒绝），\
-             实际返回 {result:?}"
-        );
-    }
-
-    /// 高 qi_max 玩家（qi_target 触顶 80）qi_current 低于 80 时必须拒绝。
-    #[test]
-    fn charge_carrier_rejected_for_high_qi_max_player_with_low_qi_current() {
-        use crate::combat::components::SkillBarBindings;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 1 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        // qi_max=600 → qi_target=(600*0.3).min(80)=80; qi_current=50 < 80 → 应拒绝
-        // 这是 bug 报告的典型场景：qi_max 高但战斗中 qi_current 被消耗
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 50.0,
-                    qi_max: 600.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::QiInsufficient
-                }
-            ),
-            "期望高 qi_max(600) 低 qi_current(50) 玩家被拒绝（qi_target 触顶 80，\
-             qi_current<80），实际返回 {result:?}"
-        );
-    }
-
-    /// 验证低真元拒绝时不会设置冷却（不应烧冷却）。
-    #[test]
-    fn charge_carrier_rejected_qi_insufficient_does_not_set_cooldown() {
-        use crate::combat::components::SkillBarBindings;
-
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 10 });
-        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
-
-        let caster = world
-            .spawn((
-                Cultivation {
-                    qi_current: 0.0,
-                    qi_max: 300.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-            ))
-            .id();
-
-        let slot: u8 = 2;
-        let result = resolve_anqi_charge_skill(&mut world, caster, slot, None);
-
-        // 先验 Rejected
-        assert!(
-            matches!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::QiInsufficient
-                }
-            ),
-            "期望 qi_current=0 被拒绝，实际 {result:?}"
-        );
-
-        // 再验冷却未设置：slot 应仍处于 ready 状态（tick=10）
-        let bindings = world.get::<SkillBarBindings>(caster).unwrap();
-        assert!(
-            !bindings.is_on_cooldown(slot, 10),
-            "期望真元不足拒绝时不设置冷却（slot={slot} 应 ready），\
-             实际 slot 被置为冷却中 — 冷却被烧掉了"
-        );
-    }
-}
+#[path = "carrier_tests.rs"]
+mod tests;

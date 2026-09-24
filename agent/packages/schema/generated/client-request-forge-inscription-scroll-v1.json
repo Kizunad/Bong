@@ -23,5 +23,6 @@
     "inscription_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "ca08ae467e152c7a9ffadf585715c1f0fce6555849aeb05660061704c4090bea"
 }

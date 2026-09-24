@@ -49,6 +49,10 @@ public final class BlockVanillaIconMap {
     private BlockVanillaIconMap() {
     }
 
+    public static java.util.Set<String> templateIds() {
+        return HOST_ITEMS.keySet();
+    }
+
     public static Optional<ItemStack> createStackFor(String templateId) {
         if (templateId == null) return Optional.empty();
         Entry entry = HOST_ITEMS.get(templateId);

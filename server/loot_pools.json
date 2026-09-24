@@ -456,6 +456,106 @@
             ],
             "entries": [
                 {
+                    "template_id": "scroll_fake_skin_light",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_herb_knife_iron",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_zhenfa_trap_iron",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_sealed_vial",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_seal_box",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_dead_drop",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_qi_talisman",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_meridian_rub",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_ningmai_prep",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_meridian_salve",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_anti_gu",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_qingzhuo",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_array_flag",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_array_eye",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_decoy_stake",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_scatter_bead",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_gather_base",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_niche_repair",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_lantern",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "scroll_workbench_niche_base",
+                    "weight": 2,
+                    "count": [1, 1]
+                },
+                {
                     "template_id": "scroll_technique_sword_parry",
                     "weight": 12,
                     "count": [

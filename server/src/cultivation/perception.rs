@@ -52,7 +52,7 @@ pub fn passive_qi_color_scan_system(
     let now_tick = clock.tick;
 
     // 按间隔节流：不是整倍数 tick 跳过
-    if now_tick % PASSIVE_COLOR_SCAN_INTERVAL_TICKS != 0 {
+    if !now_tick.is_multiple_of(PASSIVE_COLOR_SCAN_INTERVAL_TICKS) {
         return;
     }
 

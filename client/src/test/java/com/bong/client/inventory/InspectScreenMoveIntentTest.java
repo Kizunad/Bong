@@ -1,7 +1,13 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.inventory.component.BackpackGridPanel;
+import com.bong.client.inventory.component.EquipmentPanel;
+import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.model.SlotContents;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
 import net.minecraft.util.Identifier;
@@ -25,6 +31,8 @@ public class InspectScreenMoveIntentTest {
     @AfterEach
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
+        QuickUseSlotStore.resetForTests();
+        SkillBarStore.resetForTests();
     }
 
     private void install() {
@@ -54,14 +62,14 @@ public class InspectScreenMoveIntentTest {
         screen.dispatchMoveIntent(
             item,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3),
+            new ClientRequestProtocol.HotbarLoc(1),
             false
         );
 
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":1}}",
             sent.get(0).body()
         );
     }
@@ -172,6 +180,423 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void shiftQuickEquipRoutesOccupiedMainHandSwordToExtraHandAndDispatchesIntent() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem equippedMain = item(2001L, "bone_dagger");
+        InventoryItem sword = item(2002L, "iron_sword");
+        panel.slotFor(EquipSlotType.MAIN_HAND).setContents(SlotContents.ofHeld(equippedMain));
+        grid.place(sword, 1, 1);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        screen.quickEquipFromGridForTests(sword);
+
+        assertEquals(
+            null,
+            grid.itemAt(1, 1),
+            "expected shift quick-equip to remove sword from source grid because dispatch succeeded"
+        );
+        assertEquals(
+            sword,
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().held(),
+            "expected occupied main hand and ineligible off hand to route sword into EXTRA_HAND_0"
+        );
+        assertEquals(
+            1,
+            sent.size(),
+            "expected shift quick-equip to dispatch one InventoryMoveIntent, actual " + sent.size()
+        );
+        assertTrue(
+            sent.get(0).body().contains(
+                "\"to\":{\"kind\":\"equip\",\"slot\":\"extra_hand_0\",\"state\":\"held\"}"
+            ),
+            "expected quick-equip payload to target EXTRA_HAND_0 held, actual " + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void shiftQuickEquipWithNoLegalHandLeavesGridAndSendsNothing() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem sword = item(2100L, "iron_sword");
+        panel.slotFor(EquipSlotType.MAIN_HAND)
+            .setContents(SlotContents.ofHeld(item(2101L, "bone_dagger")));
+        panel.slotFor(EquipSlotType.EXTRA_HAND_0)
+            .setContents(SlotContents.ofHeld(item(2102L, "bone_dagger")));
+        panel.slotFor(EquipSlotType.EXTRA_HAND_1)
+            .setContents(SlotContents.ofHeld(item(2103L, "bone_dagger")));
+        grid.place(sword, 0, 0);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        screen.quickEquipFromGridForTests(sword);
+
+        assertEquals(
+            sword,
+            grid.itemAt(0, 0),
+            "expected source item to remain because no legal held slot exists"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected no InventoryMoveIntent when all legal hand slots are occupied, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void dragEquipCommitTargetsExtraHandOneAndDispatchesIntent() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        screen.configureEquipInteractionForTests(null, panel);
+        InventoryItem tool = item(2200L, "stone_pickaxe");
+
+        boolean committed = screen.commitEquipDrop(
+            tool,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 0),
+            EquipSlotType.EXTRA_HAND_1
+        );
+
+        assertTrue(committed, "expected valid drag drop into EXTRA_HAND_1 to commit, actual false");
+        assertEquals(
+            tool,
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().held(),
+            "expected drag drop to update EXTRA_HAND_1 held contents before authoritative refresh"
+        );
+        assertEquals(
+            1,
+            sent.size(),
+            "expected valid extra-hand drag to dispatch one InventoryMoveIntent, actual " + sent.size()
+        );
+        assertTrue(
+            sent.get(0).body().contains(
+                "\"to\":{\"kind\":\"equip\",\"slot\":\"extra_hand_1\",\"state\":\"held\"}"
+            ),
+            "expected drag payload to target EXTRA_HAND_1 held, actual " + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void dragEquipCommitAppendsBodyWornStackAndDispatchesWornIntent() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem existing = item(2250L, "armor_bone_chestplate");
+        InventoryItem dragged = item(2251L, "armor_iron_chestplate");
+        panel.slotFor(EquipSlotType.CHEST).setContents(SlotContents.ofWorn(existing));
+        screen.configureEquipInteractionForTests(null, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            dragged,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 1, 2),
+            EquipSlotType.CHEST
+        );
+
+        assertTrue(committed, "expected valid body-slot drag to commit, actual false");
+        assertEquals(
+            List.of(existing, dragged),
+            panel.slotFor(EquipSlotType.CHEST).contents().worn(),
+            "expected body-slot commit to append the dragged armor as worn stack top"
+        );
+        assertEquals(
+            null,
+            panel.slotFor(EquipSlotType.CHEST).contents().held(),
+            "expected body-slot commit to preserve held as null"
+        );
+        assertEquals(
+            1,
+            sent.size(),
+            "expected valid body-slot drag to dispatch one InventoryMoveIntent, actual " + sent.size()
+        );
+        assertTrue(
+            sent.get(0).body().contains(
+                "\"to\":{\"kind\":\"equip\",\"slot\":\"chest\",\"state\":\"worn\"}"
+            ),
+            "expected body-slot payload to target CHEST worn, actual " + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsTwoHandDisabledSlotWithoutMutationOrDispatch() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2270L, "stone_pickaxe");
+        grid.place(tool, 0, 1);
+        panel.slotFor(EquipSlotType.OFF_HAND).setDisabledByTwoHand(true);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            tool,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 1),
+            EquipSlotType.OFF_HAND
+        );
+
+        assertFalse(committed, "expected two-hand-disabled OFF_HAND drop to be rejected, actual true");
+        assertEquals(
+            tool,
+            grid.itemAt(0, 1),
+            "expected rejected disabled-slot drop to leave the source grid item unchanged"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.OFF_HAND).contents().isEmpty(),
+            "expected rejected disabled-slot drop to leave OFF_HAND empty, actual non-empty"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected disabled-slot drop to send no InventoryMoveIntent, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsIneligibleItemWithoutMutationOrDispatch() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem herb = item(2280L, "spirit_grass");
+        grid.place(herb, 2, 2);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            herb,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 2),
+            EquipSlotType.EXTRA_HAND_0
+        );
+
+        assertFalse(committed, "expected ineligible herb drop into EXTRA_HAND_0 to be rejected, actual true");
+        assertEquals(
+            herb,
+            grid.itemAt(2, 2),
+            "expected rejected ineligible-item drop to leave the source grid item unchanged"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected rejected ineligible-item drop to leave EXTRA_HAND_0 empty, actual non-empty"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected ineligible-item drop to send no InventoryMoveIntent, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void quickUseLinkCannotMoveItsItemIntoEquipment() {
+        install();
+        InventoryItem tool = item(2290L, "stone_pickaxe");
+        InspectScreen screen = new InspectScreen(InventoryModel.builder().hotbar(0, tool).build());
+        EquipmentPanel panel = new EquipmentPanel();
+        screen.configureEquipInteractionForTests(null, panel);
+        screen.registerAuthoritativeBarListenersForTests();
+        assertTrue(screen.beginQuickUseEquipDragForTests(tool, 1));
+        assertTrue(screen.isDraggingForTests());
+        assertTrue(sent.isEmpty(), "拖起链接不能解绑或移动实际物品");
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
+
+        assertFalse(committed, "expected QUICK_USE source without InvLocation to be rejected, actual true");
+        assertEquals(
+            tool,
+            screen.quickUseItemForTests(1),
+            "拒绝库存移动后应保留原快捷链接"
+        );
+        assertFalse(screen.isDraggingForTests(), "取消链接拖拽不需要等待网络确认");
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().isEmpty(),
+            "expected failed QUICK_USE-to-equip move to leave EXTRA_HAND_1 unchanged, actual non-empty"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "链接拖拽不得发送解绑或库存移动请求，实际 " + sent
+        );
+        screen.unregisterAuthoritativeBarListenersForTests();
+    }
+
+    @Test
+    void quickUseLinkDragAndCancelDoNotDependOnTransport() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem tool = item(2291L, "stone_pickaxe");
+        screen.registerAuthoritativeBarListenersForTests();
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean beganDrag = screen.beginQuickUseEquipDragForTests(tool, 1);
+
+        assertTrue(beganDrag, "链接拖拽不需要发送解绑请求");
+        screen.returnCurrentDragToSourceForTests();
+        assertFalse(screen.isDraggingForTests(), "取消本地链接拖拽应立即完成");
+        assertEquals(
+            tool,
+            screen.quickUseItemForTests(1),
+            "取消拖拽应保留快捷链接"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejecting backend not to record a quick-slot request, actual " + sent
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsMockInstanceBeforeMutatingTarget() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem mockTool = InventoryItem.create(
+            "stone_pickaxe",
+            "stone_pickaxe",
+            1,
+            1,
+            0.2,
+            "common",
+            "mock instance without authoritative id"
+        );
+        screen.configureEquipInteractionForTests(null, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            mockTool,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 1, 1),
+            EquipSlotType.EXTRA_HAND_0
+        );
+
+        assertFalse(committed, "expected instanceId=0 equip drop to be rejected, actual true");
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected rejected mock-instance drop to leave EXTRA_HAND_0 unchanged, actual non-empty"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected mock-instance drop to send no request, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void dragEquipTransportRejectionRestoresRealGridSource() {
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2295L, "stone_pickaxe");
+        grid.place(tool, 1, 1);
+        screen.configureEquipInteractionForTests(grid, panel);
+        assertTrue(
+            screen.beginGridEquipDragForTests(grid, tool),
+            "expected production grid pickup to start, actual false"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_0);
+
+        assertFalse(committed, "expected rejected local transport to abort equip commit, actual true");
+        assertEquals(
+            tool,
+            grid.itemAt(1, 1),
+            "expected transport rejection to restore the real source grid anchor"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected transport rejection to leave EXTRA_HAND_0 unchanged, actual non-empty"
+        );
+    }
+
+    @Test
+    void dragEquipTransportExceptionRestoresRealGridSource() {
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2296L, "stone_pickaxe");
+        grid.place(tool, 0, 2);
+        screen.configureEquipInteractionForTests(grid, panel);
+        assertTrue(
+            screen.beginGridEquipDragForTests(grid, tool),
+            "expected production grid pickup to start, actual false"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> {
+            throw new IllegalStateException("simulated disconnect");
+        });
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
+
+        assertFalse(committed, "expected transport exception to abort equip commit, actual true");
+        assertEquals(
+            tool,
+            grid.itemAt(0, 2),
+            "expected transport exception to restore the real source grid anchor"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().isEmpty(),
+            "expected transport exception to leave EXTRA_HAND_1 unchanged, actual non-empty"
+        );
+    }
+
+    @Test
+    void packWindowTransportRejectionRestoresExactFloatingSource() {
+        InventoryItem tool = item(2297L, "stone_pickaxe");
+        InventoryModel model = InventoryModel.builder()
+            .containers(List.of(
+                new InventoryModel.ContainerDef("body_pocket", "贴身口袋", 3, 3),
+                new InventoryModel.ContainerDef("pack_500", "测试背包", 3, 3, 500L)
+            ))
+            .gridItem(tool, "pack_500", 1, 2)
+            .build();
+        InspectScreen screen = new InspectScreen(model);
+        BackpackGridPanel ordinaryGrid = new BackpackGridPanel("body_pocket", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        screen.configureEquipInteractionForTests(ordinaryGrid, panel);
+        assertTrue(
+            screen.beginPackGridEquipDragForTests("pack_500", tool),
+            "expected production floating-pack pickup to start, actual false"
+        );
+        assertEquals(
+            null,
+            screen.packGridItemForTests("pack_500", 1, 2),
+            "expected pickup to remove the item from its floating pack before drop"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_0);
+
+        assertFalse(committed, "expected rejected transport to abort floating-pack equip, actual true");
+        assertEquals(
+            tool,
+            screen.packGridItemForTests("pack_500", 1, 2),
+            "expected failure to restore the exact floating pack/container anchor"
+        );
+        assertEquals(
+            null,
+            ordinaryGrid.itemAt(0, 0),
+            "expected floating-pack failure not to leak the item into the active ordinary grid"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected rejected floating-pack move to leave target equipment unchanged"
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsOccupiedExtraHandWithoutDispatch() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.slotFor(EquipSlotType.EXTRA_HAND_0)
+            .setContents(SlotContents.ofHeld(item(2301L, "bone_dagger")));
+        screen.configureEquipInteractionForTests(null, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            item(2302L, "stone_pickaxe"),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            EquipSlotType.EXTRA_HAND_0
+        );
+
+        assertFalse(committed, "expected occupied EXTRA_HAND_0 drag to be rejected, actual true");
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected extra-hand drag to send no InventoryMoveIntent, actual " + sent.size()
+        );
+    }
+
+    @Test
     void dispatchDiscardIntentSendsForInventoryBackedLocations() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
@@ -245,5 +670,21 @@ public class InspectScreenMoveIntentTest {
         ));
 
         assertTrue(sent.isEmpty());
+    }
+
+    private static InventoryItem item(long instanceId, String itemId) {
+        return InventoryItem.createFull(
+            instanceId,
+            itemId,
+            itemId,
+            1,
+            1,
+            0.2,
+            "common",
+            "interaction fixture",
+            1,
+            1.0,
+            1.0
+        );
     }
 }

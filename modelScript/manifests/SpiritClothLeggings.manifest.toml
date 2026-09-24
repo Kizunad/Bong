@@ -1,0 +1,11 @@
+# 灵布衫腿甲（spirit_cloth_leggings）Round 2 人工点名清单。
+# 依据是 server 物品描述「淡青布护腿」；重点核对布片分腿和缠带的轻薄层次。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+hip_and_thigh = { elements = ["hip_", "thigh_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 24, SIDE_R = 14, BACK = 24, SIDE_L = 14, "3/4" = 18 }, mirror = true }
+calf_panels = { elements = ["calf_", "cuff_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 20, SIDE_R = 12, BACK = 20, SIDE_L = 12, "3/4" = 16 }, mirror = true }
+wrap_bands = { elements = ["wrap_band_", "wrap_side_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = { FRONT = 12, SIDE_R = 8, SIDE_L = 8, "3/4" = 10 }, mirror = true }
