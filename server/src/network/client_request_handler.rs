@@ -6042,6 +6042,35 @@ pub(crate) fn handle_alchemy_take_pill(
         combat_params.decay_profiles.as_deref(),
         combat_params.season_state.as_deref(),
     );
+
+    if let ItemEffect::CombatPill { pill_item_id } = &effect {
+        let is_duan_xu_san = crate::alchemy::pill::combat_pill_spec(pill_item_id)
+            .is_some_and(|spec| spec.kind == crate::alchemy::pill::CombatPillKind::DuanXuSan);
+        if is_duan_xu_san
+            && !preflight_duan_xu_san(
+                entity,
+                alchemy_multiplier,
+                foreign_qi.effect_multiplier,
+                cultivations,
+                combat_params,
+                &mut qi_release_resources,
+            )
+        {
+            tracing::warn!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected:断续散缩容释放预检失败"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "take_pill_duan_xu_san_release_unavailable",
+            );
+            return;
+        }
+    }
+
     emit_shelflife_consume_events(
         entity,
         consumed_item.instance_id,
@@ -6120,34 +6149,6 @@ pub(crate) fn handle_alchemy_take_pill(
             "take_pill_food_rejected",
         );
         return;
-    }
-
-    if let ItemEffect::CombatPill { pill_item_id } = &effect {
-        let is_duan_xu_san = crate::alchemy::pill::combat_pill_spec(pill_item_id)
-            .is_some_and(|spec| spec.kind == crate::alchemy::pill::CombatPillKind::DuanXuSan);
-        if is_duan_xu_san
-            && !preflight_duan_xu_san(
-                entity,
-                alchemy_multiplier,
-                foreign_qi.effect_multiplier,
-                cultivations,
-                combat_params,
-                &mut qi_release_resources,
-            )
-        {
-            tracing::warn!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected:断续散缩容释放预检失败"
-            );
-            resync_snapshot(
-                entity,
-                &inventory,
-                clients,
-                player_states,
-                cultivations,
-                "take_pill_duan_xu_san_release_unavailable",
-            );
-            return;
-        }
     }
 
     let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);

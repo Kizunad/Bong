@@ -9727,6 +9727,31 @@ mod external_ingress_tests {
                     .is_none(),
                 "缩容释放预检失败时不得发出 shelf-life 峰值消费事件"
             );
+
+            app.world_mut().entity_mut(entity).insert(
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+            );
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let warnings: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<SpoilConsumeWarning>>()
+                .drain()
+                .collect();
+            assert_eq!(warnings.len(), 1, "预检通过的同条件服丹应发出腐坏消费事件");
+            assert_eq!(warnings[0].severity, SpoilSeverity::Sharp);
         }
 
         #[test]
