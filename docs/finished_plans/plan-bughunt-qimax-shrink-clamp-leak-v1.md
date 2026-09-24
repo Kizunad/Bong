@@ -145,6 +145,9 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - `3167a1420`（2026-09-24）：补充断续散预检拒绝时不发 shelf-life 消费事件的契约断言。
 - `c7aea8679`（2026-09-24）：将断续散预检前置到 shelf-life 事件之前，并加入预检拒绝/通过的事件对照测试。
 - `7e7e8060a`（2026-09-24）：修正账本事务适配的自动解引用以通过 clippy 门禁。
+- `586212d67`（2026-09-24）：抽出统一的正 excess 判定，让断续散预检与实际缩容对任意正 excess（含 `QI_EPSILON` 内边界）保持一致。
+- `90cf44aa0`（2026-09-24）：补充 `probe_transaction` 只读语义文档与余额、审计、zone 灵气不变的契约测试。
+- `92619c3c0`（2026-09-24）：合并最新 `origin/main`，并对叠加后的 server 代码完成全量复验。
 
 ### 测试结果
 
@@ -158,6 +161,8 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - 第三轮 Kody 返工目标回归：同一 shelf-life 腐坏条件下，预检失败不发 `SpoilConsumeWarning`，补齐 `LifeRecord` 使预检通过后恰发一条 `SpoilConsumeWarning`。
 - 第三轮返工完整 server 门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,594 passed、0 failed、6 ignored。
 - `git fetch origin && git merge origin/main`：主线已是最新，无新增变更，沿用上述完整门禁结果。
+- 第四轮返工目标回归：tiny positive excess（`0 < excess <= QI_EPSILON`）在缺少释放资源时，预检与实际缩容均 fail-closed；`probe_transaction` 试算后余额、transfers 数量与 zone 灵气均保持不变。
+- 第四轮返工合并主线后的完整 server 门禁（2026-09-24 CST）：`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 均通过；cargo test 汇总为 12,604 passed、0 failed、6 ignored，doc-tests 为 3 passed、0 failed、5 ignored。
 
 ### 跨仓库核验
 
