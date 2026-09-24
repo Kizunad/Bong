@@ -141,6 +141,10 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - `c48f70d46`（2026-09-24）：合并主线复验；`origin/main` 为 `64e996dd2ed9514bffad4f6c45666380efe2faa7`。
 - `08507474c`（2026-09-24）：第二轮 Kody 返工，将断续散缩容释放可行性预检提前到扣丹药、写丹毒之前，并补齐拒绝路径契约测试。
 - `45e5d13af`（2026-09-24）：合并最新主线 `5bdead4a656f4502ae839c2ecb8c8a4cf9a2ba49` 后复验 server 门禁。
+- `b2d3da0fe`（2026-09-24）：第三轮 Kody 返工复用 #2314 的 touched-balance 账本事务，预检不再深拷贝审计历史。
+- `3167a1420`（2026-09-24）：补充断续散预检拒绝时不发 shelf-life 消费事件的契约断言。
+- `c7aea8679`（2026-09-24）：将断续散预检前置到 shelf-life 事件之前，并加入预检拒绝/通过的事件对照测试。
+- `7e7e8060a`（2026-09-24）：修正账本事务适配的自动解引用以通过 clippy 门禁。
 
 ### 测试结果
 
@@ -151,6 +155,9 @@ Server 完整门禁：`scripts/build-token.sh cargo fmt --check` 通过；`scrip
 - `git fetch origin && git merge origin/main` 后重跑完整门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,593 passed、0 failed、6 ignored。主线新增测试使 passed 数增加 1。
 - 第二轮 Kody 返工目标回归：`duan_xu_san_release_preflight_rejects_before_consumption` 通过，确认预检失败时丹药、丹毒、伤口、`qi_max`、`qi_current`、zone 与账本均不变，并发出背包重同步。
 - 合并最新主线后重跑完整 server 门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,594 passed、0 failed、6 ignored。
+- 第三轮 Kody 返工目标回归：同一 shelf-life 腐坏条件下，预检失败不发 `SpoilConsumeWarning`，补齐 `LifeRecord` 使预检通过后恰发一条 `SpoilConsumeWarning`。
+- 第三轮返工完整 server 门禁：fmt、clippy、cargo test 均通过；cargo test 汇总为 12,594 passed、0 failed、6 ignored。
+- `git fetch origin && git merge origin/main`：主线已是最新，无新增变更，沿用上述完整门禁结果。
 
 ### 跨仓库核验
 
