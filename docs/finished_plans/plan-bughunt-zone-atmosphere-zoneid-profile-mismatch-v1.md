@@ -72,7 +72,7 @@
 - **落地清单**：
   - P0：`client/src/test/java/com/bong/client/atmosphere/ZoneAtmosphereTest.java` 新增 live zone id、direct-first、TSY、空值/空白与未知 zone 的契约测试；历史修复前 JDK 17 targeted run 为 25 tests / 2 failed，失败点即 live-zone alias；本次移植提交为 `d412733ce`。
   - P1：`client/src/main/java/com/bong/client/atmosphere/ZoneAtmosphereProfileRegistry.java` 新增 `LIVE_ZONE_PROFILE_IDS`，统一 `forZone` / `hasProfile` 的 direct-first 解析，并把既有 `dan_zong_yi_yuan.json` 纳入 required/fallback registry；本次移植提交为 `d91942001`、`a405a8c3c`。
-  - P2：Java 17 client targeted 与完整门禁全绿；主线同步后的复验结果记录在下方。
+  - P2：Java 17 client targeted 与完整门禁全绿；主线同步后重新跑过 client，并对主线带入的 agent 变更执行了 schema/tiandao 门禁。
 - **关键 commit**（本次接续，2026-09-24；括号内为原本地来源）：
   - `9b05a775b`：升格 active plan（来源 `5391bc49a`）。
   - `d412733ce`：加入 live zone 映射契约（来源 `ce04a4ccc`）。
@@ -82,14 +82,17 @@
 - **测试结果**：
   - 修复前（历史来源）：`JAVA_HOME=$HOME/.cache/codex-jdks/jdk-17 ./gradlew test --tests com.bong.client.atmosphere.ZoneAtmosphereTest` → 25 tests，2 failed（预期 RED）。
   - 修复后 targeted：`scripts/build-token.sh gradle test --tests com.bong.client.atmosphere.ZoneAtmosphereTest` → 26/26 PASS。
-  - 完整 client gate：`JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH scripts/build-token.sh gradle test build` → 584 suites / 5055 tests / 0 failures / 0 errors / 0 skipped，BUILD SUCCESSFUL。
-  - 主线同步：待 `git fetch origin` + `git merge origin/main` 后写入真实 merge 结果，并在合并带入 client 变更时重新执行上述完整 gate。
+  - 完整 client gate（主线同步前）：`JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH scripts/build-token.sh gradle test build --rerun-tasks` → 584 suites / 5055 tests / 0 failures / 0 errors / 0 skipped，21 actionable tasks 全执行，BUILD SUCCESSFUL。
+  - 主线同步：`git fetch origin` 后 `origin/main=6d7e1699b8cc3025c8ffe5c2b211c4c9fa7049fe`；`git merge origin/main` 无冲突，产生 merge commit `d454aaf1b2725f45627340e196a8f0c0a88dd6db`。合入内容触及 agent runtime/test，未触及本 plan 的 client 文件。
+  - 主线同步后 client 复验：同一 Java 17 `scripts/build-token.sh gradle test build --rerun-tasks` → 584 suites / 5055 tests / 0 failures / 0 errors / 0 skipped，21 actionable tasks 全执行，BUILD SUCCESSFUL。
+  - 主线同步后 agent 复验：`npm ci`；`npm run build -w @bong/schema`；`npm test -w @bong/schema` → 33 files / 913 tests passed；`npm test`（`agent/packages/tiandao`）→ 72 files / 873 tests passed。
 - **validator 证据**：
   - 首轮 `FAIL 7907bc283007eb82dd8a83fa373301534385f734`：发现 `dan_zong_yi_yuan` 漏注册与 alias 遮蔽 direct key；已返工。
   - 修复关口 `PASS 5c53259580211c28e39fd707db928301440bdea4`：9 个 atmosphere JSON 全注册，direct/alias/fallback 语义与 JDK 17 26/26 测试成立。
-  - 主线同步关口 `PASS 5c53259580211c28e39fd707db928301440bdea4`：最新 `origin/main` 无漂移，完整 client gate 证据成立。
+  - 主线同步关口 `PASS d454aaf1b2725`：最新 `origin/main` 合入无冲突；client、schema、tiandao 复验均通过。
 - **跨栈核验**：
   - server：继续由 `send_player_state_payload_to_client` / `zone_name_for_position` 下发 live `Zone.name`，本修复不改 wire。
   - client：`ZoneAtmospherePlanner` 仍从 `ZoneState.zoneId()` 调 `ZoneAtmosphereProfileRegistry.forZone`，现能命中已有视觉 profile；未新增或修改视觉资产。
-  - agent/worldgen：无代码或契约改动；只复用既有 terrain/atmosphere 资源对应关系。
+  - agent：主线同步带入 `agent/packages/tiandao/src/runtime.ts` 与对应测试更新，已用 slot-2 自己的依赖完成 schema/tiandao 门禁；本 plan 的 atmosphere 契约仍只在 client registry 内闭环。
+  - worldgen：无代码或契约改动；只复用既有 terrain/atmosphere 资源对应关系。
 - **遗留 / 后续**：dynamic zone 若需自定义 atmosphere profile，应另立 plan 设计显式字段；本修复不扩大协议。实机逐 zone 截图由 PR e2e/人工视觉验收继续承担，不影响本次确定性 lookup 契约闭环。
