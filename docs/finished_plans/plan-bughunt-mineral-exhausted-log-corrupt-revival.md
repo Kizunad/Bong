@@ -103,6 +103,14 @@
 - P2：同文件覆盖成功 roundtrip、临时文件清理、失败后 final 字节保持、重启 `hydrated_from_path` 保留旧 entry、清除阻塞后 dirty 重试；`server/src/mineral/anchors.rs::startup_spawns_index_entries_and_skips_exhausted_positions` 保持启动物化跳过契约。
 - P3：在最新 `origin/main` 上完成 server fmt、clippy、全量测试门禁，并将 active plan 归档至 `docs/finished_plans/`。
 
+### 接入面
+
+- 进料：`server/src/mineral/break_handler.rs` 发出 `MineralExhaustedEvent`；`server/src/mineral/persistence.rs::record_exhausted_minerals` 读取事件并调用 `ExhaustedMineralsLog::record`。
+- 出料：`ExhaustedMineralsLog::flush` 写入 `data/minerals/exhausted.json`；`load_exhausted_log` 与 `ExhaustedMineralsLog::hydrated_from_path` 读取持久化结果；`spawn_mineral_anchor_nodes` 消费 entries 生成启动跳过集合。
+- 复用类型：`MineralExhaustedEvent`、`ExhaustedEntry`、`ExhaustedLogFile`、`ExhaustedMineralsLog`。
+- server 契约：`ExhaustedMineralsLog::flush` 采用同目录临时文件加原子替换，失败时保留上一份 final 文件并保持 dirty。
+- agent/client 无变更；`server/src/mineral` 未接入 `qi_physics`，本修复不涉及真元账本。
+
 ### 关键 commit
 
 - `20e167158`（2026-09-24）：升格矿脉耗尽日志原子刷盘 BugFix 计划。

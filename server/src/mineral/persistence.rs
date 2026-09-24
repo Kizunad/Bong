@@ -172,6 +172,9 @@ impl ExhaustedMineralsLog {
         let tmp_path = self.file_path.with_extension("tmp");
         fs::write(&tmp_path, json)
             .map_err(|e| format!("write {} failed: {e}", tmp_path.display()))?;
+        // 这里是日志刷盘的原子替换语义，需要替换上一份有效 final 文件。
+        // 临时文件与目标文件同目录，保证 rename 在同一文件系统内原子完成。
+        // 这不是进程所有权发布，不使用 RENAME_NOREPLACE。
         fs::rename(&tmp_path, &self.file_path).map_err(|e| {
             format!(
                 "rename {} to {} failed: {e}",
