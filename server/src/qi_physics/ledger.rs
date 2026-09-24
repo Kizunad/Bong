@@ -682,7 +682,7 @@ impl QiLedgerOps for valence::prelude::ResMut<'_, WorldQiAccount> {
         amount: f64,
         reason: QiTransferReason,
     ) -> Result<Option<QiTransfer>, QiPhysicsError> {
-        transfer_external_qi_to_ledger(&mut **self, from, to, amount, reason)
+        transfer_external_qi_to_ledger(self, from, to, amount, reason)
     }
 
     fn push_transfer_audit(&mut self, transfer: QiTransfer) {
