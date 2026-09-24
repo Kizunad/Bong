@@ -543,6 +543,18 @@ pub(crate) struct WorldQiAccountTransaction<'a> {
     transfers: Vec<QiTransfer>,
 }
 
+pub(crate) trait QiLedgerOps {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError>;
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer);
+}
+
 impl WorldQiAccountTransaction<'_> {
     fn balance(&self, account: &QiAccountId) -> f64 {
         match self.changes.get(account) {
@@ -646,6 +658,54 @@ impl WorldQiAccountTransaction<'_> {
     }
 }
 
+impl QiLedgerOps for WorldQiAccount {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        transfer_external_qi_to_ledger(self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
+impl QiLedgerOps for valence::prelude::ResMut<'_, WorldQiAccount> {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        transfer_external_qi_to_ledger(&mut **self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
+impl QiLedgerOps for WorldQiAccountTransaction<'_> {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        WorldQiAccountTransaction::transfer_external_qi_to_ledger(self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
 impl WorldQiAccount {
     /// 在不复制既有审计历史的前提下执行失败原子的账本操作。
     pub(crate) fn with_transaction<T>(
@@ -675,6 +735,18 @@ impl WorldQiAccount {
         }
         self.transfers.extend(transfers);
         Ok(value)
+    }
+
+    pub(crate) fn probe_transaction<T>(
+        &mut self,
+        operation: impl FnOnce(&mut WorldQiAccountTransaction<'_>) -> T,
+    ) -> T {
+        let mut transaction = WorldQiAccountTransaction {
+            base_balances: &self.balances,
+            changes: BTreeMap::new(),
+            transfers: Vec::new(),
+        };
+        operation(&mut transaction)
     }
 
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {

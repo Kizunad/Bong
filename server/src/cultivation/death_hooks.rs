@@ -23,6 +23,7 @@ use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
+use crate::qi_physics::ledger::QiLedgerOps;
 use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
@@ -76,18 +77,18 @@ type TerminatedPlayerQueryItem<'a> = (
     Option<&'a LifeRecord>,
 );
 
-pub(crate) struct QiMaxShrinkReleaseContext<'a> {
+pub(crate) struct QiMaxShrinkReleaseContext<'a, L: QiLedgerOps + ?Sized = WorldQiAccount> {
     pub(crate) entity: Entity,
     pub(crate) position: Option<&'a Position>,
     pub(crate) current_dimension: Option<&'a CurrentDimension>,
     pub(crate) life_record: Option<&'a LifeRecord>,
     pub(crate) zones: Option<&'a mut ZoneRegistry>,
-    pub(crate) ledger: Option<&'a mut WorldQiAccount>,
+    pub(crate) ledger: Option<&'a mut L>,
     pub(crate) qi_transfers: Option<&'a mut Events<QiTransfer>>,
     pub(crate) source: &'static str,
 }
 
-impl QiMaxShrinkReleaseContext<'_> {
+impl<L: QiLedgerOps + ?Sized> QiMaxShrinkReleaseContext<'_, L> {
     pub(crate) fn shrink_qi_max(&mut self, cultivation: &mut Cultivation, new_qi_max: f64) -> bool {
         let excess = (cultivation.qi_current - new_qi_max).max(0.0);
         if excess > 0.0 && !self.release_excess(cultivation, excess) {
@@ -116,7 +117,7 @@ impl QiMaxShrinkReleaseContext<'_> {
             return false;
         };
 
-        match release_qi_amount_to_zone(
+        match release_qi_amount_to_zone_with_ledger(
             cultivation,
             amount,
             self.position,
@@ -434,6 +435,31 @@ pub fn release_qi_amount_to_zone(
     life_record: Option<&LifeRecord>,
     zones: Option<&mut ZoneRegistry>,
     ledger: &mut WorldQiAccount,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    source: &'static str,
+) -> Result<QiFlowOutcome, QiFlowError> {
+    release_qi_amount_to_zone_with_ledger(
+        cultivation,
+        amount,
+        position,
+        current_dimension,
+        life_record,
+        zones,
+        ledger,
+        qi_transfers,
+        source,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn release_qi_amount_to_zone_with_ledger<L: QiLedgerOps + ?Sized>(
+    cultivation: &mut Cultivation,
+    amount: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    zones: Option<&mut ZoneRegistry>,
+    ledger: &mut L,
     mut qi_transfers: Option<&mut Events<QiTransfer>>,
     source: &'static str,
 ) -> Result<QiFlowOutcome, QiFlowError> {

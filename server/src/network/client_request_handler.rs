@@ -130,7 +130,7 @@ use crate::player::state::{
 };
 use crate::qi_physics::attrition::{apply_attrition_checked_with_ledger, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
-use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer, WorldQiAccount};
+use crate::qi_physics::ledger::{AttritionOpKind, QiLedgerOps, QiTransfer, WorldQiAccount};
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
@@ -6050,7 +6050,6 @@ pub(crate) fn handle_alchemy_take_pill(
         &mut combat_params.spoil_warnings,
         &mut combat_params.age_bonus_rolls,
     );
-
     if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` blocked by spoil CriticalBlock"
@@ -6616,48 +6615,58 @@ fn preflight_duan_xu_san(
     };
     let mut staged_wounds = wounds.clone();
     let mut staged_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
+    let new_qi_max = (staged_cultivation.qi_max * 0.97).max(0.0);
+    if (staged_cultivation.qi_current - new_qi_max).max(0.0)
+        <= crate::qi_physics::constants::QI_EPSILON
+    {
+        return true;
+    }
+    let Some(ledger) = qi_release_resources.ledger.as_deref_mut() else {
+        return false;
+    };
+    if qi_release_resources.transfers.is_none() {
+        return false;
+    }
     let (realm_pos_scale, _) =
         crate::alchemy::pill::mortal_pill_realm_scale(staged_cultivation.realm);
     let success_scale =
         (realm_pos_scale * alchemy_multiplier as f32 * foreign_qi_multiplier as f32).max(0.0);
     let mut staged_zones = qi_release_resources.zones.as_deref().cloned();
-    let mut staged_ledger = qi_release_resources.ledger.as_deref().cloned();
     let mut staged_transfers = Events::default();
-    let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
-        entity,
-        position: combat_params.positions.get(entity).ok(),
-        current_dimension: combat_params.dimensions.get(entity).ok(),
-        life_record: combat_params.life_records.get(entity).ok(),
-        zones: staged_zones.as_mut(),
-        ledger: staged_ledger.as_mut(),
-        qi_transfers: qi_release_resources
-            .transfers
-            .as_ref()
-            .map(|_| &mut staged_transfers),
-        source: "combat_pill:duan_xu_san",
-    };
+    ledger.probe_transaction(|transaction| {
+        let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
+            entity,
+            position: combat_params.positions.get(entity).ok(),
+            current_dimension: combat_params.dimensions.get(entity).ok(),
+            life_record: combat_params.life_records.get(entity).ok(),
+            zones: staged_zones.as_mut(),
+            ledger: Some(transaction),
+            qi_transfers: Some(&mut staged_transfers),
+            source: "combat_pill:duan_xu_san",
+        };
 
-    try_apply_duan_xu_san_mend(
-        &mut staged_wounds,
-        &mut staged_cultivation,
-        success_scale,
-        &mut qi_release,
-    )
+        try_apply_duan_xu_san_mend(
+            &mut staged_wounds,
+            &mut staged_cultivation,
+            success_scale,
+            &mut qi_release,
+        )
+    })
 }
 
-fn shrink_qi_max_for_duan_xu_san(
+fn shrink_qi_max_for_duan_xu_san<L: QiLedgerOps + ?Sized>(
     cultivation: &mut Cultivation,
-    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_>,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_, L>,
 ) -> bool {
     let new_qi_max = (cultivation.qi_max * 0.97).max(0.0);
     qi_release.shrink_qi_max(cultivation, new_qi_max)
 }
 
-fn try_apply_duan_xu_san_mend(
+fn try_apply_duan_xu_san_mend<L: QiLedgerOps + ?Sized>(
     wounds: &mut Wounds,
     cultivation: &mut Cultivation,
     success_scale: f32,
-    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_>,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_, L>,
 ) -> bool {
     let target = crate::alchemy::pill::worst_severed_part(wounds);
     if !shrink_qi_max_for_duan_xu_san(cultivation, qi_release) {
