@@ -13,7 +13,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{
     qi_flow_overflow_account, reject_audit_only_qi_reason, transfer_external_qi_to_ledger,
-    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    QiAccountId, QiLedgerOps, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::qi_physics::{finite_non_negative, QiPhysicsError};
@@ -358,10 +358,10 @@ impl Cultivation {
 
     /// 从活体释放 raw qi。zone 可缺失；zone 装不下或无法定位时，余量进入持久化
     /// `qi_flow_overflow` 账户，绝不以 emit-only event 冒充真实落账。
-    pub(crate) fn release_to_zone(
+    pub(crate) fn release_to_zone<L: QiLedgerOps + ?Sized>(
         &mut self,
         zone: Option<&mut Zone>,
-        ledger: &mut WorldQiAccount,
+        ledger: &mut L,
         actor: &ActorQiIdentity,
         requested: f64,
         reason: QiTransferReason,
@@ -604,11 +604,11 @@ pub(crate) fn transfer_cultivation_to_external_owner(
 ///
 /// source 字段、signed zone、稳定 overflow 与审计共用活体事务的同一失败原子性边界；
 /// durable identity 必须由调用方明确提供，禁止在这里从 `Entity` debug 文本兜底。
-pub(crate) fn release_external_qi_to_zone(
+pub(crate) fn release_external_qi_to_zone<L: QiLedgerOps + ?Sized>(
     source_current: &mut f64,
     source_account: QiAccountId,
     zone: Option<&mut Zone>,
-    ledger: &mut WorldQiAccount,
+    ledger: &mut L,
     requested: f64,
     reason: QiTransferReason,
 ) -> Result<QiFlowOutcome, QiFlowError> {
@@ -699,8 +699,7 @@ pub(crate) fn release_external_qi_to_zone(
 
     // 唯一可能失败的真实账本写入先提交；它失败时 external source/zone/audit 均未改变。
     if let Some(transfer) = overflow_transfer.as_ref() {
-        transfer_external_qi_to_ledger(
-            ledger,
+        ledger.transfer_external_qi_to_ledger(
             transfer.from.clone(),
             transfer.to.clone(),
             transfer.amount,

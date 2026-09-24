@@ -130,7 +130,7 @@ use crate::player::state::{
 };
 use crate::qi_physics::attrition::{apply_attrition_checked_with_ledger, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
-use crate::qi_physics::ledger::{AttritionOpKind, WorldQiAccount};
+use crate::qi_physics::ledger::{AttritionOpKind, QiLedgerOps, QiTransfer, WorldQiAccount};
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
@@ -404,6 +404,7 @@ pub struct CombatRequestParams<'w, 's> {
     /// plan-race-system-v1 P3a —— 施放门 race gate（`handle_skill_bar_cast` 拥有门后、
     /// 经脉门前判定，见该函数内插入点）。`Option` 与其余 registry 同规则。
     pub cultivations: Query<'w, 's, &'static Cultivation>,
+    pub life_records: Query<'w, 's, &'static crate::cultivation::life_record::LifeRecord>,
     pub body_plans: Option<Res<'w, crate::body_plan::BodyPlanRegistry>>,
     pub race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
 }
@@ -581,6 +582,12 @@ pub struct AlchemyRequestParams<'w, 's> {
         Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
     /// plan-fauna-stitched-beast-v1 P3：叙事容器（M1 修复：兽核吸收后推 player narration）
     pub pending_narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
+}
+
+pub(crate) struct QiMaxShrinkReleaseResources<'a> {
+    pub(crate) zones: Option<&'a mut ZoneRegistry>,
+    pub(crate) ledger: Option<&'a mut WorldQiAccount>,
+    pub(crate) transfers: Option<&'a mut Events<QiTransfer>>,
 }
 
 #[derive(SystemParam)]
@@ -2321,6 +2328,11 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &mut combat_params,
                     &mut dispatch.lifespan_extension_tx,
+                    QiMaxShrinkReleaseResources {
+                        zones: alchemy_params.zones.as_deref_mut(),
+                        ledger: alchemy_params.qi_ledger.as_deref_mut(),
+                        transfers: alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    },
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
                     // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
@@ -4971,6 +4983,7 @@ fn handle_apply_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    qi_release_resources: QiMaxShrinkReleaseResources<'_>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     hallucination_events: Option<
@@ -5003,6 +5016,7 @@ fn handle_apply_pill(
         cultivations,
         combat_params,
         lifespan_extension_tx,
+        qi_release_resources,
         vfx_events,
         audio_events,
         // plan-fauna-stitched-beast-v1 P3 M1 修复：透传幻觉事件和叙事容器
@@ -5966,6 +5980,7 @@ pub(crate) fn handle_alchemy_take_pill(
     cultivations: &Query<&Cultivation>,
     combat_params: &mut CombatRequestParams,
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
+    mut qi_release_resources: QiMaxShrinkReleaseResources<'_>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     hallucination_events: Option<
@@ -6027,6 +6042,35 @@ pub(crate) fn handle_alchemy_take_pill(
         combat_params.decay_profiles.as_deref(),
         combat_params.season_state.as_deref(),
     );
+
+    if let ItemEffect::CombatPill { pill_item_id } = &effect {
+        let is_duan_xu_san = crate::alchemy::pill::combat_pill_spec(pill_item_id)
+            .is_some_and(|spec| spec.kind == crate::alchemy::pill::CombatPillKind::DuanXuSan);
+        if is_duan_xu_san
+            && !preflight_duan_xu_san(
+                entity,
+                alchemy_multiplier,
+                foreign_qi.effect_multiplier,
+                cultivations,
+                combat_params,
+                &mut qi_release_resources,
+            )
+        {
+            tracing::warn!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected:断续散缩容释放预检失败"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "take_pill_duan_xu_san_release_unavailable",
+            );
+            return;
+        }
+    }
+
     emit_shelflife_consume_events(
         entity,
         consumed_item.instance_id,
@@ -6035,7 +6079,6 @@ pub(crate) fn handle_alchemy_take_pill(
         &mut combat_params.spoil_warnings,
         &mut combat_params.age_bonus_rolls,
     );
-
     if matches!(spoil, SpoilCheckOutcome::CriticalBlock { .. }) {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` blocked by spoil CriticalBlock"
@@ -6230,7 +6273,7 @@ pub(crate) fn handle_alchemy_take_pill(
             }
         }
         ItemEffect::CombatPill { pill_item_id } => {
-            apply_combat_pill_runtime(
+            if !apply_combat_pill_runtime(
                 entity,
                 pill_item_id.as_str(),
                 &template.id,
@@ -6247,7 +6290,21 @@ pub(crate) fn handle_alchemy_take_pill(
                 vfx_events,
                 audio_events,
                 clients,
-            );
+                qi_release_resources,
+            ) {
+                tracing::warn!(
+                    "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` runtime rejected after consumption"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "take_pill_runtime_rejected",
+                );
+                return;
+            }
         }
         ItemEffect::MeridianHeal { .. } | ItemEffect::ContaminationCleanse { .. } => {
             let meridians = combat_params.meridians.get_mut(entity).ok();
@@ -6414,12 +6471,13 @@ fn apply_combat_pill_runtime(
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     clients: &mut Query<(&Username, &mut Client)>,
-) {
+    mut qi_release_resources: QiMaxShrinkReleaseResources<'_>,
+) -> bool {
     let Some(spec) = crate::alchemy::pill::combat_pill_spec(pill_item_id) else {
         tracing::warn!(
             "[bong][network][alchemy] take_pill entity={entity:?} `{template_id}` references unknown combat pill `{pill_item_id}`"
         );
-        return;
+        return false;
     };
 
     let base_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
@@ -6451,8 +6509,8 @@ fn apply_combat_pill_runtime(
     let mut touched_cultivation = false;
     if let Ok(mut wounds) = combat_params.wounds.get_mut(entity) {
         use crate::alchemy::pill::{
-            apply_severed_mend, apply_wound_heal, apply_wound_worsen, scaled_grades,
-            worst_non_severed_part, worst_severed_part, CombatPillKind,
+            apply_wound_heal, apply_wound_worsen, scaled_grades, worst_non_severed_part,
+            CombatPillKind,
         };
         match spec.kind {
             CombatPillKind::HuoXueDan => {
@@ -6465,12 +6523,25 @@ fn apply_combat_pill_runtime(
                 apply_wound_heal(&mut wounds, target, grades);
             }
             CombatPillKind::DuanXuSan => {
-                let target = worst_severed_part(&wounds);
-                apply_severed_mend(&mut wounds, target, pos_scale);
                 let qi_max_before = next_cultivation.qi_max;
-                next_cultivation.qi_max = (next_cultivation.qi_max * 0.97).max(0.0);
-                next_cultivation.qi_current =
-                    next_cultivation.qi_current.min(next_cultivation.qi_max);
+                let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
+                    entity,
+                    position: combat_params.positions.get(entity).ok(),
+                    current_dimension: combat_params.dimensions.get(entity).ok(),
+                    life_record: combat_params.life_records.get(entity).ok(),
+                    zones: qi_release_resources.zones.as_deref_mut(),
+                    ledger: qi_release_resources.ledger.as_deref_mut(),
+                    qi_transfers: qi_release_resources.transfers.as_deref_mut(),
+                    source: "combat_pill:duan_xu_san",
+                };
+                if !try_apply_duan_xu_san_mend(
+                    &mut wounds,
+                    &mut next_cultivation,
+                    pos_scale,
+                    &mut qi_release,
+                ) {
+                    return false;
+                }
                 touched_cultivation |=
                     (qi_max_before - next_cultivation.qi_max).abs() > f64::EPSILON;
             }
@@ -6529,6 +6600,85 @@ fn apply_combat_pill_runtime(
         &format!("服下{}，药力入体。", spec.name),
         if realm_pos_scale < 1.0 { 0xFFFFA040 } else { 0 },
     );
+    true
+}
+
+fn preflight_duan_xu_san(
+    entity: Entity,
+    alchemy_multiplier: f64,
+    foreign_qi_multiplier: f64,
+    cultivations: &Query<&Cultivation>,
+    combat_params: &mut CombatRequestParams,
+    qi_release_resources: &mut QiMaxShrinkReleaseResources<'_>,
+) -> bool {
+    let Ok(wounds) = combat_params.wounds.get(entity) else {
+        return true;
+    };
+    let mut staged_wounds = wounds.clone();
+    let mut staged_cultivation = cultivations.get(entity).ok().cloned().unwrap_or_default();
+    let new_qi_max = (staged_cultivation.qi_max * 0.97).max(0.0);
+    if crate::cultivation::death_hooks::qi_max_shrink_release_amount(
+        staged_cultivation.qi_current,
+        new_qi_max,
+    )
+    .is_none()
+    {
+        return true;
+    }
+    let Some(ledger) = qi_release_resources.ledger.as_deref_mut() else {
+        return false;
+    };
+    if qi_release_resources.transfers.is_none() {
+        return false;
+    }
+    let (realm_pos_scale, _) =
+        crate::alchemy::pill::mortal_pill_realm_scale(staged_cultivation.realm);
+    let success_scale =
+        (realm_pos_scale * alchemy_multiplier as f32 * foreign_qi_multiplier as f32).max(0.0);
+    let mut staged_zones = qi_release_resources.zones.as_deref().cloned();
+    let mut staged_transfers = Events::default();
+    ledger.probe_transaction(|transaction| {
+        let mut qi_release = crate::cultivation::death_hooks::QiMaxShrinkReleaseContext {
+            entity,
+            position: combat_params.positions.get(entity).ok(),
+            current_dimension: combat_params.dimensions.get(entity).ok(),
+            life_record: combat_params.life_records.get(entity).ok(),
+            zones: staged_zones.as_mut(),
+            ledger: Some(transaction),
+            qi_transfers: Some(&mut staged_transfers),
+            source: "combat_pill:duan_xu_san",
+        };
+
+        try_apply_duan_xu_san_mend(
+            &mut staged_wounds,
+            &mut staged_cultivation,
+            success_scale,
+            &mut qi_release,
+        )
+    })
+}
+
+fn shrink_qi_max_for_duan_xu_san<L: QiLedgerOps + ?Sized>(
+    cultivation: &mut Cultivation,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_, L>,
+) -> bool {
+    let new_qi_max = (cultivation.qi_max * 0.97).max(0.0);
+    qi_release.shrink_qi_max(cultivation, new_qi_max)
+}
+
+fn try_apply_duan_xu_san_mend<L: QiLedgerOps + ?Sized>(
+    wounds: &mut Wounds,
+    cultivation: &mut Cultivation,
+    success_scale: f32,
+    qi_release: &mut crate::cultivation::death_hooks::QiMaxShrinkReleaseContext<'_, L>,
+) -> bool {
+    let target = crate::alchemy::pill::worst_severed_part(wounds);
+    if !shrink_qi_max_for_duan_xu_san(cultivation, qi_release) {
+        return false;
+    }
+
+    crate::alchemy::pill::apply_severed_mend(wounds, target, success_scale);
+    true
 }
 
 fn emit_combat_pill_feedback(

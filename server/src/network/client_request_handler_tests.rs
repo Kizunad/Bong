@@ -8,15 +8,36 @@ use super::*;
 use crate::combat::components::{WoundKind, Wounds};
 use crate::combat::events::RevivalActionIntent;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
+use crate::cultivation::death_hooks::QiMaxShrinkReleaseContext;
 use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::ItemInstance;
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{
+    assert_conservation, summarize_world_qi, QiAccountId, WorldQiAccount, WorldQiSnapshot,
+};
+use crate::qi_physics::QiTransferReason;
+use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    ident, App, BlockPos, DVec3, Entity, EntityLayerId, IntoSystemConfigs, Update,
+    ident, App, BlockPos, DVec3, Entity, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
 };
 use valence::testing::create_mock_client;
+
+fn summarize_qi_state_for_test(
+    cultivation: &Cultivation,
+    zones: &ZoneRegistry,
+    ledger: &WorldQiAccount,
+) -> WorldQiSnapshot {
+    let mut world = bevy_ecs::world::World::new();
+    world.spawn(cultivation.clone());
+    world.insert_resource(zones.clone());
+    world.insert_resource(ledger.clone());
+    summarize_world_qi(&mut world)
+}
 
 #[test]
 fn combat_pill_buff_status_payload_preserves_hud_fields() {
@@ -28,6 +49,175 @@ fn combat_pill_buff_status_payload_preserves_hud_fields() {
     assert_eq!(value["buff_id"], "tie_bi_san");
     assert_eq!(value["remaining_ticks"], 3600);
     assert_eq!(value["effect_multiplier"], 1.25);
+}
+
+#[test]
+fn duan_xu_san_shrinks_qi_max_without_release_when_current_fits() {
+    let mut cultivation = Cultivation {
+        qi_current: 90.0,
+        qi_max: 100.0,
+        ..Default::default()
+    };
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(500),
+        position: None,
+        current_dimension: None,
+        life_record: None,
+        zones: None,
+        ledger: None,
+        qi_transfers: None,
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, 97.0);
+    assert_eq!(cultivation.qi_current, 90.0);
+}
+
+#[test]
+fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let before = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(501),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL * 0.97);
+    assert_eq!(cultivation.qi_current, cultivation.qi_max);
+    let zone = zones
+        .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+        .expect("player zone should receive qi released by the cap shrink");
+    let released = SPIRIT_QI_TOTAL * 0.03;
+    assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
+
+    let mut reader = transfers.get_reader();
+    let emitted: Vec<_> = reader.read(&transfers).cloned().collect();
+    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted[0].from, QiAccountId::player("offline:duan-xu-san"));
+    assert_eq!(emitted[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+    assert!((emitted[0].amount - released).abs() < 1e-9);
+    assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
+
+    let after = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_conservation(&before, &after, 0.0).expect("断续散缩减真元上限后应将差额完整释放到 zone");
+}
+
+#[test]
+fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut wounds = Wounds {
+        entries: vec![crate::combat::components::Wound {
+            location: crate::body_plan::BodyPartId::new("leg_l"),
+            kind: WoundKind::Blunt,
+            severity: 0.95,
+            bleeding_per_sec: 2.0,
+            created_at_tick: 1,
+            inflicted_by: None,
+        }],
+        ..Default::default()
+    };
+    let wounds_before = serde_json::to_value(&wounds).unwrap();
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(502),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: None,
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!try_apply_duan_xu_san_mend(
+        &mut wounds,
+        &mut cultivation,
+        1.0,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(
+        serde_json::to_value(&wounds).unwrap(),
+        wounds_before,
+        "断续散缩容释放失败时不得接骨"
+    );
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(ledger.total(), 0.0);
+    assert_eq!(transfers.len(), 0);
+}
+
+#[test]
+fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(503),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: None,
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(transfers.len(), 0);
 }
 
 #[test]
@@ -1603,8 +1793,10 @@ mod external_ingress_tests {
             BotanyHarvestMode, BotanyPhase, HarvestSession, HarvestSessionStore,
         };
         use crate::botany::registry::BotanyPlantId;
-        use crate::combat::components::{Lifecycle, UnlockedStyles, WoundKind, Wounds};
-        use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+        use crate::combat::components::{Lifecycle, UnlockedStyles, Wound, WoundKind, Wounds};
+        use crate::cultivation::components::{
+            Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+        };
         use crate::cultivation::known_techniques::KnownTechniques;
         use crate::cultivation::tribulation::TribulationState;
         use crate::forge::session::{ForgeSession, StepState};
@@ -1619,6 +1811,8 @@ mod external_ingress_tests {
         use crate::npc::faction::{
             FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
         };
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use crate::schema::common::SPIRIT_QI_TOTAL;
         use crate::skill::components::{ScrollId, SkillId, SkillSet};
         use crate::zhenfa::trap_content::TrapTargetFace;
         use crate::zhenfa::{
@@ -1631,6 +1825,31 @@ mod external_ingress_tests {
         };
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
+
+        fn combat_pill_item(instance_id: u64) -> ItemInstance {
+            ItemInstance {
+                instance_id,
+                template_id: "duan_xu_san".to_string(),
+                display_name: "duan_xu_san".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.1,
+                rarity: ItemRarity::Rare,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            }
+        }
 
         fn mark_test_layer_as_overworld(app: &mut App) {
             let world = app.world_mut();
@@ -9344,6 +9563,219 @@ mod external_ingress_tests {
             let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
             assert!(inventory.containers[0].items.is_empty());
             assert_eq!(inventory.revision.0, 1);
+        }
+
+        #[test]
+        fn duan_xu_san_release_preflight_rejects_before_consumption() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+
+            let mut duan_xu_san = ItemTemplate::minimal_for_test("duan_xu_san");
+            duan_xu_san.category = ItemCategory::Pill;
+            duan_xu_san.effect = Some(ItemEffect::CombatPill {
+                pill_item_id: "duan_xu_san".to_string(),
+            });
+            app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+                "duan_xu_san".to_string(),
+                duan_xu_san,
+            )])));
+            app.insert_resource(WorldQiAccount::default());
+            let spoil_profile = crate::shelflife::DecayProfile::Spoil {
+                id: crate::shelflife::DecayProfileId::new("duan_xu_san_preflight_spoil"),
+                formula: crate::shelflife::DecayFormula::Exponential {
+                    half_life_ticks: 100,
+                },
+                spoil_threshold: 60.0,
+            };
+            let mut decay_profiles = DecayProfileRegistry::new();
+            decay_profiles.insert(spoil_profile.clone()).unwrap();
+            app.insert_resource(decay_profiles);
+            app.add_event::<SpoilConsumeWarning>();
+            app.add_event::<AgeBonusRoll>();
+            app.world_mut().resource_mut::<CombatClock>().tick = 100;
+
+            let mut pill = combat_pill_item(77);
+            pill.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &spoil_profile));
+            let inventory = inventory_with_item(pill);
+            let wounds = Wounds {
+                entries: vec![Wound {
+                    location: crate::body_plan::BodyPartId::new("leg_l"),
+                    kind: WoundKind::Cut,
+                    severity: 0.95,
+                    bleeding_per_sec: 2.0,
+                    created_at_tick: 1,
+                    inflicted_by: None,
+                }],
+                ..Default::default()
+            };
+            let wounds_before = serde_json::to_value(&wounds).unwrap();
+            let qi_before = Cultivation {
+                qi_current: QI_EPSILON,
+                qi_max: QI_EPSILON,
+                ..Default::default()
+            };
+
+            let tiny_excess = crate::cultivation::death_hooks::qi_max_shrink_release_amount(
+                qi_before.qi_current,
+                qi_before.qi_max * 0.97,
+            )
+            .expect("tiny positive excess must still require a release");
+            assert!(tiny_excess > 0.0 && tiny_excess <= QI_EPSILON);
+            let mut runtime_cultivation = qi_before.clone();
+            let mut runtime_release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> =
+                QiMaxShrinkReleaseContext {
+                    entity: Entity::from_raw(504),
+                    position: None,
+                    current_dimension: None,
+                    life_record: None,
+                    zones: None,
+                    ledger: None,
+                    qi_transfers: None,
+                    source: "combat_pill:duan_xu_san",
+                };
+            assert!(
+                !shrink_qi_max_for_duan_xu_san(&mut runtime_cultivation, &mut runtime_release,),
+                "实际缩容对 tiny excess 缺少 LifeRecord 时必须拒绝"
+            );
+            assert_eq!(runtime_cultivation.qi_max, qi_before.qi_max);
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    qi_before.clone(),
+                    PlayerState::default(),
+                    wounds,
+                    Contamination::default(),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let zone_qi_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .expect("fallback zone should exist")
+                .spirit_qi;
+            let ledger_qi_before = app.world().resource::<WorldQiAccount>().total();
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+            assert_eq!(inventory.revision.0, 0, "拒绝服丹不得推进背包 revision");
+            assert_eq!(
+                inventory.containers[0].items[0].instance.stack_count, 1,
+                "缩容释放预检失败时丹药不得被扣除"
+            );
+            assert!(
+                has_inventory_snapshot_payload(&mut helper),
+                "拒绝服丹应沿现有路径重同步背包快照"
+            );
+
+            let contamination = app.world().get::<Contamination>(entity).unwrap();
+            assert!(
+                contamination.entries.is_empty(),
+                "缩容释放预检失败时不得写入断续散丹毒"
+            );
+            assert_eq!(
+                serde_json::to_value(app.world().get::<Wounds>(entity).unwrap()).unwrap(),
+                wounds_before,
+                "缩容释放预检失败时不得接骨"
+            );
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(cultivation.qi_max, qi_before.qi_max);
+            assert_eq!(cultivation.qi_current, qi_before.qi_current);
+            assert_eq!(
+                app.world()
+                    .resource::<ZoneRegistry>()
+                    .zones
+                    .first()
+                    .expect("fallback zone should exist")
+                    .spirit_qi,
+                zone_qi_before,
+                "缩容释放预检失败时不得向 zone 释放真元"
+            );
+            assert_eq!(
+                app.world().resource::<WorldQiAccount>().total(),
+                ledger_qi_before,
+                "缩容释放预检失败时不得改动真元账本"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<crate::qi_physics::ledger::QiTransfer>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 QiTransfer"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<ApplyStatusEffectIntent>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出正向效果"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<SpoilConsumeWarning>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 腐败消费事件"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<AgeBonusRoll>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 峰值消费事件"
+            );
+
+            app.world_mut().entity_mut(entity).insert(
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+            );
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let warnings: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<SpoilConsumeWarning>>()
+                .drain()
+                .collect();
+            assert_eq!(warnings.len(), 1, "预检通过的同条件服丹应发出腐坏消费事件");
+            assert_eq!(warnings[0].severity, SpoilSeverity::Sharp);
         }
 
         #[test]
