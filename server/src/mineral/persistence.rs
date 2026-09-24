@@ -152,6 +152,9 @@ impl ExhaustedMineralsLog {
     }
 
     /// 强制刷盘 — 测试 / 关服 hook 用。
+    ///
+    /// 原子落盘：先写同目录 `.tmp` 临时文件，成功后再 rename 到最终路径，
+    /// 避免写入失败或进程中断时截断上一份有效的耗尽日志。
     pub fn flush(&mut self) -> Result<(), String> {
         if !self.dirty {
             return Ok(());
@@ -166,8 +169,19 @@ impl ExhaustedMineralsLog {
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("serialize exhausted log failed: {e}"))?;
-        fs::write(&self.file_path, json)
-            .map_err(|e| format!("write {} failed: {e}", self.file_path.display()))?;
+        let tmp_path = self.file_path.with_extension("tmp");
+        fs::write(&tmp_path, json)
+            .map_err(|e| format!("write {} failed: {e}", tmp_path.display()))?;
+        // 这里是日志刷盘的原子替换语义，需要替换上一份有效 final 文件。
+        // 临时文件与目标文件同目录，保证 rename 在同一文件系统内原子完成。
+        // 这不是进程所有权发布，不使用 RENAME_NOREPLACE。
+        fs::rename(&tmp_path, &self.file_path).map_err(|e| {
+            format!(
+                "rename {} to {} failed: {e}",
+                tmp_path.display(),
+                self.file_path.display()
+            )
+        })?;
         self.dirty = false;
         self.flush_clock = 0;
         Ok(())
@@ -322,6 +336,47 @@ mod tests {
     fn flush_writes_json_and_roundtrips() {
         let path = unique_tmp_path("flush_writes");
         let mut log = ExhaustedMineralsLog::default().with_path(&path);
+        let permanent = ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: None,
+        };
+        let respawning = ExhaustedEntry {
+            mineral_id: "sui_tie".into(),
+            x: 1,
+            y: 65,
+            z: 1,
+            tick: 200,
+            respawn_at_tick: Some(800),
+        };
+        log.record(permanent.clone());
+        log.record(respawning.clone());
+        log.flush().expect("flush should succeed");
+
+        let loaded = load_exhausted_log(&path).expect("load should parse");
+        assert_eq!(loaded.version, 1);
+        assert_eq!(
+            loaded.entries,
+            vec![permanent, respawning],
+            "successful atomic flush must roundtrip every exhausted entry"
+        );
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "successful rename must not leave the temporary path behind"
+        );
+        assert!(!log.dirty, "successful flush must clear dirty state");
+
+        // cleanup
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn flush_failure_preserves_existing_final_file_and_dirty_state() {
+        let path = unique_tmp_path("flush_failure_atomic");
+        let mut log = ExhaustedMineralsLog::default().with_path(&path);
         log.record(ExhaustedEntry {
             mineral_id: "fan_tie".into(),
             x: 0,
@@ -330,14 +385,57 @@ mod tests {
             tick: 100,
             respawn_at_tick: None,
         });
-        log.flush().expect("flush should succeed");
+        log.flush().expect("initial flush should succeed");
+        let original = fs::read(&path).expect("initial final file should exist");
 
-        let loaded = load_exhausted_log(&path).expect("load should parse");
-        assert_eq!(loaded.version, 1);
-        assert_eq!(loaded.entries.len(), 1);
-        assert_eq!(loaded.entries[0].mineral_id, "fan_tie");
+        let tmp_path = path.with_extension("tmp");
+        fs::create_dir_all(&tmp_path).expect("tmp path directory should block atomic write");
+        log.record(ExhaustedEntry {
+            mineral_id: "sui_tie".into(),
+            x: 1,
+            y: 65,
+            z: 1,
+            tick: 200,
+            respawn_at_tick: None,
+        });
 
-        // cleanup
+        assert!(
+            log.flush().is_err(),
+            "flush must fail when its temporary path cannot be written"
+        );
+        assert_eq!(
+            fs::read(&path).expect("failed flush must preserve final file"),
+            original,
+            "failed flush must not replace or truncate the last valid exhausted log"
+        );
+        assert!(log.dirty, "failed flush must remain dirty for retry");
+
+        let restarted = ExhaustedMineralsLog::hydrated_from_path(&path);
+        assert_eq!(
+            restarted.entries().len(),
+            1,
+            "restart after failed flush must still hydrate the last valid final file"
+        );
+        assert_eq!(
+            restarted.entries()[0].mineral_id,
+            "fan_tie",
+            "the already exhausted mineral must remain exhausted after restart"
+        );
+
+        fs::remove_dir_all(&tmp_path).expect("remove tmp blocker before retry");
+        log.flush().expect("dirty log should retry successfully");
+        let retried = load_exhausted_log(&path).expect("retry should leave valid final JSON");
+        assert_eq!(
+            retried.entries.len(),
+            2,
+            "successful retry must persist both the old and newly exhausted minerals"
+        );
+        assert!(!log.dirty, "successful retry must clear dirty state");
+        assert!(
+            !tmp_path.exists(),
+            "successful retry must consume the temporary file via rename"
+        );
+
         let _ = fs::remove_file(&path);
     }
 
