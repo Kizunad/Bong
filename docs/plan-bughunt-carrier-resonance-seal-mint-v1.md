@@ -1,5 +1,18 @@
 # BugHunt: 暗器共鸣封印按比例放大真元却只扣基础量，miss 释放真造真元
 
+> 一句话主题：把暗器共鸣从“无来源增量”收口为不超过投入量的封印效率，并以充能、未封印回流、miss 释放的统一账本不变式锁死真元守恒。
+>
+> 阶段总览：P0 验真与方案收口 ⏳ ｜ P1 守恒修复 ⬜ ｜ P2 饱和测试与全栈门禁 ⬜ ｜ P3 主线同步、终验与归档 ⬜
+
+## 接入面
+
+- **进料**：`ChargeCarrierIntent` / `CarrierCharging`、`Cultivation.qi_current`、`PlayerInventory` 中的 `ArtifactColor` 与凹槽深度、`ZoneRegistry`。
+- **出料**：`CarrierImprint.qi_amount` → `QiProjectile.qi_payload`；未封印部分和 miss residual 统一经 `qi_release_to_zone` 回到落点 zone。
+- **共享类型 / event**：复用 `QiTransfer`、`QiAccountId`、`QiTransferReason`、`CarrierChargedEvent`、`ProjectileDespawnedEvent`，不新增平行账户或事件。
+- **跨仓库契约**：纯 server 数值与账本修复；不改 C2S payload、schema、client HUD 或 agent 契约。
+- **worldview 锚点**：`worldview.md` §二/§十真元只能转移、全服总量守恒；暗器离体真元仍受既有距离损耗和 miss 回流规则约束。
+- **qi_physics 锚点**：释放复用 `qi_physics::release::qi_release_to_zone`，折算复用 `QI_ZONE_UNIT_CAPACITY`；封印效率属于装备共鸣系数，保留于 `forge::resonance`，不新增真元物理衰减常量。
+
 ## Bug 摘要
 
 **critical**（skeptic 由 high 调整为 critical）：暗器（anqi）充能封印在 `finish_charge` 里按法器共鸣 resonance 把封印真元量放大到最高 1.2×，但玩家账户只被扣了未放大的基础量；这段被凭空放大的差额没有任何账户承担来源，一旦投射物 miss（`OutOfRange`/`NaturalDecay`，正常投掷即可触发，不需要命中任何目标），该差额会被 `qi_release_to_zone` 真实写进 zone.spirit_qi——玩家只需反复对空/远处投掷即可无限刷真元，直接违反 `CLAUDE.md` 明文的全服真元守恒硬约束（`SPIRIT_QI_TOTAL` 恒定）。
@@ -53,18 +66,29 @@
 
 主循环复核：已亲读关键行确认（`carrier.rs:579-681`/`729-734`/`824-880`/`920-1276`/`1292-1410`、`forge/resonance.rs:35-37`、`qi_physics/release.rs:12-46`），行号与 JSON 引用一致，且额外确认生产环境 `ProjectileDespawnReason::HitBlock` 未被触发（仅测试用），实际可达路径比 skeptic 原文举例的"对墙投掷"更宽松（任意方向投掷即可 `OutOfRange`）。
 
-## Skeleton Fix Plan
+## P0 验真与方案收口 ⏳
 
-真元流动必须走 `qi_physics::ledger` 口径，禁止凭空增减；本 fix 二选一（**决议时二选其一，不并存**，避免叠加式过度设计）：
+### 2026-07-27 pre-P0 决议
 
-**方案 A（推荐）：放大语义改为「效率折损」（≤1.0）**
+1. **确认真 bug**：`finish_charge` 的 full-charge 路径实际扣除量与 `base_qi_amount` 均为 `qi_target`，而 `carrier_seal_efficiency_multiplier(1.0) == 1.2` 使 imprint 可达投入量的 120%；`OutOfRange`/`NaturalDecay` 的 residual 会进入 `qi_release_to_zone`，来源账户仅为审计标签，不校验余额。
+2. **采用方案 A**：封印共鸣定义为“从 80% 折损线性提升到 100% 无损”，公式收口为 `0.8 + 0.2 * clamp(resonance, 0, 1)`。高共鸣正反馈仍由“少损失封印量”与独立的 `damage_resonance_multiplier`（0.7–1.3×）共同承担；不向 zone 借取放大差额，避免跨 zone 套利和新账户状态。
+3. **归还真实未封印量**：成功转换载体时，以实际写入 imprint 的 `qi_amount` 作为 sealed 量；转换失败时 sealed 为 0。`release_unsealed_carrier_qi` 归还 `total_deducted - sealed_qi`，保证折损部分与失败部分均回到 zone。
+4. **范围边界**：不改 `damage_resonance_multiplier`、投射物距离损耗、miss residual 比例、C2S/schema/client；不新增 qi_physics 常量。
+
+**落点**：`server/src/forge/resonance.rs:31-37`、`server/src/combat/carrier.rs:579-734`、本 plan P1/P2。
+
+## P1 守恒修复 ⬜
+
+真元流动必须走 `qi_physics::ledger` 口径，禁止凭空增减；本 fix 已决议采用方案 A，方案 B 仅保留为被拒绝路线的历史记录：
+
+**方案 A（已采纳）：放大语义改为「效率折损」（≤1.0）**
 
 - [ ] 把 `carrier_seal_efficiency_multiplier`（`server/src/forge/resonance.rs:35-37`）的区间从 `[0.8, 1.2]` 改为 `[<下限>, 1.0]`（例如维持下限 0.8，上限钳到 1.0：`0.8 + 0.2 * resonance.clamp(0.0, 1.0)`，resonance 决定"损耗多少"而非"倍增多少"）——数值上限具体取值走 pre-P0 决议（Explore 一次代码现状+平衡性核查，不在本骨架里拍板）。
 - [ ] 确认改动后 `carrier_sealed_qi_amount(base, resonance) <= base` 对任意 `resonance ∈ [0,1]` 恒成立（新增专属边界测试，见验收测试计划）。
 - [ ] 同步修改既有 pin 测试 `carrier_charge_qi_uses_artifact_resonance_efficiency`（carrier.rs:2472-2475）的口径：`carrier_sealed_qi_amount(50.0, Some(1.0))` 期望值需要从 `60.0` 改为新上限对应值（若上限收窄到 1.0，则为 `50.0`）；同时改 `damage_resonance_multiplier` 相关命名/文档若有混淆（该函数是伤害倍率，允许 >1.0，不在本 fix 范围内，需在 PR 描述中明确区分两者不是同一语义，避免误改）。
 - [ ] `release_unsealed_carrier_qi`（L672-679）的 `sealed_base_qi` 语义保持"未放大基数"不变——效率折损方案下 `qi_amount <= base_qi_amount`，未封印回收部分（`total_deducted - qi_amount` 或等价量）需要重新过一遍：改为用 `total_deducted - qi_amount`（放大后/折损后的真实封印量）而不是 `total_deducted - sealed_base_qi`，让"没被封进去的真元"（无论是因为进度不足还是效率折损）**全部**如实归还 zone，不留任何差额悬空。
 
-**方案 B（备选）：放大差额从 zone 现场扣取，不足则按实际扣到的量封印**
+**方案 B（已拒绝）：放大差额从 zone 现场扣取，不足则按实际扣到的量封印**
 
 - [ ] 在 `finish_charge` 计算出 `qi_amount > base_qi_amount` 时，对放大差额 `delta = qi_amount - base_qi_amount` 尝试从玩家当前所在 zone 走 `qi_physics::ledger::QiTransfer { from: QiAccountId::zone(zone_name), to: <封印对应账户或直接算入 imprint 来源标签>, amount: delta, reason: QiTransferReason::... }` 真实扣取（复用 `qi_physics` 既有 zone 扣减路径，不新造公式）。
 - [ ] zone 当前浓度不足以支付 `delta` 时，`qi_amount` 钳到 `base_qi_amount + <zone 实际能扣出的量>`（即"按实际扣到的量封印"），不允许出现 `delta` 部分来源不明的中间态。
@@ -77,7 +101,9 @@
 - [ ] 修复不得触及 `damage_resonance_multiplier`（`resonance.rs:31-33`，伤害倍率，允许 >1.0 是合理的战斗强度设计，不是真元数量问题）——PR 描述需明确写清"只动封印效率，不动伤害倍率"，避免审查者混淆。
 - [ ] 不新增独立衰减/放大公式——效率折损区间收窄如落在 `qi_physics::constants` 覆盖范围内应复用；若纯粹是"combat 特有的封印效率系数"（非全局真元物理常数），可保留在 `forge/resonance.rs` 内，但需在 PR 描述中说明为何不下沉 `qi_physics`（本质是装备强化系数，不是灵气物理衰减公式，符合 CLAUDE.md「新模块出现类衰减率常数」红旗的排除条件——但仍建议开 fix 时显式过一遍 `qi_physics::constants` 确认没有可复用的现成系数）。
 
-## 验收测试计划
+## P2 饱和测试与 server 门禁 ⬜
+
+### 验收测试计划
 
 - **server（`cargo test`）单测 — happy path**：
   - resonance=0.0 时封印效率下限（方案 A：`carrier_seal_efficiency_multiplier(0.0) == 0.8`，保持不变）。
@@ -93,6 +119,12 @@
   - **守恒不变式集成测试（两案通用，必须新增）**：完整走一遍 `begin_charge_carrier → charge_carrier_tick(full_charge) → finish_charge → throw_carrier_intents → projectile_tick_system(触发 OutOfRange) → projectile_miss_qi_release_system`，在测试里手动推进到 `OutOfRange`（构造超过 `ANQI_PROJECTILE_MAX_DISTANCE` 的飞行距离或直接调用 `emit_projectile_despawn` 传入 `OutOfRange`），断言循环前后 `(cultivation.qi_current 减少总量) == (zone.spirit_qi 增加对应的绝对真元量，按 `QI_ZONE_UNIT_CAPACITY` 折算)`，即净变化为 0（允许因 `residual_qi_after_miss` 正常蒸发损耗，蒸发部分不计入 zone，需要断言蒸发量 + zone 归还量 + （若方案B）zone 扣取量在数值上自洽，不出现来源不明的正向净增）。
   - **回归**：resonance 处于会导致旧逻辑放大的区间（如 0.6-1.0）时，`HitTarget` 命中分支（不走 miss 释放）不应受本次修复影响——保留/新增一条 `HitTarget` 分支下伤害计算不变的回归测试，确认没有误伤 `damage_resonance_multiplier`。
 - **测试所在栈**：全部为 `server/` Rust 单测 + 集成测试，跑 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（本 fix 不涉及 client/agent/worldgen，无需跨栈门禁）。
+
+## P3 主线同步、终验与归档 ⬜
+
+- [ ] `git fetch origin && git merge origin/main`，若 HEAD 或相关文件变化则重跑 server 门禁与绑定新 HEAD 的 validator。
+- [ ] 全阶段改为 `✅ 2026-07-27`，补 `## Finish Evidence`，运行 plan finish 校验并迁入 `docs/finished_plans/`。
+- [ ] 最终 HEAD 完成 read-only validator PASS，push claim 分支并创建 PR。
 
 ## 风险
 
