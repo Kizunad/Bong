@@ -342,6 +342,47 @@ mod tests {
     }
 
     #[test]
+    fn flush_failure_preserves_existing_final_file_and_dirty_state() {
+        let path = unique_tmp_path("flush_failure_atomic");
+        let mut log = ExhaustedMineralsLog::default().with_path(&path);
+        log.record(ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: None,
+        });
+        log.flush().expect("initial flush should succeed");
+        let original = fs::read(&path).expect("initial final file should exist");
+
+        let tmp_path = path.with_extension("tmp");
+        fs::create_dir_all(&tmp_path).expect("tmp path directory should block atomic write");
+        log.record(ExhaustedEntry {
+            mineral_id: "sui_tie".into(),
+            x: 1,
+            y: 65,
+            z: 1,
+            tick: 200,
+            respawn_at_tick: None,
+        });
+
+        assert!(
+            log.flush().is_err(),
+            "flush must fail when its temporary path cannot be written"
+        );
+        assert_eq!(
+            fs::read(&path).expect("failed flush must preserve final file"),
+            original,
+            "failed flush must not replace or truncate the last valid exhausted log"
+        );
+        assert!(log.dirty, "failed flush must remain dirty for retry");
+
+        let _ = fs::remove_dir_all(&tmp_path);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn flush_no_op_when_clean() {
         let path = unique_tmp_path("flush_clean");
         let mut log = ExhaustedMineralsLog::default().with_path(&path);
