@@ -1,6 +1,6 @@
 # plan-bughunt-player-trade-npc-gate-v1
 
-> **状态：BLOCKED（metadata-authority）**。代码、饱和回归与实质 validator 审查均已通过；分支前 8 个历史 commit 缺少强制 `Model:` trailer，补齐必须 amend/rebase + force-push，当前未获该破坏性历史改写授权。一句话主题：`server/src/social/mod.rs` 的玩家交易派发链把仅供 NPC 使用的 `npc_should_decline_trade()` 门禁误接到了 `TradeOfferRequest` 上，导致 **Low / Wanted 声名玩家无法向任何其他玩家发起交易**；目标端不会收到 `trade_offer` payload，发起方只看到一条“对方听过这张面孔的事，不愿交易”的提示，但实际对方根本不是 NPC。
+> **状态：已完成（2026-09-24）**。`server/src/social/mod.rs` 的玩家交易派发链已移除仅供 NPC 使用的 `npc_should_decline_trade()` 门禁；Low / Wanted 声名玩家现在可以正常向其他玩家发起交易，目标端收到 `trade_offer` payload，发起方不会再收到伪 NPC 拒绝文案。一句话主题：修复玩家交易误套 NPC 声名门禁。
 
 > 立项动机：这条链路落在 `plan-social-v1` / `plan-input-binding-v1` 已上线的 **玩家↔玩家交易** 主玩法上，且当前仓库已经用单测把错误行为固定成“应拒绝”。它不属于你列出的 cross-dimension witness leak、social anonymity live refresh、identity/social renown bridge、silent signal runtime bridge 几条已知支线，适合作为 server/social 的另一条侧路径 bug skeleton。
 
@@ -8,15 +8,15 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | BLOCKED：metadata-authority |
+| P0 | 玩家交易误套 NPC 拒交易门禁 | fix_pr | ✅ 2026-09-24 |
 
 ## P0 — 玩家交易误套 NPC 拒交易门禁
 
 - **复现路径**：
   1. client 侧 `TradeOfferIntentHandler` 只在准星命中 `PlayerEntity` 时产出 `InteractIntent::TradePlayer`，并发送 `sendTradeOfferRequest("entity:<protocol_id>", offered_instance_id)`（`client/src/main/java/com/bong/client/social/TradeOfferIntentHandler.java:18-42`；设计稿也明确写成“准星命中 `PlayerEntity`”与 `TradePlayer`，`docs/finished_plans/plan-input-binding-v1.md:137-140`）。
   2. server 侧 `ClientRequestV1::TradeOfferRequest` 进入 `resolve_trade_offer_target()`，该函数直接走实体目标解析，没有 NPC 专用分支（`server/src/network/client_request_handler.rs:1181-1202,9858-9864`）。
-  3. 两名在线玩家站在 `CHAT_EXPOSURE_RADIUS` 内、双方背包各有可交易物品时，只要发起方 active identity 落入 Low / Wanted，`dispatch_trade_offers()` 就会在真正构造 `TradeOfferPayloadV1` 前被 `npc_should_decline_trade()` 提前拦截（`server/src/social/mod.rs:933-985`）。
-  4. 当前仓库已有单测 `trade_offer_dispatch_rejects_wanted_initiator_identity()`，直接断言目标玩家收不到 payload、`TradeOfferRegistry.pending` 为空（`server/src/social/mod.rs:4220-4272`）。这说明错误行为不仅存在，而且已经被现测试套锁成“正确”。
+  3. 两名在线玩家站在 `CHAT_EXPOSURE_RADIUS` 内、双方背包各有可交易物品时，只要发起方 active identity 落入 Low / Wanted，旧版 `dispatch_trade_offers()` 就会在真正构造 `TradeOfferPayloadV1` 前被 `npc_should_decline_trade()` 提前拦截（旧代码 `server/src/social/mod.rs:1055-1117`）。
+  4. 旧版单测 `trade_offer_dispatch_rejects_wanted_initiator_identity()` 直接断言目标玩家收不到 payload、`TradeOfferRegistry.pending` 为空；该错误断言现已由 `server/src/social/mod_tests.rs:1363-1429` 的 Low / Wanted 反向契约替换。
 
 - **根因链路**：
   1. `npc_should_decline_trade()` 的定义和注释都写明语义是“NPC 是否应拒绝某玩家 active identity 的交易”，Low / Wanted 档属于 NPC 反应系统（`server/src/identity/reaction.rs:52-80`）。
@@ -41,7 +41,7 @@
 
 ## 反方裁决摘要
 
-> 下列两轮为 skeleton 立项时按“默认怀疑”标准记录的反方论点与驳回理由；实施完成后还需由全新无上下文只读 validator 对最终 HEAD 做独立裁决。
+> 下列两轮为 skeleton 立项时按“默认怀疑”标准记录的反方论点与驳回理由；最终 HEAD 的独立只读 validator 结果记录在下方 Finish Evidence。
 
 1. **Round 1 反方论点**：“也许 `TradeOfferRequest` 其实同时服务 NPC 和玩家，`npc_should_decline_trade()` 放这里是统一门禁，不算 bug。”
    **驳回理由**：client `TradeOfferIntentHandler` 只命中 `PlayerEntity`；server `dispatch_trade_offers()` / `handle_trade_offer_responses()` 两端 Query 也都是 `With<Client>`；`resolve_trade_offer_target()` 没有任何 NPC 专用支路。代码证据表明这是纯玩家↔玩家链，而不是共用 trade abstraction。
@@ -57,14 +57,44 @@
 
 - Promotion：`8467f570`，骨架已独立升格为 active plan。
 - 第一性原理 RED：`4f777deb` 所在测试 HEAD 上，`trade_offer_dispatch_allows_wanted_initiator_identity_between_players` 编译通过后按行为失败；目标玩家收到的 `TradeOffer` 数量为 `0`，而契约期望为 `1`，证明 server authority 的 NPC 声名门禁真实吞掉玩家 offer。
-- 最小修复：`76fbb974` 仅从 `dispatch_trade_offers` 的纯 `With<Client>` 玩家链移除 `npc_should_decline_trade()` 及其冗余 query 字段；NPC reaction helper 与 NPC 子系统保持不变。
-- Targeted GREEN：上述 RED 用例经 validator 返工后扩为 Low / Wanted 表驱动契约，`trade_offer_dispatch_allows_low_and_wanted_initiators_between_players` 为 `1/1 PASS`；同时断言发起方不再收到伪 NPC 拒绝文案、目标收到 offer、pending 已登记。`cargo test social::tests::trade_offer -- --nocapture` 覆盖正常派发、Low/Wanted 发起者派发、非法请求拒绝、装备中物品拒绝。
-- 全量测试预跑：设置 `BONG_SKIP_SKIN_PREFETCH=1` 后执行 `cargo test`，lib 为 `11156 passed / 0 failed / 1 ignored`，main 为 `11/11 PASS`，full-app startup 为 `1/1 PASS`，Tarkov backpack e2e 为 `4/4 PASS`，doc-tests 为 `0 failed / 5 ignored`。
-- Validator r1：对 `c3f11874` 判 FAIL；指出 Low 分级与错误拒绝文案未被测试锁住、审计来源仍写当前 report-only。已在 `8f38d898` / `549a1f25` 完成表驱动饱和回归与文档状态修正，targeted test 为 `1/1 PASS`。
-- 返工后全量测试：`cargo test` 为 `11155 passed / 1 failed / 1 ignored`，唯一失败是与本次仅改 social 测试/helper 无关的 POI 墙钟阈值 `scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发编译负载下耗时 `12.3129s`）；同一修复分支在返工前全量测试曾为 `11156/0/1`。按编译并发调度要求不继续重跑、不跨 scope 修改 POI。
-- Validator r2：全新只读 validator 对 `16a8fb79` 的实质代码、测试、回归面与文档审查全部通过；唯一结论为 `VERDICT: FAIL — 唯一阻塞=metadata-authority`。缺 trailer 的历史提交为 `8467f570`、`8758bdf3`、`084ac90b`、`5ce33163`、`4f777deb`、`76fbb974`、`ed50c5fe`、`c3f11874`；后续提交均带 `Model: gpt-5.6-sol-xhigh`。在获得明确的 amend/rebase/force-push 授权前，不归档、不开 PR。
-- 完整 server gate：仍须等待 Rust stable clippy baseline PR #1170 合入后，基于最新 `origin/main` 重新执行整组 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；当前不得把 baseline 的 69 项跨 scope 复制进本修复。
-- 最终裁决：完整门禁后须在最终 HEAD 上启动全新、无上下文、只读的 `gpt-5.6-sol xhigh` validator；归档导致 HEAD 变化后再次 fresh validator。
+- 最小修复：`76fbb974` 从 `dispatch_trade_offers` 的纯 `With<Client>` 玩家链移除 `npc_should_decline_trade()` 及其冗余 query 字段；NPC reaction helper 与 NPC 子系统保持不变。
+- 主线复验：`1f0a7b0d1` 合并最新 `origin/main`（一个冲突，`server/src/social/mod.rs` 的测试模块已迁移为 `mod_tests.rs`；保留主线结构并移植修复），随后 `d5c628bbd` 完成格式化。
+- Targeted GREEN：`BONG_SKIP_SKIN_PREFETCH=1 scripts/build-token.sh cargo test social::tests::trade_offer -- --nocapture` 为 `4 passed / 0 failed`，覆盖正常派发、Low/Wanted 发起者派发、非法请求拒绝、装备中物品拒绝；Low/Wanted 断言目标收到 offer、pending 已登记、发起方没有伪 NPC 拒绝文案。
+- 完整 server gate：`scripts/build-token.sh cargo fmt --check` PASS；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` PASS；在允许 Unix socket 与临时端口的执行环境中，`BONG_SKIP_SKIN_PREFETCH=1 scripts/build-token.sh cargo test` PASS（lib `10364 passed / 0 failed / 1 ignored`，doc-tests `3 passed / 0 failed / 5 ignored`，其余测试二进制均无失败）。
+- Fresh validator（2026-09-24，HEAD `d5c628bbd`）：`VERDICT: PASS`；确认 `dispatch_trade_offers` 不再读取 `PlayerIdentities` 或调用 `npc_should_decline_trade`，Low / Wanted 回归覆盖 payload、pending 和无伪拒绝文案，且最新 `origin/main` 已在 HEAD 祖先链上。
+- 旧分支的历史署名保持不改；现行流程要求执行模型写入 PR body，当前新增提交均带 `Model: gpt-6-luna`，无需 amend、rebase 或 force-push。
+
+## Finish Evidence
+
+### 落地清单
+
+- `server/src/social/mod.rs:dispatch_trade_offers`：玩家 Query 不再读取 active identity，也不再调用 NPC 专用拒绝门禁；合法玩家交易继续构造并登记 `TradeOfferPayloadV1`。
+- `server/src/social/mod_tests.rs:trade_offer_dispatch_allows_low_and_wanted_initiators_between_players`：Low / Wanted 表驱动回归锁定 payload、pending 登记和无伪拒绝文案；原先的错误拒绝测试已移除。
+- `docs/finished_plans/plan-bughunt-player-trade-npc-gate-v1.md`：本文件归档并记录最终证据。
+
+### 关键 commit
+
+- `76fbb9740`（2026-07-11）：移除玩家交易链上的 NPC 声名门禁。
+- `1f0a7b0d1`（2026-09-24）：合并最新主线并把修复移植到 `social/mod_tests.rs` 新布局。
+- `d5c628bbd`（2026-09-24）：格式化玩家交易派发查询，提交带 `Model: gpt-6-luna`。
+
+### 测试结果
+
+- `BONG_SKIP_SKIN_PREFETCH=1 scripts/build-token.sh cargo test social::tests::trade_offer -- --nocapture`：4 passed / 0 failed。
+- `scripts/build-token.sh cargo fmt --check`：PASS。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：PASS。
+- `BONG_SKIP_SKIN_PREFETCH=1 scripts/build-token.sh cargo test`：lib 10364 passed / 0 failed / 1 ignored；doc-tests 3 passed / 0 failed / 5 ignored；全套无失败。
+
+### 跨仓库核验
+
+- server：`TradeOfferRequest` → `dispatch_trade_offers` → `TradeOfferPayloadV1` 链路保留，`npc_should_decline_trade` 只留在 NPC reaction 路径。
+- agent：本修复不改变 Redis IPC 或 agent schema，未触及 agent 代码。
+- client：`TradeOfferIntentHandler` 仍以 `PlayerEntity` 为目标，`trade_offer` payload 契约未变；本修复不改 client 代码。
+
+### 遗留 / 后续
+
+- 本修复于 2026-07-11 完成，曾因旧流程的历史署名阻塞搁置；本次已合并主线并完成复验。
+- 若未来需要玩家主动拒绝恶名交易，应在目标玩家 UI / 响应路径增加明确契约，不得把 NPC reaction helper 重新接回玩家派发链。
 
 ## 审计来源
 
