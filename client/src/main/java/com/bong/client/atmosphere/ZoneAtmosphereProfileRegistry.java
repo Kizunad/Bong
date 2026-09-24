@@ -18,6 +18,7 @@ public final class ZoneAtmosphereProfileRegistry {
         "north_wastes",
         "wilderness",
         "dark_cavern",
+        "dan_zong_yi_yuan",
         "tsy"
     );
     private static final Map<String, String> LIVE_ZONE_PROFILE_IDS = Map.of(
@@ -107,6 +108,18 @@ public final class ZoneAtmosphereProfileRegistry {
         defaults.put("north_wastes", profile("north_wastes", 0x909090, 0.50, 0xB0B0B0, "cloud256_dust", 0xA0A0A0, 3.0, "ambient_north_wastes"));
         defaults.put("wilderness", profile("wilderness", 0xC0C0B0, 0.10, 0xD8D8D0, "cloud256_dust", 0xB0B0A0, 0.3, "ambient_wilderness"));
         defaults.put("dark_cavern", profile("dark_cavern", 0x303038, 0.45, 0x383848, "cloud256_dust", 0x686878, 1.1, "ambient_dark_cavern"));
+        defaults.put("dan_zong_yi_yuan", new ZoneAtmosphereProfile(
+            "dan_zong_yi_yuan",
+            0x5A4060,
+            0.30,
+            List.of(
+                new ZoneAtmosphereProfile.ParticleConfig("pill_haze", 0x8B6FA5, 0.4, 0.005, 0.015, 0.005, 18),
+                new ZoneAtmosphereProfile.ParticleConfig("purple_soil_stain", 0x6B4A7A, 0.05, 0.0, 0.0, 0.0, 80)
+            ),
+            0x6B4A7A,
+            ZoneAtmosphereProfile.TransitionFx.MIST_BURST,
+            "ambient_dan_zong"
+        ));
         defaults.put("tsy", profile("tsy", 0x404050, 0.30, 0x202030, "cloud256_dust", 0x707080, 1.0, "ambient_tsy"));
         return new ZoneAtmosphereProfileRegistry(defaults);
     }
@@ -139,9 +152,12 @@ public final class ZoneAtmosphereProfileRegistry {
 
     private String resolveProfileId(String zoneId) {
         String normalized = normalizeZoneId(zoneId);
-        String profileId = LIVE_ZONE_PROFILE_IDS.getOrDefault(normalized, normalized);
-        if (profiles.containsKey(profileId)) {
-            return profileId;
+        if (profiles.containsKey(normalized)) {
+            return normalized;
+        }
+        String aliasedProfileId = LIVE_ZONE_PROFILE_IDS.get(normalized);
+        if (aliasedProfileId != null && profiles.containsKey(aliasedProfileId)) {
+            return aliasedProfileId;
         }
         if ((normalized.startsWith("tsy") || normalized.contains("tianshuiyao"))
             && profiles.containsKey("tsy")) {

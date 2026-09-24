@@ -179,7 +179,8 @@ class ZoneAtmosphereTest {
         Map<String, String> expectedProfiles = Map.of(
             "spawn", "spawn_plain",
             "lingquan_marsh", "spring_marsh",
-            "youan_depths", "dark_cavern"
+            "youan_depths", "dark_cavern",
+            "dan_zong_yi_yuan", "dan_zong_yi_yuan"
         );
 
         expectedProfiles.forEach((liveZoneId, expectedProfileId) -> {
@@ -211,6 +212,31 @@ class ZoneAtmosphereTest {
         assertTrue(registry.hasProfile("tsy_lingxu"));
         assertTrue(registry.hasProfile("   "));
         assertFalse(registry.hasProfile("unmapped_zone"));
+    }
+
+    @Test
+    void direct_profile_id_takes_precedence_over_live_zone_alias() {
+        ZoneAtmosphereProfileRegistry registry = ZoneAtmosphereProfileRegistry.fromJson(Map.of(
+            "spawn",
+            """
+            {
+              "zone_id":"spawn",
+              "fog_color":"#112233",
+              "fog_density":0.42,
+              "ambient_particle":{"type":"cloud256_dust","tint":"#445566","density":0.2},
+              "sky_tint":"#223344",
+              "entry_transition_fx":"FADE",
+              "ambient_recipe_id":"ambient_custom_spawn"
+            }
+            """
+        ));
+
+        ZoneAtmosphereProfile actual = registry.forZone("spawn");
+
+        assertEquals("spawn", actual.zoneId());
+        assertEquals(0x112233, actual.fogColorRgb());
+        assertEquals("ambient_custom_spawn", actual.ambientRecipeId());
+        assertTrue(registry.hasProfile("spawn"));
     }
 
     @Test

@@ -39,7 +39,7 @@
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P0 | 用 `ZoneAtmosphereTest` 增加 live zone id 契约测试，修复前证明 `spawn` / `lingquan_marsh` / `youan_depths` 错落 `wilderness`；同时确认直接 profile id、TSY fallback 和未知 zone fallback 的既有语义 | ⏳ |
-| P1 | 在 `ZoneAtmosphereProfileRegistry` 加显式、不可变的 live-zone → profile-id alias；`forZone` 与 `hasProfile` 使用同一归一化入口，覆盖三条正向 alias、已有 profile id、空值/空白、未知 id 与 TSY 路径 | ⬜ |
+| P1 | 在 `ZoneAtmosphereProfileRegistry` 加显式、不可变的 live-zone → profile-id alias；补齐已存在但未注册的 `dan_zong_yi_yuan` profile；`forZone` 与 `hasProfile` 使用同一 direct-first 解析入口，覆盖三条正向 alias、已有 profile id、空值/空白、未知 id 与 TSY 路径 | ⬜ |
 | P2 | 用 JDK 17 运行 targeted test 和 `./gradlew test build`；同步最新 `origin/main` 后复验，记录 validator SHA 与完整 Finish Evidence，再归档 | ⬜ |
 
 ## 3. 两轮反方裁决
@@ -64,5 +64,5 @@
 ## 6. 已收口问题与后续边界
 
 - alias owner 固定放在 client `ZoneAtmosphereProfileRegistry`：它连接 live zone id 与 client-only 资源键，避免为了三条稳定映射扩大 server/schema 改动。
-- 本次只纳入已有证据和既有资源一一对应的 `spawn→spawn_plain`、`lingquan_marsh→spring_marsh`、`youan_depths→dark_cavern`；其它区域没有已存在的明确专属 profile 时继续走既有 fallback，不臆造映射。
+- 本次 alias 只纳入已有证据和既有资源一一对应的 `spawn→spawn_plain`、`lingquan_marsh→spring_marsh`、`youan_depths→dark_cavern`；审计同时发现 live zone 与资源同名的 `dan_zong_yi_yuan.json` 未进入 `REQUIRED_PROFILE_IDS`，一并补齐注册。其它区域没有已存在的明确专属 profile 时继续走既有 fallback，不臆造映射。
 - 后续若 dynamic zone 需要可配置 atmosphere profile，应另立 plan 评估显式 `atmosphere_profile_id` 契约；不在本 BugFix 中扩协议。
