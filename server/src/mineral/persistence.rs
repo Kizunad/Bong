@@ -333,20 +333,38 @@ mod tests {
     fn flush_writes_json_and_roundtrips() {
         let path = unique_tmp_path("flush_writes");
         let mut log = ExhaustedMineralsLog::default().with_path(&path);
-        log.record(ExhaustedEntry {
+        let permanent = ExhaustedEntry {
             mineral_id: "fan_tie".into(),
             x: 0,
             y: 64,
             z: 0,
             tick: 100,
             respawn_at_tick: None,
-        });
+        };
+        let respawning = ExhaustedEntry {
+            mineral_id: "sui_tie".into(),
+            x: 1,
+            y: 65,
+            z: 1,
+            tick: 200,
+            respawn_at_tick: Some(800),
+        };
+        log.record(permanent.clone());
+        log.record(respawning.clone());
         log.flush().expect("flush should succeed");
 
         let loaded = load_exhausted_log(&path).expect("load should parse");
         assert_eq!(loaded.version, 1);
-        assert_eq!(loaded.entries.len(), 1);
-        assert_eq!(loaded.entries[0].mineral_id, "fan_tie");
+        assert_eq!(
+            loaded.entries,
+            vec![permanent, respawning],
+            "successful atomic flush must roundtrip every exhausted entry"
+        );
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "successful rename must not leave the temporary path behind"
+        );
+        assert!(!log.dirty, "successful flush must clear dirty state");
 
         // cleanup
         let _ = fs::remove_file(&path);
@@ -389,7 +407,32 @@ mod tests {
         );
         assert!(log.dirty, "failed flush must remain dirty for retry");
 
-        let _ = fs::remove_dir_all(&tmp_path);
+        let restarted = ExhaustedMineralsLog::hydrated_from_path(&path);
+        assert_eq!(
+            restarted.entries().len(),
+            1,
+            "restart after failed flush must still hydrate the last valid final file"
+        );
+        assert_eq!(
+            restarted.entries()[0].mineral_id,
+            "fan_tie",
+            "the already exhausted mineral must remain exhausted after restart"
+        );
+
+        fs::remove_dir_all(&tmp_path).expect("remove tmp blocker before retry");
+        log.flush().expect("dirty log should retry successfully");
+        let retried = load_exhausted_log(&path).expect("retry should leave valid final JSON");
+        assert_eq!(
+            retried.entries.len(),
+            2,
+            "successful retry must persist both the old and newly exhausted minerals"
+        );
+        assert!(!log.dirty, "successful retry must clear dirty state");
+        assert!(
+            !tmp_path.exists(),
+            "successful retry must consume the temporary file via rename"
+        );
+
         let _ = fs::remove_file(&path);
     }
 
