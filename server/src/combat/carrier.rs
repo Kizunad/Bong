@@ -639,14 +639,14 @@ fn finish_charge(
             .unwrap_or_default(),
     )
     .unwrap_or(CarrierKind::YibianShougu);
-    let mut sealed_base_qi = 0.0_f32;
+    let mut sealed_qi = 0.0_f32;
     if transform_equipped_item(
         inventory,
         registry,
         charging.slot,
         carrier_kind.charged_template_id(),
     ) {
-        sealed_base_qi = base_qi_amount;
+        sealed_qi = qi_amount;
         store.imprints_by_instance.insert(
             charging.instance_id,
             CarrierImprint {
@@ -680,7 +680,7 @@ fn finish_charge(
         entity,
         charging.instance_id,
         position,
-        f64::from((total_deducted - sealed_base_qi).max(0.0)),
+        f64::from((total_deducted - sealed_qi).max(0.0)),
     );
     commands.entity(entity).remove::<CarrierCharging>();
 }

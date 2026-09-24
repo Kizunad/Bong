@@ -33,7 +33,7 @@ pub fn damage_resonance_multiplier(resonance: f64) -> f32 {
 }
 
 pub fn carrier_seal_efficiency_multiplier(resonance: f64) -> f32 {
-    (0.8 + 0.4 * resonance.clamp(0.0, 1.0)) as f32
+    (0.8 + 0.2 * resonance.clamp(0.0, 1.0)) as f32
 }
 
 #[cfg(test)]
@@ -102,10 +102,16 @@ mod tests {
     }
 
     #[test]
-    fn carrier_seal_efficiency_scales_with_resonance() {
+    fn carrier_seal_efficiency_scales_from_eighty_percent_to_lossless() {
         assert!((carrier_seal_efficiency_multiplier(0.0) - 0.8).abs() < 1e-6);
-        assert!((carrier_seal_efficiency_multiplier(0.5) - 1.0).abs() < 1e-6);
-        assert!((carrier_seal_efficiency_multiplier(1.0) - 1.2).abs() < 1e-6);
+        assert!((carrier_seal_efficiency_multiplier(0.5) - 0.9).abs() < 1e-6);
+        assert!((carrier_seal_efficiency_multiplier(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn carrier_seal_efficiency_clamps_out_of_range_resonance() {
+        assert!((carrier_seal_efficiency_multiplier(-0.1) - 0.8).abs() < 1e-6);
+        assert!((carrier_seal_efficiency_multiplier(1.5) - 1.0).abs() < 1e-6);
     }
 
     #[test]
