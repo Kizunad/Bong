@@ -20,6 +20,11 @@ public final class ZoneAtmosphereProfileRegistry {
         "dark_cavern",
         "tsy"
     );
+    private static final Map<String, String> LIVE_ZONE_PROFILE_IDS = Map.of(
+        "spawn", "spawn_plain",
+        "lingquan_marsh", "spring_marsh",
+        "youan_depths", "dark_cavern"
+    );
 
     private final Map<String, ZoneAtmosphereProfile> profiles;
 
@@ -59,19 +64,15 @@ public final class ZoneAtmosphereProfileRegistry {
     }
 
     public ZoneAtmosphereProfile forZone(String zoneId) {
-        String normalized = normalizeZoneId(zoneId);
-        ZoneAtmosphereProfile direct = profiles.get(normalized);
-        if (direct != null) {
-            return direct;
-        }
-        if (normalized.startsWith("tsy") || normalized.contains("tianshuiyao")) {
-            return profiles.get("tsy");
+        String profileId = resolveProfileId(zoneId);
+        if (profileId != null) {
+            return profiles.get(profileId);
         }
         return profiles.getOrDefault("wilderness", profiles.values().stream().findFirst().orElse(null));
     }
 
     public boolean hasProfile(String zoneId) {
-        return profiles.containsKey(normalizeZoneId(zoneId));
+        return resolveProfileId(zoneId) != null;
     }
 
     public Map<String, ZoneAtmosphereProfile> profiles() {
@@ -134,5 +135,18 @@ public final class ZoneAtmosphereProfileRegistry {
     private static String normalizeZoneId(String zoneId) {
         String normalized = zoneId == null ? "" : zoneId.trim();
         return normalized.isEmpty() ? "wilderness" : normalized;
+    }
+
+    private String resolveProfileId(String zoneId) {
+        String normalized = normalizeZoneId(zoneId);
+        String profileId = LIVE_ZONE_PROFILE_IDS.getOrDefault(normalized, normalized);
+        if (profiles.containsKey(profileId)) {
+            return profileId;
+        }
+        if ((normalized.startsWith("tsy") || normalized.contains("tianshuiyao"))
+            && profiles.containsKey("tsy")) {
+            return "tsy";
+        }
+        return null;
     }
 }

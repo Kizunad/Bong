@@ -208,6 +208,8 @@ class ZoneAtmosphereTest {
         assertEquals("wilderness", registry.forZone("unmapped_zone").zoneId());
         assertEquals("wilderness", registry.forZone(null).zoneId());
         assertEquals("wilderness", registry.forZone("   ").zoneId());
+        assertTrue(registry.hasProfile("tsy_lingxu"));
+        assertTrue(registry.hasProfile("   "));
         assertFalse(registry.hasProfile("unmapped_zone"));
     }
 
