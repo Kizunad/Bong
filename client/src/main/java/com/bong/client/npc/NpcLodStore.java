@@ -46,6 +46,10 @@ public final class NpcLodStore {
         STORE.clear();
     }
 
+    public static void clearOnDisconnect() {
+        clearAll();
+    }
+
     /** 当前快照数量（供测试 / debug 用）。 */
     public static int size() {
         return STORE.size();

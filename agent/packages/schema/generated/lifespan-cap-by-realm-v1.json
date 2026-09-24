@@ -39,5 +39,6 @@
       "const": 2000,
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e822890e84624cd347ba38d45252fa94163a4d7b91ac8ff4e92ab4670da07fec"
 }

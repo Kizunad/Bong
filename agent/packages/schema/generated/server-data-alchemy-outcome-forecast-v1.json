@@ -56,5 +56,6 @@
     "flawed_note": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "b99baf27bd48fdd59920a521da3baae8f153c974ffd4b837712860fd2fb6b15b"
 }

@@ -31,7 +31,7 @@
 - [ ] **无家族 / 无姓氏概念**（Q-ML1 B）：每个角色完全独立，避免出戏。亡者博物馆按 player_id 历代列出，但不归类家族
 - [ ] **不允许主动放弃**（Q-ML2 A）：还有寿元 / 运数时不可主动重开——破坏末土残忍设定（worldview §十二"寿元宽裕"原意是逼人前进，主动重开会消解）
 - [ ] **前世坐标不传承**（Q-ML3 B+ 精细化）：服务器不存"前世坐标"、客户端不显示——玩家自己脑内记。**前世物资 / 基地服务器不主动清除**（自然存在），**也不主动保护**——前世死后的物资箱子 / 基地可能被 NPC / 其他玩家搜刮 / 占据，玩家回去找发现"已被人翻过"是合理叙事（worldview §十"末土资源被翻是常态"）
-- [ ] **道统遗物仅随机分散**（Q-ML5 A）：不做 plan-void-actions-v1 legacy_assign 化虚指定继承人。统一随机分散到 4 tsy 副本（worldview §十二"道统遗物天道分配"）
+- [ ] **道统遗物仅随机分散**（Q-ML5 A）：不做化虚指定继承人机制。统一随机分散到 4 tsy 副本（worldview §十二"道统遗物天道分配"）
 
 ---
 
@@ -59,7 +59,7 @@
    → LifeRecord 写入亡者博物馆（按 player_id 历代列出，不归类家族 Q-ML1）
    → NaturalDeathCorpse / 战斗死遗骸就地生成（plan-lifespan-v1 §5）
    → 前世物资 / 基地不主动清除（Q-ML3 决议，可能被 NPC/玩家搜刮）
-   → 道统遗物随机分散到 4 tsy 副本（Q-ML5，不做 legacy_assign 指定继承人）
+   → 道统遗物随机分散到 4 tsy 副本（Q-ML5，不做指定继承人机制）
    → 玩家进入 character_select（不允许主动放弃 Q-ML2，仅在终结后进入）
    → 新角色生成: Realm = Awaken, 运数 = 3, 寿元 = 醒灵 cap（引 LifespanCapTable）,
                   spawn 位置 = spawn_plain（Q-ML4，与新玩家相同）, 物品/真元/境界 = 0
@@ -88,7 +88,7 @@
 - [x] **Q-ML2 ✅**（user 2026-05-04 A）：**不允许主动放弃**——还有寿元 / 运数时不可主动重开
 - [x] **Q-ML3 ✅**（user 2026-05-04 B+ 精细化）：**不传承前世坐标**——服务器不存 / 客户端不显示，玩家自己脑内记。**前世物资 / 基地服务器不主动清除**（自然存在）也不主动保护——可能被 NPC / 玩家搜刮
 - [x] **Q-ML4 ✅**（user 2026-05-04 A）：第二世新角色出生位置 = spawn_plain（与新玩家相同）
-- [x] **Q-ML5 ✅**（user 2026-05-04 A）：**仅随机分散** 4 tsy 副本，不做 plan-void-actions-v1 legacy_assign 化虚指定继承人
+- [x] **Q-ML5 ✅**（user 2026-05-04 A）：**仅随机分散** 4 tsy 副本，不做化虚指定继承人机制
 
 > **本 plan 无未拍开放问题**——P0 可立刻起。
 
@@ -101,7 +101,7 @@
   - Q-ML2 不允许主动放弃
   - Q-ML3 前世坐标不传承，物资不主动清也不主动保护（"末土残忍"）
   - Q-ML4 第二世仍 spawn_plain
-  - Q-ML5 道统遗物仅随机分散（不做 legacy_assign）
+  - Q-ML5 道统遗物仅随机分散（不做指定继承人机制）
   - 关键修正：原 §2 寿元上限表 (80/150/300/500/1000/2000) → 引 lifespan-v1 §2 LifespanCapTable (120/200/350/600/1000/2000)
   - 下一步起 P0 worktree（character_lifecycle::regenerate_or_terminate + 验证 luck_pool per-character + character_select spawn_plain 路径）
 - **2026-05-07**：P0/P1/P2/P3 全部 ✅。`/consume-plan multi-life-v1` 一次过：cultivation 三个新模块（luck_pool / character_select / character_lifecycle）+ era skill 新一世 narration 章节 + library-web `/lives/index.astro`（`?id=<player_id>` query string 形式）。详 Finish Evidence。

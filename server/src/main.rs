@@ -5,17 +5,22 @@
 //! binary is the thin consumer: it wires every module's `register(&mut App)` and
 //! owns the CLI / startup-smoke entry points exactly as before.
 
+use std::io::Write;
+use std::time::Duration;
+
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
     death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, shader, shelflife, skill,
-    skin, social, spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
+    movement, network, npc, persistence, player, preview, qi_physics, server_readiness, shader,
+    shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world,
+    zhenfa,
 };
 
 use crossbeam_channel::unbounded;
 use network::agent_bridge::{
     spawn_mock_bridge_daemon, AgentCommand, GameEvent, NetworkBridgeResource,
 };
+use network::morph_state_emit::MorphStateEmitState;
 use network::RedisBridgeResource;
 use persistence::{
     bootstrap_sqlite, export_zone_persistence, import_zone_persistence, PersistenceSettings,
@@ -38,6 +43,11 @@ fn main() {
     let _ = dotenvy::dotenv();
     init_tracing();
 
+    if shutdown_signal_probe_enabled() {
+        run_shutdown_signal_probe();
+        return;
+    }
+
     if let Err(code) = run_cli(std::env::args()) {
         std::process::exit(code);
     }
@@ -47,6 +57,12 @@ fn main() {
     } else {
         run_server();
     }
+}
+
+fn shutdown_signal_probe_enabled() -> bool {
+    std::env::var("BONG_SHUTDOWN_SIGNAL_PROBE")
+        .ok()
+        .is_some_and(|value| is_truthy_env_value(&value))
 }
 
 fn full_app_startup_smoke_enabled() -> bool {
@@ -67,6 +83,30 @@ fn run_server() {
     app.run();
 }
 
+/// `BONG_SERVER_PORT` 覆盖监听端口，默认 25565（与 valence NetworkSettings 默认一致）。
+/// headless 起服走 `cargo run` 没有 CLI 传参，scripts/bot-e2e.sh 并发跑多套 e2e 时
+/// 各自分配空闲端口、通过该 env 传入，否则全部争抢 25565（连开三次端口战败）。
+fn server_listen_address() -> std::net::SocketAddr {
+    let port = std::env::var("BONG_SERVER_PORT")
+        .map(|raw| parse_server_port(&raw))
+        .unwrap_or(25565);
+    std::net::SocketAddr::from(([0, 0, 0, 0], port))
+}
+
+fn parse_server_port(raw: &str) -> u16 {
+    let port = raw.trim().parse().unwrap_or_else(|error| {
+        // 值非法直接 panic 而非静默回退：回退会让调用方（bot-e2e.sh）继续等一个
+        // server 从未绑定的端口，退化为修复前的 600s 假超时。
+        panic!("BONG_SERVER_PORT 必须是 1-65535 的整数，实际 {raw:?}: {error}")
+    });
+    if port == 0 {
+        // 端口 0 会让操作系统选择一个 ephemeral port，但启动方拿不到这个回填值，
+        // readiness 只能继续探测字面量 0 并最终假超时。
+        panic!("BONG_SERVER_PORT 必须是 1-65535 的整数，实际 {raw:?}")
+    }
+    port
+}
+
 fn build_server_app() -> App {
     let (tx_to_game, rx_from_agent) = unbounded::<AgentCommand>();
     let (tx_to_agent, rx_from_game) = unbounded::<GameEvent>();
@@ -76,10 +116,13 @@ fn build_server_app() -> App {
     let mut app = App::new();
     app.insert_resource(NetworkSettings {
         connection_mode: ConnectionMode::Offline,
+        address: server_listen_address(),
         ..Default::default()
     })
     .insert_resource(NetworkBridgeResource::new(tx_to_agent, rx_from_agent))
     .add_plugins(DefaultPlugins.build().disable::<LogPlugin>());
+
+    shutdown::register(&mut app);
 
     world::register(&mut app);
     player::register(&mut app);
@@ -118,8 +161,55 @@ fn build_server_app() -> App {
     network::register(&mut app);
     persistence::register(&mut app);
     preview::register(&mut app);
+    app.add_systems(PostStartup, server_readiness::publish_if_requested_from_env);
 
     app
+}
+
+fn run_shutdown_signal_probe() {
+    let unlock_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH")
+        .expect("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH is required for the signal probe");
+    let ready_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH")
+        .expect("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH is required for the signal probe");
+
+    let mut unlock_state = craft::RecipeUnlockState::new()
+        .with_path(unlock_path)
+        .with_flush_interval(600);
+    let probe_recipe = craft::RecipeId::new("craft.probe.shutdown.flush");
+    assert!(
+        unlock_state.unlock("offline:shutdown-probe", probe_recipe),
+        "fresh shutdown probe state must become dirty before waiting for a real OS signal"
+    );
+
+    let mut app = build_server_app();
+    app.insert_resource(unlock_state);
+
+    // The first update runs PreStartup/Startup/PostStartup before PreUpdate. Do
+    // not publish signal readiness until that potentially slow startup frame has
+    // completed; otherwise an immediate TERM can sit queued behind Startup long
+    // enough for the pinned lifecycle helper to classify the stop as forced.
+    app.update();
+    if app.should_exit().is_some() {
+        return;
+    }
+
+    let mut ready_file = std::fs::File::create(&ready_path).unwrap_or_else(|error| {
+        panic!("write shutdown signal probe readiness file failed: {error}")
+    });
+    ready_file
+        .write_all(b"ready\n")
+        .and_then(|()| ready_file.flush())
+        .unwrap_or_else(|error| {
+            panic!("flush shutdown signal probe readiness file failed: {error}")
+        });
+
+    loop {
+        app.update();
+        if app.should_exit().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn run_full_app_startup_smoke() {
@@ -128,16 +218,55 @@ fn run_full_app_startup_smoke() {
         "bong-full-app-startup-smoke-{}",
         std::process::id()
     ));
-    app.insert_resource(PersistenceSettings::with_paths(
+    app.insert_resource(PersistenceSettings::with_db_path(
         db_root.join("data").join("bong.db"),
-        db_root.join("deceased"),
         "full-app-startup-smoke",
     ));
 
     assert_full_app_core_resources(&app);
+    #[cfg(test)]
+    assert_craft_registry_matches_pre_migration_oracle(&app);
     app.update();
     assert_full_app_core_resources(&app);
+    #[cfg(test)]
+    assert_craft_registry_matches_pre_migration_oracle(&app);
     println!("full app startup smoke ok");
+}
+
+#[cfg(test)]
+fn assert_craft_registry_matches_pre_migration_oracle(app: &App) {
+    // major #2 修复：不再只查两个 sentinel。生产 CraftRegistry 的数据侧必须与
+    // 迁移前 registrar oracle（95 条）逐 id 完全相等 —— 任何"只加载两条配方"
+    // 的回归都会立刻撞红。oracle 由 `fixtures/legacy_p0_registrar.rs` 程序化
+    // 重建（不读 TOML / JSON），独立于数据资产。
+    let world = app.world();
+    let craft_registry = world
+        .get_resource::<craft::CraftRegistry>()
+        .expect("full server App must install CraftRegistry (craft::register())");
+    let oracle_ids: std::collections::HashSet<String> =
+        craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_ids()
+            .into_iter()
+            .collect();
+    let data_owned_ids: std::collections::HashSet<String> = craft_registry
+        .iter()
+        .map(|recipe| recipe.id.as_str().to_owned())
+        .collect();
+    let missing: Vec<_> = oracle_ids
+        .difference(&data_owned_ids)
+        .map(String::as_str)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "CraftRegistry must contain every data-owned oracle recipe after strict TOML \
+         startup loading; missing: {missing:?}"
+    );
+    assert!(
+        data_owned_ids.len() > oracle_ids.len(),
+        "CraftRegistry must contain the full data-owned oracle set ({}) plus code-owned \
+         registrars, got only {}",
+        oracle_ids.len(),
+        data_owned_ids.len()
+    );
 }
 
 fn assert_full_app_core_resources(app: &App) {
@@ -157,6 +286,105 @@ fn assert_full_app_core_resources(app: &App) {
     assert!(
         world.contains_resource::<PersistenceSettings>(),
         "full server App must install PersistenceSettings"
+    );
+    let craft_registry = world
+        .get_resource::<craft::CraftRegistry>()
+        .expect("full server App must install CraftRegistry (craft::register())");
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.example.eclipse_needle.iron"))
+            .is_some(),
+        "CraftRegistry must contain data-owned legacy recipes after strict TOML startup loading"
+    );
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.tool.workbench"))
+            .is_some(),
+        "CraftRegistry must contain data-owned workbench recipes after strict TOML startup loading"
+    );
+    let technique_registry = world
+        .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
+        .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert!(
+        !technique_registry.is_empty(),
+        "TechniqueRegistry must contain data-owned metadata after strict TOML startup loading"
+    );
+    let unique_ids = technique_registry
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        unique_ids.len(),
+        technique_registry.len(),
+        "TechniqueRegistry must preserve every validated TOML entry exactly once"
+    );
+    let technique_registry = world
+        .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
+        .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert!(
+        !technique_registry.is_empty(),
+        "TechniqueRegistry must contain data-owned metadata after strict TOML startup loading"
+    );
+    let unique_ids = technique_registry
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        unique_ids.len(),
+        technique_registry.len(),
+        "TechniqueRegistry must preserve every validated TOML entry exactly once"
+    );
+    // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
+    // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
+    // `network::register()` 从未 `init_resource::<MorphStateEmitState>()`（只在
+    // 模块内单测里手动 init，掩盖了生产孤岛），会导致服务器第一个 Update tick
+    // 必崩。这里断言真实生产注册路径（`build_server_app()` → `network::register`）
+    // 装好了该资源，且下面的 `app.update()` 必须真的跑一个 tick 不 panic——
+    // 若又漏掉某个 `init_resource`，本测试会立刻撞红，而不是靠模块单测手塞掩盖。
+    assert!(
+        world.contains_resource::<shutdown::ShutdownSignalReceiver>(),
+        "full server App must install ShutdownSignalReceiver (shutdown::register()) so OS signals emit AppExit before Last persistence systems"
+    );
+    assert!(
+        world.contains_resource::<MorphStateEmitState>(),
+        "full server App must install MorphStateEmitState (network::register()) — \
+         missing this causes emit_morph_state_payloads to panic on the first Update tick"
+    );
+    // plan-race-system-v1 PR-5b —— 同款 CRITICAL fix guard，`emit_morph_state_delta_payloads`
+    // 取 `ResMut<MorphStateEntityCache>`，缺资源同样无条件 panic。
+    assert!(
+        world.contains_resource::<network::morph_state_emit::MorphStateEntityCache>(),
+        "full server App must install MorphStateEntityCache (network::register()) — \
+         missing this causes emit_morph_state_delta_payloads to panic on the first Update tick"
+    );
+    // bughunt minor④ —— body_plan::register() 资产加载全靠 panic 兜底数据完整性
+    // （humanoid plan 缺失 / 磁盘文件读取失败等），本身没有"加载失败但静默继续"的
+    // 退化路径；但 `run_full_app_startup_smoke` 此前只验证网络/持久化侧资源，从未
+    // 断言这两个 registry 真的落进了 `World`——`body_plan::resolve_assets_root()`
+    // 的运行时路径解析（bughunt major-3）一旦在某种部署形态下解析出一个"存在但是
+    // 空目录"的 assets 根（`load_dir`/`load_file` 返回 Ok 但内容为空/缺 humanoid），
+    // 光靠 `register()` 内部的 panic 兜底不了这种情况——必须有一条独立的启动期
+    // smoke 断言直接核验 registry 内容非空、且强制存在的 humanoid 构型确实在场。
+    let body_plans = world
+        .get_resource::<body_plan::BodyPlanRegistry>()
+        .expect("full server App must install BodyPlanRegistry (body_plan::register())");
+    assert!(
+        body_plans.contains(&body_plan::BodyPlanId::new(
+            body_plan::HUMANOID_BODY_PLAN_ID
+        )),
+        "BodyPlanRegistry must contain the mandatory \"{}\" body plan — every entity resolution \
+         path falls back to it",
+        body_plan::HUMANOID_BODY_PLAN_ID,
+    );
+    let races = world
+        .get_resource::<body_plan::RaceRegistry>()
+        .expect("full server App must install RaceRegistry (body_plan::register())");
+    assert!(
+        races
+            .get(&body_plan::RaceId::new(body_plan::HUMAN_RACE_ID))
+            .is_some(),
+        "RaceRegistry must contain the mandatory \"{}\" race",
+        body_plan::HUMAN_RACE_ID,
     );
 }
 
@@ -235,7 +463,7 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
             }
         }
         "import" => {
-            if !cli_dev_mode_enabled() {
+            if !cmd::dev::dev_mode_enabled() {
                 eprintln!("导入命令仅允许在 dev 模式下执行（设置 BONG_DEV_MODE=1）");
                 return Err(2);
             }
@@ -379,20 +607,14 @@ fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
     }
 }
 
-fn cli_dev_mode_enabled() -> bool {
-    matches!(
-        std::env::var("BONG_DEV_MODE").ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
-    )
-}
-
 #[cfg(test)]
 mod cli_tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
     use super::{
-        cli_dev_mode_enabled, full_app_startup_smoke_enabled, is_truthy_env_value, run_cli,
+        cmd, full_app_startup_smoke_enabled, is_truthy_env_value, parse_server_port, run_cli,
+        server_listen_address,
     };
 
     static CLI_ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -525,9 +747,25 @@ mod cli_tests {
     }
 
     #[test]
-    fn cli_dev_mode_enabled_accepts_common_truthy_values() {
-        let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some("true"));
-        assert!(cli_dev_mode_enabled());
+    fn dev_mode_enabled_accepts_common_truthy_values() {
+        for value in ["1", "true", "TRUE", " yes "] {
+            let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some(value));
+            assert!(
+                cmd::dev::dev_mode_enabled(),
+                "BONG_DEV_MODE={value:?} should enable dev-only command registration"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_mode_enabled_rejects_falsey_values() {
+        for value in ["", "0", "false", "no", "off"] {
+            let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some(value));
+            assert!(
+                !cmd::dev::dev_mode_enabled(),
+                "BONG_DEV_MODE={value:?} must keep dev-only command registration disabled"
+            );
+        }
     }
 
     #[test]
@@ -556,6 +794,49 @@ mod cli_tests {
         assert!(
             !full_app_startup_smoke_enabled(),
             "BONG_FULL_APP_STARTUP_SMOKE=0 should not route production startup into smoke mode"
+        );
+    }
+
+    #[test]
+    fn parse_server_port_accepts_trimmed_valid_values() {
+        assert_eq!(parse_server_port("25565"), 25565);
+        assert_eq!(parse_server_port(" 34567 "), 34567);
+        assert_eq!(parse_server_port("65535"), 65535);
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
+    fn parse_server_port_panics_on_zero() {
+        parse_server_port("0");
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
+    fn parse_server_port_panics_on_garbage() {
+        parse_server_port("not-a-port");
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
+    fn parse_server_port_panics_on_out_of_range() {
+        parse_server_port("65536");
+    }
+
+    #[test]
+    fn server_listen_address_defaults_to_25565() {
+        let _guard = ScopedEnvVar::set("BONG_SERVER_PORT", None);
+        assert_eq!(
+            server_listen_address(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 25565))
+        );
+    }
+
+    #[test]
+    fn server_listen_address_honors_bong_server_port() {
+        let _guard = ScopedEnvVar::set("BONG_SERVER_PORT", Some("34567"));
+        assert_eq!(
+            server_listen_address(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 34567))
         );
     }
 }

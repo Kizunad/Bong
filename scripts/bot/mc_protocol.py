@@ -12,15 +12,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import struct
+import uuid
 import zlib
 
 PROTOCOL_VERSION = 763
 
 # ---- S2C play 包 ID（观察面）----
 S2C_ENTITY_SPAWN = 0x01
+S2C_PLAYER_SPAWN = 0x03
+S2C_PLAYER_ACTION_RESPONSE = 0x06
 S2C_BLOCK_UPDATE = 0x0A
 S2C_INVENTORY = 0x12
 S2C_SLOT_UPDATE = 0x14
@@ -34,8 +38,11 @@ S2C_ENTITY_POSITION = 0x2B
 S2C_ENTITY_POSITION_ROTATION = 0x2C
 S2C_PLAYER_CHAT = 0x35
 S2C_DEATH_MESSAGE = 0x38
+S2C_PLAYER_REMOVE = 0x39
+S2C_PLAYER_LIST = 0x3A
 S2C_POS_LOOK = 0x3C
 S2C_ENTITIES_DESTROY = 0x3E
+S2C_ENTITY_METADATA = 0x52
 S2C_ENTITY_TELEPORT = 0x68
 S2C_RESPAWN = 0x41
 S2C_CHUNK_CENTER = 0x4E
@@ -141,9 +148,23 @@ class Reader:
 
     def string(self) -> str:
         length = self.varint()
+        if length < 0:
+            raise ValueError(f"string length {length} must be non-negative")
+        remaining = len(self.data) - self.pos
+        if length > remaining:
+            raise ValueError(
+                f"string length {length} exceeds remaining bytes {remaining}"
+            )
         raw = self.data[self.pos : self.pos + length]
         self.pos += length
         return raw.decode("utf-8", "replace")
+
+    def uuid(self) -> str:
+        raw = self.data[self.pos : self.pos + 16]
+        if len(raw) != 16:
+            raise ValueError("UUID 需要 16 字节，packet 已截断")
+        self.pos += 16
+        return str(uuid.UUID(bytes=raw))
 
     def rest(self) -> bytes:
         return self.data[self.pos :]
@@ -207,7 +228,10 @@ class Connection:
     def send_packet(self, packet_id: int, body: bytes = b"") -> None:
         data = write_varint(packet_id) + body
         if self.compression_threshold >= 0:
-            if len(data) >= self.compression_threshold:
+            # Valence rejects a compressed payload whose decompressed length is
+            # equal to the threshold, so the boundary belongs to the raw-frame
+            # branch for this server implementation.
+            if len(data) > self.compression_threshold:
                 frame = write_varint(len(data)) + zlib.compress(data)
             else:
                 frame = write_varint(0) + data
@@ -268,3 +292,19 @@ def chat_text_to_plain(raw: str) -> str:
         return walk(json.loads(raw))
     except (json.JSONDecodeError, TypeError):
         return raw
+
+
+def offline_uuid(username: str) -> str:
+    """offline mode 玩家 UUID：valence `offline_uuid` = sha256(username) 前 16 字节。
+
+    服务器身份由用户名确定性导出，bot 可据此在 PlayerSpawnS2c 里精确辨认
+    另一名 bot（NPC 也有 spawn 包，不能靠位置猜）。
+    """
+    raw = hashlib.sha256(username.encode()).digest()[:16]
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"
+
+
+def uuid_to_string(raw: bytes) -> str:
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"

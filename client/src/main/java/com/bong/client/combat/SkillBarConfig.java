@@ -2,24 +2,39 @@ package com.bong.client.combat;
 
 import java.util.Arrays;
 
-/** Immutable snapshot of the 1-9 combat skill bar bindings. */
+/** Immutable snapshot of the combat skill bar bindings. */
 public final class SkillBarConfig {
-    public static final int SLOT_COUNT = 9;
+    /** 当前默认两格；后续由身体条件（如手部数量）和功法扩展。 */
+    public static final int SLOT_COUNT = 2;
     private static final SkillBarConfig EMPTY = new SkillBarConfig(new SkillBarEntry[SLOT_COUNT], new long[SLOT_COUNT]);
 
     private final SkillBarEntry[] slots;
     private final long[] cooldownUntilMs;
+    private final String dashSkillId;
 
     private SkillBarConfig(SkillBarEntry[] slots, long[] cooldownUntilMs) {
+        this(slots, cooldownUntilMs, com.bong.client.movement.DashSkill.ID);
+    }
+
+    private SkillBarConfig(SkillBarEntry[] slots, long[] cooldownUntilMs, String dashSkillId) {
         this.slots = slots;
         this.cooldownUntilMs = cooldownUntilMs;
+        this.dashSkillId = dashSkillId == null || dashSkillId.isBlank() ? com.bong.client.movement.DashSkill.ID : dashSkillId;
     }
 
     public static SkillBarConfig empty() {
         return EMPTY;
     }
 
+    public static boolean isAvailable(int slot) {
+        return slot >= 0 && slot < SLOT_COUNT;
+    }
+
     public static SkillBarConfig of(SkillBarEntry[] slots, long[] cooldownUntilMs) {
+        return of(slots, cooldownUntilMs, com.bong.client.movement.DashSkill.ID);
+    }
+
+    public static SkillBarConfig of(SkillBarEntry[] slots, long[] cooldownUntilMs, String dashSkillId) {
         SkillBarEntry[] slotCopy = new SkillBarEntry[SLOT_COUNT];
         long[] cooldownCopy = new long[SLOT_COUNT];
         if (slots != null) {
@@ -28,8 +43,10 @@ public final class SkillBarConfig {
         if (cooldownUntilMs != null) {
             System.arraycopy(cooldownUntilMs, 0, cooldownCopy, 0, Math.min(SLOT_COUNT, cooldownUntilMs.length));
         }
-        return new SkillBarConfig(slotCopy, cooldownCopy);
+        return new SkillBarConfig(slotCopy, cooldownCopy, dashSkillId);
     }
+
+    public String dashSkillId() { return dashSkillId; }
 
     public SkillBarEntry slot(int index) {
         if (index < 0 || index >= SLOT_COUNT) return null;
@@ -49,7 +66,7 @@ public final class SkillBarConfig {
         if (index < 0 || index >= SLOT_COUNT) return this;
         SkillBarEntry[] slotCopy = Arrays.copyOf(slots, SLOT_COUNT);
         slotCopy[index] = entry;
-        return new SkillBarConfig(slotCopy, Arrays.copyOf(cooldownUntilMs, SLOT_COUNT));
+        return new SkillBarConfig(slotCopy, Arrays.copyOf(cooldownUntilMs, SLOT_COUNT), dashSkillId);
     }
 
     public int findSkill(String skillId) {

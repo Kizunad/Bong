@@ -14,5 +14,6 @@
       "const": "abort_tribulation",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "6834f1d21e6f98f21cdcc28616ac0ec74361b66b56a30f5a94f2f0f479b3cd6a"
 }

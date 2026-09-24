@@ -800,10 +800,13 @@ mod tests {
             .id();
 
         let mut lifecycle = Lifecycle {
-            character_id: "npc_near_death".to_string(),
+            character_id: "npc_awaiting_revival".to_string(),
             ..Default::default()
         };
-        lifecycle.enter_near_death(10);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            10,
+        );
 
         let npc = app
             .world_mut()
@@ -838,14 +841,14 @@ mod tests {
         assert_eq!(
             *action_state,
             ActionState::Failure,
-            "NearDeath NPC melee action should transition to Failure, got {:?}",
+            "AwaitingRevival NPC melee action should transition to Failure, got {:?}",
             action_state
         );
 
         let captured = &app.world().resource::<CapturedAttackIntents>().0;
         assert!(
             captured.is_empty(),
-            "NearDeath NPC must not emit any AttackIntent, got {} intents",
+            "AwaitingRevival NPC must not emit any AttackIntent, got {} intents",
             captured.len()
         );
     }
@@ -1024,7 +1027,7 @@ mod tests {
         use crate::cultivation::components::{Cultivation, Realm};
 
         for non_alive_state in [
-            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
             LifecycleState::AwaitingRevival,
             LifecycleState::Terminated,
         ] {
@@ -1089,7 +1092,7 @@ mod tests {
         use crate::cultivation::components::{Cultivation, Realm};
 
         for non_alive_state in [
-            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
             LifecycleState::AwaitingRevival,
             LifecycleState::Terminated,
         ] {

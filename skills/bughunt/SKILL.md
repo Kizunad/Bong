@@ -22,18 +22,21 @@ allowed-tools: Bash Read Edit Write Workflow Grep Glob
 
 ## 跑一轮（标准流程）
 
-### 0. 跑前两查（MANDATORY，"注意 5h" 的硬闸门）
+### 0. 跑前检查（MANDATORY）
 
 ```bash
-bash ~/.claude/quota.sh        # 看 5h%（别用 ccusage，错的）
-df -h /                        # 盘 >90% 先清 worktree build 缓存
+# Claude harness 额外执行：bash ~/.claude/quota.sh（别用 ccusage，错的）
+# GPT/Codex 明确跳过 quota.sh，不读取、不请求权限、不因其失败阻塞。
+df -h /                        # 所有模型都查；盘 >90% 按下方安全边界清理
 ```
 
-- **5h governor**：一轮 ~8-12 个 subagent（含 worktree 冷构建）≈ **吃 15-50% 的 5h 窗口**。
+<!-- quota.sh 是 Claude 专属配额闸门。GPT/Codex 直接跳到磁盘检查。 -->
+
+- **5h governor（仅 Claude）**：一轮 ~8-12 个 subagent（含 worktree 冷构建）≈ **吃 15-50% 的 5h 窗口**。
   - 5h **< 75%** → 跑。
   - 5h **≥ 75%** → **停**，别开新轮；ScheduleWakeup 到 5h reset 时刻后再续（reset 时刻见 quota.sh 输出）。
   - 接近 **95% 硬停**。用户令"只看 5h，不管 7d"——但 7d 满（~100%）会强制全锁，撞到也得停。
-- **磁盘**：盘 >90% 先 `rm -rf .worktree/*/server/target`（纯 build 缓存可再生，无源码损失）。⚠️ 别盲删带未提交工作的 worktree（外部 orchestrator 可能有活，先 `ls .worktree/` + `git -C <wt> status` 看）。
+- **磁盘**：盘 >90% 时，任务级只清理**已闭环 worktree** 内明确独占、ignored、可再生的私有生成物；先确认无源码/WIP 和未提交改动，禁止通配泛删活跃 worktree。共享 `CARGO_TARGET_DIR` 严禁任务级清理，只能由主干确认**所有编译任务均已停止**后统一处理；`cargo clean -p valence_generated` 也仅是该前提下、出现共享生成物缺失故障时的恢复手段。
 
 ### 1. 起 Workflow
 
@@ -56,7 +59,7 @@ workflow 返回 `{ round, found, confirmed, fixes:[{id,branch,verify,...}], skip
 ### 3. 落地铁律（opus verify 会漏，这几关不能省）
 
 1. **fix-now 必主循环亲自读码复核全链路**——workflow synthesis 读不够深会误判方向（藏设计抉择/Bevy 16 参数上限/孤岛）。守恒/scorer 类尤其。
-2. **本地必跑 `cargo test --lib`（全量）+ 连跑 3× 验 flaky**——绝不只信 opus verdict。`cargo test -- A B C`（多 filter 要 `--`，否则 "unexpected argument"）。
+2. **本地必跑 `scripts/build-token.sh cargo test --lib`（全量）+ 连跑 3× 验 flaky**——绝不只信 opus verdict。`scripts/build-token.sh cargo test -- A B C`（多 filter 要 `--`，否则 "unexpected argument"）。
 3. **守恒类 fix 必查 `mod.rs` 注册**——多次发现整 fix 是生产 no-op 死代码（system 没注册，单测 add_systems 掩盖孤岛）。
 4. **合并前必查 CodeRabbit actionable**——它多次抓出 opus 全漏的 Critical（`.max(0.0)` 负灵域守恒、over-credit qi_current<damage）。每 PR 评论 `/review` 触发 Pi，等 CodeRabbit + Pi 都无阻塞再合（CodeRabbit summary-only "fail"=无 actionable，非阻塞）。
 5. 自己开的 PR 自己盯到 merge，别甩回用户。

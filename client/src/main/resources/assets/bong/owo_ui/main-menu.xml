@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components>
+        <flow-layout direction="vertical">
+            <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+            <children>
+                <flow-layout id="menu-content" direction="vertical">
+                    <sizing><horizontal method="fixed">164</horizontal><vertical method="content">0</vertical></sizing>
+                    <positioning type="relative">9,46</positioning>
+                    <gap>8</gap>
+                    <children>
+                        <flow-layout id="menu-brand" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">78</vertical></sizing>
+                        </flow-layout>
+                        <button id="menu-enter">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">28</vertical></sizing>
+                            <text translate="true">bong.menu.enter</text>
+                        </button>
+                        <button id="menu-settings">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
+                            <text translate="true">menu.options</text>
+                        </button>
+                        <button id="menu-exit">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
+                            <text translate="true">menu.quit</text>
+                        </button>
+                        <flow-layout id="menu-status-slot" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">24</vertical></sizing>
+                            <children>
+                                <label id="menu-status">
+                                    <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                    <color>#FFA9B5AA</color>
+                                    <shadow>true</shadow>
+                                    <horizontal-text-alignment>center</horizontal-text-alignment>
+                                </label>
+                            </children>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

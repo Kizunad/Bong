@@ -190,6 +190,7 @@ mod tests {
             map.insert(
                 id.to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: id.to_string(),
                     display_name: id.to_string(),
                     category: ItemCategory::Misc,
@@ -215,6 +216,7 @@ mod tests {
                     shelflife_profile: None,
                     shield_spec: None,
                     shelflife_track: None,
+                    wearer_race: crate::body_plan::types::RaceGateOwned::default(),
                 },
             );
         }

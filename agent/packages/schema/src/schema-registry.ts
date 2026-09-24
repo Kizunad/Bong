@@ -46,6 +46,7 @@ import {
   WelcomePayloadV1,
   ZoneInfoPayloadV1,
 } from "./client-payload.js";
+import { AgentUiResponsePayloadV1 } from "./payloads/agent-ui.js";
 import {
   AlchemyFeedSlotRequestV1,
   AlchemyIgniteRequestV1,
@@ -109,12 +110,16 @@ import {
   ZhenfaTriggerRequestV1,
 } from "./client-request.js";
 import {
+  CombatHudStateV1,
+  QuickSlotConfigV1,
+  QuickSlotEntryV1,
   SkillBarConfigV1,
   SkillBarEntryV1,
   TechniquesSnapshotV1,
 } from "./combat-hud.js";
 import { SkillConfigSnapshotV1, SkillConfigV1 } from "./skill-config.js";
 import { CombatRealtimeEventV1, CombatSummaryV1 } from "./combat-event.js";
+import { SkillLvUpPayloadV1 } from "./skill.js";
 import {
   AntidoteResultEventV1,
   AntidoteResultV1,
@@ -131,6 +136,7 @@ import {
   DuguV2SkillIdV1,
 } from "./dugu_v2.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import { CraftOutcomeV1, RecipeUnlockedV1 } from "./craft.js";
 import {
   DeathCinematicPhaseV1,
   DeathCinematicRollV1,
@@ -204,6 +210,8 @@ import {
   HeartDemonPregenRequestV1,
 } from "./heart-demon.js";
 import { NarrationV1 } from "./narration.js";
+import { MeridianSeveredEventV1 } from "./meridian-severed.js";
+import { ElderEncounterEventV1 } from "./elder-encounter.js";
 import {
   DuXuOutcomeV1,
   DuXuResultV1,
@@ -230,6 +238,8 @@ import {
   FactionEventKindV1,
   FactionEventV1,
   FactionIdV1,
+  FactionWarEventV1,
+  NamedFactionStateV1,
   NpcArchetypeV1,
   NpcDeathCauseV1,
   NpcDeathV1,
@@ -289,6 +299,7 @@ import {
   ServerDataExtractStartedV1,
   ServerDataRiftPortalRemovedV1,
   ServerDataRiftPortalStateV1,
+  ServerDataQuickSlotConfigV1,
   ServerDataSkillCapChangedV1,
   ServerDataSkillBarConfigV1,
   ServerDataSkillLvUpV1,
@@ -299,6 +310,7 @@ import {
   ServerDataFullPowerChargingStateV1,
   ServerDataFullPowerExhaustedStateV1,
   ServerDataFullPowerReleaseV1,
+  ServerDataCombatHudStateV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataTribulationStateV1,
@@ -306,6 +318,8 @@ import {
   ServerDataTreasureEquippedV1,
   ServerDataFalseSkinStateV1,
   ServerDataVortexStateV1,
+  AnqiHudV1,
+  ServerDataAnqiHudV1,
   ServerDataCarrierStateV1,
   ServerDataDuguPoisonStateV1,
   ServerDataPoisonDoseEventV1,
@@ -390,6 +404,7 @@ import {
   FalseSkinLayerStateV1,
   FalseSkinStackStateV1,
   FalseSkinTierV1,
+  TuikeAshDecayV1,
   TuikeV2SkillEventV1,
   TuikeV2SkillIdV1,
 } from "./tuike-v2.js";
@@ -563,6 +578,7 @@ export const SCHEMA_REGISTRY = {
   boneCoinTickV1: BoneCoinTickV1,
   priceSampleV1: PriceSampleV1,
   priceIndexV1: PriceIndexV1,
+  agentUiResponsePayloadV1: AgentUiResponsePayloadV1,
   serverDataV1: ServerDataV1,
   clientPayloadV1: ClientPayloadV1,
   clientPayloadWelcomeV1: WelcomePayloadV1,
@@ -700,12 +716,17 @@ export const SCHEMA_REGISTRY = {
   serverDataFullPowerChargingStateV1: ServerDataFullPowerChargingStateV1,
   serverDataFullPowerReleaseV1: ServerDataFullPowerReleaseV1,
   serverDataFullPowerExhaustedStateV1: ServerDataFullPowerExhaustedStateV1,
+  combatHudStateV1: CombatHudStateV1,
   qiColorObservedV1: QiColorObservedV1,
+  quickSlotEntryV1: QuickSlotEntryV1,
+  quickSlotConfigV1: QuickSlotConfigV1,
   skillBarEntryV1: SkillBarEntryV1,
   skillBarConfigV1: SkillBarConfigV1,
   techniquesSnapshotV1: TechniquesSnapshotV1,
   skillConfigV1: SkillConfigV1,
   skillConfigSnapshotV1: SkillConfigSnapshotV1,
+  serverDataQuickSlotConfigV1: ServerDataQuickSlotConfigV1,
+  serverDataCombatHudStateV1: ServerDataCombatHudStateV1,
   serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
   serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
   serverDataSkillConfigSnapshotV1: ServerDataSkillConfigSnapshotV1,
@@ -727,6 +748,8 @@ export const SCHEMA_REGISTRY = {
   zhenmaiSkillEventV1: ZhenmaiSkillEventV1,
   zhenfaV2EventV1: ZhenfaV2EventV1,
   serverDataVortexStateV1: ServerDataVortexStateV1,
+  anqiHudV1: AnqiHudV1,
+  serverDataAnqiHudV1: ServerDataAnqiHudV1,
   woliuSkillIdV1: WoliuSkillIdV1,
   woliuBackfireLevelV1: WoliuBackfireLevelV1,
   woliuSkillCastV1: WoliuSkillCastV1,
@@ -769,6 +792,14 @@ export const SCHEMA_REGISTRY = {
   tuikeV2SkillIdV1: TuikeV2SkillIdV1,
   falseSkinTierV1: FalseSkinTierV1,
   tuikeV2SkillEventV1: TuikeV2SkillEventV1,
+  tuikeAshDecayV1: TuikeAshDecayV1,
+  meridianSeveredEventV1: MeridianSeveredEventV1,
+  elderEncounterEventV1: ElderEncounterEventV1,
+  factionWarEventV1: FactionWarEventV1,
+  namedFactionStateV1: NamedFactionStateV1,
+  craftOutcomeV1: CraftOutcomeV1,
+  recipeUnlockedV1: RecipeUnlockedV1,
+  skillLvUpPayloadV1: SkillLvUpPayloadV1,
   falseSkinLayerStateV1: FalseSkinLayerStateV1,
   falseSkinStackStateV1: FalseSkinStackStateV1,
   serverDataFalseSkinStateV1: ServerDataFalseSkinStateV1,
@@ -1015,6 +1046,8 @@ export const GENERATED_SCHEMA_FILES = {
   "price-index-v1.json": SCHEMA_REGISTRY.priceIndexV1,
   "inventory-snapshot-v1.json": SCHEMA_REGISTRY.inventorySnapshotV1,
   "inventory-event-v1.json": SCHEMA_REGISTRY.inventoryEventV1,
+  "agent-ui-response-payload-v1.json":
+    SCHEMA_REGISTRY.agentUiResponsePayloadV1,
   "server-data-v1.json": SCHEMA_REGISTRY.serverDataV1,
   "client-payload-v1.json": SCHEMA_REGISTRY.clientPayloadV1,
   "client-payload-welcome-v1.json": SCHEMA_REGISTRY.clientPayloadWelcomeV1,
@@ -1079,6 +1112,14 @@ export const GENERATED_SCHEMA_FILES = {
   "baomai-v4-resonance-lock-end-v1.json": SCHEMA_REGISTRY.baomaiV4ResonanceLockEndV1,
   "zhenfa-v2-event-v1.json": SCHEMA_REGISTRY.zhenfaV2EventV1,
   "tuike-v2-skill-event-v1.json": SCHEMA_REGISTRY.tuikeV2SkillEventV1,
+  "tuike-ash-decay-v1.json": SCHEMA_REGISTRY.tuikeAshDecayV1,
+  "meridian-severed-event-v1.json": SCHEMA_REGISTRY.meridianSeveredEventV1,
+  "elder-encounter-event-v1.json": SCHEMA_REGISTRY.elderEncounterEventV1,
+  "faction-war-event-v1.json": SCHEMA_REGISTRY.factionWarEventV1,
+  "named-faction-state-v1.json": SCHEMA_REGISTRY.namedFactionStateV1,
+  "craft-outcome-v1.json": SCHEMA_REGISTRY.craftOutcomeV1,
+  "recipe-unlocked-v1.json": SCHEMA_REGISTRY.recipeUnlockedV1,
+  "skill-lv-up-payload-v1.json": SCHEMA_REGISTRY.skillLvUpPayloadV1,
   "false-skin-stack-state-v1.json": SCHEMA_REGISTRY.falseSkinStackStateV1,
   "style-telemetry-color-snapshot-v1.json":
     SCHEMA_REGISTRY.styleTelemetryColorSnapshotV1,
@@ -1222,12 +1263,19 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataFullPowerReleaseV1,
   "server-data-full-power-exhausted-state-v1.json":
     SCHEMA_REGISTRY.serverDataFullPowerExhaustedStateV1,
+  "combat-hud-state-v1.json": SCHEMA_REGISTRY.combatHudStateV1,
+  "server-data-combat-hud-state-v1.json":
+    SCHEMA_REGISTRY.serverDataCombatHudStateV1,
   "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
+  "quick-slot-entry-v1.json": SCHEMA_REGISTRY.quickSlotEntryV1,
+  "quick-slot-config-v1.json": SCHEMA_REGISTRY.quickSlotConfigV1,
   "skill-bar-entry-v1.json": SCHEMA_REGISTRY.skillBarEntryV1,
   "skill-bar-config-v1.json": SCHEMA_REGISTRY.skillBarConfigV1,
   "techniques-snapshot-v1.json": SCHEMA_REGISTRY.techniquesSnapshotV1,
   "skill-config-v1.json": SCHEMA_REGISTRY.skillConfigV1,
   "skill-config-snapshot-v1.json": SCHEMA_REGISTRY.skillConfigSnapshotV1,
+  "server-data-quick-slot-config-v1.json":
+    SCHEMA_REGISTRY.serverDataQuickSlotConfigV1,
   "server-data-skill-bar-config-v1.json":
     SCHEMA_REGISTRY.serverDataSkillBarConfigV1,
   "server-data-techniques-snapshot-v1.json":
@@ -1250,6 +1298,9 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataShieldBlockHitV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
+  "anqi-hud-v1.json": SCHEMA_REGISTRY.anqiHudV1,
+  "server-data-anqi-hud-v1.json":
+    SCHEMA_REGISTRY.serverDataAnqiHudV1,
   "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,
   "dugu-poison-progress-event-v1.json":
     SCHEMA_REGISTRY.duguPoisonProgressEventV1,

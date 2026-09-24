@@ -1,0 +1,23 @@
+# 玄铁 XuanIron —— 特征点名清单
+#
+# 特征来源：`xuan_iron.png` 物品原画与致密玄铁重块方块：
+# 1. main_facets: 致密深黑玄铁多面体矿体与前倾向阳金属受光大折面
+# 2. peak_and_ridges: 左侧高耸锋锐主脊峰与贯穿金属冷银刀锋反光棱
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+xuan_void = [12, 14, 18]
+xuan_dark = [28, 30, 36]
+xuan_mid  = [58, 62, 70]
+xuan_lit  = [106, 112, 124]
+xuan_spec = [154, 160, 172]
+
+[features]
+# 核心致密金属受光折面与母体
+main_facets = { elements = ["facet_", "body_", "base_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 9000, SIDE_R = 7500 } }
+
+# 锐利主脊峰与冷银反光棱
+peak_and_ridges = { elements = ["peak_", "flank_", "ridge_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }

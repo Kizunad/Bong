@@ -80,7 +80,7 @@ impl EraDecayClock {
         if self.interval_ticks == 0 {
             return 1.0;
         }
-        if tick > 0 && tick % self.interval_ticks == 0 {
+        if tick > 0 && tick.is_multiple_of(self.interval_ticks) {
             return 1.0;
         }
         (tick % self.interval_ticks) as f64 / self.interval_ticks as f64
@@ -89,7 +89,7 @@ impl EraDecayClock {
 
 pub fn era_decay_tick(mut clock: ResMut<EraDecayClock>, mut budget: ResMut<WorldQiBudget>) {
     let next_tick = clock.tick.wrapping_add(1);
-    if clock.interval_ticks == 0 || next_tick % clock.interval_ticks != 0 {
+    if clock.interval_ticks == 0 || !next_tick.is_multiple_of(clock.interval_ticks) {
         clock.tick = next_tick;
         return;
     }

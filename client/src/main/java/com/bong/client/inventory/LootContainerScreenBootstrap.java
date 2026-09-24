@@ -2,7 +2,6 @@ package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
 import com.bong.client.hud.LootContainerStateStore;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 
 public final class LootContainerScreenBootstrap {
@@ -25,10 +24,6 @@ public final class LootContainerScreenBootstrap {
                 // Don't close on Closed — InspectScreen handles unmounting the panel internally
             });
         });
-
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) ->
-            mc.execute(LootContainerStateStore::clear)
-        );
 
         BongClient.LOGGER.info("Registered loot container screen bootstrap");
     }

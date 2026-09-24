@@ -1,0 +1,326 @@
+[[recipes]]
+id = "workbench.process.bone_chip"
+category = "misc"
+display_name = "骨片"
+qi_cost = 0.0
+time_sec = 10
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 1
+
+[recipes.output]
+template_id = "bone_chip_mat"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.bone_meal"
+category = "misc"
+display_name = "骨粉"
+qi_cost = 0.0
+time_sec = 25
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 2
+
+[recipes.output]
+template_id = "bone_meal_mat"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.clay_pot"
+category = "misc"
+display_name = "陶罐"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 3
+
+[recipes.output]
+template_id = "clay_pot"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.dan_sha_powder"
+category = "misc"
+display_name = "丹砂粉"
+qi_cost = 0.0
+time_sec = 15
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dan_sha"
+count = 1
+
+[recipes.output]
+template_id = "powder_dan_sha"
+count = 3
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.dried_grass"
+category = "misc"
+display_name = "干草"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "grass_fiber"
+count = 5
+
+[recipes.output]
+template_id = "dried_grass"
+count = 3
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.herb_bundle"
+category = "misc"
+display_name = "灵草束"
+qi_cost = 0.0
+time_sec = 10
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_grass"
+count = 5
+
+[recipes.output]
+template_id = "herb_bundle"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.iron_ingot"
+category = "misc"
+display_name = "粗铁锭"
+qi_cost = 0.0
+time_sec = 50
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "cu_tie"
+count = 2
+
+[recipes.output]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.needle_batch"
+category = "misc"
+display_name = "铁针"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.output]
+template_id = "iron_needle"
+count = 5
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.rat_tail_oil"
+category = "misc"
+display_name = "鼠尾油"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rat_tail"
+count = 3
+
+[recipes.output]
+template_id = "rat_tail_oil"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.rope"
+category = "misc"
+display_name = "草绳"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "grass_fiber"
+count = 3
+
+[recipes.output]
+template_id = "grass_rope"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.rough_cloth"
+category = "misc"
+display_name = "粗布"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ash_spider_silk"
+count = 5
+
+[recipes.output]
+template_id = "rough_cloth"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.salt_crystal"
+category = "misc"
+display_name = "盐蓬晶"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "bai_yan_peng"
+count = 3
+
+[recipes.output]
+template_id = "salt_crystal"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.spider_cord"
+category = "misc"
+display_name = "蛛丝绳"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ash_spider_silk"
+count = 4
+
+[recipes.output]
+template_id = "spider_silk_cord"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.spirit_charcoal"
+category = "misc"
+display_name = "灵木炭"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 2
+
+[recipes.output]
+template_id = "spirit_charcoal"
+count = 3
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.tanned_hide"
+category = "misc"
+display_name = "熟皮"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "raw_beast_hide"
+count = 1
+
+[[recipes.materials]]
+template_id = "hui_jin_tai"
+count = 1
+
+[recipes.output]
+template_id = "tanned_hide"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.wood_handle"
+category = "misc"
+display_name = "木柄"
+qi_cost = 0.0
+time_sec = 15
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 1
+
+[recipes.output]
+template_id = "wood_handle"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.process.wood_plank"
+category = "misc"
+display_name = "木板"
+qi_cost = 0.0
+time_sec = 15
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 1
+
+[recipes.output]
+template_id = "wood_plank"
+count = 2
+
+[recipes.requirements]

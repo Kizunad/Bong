@@ -1,0 +1,10 @@
+{
+  "id": "cao_lian_harvest_swing",
+  "layers": [
+    { "sound": "minecraft:block.grass.break", "volume": 0.9, "pitch": 0.8, "delay_ticks": 0 }
+  ],
+  "priority": 30,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

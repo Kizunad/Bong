@@ -5,7 +5,8 @@
     "v",
     "type",
     "slot",
-    "item_id"
+    "instance_id",
+    "request_id"
   ],
   "properties": {
     "v": {
@@ -18,19 +19,26 @@
     },
     "slot": {
       "minimum": 0,
-      "maximum": 8,
+      "maximum": 1,
       "type": "integer"
     },
-    "item_id": {
+    "instance_id": {
       "anyOf": [
         {
           "type": "null"
         },
         {
-          "minLength": 1,
-          "type": "string"
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
         }
       ]
+    },
+    "request_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "dc03d92cefbbc75211bd1b088d4217b3023f3a70e055f741dbd0a2f0937272f6"
 }

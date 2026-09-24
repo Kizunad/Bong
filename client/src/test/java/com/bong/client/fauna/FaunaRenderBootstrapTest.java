@@ -1,5 +1,7 @@
 package com.bong.client.fauna;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.util.Identifier;
@@ -76,7 +78,11 @@ public class FaunaRenderBootstrapTest {
             "geo/zhinian.geo.json",
             "geo/tsy_sentinel.geo.json",
             "geo/fuya.geo.json",
-            "geo/skull_fiend.geo.json"
+            "geo/skull_fiend.geo.json",
+            "geo/dainu_lion.geo.json",
+            "geo/fuyu_vulture.geo.json",
+            "geo/kekeda_goose.geo.json",
+            "geo/horse.geo.json"
         );
         assertEquals(
             expected,
@@ -149,9 +155,12 @@ public class FaunaRenderBootstrapTest {
 
     @Test
     void idleAnimationNameDerivesFromAnimPath() {
-        // 通用 fauna 模型（animPath==null）→ animation.fauna.idle（在 fauna.animation.json 内）
-        assertEquals("animation.fauna.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
-            "通用 fauna 物种应回退 animation.fauna.idle");
+        assertEquals("animation.bong.ash_spider.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
+            "拟态蜘蛛应使用独立流水线的 idle");
+        // 噬元鼠改走专属模型（devour_rat.geo.json + devour_rat.animation.json，含 idle/walk/run/peck/claw/pounce），
+        // idle 应取 animation.bong.devour_rat.idle 而非通用回退。
+        assertEquals("animation.bong.devour_rat.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
+            "噬元鼠走专属模型动画文件，idle 应取 animation.bong.devour_rat.idle");
         // 专属模型（animPath!=null）→ animation.bong.<animPath>.idle（在各物种文件内）
         // 黑武士现走专属 heiwushi.animation.json（boss 招式动画 dark_barrage/dark_vortex/transform
         // 都在该文件，idle 同理），故 idle 名应为 animation.bong.heiwushi.idle 而非通用回退。
@@ -185,63 +194,56 @@ public class FaunaRenderBootstrapTest {
         }
     }
 
+    // ─── 移动动画：controller 按水平速度切 idle↔walk↔run（此前只播 idle，
+    //     walk/run 是死资产从不触发）。噬元鼠接入三态，其余物种维持 null（idle-only）───
+
     @Test
-    void faunaEntityDerivesIdleFromVisualKindAndDropsHardcodedFaunaIdle() {
-        // 字节码核验 controller 接线（无法 bootstrap GeckoLib 运行时）：
-        // ① FaunaEntity 必须调用 FaunaVisualKind.idleAnimationName()（按物种取 idle）；
-        // ② FaunaEntity 不得再硬编码字面量 "animation.fauna.idle"（已下沉到 FaunaVisualKind）。
-        // 二者同时成立才能保证专属模型物种不再 T-Pose；任一回退都撞红。
-        Set<String> ldcStrings = new HashSet<>();
-        Set<String> invokedMethods = new HashSet<>();
-        try (InputStream input = FaunaEntity.class.getResourceAsStream("FaunaEntity.class")) {
-            if (input == null) {
-                throw new AssertionError("expected FaunaEntity.class resource for idle-wiring bytecode test");
+    void availableLocomotionClipsDriveMovementAndLoop() {
+        for (FaunaVisualKind kind : FaunaVisualKind.values()) {
+            for (var profile : FaunaAnimations.profiles(kind)) {
+                FaunaPlayback playback = new FaunaPlayback(kind);
+                playback.trigger(profile.idle().name(), 1);
+                playback.tick();
+                assertEquals(profile.idle(), playback.current(0));
+                var moving = profile.run() != null ? profile.run()
+                    : profile.walk() != null ? profile.walk() : profile.idle();
+                assertEquals(moving, playback.current(0.3f), kind + " 应选择存在的移动动作");
+                assertTrue(moving.loop(), kind + " 移动动作必须循环");
             }
-            new ClassReader(input).accept(new ClassVisitor(Opcodes.ASM9) {
-                @Override
-                public MethodVisitor visitMethod(
-                    int access,
-                    String name,
-                    String descriptor,
-                    String signature,
-                    String[] exceptions
-                ) {
-                    return new MethodVisitor(Opcodes.ASM9) {
-                        @Override
-                        public void visitLdcInsn(Object value) {
-                            if (value instanceof String s) {
-                                ldcStrings.add(s);
-                            }
-                        }
-
-                        @Override
-                        public void visitMethodInsn(
-                            int opcode,
-                            String owner,
-                            String methodName,
-                            String methodDescriptor,
-                            boolean isInterface
-                        ) {
-                            invokedMethods.add(methodName);
-                        }
-                    };
-                }
-            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        } catch (IOException error) {
-            throw new AssertionError("expected to read FaunaEntity.class for idle-wiring test", error);
+            assertEquals(kind.walkAnimationName() != null, kind.facesMovementDirection());
         }
+    }
 
-        assertTrue(
-            invokedMethods.contains("idleAnimationName"),
-            "expected FaunaEntity.registerControllers to call FaunaVisualKind.idleAnimationName() so each "
-                + "species loops its OWN idle（否则专属模型物种定格 T-Pose），actual invoked methods: " + invokedMethods
-        );
-        assertFalse(
-            ldcStrings.contains("animation.fauna.idle"),
-            "expected FaunaEntity to NOT hardcode \"animation.fauna.idle\"（已下沉到 FaunaVisualKind."
-                + "idleAnimationName）；若该字面量重现说明 controller 又写死了通用 idle → 专属物种 T-Pose，"
-                + "actual LDC strings: " + ldcStrings
-        );
+    @Test
+    void approachYawTurnsTowardTargetWithClampAndWrap() {
+        // 小于步长：一步到位。
+        assertEquals(30.0f, FaunaYawMath.approachYaw(0.0f, 30.0f, 90.0f), 1e-4);
+        // 大于步长且走近路：target=200° 归一化 = −160°，从 0 最短转向为负 → 只走 −maxDelta。
+        assertEquals(-28.0f, FaunaYawMath.approachYaw(0.0f, 200.0f, 28.0f), 1e-4);
+        // 正向大角：target=120°（>maxDelta），正向走 +28。
+        assertEquals(28.0f, FaunaYawMath.approachYaw(0.0f, 120.0f, 28.0f), 1e-4);
+        // 环绕：从 170 转向 -170（差 20°，走近路 +20 越过 180）。
+        assertEquals(-170.0f, FaunaYawMath.approachYaw(170.0f, -170.0f, 90.0f), 1e-4);
+        // wrapDegrees 边界。
+        assertEquals(-179.0f, FaunaYawMath.wrapDegrees(181.0f), 1e-4);
+        assertEquals(180.0f, FaunaYawMath.wrapDegrees(180.0f), 1e-4);
+        assertEquals(0.0f, FaunaYawMath.wrapDegrees(360.0f), 1e-4);
+    }
+
+    @Test
+    void devourRatAnimationFileContainsWalkAndRun() throws IOException {
+        // 不变式：既然 controller 会对噬元鼠 setAnimation(walk/run)，其动画文件必须含这两个 key，
+        // 否则移动时 GeckoLib 解析不到 → 定格 T-Pose（与 idle 缺失同源的坑）。
+        Path resources = Path.of("src", "main", "resources");
+        Path path = resources.resolve("assets/bong")
+            .resolve(FaunaVisualKind.DEVOUR_RAT.animationId().getPath());
+        JsonObject animations = JsonParser.parseString(Files.readString(path))
+            .getAsJsonObject().getAsJsonObject("animations");
+        for (String name : new String[] {"animation.bong.devour_rat.walk", "animation.bong.devour_rat.run"}) {
+            assertTrue(animations != null && animations.has(name),
+                "噬元鼠动画文件缺少移动动画 \"" + name + "\"——移动时会定格 T-Pose。文件含: "
+                    + (animations == null ? "<none>" : animations.keySet()));
+        }
     }
 
     private static List<Integer> canHitInstructionOpcodes() {
@@ -277,6 +279,72 @@ public class FaunaRenderBootstrapTest {
                 error
             );
         }
+    }
+
+    /**
+     * 全仓不变式：**任何** GeckoLib geo 文件里都不得出现负 {@code size} 的 cube。
+     *
+     * <p>Blockbench 允许某轴 {@code to < from}（手雕时很容易出现），转换脚本若直接
+     * {@code to - from} 就会写出负 size。Bedrock geometry 约定 size 非负，负宽度会让该 cube
+     * 退化 / 翻面——背面剔除后从外面直接看不见，而加载、解析、渲染全程**不报任何错**，
+     * 只能靠实机盯出来。
+     *
+     * <p>实战命中：噬元鼠尾脊末段 {@code ridge3}（`to.x < from.x`，size.x = -0.186）正是
+     * q2 满档才点亮的第 4 段蓝脊；不修则"吸饱了"这一档的最后一段可能整段不可见，而所有
+     * 贴图/档位/发光测试照样全绿。
+     */
+    @Test
+    void noFaunaGeoModelContainsNegativeCubeSize() throws IOException {
+        Path geoDir = Path.of("src", "main", "resources", "assets", "bong", "geo");
+        assertTrue(Files.isDirectory(geoDir), "geo 资源目录应存在：" + geoDir);
+
+        List<String> offenders = new ArrayList<>();
+        List<Path> geoFiles;
+        try (var stream = Files.list(geoDir)) {
+            geoFiles = stream.filter(p -> p.getFileName().toString().endsWith(".geo.json"))
+                .sorted()
+                .toList();
+        }
+        assertFalse(geoFiles.isEmpty(), "geo 目录不应为空，否则本不变式形同虚设");
+
+        for (Path file : geoFiles) {
+            JsonObject root = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+            if (!root.has("minecraft:geometry")) {
+                continue;
+            }
+            for (JsonElement geometry : root.getAsJsonArray("minecraft:geometry")) {
+                JsonObject geo = geometry.getAsJsonObject();
+                if (!geo.has("bones")) {
+                    continue;
+                }
+                for (JsonElement boneElement : geo.getAsJsonArray("bones")) {
+                    JsonObject bone = boneElement.getAsJsonObject();
+                    if (!bone.has("cubes")) {
+                        continue;
+                    }
+                    for (JsonElement cubeElement : bone.getAsJsonArray("cubes")) {
+                        JsonObject cube = cubeElement.getAsJsonObject();
+                        if (!cube.has("size")) {
+                            continue;
+                        }
+                        JsonArray size = cube.getAsJsonArray("size");
+                        for (int axis = 0; axis < size.size(); axis++) {
+                            if (size.get(axis).getAsDouble() < 0) {
+                                offenders.add(file.getFileName() + " bone=" + bone.get("name")
+                                    + " size=" + size + "（轴 " + axis + " 为负）");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(
+            offenders.isEmpty(),
+            "以下 cube 的 size 含负值 —— 会退化/翻面且全程不报错，只能实机盯出来；"
+                + "转换脚本应取 min(from,to) 作 origin、abs(to-from) 作 size：\n  "
+                + String.join("\n  ", offenders)
+        );
     }
 
     private static Method assertCanHitMethod() {

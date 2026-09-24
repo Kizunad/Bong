@@ -17,16 +17,19 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
-        String slot = readString(payload, "slot", "main_hand");
+        String slot = readSlot(payload);
 
         JsonElement weaponElem = payload.get("weapon");
-        if (weaponElem == null || weaponElem.isJsonNull() || !weaponElem.isJsonObject()) {
+        if (weaponElem == null || weaponElem.isJsonNull()) {
             WeaponEquippedStore.putOrClear(slot, null);
             // plan-shield-block-v1 §P3：卸下时同步清空盾槽（若 off_hand 卸下则盾也消）
             if ("off_hand".equals(slot)) {
                 EquippedShieldStore.clear();
             }
             return ServerDataDispatch.handled(envelope.type(), "Cleared slot " + slot);
+        }
+        if (!weaponElem.isJsonObject()) {
+            throw new IllegalArgumentException("weapon must be an object or null");
         }
 
         JsonObject w = weaponElem.getAsJsonObject();
@@ -68,10 +71,16 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
         );
     }
 
-    private static String readString(JsonObject obj, String field, String fallback) {
-        JsonElement e = obj.get(field);
-        if (e == null || !e.isJsonPrimitive()) return fallback;
-        return e.getAsString();
+    private static String readSlot(JsonObject payload) {
+        JsonElement slotElement = payload.get("slot");
+        if (slotElement == null || !slotElement.isJsonPrimitive()) {
+            throw new IllegalArgumentException("slot must be a string");
+        }
+        String slot = slotElement.getAsString();
+        if (!"main_hand".equals(slot) && !"off_hand".equals(slot) && !"two_hand".equals(slot)) {
+            throw new IllegalArgumentException("unsupported weapon slot: " + slot);
+        }
+        return slot;
     }
 
     /**

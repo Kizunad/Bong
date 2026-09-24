@@ -55,5 +55,6 @@
     "has_session": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "4852803269ad8d3b5c4d61ca0008dd8cf840a8257bd6b7b353d811fbff169abe"
 }

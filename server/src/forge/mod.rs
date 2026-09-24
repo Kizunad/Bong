@@ -22,6 +22,7 @@ pub mod fallback;
 pub mod history;
 pub mod inventory_bridge;
 pub mod learned;
+pub mod preparation;
 pub mod processing_mode;
 pub mod resonance;
 pub mod session;
@@ -32,13 +33,15 @@ pub mod steps;
 use std::collections::HashMap;
 
 use valence::prelude::{
-    App, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut, Update,
+    App, Client, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut,
+    Update, Username,
 };
 
 use self::blueprint::{BlueprintRegistry, MaterialStack, StepKind, DEFAULT_BLUEPRINTS_DIR};
 use self::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
-    InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
+    InscriptionScrollApplied, InscriptionScrollSubmit, StartForgeRequest, StepAdvance,
+    TemperingHit,
 };
 use self::history::{ForgeAttempt, ForgeHistory};
 use self::learned::LearnedBlueprints;
@@ -53,10 +56,16 @@ use self::steps::{
 };
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
-use crate::inventory::{consume_forge_materials_atomic, PlayerInventory};
+use crate::inventory::{
+    consume_item_instance_once, inventory_item_by_instance_borrow, ItemRegistry, PlayerInventory,
+};
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
-use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::network::{
+    gameplay_vfx, inventory_snapshot_emit::send_inventory_snapshot_to_client,
+    vfx_event_emit::VfxEventRequest,
+};
+use crate::player::state::PlayerState;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
@@ -88,6 +97,7 @@ pub fn register(app: &mut App) {
     app.add_event::<StartForgeRequest>();
     app.add_event::<TemperingHit>();
     app.add_event::<InscriptionScrollSubmit>();
+    app.add_event::<InscriptionScrollApplied>();
     app.add_event::<ConsecrationInject>();
     app.add_event::<StepAdvance>();
     app.add_event::<ForgeStartAccepted>();
@@ -103,7 +113,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             station::handle_place_station_request,
-            handle_start_forge_requests,
+            handle_start_forge_requests
+                .after(crate::network::craft_materials::apply_craft_material_intents),
             crate::network::forge_bridge::publish_forge_start_on_session_create
                 .after(handle_start_forge_requests),
             // plan-forge-session-entry-wiring-v1 P2 —— 起炉受理 S2C 回执
@@ -111,28 +122,19 @@ pub fn register(app: &mut App) {
             // 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
                 .after(handle_start_forge_requests),
-            handle_tempering_hits.after(handle_start_forge_requests),
-            handle_scroll_submits.after(handle_tempering_hits),
-            handle_consecration_injects.after(handle_scroll_submits),
-            // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
-            // ForgeScreen 实时反映进度。
-            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
-                .after(handle_consecration_injects),
-            handle_step_advance.after(handle_consecration_injects),
-            // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
-            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
-                .after(handle_step_advance),
-            inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
-            crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
+            inventory_bridge::forge_outcome_to_inventory.after(handle_consecration_step_advance),
+            crate::network::forge_bridge::publish_forge_outcome
+                .after(handle_consecration_step_advance),
             // 结算 S2C 回执（send_forge_outcome_to_player 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_outcome_on_event
-                .after(handle_step_advance),
+                .after(handle_consecration_step_advance),
             processing_mode::forge_processing_mode_handler,
             // 延迟清理：Done session 保留 DONE_SESSION_RETENTION_TICKS tick 后移除，
             // 避免 client_request_handler 在 finalize 瞬间后仍读 session 时出竞态。
-            cleanup_completed_sessions.after(handle_step_advance),
+            cleanup_completed_sessions.after(handle_consecration_step_advance),
         ),
     );
+    add_forge_c2s_step_advance_systems(app);
 
     app.add_systems(
         Update,
@@ -151,6 +153,30 @@ pub fn register(app: &mut App) {
     );
 }
 
+/// 注册炼器 C2S 阶段推进的唯一生产顺序契约，集成测试复用同一条系统链。
+fn add_forge_c2s_step_advance_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            handle_billet_step_advance
+                .after(handle_start_forge_requests)
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
+            handle_tempering_hits.after(handle_billet_step_advance),
+            handle_tempering_step_advance.after(handle_tempering_hits),
+            handle_scroll_submits.after(handle_tempering_step_advance),
+            handle_inscription_step_advance.after(handle_scroll_submits),
+            handle_consecration_injects.after(handle_inscription_step_advance),
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                .after(handle_consecration_injects),
+            handle_consecration_step_advance.after(
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction,
+            ),
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                .after(handle_consecration_step_advance),
+        ),
+    );
+}
+
 // ══════════════════════════════ Systems ══════════════════════════════
 
 #[allow(clippy::too_many_arguments)]
@@ -165,6 +191,14 @@ fn handle_start_forge_requests(
     mut accepted: EventWriter<ForgeStartAccepted>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
     mut feedback: EventWriter<MineralFeedbackEvent>,
+    item_registry: Option<Res<ItemRegistry>>,
+    persistence: Option<Res<crate::player::state::PlayerStatePersistence>>,
+    contexts: Query<(
+        &Username,
+        &valence::prelude::Position,
+        Option<&crate::world::dimension::CurrentDimension>,
+    )>,
+    mut dropped: Option<ResMut<crate::inventory::DroppedLootRegistry>>,
 ) {
     for req in ev.read() {
         let Some(bp) = registry.get(&req.blueprint) else {
@@ -258,6 +292,18 @@ fn handle_start_forge_requests(
             continue;
         }
 
+        let Ok(mut inventory) = inventories.get_mut(req.caster) else {
+            continue;
+        };
+        if inventory.material_preparation.recipe_id.as_deref() != Some(bp.id.as_str())
+            || inventory.material_preparation.station_pos != station.pos
+        {
+            feedback.send(MineralFeedbackEvent::forge_materials_insufficient(
+                req.caster,
+                &[],
+            ));
+            continue;
+        }
         // 收集投料。optional carrier 允许来自 fauna/spiritwood 等后续专项；required
         // mineral 已在 blueprint load + runtime 双重校验为正典金属。
         let mut inputs: HashMap<String, u32> = HashMap::new();
@@ -299,17 +345,8 @@ fn handle_start_forge_requests(
         // 实际持有的输入料。不足则整体不改动、发 reject 回执、不建会话（不吞料）；这同时
         // 封堵了"引擎只记账 committed_materials、从不核实玩家是否真持有 req.materials
         // 声明"的 anti-cheat 漏洞。Waste 路径已在上面 continue，天然不会走到这里。
-        let materials_to_consume: Vec<(String, u32)> =
-            inputs.iter().map(|(m, c)| (m.clone(), *c)).collect();
-        let Ok(mut inventory) = inventories.get_mut(req.caster) else {
-            tracing::warn!(
-                "[bong][forge] start session rejected: caster={:?} has no PlayerInventory",
-                req.caster
-            );
-            continue;
-        };
-        if let Err(deficits) = consume_forge_materials_atomic(&mut inventory, &materials_to_consume)
-        {
+        let mut staged = inventory.clone();
+        if let Err(deficits) = preparation::consume(&mut staged, &inputs) {
             tracing::info!(
                 "[bong][forge] start session rejected: insufficient materials caster={:?} deficits={deficits:?}",
                 req.caster
@@ -330,6 +367,50 @@ fn handle_start_forge_requests(
                 req.caster, &detail,
             ));
             continue;
+        }
+
+        // 未用到的余料在开炉事务内返还；确认开炉后，投入本炉的材料不再可取回。
+        let mut refunds = Vec::new();
+        if !staged.material_preparation.materials.is_empty() {
+            let (Some(items), Ok((_, position, dimension))) =
+                (item_registry.as_deref(), contexts.get(req.caster))
+            else {
+                continue;
+            };
+            refunds = crate::craft::preparation::return_materials(
+                &mut staged,
+                items,
+                None,
+                [position.0.x, position.0.y, position.0.z],
+                dimension.map(|value| value.0).unwrap_or_default(),
+            )
+            .expect("全部返还不要求指定实例");
+            if !refunds.is_empty() && dropped.is_none() {
+                continue;
+            }
+        }
+        if let Some(persistence) = persistence.as_deref() {
+            let Ok((username, _, _)) = contexts.get(req.caster) else {
+                continue;
+            };
+            if let Err(error) = crate::player::state::save_player_craft_checkpoint(
+                persistence,
+                &username.0,
+                Some(&staged),
+                None,
+                None,
+                None,
+                &refunds,
+            ) {
+                tracing::warn!("[bong][forge] 起炉材料保存失败：{error}");
+                continue;
+            }
+        }
+        *inventory = staged;
+        if let Some(dropped) = dropped.as_deref_mut() {
+            dropped
+                .entries
+                .extend(refunds.into_iter().map(|entry| (entry.instance_id, entry)));
         }
 
         let id = sessions.allocate_id();
@@ -444,38 +525,85 @@ fn handle_tempering_hits(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_scroll_submits(
     mut ev: EventReader<InscriptionScrollSubmit>,
     mut sessions: ResMut<ForgeSessions>,
+    registry: Res<ItemRegistry>,
+    mut inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&Username, &mut Client, &PlayerState, &Cultivation)>,
     stations: Query<&WeaponForgeStation>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut applied_events: EventWriter<InscriptionScrollApplied>,
 ) {
     for submit in ev.read() {
         let Some(session) = sessions.get_mut(submit.session) else {
             continue;
         };
-        if session.current_step != ForgeStep::Inscription {
+        if session.current_step != ForgeStep::Inscription || session.caster != submit.caster {
             continue;
         }
-        if let StepState::Inscription(state) = &mut session.step_state {
-            apply_scroll(state, submit.inscription_id.clone());
-            if let (Some(events), Ok(station)) =
-                (vfx_events.as_deref_mut(), stations.get(session.station))
-            {
-                if let Some(origin) = forge_station_origin(station) {
-                    gameplay_vfx::send_spawn(
-                        events,
-                        gameplay_vfx::spawn_request(
-                            gameplay_vfx::FORGE_INSCRIPTION,
-                            origin,
-                            None,
-                            "#4488FF",
-                            0.8,
-                            1,
-                            20,
-                        ),
-                    );
-                }
+        let StepState::Inscription(state) = &mut session.step_state else {
+            continue;
+        };
+        let Ok(mut inventory) = inventories.get_mut(submit.caster) else {
+            continue;
+        };
+        let instance_matches =
+            inventory_item_by_instance_borrow(&inventory, submit.item_instance_id)
+                .and_then(|instance| registry.get(instance.template_id.as_str()))
+                .and_then(|template| template.inscription_scroll_spec.as_ref())
+                .is_some_and(|spec| spec.inscription_id == submit.inscription_id);
+        if !instance_matches {
+            tracing::warn!(
+                "[bong][forge] inscription submit rejected: caster={:?} instance_id={} no longer matches inscription_id={}",
+                submit.caster,
+                submit.item_instance_id,
+                submit.inscription_id
+            );
+            continue;
+        }
+        if let Err(err) = consume_item_instance_once(&mut inventory, submit.item_instance_id) {
+            tracing::warn!(
+                "[bong][forge] inscription submit rejected: consume instance_id={} failed: {err}",
+                submit.item_instance_id
+            );
+            continue;
+        }
+
+        apply_scroll(state, submit.inscription_id.clone());
+        applied_events.send(InscriptionScrollApplied {
+            session: submit.session,
+        });
+        if let Ok((username, mut client, player_state, cultivation)) =
+            clients.get_mut(submit.caster)
+        {
+            send_inventory_snapshot_to_client(
+                submit.caster,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "forge_inscription_scroll_consumed",
+            );
+        }
+        if let (Some(events), Ok(station)) =
+            (vfx_events.as_deref_mut(), stations.get(session.station))
+        {
+            if let Some(origin) = forge_station_origin(station) {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::FORGE_INSCRIPTION,
+                        origin,
+                        None,
+                        "#4488FF",
+                        0.8,
+                        1,
+                        20,
+                    ),
+                );
             }
         }
     }
@@ -663,9 +791,108 @@ fn station_zone_is_collapsed(
         })
 }
 
-/// StepAdvance 统一收束：根据当前 step 结果推进，若到 Done → 派发 outcome。
+/// Billet 本身没有逐 tick 交互；先推进它，才能让同一 Update 内后续
+/// tempering_hit 按新进入的 Tempering step 生效。
 #[allow(clippy::too_many_arguments)]
-fn handle_step_advance(
+fn handle_billet_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Billet,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_tempering_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Tempering,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_inscription_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Inscription,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_consecration_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Consecration,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+/// StepAdvance 分阶段收束：根据发起时的 step 结果推进，若到 Done → 派发 outcome。
+#[allow(clippy::too_many_arguments)]
+fn handle_step_advance_for_step(
+    expected_from_step: ForgeStep,
     mut ev: EventReader<StepAdvance>,
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
@@ -676,9 +903,15 @@ fn handle_step_advance(
     mut skill_xp_events: EventWriter<SkillXpGain>,
 ) {
     for advance in ev.read() {
+        if advance.from_step != expected_from_step {
+            continue;
+        }
         let Some(session) = sessions.get_mut(advance.session) else {
             continue;
         };
+        if session.current_step != advance.from_step {
+            continue;
+        }
         let Some(bp) = registry.get(&session.blueprint) else {
             continue;
         };
@@ -1021,12 +1254,879 @@ fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::{PlaceFurnaceRequest, RecipeRegistry};
+    use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent};
+    use crate::combat::CombatClock;
+    use crate::cultivation::breakthrough::BreakthroughRequest;
+    use crate::cultivation::forging::ForgeRequest;
+    use crate::cultivation::insight::InsightChosen;
     use crate::forge::blueprint::{
         BilletProfile, BilletTolerance, CarrierSpec, MaterialStack, TemperBeat,
     };
-    use crate::forge::session::ForgeSessionId;
+    use crate::forge::learned::LearnedBlueprints;
+    use crate::forge::session::{ForgeSessionId, TemperingState};
+    use crate::inventory::{
+        ContainerState, DroppedLootRegistry, InventoryRevision, ItemInstance, ItemRarity,
+        ItemRegistry, PlacedItemState,
+    };
+    use crate::lingtian::events::{
+        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+        StartReplenishRequest, StartTillRequest,
+    };
+    use crate::mineral::MineralProbeIntent;
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use crate::network::client_request_handler::{
+        handle_client_request_payloads, AlchemyMockState,
+    };
+    use crate::player::gameplay::GameplayActionQueue;
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::shelflife::probe::FreshnessProbeIntent;
+    use crate::skill::events::SkillScrollUsed;
+    use crate::world::extract_system::{
+        CancelExtractRequest as CancelExtractRequestEvent,
+        StartExtractRequest as StartExtractRequestEvent,
+    };
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
-    use valence::prelude::{App, BlockPos, Update};
+    use valence::custom_payload::CustomPayloadEvent;
+    use valence::prelude::{ident, App, BlockPos, Client, Entity, Events, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    const INSCRIPTION_SCROLL_INSTANCE_ID: u64 = 43;
+    const INSCRIPTION_INITIAL_REVISION: InventoryRevision = InventoryRevision(17);
+
+    fn add_minimal_client_request_resources(app: &mut App) {
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<crate::inventory::RemainsLootIntent>();
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+        // fix-spec-1901-v2 §4.1 — `handle_client_request_payloads` 的 lingtian
+        // 分支现在 enqueue 进 `PendingLingtianRequests`，测试 app 必须 init。
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataPayloadV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                Some(payload.payload)
+            })
+            .collect()
+    }
+
+    fn registry_with_qing_feng() -> BlueprintRegistry {
+        let mut registry = BlueprintRegistry::new();
+        let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/qing_feng_v0.json"
+        ))
+        .expect("qing_feng_v0 blueprint should parse");
+        registry
+            .insert(blueprint)
+            .expect("qing_feng_v0 should insert into fresh registry");
+        registry
+    }
+
+    fn registry_with_ling_feng() -> BlueprintRegistry {
+        let mut registry = BlueprintRegistry::new();
+        let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/ling_feng_v0.json"
+        ))
+        .expect("ling_feng_v0 blueprint should parse");
+        registry
+            .insert(blueprint)
+            .expect("ling_feng_v0 should insert into fresh registry");
+        registry
+    }
+
+    fn add_forge_c2s_events(app: &mut App) {
+        app.add_event::<StepAdvance>();
+        app.add_event::<TemperingHit>();
+        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<InscriptionScrollApplied>();
+        app.add_event::<ConsecrationInject>();
+        app.add_event::<ForgeOutcomeEvent>();
+    }
+
+    fn add_production_forge_c2s_systems(app: &mut App) {
+        app.add_systems(Update, handle_client_request_payloads);
+        add_forge_c2s_step_advance_systems(app);
+    }
+
+    fn forge_c2s_test_app_with_registry(registry: BlueprintRegistry) -> App {
+        let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
+        add_minimal_client_request_resources(&mut app);
+        add_forge_c2s_events(&mut app);
+        app.insert_resource(registry);
+        add_production_forge_c2s_systems(&mut app);
+        app
+    }
+
+    fn forge_c2s_test_app() -> App {
+        forge_c2s_test_app_with_registry(registry_with_qing_feng())
+    }
+
+    fn ling_feng_inscription_race_app() -> App {
+        let mut app = forge_c2s_test_app_with_registry(registry_with_ling_feng());
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("production item registry should load"),
+        );
+        app
+    }
+
+    fn send_forge_c2s(app: &mut App, client: Entity, data: &[u8]) {
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: data.to_vec().into_boxed_slice(),
+            });
+    }
+
+    fn spawn_qing_feng_c2s_session(
+        app: &mut App,
+        session_id: u64,
+        username: &str,
+        initial_step: ForgeStep,
+    ) -> (Entity, Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client(username);
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("qing_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+            ))
+            .id();
+
+        let session_id = ForgeSessionId(session_id);
+        let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
+        station.session = (initial_step != ForgeStep::Done).then_some(session_id);
+        let station = app.world_mut().spawn(station).id();
+
+        let mut session =
+            ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
+        match initial_step {
+            ForgeStep::Billet => {
+                session.step_state = StepState::Billet(Default::default());
+            }
+            ForgeStep::Tempering => {
+                session.current_step = ForgeStep::Tempering;
+                session.step_index = 1;
+                session.step_state = StepState::Tempering(Default::default());
+            }
+            ForgeStep::Done => {
+                session.current_step = ForgeStep::Done;
+                session.step_index = 2;
+                session.step_state = StepState::None;
+            }
+            unsupported => panic!("qing_feng_v0 fixture does not contain {unsupported:?}"),
+        }
+        let mut sessions = ForgeSessions::new();
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        (caster, station, helper)
+    }
+
+    fn inscription_scroll_item(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "inscription_scroll_sharp_v0".to_string(),
+            display_name: "锐意铭文残卷".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.03,
+            rarity: ItemRarity::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.8,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_with_inscription_scroll(
+        instance_id: u64,
+        revision: InventoryRevision,
+    ) -> PlayerInventory {
+        PlayerInventory {
+            revision,
+            containers: vec![ContainerState {
+                id: "main_pack".to_string(),
+                name: "main_pack".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: inscription_scroll_item(instance_id),
+                }],
+                owner_instance_id: None,
+                quick_access: false,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+            material_preparation: Default::default(),
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn spawn_ling_feng_tempering_session(
+        app: &mut App,
+        session_id: u64,
+        misses: u32,
+    ) -> (Entity, MockClientHelper) {
+        let (client_bundle, helper) = create_mock_client("Azure");
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("ling_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+                PlayerState::default(),
+                inventory_with_inscription_scroll(
+                    INSCRIPTION_SCROLL_INSTANCE_ID,
+                    INSCRIPTION_INITIAL_REVISION,
+                ),
+            ))
+            .id();
+
+        let session_id = ForgeSessionId(session_id);
+        let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
+        station.session = Some(session_id);
+        let station = app.world_mut().spawn(station).id();
+
+        let mut tempering = TemperingState {
+            beat_cursor: 15,
+            hits: 15,
+            ..Default::default()
+        };
+        if misses > 0 {
+            tempering.beat_cursor = misses as usize;
+            tempering.hits = 0;
+            tempering.misses = misses;
+            tempering.deviation = misses;
+        }
+        let mut session =
+            ForgeSession::new(session_id, "ling_feng_v0".to_string(), station, caster);
+        session.current_step = ForgeStep::Tempering;
+        session.step_index = 1;
+        session.step_state = StepState::Tempering(tempering);
+        session.achieved_tier = 1;
+        let mut sessions = ForgeSessions::new();
+        sessions.insert(session);
+        app.insert_resource(sessions);
+
+        (caster, helper)
+    }
+
+    #[test]
+    fn forge_step_advance_c2s_advances_and_pushes_tempering_session() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(
+            sessions
+                .get(ForgeSessionId(1))
+                .map(|session| session.current_step),
+            Some(ForgeStep::Tempering),
+            "C2S forge_step_advance 应在同一 Update 内经 step advance 阶段推进到 Tempering"
+        );
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                )
+            }),
+            "step_advance 推进后必须给 caster 回推 current_step=tempering 的 forge_session，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_step_advance_then_tempering_hit_same_update_applies_hit_and_pushes_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("session should remain active after first tempering hit");
+        assert_eq!(session.current_step, ForgeStep::Tempering);
+        match &session.step_state {
+            StepState::Tempering(state) => {
+                assert_eq!(state.beat_cursor, 1);
+                assert_eq!(state.hits, 1);
+                assert_eq!(state.misses, 0);
+            }
+            other => panic!("expected tempering state, got {other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        let session_payloads: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(session) if session.session_id == 1 => {
+                    Some(session)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !session_payloads.is_empty()
+                && session_payloads.iter().all(|session| {
+                    session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                        && matches!(
+                            &session.step_state,
+                            crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                beat_cursor: 1,
+                                hits: 1,
+                                misses: 0,
+                                ..
+                            }
+                        )
+                }),
+            "同帧 step_advance 后接 tempering_hit 时，交互快照与推进快照都必须在击键处理后发送，不能夹带旧状态，实际={session_payloads:?}；全部 payload={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_waste_then_inscription_scroll_same_update_preserves_scroll() {
+        let mut app = ling_feng_inscription_race_app();
+        let (caster, mut helper) = spawn_ling_feng_tempering_session(&mut app, 7, 3);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":7}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_inscription_scroll","v":1,"session_id":7,"inscription_id":"sharp_v0"}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let session = app
+            .world()
+            .resource::<ForgeSessions>()
+            .get(ForgeSessionId(7))
+            .expect("Waste session should remain during the retention window");
+        assert_eq!(session.current_step, ForgeStep::Done);
+        assert_eq!(session.tempering_result, Some(TemperingResult::Waste));
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(caster)
+            .expect("caster should retain inventory");
+        assert_eq!(inventory.revision, INSCRIPTION_INITIAL_REVISION);
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(
+            inventory.containers[0].items[0].instance.instance_id, INSCRIPTION_SCROLL_INSTANCE_ID,
+            "Tempering 结算为 Waste 时，同帧预测授权不得提前消费铭文残卷"
+        );
+
+        let applied_count = app
+            .world()
+            .resource::<Events<InscriptionScrollApplied>>()
+            .iter_current_update_events()
+            .count();
+        assert_eq!(
+            applied_count, 0,
+            "未真实进入 Inscription 时不得发出成功应用事件"
+        );
+        let outcomes = app.world().resource::<Events<ForgeOutcomeEvent>>();
+        assert!(outcomes.iter_current_update_events().any(|outcome| {
+            outcome.session == ForgeSessionId(7) && outcome.bucket == ForgeBucket::Waste
+        }));
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().all(|payload| !matches!(
+                payload,
+                ServerDataPayloadV1::InventorySnapshot(_) | ServerDataPayloadV1::ForgeSession(_)
+            )),
+            "Waste 后不得伪造残卷消费快照或铭文交互成功快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_success_then_inscription_scroll_same_update_consumes_once() {
+        let mut app = ling_feng_inscription_race_app();
+        let (caster, mut helper) = spawn_ling_feng_tempering_session(&mut app, 8, 0);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":8}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_inscription_scroll","v":1,"session_id":8,"inscription_id":"sharp_v0"}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let session = app
+            .world()
+            .resource::<ForgeSessions>()
+            .get(ForgeSessionId(8))
+            .expect("successful Tempering should advance into Inscription");
+        assert_eq!(session.current_step, ForgeStep::Inscription);
+        assert_eq!(session.tempering_result, Some(TemperingResult::Perfect));
+        match &session.step_state {
+            StepState::Inscription(state) => {
+                assert_eq!(state.filled_slots, 1);
+                assert_eq!(state.scrolls_in, vec!["sharp_v0".to_string()]);
+            }
+            other => panic!("expected post-apply Inscription state, got {other:?}"),
+        }
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(caster)
+            .expect("caster should retain inventory component");
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(INSCRIPTION_INITIAL_REVISION.0 + 1),
+            "权威应用成功只能消费一次并递增一次 revision"
+        );
+        assert!(inventory.containers[0].items.is_empty());
+
+        let applied: Vec<_> = app
+            .world()
+            .resource::<Events<InscriptionScrollApplied>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].session, ForgeSessionId(8));
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        let inventory_snapshots: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::InventorySnapshot(snapshot) => Some(snapshot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            inventory_snapshots.len(),
+            1,
+            "残卷消费成功后必须回推且只回推一次 inventory_snapshot，实际={payloads:?}"
+        );
+        assert_eq!(
+            inventory_snapshots[0].revision,
+            INSCRIPTION_INITIAL_REVISION.0 + 1
+        );
+        assert!(inventory_snapshots[0]
+            .placed_items
+            .iter()
+            .all(|placed| placed.item.instance_id != INSCRIPTION_SCROLL_INSTANCE_ID));
+
+        let session_snapshots: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(snapshot) if snapshot.session_id == 8 => {
+                    Some(snapshot)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !session_snapshots.is_empty()
+                && session_snapshots.iter().all(|snapshot| {
+                    snapshot.current_step == crate::schema::forge::ForgeStepV1::Inscription
+                        && matches!(
+                            snapshot.step_state,
+                            crate::schema::forge::ForgeStepStateDataV1::Inscription {
+                                filled_slots: 1,
+                                ..
+                            }
+                        )
+                }),
+            "同帧成功链的所有 session 快照都必须在残卷应用后发送，实际={session_snapshots:?}；全部 payload={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_hit_before_step_advance_same_update_is_rejected() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("step advance 后 session 应继续存在");
+        assert_eq!(
+            session.current_step,
+            ForgeStep::Tempering,
+            "击键先到时应仅拒绝击键，随后同帧推进仍须进入 Tempering，实际={:?}",
+            session.current_step
+        );
+        match &session.step_state {
+            StepState::Tempering(state) => assert_eq!(
+                (state.beat_cursor, state.hits, state.misses),
+                (0, 0, 0),
+                "击键发生在 step_advance 前时不得借未来步骤生效，实际 state={state:?}"
+            ),
+            other => panic!("推进后应初始化 Tempering state，实际={other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                            && matches!(
+                                &session.step_state,
+                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                    beat_cursor: 0,
+                                    hits: 0,
+                                    misses: 0,
+                                    ..
+                                }
+                            )
+                )
+            }),
+            "逆序请求后必须只回推未击中的 Tempering 快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_duplicate_step_advance_same_update_advances_only_once() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        for _ in 0..2 {
+            send_forge_c2s(
+                &mut app,
+                caster,
+                br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+            );
+        }
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("重复推进后 session 不得被跨步结算移除");
+        assert_eq!(
+            (session.current_step, session.step_index),
+            (ForgeStep::Tempering, 1),
+            "同帧重复 step_advance 必须按 from_step 幂等，只从 Billet 推进一步，实际=({:?}, {})",
+            session.current_step,
+            session.step_index
+        );
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        let forge_sessions: Vec<_> = payloads
+            .iter()
+            .filter_map(|payload| match payload {
+                ServerDataPayloadV1::ForgeSession(session) if session.session_id == 1 => {
+                    Some(session)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !forge_sessions.is_empty()
+                && forge_sessions.iter().all(|session| {
+                    session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                        && session.step_index == 1
+                }),
+            "重复推进只能回推同一个 Tempering 状态，不得出现跨步快照，实际={forge_sessions:?}"
+        );
+    }
+
+    #[test]
+    fn forge_pending_step_does_not_authorize_other_client_same_update() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut owner_helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Owner", ForgeStep::Billet);
+        let (attacker_bundle, mut attacker_helper) = create_mock_client("Attacker");
+        let attacker = app.world_mut().spawn(attacker_bundle).id();
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+        send_forge_c2s(
+            &mut app,
+            attacker,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("owner 推进后 session 应继续存在");
+        match &session.step_state {
+            StepState::Tempering(state) => assert_eq!(
+                (state.beat_cursor, state.hits, state.misses),
+                (0, 0, 0),
+                "owner 的 pending step 不得授权其他 client 击键，实际 state={state:?}"
+            ),
+            other => panic!("owner 推进后应处于 Tempering，实际={other:?}"),
+        }
+
+        let owner_payloads = collect_server_data_payloads(&mut owner_helper);
+        assert!(
+            owner_payloads.iter().any(|payload| matches!(
+                payload,
+                ServerDataPayloadV1::ForgeSession(session)
+                    if session.session_id == 1
+                        && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+            )),
+            "合法 owner 必须收到推进快照，实际={owner_payloads:?}"
+        );
+        let attacker_payloads = collect_server_data_payloads(&mut attacker_helper);
+        assert!(
+            attacker_payloads.is_empty(),
+            "非 caster 的连续请求必须无状态或 S2C 副作用，实际={attacker_payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_step_advance_missing_session_is_noop_without_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Billet);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":999}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let existing = sessions
+            .get(ForgeSessionId(1))
+            .expect("无效 session 请求不得影响既有会话");
+        assert_eq!(
+            (existing.current_step, existing.step_index),
+            (ForgeStep::Billet, 0),
+            "缺失 session 的推进请求必须完全无状态副作用，实际=({:?}, {})",
+            existing.current_step,
+            existing.step_index
+        );
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "缺失 session 的推进请求不得伪造 forge 快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_step_advance_done_session_is_noop_without_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Done);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_step_advance","v":1,"session_id":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("Done session 在 retention 窗口内应继续存在");
+        assert_eq!(
+            (session.current_step, session.step_index),
+            (ForgeStep::Done, 2),
+            "Done session 必须拒绝再次推进，实际=({:?}, {})",
+            session.current_step,
+            session.step_index
+        );
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "Done session 的非法推进不得回推伪造快照，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_hit_c2s_updates_hits_and_pushes_session_snapshot() {
+        let mut app = forge_c2s_test_app();
+        let (caster, _station, mut helper) =
+            spawn_qing_feng_c2s_session(&mut app, 1, "Azure", ForgeStep::Tempering);
+
+        send_forge_c2s(
+            &mut app,
+            caster,
+            br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#,
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("tempering session should remain active");
+        match &session.step_state {
+            StepState::Tempering(state) => {
+                assert_eq!(state.beat_cursor, 1);
+                assert_eq!(state.hits, 1);
+                assert_eq!(state.misses, 0);
+            }
+            other => panic!("expected tempering state, got {other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                            && matches!(
+                                &session.step_state,
+                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                    beat_cursor: 1,
+                                    hits: 1,
+                                    misses: 0,
+                                    ..
+                                }
+                            )
+                )
+            }),
+            "tempering_hit 后必须给 caster 回推 hits=1 misses=0 的 forge_session，实际={payloads:?}"
+        );
+    }
 
     #[test]
     fn runtime_required_material_accepts_forge_metal() {
@@ -1807,6 +2907,7 @@ mod tests {
         app.insert_resource(registry);
         app.insert_resource(minerals);
         app.insert_resource(ForgeSessions::new());
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<StartForgeRequest>();
         app.add_event::<ForgeStartAccepted>();
         app.add_event::<ForgeOutcomeEvent>();
@@ -1842,6 +2943,7 @@ mod tests {
 
     fn inventory_with_items(items: Vec<crate::inventory::ItemInstance>) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![crate::inventory::ContainerState {
@@ -1868,6 +2970,21 @@ mod tests {
         }
     }
 
+    fn stage_test_forge(app: &mut App, caster: Entity) {
+        let blueprint = app
+            .world()
+            .resource::<BlueprintRegistry>()
+            .get("iron_sword_v0")
+            .unwrap()
+            .clone();
+        app.world_mut().entity_mut(caster).insert((
+            Username("Forger".into()),
+            valence::prelude::Position::new([8.0, 66.0, 8.0]),
+        ));
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(caster).unwrap();
+        preparation::stage(&mut inventory, &blueprint, (8, 66, 8), 1).unwrap();
+    }
+
     #[test]
     fn start_forge_request_happy_path_consumes_materials_and_creates_session() {
         let mut app = start_forge_app();
@@ -1890,6 +3007,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -1943,6 +3061,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -2062,6 +3181,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -2133,7 +3253,7 @@ mod tests {
     fn start_forge_request_waste_billet_rejects_without_touching_inventory() {
         // 客户端声明的 materials 只有 1 个 fan_tie（< 需求 3，超出 tolerance），
         // resolve_billet 判定 Waste；即使真实背包里其实有 5 个 fan_tie，也不应被
-        // consume_forge_materials_atomic 碰到——Waste 路径在到达扣料代码之前就 continue。
+        // 扣料碰到——Waste 路径在到达扣料代码之前就 continue。
         let mut app = start_forge_app();
         let caster = app
             .world_mut()
@@ -2154,6 +3274,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -2172,7 +3293,7 @@ mod tests {
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert_eq!(
-            inventory.containers[0].items[0].instance.stack_count, 5,
+            inventory.material_preparation.materials[0].item.stack_count, 5,
             "Waste 路径必须不吞料——真实持有的 5 个 fan_tie 应原封不动"
         );
     }
@@ -2202,6 +3323,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -2230,7 +3352,7 @@ mod tests {
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert_eq!(
-            inventory.containers[0].items[0].instance.stack_count, 1,
+            inventory.material_preparation.materials[0].item.stack_count, 1,
             "拒绝路径不吞料——真实持有的 1 个 fan_tie 应原封不动"
         );
     }

@@ -1,0 +1,7 @@
+# layer	owner	allowed_dependencies	forbidden_dependencies	result_semantics
+contract	ui/contract	NONE	owo;vanilla_widget;ClientRequestSender;ServerDataHandler	library-neutral
+state	ui/state	UiStateSource;UiSubscription	Store_static_fields;ServerDataEnvelope	immutable-snapshot
+intent	ui/intent	ClientRequestSender	ServerDataHandler;ProtoServerDataBridge;Screen	LOCAL_ACCEPTED|LOCAL_REJECTED|LOCAL_ERROR
+screen	client/*Screen	UiIntentSink;UiStateSource	ClientRequestSender;ClientRequestProtocol;ServerDataEnvelope;ServerDataHandler	authoritative-S2C-only
+bootstrap	ui/bootstrap	UiRuntime;UiBootstrapModule	reflection;annotation-discovery;BongNetworkHandler.register	idempotent-registration
+headless	scripts/bot	production-wire;UiActionRegistry	Java-Store;private-callback;pixel-input;raw-XML	request-revision-receipt

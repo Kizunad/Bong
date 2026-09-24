@@ -562,7 +562,10 @@ mod rumor_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: now_tick });
 
         // 写入 influence map + public_known
@@ -707,7 +710,10 @@ mod rumor_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: now });
         app.add_systems(
             Update,
@@ -789,7 +795,10 @@ mod rumor_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: now });
         app.add_systems(Update, territory_rumor_spread_system);
 
@@ -900,6 +909,7 @@ mod rumor_tests {
         app.init_resource::<RumorSpreadThrottle>();
         app.init_resource::<ZoneInfluenceMap>();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_a, zone_b, zone_far],
         });
         app.insert_resource(CultivationClock { tick: now });
@@ -1010,6 +1020,7 @@ mod rumor_tests {
 
         use crate::world::zone::{Zone, ZoneRegistry};
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: zone_name.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1107,6 +1118,7 @@ mod rumor_tests {
 
         use crate::world::zone::{Zone, ZoneRegistry};
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: zone_name.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,

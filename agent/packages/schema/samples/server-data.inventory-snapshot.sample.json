@@ -76,7 +76,7 @@
         "display_name": "铁胸甲",
         "grid_width": 2,
         "grid_height": 2,
-        "weight": 6.0,
+        "weight": 6,
         "rarity": "common",
         "description": "凡铁胸甲，挡得住几下。",
         "stack_count": 1,
@@ -114,7 +114,9 @@
       "durability": 0.88,
       "forge_quality": 0.74,
       "forge_color": "Sharp",
-      "forge_side_effects": ["brittle_edge"],
+      "forge_side_effects": [
+        "brittle_edge"
+      ],
       "forge_achieved_tier": 1
     },
     "off_hand_worn": [],
@@ -135,13 +137,6 @@
       "spirit_quality": 0.54,
       "durability": 1
     },
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
     null
   ],
   "bone_coins": 57,

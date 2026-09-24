@@ -10,27 +10,37 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::patrol::NpcPatrol;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::ledger::{
+    qi_flow_overflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::ZoneRegistry;
 
-// ─── AV reuse map (纯加法 cosmetic，无净新资产) ────────────────────────────────
-// 三招 AV 全部复用既有 particle event_id（client 已注册）+ audio recipe（server JSON 已存在）。
+// ─── AV map (plan-skill-anim-fidelity-v1 P5：粒子去借用) ──────────────────────
+// 去复用前三招粒子全是借的——heal 借医道 `bong:yidao_meridian_repair`、buff_speed
+// 借真脉 `bong:jiemai_neutralize_dust`、buff_defense 借崩拳
+// `bong:burst_meridian_beng_quan`。后果有二：① NPC 施法与玩家同招粒子完全同形，
+// 旁观者分不清「对面 NPC 在补血」还是「有玩家在放医道」；② 借来的 id 命中
+// `bong:yidao_` / `bong:jiemai_` 家族前缀，让 NPC 背景 cosmetic 误吃 Important
+// 优先级、在拥挤 chunk 里挤掉玩家自己的技能反馈。
 //
-// heal_basic → 医道平和色治疗脉络绿光（YidaoPeacePulsePlayer），与玩家「医道」回血同款语义。
-// buff_speed → 解脉中和尘 + 移动冲刺音，表达「经脉加速运转」的疾行尘。
-// buff_defense → 崩拳真元爆护体环 + 镇脉护盾嗡音，与 burst_meridian.ni_mai_hu_ti（同款 DamageReduction buff）一致。
-const HEAL_PARTICLE_ID: &str = "bong:yidao_meridian_repair";
-const HEAL_PARTICLE_COLOR: &str = "#A8E6CF";
+// 现改为 3 个 NPC 专属 id → client `NpcSkillAuraPlayer`（形态从简，见 plan §P5.1 ③），
+// 且**不登记**进玩家技能优先级表 —— NPC 施法归 Normal 档是正确档位。
+// audio recipe 仍复用既有条目（音效不在 P5 范围）。
+pub(crate) const HEAL_PARTICLE_ID: &str = "bong:npc_heal_basic";
+pub(crate) const HEAL_PARTICLE_COLOR: &str = "#A8E6CF";
 const HEAL_AUDIO_RECIPE: &str = "yidao_meridian_repair";
 
-const BUFF_SPEED_PARTICLE_ID: &str = "bong:jiemai_neutralize_dust";
-const BUFF_SPEED_PARTICLE_COLOR: &str = "#9FD8C8";
+pub(crate) const BUFF_SPEED_PARTICLE_ID: &str = "bong:npc_buff_speed";
+/// 麦黄。旧值 `#9FD8C8` 与 heal 的 `#A8E6CF` 同属淡青绿、仅单通道差 ~10%，
+/// 远距离不可辨——违背 plan P5「id 与颜色必须独立，保证旁观读招」。改后三招
+/// 构成 绿 / 黄 / 蓝 高分离色相三元组。
+pub(crate) const BUFF_SPEED_PARTICLE_COLOR: &str = "#E3C766";
 const BUFF_SPEED_AUDIO_RECIPE: &str = "movement_dash";
 
-const BUFF_DEFENSE_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
-const BUFF_DEFENSE_PARTICLE_COLOR: &str = "#5BA8C9";
+pub(crate) const BUFF_DEFENSE_PARTICLE_ID: &str = "bong:npc_buff_defense";
+pub(crate) const BUFF_DEFENSE_PARTICLE_COLOR: &str = "#5BA8C9";
 const BUFF_DEFENSE_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
 
 /// AV 广播半径（与 audio/vfx 既有默认一致）。
@@ -48,6 +58,13 @@ pub const BUFF_DEFENSE_QI_COST: f64 = 6.0;
 pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
 pub const BUFF_DURATION_TICKS: u64 = 200;
 pub const BUFF_COOLDOWN_TICKS: u64 = 400;
+
+/// M08：resolver 从权威 registry 读 qi_cost/cooldown 用的 skill id（与
+/// `register_npc_skills` 的注册 id 一一对应；测试断言仍可用 HEAL_* 常量作
+/// checked-in 期望值，运行时成本以 registry 为准）。
+pub const NPC_HEAL_SKILL_ID: &str = "npc.heal_basic";
+pub const NPC_BUFF_SPEED_SKILL_ID: &str = "npc.buff_speed";
+pub const NPC_BUFF_DEFENSE_SKILL_ID: &str = "npc.buff_defense";
 
 fn npc_qi_account(caster: Entity) -> QiAccountId {
     QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()))
@@ -137,7 +154,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
         None => {
             // No patrol component — route to overflow so qi is not lost.
             let from = npc_qi_account(caster);
-            let to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+            let to = qi_flow_overflow_account();
             route_spent_qi_to_overflow(world, from, to, amount);
             return;
         }
@@ -167,10 +184,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                         transfers.push(transfer);
                     }
                     if outcome.overflow > QI_EPSILON {
-                        let overflow_to = QiAccountId::overflow(format!(
-                            "npc_skill_overflow:{}",
-                            caster.to_bits()
-                        ));
+                        let overflow_to = qi_flow_overflow_account();
                         if let Ok(t) = QiTransfer::new(
                             from.clone(),
                             overflow_to,
@@ -188,8 +202,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                         "[bong][npc_skill] invalid qi release for {:?}; route to overflow",
                         caster
                     );
-                    let overflow_to =
-                        QiAccountId::overflow(format!("npc_skill_overflow:{}", caster.to_bits()));
+                    let overflow_to = qi_flow_overflow_account();
                     if let Ok(t) = QiTransfer::new(
                         from.clone(),
                         overflow_to,
@@ -203,8 +216,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
             }
         } else {
             // Zone not found in registry — overflow.
-            let overflow_to =
-                QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+            let overflow_to = qi_flow_overflow_account();
             if let Ok(t) = QiTransfer::new(
                 from.clone(),
                 overflow_to,
@@ -216,7 +228,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
             }
         }
     } else {
-        let overflow_to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+        let overflow_to = qi_flow_overflow_account();
         if let Ok(t) = QiTransfer::new(
             from.clone(),
             overflow_to,
@@ -282,9 +294,9 @@ fn emit_npc_skill_av(
 }
 
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
-    registry.register("npc.heal_basic", npc_heal_basic);
-    registry.register("npc.buff_speed", npc_buff_speed);
-    registry.register("npc.buff_defense", npc_buff_defense);
+    registry.register(NPC_HEAL_SKILL_ID, npc_heal_basic);
+    registry.register(NPC_BUFF_SPEED_SKILL_ID, npc_buff_speed);
+    registry.register(NPC_BUFF_DEFENSE_SKILL_ID, npc_buff_defense);
 }
 
 pub fn declare_npc_skill_meridian_deps(deps: &mut SkillMeridianDependencies) {
@@ -317,7 +329,21 @@ fn npc_heal_basic(
         }
     };
 
-    if cultivation.qi_current < HEAL_QI_COST {
+    // M08：resolver 必须消费权威 registry 的 qi_cost/cooldown——selector 已经按
+    // registry 成本选择（npc/technique.rs），executor 若继续用硬编码常量就会
+    // 出现「selector 认为可负担 → resolver 拒绝」或双重扣费的分裂契约。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_HEAL_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
@@ -327,10 +353,10 @@ fn npc_heal_basic(
     let heal_grades = (heal_amount / 0.25).round().clamp(0.0, f64::from(u8::MAX)) as u8;
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - HEAL_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, HEAL_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     if let Some(mut wounds) = world.get_mut::<Wounds>(caster) {
         crate::alchemy::pill::apply_wound_heal(&mut wounds, None, heal_grades);
@@ -345,7 +371,7 @@ fn npc_heal_basic(
     );
 
     CastResult::Started {
-        cooldown_ticks: HEAL_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 20,
     }
 }
@@ -365,17 +391,29 @@ fn npc_buff_speed(
         }
     };
 
-    if cultivation.qi_current < BUFF_SPEED_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_SPEED_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_SPEED_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_SPEED_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -401,7 +439,7 @@ fn npc_buff_speed(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -421,17 +459,29 @@ fn npc_buff_defense(
         }
     };
 
-    if cultivation.qi_current < BUFF_DEFENSE_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_DEFENSE_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_DEFENSE_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_DEFENSE_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -457,7 +507,7 @@ fn npc_buff_defense(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -478,6 +528,10 @@ mod tests {
         world.insert_resource(Events::<QiTransfer>::default());
         world.insert_resource(Events::<VfxEventRequest>::default());
         world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        // M08：resolver 从注入 registry 读成本——测试必须安装与生产一致的 registry。
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         world
     }
 
@@ -1012,8 +1066,7 @@ mod tests {
         let mut world = world_with_zone_registry();
         insert_qi_ledger(&mut world);
         let entity = world.spawn(make_cultivation(Realm::Condense, 50.0)).id();
-        let overflow_account =
-            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
+        let overflow_account = qi_flow_overflow_account();
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -1058,8 +1111,7 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account =
-            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
+        let overflow_account = qi_flow_overflow_account();
         let before = summarize_world_qi(&mut world);
 
         npc_heal_basic(&mut world, entity, 0, None);
@@ -1101,8 +1153,7 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account =
-            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
+        let overflow_account = qi_flow_overflow_account();
         let before_total = world.get::<Cultivation>(entity).unwrap().qi_current
             + world
                 .resource::<ZoneRegistry>()
@@ -1151,8 +1202,7 @@ mod tests {
                 NpcPatrol::new("missing_zone", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account =
-            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
+        let overflow_account = qi_flow_overflow_account();
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -1172,8 +1222,7 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account =
-            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
+        let overflow_account = qi_flow_overflow_account();
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -1207,7 +1256,8 @@ mod tests {
 
     // === AV (particle + audio) emission ===
     //
-    // 锁定：① 三招各发对应 reused particle event_id + color ② 各发对应 reused audio recipe
+    // 锁定：① 三招各发**专属** particle event_id + color（P5 去复用，旧借用 id 负向锁）
+    //       ② 各发对应 reused audio recipe（音效不在 P5 范围）
     //       ③ AV 只在 cast 成功时发，rejection 不发 ④ 缺 Position 时静默跳过不发 AV 也不崩。
 
     fn make_position() -> Position {
@@ -1215,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn heal_basic_emits_reused_heal_particle_and_audio() {
+    fn heal_basic_emits_bespoke_heal_particle_and_reused_audio() {
         let mut world = world_with_events();
         let wounds = make_wounds(50.0, 100.0, vec![]);
         let entity = world
@@ -1236,24 +1286,29 @@ mod tests {
         );
         assert_eq!(
             particles[0].0, HEAL_PARTICLE_ID,
-            "heal must reuse 医道治疗 particle id (no net-new asset)"
+            "heal 应发 NPC 专属粒子 id（P5 去复用：原借医道 bong:yidao_meridian_repair，\
+             借用时旁观者分不清是 NPC 补血还是有玩家在放医道）"
         );
         assert_eq!(
             particles[0].1.as_deref(),
             Some(HEAL_PARTICLE_COLOR),
-            "heal particle color should be the green heal tint"
+            "heal 粒子应为薄荷绿（绿/黄/蓝三元组中的绿）"
+        );
+        assert_ne!(
+            particles[0].0, "bong:yidao_meridian_repair",
+            "heal 回退到了 P5 之前借用的医道粒子 id"
         );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![HEAL_AUDIO_RECIPE.to_string()],
-            "heal must reuse existing yidao_meridian_repair audio recipe"
+            "heal 仍复用既有 yidao_meridian_repair 音效配方——P5 只做粒子去复用，音效不在范围内"
         );
     }
 
     #[test]
-    fn buff_speed_emits_reused_speed_particle_and_audio() {
+    fn buff_speed_emits_bespoke_speed_particle_and_reused_audio() {
         let mut world = world_with_events();
         let entity = world
             .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
@@ -1265,20 +1320,28 @@ mod tests {
         assert_eq!(particles.len(), 1, "buff_speed should emit 1 particle");
         assert_eq!(
             particles[0].0, BUFF_SPEED_PARTICLE_ID,
-            "buff_speed must reuse 解脉中和尘 particle id"
+            "buff_speed 应发 NPC 专属粒子 id（P5 去复用：原借真脉 bong:jiemai_neutralize_dust）"
         );
-        assert_eq!(particles[0].1.as_deref(), Some(BUFF_SPEED_PARTICLE_COLOR));
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(BUFF_SPEED_PARTICLE_COLOR),
+            "buff_speed 粒子应为麦黄——旧值 #9FD8C8 与 heal 的 #A8E6CF 同属淡青绿、远距离不可辨"
+        );
+        assert_ne!(
+            particles[0].0, "bong:jiemai_neutralize_dust",
+            "buff_speed 回退到了 P5 之前借用的真脉粒子 id"
+        );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![BUFF_SPEED_AUDIO_RECIPE.to_string()],
-            "buff_speed must reuse existing movement_dash audio recipe"
+            "buff_speed 仍复用既有 movement_dash 音效配方（P5 不动音效）"
         );
     }
 
     #[test]
-    fn buff_defense_emits_reused_shield_particle_and_audio() {
+    fn buff_defense_emits_bespoke_shield_particle_and_reused_audio() {
         let mut world = world_with_events();
         let entity = world
             .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
@@ -1290,15 +1353,24 @@ mod tests {
         assert_eq!(particles.len(), 1, "buff_defense should emit 1 particle");
         assert_eq!(
             particles[0].0, BUFF_DEFENSE_PARTICLE_ID,
-            "buff_defense must reuse 崩拳护体环 particle id (same as ni_mai_hu_ti)"
+            "buff_defense 应发 NPC 专属粒子 id（P5 去复用：原借崩拳 \
+             bong:burst_meridian_beng_quan，与玩家爆脉招完全同形）"
         );
-        assert_eq!(particles[0].1.as_deref(), Some(BUFF_DEFENSE_PARTICLE_COLOR));
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(BUFF_DEFENSE_PARTICLE_COLOR),
+            "buff_defense 粒子应为青蓝（绿/黄/蓝三元组中的蓝）"
+        );
+        assert_ne!(
+            particles[0].0, "bong:burst_meridian_beng_quan",
+            "buff_defense 回退到了 P5 之前借用的崩拳粒子 id"
+        );
 
         let audio = collected_audio(&world);
         assert_eq!(
             audio,
             vec![BUFF_DEFENSE_AUDIO_RECIPE.to_string()],
-            "buff_defense must reuse existing zhenmai_shield_hum audio recipe"
+            "buff_defense 仍复用既有 zhenmai_shield_hum 音效配方（P5 不动音效）"
         );
     }
 
@@ -1311,6 +1383,66 @@ mod tests {
         assert_ne!(HEAL_AUDIO_RECIPE, BUFF_SPEED_AUDIO_RECIPE);
         assert_ne!(HEAL_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
         assert_ne!(BUFF_SPEED_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
+    }
+
+    // ─── plan-skill-anim-fidelity-v1 P5：粒子去借用回归锁 ─────────────────────────
+
+    /// 三招的粒子 id 不得是任何一个曾被借用的别家 id。
+    ///
+    /// 与上面的「三招互不相同」不可互相替代——三招彼此不同、但仍全是借来的，
+    /// 正是 P5 之前的状态（heal 借医道 / speed 借真脉 / defense 借崩拳，三者确实互异）。
+    #[test]
+    fn p5_no_npc_skill_borrows_another_style_particle() {
+        const LEGACY_BORROWED: [&str; 3] = [
+            "bong:yidao_meridian_repair",
+            "bong:jiemai_neutralize_dust",
+            "bong:burst_meridian_beng_quan",
+        ];
+        for particle_id in [
+            HEAL_PARTICLE_ID,
+            BUFF_SPEED_PARTICLE_ID,
+            BUFF_DEFENSE_PARTICLE_ID,
+        ] {
+            assert!(
+                !LEGACY_BORROWED.contains(&particle_id),
+                "{particle_id} 是 P5 之前借用的别家流派粒子——NPC 施法必须有自己的 id，\
+                 否则旁观者分不清是 NPC 在放技能还是玩家在放"
+            );
+            assert!(
+                particle_id.starts_with("bong:npc_"),
+                "{particle_id} 应落在 bong:npc_ 前缀下——该前缀**有意**不在玩家技能优先级表里，\
+                 NPC 背景 cosmetic 归 Normal 档，不与玩家技能反馈争拥挤 chunk 的粒子配额"
+            );
+        }
+    }
+
+    /// 三招接线与 `network::skill_vfx_wiring` 共享表逐项一致（client 按同一份表注册）。
+    #[test]
+    fn p5_npc_particles_match_shared_wiring_table() {
+        for (skill_id, particle_id, color) in [
+            ("npc.heal_basic", HEAL_PARTICLE_ID, HEAL_PARTICLE_COLOR),
+            (
+                "npc.buff_speed",
+                BUFF_SPEED_PARTICLE_ID,
+                BUFF_SPEED_PARTICLE_COLOR,
+            ),
+            (
+                "npc.buff_defense",
+                BUFF_DEFENSE_PARTICLE_ID,
+                BUFF_DEFENSE_PARTICLE_COLOR,
+            ),
+        ] {
+            let wiring = crate::network::skill_vfx_wiring::wiring_for(skill_id)
+                .unwrap_or_else(|| panic!("{skill_id} 未登记进 P5_SKILL_VFX_WIRING 接线表"));
+            assert_eq!(
+                wiring.event_id, particle_id,
+                "{skill_id} 的 event_id 与共享接线表不一致——client 按表注册，不符即 bridgeMiss"
+            );
+            assert_eq!(
+                wiring.color, color,
+                "{skill_id} 的粒子颜色与共享接线表不一致"
+            );
+        }
     }
 
     #[test]
@@ -1332,6 +1464,218 @@ mod tests {
             collected_audio(&world).is_empty(),
             "rejected cast must not emit audio AV"
         );
+    }
+
+    // === M08 override：selector 到 resolver 共享同一注入 registry 成本/冷却 ===
+
+    fn world_with_override(
+        id: &str,
+        override_definition: impl FnOnce(&mut crate::cultivation::known_techniques::TechniqueDefinition),
+    ) -> bevy_ecs::world::World {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
+        world.insert_resource(Events::<QiTransfer>::default());
+        world.insert_resource(Events::<VfxEventRequest>::default());
+        world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                id,
+                override_definition,
+            ),
+        );
+        world
+    }
+
+    #[test]
+    fn heal_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.heal_basic 成本到 40.0/冷却 77——qi=20（旧常量 8.0
+        // 本可负担）必须被拒；qi=40 才放行且 cooldown 取 77（旧常量 200 必撞红），
+        // 证明 resolver 结算读的是注入 registry 而非硬编码常量。
+        let mut world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.qi_cost = 40.0;
+            definition.cooldown_ticks = 77;
+        });
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 20.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 40.0 must reject qi=20 (constant 8.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 40.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 77,
+                    anim_duration_ticks: 20
+                }
+            ),
+            "overridden cooldown 77 must be returned (constant 200 would fail); got {result:?}"
+        );
+        let cult = world.get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cult.qi_current - 0.0).abs() < f64::EPSILON,
+            "qi must be charged by overridden cost 40.0, got {}",
+            cult.qi_current
+        );
+    }
+
+    #[test]
+    fn buff_speed_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_speed 成本到 30.0/冷却 88——qi=6（旧常量 5.0
+        // 本可负担）必须被拒；qi=30 才放行、冷却取 88、且发出 SpeedBoost intent。
+        let mut world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.qi_cost = 30.0;
+            definition.cooldown_ticks = 88;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 6.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 30.0 must reject qi=6 (constant 5.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 30.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 88,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 88 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(intents.len(), 1, "SpeedBoost intent must fire on success");
+        assert_eq!(intents[0].kind, StatusEffectKind::SpeedBoost);
+    }
+
+    #[test]
+    fn buff_defense_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_defense 成本到 25.0/冷却 99——qi=7（旧常量 6.0
+        // 本可负担）必须被拒；qi=25 才放行、冷却取 99、且发出 DamageReduction intent。
+        let mut world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.qi_cost = 25.0;
+            definition.cooldown_ticks = 99;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 7.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 25.0 must reject qi=7 (constant 6.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 25.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 99,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 99 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(
+            intents.len(),
+            1,
+            "DamageReduction intent must fire on success"
+        );
+        assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
+    }
+
+    #[test]
+    fn npc_resolvers_preserve_zero_registry_cooldown() {
+        let mut heal_world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let heal_entity = heal_world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        assert!(matches!(
+            npc_heal_basic(&mut heal_world, heal_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut speed_world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let speed_entity = speed_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_speed(&mut speed_world, speed_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut defense_world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let defense_entity = defense_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_defense(&mut defense_world, defense_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

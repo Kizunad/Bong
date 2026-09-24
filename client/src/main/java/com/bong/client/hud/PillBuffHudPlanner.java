@@ -35,8 +35,13 @@ public final class PillBuffHudPlanner {
         return Collections.unmodifiableList(new ArrayList<>(activeBuffs));
     }
 
-    public static void clear() {
+    /** Clears buffs sourced from the disconnected server; buff rules and HUD planning remain unchanged. */
+    public static void clearOnDisconnect() {
         activeBuffs.clear();
+    }
+
+    public static void clear() {
+        clearOnDisconnect();
     }
 
     private PillBuffHudPlanner() {

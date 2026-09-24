@@ -84,7 +84,7 @@ final class IdentityPanelStateStoreTest {
         assertEquals(
             3,
             callCount.get(),
-            "多个订阅者（HUD 角标 / IdentityPanelScreenBootstrap 面板重建等）都必须收到断线清空通知");
+            "多个订阅者（HUD 角标等）都必须收到断线清空通知");
     }
 
     @Test

@@ -611,6 +611,7 @@ mod tests {
 
     fn zone_registry_with_neg_domain(neg_center: [f64; 3]) -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone("spawn", [0.0, 64.0, 0.0], 0.8),
                 make_zone("ash_dead_zone", neg_center, -0.5), // 负灵域
@@ -659,6 +660,7 @@ mod tests {
 
         let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone("spawn", [0.0, 64.0, 0.0], 0.8),
                 make_zone("good_zone", [200.0, 64.0, 0.0], 0.3),
@@ -713,6 +715,7 @@ mod tests {
 
         let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone("mildly_neg_north", [0.0, 64.0, -200.0], -0.25), // 北（Z-）
                 make_zone("deeply_neg_south", [0.0, 64.0, 200.0], -0.8),   // 南（Z+），更负

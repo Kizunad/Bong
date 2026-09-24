@@ -12,5 +12,6 @@
       "const": "severe",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "ab3559eb8924ec0ce42bafdde954e25fd0b8a126832b0489ad434b2d55b861bb"
 }

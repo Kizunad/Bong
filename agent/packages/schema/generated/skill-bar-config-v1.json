@@ -6,9 +6,12 @@
     "cooldown_until_ms"
   ],
   "properties": {
+    "dash_skill_id": {
+      "type": "string"
+    },
     "slots": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "anyOf": [
@@ -97,13 +100,14 @@
       }
     },
     "cooldown_until_ms": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "minimum": 0,
         "type": "integer"
       }
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "befc6b1a43d40bccb4ebd0561e0ac25c336d354f64c1b4d1e31d1f8924178a43"
 }

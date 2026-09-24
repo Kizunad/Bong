@@ -65,6 +65,9 @@ EFFECTS: list[tuple[str, str, str]] = [
      "a dizzying violet vertigo spiral swirl with two small four-point stars "
      "orbiting around it, a stunned disoriented feeling, glowing amethyst "
      "purple and pale lavender"),
+    ("immobilized", "control",
+     "two iron ankle shackles joined by a taut chain, firmly pinned to the "
+     "ground, pale violet steel, movement restrained"),
     ("vortexcasting", "control",
      "a dark inward-sucking funnel vortex pulling spirit-energy into its "
      "center, concentric spiral walls collapsing toward a black core, deep "
@@ -106,6 +109,12 @@ EFFECTS: list[tuple[str, str, str]] = [
     ("woundheal", "buff",
      "a soft green plus/cross over a closing gash mended with a single stitch "
      "thread, a stabilizing wound, gentle healing green"),
+    ("health_regen_boost", "buff",
+     "a warm coral anatomical heart cradled by two fresh jade leaves, "
+     "a single pale gold pulse line, steady restoration of life"),
+    ("shieldblocking", "buff",
+     "a broad battered round iron buckler seen from the front, a bright "
+     "ivory impact deflected off its upper rim, muted jade and silver"),
     ("body_part_resist", "buff",
      "a simple humanoid torso silhouette with one body segment overlaid by a "
      "glowing hardened jade plate, body-part hardening, calm jade green"),
@@ -164,6 +173,9 @@ EFFECTS: list[tuple[str, str, str]] = [
     ("staminacrash", "debuff",
      "an empty vertical gauge collapsing to the bottom with a drooping wilting "
      "arrow, total stamina exhaustion, washed-out grey-orange"),
+    ("exhausted", "debuff",
+     "a weathered hourglass with its last amber grains gathered in the lower "
+     "bulb, empty upper chamber, ashen silver and faded ochre, depleted stamina"),
     ("qidrainforstamina", "debuff",
      "two opposing curved arrows converting a cool spirit swirl downward into "
      "a warm body glow, qi traded for stamina, an exchange motif of teal into "

@@ -86,7 +86,17 @@ pub fn publish_forge_events(
             Err(_) => (0, 0, false),
         };
         let payload = ForgeEventV1 {
-            meridian: meridian_id_to_string(ev.meridian).to_string(),
+            // plan-race-system-v1 P1c：`ForgeOutcome.meridian` 现为 `MeridianChannelId`。
+            // world_state `ForgeEventV1.meridian` 仍是 humanoid PascalCase 闭合字符串
+            // （agent 侧尚未随本轮开放化，超出本任务范围）——非 humanoid channel（无
+            // legacy `MeridianId` 对应物）时落其原始 snake_case channel id，不伪造
+            // 某个已知经脉名；下游 `ForgeEventV1::validate()` 会按既有规则拒绝这类值。
+            meridian: ev
+                .meridian
+                .to_meridian_id()
+                .map(meridian_id_to_string)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| ev.meridian.as_str().to_string()),
             axis: axis_s.to_string(),
             from_tier,
             to_tier,

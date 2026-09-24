@@ -16,5 +16,6 @@
       "const": "residue_ash",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "7d907463e6ed4c8b9b3747dd17aea43b48546e24690dc5537ca2fc50cd0b4472"
 }

@@ -1,0 +1,183 @@
+[[recipes]]
+id = "workbench.tool.axe_iron"
+category = "tool"
+display_name = "铁斧"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "axe_iron"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.hoe_iron"
+category = "tool"
+display_name = "铁锄"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "hoe_iron"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.ice_gauntlet"
+category = "tool"
+display_name = "冰甲手套"
+qi_cost = 0.0
+time_sec = 50
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 2
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.output]
+template_id = "bing_jia_shou_tao"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.pickaxe_iron"
+category = "tool"
+display_name = "铁镐"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 3
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "pickaxe_iron"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.scraper"
+category = "tool"
+display_name = "刮刀"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[[recipes.materials]]
+template_id = "bone_chip_mat"
+count = 1
+
+[recipes.output]
+template_id = "gua_dao"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.sickle"
+category = "tool"
+display_name = "草镰"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "cao_lian"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.stone_axe"
+category = "tool"
+display_name = "石斧"
+qi_cost = 0.0
+time_sec = 25
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 2
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "stone_axe"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.tool.stone_pickaxe"
+category = "tool"
+display_name = "石镐"
+qi_cost = 0.0
+time_sec = 25
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 3
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "stone_pickaxe"
+count = 1
+
+[recipes.requirements]

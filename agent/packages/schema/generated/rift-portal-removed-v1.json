@@ -8,5 +8,6 @@
     "entity_id": {
       "type": "number"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "dba32b83b99936c6c514ed8a384f6c42381a9b24452b64cf591471a8b18a2a3f"
 }

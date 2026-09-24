@@ -45,10 +45,25 @@ public final class CoffinEnterIntentHandler implements IntentHandler {
             return Optional.empty();
         }
         BongEntityModelKind kind = modeled.modelKind();
-        if (!isCoffinKind(kind)) {
+        double distSq = client.player.squaredDistanceTo(hit.getEntity());
+        return candidateForCoffin(kind, distSq, hit.getEntity().getId());
+    }
+
+    /**
+     * <b>生产 candidate 门控</b>（package-private 纯函数，{@code candidate} 直接调用）：
+     * 只对四档延寿棺 kind 且落在 6 格（{@code MAX_INTERACT_DISTANCE_SQ}=36）内的目标产出
+     * OpenContainer candidate。抽出供 {@code CoffinEnterIntentHandlerTest} 正向按压
+     * 「合法 marker 不返回 empty」——review finding [1]：Python 场景是 server 端点镜像，
+     * 无法发现让 candidate 对合法 marker 恒返 empty 的变异；本条正面用例在 Java 侧锁死。
+     */
+    static Optional<InteractCandidate> candidateForCoffin(
+        BongEntityModelKind kind,
+        double distSq,
+        int entityId
+    ) {
+        if (kind == null || !isCoffinKind(kind)) {
             return Optional.empty();
         }
-        double distSq = client.player.squaredDistanceTo(hit.getEntity());
         if (distSq > MAX_INTERACT_DISTANCE_SQ) {
             return Optional.empty();
         }
@@ -56,7 +71,7 @@ public final class CoffinEnterIntentHandler implements IntentHandler {
             InteractIntent.OpenContainer,
             ReservedInteractionIntents.OPEN_CONTAINER_PRIORITY,
             distSq,
-            LABEL_PREFIX + hit.getEntity().getId()
+            LABEL_PREFIX + entityId
         ));
     }
 
@@ -70,8 +85,17 @@ public final class CoffinEnterIntentHandler implements IntentHandler {
         if (hit == null || hit.getEntity().getId() != candidateEntityId) {
             return false;
         }
-        // marker 实体坐标 → 棺 lower/upper 任一格（server 端 registry 归一）。
-        BlockPos coffinPos = hit.getEntity().getBlockPos();
+        // marker 实体坐标 → 棺 block pos（生产派生，见 {@link #coffinBlockPos}）。
+        // marker 取棺两格中心（server coffin/mod.rs coffin_marker_position），对 marker
+        // 坐标取 floor 得到的是棺的 **upper** 格（lower.x+1, lower.y, lower.z）——
+        // plan-coffin-tiers-v1 P3 生产者链（candidate → dispatch → CoffinMenuScreen →
+        // [回收] → ClientRequestSender）实际发出的就是 upper 格，与
+        // CoffinGMenuProducerChainTest 钉死的 payload 一致。
+        BlockPos coffinPos = coffinBlockPos(
+            hit.getEntity().getX(),
+            hit.getEntity().getY(),
+            hit.getEntity().getZ()
+        );
         client.setScreen(new CoffinMenuScreen(coffinPos));
         return true;
     }
@@ -85,6 +109,18 @@ public final class CoffinEnterIntentHandler implements IntentHandler {
             || kind == BongEntityModelKind.COFFIN_JADE
             || kind == BongEntityModelKind.COFFIN_STONE
             || kind == BongEntityModelKind.COFFIN_BRONZE;
+    }
+
+    /**
+     * marker 实体坐标 → 延寿棺 block pos 的生产派生（floor 语义，与 {@code Entity.getBlockPos}
+     * 一致）。marker 位于棺两格中心：lower+(1, 0, 0.5)（server coffin/mod.rs
+     * {@code coffin_marker_position}）→ floor 后得到棺的 **upper** 格（lower.x+1, lower.y,
+     * lower.z），正是真实 G 菜单 [回收] 生产者发送的坐标。抽出为 package-private 纯函数，
+     * 供 {@code CoffinGMenuProducerChainTest} 对 Java 侧产出的 upper-coordinate payload 做
+     * 端到端断言（review finding [1]：场景侧不得再用 lower 冷注入镜像覆盖这条生产派生）。
+     */
+    static BlockPos coffinBlockPos(double x, double y, double z) {
+        return new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
     }
 
     /** Package-private for testing the label-parsing contract. */

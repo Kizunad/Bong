@@ -68,6 +68,23 @@ public final class BongShaderState {
         }
     }
 
+    /**
+     * 丢弃旧连接下发的 shader runtime 值，供未来 token-gated 网络断连入口调用。
+     *
+     * <p>只清 current/target/override 等会话数据；每个 uniform 的 interpolation 配置是本地
+     * runtime 设置，断线不应把它还原为默认值。重复调用安全。
+     */
+    public static void clearOnDisconnect() {
+        for (int i = 0; i < current.length; i++) {
+            targets[i] = 0f;
+            current[i] = 0f;
+            overridden[i] = false;
+        }
+    }
+
+    /**
+     * 测试隔离用完整重置；生产断线必须使用 {@link #clearOnDisconnect()}，以保留本地配置。
+     */
     public static void reset() {
         for (int i = 0; i < current.length; i++) {
             targets[i] = 0f;

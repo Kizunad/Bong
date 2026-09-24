@@ -209,6 +209,11 @@ fn sanitize_positive(value: f32, fallback: f32) -> f32 {
 mod tests {
     use super::*;
 
+    use valence::prelude::DVec3;
+
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::ZoneRegistry;
+
     #[test]
     fn profile_serde_round_trip() {
         let profile = ZoneWeatherProfile {
@@ -227,6 +232,39 @@ mod tests {
         let parsed: ZoneWeatherProfile = serde_json::from_str(json.as_str()).expect("deserialize");
 
         assert_eq!(parsed, profile);
+    }
+
+    #[test]
+    fn relocated_north_rift_preserves_production_scorch_weather_semantics() {
+        let zones = ZoneRegistry::load();
+        let profiles = ZoneWeatherProfileRegistry::load_default()
+            .expect("production weather profiles must load");
+
+        for pos in [
+            DVec3::new(2000.0, 74.0, -7800.0),
+            DVec3::new(2100.0, 80.0, -8000.0),
+        ] {
+            let zone = zones
+                .find_zone(DimensionKind::Overworld, pos)
+                .expect("former portal/ascension positions must remain zoned");
+            assert_eq!(zone.name, "north_waste_east_scorch");
+            let profile = profiles.profile_for(&zone.name);
+            assert_eq!(profile.multiplier_for(WeatherEvent::Thunderstorm), 5.0);
+            assert_eq!(profile.multiplier_for(WeatherEvent::DroughtWind), 2.0);
+            assert_eq!(profile.lightning_strike_per_min(), 3.0);
+        }
+
+        let relocated_rift = zones
+            .find_zone(DimensionKind::Overworld, DVec3::new(2000.0, 74.0, -7300.0))
+            .expect("relocated portal must remain zoned");
+        assert_eq!(relocated_rift.name, "rift_mouth_north_002");
+        assert_eq!(
+            profiles
+                .profile_for(&relocated_rift.name)
+                .multiplier_for(WeatherEvent::Thunderstorm),
+            1.0,
+            "rift entry must not inherit the scorch-only storm multiplier"
+        );
     }
 
     #[test]

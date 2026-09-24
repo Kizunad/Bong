@@ -35,6 +35,43 @@ public class InventorySnapshotHandlerTest {
     }
 
     @Test
+    void stagedMaterialProtoSnapshotKeepsInstanceAttributesOutsideTheBackpack() {
+        var item = bong.Envelope.InventoryItemView.newBuilder()
+            .setInstanceId(41).setItemId("iron").setDisplayName("铁片")
+            .setGridWidth(1).setGridHeight(1).setStackCount(2)
+            .setRarity("common").setWeight(0.2).setDurability(0.4)
+            .setSpiritQuality(0.7).setForgeQuality(0.8F)
+            .setForgeColor(bong.Common.ColorKind.COLOR_KIND_SHARP);
+        var snapshot = bong.Envelope.InventorySnapshot.newBuilder()
+            .setRevision(12).setRealm("Awaken").setQiMax(100)
+            .setWeight(bong.Envelope.InventoryWeight.newBuilder().setCurrent(0.4).setMax(50))
+            .setEquipped(bong.Envelope.EquippedInventorySnapshot.newBuilder())
+            .addContainers(bong.Envelope.ContainerSnapshot.newBuilder()
+                .setId("body_pocket").setName("贴身口袋").setRows(2).setCols(3))
+            .setMaterialPreparation(bong.Envelope.MaterialPreparation.newBuilder()
+                .setRecipeId("tool").addMaterials(item));
+        for (int index = 0; index < InventoryModel.HOTBAR_SIZE; index++) {
+            snapshot.addHotbar(bong.Envelope.HotbarSlot.newBuilder());
+        }
+        var envelope = bong.Envelope.ServerDataEnvelope.newBuilder().setInventorySnapshot(snapshot).build();
+        var bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(), bridge.errorMessage());
+        var result = ServerDataRouter.createDefault().route(bridge.legacyJson(), 0);
+        assertTrue(result.isHandled(), result.logMessage());
+        var model = InventoryStateStore.snapshot();
+        assertTrue(model.gridItems().isEmpty(), "暂存实例不能同时显示在背包中");
+        assertEquals("tool", model.craftRecipeId());
+        assertEquals(1, model.craftMaterials().size());
+        var material = model.craftMaterials().get(0);
+        assertEquals(41, material.instanceId());
+        assertEquals(2, material.stackCount());
+        assertEquals(0.4, material.durability());
+        assertEquals(0.7, material.spiritQuality());
+        assertEquals(0.8, material.forgeQuality(), 0.0001);
+        assertEquals("Sharp", material.forgeColor());
+    }
+
+    @Test
     void sharedFixtureRoutesIntoAuthoritativeInventoryStore() throws IOException {
         String json = loadSharedFixture("server-data.inventory-snapshot.sample.json");
         ServerDataRouter router = ServerDataRouter.createDefault();
@@ -188,7 +225,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
               "realm": "Awaken",
@@ -258,7 +295,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
               "realm": "Awaken",
@@ -367,7 +404,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0.23, "max": 50.0},
               "realm": "Awaken",
@@ -457,7 +494,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 2.5, "max": 50.0},
               "realm": "Awaken",
@@ -547,7 +584,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 5.0, "max": 50.0},
               "realm": "Awaken",
@@ -593,7 +630,7 @@ public class InventorySnapshotHandlerTest {
               ],
               "placed_items": [],
               "equipped": {},
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0, "max": 50},
               "realm": "Awaken",
@@ -638,7 +675,7 @@ public class InventorySnapshotHandlerTest {
               ],
               "placed_items": [],
               "equipped": {},
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0, "max": 50},
               "realm": "Awaken",

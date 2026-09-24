@@ -137,6 +137,18 @@ class OmenStateStoreTest {
     }
 
     @Test
+    void clearOnDisconnect_dropsActiveEntries() {
+        OmenStateStore.note(payload("world_omen_tide_sky", 0.8, 200), 1_000L);
+        assertTrue(!OmenStateStore.snapshot(1_500L).entries().isEmpty(),
+            "测试前必须建立尚未过期的旧会话 omen");
+
+        OmenStateStore.clearOnDisconnect();
+
+        assertTrue(OmenStateStore.snapshot(1_500L).entries().isEmpty(),
+            "断线必须立即清除旧会话 omen，不能等待自然过期后串到新世界");
+    }
+
+    @Test
     void noteUpsertsByKindAndOriginButKeepsParallelZones() {
         OmenStateStore.note(payload("world_omen_beast_tide", 0.2, 20), 1_000L);
         OmenStateStore.note(payload(

@@ -34,4 +34,9 @@ public final class NpcMoodStore {
     public static void clearAll() {
         MOOD_BY_ENTITY_ID.clear();
     }
+
+
+    public static void clearOnDisconnect() {
+        clearAll();
+    }
 }

@@ -58,6 +58,13 @@ public final class AlchemyAttemptHistoryStore {
         return lastAppendMillis;
     }
 
+    public static void clearOnDisconnect() {
+        synchronized (entries) {
+            entries.clear();
+            lastAppendMillis = 0L;
+        }
+    }
+
     public static void resetForTests() {
         synchronized (entries) {
             entries.clear();

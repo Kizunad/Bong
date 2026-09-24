@@ -1,7 +1,7 @@
 use valence::prelude::{bevy_ecs, Component, Entity, Event};
 
 use crate::cultivation::components::{Cultivation, MeridianSystem};
-use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::technique_observe::{parse_grade, TechniqueGrade};
 use crate::cultivation::technique_scroll::{
@@ -62,13 +62,16 @@ pub fn mentor_dialog_option_appears(
         && tags.is_some_and(|tags| tags.has(WOLIU_STYLE_TAG))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn mentor_teaches_technique(
+    registry: &TechniqueRegistry,
     inventory: &mut PlayerInventory,
     known: &mut KnownTechniques,
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
     ctx: MentorTeachContext,
+    intrinsic_is_humanoid: bool,
 ) -> MentorOutcome {
     if !matches!(ctx.archetype, NpcArchetype::Rogue | NpcArchetype::Disciple) {
         return MentorOutcome::UnsupportedArchetype;
@@ -79,13 +82,14 @@ pub fn mentor_teaches_technique(
     if ctx.reputation_to_player < MENTOR_MIN_REPUTATION {
         return MentorOutcome::LowReputation;
     }
-    let Some(definition) = technique_definition(ctx.technique_id) else {
+    let Some(definition) = registry.get(ctx.technique_id) else {
         return MentorOutcome::UnknownTechnique;
     };
-    if parse_grade(definition.grade) == TechniqueGrade::Earth {
+    let grade = parse_grade(&definition.grade);
+    if grade == TechniqueGrade::Earth {
         return MentorOutcome::EarthGradeRefused;
     }
-    let cost = mentor_cost_for_grade(parse_grade(definition.grade));
+    let cost = mentor_cost_for_grade(grade);
     if inventory.bone_coins < cost {
         return MentorOutcome::NotEnoughBoneCoins {
             required: cost,
@@ -93,12 +97,15 @@ pub fn mentor_teaches_technique(
         };
     }
     let outcome = learn_technique_if_allowed(
+        registry,
         known,
         cultivation,
         meridians,
         severed,
         ctx.technique_id,
         0.0,
+        intrinsic_is_humanoid,
+        None,
     );
     if !matches!(outcome, ScrollReadOutcome::Learned) {
         return MentorOutcome::LearnBlocked(outcome);
@@ -149,6 +156,7 @@ mod tests {
 
     fn inventory(coins: u64) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -187,6 +195,46 @@ mod tests {
     }
 
     #[test]
+    fn mentor_uses_overridden_registry_grade_for_cost() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.burst", |definition| {
+                definition.grade = "profound".to_string()
+            });
+        let mut inventory = inventory(60);
+        let mut known = KnownTechniques::default();
+
+        let outcome = super::mentor_teaches_technique(
+            &registry,
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "woliu.burst",
+            },
+            true,
+        );
+
+        assert!(matches!(
+            outcome,
+            MentorOutcome::Taught {
+                bone_coin_cost: 50,
+                ..
+            }
+        ));
+        assert_eq!(inventory.bone_coins, 10);
+    }
+
+    #[test]
     fn mentor_teaches_woliu_technique() {
         let player = Entity::from_raw(1);
         let npc = Entity::from_raw(2);
@@ -194,6 +242,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -210,6 +259,7 @@ mod tests {
                 reputation_to_player: 60,
                 technique_id: "woliu.burst",
             },
+            true,
         );
 
         assert!(matches!(
@@ -229,6 +279,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let _ = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -245,6 +296,7 @@ mod tests {
                 reputation_to_player: 50,
                 technique_id: "woliu.vacuum_palm",
             },
+            true,
         );
 
         assert_eq!(inventory.bone_coins, 30);
@@ -265,6 +317,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -281,9 +334,70 @@ mod tests {
                 reputation_to_player: 70,
                 technique_id: "woliu.heart",
             },
+            true,
         );
 
         assert_eq!(outcome, MentorOutcome::EarthGradeRefused);
+    }
+
+    #[test]
+    fn mentor_rejects_unknown_technique() {
+        let mut inventory = inventory(100);
+        let mut known = KnownTechniques::default();
+        let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "missing.technique",
+            },
+            true,
+        );
+        assert_eq!(outcome, MentorOutcome::UnknownTechnique);
+    }
+
+    #[test]
+    fn mentor_reports_bone_coin_shortfall() {
+        let mut inventory = inventory(0);
+        let mut known = KnownTechniques::default();
+        let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "woliu.burst",
+            },
+            true,
+        );
+        assert_eq!(
+            outcome,
+            MentorOutcome::NotEnoughBoneCoins {
+                required: 20,
+                current: 0
+            }
+        );
     }
 
     #[test]
@@ -291,9 +405,12 @@ mod tests {
         let mut inventory = inventory(100);
         let mut known = KnownTechniques::default();
         let mut severed = MeridianSeveredPermanent::default();
-        severed.severed_meridians.insert(MeridianId::Lung);
+        severed
+            .severed_meridians
+            .insert(MeridianId::Lung.channel_id());
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -310,11 +427,49 @@ mod tests {
                 reputation_to_player: 70,
                 technique_id: "woliu.burst",
             },
+            true,
         );
 
         assert!(matches!(
             outcome,
             MentorOutcome::LearnBlocked(ScrollReadOutcome::MeridianSevered { .. })
         ));
+    }
+
+    // plan-race-system-v1 P3a —— 拜师习得门也要走 race gate（woliu 家族全 Humanoid）。
+    #[test]
+    fn mentor_refuses_non_humanoid_intrinsic() {
+        let mut inventory = inventory(100);
+        let mut known = KnownTechniques::default();
+
+        let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 70,
+                technique_id: "woliu.burst",
+            },
+            false,
+        );
+
+        assert!(matches!(
+            outcome,
+            MentorOutcome::LearnBlocked(ScrollReadOutcome::RaceMismatch)
+        ));
+        assert_eq!(
+            inventory.bone_coins, 100,
+            "race gate 拒绝时不应扣骨币（LearnBlocked 分支在扣费之前 return）"
+        );
     }
 }

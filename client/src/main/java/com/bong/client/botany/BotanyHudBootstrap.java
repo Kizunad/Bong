@@ -4,14 +4,16 @@ import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetStore;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
+
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 public final class BotanyHudBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
@@ -19,37 +21,42 @@ public final class BotanyHudBootstrap {
     /** plan-skill-v1 §6.1：herbalism Lv.3 解锁自动采集。 */
     private static final int HERBALISM_AUTO_UNLOCK_LV = 3;
     private static KeyBinding autoHarvestKey;
+    private static boolean registered;
 
     private BotanyHudBootstrap() {
     }
 
     public static void register() {
+        if (registered) {
+            return;
+        }
         autoHarvestKey();
         ClientTickEvents.START_CLIENT_TICK.register(BotanyHudBootstrap::onStartClientTick);
         ClientTickEvents.END_CLIENT_TICK.register(BotanyHudBootstrap::onEndClientTick);
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(BotanyHudBootstrap::resetOnDisconnect));
-        BongClient.LOGGER.info("Botany HUD bootstrap ready: manual via inventory key, auto via R.");
+        BongClient.LOGGER.info("Botany HUD bootstrap ready: manual via inventory key, auto harvest is configurable.");
+        registered = true;
     }
 
     public static boolean shouldCaptureSpellVolumeKey() {
         return HarvestSessionStore.capturesReservedInput();
     }
 
-    static void resetOnDisconnect() {
-        HarvestSessionStore.clearOnDisconnect();
-        BotanyPlantRenderProfileStore.clearOnDisconnect();
-        BotanyPlantStageVisualStore.clear();
-        com.bong.client.skill.SkillSetStore.clearOnDisconnect();
-        com.bong.client.skill.SkillMilestoneStore.clearOnDisconnect();
-        com.bong.client.skill.SkillRecentEventStore.clearOnDisconnect();
+    public static void clearOnDisconnect() {
+        BotanyDragState.clearOnDisconnect();
     }
 
     private static void onStartClientTick(MinecraftClient client) {
-        if (client == null || client.player == null) {
+        if (client == null) {
             return;
         }
+        if (client.player == null) {
+            discardAutoHarvestPresses();
+            return;
+        }
+
         HarvestSessionViewModel session = HarvestSessionStore.snapshot();
         if (!session.interactive() || client.currentScreen != null) {
+            discardAutoHarvestPresses();
             return;
         }
 
@@ -57,8 +64,36 @@ public final class BotanyHudBootstrap {
             dispatchModeRequest(session, BotanyHarvestMode.MANUAL);
         }
 
-        while (autoHarvestKey().wasPressed()) {
-            dispatchModeRequest(session, BotanyHarvestMode.AUTO);
+        pumpAutoHarvestPresses(true, false, autoHarvestKey()::wasPressed);
+    }
+
+    /**
+     * 消费自动采集按键队列；门控期间也必须取空队列，避免按键跨 tick/会话幽灵重放。
+     *
+     * <p>每次真正尝试派发前都从 {@link HarvestSessionStore} 读取实时快照。首次派发会把
+     * {@code requestPending} 写为 true，后续同 tick 排队按键因此只能被消费，不能再次发包。</p>
+     *
+     * @return 本次 pump 消费的按键次数（包括门控时丢弃的次数）
+     */
+    static int pumpAutoHarvestPresses(
+        boolean interactive,
+        boolean screenOpen,
+        BooleanSupplier wasPressed
+    ) {
+        Objects.requireNonNull(wasPressed, "wasPressed");
+        int consumed = 0;
+        while (wasPressed.getAsBoolean()) {
+            consumed++;
+            if (interactive && !screenOpen) {
+                dispatchModeRequest(HarvestSessionStore.snapshot(), BotanyHarvestMode.AUTO);
+            }
+        }
+        return consumed;
+    }
+
+    private static void discardAutoHarvestPresses() {
+        if (autoHarvestKey != null) {
+            pumpAutoHarvestPresses(false, true, autoHarvestKey::wasPressed);
         }
     }
 
@@ -94,8 +129,14 @@ public final class BotanyHudBootstrap {
 
     private static KeyBinding autoHarvestKey() {
         if (autoHarvestKey == null) {
-            autoHarvestKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(AUTO_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, CATEGORY)
+            autoHarvestKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("botany.auto_harvest"),
+                    AUTO_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    InputUtil.UNKNOWN_KEY.getCode(),
+                    CATEGORY
+                )
             );
         }
         return autoHarvestKey;

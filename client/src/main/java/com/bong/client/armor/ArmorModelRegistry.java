@@ -1,50 +1,86 @@
 package com.bong.client.armor;
 
+import com.bong.client.inventory.model.EquipSlotType;
+import net.minecraft.util.Identifier;
+
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * plan-depth-loop-v1 P1: template_id -> OBJ model / texture path registry for custom armor rendering.
+ * plan-armor-model-render-v1 P0: template_id -> ModelPart cube table / texture registry.
  *
  * <p>When an armor template_id is present here, {@code MixinPlayerEntityArmor} skips the
- * leather dye fallback and lets {@link ArmorFeatureRenderer} handle the OBJ render instead.
+ * leather dye fallback once {@link ArmorFeatureRenderer} is ready and lets its ModelPart path render instead.
  */
 public final class ArmorModelRegistry {
     public record ArmorModelSpec(
         String templateId,
-        String slot,
-        String modelPath,
+        EquipSlotType slot,
+        String modelKey,
         String texturePath
-    ) {}
-
-    private static final Map<String, ArmorModelSpec> REGISTRY = new LinkedHashMap<>();
-    private static final Set<String> MODEL_PATHS;
-
-    static {
-        register("armor_iron_helmet", "head", "iron_helmet");
-        register("armor_iron_chestplate", "chest", "iron_chestplate");
-        register("armor_iron_leggings", "legs", "iron_leggings");
-        register("armor_iron_boots", "feet", "iron_boots");
-
-        register("armor_bone_helmet", "head", "bone_helmet");
-        register("armor_bone_chestplate", "chest", "bone_chestplate");
-        register("armor_bone_leggings", "legs", "bone_leggings");
-        register("armor_bone_boots", "feet", "bone_boots");
-
-        MODEL_PATHS = REGISTRY.values().stream()
-            .map(ArmorModelSpec::modelPath)
-            .collect(Collectors.toUnmodifiableSet());
+    ) {
+        public Identifier textureId() {
+            return new Identifier(texturePath);
+        }
     }
 
-    private static void register(String templateId, String slot, String modelDir) {
+    private static final Map<String, ArmorModelSpec> REGISTRY = new LinkedHashMap<>();
+
+    static {
+        register("armor_iron_helmet", EquipSlotType.HEAD, "iron_helmet");
+        register("armor_iron_chestplate", EquipSlotType.CHEST, "iron_chestplate");
+        register("armor_iron_leggings", EquipSlotType.LEGS, "iron_leggings");
+        register("armor_iron_boots", EquipSlotType.FEET, "iron_boots");
+
+        register("armor_bone_helmet", EquipSlotType.HEAD, "bone_helmet");
+        register("armor_bone_chestplate", EquipSlotType.CHEST, "bone_chestplate");
+        register("armor_bone_leggings", EquipSlotType.LEGS, "bone_leggings");
+        register("armor_bone_boots", EquipSlotType.FEET, "bone_boots");
+
+        register("armor_copper_helmet", EquipSlotType.HEAD, "copper_helmet");
+        register("armor_copper_chestplate", EquipSlotType.CHEST, "copper_chestplate");
+        register("armor_copper_leggings", EquipSlotType.LEGS, "copper_leggings");
+        register("armor_copper_boots", EquipSlotType.FEET, "copper_boots");
+
+        register("armor_hide_helmet", EquipSlotType.HEAD, "hide_helmet");
+        register("armor_hide_chestplate", EquipSlotType.CHEST, "hide_chestplate");
+        register("armor_hide_leggings", EquipSlotType.LEGS, "hide_leggings");
+        register("armor_hide_boots", EquipSlotType.FEET, "hide_boots");
+
+        register("armor_scroll_wrap_helmet", EquipSlotType.HEAD, "scroll_wrap_helmet");
+        register("armor_scroll_wrap_chestplate", EquipSlotType.CHEST, "scroll_wrap_chestplate");
+        register("armor_scroll_wrap_leggings", EquipSlotType.LEGS, "scroll_wrap_leggings");
+        register("armor_scroll_wrap_boots", EquipSlotType.FEET, "scroll_wrap_boots");
+
+        register("armor_straw_helmet", EquipSlotType.HEAD, "straw_helmet");
+        register("armor_straw_chestplate", EquipSlotType.CHEST, "straw_chestplate");
+        register("armor_straw_leggings", EquipSlotType.LEGS, "straw_leggings");
+        register("armor_straw_boots", EquipSlotType.FEET, "straw_boots");
+
+        register("armor_linen_helmet", EquipSlotType.HEAD, "linen_helmet");
+        register("armor_linen_chestplate", EquipSlotType.CHEST, "linen_chestplate");
+        register("armor_linen_leggings", EquipSlotType.LEGS, "linen_leggings");
+        register("armor_linen_boots", EquipSlotType.FEET, "linen_boots");
+
+        register("armor_mutated_bone_helmet", EquipSlotType.HEAD, "mutated_bone_helmet");
+        register("armor_mutated_bone_chestplate", EquipSlotType.CHEST, "mutated_bone_chestplate");
+        register("armor_mutated_bone_leggings", EquipSlotType.LEGS, "mutated_bone_leggings");
+        register("armor_mutated_bone_boots", EquipSlotType.FEET, "mutated_bone_boots");
+
+        register("armor_spirit_cloth_helmet", EquipSlotType.HEAD, "spirit_cloth_helmet");
+        register("armor_spirit_cloth_chestplate", EquipSlotType.CHEST, "spirit_cloth_chestplate");
+        register("armor_spirit_cloth_leggings", EquipSlotType.LEGS, "spirit_cloth_leggings");
+        register("armor_spirit_cloth_boots", EquipSlotType.FEET, "spirit_cloth_boots");
+    }
+
+    private static void register(String templateId, EquipSlotType slot, String modelKey) {
         REGISTRY.put(templateId, new ArmorModelSpec(
             templateId,
             slot,
-            "bong:models/armor/" + modelDir + "/" + modelDir + ".obj",
-            "bong:textures/armor/" + modelDir + "/0.png"
+            modelKey,
+            "bong:textures/armor/" + modelKey + "/0.png"
         ));
     }
 
@@ -53,8 +89,8 @@ public final class ArmorModelRegistry {
         return Optional.ofNullable(REGISTRY.get(templateId.trim()));
     }
 
-    public static Set<String> modelPaths() {
-        return MODEL_PATHS;
+    public static List<ArmorModelSpec> all() {
+        return List.copyOf(REGISTRY.values());
     }
 
     public static int size() {

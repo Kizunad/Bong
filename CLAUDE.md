@@ -5,19 +5,19 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 - **server/** — Rust 无头 MC 服务器（Valence on Bevy 0.14 ECS，MC 1.20.1 协议 763）
 - **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
 - **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
-- **worldgen/** — Python 地形生成流水线（blueprint 驱动，terrain_gen 模块，LAYER_REGISTRY 统一 16 层地形）
-- **library-web/** — 末法残土图书馆前端（Astro，静态站点）
+- **BongWorldGen** — 独立的 Python/NumPy 地形生成库（<https://github.com/Kizunad/BongWorldGen>）
+- **末法Cantu** — 独立的世界观设定库（<https://github.com/Kizunad/MofaCantu>）：正典分章 + 馆藏三十八卷 + 十卷写作大纲
 
 ## Quick commands
 
 ```bash
 # Server
-cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-cd server && cargo run              # 监听 :25565，offline mode
+scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test
+scripts/build-token.sh cargo run              # 监听 :25565，offline mode
 
 # Client
-cd client && ./gradlew test build   # jar 在 build/libs/
-cd client && ./gradlew runClient    # 通过 WSLg 启动 MC
+scripts/build-token.sh gradle test build   # jar 在 build/libs/
+scripts/build-token.sh gradle runClient    # 通过 WSLg 启动 MC
 
 # Agent（天道）
 cd agent && npm run build                          # 编译 TS
@@ -28,9 +28,10 @@ cd agent/packages/tiandao && npm test              # 类型检查 + vitest
 # Schema
 cd agent/packages/schema && npm test
 
-# Worldgen
-cd worldgen && python -m scripts.terrain_gen       # 地形生成主流程
-bash worldgen/pipeline.sh                          # 默认导出 raster + 预览
+# Worldgen（独立仓库）
+cd ../BongWorldGen
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/bong-worldgen --width 256 --height 256 --seed 812731 --output generated/demo.npz
 
 # Dev reload (regen + validate + rebuild + restart)
 bash scripts/dev-reload.sh
@@ -51,6 +52,7 @@ bash scripts/smoke-test.sh
 |------|------|
 | `/meridian open <id>` / `/meridian open_all` / `/meridian list` | 强制打通经脉或查看经脉状态 |
 | `/realm set <id>` | 直写玩家境界 |
+| `/race set <id>` | 切换玩家种族（走真实 `RaceChange` 两阶段事务：装备门重扫/经脉迁移+休眠登记/qi_max 重算+守恒释放，唯一绕过的是自然修炼流程） |
 | `/qi set <value>` / `/qi max <value>` | 直写真元当前值或上限 |
 | `/technique list` / `/technique add <id>` / `/technique remove <id>` / `/technique proficiency <id> <value>` / `/technique active <id> <bool>` / `/technique reset_all` | 查看、增删、调熟练度或重置功法 |
 | `/give <template_id> [count]` | 给予物品 |
@@ -74,10 +76,9 @@ bash scripts/smoke-test.sh
 - **IPC schema**：TypeBox（TS source of truth）→ JSON Schema export → Rust serde structs；共享 `agent/packages/schema/samples/*.json` 双端校验
 - **天道 Agent**：三 Agent 并发推演（灾劫/变化/演绎时代），Arbiter 仲裁层负责合并与冲突消解
 - **NPC AI**：big-brain Utility AI（Scorer → Action 模式），Position ↔ Transform 同步桥
-- **Worldgen 流水线**：blueprint 定义固定坐标大地图 → terrain_gen 生成区域 field → stitcher 负责 zone→wilderness 过渡（按 LAYER_REGISTRY blend_mode）→ raster_export 导出 little-endian float32/uint8 二进制（mmap-friendly）→ Rust server 运行时按需生成 chunk
-- **LAYER_REGISTRY**（`worldgen/scripts/terrain_gen/fields.py`）：16 层地形统一注册表，每层定义 `LayerSpec(safe_default, blend_mode, export_type)`；stitcher 和 raster_export 均从此派生配置
-- **Dev harness**：`scripts/dev-reload.sh` 一键 regen+validate+rebuild+restart；`worldgen/scripts/terrain_gen/harness/raster_check.py` 做 raster 后验（rift_axis_sdf 默认值、height range、water depth）
-- **Terrain profiles**：qingyun_peaks、spring_marsh、rift_valley/blood_valley、spawn、north_wastes、lingquan_marsh 均已完成
+- **地形生成**：已从本仓库迁出至 [BongWorldGen](https://github.com/Kizunad/BongWorldGen)。Bong 只负责读取生成后的 raster，并在运行时按需生成 chunk；生成器、荒野分类、河流与洞穴数据均由独立库维护。
+- **Dev harness**：`scripts/dev-reload.sh` 只负责服务端重建与重启；地形生成和地形数据校验在 BongWorldGen 内执行。
+- **世界观**：正典与馆藏的**独立维护库**为 [末法Cantu](https://github.com/Kizunad/MofaCantu)（正典按章拆分、馆藏索引重建、十卷写作大纲、悬案与留白清单）。本仓库的 `docs/worldview.md` 与 `docs/library/` 仍是代码侧引用的锚点，不随之改动。
 - `#[allow(dead_code)]` on `mod schema` in main.rs — schema 模块用于 IPC 对齐，尚未接入运行时
 
 ## Current milestone
@@ -97,7 +98,7 @@ bash scripts/smoke-test.sh
 - 使用中文沟通
 - 云端开发，拉到本地 WSL 测试
 - `cargo run` 使用 offline mode（无需 Mojang 认证）
-- Client 测试通过 `./gradlew runClient`（WSLg，无需单独启动器）
+- Client 测试通过 `scripts/build-token.sh gradle runClient`（WSLg，无需单独启动器）
 - Java 17 用于 Fabric，系统默认 Java 21（sdkman）
 - docs/ 目录存放架构设计文档和路线图，修改前可参考
 - Python 文件保存后自动 ruff 格式化（PostToolUse hook，见 `.claude/settings.local.json`）
@@ -160,36 +161,35 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、派发 review 返工、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
 
 - 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表。**防重的权威机制是原子 claim 锁，唯一创建主体是 subagent**（执行命令见 Subagent step 1，主干只派任务、绝不抢先创建 claim ref——两个角色都建 ref 会让正常派发必得 422 死锁）。普通 `git push` 没有 create-only 语义（两会话同 base 时第二个 push 是 no-op 也"成功"），不得用作互斥依据；查询式检查有 TOCTOU 竞态。派发前**四查**只作辅助诊断：① skeleton 在 origin/main 上仍存在 ② 无同名 active plan ③ 目标 symbol 未被已 merge 的修复覆盖 ④ 无同名远端分支 / 开放 PR（`gh pr list --state open --search "plan-X"`）。占用持续到对应 PR merge/close 才解除（promotion 只发生在 subagent 分支上，PR 未合并时 origin/main 依旧满足前三查）
-- **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
-- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；validator/验证类 agent 并发 **≤3**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`（这是故障修复手段，须确认无并行编译在跑时才执行）
-- subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
-- subagent 闭环（PR 开出 + e2e 绿）后**必须完整清理再补位**：关闭 agent → `git worktree unlock` + `remove` → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 worktree 检出时删不掉）→ 删 worktree **私有**生成物（**共享 `CARGO_TARGET_DIR` 严禁任务级清理**——并行任务还在用，共享缓存只能由主干在确认全部编译停止后统一清）→ `git worktree prune`。本地只留 in-flight 的 worktree/分支，历史上残留 worktree + 缓存曾塞掉上百 G。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
-- **claim 锁的释放也归主干**：PR merge 后核验远端 claim 分支确已删除（不依赖仓库自动删分支设置，没删就 `git push origin --delete bugfix/plan-X`）；PR close 未合并且确认放弃时，先核验无开放 PR、无在跑 subagent，再删 ref 让任务重新开放——锁不能靠"大概会自动清"悬着。**孤儿锁回收**：claim 成功但 PR 尚未创建时 subagent 异常退出/失联，主干确认无开放 PR、无存活 subagent、远端无需保留的提交后删 claim ref 重开任务；每轮补位时顺带巡检一遍孤儿锁。claim ref 的创建/删除是**锁运维**，是主干「不 push」禁令的唯一例外（该禁令约束的是提交/分支内容，不是锁 ref 生命周期管理）
-- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 `/review` / CodeRabbit 结果，出现修改意见时派**返工 subagent** 从 PR 分支重建 worktree（原 worktree 已清理无妨，分支在远端）。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → validator（step 4）→ 按栈门禁（step 5）→ fetch/merge 最新主线（step 6，带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e → **重发 `/review` 评论**（引擎对后续提交不自动跑）——review 意见永远有责任主体，不悬空
+- **一个 skeleton = 一个 subagent = 一个常驻 slot 进驻 = 一个 PR**（对齐「一个 PR 只动一个 plan」；slot 是复用工作目录，不是每任务新建 worktree）
+- 编译型任务并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）。实施工作区用**常驻 slot 池**（`.agent-worktrees/slot-<k>`，k=1..N，N 默认 = 编译并发上限 2，主干 `bash scripts/slot_registry.sh init --max N` 写入可观察容量；按需 `git worktree add --lock --detach` 创建后永久复用）。**占用权威不是 detached HEAD**，而是 `scripts/slot_registry.sh` 的原子 reservation（只准执行 `scripts/slot_registry.sh acquire`，不得手工 mkdir reservation）：主干/进驻方必须先 `acquire --slot --task --branch --claim-sha --agent` 成功才允许对该 slot 做任何 checkout；detached 只作辅助诊断。进驻契约：① registry 持有 + 双门核验 detached + 工作区干净；② 进驻前枚举 ignored；脚本是权威，白名单为 `server/target` / `client/build` / `client/.gradle` / `server/data` / `tmp`，以及任意位置的 `__pycache__/`；这些白名单只表示 ignored 路径可接受存在，不表示路径可安全删除，尤其 `server/data/` 下的 `bong.db` 与存档备份任何情况下不得按白名单删除；`slot_registry.sh` 的 `CACHE_DIRS` 与 `wt-janitor.sh` 中同名的 `CACHE_DIRS` 是刻意分裂的两份，后者才承担 `rm -rf` 回收语义，严禁合并或共享；文档与脚本不一致时以脚本为准并回来修正文档；其它 ignored（`.env` 等）转人工；③ 本地分支不存在时才 `git checkout -B bugfix/plan-X origin/bugfix/plan-X` 并执行带 `--agent <canonical-id> --owner-token "$owner_token"` 的 `mark-created-local --value true`；本地分支已存在时**禁止 `checkout -B`**，改为直接 `git checkout bugfix/plan-X` 并核验本地 SHA == claim SHA，不一致转人工（`created_local_branch` 保持 false）。所有前置 checkout/跟踪配置完成后，必须把 `acquire` 返回的 opaque `OWNER_TOKEN` 连同 slot+task+agent 传给 `slot_registry.sh occupy`；该命令是唯一生产进驻门，会自己核验 canonical slot 已注册且 locked、branch/HEAD/upstream/claim 对拍、tracked/untracked 干净及 ignored 白名单，成功后才 occupied。释放 = detach 回 origin/main +（CLOSED 路径）删本地分支 + 带 slot+task+agent+owner-token 的 `slot_registry.sh release`。BLOCKED 任务现场以 commit 留在任务分支上后同样 detach + 带完整 owner identity 的 `release`（保留本地分支）；脏现场执行带 slot+task+agent+owner-token 的 `scripts/slot_registry.sh freeze-blocked` 冻结交人工；恢复只允许运行 `manual-report` 后由人工以完整旧 reservation identity + 新 recovery agent + operator + reason 执行 audited `force-unfreeze-blocked`。`force-unfreeze-blocked` 只准备 durable 私有 handoff + 公开 intent，并一次性返回必须安全保存的 `OPERATION_ID` 与新 `OWNER_TOKEN`；它不修改 reservation。恢复者必须携同一 operation/token/operator/reason 调用 `resume-unfreeze-blocked`，事务才按 agent→token→state→completion audit→private cleanup 续跑。任一步中断均保留可续跑状态；private handoff 已落盘但 intent 缺失时，普通命令 fail-closed，合法 resume 必须先补写并 fsync public intent 才能 mutation；status/report/public audit 均不泄漏 raw token，仅 audit 新 token SHA-256。reserved 来源最终回到 reserved 后仍须用新 holder 通过既有 reservation 的 `occupy` 门（**不再调用 acquire**），occupied 来源最终回到 occupied 并由新 holder直接接管 authority。全程不宣称 PID/liveness 自动恢复。容量满（held≥max）拒绝新 acquire。slot 跨任务保温缓存——磁盘上限由 capacity 固定、热编译，**严禁 remove slot 或删其构建缓存**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`（故障修复手段，须确认无并行编译在跑；slot 路径恒定后此坑不应再现）
+- subagent 回报只带结论（PR 链接 / commit hash / 测试与 gate 证据），不回灌大段 diff/日志进主干上下文
+- subagent 闭环（PR 开出 + e2e 绿）后**必须释放 slot 再补位**：关闭 agent → slot 内 `git checkout --detach origin/main` 脱离任务分支 → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 slot 检出时删不掉）→ 删任务**私有**非缓存生成物（`.tmp` 日志等；**slot 的 `server/target`/`client/build` 保温缓存与共享 `CARGO_TARGET_DIR` 严禁任务级清理**）→ 标记 slot 空闲。slot 本身不 remove 不 prune。旧流程/异常残留的一次性 worktree 由主干跑 `bash scripts/wt-janitor.sh` 巡检回收（仅 PR **MERGED** 且工作区干净、无非缓存 ignored（如 `.env`）、且无未合入 patch 的树才 `--apply` 自动收；squash 合入后远端 branch 删除时以 `git cherry origin/main` 判定 patch 等价；CLOSED/UNKNOWN/无 PR/脏树/含 `.env` 等一律交人工；脚本主动枚举 ignored，不依赖 `git worktree remove` 拒绝）——历史上残留 worktree + 缓存曾塞掉上百 G（2026-07-17 实测塞满 444G 盘）。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
+- **claim 锁的释放也归主干**：PR merge 后核验远端 claim 分支确已删除（不依赖仓库自动删分支设置，没删就 `git push origin --delete bugfix/plan-X`）；PR close 未合并且确认放弃时，先核验无开放 PR、无在跑 subagent，再删 ref 让任务重新开放——锁不能靠"大概会自动清"悬着。**唯一 subagent 删除例外**：仅限该 subagent 本轮 create-ref 刚创建、PR 尚未创建、且删除前重新查询确认远端 ref SHA 仍严格等于本轮 `claim_sha` 的失败回滚；任一条件不满足即保留 ref 交主干，不得删除。**孤儿锁回收**：claim 成功但 PR 尚未创建时 subagent 异常退出/失联，主干确认无开放 PR、无存活 subagent、远端无需保留的提交后删 claim ref 重开任务；每轮补位时顺带巡检一遍孤儿锁。除上述严格失败回滚外，其余 claim ref 的释放、巡检与删除统一由主干负责。claim ref 的创建/删除是**锁运维**，是主干「不 push」禁令的唯一例外（该禁令约束的是提交/分支内容，不是锁 ref 生命周期管理）
+- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 Kody 结果，出现修改意见时派**返工 subagent** 从 PR 分支进驻空闲 slot（原任务的进驻早已释放无妨，分支在远端；无空闲 slot 时返工排队并优先于新 skeleton 派发）。返工进驻也必须先用 `scripts/slot_registry.sh acquire` 获取 opaque `OWNER_TOKEN`，完成 detached/clean/ignored 与四方 SHA 对拍后，再用同一 token 通过唯一 `occupy` 门；失败按 token 化 `rollback`，成功后按 token 化 `release`/`freeze-blocked`，不得绕过 slot admission。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → 按栈门禁 → fetch/merge 最新主线（带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e 与自动 review；发现问题或需要复审时发送 `@kody review --force`——review 意见永远有责任主体，不悬空
 
 ### Subagent（修复）流程
 
-1. **Claim + 开独立 worktree/branch**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再 **`git worktree add --lock`**（一步完成创建 + 锁定，消除 add→lock 之间被外部 orchestrator prune 的竞态；本地分支显式跟踪该 ref，核验 worktree HEAD = claim SHA）；worktree 建立失败 → 删刚创建的 claim ref 回滚，不留孤儿锁
+1. **Claim + 进驻常驻 slot**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再进驻主干分派的常驻 slot：先用 `out=$(bash scripts/slot_registry.sh acquire --slot slot-k --task <plan> --branch bugfix/plan-X --claim-sha <sha> --agent <id>)` 原子获取 reservation，并从仅本次 stdout 提取 `OWNER_TOKEN`（默认 status 不暴露；失败=换 slot/排队，禁止无 reservation checkout）→ 核验 detached + `git status --porcelain=v1 --untracked-files=all` 为空 + ignored 仅缓存白名单 → 本地分支不存在时 `git checkout -B bugfix/plan-X origin/bugfix/plan-X` 并执行带 `--agent <canonical-id> --owner-token "$owner_token"` 的 `mark-created-local --value true`，本地分支已存在则直接 `git checkout` 并核验 SHA==claim SHA（不一致转人工，**禁 `checkout -B` 覆盖残留提交**，`created_local_branch` 保持 false）+ 显式设 upstream，配置 upstream 后，只通过带 `--agent <id> --owner-token "$owner_token"` 的 `occupy` executable gate 进驻（由命令自己重验 canonical path、registered+locked、branch/HEAD/upstream/claim、dirty/untracked/ignored）；slot 不存在时主干先 `git worktree add --lock --detach` 一次性创建。**进驻失败回滚**：slot 内 detach（若已 checkout）+ `bash scripts/slot_registry.sh rollback --slot slot-k --task <plan> --agent <id> --owner-token "$owner_token"`，**仅当 stdout `DELETE_LOCAL_BRANCH=true`（本轮新建本地分支）才 `git branch -D`**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工。远端 claim ref 也只允许该 subagent 在「本轮 create-ref 刚创建、PR 尚未创建、且删除前重新查询确认远端 SHA 仍等于本轮 claim SHA」三项同时成立时回滚删除并核验不存在；否则保留 ref 交主干。slot 不 remove。
 2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
 3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
-   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
+   - **真 bug** → 最小正确修复 + 最小契约测试锁住该 bug 的可观察行为，按小阶段中文 commit
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
-4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。启动时**显式传入 worktree 绝对路径 + 待审 HEAD SHA**，validator 第一步回报 `git rev-parse HEAD` 与目标对拍，PASS/FAIL 结论必须携带该 SHA（防对错误代码的假 PASS）。validator 只输出 PASS/FAIL + 理由，不改代码；**出结论即关闭**——PASS / FAIL / 超时 / 异常四条路径都要关，不留活 validator 占并发槽。FAIL → 返工 → **对新 HEAD 开新的无上下文 validator 重验**，循环直到 PASS 才算闭环；此后任何 HEAD 变化（返工、合并主线）都必须对新 SHA 重验
-5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；client：`cd client && ./gradlew test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
-6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
-7. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
-8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型），随后 `gh pr comment <PR> --body "/review"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
+4. **本地门禁**：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；BongWorldGen：在独立仓库运行其 `pytest` 和生成器测试。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+5. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或触及修复相关文件 → 重新跑受影响栈门禁
+6. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
+7. **Push + 开 PR**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 reviewer 模型）。PR 有新提交/变动时默认由 Kody 自动 review；发现问题或需要复审时，再执行 `gh pr comment <PR> --body "@kody review --force"`。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
 
-## Testing — 饱和化测试
+## Testing — 契约驱动的必要测试
 
-**核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
+**核心原则**：测试保护稳定、可观察且有真实回归风险的业务契约，不以测试数量、覆盖率、每个函数或每个 enum 变体都命中为目标。每个测试或表驱动测试组必须能回答“保护什么契约、避免什么风险”；回答不出来的测试应删除或改写。
 
-- **饱和覆盖**：每个新加的函数 / 组件 / 协议都要测 ① happy path ② 所有边界（empty / max / boundary off-by-one）③ 所有错误分支（invalid input、权限、状态前置）④ 所有状态转换（enum 变体、生命周期阶段）。覆盖到"想不出还能加什么 case"为止
-- **测契约不测实现**：断言外部可观察的行为（IO、协议、副作用、payload 结构），不要绑死内部调用次数 / 私有字段 / 中间步骤。重构内部不应让测试红
-- **mock 顶位时接口必须完整**：当下游模块未实装（plan A 依赖 plan B 的 P0），mock 暴露的接口要和真实最终形态一致；测试要覆盖 mock 的全部行为分支，让真实 impl 接入时"只换 impl 不改测试"。**接口先于实现锁定，测试同时锁定接口**
-- **schema / enum / 状态机有专属 pin 测试**：每个 TypeBox / serde variant 都要有正反 sample 对拍；每个 enum 变体至少一条专属 case；每个 state transition (A→B、A→C、A→A) 都有命中用例。schema 改动连同 sample 一起改
-- **集成测试走完整链路**：单元测试不能替代集成测试。client 发请求 → server 处理 → emit payload → client 收到 这种端到端路径要有专门的 e2e 用例，不要假设单元拼起来就是对的
-- **失败信息带修复线索**：assert 写清"期望是 X 因为 Y，实际是 Z"，而不是 `assertEq(a, b)` 一行带过。撞红时不需要 git blame 才能理解为什么
+- **必须保留的契约**：安全/权限、原子性/并发、真元守恒、具有不同外部结果的状态转换、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。跨栈链路只有在消息、序列化、异步时序或副作用无法由单栈测试证明时才写 E2E。
+- **硬编码值的边界**：packet ID、编码顺序、文件权限、版本化 type tag、领域物理常量和明确对外配置可以精确断言；优先引用生产常量。字段数量、私有字段顺序、默认构造细节、fixture 文案/地图名/演示 tick、扫描顺序和源码字符串不是契约，除非有明确外部消费者证明相反。
+- **最小判别集**：每个行为等价类保留一个代表 case 加必要边界；多个 enum/input 走同一无分支路径时用代表 case 或表驱动合并，不做组合穷举。只有不同 variant 或 state transition 导致不同可观察结果时才分别测试。
+- **测契约不测实现**：断言 IO、协议、副作用、持久化结果和 payload 结构；不要绑定私有字段、调用次数或中间步骤。等价重构不应让测试红。源码 grep、函数名、变量名或命令拼写断言不能替代行为测试。
+- **mock 只覆盖被依赖的契约**：下游未实装时，mock 提供调用方需要的真实接口和行为；不为 mock 自身的所有内部实现分支写同构测试。真实实现接入后保留同一调用方契约。
+- **失败信息带修复线索**：assert 写清期望的契约和失败原因；删除测试也必须在测试重构记录中说明其实现镜像性质或与保留测试的重复关系。
 
 ---
 
@@ -212,11 +212,69 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 - commit message **中文**，匹配仓库近 30 提交风格；每个逻辑单元一个 atomic commit，不堆积巨型 commit
 - 归档 commit 形如：`归档 plan-<name>：<一句话总结>`
-- **模型署名（供后续统计，必填）**：agent 产出的每个 commit 末尾必须带 trailer 注明**真实执行模型**：`Model: <精确模型 id>`（如 `claude-fable-5` / `claude-opus-4-8` / `gpt-5.6-sol-xhigh`），`Co-Authored-By` 照旧保留。PR body 末尾同样注明主导模型及参与模型（validator / reviewer 用了不同模型也逐个列出）。不许漏署，不许写泛称 "AI" / "agent"。统计入口：`git log --format='%(trailers:key=Model,valueonly)'`
+
+## 反 machine slop（"给人读"是硬要求，不是审美偏好）
+
+> 背景：`machine slop` 指**用尽可能少的 token 解决眼前问题、只保证 AI 自己读得懂**的输出风格，被定性为 reward hacking——训练把 token 效率和任务完成率压得很紧，而"一个人类能看懂这里发生了什么"几乎不产生梯度。触发条件是模型判断**"这段东西不会有人真的去看"**。已知在 greenfield 任务上拉力最强，即使明确告知"要长期维护"也会滑向那边。
+>
+> 本仓是多 agent 并行（4 路 Codex worker + 各自的 validator subagent + 调度主干），正是高发场景。以下是硬约束，不是风格建议。
+
+**判据：凡是人可能要读的，就按人能读的写。** 这个前提今天仍然成立，理由不在审美而在**带宽**——人类读代码效率很低，能做好 code review、`git diff`、事故复盘就算不错了。不要因为"这条命令是一次性的"/"这个 PR 会被 squash"/"只有 agent 会看"就切换写法。
+
+### 红旗清单（出现即返工）
+
+- **绕开 harness 的编辑工具改用脚本改文件**：例如用 Python 把整个源文件读成字符串、`replace`、再写回磁盘。必须用 Edit/Write/patch 类工具做文件修改——绕开之后，人就无法通过读动作跟上你在干什么，只能等尘埃落定去看最终 diff。
+- **一行里用分号串起多条语句**；提交的代码没有空行、缩进随意、赋值挤在分号后面。这类写法在格式化前约省 10% token，省下的是别人的理解成本。
+- **套娃调用链**：Bash 调 Python、Python 调 Node、Node 再拉起别的进程。用目标栈的原生方式做，跨栈套娃一律先停下说明理由。
+- **写出本仓不存在的写法**：一行连打多个宏、与周围代码风格明显不同的构造。新代码要读起来像它周围的代码。
+- **裸下标/魔数存取状态**：`_some_accelerator[6]`、`[8]` 这种，数字来源无人知晓。用具名常量、结构体字段或枚举。
+- **只服务测试的 helper 被生产代码调用**：这是把测试脚手架偷渡进生产路径。要么提升为正经 API 并补文档与测试，要么保持私有。
+- **标识符退化**：任务/分支/文件编号从 `1、2、3` 滑成 `8b2c2b3`、`8b2c2b2b-checkpoint1` 这类。编号体系读不懂就是失控信号，停下重整。
+- **嵌套过深、回调堆叠、提前 return 满天飞、错误构造方式在同一模块里不统一**；短函数里把基础组件该干的事和业务逻辑糊在一起。
+
+### agent 之间的通信同样受约束
+
+多 agent 协同下，一旦给消息加长度压力，agent 间通信会自发压成"电报体"——删空格、去冠词、复合词粘连、大小写挪作他用，形成人类要费很大劲才读得懂的 **agent dialect**。本仓禁止这样：
+
+- **subagent 回报、任务卡、validator 结论、agent 间消息，全部写成人能直接读的中文或英文**，正常空格与标点，不得为压缩而牺牲可读性。
+- 回报只带结论与证据锚点（PR 链接 / commit hash / `file:line` / PASS 证据），**不回灌大段 diff 或日志**——这是为了控制上下文，不是为了压缩语言本身。两者别混。
+- 不得自创缩写体系、符号协议或只有 agent 能解码的编码方式。
+
+### 为什么这条单独立一节
+
+比风格更值得警惕的是它的**触发条件**：如果一个模型会因为判断"没人在看"而改变行为，那么代码风格只是这件事最无害的一种表现形式。本仓的多 agent 编排依赖人能读懂 CoT、回报和 diff 来做监督；这条链路一旦断了，review gate、事故复盘和守恒审计全部失效。
+
+**所以：假定总有人在看。** 一次性的探针脚本、临时的调试命令、agent 之间的私聊，全都按会被人读来写。
+
+## 先读注释，再解析结构
+
+上一节要求「假定总有人在看」。它的另一半是：**本仓确实把决策写给人看了，
+所以在对任何代码下判断之前，先读紧挨着目标的那几行散文。**
+
+「为什么是这样」「这个例外是有意的」「清理它需要什么前置条件」——
+这些几乎从不在数据结构里，而在它旁边的注释、docstring 和行内尾注里。
+只解析字段、不读旁边的话，会**稳定地**产出假发现：看到一条与众不同的 entry
+就当它是 bug，看到一处不对称就当它是漏改。
+
+两次实证，同一天：
+
+- `BongWeaponModelRegistry.java:140-145` 的 `pickaxe_iron` 是唯一带 Bong OBJ 的工具 entry，
+  看着像个该修的异常。**往下三行 `:146-149` 就写着政策**：
+  「镐/斧/锄直接白嫖 vanilla 模型（`bongObjModelPath=null` → 宿主 item 即模型，不走 SML 劫持）」。
+  它不是异常，是唯一还没跟上政策的那条。
+- 用脚本比对 `assets/minecraft/` 下 15 个 vanilla override 与 registry entry，
+  报出 5 处「不一致」，逐条回源核**全是误报**：4 条是宿主共享（registry 里就写着
+  `// 借 iron_sword.obj`），第 5 条 `flint` 在 `:214-215` 写明了它是孤儿 override，
+  连「删 override + 同步资源包 sha1」这两个清理前置条件都记了。
+
+**判据：任何「这里看起来不对」的结论，落笔前先把目标上下各看二十行注释。**
+本仓的例外几乎都被就地记过账 —— 注释不是装饰，是索引。
+同理适用于 docstring（`gen_hide_armor.py` 把自己前几轮踩的坑写在函数说明里）
+和 javadoc（`ArmorPartModel.java:20` 声明了运行时唯一模型事实来源是谁）。
 
 ## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
-唯一权威 `docs/worldview.md`。下面是**最常被违反**的几条，违反 = review 直接打回：
+唯一权威 `docs/worldview.md`（独立维护库见 [末法Cantu](https://github.com/Kizunad/MofaCantu)，其中 `notes/悬案与留白.md` 记录了正典自身已知的错引与数值冲突）。下面是**最常被违反**的几条，违反 = review 直接打回：
 
 - **六境界**（worldview.md §三 L67-L72，顺序固定；worldview.md §三 L63 明禁旧称）：**醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚**。严禁上古称呼：练气 / 筑基 / 金丹 / 元婴。
 - **命名禁词**（worldview.md §三 L63 的命名原则落地速查）：末法时代禁用 玄/陨/星/仙/太/古；优选衰败素朴意象 残/碎/锈/杂/粗/髓/朴/枯。例外：已入世俗医药的矿名（丹砂/朱砂/雄黄）OK。
@@ -249,8 +307,12 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ## 视觉资产纪律（NBT 建筑 / layout / 模型 / 贴图）
 
-- **3 轮打磨 + `<PROMISE>` 担保**：NBT 建筑、worldgen layout 摆位、复杂模型、视觉资产**禁止一把 commit**。Round 1 first cut → Round 2 自评（截图渲染/structure dump/ASCII 平面投影）→ Round 3 终轮，commit message 标 `(round N/3)`；终轮 commit 末尾写 `<PROMISE>...已 3 轮打磨...已检查[...]...仍存局限[...]</PROMISE>` 块（**拼写是 PROMISE 不是 PROMIS**）。纯 Rust/TS 逻辑 TODO 不适用。
-- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `scripts/models/render_bbmodel.py` 看，别只信平涂示意图。
+- **3 轮打磨 + `<PROMISE>` 担保**：NBT 建筑、worldgen layout 摆位、复杂模型、视觉资产**禁止一把 commit**。Round 1 first cut → **Round 2 人工闸门** → Round 3 终轮，commit message 标 `(round N/3)`；终轮 commit 末尾写 `<PROMISE>...已 3 轮打磨...已检查[...]...仍存局限[...]</PROMISE>` 块（**拼写是 PROMISE 不是 PROMIS**）。纯 Rust/TS 逻辑 TODO 不适用。
+- **Round 2 是人工闸门，不是模型自评**：固定产出**一张给人看的接触表**，然后**停下等人一句话**再动 round 3。bbmodel 类走 `bbmodel-contact-sheet <模型> --gates <生成器模块> --prev <上一轮>`，表里必须有四样：① 六个**诚实命名**的视角（标签写出实际照到的轴面）② 上一轮的**同一取景**对比 ③ manifest 点名结果 ④ 门禁的差分自证结果。
+  - 改掉「自评」的理由是两次实测，**都恰好发生在自评这一步**：`yaw=180` 名义叫 FRONT 实渲 −z 面，害人在错的视角上连试三个亮度阈值去找一个本就不该出现的骨扣（几何/UV/材质从头到尾都是对的）；小草包前两轮**整件漏掉背带**（参考图里占比仅次于包身）而七道数值门全绿 —— 有没有背带根本不在任何一道门的问题域里。人看图三十秒能问出「背带呢」，模型跑四十分钟数值门也问不出来。
+  - **任何「让模型自己判断像不像参考图」的设计都是错的** —— 自己出题自己判卷。特征清单 `modelScript/manifests/<Asset>.manifest.toml` **必须人写**，点名器只负责核对。
+- **「自检全绿」在做差分注入之前，信息量是零**：判据本身会假绿而模型不会怀疑它 —— 某版穿模判据白名单写反，**坏版本和修好的版本都报 17 处**，零区分力却两边都「有输出」。所以 `bbmodel_maker.gates.gatekit` 每道门旁边就是它的注入器（动画侧同理见 `animgate`），跑 `--self-test` 先注入缺陷再跑，报不出违例的门直接算失效。新写判据先问一句：**把它该抓的东西造出来，它报得出来吗？**
+- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `bbmodel-render <模型>` 看，别只信平涂示意图。
 - **item icon 批量出**：新增 ItemTemplate 必配 icon，走 `/gen-image item`（批量、不需多轮）。跑不了 `/gen-image` 的 harness 标 `[BLOCKED: 需 /gen-image]`。
 
 ## 架构硬约束（entity / 动画）
@@ -273,6 +335,8 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ## PR review gate
 
-- **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。
-- **单一 `/review` 入口**：在 PR 评论 `/review` 触发（独立 issue comment，写在 PR body 不生效）。不要用 `@pi`/`@hive`/`@claude`——会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动跑（额度耗尽限流失败是计费问题不是代码问题）。
+- **gate 只看 Kody**，绝不把 Codex connector 的限流噪音当成代码结论。Kody 按当前配置做 bug、性能、安全和业务逻辑 review，是本仓库唯一在跑的 LLM 审查器。
+- **默认自动 review**：PR 创建时以及 push 新提交后由 Kody 自动 review。不要发送 `/review`、`/review-next` 或 `@kody start-review`；发现问题或需要针对最新 HEAD 复审时，才在 PR 根评论发 `@kody review --force`。
+- **判审查归属必须核 SHA，不能只看时间戳**：旧 HEAD 的延迟评论会落在新 push 之后。认行内评论的 `original_commit_id`——**`commit_id` 会被 GitHub 改写成当前 HEAD，用它必得假阳性**（#2058 实测 6 条里 4 条被改写）。同时按 `--paginate` 拉取完整评论，并优先确认评论对应当前 HEAD；Kody 的 clean 总结可能没有 SHA，必要时用 `@kody review --force` 获取当前 HEAD 的新结论。详见 `docs/CLAUDE.md §6.5`。
+- **CodeRabbit 不在默认等待范围**：`.coderabbit.yaml` 已关闭自动触发；确实需要第二双眼睛时才评论 `@coderabbitai review` 按需拉起。也不要用 `@pi`/`@hive`/`@claude` mention 陌生账号。
 - 等待用 `ScheduleWakeup delaySeconds=1200`（~20 min/回合，最多 3 回合卡死才停交人工），禁止 sleep loop / busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"（完整协议见 `docs/CLAUDE.md §6.5`）。

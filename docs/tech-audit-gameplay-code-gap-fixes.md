@@ -135,7 +135,7 @@
 - P5 `358e3e594`：毒蛊 v2 HUD S2C + permanent qi decay + self-revealed client 半边。
 - P6 `41672a35c`：剑道人剑共生 HUD + 蜕壳灰烬入包/VFX/agent 叙事。
 
-测试证据：server `7301 passed`；client `./gradlew test build` 成功；agent tiandao `574 passed`、schema `530 passed`。
+测试证据：server `7301 passed`；client `scripts/build-token.sh gradle test build` 成功；agent tiandao `574 passed`、schema `530 passed`。
 
 遗留：第 27 条 `jingmai-sever-yidao-hud-count`（yidao 患者诊断面板 hp/contam/severed 字段全空）超出该 plan 范围。
 
@@ -166,7 +166,7 @@
 - P6 #363/#364：`FactionWar` 四态、玩家参与、settle、Renown、`FactionWarHudLayer`、war outcome 叙事。
 - P7 #365/#366：Drowsy LOD 三态、`bong:npc_lod` S2C、client `NpcLodWorldRenderer`。
 
-测试证据：server `6968 passed`；agent schema `419` + tiandao `450`；client `./gradlew test build` +64；e2e `scripts/e2e-offscreen-war.sh` 在 PR 阶段全量/分段通过。
+测试证据：server `6968 passed`；agent schema `419` + tiandao `450`；client `scripts/build-token.sh gradle test build` +64；e2e `scripts/e2e-offscreen-war.sh` 在 PR 阶段全量/分段通过。
 
 遗留：P7 远视野视觉仍需人工 `runClient` 目视；live↔dormant 往返丢 emergent_group 留 P6+；部分 skeleton / 孤儿副本需人工清理。
 
@@ -177,7 +177,7 @@
 落地：
 
 - commit `863afd1f5`：注册 `trade_offer`；新增 `MiningProgressHandler` / `LumberProgressHandler`；接 `GatheringSessionStore` 和 `GatheringProgressHud`；断线清理。
-- 测试：`GatheringProgressHandlerTest`、`ServerDataRouterTest`、`SocialServerDataHandlerTest`；`./gradlew test build` 1394 tests 全过。
+- 测试：`GatheringProgressHandlerTest`、`ServerDataRouterTest`、`SocialServerDataHandlerTest`；`scripts/build-token.sh gradle test build` 1394 tests 全过。
 
 ### 4.6 `plan-vfx-wiring-v1`
 
@@ -199,7 +199,7 @@
 | High | yidao 患者诊断面板仍可能是完整 HUD 断链 | combat plan 遗留第 27 条：`jingmai-sever-yidao-hud-count`，hp/contam/severed 全空 | 单独立/消费 yidao HUD wiring plan，需患者 Entity 解析 |
 | High | ColumnSample 9 个 terrain raster 层是否真实被消费 | terrain plan 遗留 #12 指向已归档 plan，但提示需核验 Finish Evidence | 做一次 terrain layer-query 实地 grep + 测试核验 |
 | Medium | 暴龙王 P4 可感知 polish / loot spawn | dandao Finish Evidence：VFX/HUD/audio/item icon、loot inventory spawn 留后续 | 若要玩家完整体验，单独做 BOSS presentation/loot spawn follow-up |
-| Medium | offscreen-war 远视野 LOD 目视验证 | headless 测不到 client 真实视觉 | 人工 `./gradlew runClient` checklist |
+| Medium | offscreen-war 远视野 LOD 目视验证 | headless 测不到 client 真实视觉 | 人工 `scripts/build-token.sh gradle runClient` checklist |
 | Medium | QuickSlotConfig wire 名称历史易复发 | 当前已修：server 显式 rename `quickslot_config`，client tests 锁定 | 保留现有 pin；新增 payload 时照此加 wire-vs-label 测试 |
 | Medium | proto 新增变体时 JSON 假绿 | combat plan 多次强调 proto 生产路径与 JSON 测试路径差异 | 新增 `ServerDataPayloadV1` 必做 proto 双端 roundtrip |
 | Low | plan 自报与代码实际不一致的历史债务 | terrain plan 提到 dandao-path / woliu / sword Finish Evidence 红旗 | 定期跑 plans-status / audit-plans-progress |

@@ -104,9 +104,9 @@ const DuguPoisonInflicted = Type.Object(
   },
   { additionalProperties: false },
 );
-const NearDeath = Type.Object(
+const Death = Type.Object(
   {
-    NearDeath: Type.Object({
+    Death: Type.Object({
       cause: Type.String({ minLength: 1, maxLength: 512 }),
       tick: tickField,
     }),
@@ -288,7 +288,7 @@ export const BiographyEntryV1 = Type.Union([
   InsightTaken,
   Rebirth,
   DuguPoisonInflicted,
-  NearDeath,
+  Death,
   Terminated,
   LifespanExtended,
   DuoShePerformed,

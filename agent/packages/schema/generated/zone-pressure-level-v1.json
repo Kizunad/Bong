@@ -12,5 +12,6 @@
       "const": "high",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "f2ede5749f31ea95f53a6b2a24ae0497a3593a24077ab5f5969ec96bff799ca7"
 }

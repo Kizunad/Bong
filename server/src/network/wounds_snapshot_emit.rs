@@ -6,17 +6,22 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Changed, Client, Entity, Or, Query, Username, With};
+use valence::prelude::{Changed, Client, Entity, Or, Query, Username};
 
-use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
+use crate::combat::components::{Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_hud::{WoundEntryV1, WoundsSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
-type WoundsEmitFilter = (With<Client>, Or<(Changed<Wounds>, Changed<Lifecycle>)>);
+type WoundsEmitFilter = (
+    AmbientServerDataClientFilter,
+    Or<(Changed<Wounds>, Changed<Lifecycle>)>,
+);
 
 pub fn emit_wounds_snapshot_payloads(
     mut clients: Query<
@@ -86,24 +91,25 @@ fn wound_to_wire(wound: &Wound, now_ms: u64) -> WoundEntryV1 {
 /// plan-race-system-v1 P0 review r2（BLOCKING-2 收口，wire 边界 ②）—— `Wound.location`
 /// 现在是通用 `BodyPartId`（string），wire 的 `part` 字段本就是 `String`（proto
 /// `WoundEntry.part` / `WoundEntryV1.part` 双端均为 `string`，见 schema），不破坏 wire
-/// 形状。humanoid 8 段仍走既有"粗 7 段映射到 client 细 16 段代表位"（`plan-combat-v1`
-/// 阶段性设计，16 段精细化留给未来批次）；非人形部位 id（如 P5 whale 的 `tail_fin`，
-/// 目前没有对应的 client 16 段模型）**原样透传**（不 panic、不猜一个人形代表位）——
-/// 这是显式选择的 fallback 而非遗漏，见 `wounds_wire_passes_through_unmapped_part_id`
-/// pin 测试。
+/// 形状。
+///
+/// plan-race-system-v1 P2a —— 此前"粗 8 段硬编码 match 到 client 细 16 段代表位"的表
+/// 已迁移为读取 [`crate::body_plan::layout::humanoid_layout_static`]
+/// `part_display_map` 数据（`server/assets/body_plans/layouts/humanoid.json`），不再
+/// 是 Rust 常量——数据与 [`crate::body_plan::registry::humanoid_plan_static`] 的
+/// `humanoid.json` 同源（无 ECS 访问权限的纯函数消费点，仿 `combat::raycast` P0b 的
+/// `humanoid_plan_static()` 先例，见该文档）。非人形部位 id（如 P5 whale 的
+/// `tail_fin`，`part_display_map` 表中没有条目）**原样透传**（不 panic、不猜一个人形
+/// 代表位）——这是显式选择的 fallback 而非遗漏，见
+/// `body_part_wire_passes_through_unmapped_non_humanoid_part_id` pin 测试。
 fn body_part_wire(part_id: &crate::body_plan::BodyPartId) -> String {
-    // 粗 7 段映射到 client 细 16 段中的代表位（plan-combat-v1 阶段性）。
-    match crate::body_plan::id_to_legacy_body_part(part_id) {
-        Some(BodyPart::Head) => "head".to_string(),
-        Some(BodyPart::Chest) => "chest".to_string(),
-        Some(BodyPart::Back) => "back".to_string(),
-        Some(BodyPart::Abdomen) => "abdomen".to_string(),
-        Some(BodyPart::ArmL) => "left_upper_arm".to_string(),
-        Some(BodyPart::ArmR) => "right_upper_arm".to_string(),
-        Some(BodyPart::LegL) => "left_thigh".to_string(),
-        Some(BodyPart::LegR) => "right_thigh".to_string(),
-        None => part_id.as_str().to_string(),
-    }
+    let layout = crate::body_plan::layout::humanoid_layout_static();
+    layout
+        .part_display_map
+        .iter()
+        .find(|mapping| mapping.server_part_id == part_id.as_str())
+        .map(|mapping| mapping.display_segment_id.clone())
+        .unwrap_or_else(|| part_id.as_str().to_string())
 }
 
 fn wound_kind_wire(kind: WoundKind) -> &'static str {
@@ -126,6 +132,7 @@ fn current_unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::BodyPart;
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -175,16 +182,19 @@ mod tests {
     }
 
     #[test]
-    fn wounds_to_wire_clears_entries_for_near_death_lifecycle() {
+    fn wounds_to_wire_clears_entries_for_awaiting_revival_lifecycle() {
         let wounds = sample_wounds();
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(20);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            20,
+        );
 
         let wire = wounds_to_wire(&wounds, Some(&lifecycle), 123);
 
         assert!(
             wire.is_empty(),
-            "death/near-death clients should receive an empty wounds snapshot"
+            "dead clients should receive an empty wounds snapshot"
         );
     }
 
@@ -264,11 +274,23 @@ mod tests {
     }
 
     #[test]
-    fn emits_empty_snapshot_when_lifecycle_changes_to_near_death() {
-        assert_lifecycle_change_emits_empty_snapshot(
-            "NearDeath",
-            LifecycleState::NearDeath,
-            |lifecycle| lifecycle.enter_near_death(20),
+    fn isolated_client_does_not_receive_changed_wounds_snapshot() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_wounds_snapshot_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            sample_wounds(),
+            crate::network::AmbientServerDataIsolation,
+        ));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        assert!(
+            collect_wounds_snapshot_payloads(&mut helper).is_empty(),
+            "ambient isolation must suppress unsolicited wounds_snapshot payloads"
         );
     }
 
@@ -278,15 +300,9 @@ mod tests {
             "AwaitingRevival",
             LifecycleState::AwaitingRevival,
             |lifecycle| {
-                lifecycle.enter_near_death(20);
-                assert_eq!(
-                    lifecycle.state,
-                    LifecycleState::NearDeath,
-                    "test setup expected enter_near_death to move lifecycle into NearDeath"
-                );
                 lifecycle.await_revival_decision(
                     crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
-                    40,
+                    20,
                 );
             },
         );
@@ -308,7 +324,10 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(20);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            20,
+        );
         let entity = app
             .world_mut()
             .spawn((client_bundle, sample_wounds(), lifecycle))

@@ -30,6 +30,11 @@ public final class DefenseWindowStore {
         }
     }
 
+    /** Clears the session-scoped defense window without touching test seams. */
+    public static void clearOnDisconnect() {
+        snapshot = DefenseWindowState.idle();
+    }
+
     public static void resetForTests() {
         snapshot = DefenseWindowState.idle();
     }

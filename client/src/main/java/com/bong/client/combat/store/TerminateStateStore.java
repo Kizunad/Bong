@@ -9,12 +9,18 @@ public final class TerminateStateStore {
         boolean visible,
         String finalWords,
         String epilogue,
-        String archetypeSuggestion
+        String archetypeSuggestion,
+        TerminationSummary summary
     ) {
         public State {
             finalWords = finalWords == null ? "" : finalWords;
             epilogue = epilogue == null ? "" : epilogue;
             archetypeSuggestion = archetypeSuggestion == null ? "" : archetypeSuggestion;
+            summary = summary == null ? TerminationSummary.EMPTY : summary;
+        }
+
+        public State(boolean visible, String finalWords, String epilogue, String archetypeSuggestion) {
+            this(visible, finalWords, epilogue, archetypeSuggestion, TerminationSummary.EMPTY);
         }
 
         public static final State HIDDEN = new State(false, "", "", "");
@@ -31,6 +37,8 @@ public final class TerminateStateStore {
     }
 
     public static void hide() { snapshot = State.HIDDEN; }
+
+    public static void clearOnDisconnect() { snapshot = State.HIDDEN; }
 
     public static void resetForTests() { snapshot = State.HIDDEN; }
 }

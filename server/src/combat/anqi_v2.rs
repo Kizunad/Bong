@@ -420,7 +420,7 @@ fn resolve_echo_fractal(
 fn resolve_anqi_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
     skill: AnqiSkillId,
 ) -> CastResult {
@@ -430,7 +430,7 @@ fn resolve_anqi_skill(
         .unwrap_or_default();
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill.as_str(), now_tick))
     {
         return CastResult::Rejected {
             reason: CastRejectReason::OnCooldown,
@@ -525,7 +525,7 @@ fn resolve_anqi_skill(
 
     let cooldown = cooldown_for(skill, mastery);
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(cooldown));
+        bindings.set_cooldown(skill.as_str(), now_tick.saturating_add(cooldown));
     }
     CastResult::Started {
         cooldown_ticks: cooldown,
@@ -577,6 +577,7 @@ fn multi_shot_cone_degrees(world: &bevy_ecs::world::World, caster: Entity) -> f6
         crate::body_plan::BodyPlanResolveInputs {
             cultivation: world.get::<Cultivation>(caster),
             beast_kind: None,
+            morph_state: None,
         },
         world.get_resource::<crate::body_plan::BodyPlanRegistry>(),
         world.get_resource::<crate::body_plan::RaceRegistry>(),
@@ -977,6 +978,7 @@ mod tests {
             crate::inventory::SlotContents::held_single(charged_item(instance_id, kind)),
         );
         let inventory = PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),

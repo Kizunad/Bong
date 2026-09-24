@@ -45,14 +45,10 @@ pub struct WantedPlayerEventV1 {
 /// `WantedPlayerEventV1.event` 字段固定 string literal 的别名（`"wanted_player"`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum WantedPlayerEventTag {
+    #[default]
     WantedPlayer,
-}
-
-impl Default for WantedPlayerEventTag {
-    fn default() -> Self {
-        Self::WantedPlayer
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

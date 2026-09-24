@@ -14,7 +14,7 @@
 #
 # 前置:
 #   single-player 世界 bong_weapon_test 必须已存在（创造 + 允许作弊 + 超平坦）。
-#   首次: 手动 `./gradlew runClient` → 单人 → 创建新世界，名字 "bong_weapon_test"，
+#   首次: 手动 `scripts/build-token.sh gradle runClient` → 单人 → 创建新世界，名字 "bong_weapon_test"，
 #         其它随意，关游戏。之后本脚本用 --quickPlaySingleplayer 直进。
 #
 # 输出:
@@ -58,7 +58,7 @@ if [ ! -f "$save_dir/level.dat" ]; then
 错误: 测试世界不存在: $save_dir
 
 首次手动创建流程（只要做一次）:
-  1. cd $CLIENT_DIR && ./gradlew runClient
+  1. cd $REPO_DIR && scripts/build-token.sh gradle runClient
   2. 单人游戏 → 创建新世界
      - 名字: bong_weapon_test
      - 游戏模式: 创造
@@ -85,7 +85,7 @@ export BONG_WEAPON_TEST_ASSET="$asset_id"
 export BONG_WEAPON_TEST_OUT="$(realpath "$CLIENT_DIR/tools/renders")"
 
 # --quickPlaySingleplayer 直接进世界，跳标题页；harness 会自己 scheduleStop 退出
-./gradlew runClient -x test --args="--quickPlaySingleplayer bong_weapon_test"
+"$REPO_DIR/scripts/build-token.sh" gradle runClient -x test --args="--quickPlaySingleplayer bong_weapon_test"
 
 echo "[screenshot_weapon] 完成，产物:"
 ls -la "$out_dir"/mc_*.png 2>/dev/null || {

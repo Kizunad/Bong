@@ -1,0 +1,37 @@
+# 回力丹 HuiLiDan —— 特征点名清单
+#
+# 特征来源：`hui_li_dan.png` 图标解析：
+# 1. wooden_bowl: 深棕陶木药钵
+# 2. golden_pills: 满盛的金黄色回力丹丸
+# 3. ginseng_root: 左侧斜靠的百年老参及盘曲参须
+# 4. ginseng_leaves: 右侧青翠复叶
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+bowl_base    = [108, 68, 48]
+bowl_lit     = [142, 94, 68]
+bowl_dark    = [66, 42, 30]
+pill_base    = [228, 178, 54]
+pill_lit     = [252, 214, 88]
+pill_shadow  = [168, 122, 36]
+ginseng_body = [222, 192, 134]
+ginseng_dark = [174, 142, 94]
+ginseng_root = [198, 168, 114]
+leaf_lit     = [102, 144, 68]
+leaf_dark    = [62, 98, 44]
+
+[features]
+# 药钵：圈足 + 腹部 + 钵沿
+wooden_bowl = { elements = ["bowl_", "rim_", "inner_bed"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
+
+# 金黄回力丹
+golden_pills = { elements = ["p_main", "p_fl", "p_fr", "p_bl", "p_br"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 600, "3/4" = 1000 } }
+
+# 百年老参 (位于左侧，FRONT与SIDE_L最清楚，SIDE_R被药钵阻挡大半)
+ginseng_root = { elements = ["gin_", "root_"], must_show_in = ["FRONT"], min_px = { FRONT = 600 } }
+
+# 绿叶枝条
+ginseng_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 300, "3/4" = 400 } }

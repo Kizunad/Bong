@@ -18,6 +18,11 @@ public final class TsyDeathVfxStore {
         state = TsyDeathVfxState.empty();
     }
 
+
+    public static void clearOnDisconnect() {
+        reset();
+    }
+
     public static void resetForTests() {
         reset();
     }

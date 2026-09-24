@@ -980,7 +980,7 @@ mod tests {
 
     /// Helper: parse mineral_anchors.json and find max_units for a given zone + mineral_id.
     fn spawn_anchor_max_units(zone: &str, mineral_id: &str) -> Option<u64> {
-        let json_str = include_str!("../../../worldgen/blueprint/mineral_anchors.json");
+        let json_str = include_str!("../../assets/mineral_anchors.json");
         let root: serde_json::Value =
             serde_json::from_str(json_str).expect("mineral_anchors.json should parse");
         let anchors = root["anchors"]

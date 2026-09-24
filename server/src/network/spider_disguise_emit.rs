@@ -162,7 +162,10 @@ pub fn periodic_spider_disguise_sync_system(
     mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
     spiders: SpiderStateQuery<'_, '_>,
 ) {
-    if clock.tick % SPIDER_DISGUISE_SYNC_INTERVAL_TICKS != 0 {
+    if !clock
+        .tick
+        .is_multiple_of(SPIDER_DISGUISE_SYNC_INTERVAL_TICKS)
+    {
         return;
     }
 

@@ -4,7 +4,9 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillMilestoneStore;
 import com.bong.client.skill.SkillSetStore;
@@ -24,13 +26,19 @@ public class CultivationDetailHandlerTest {
     private final CultivationDetailHandler handler = new CultivationDetailHandler();
 
     @BeforeEach
-    void setUp() { MeridianStateStore.resetForTests(); }
+    void setUp() {
+        MeridianStateStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
+        PlayerRaceIdentityStore.resetForTests();
+    }
 
     @AfterEach
     void tearDown() {
         MeridianStateStore.resetForTests();
         SkillSetStore.resetForTests();
         SkillMilestoneStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
+        PlayerRaceIdentityStore.resetForTests();
     }
 
     private static ServerDataEnvelope envelope(JsonObject payload) {
@@ -71,6 +79,111 @@ public class CultivationDetailHandlerTest {
         assertEquals(1.5, lu.currentFlow());
         assertEquals(ChannelState.DamageLevel.INTACT, lu.damage());
         assertFalse(lu.blocked());
+    }
+
+    // plan-race-system-v1 P2b — cultivation_detail.body_plan_id 是
+    // BodyPlanLayoutStore"当前"指针的唯一权威来源。
+    @Test
+    void bodyPlanIdSetsBodyPlanLayoutStoreCurrentPointer() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("body_plan_id", "humanoid");
+        handler.handle(envelope(payload));
+        assertEquals("humanoid", BodyPlanLayoutStore.currentPlanId());
+    }
+
+    @Test
+    void missingBodyPlanIdLeavesCurrentPointerNull() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        handler.handle(envelope(payload));
+        // 字段缺失（非空字符串）时读到 null，不会误把指针钉死在空字符串上。
+        assertNull(BodyPlanLayoutStore.currentPlanId());
+    }
+
+    @Test
+    void bodyPlanIdChangeUpdatesPointerOnRealRaceChange() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("body_plan_id", "humanoid");
+        handler.handle(envelope(payload));
+        assertEquals("humanoid", BodyPlanLayoutStore.currentPlanId());
+
+        var payload2 = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload2.addProperty("body_plan_id", "whale");
+        handler.handle(envelope(payload2));
+        assertEquals("whale", BodyPlanLayoutStore.currentPlanId(),
+            "真实换 race（body_plan_id 变化）必须更新 store 当前指针");
+    }
+
+    // plan-race-system-v1 P3c — 身份快照五字段解码（P3b 只接到 server + TS，client 端
+    // 一直未消费；本段补上 wire→PlayerRaceIdentityStore 落点）。
+
+    @Test
+    void identityFiveFieldsDecodeIntoStoreOnFullPayload() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "whale");
+        payload.addProperty("form_body_plan_id", "whale");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", false);
+
+        handler.handle(envelope(payload));
+
+        assertEquals("human", PlayerRaceIdentityStore.raceId());
+        assertEquals("whale", PlayerRaceIdentityStore.formRaceId());
+        assertEquals("whale", PlayerRaceIdentityStore.formBodyPlanId());
+        assertTrue(PlayerRaceIdentityStore.intrinsicIsHumanoid());
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void identityFieldsDefaultToEmptyStringAndFalseWhenMissing() {
+        // 未易形 / 老 fixture 缺该五字段时，store 必须落到安全默认值而非 null / 崩溃。
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        handler.handle(envelope(payload));
+
+        assertEquals("", PlayerRaceIdentityStore.raceId());
+        assertEquals("", PlayerRaceIdentityStore.formRaceId());
+        assertEquals("", PlayerRaceIdentityStore.formBodyPlanId());
+        assertFalse(PlayerRaceIdentityStore.intrinsicIsHumanoid());
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void unmorphedIdentityHasFormFieldsEqualToIntrinsicFields() {
+        // 未易形时 form_* 三字段 = 对应本体字段（决议 §8.1 #5/#6 契约）。
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "human");
+        payload.addProperty("form_body_plan_id", "humanoid");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", true);
+
+        handler.handle(envelope(payload));
+
+        assertEquals(PlayerRaceIdentityStore.raceId(), PlayerRaceIdentityStore.formRaceId());
+        assertEquals(PlayerRaceIdentityStore.intrinsicIsHumanoid(), PlayerRaceIdentityStore.formIsHumanoid());
+    }
+
+    @Test
+    void identityFieldsUpdateAcrossSuccessiveSnapshotsOnRealMorphChange() {
+        var payload = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload.addProperty("race_id", "human");
+        payload.addProperty("form_race_id", "human");
+        payload.addProperty("intrinsic_is_humanoid", true);
+        payload.addProperty("form_is_humanoid", true);
+        handler.handle(envelope(payload));
+        assertTrue(PlayerRaceIdentityStore.formIsHumanoid());
+
+        var payload2 = fullPayload(twenty(true), twenty(1.5), twenty(10.0), twenty(1.0));
+        payload2.addProperty("race_id", "human");
+        payload2.addProperty("form_race_id", "whale");
+        payload2.addProperty("intrinsic_is_humanoid", true);
+        payload2.addProperty("form_is_humanoid", false);
+        handler.handle(envelope(payload2));
+
+        assertEquals("human", PlayerRaceIdentityStore.raceId(), "本体身份不随易形改变");
+        assertEquals("whale", PlayerRaceIdentityStore.formRaceId(), "易形后 form_race_id 必须更新");
+        assertTrue(PlayerRaceIdentityStore.intrinsicIsHumanoid(), "本体人形性状不随易形改变");
+        assertFalse(PlayerRaceIdentityStore.formIsHumanoid(), "易形为非人形（whale）后 form_is_humanoid 必须翻转");
     }
 
     @Test
@@ -272,6 +385,73 @@ public class CultivationDetailHandlerTest {
         assertEquals(MeridianChannel.YANG_WEI, CultivationDetailHandler.CHANNEL_ORDER[19]);
     }
 
+    // plan-race-system-v1 P1c — wire 开放化：server 现附带 channel_ids 附带每个数组
+    // 下标对应的 channel id 字符串，client 必须按 channel_ids keyed 查找，而非假设固定
+    // CHANNEL_ORDER 位置顺序。以下测试锁死 keyed 解码行为，防止回归到位置假设。
+
+    @Test
+    void keyedDecodeIgnoresArrayPositionAndUsesChannelIds() {
+        // 把 opened/flow_rate 的下标 0 塞成"pericardium"而不是 CHANNEL_ORDER[0]=lung，
+        // 若 handler 仍按位置解码就会把这份数据错读成 Lung 的状态。
+        var opened = new ArrayList<Boolean>(List.of(true, false));
+        var rate = new ArrayList<Double>(List.of(9.0, 0.0));
+        var cap = new ArrayList<Double>(List.of(20.0, 5.0));
+        var integ = new ArrayList<Double>(List.of(1.0, 1.0));
+        var payload = fullPayload(opened, rate, cap, integ);
+        payload.add("channel_ids", new Gson().toJsonTree(List.of("pericardium", "lung")));
+        handler.handle(envelope(payload));
+
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertEquals(20.0, body.channel(MeridianChannel.PC).capacity(),
+            "channel_ids[0]=pericardium must map array index 0 to PC, not positional CHANNEL_ORDER[0]=LU");
+        assertTrue(body.channel(MeridianChannel.PC).blocked() == false);
+        assertTrue(body.channel(MeridianChannel.LU).blocked(),
+            "channel_ids[1]=lung with opened=false must mark LU blocked");
+    }
+
+    @Test
+    void keyedDecodeSupportsNonHumanoidChannelCountAndSkipsUnknownIds() {
+        // P5 飞鲸草案的合成样本：6 条经脉，其中一个 channel id 未知（客户端尚无 UI
+        // 展示位）；handler 必须只跳过未知项，不 crash、不把其他项错位。
+        var opened = new ArrayList<Boolean>(List.of(true, true, false, false, false, false));
+        var rate = new ArrayList<Double>(List.of(1.0, 1.0, 0.0, 0.0, 0.0, 0.0));
+        var cap = new ArrayList<Double>(List.of(10.0, 10.0, 10.0, 10.0, 10.0, 10.0));
+        var integ = new ArrayList<Double>(List.of(1.0, 1.0, 1.0, 1.0, 1.0, 1.0));
+        var payload = fullPayload(opened, rate, cap, integ);
+        payload.add("channel_ids", new Gson().toJsonTree(List.of(
+            "lung", "heart", "skull_channel", "tail_fin_channel", "ren", "du"
+        )));
+        var result = handler.handle(envelope(payload));
+        assertTrue(result.handled(), result.logMessage());
+
+        MeridianBody body = MeridianStateStore.snapshot();
+        assertFalse(body.channel(MeridianChannel.LU).blocked(), "channel_ids[0]=lung, opened[0]=true");
+        assertFalse(body.channel(MeridianChannel.HT).blocked(), "channel_ids[1]=heart, opened[1]=true");
+        assertTrue(body.channel(MeridianChannel.REN).blocked(), "channel_ids[4]=ren, opened[4]=false");
+        assertTrue(body.channel(MeridianChannel.DU).blocked(), "channel_ids[5]=du, opened[5]=false");
+        // 未知 channel id（skull_channel/tail_fin_channel）没有对应 MeridianChannel，
+        // 应被静默跳过而不是撑爆 EnumMap 或抛异常——上面 handled() 断言已隐含验证。
+    }
+
+    @Test
+    void resolveChannelOrderFallsBackToLegacyOrderWhenChannelIdsMissingAndLengthIs20() {
+        MeridianChannel[] resolved = CultivationDetailHandler.resolveChannelOrder(null, 20);
+        assertEquals(20, resolved.length);
+        assertEquals(MeridianChannel.LU, resolved[0]);
+        assertEquals(MeridianChannel.YANG_WEI, resolved[19]);
+    }
+
+    @Test
+    void resolveChannelOrderReturnsAllNullWhenChannelIdsMissingAndLengthIsNot20() {
+        // 非 humanoid 长度且缺 channel_ids 时，没有可信真源可回退——整段落 null
+        // （调用方按 null 静默跳过，不假造对应关系）。
+        MeridianChannel[] resolved = CultivationDetailHandler.resolveChannelOrder(null, 6);
+        assertEquals(6, resolved.length);
+        for (MeridianChannel ch : resolved) {
+            assertNull(ch);
+        }
+    }
+
     @Test
     void skillCapForRealmMatchesPlanSectionFour() {
         assertEquals(3, CultivationDetailHandler.skillCapForRealm("Awaken"));
@@ -290,7 +470,7 @@ public class CultivationDetailHandlerTest {
         openProg.set(4, 0.65); // Heart = index 4
         var payload = fullPayload(opened, twenty(0.0), twenty(5.0), twenty(1.0));
         payload.add("open_progress", new Gson().toJsonTree(openProg));
-        payload.addProperty("target_meridian", 4);
+        payload.addProperty("target_meridian", "heart");
         handler.handle(envelope(payload));
         MeridianBody body = MeridianStateStore.snapshot();
         assertEquals(MeridianChannel.HT, body.targetMeridian());
@@ -307,7 +487,7 @@ public class CultivationDetailHandlerTest {
     @Test
     void targetMeridianNullWhenOutOfRange() {
         var payload = fullPayload(twenty(false), twenty(0.0), twenty(5.0), twenty(1.0));
-        payload.addProperty("target_meridian", 99);
+        payload.addProperty("target_meridian", "unknown_channel_id");
         handler.handle(envelope(payload));
         assertNull(MeridianStateStore.snapshot().targetMeridian());
     }
@@ -315,7 +495,7 @@ public class CultivationDetailHandlerTest {
     @Test
     void targetMeridianExtraordinary() {
         var payload = fullPayload(twenty(false), twenty(0.0), twenty(5.0), twenty(1.0));
-        payload.addProperty("target_meridian", 12); // Ren = index 12
+        payload.addProperty("target_meridian", "ren");
         handler.handle(envelope(payload));
         assertEquals(MeridianChannel.REN, MeridianStateStore.snapshot().targetMeridian());
     }

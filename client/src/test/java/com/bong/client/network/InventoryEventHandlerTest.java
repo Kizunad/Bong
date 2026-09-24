@@ -9,11 +9,15 @@ import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -246,7 +250,7 @@ public class InventoryEventHandlerTest {
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1005,
              "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
-             "to":{"kind":"equip","slot":"chest"}}
+             "to":{"kind":"equip","slot":"chest","state":"worn"}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
@@ -303,35 +307,97 @@ public class InventoryEventHandlerTest {
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
              "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
-             "to":{"kind":"hotbar","index":3}}
+             "to":{"kind":"hotbar","index":1}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         InventoryModel after = InventoryStateStore.snapshot();
         assertTrue(after.gridItems().isEmpty(), "grid should be empty after move out");
-        InventoryItem hotbarItem = after.hotbar().get(3);
+        InventoryItem hotbarItem = after.hotbar().get(1);
         assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    @Test
+    void inventoryMutationPreservesActiveForgePreparationProjection() {
+        InventoryItem starter = InventoryItem.createFull(
+            1001L,
+            "starter_talisman",
+            "启程护符",
+            1,
+            1,
+            0.2,
+            "uncommon",
+            "初入修途者配发的护身符。",
+            1,
+            0.76,
+            0.93
+        );
+        InventoryItem prepared = InventoryItem.createFull(
+            2001L,
+            "mineral_fan_tie",
+            "凡铁",
+            1,
+            1,
+            1.0,
+            "common",
+            "锻造材料。",
+            2,
+            0.4,
+            1.0
+        );
+        net.minecraft.util.math.BlockPos station = new net.minecraft.util.math.BlockPos(12, 64, -4);
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .gridItem(starter, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .materialPreparation("ling_feng_v0", station, java.util.List.of(prepared))
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "to":{"kind":"hotbar","index":1}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertEquals(
+            "ling_feng_v0",
+            after.preparationRecipeId(),
+            "inventory event rebuild must preserve the active forge recipe"
+        );
+        assertEquals(
+            station,
+            after.preparationStation(),
+            "inventory event rebuild must preserve the forge station coordinate"
+        );
+        assertEquals(1, after.preparedMaterials().size());
+        assertSame(
+            prepared,
+            after.preparedMaterials().get(0),
+            "inventory event rebuild must preserve the prepared material projection"
+        );
     }
 
     @Test
     void movedTrustsServerToEvenIfFromOutOfSync() {
         // 复现真实场景：client 已乐观把 1001 从 grid 搬到 hotbar(0)，server 然后回推
-        // moved with from=container（server's view），to=hotbar(3)。client 应当信任
-        // server 的 to，把 instance 重定位到 hotbar(3)，而不是因 from 不匹配而拒绝。
+        // moved with from=container（server's view），to=hotbar(1)。client 应当信任
+        // server 的 to，把 instance 重定位到 hotbar(1)，而不是因 from 不匹配而拒绝。
         InventoryModel baseline = baselineWithStarterTalisman();
         InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
 
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
              "from":{"kind":"hotbar","index":0},
-             "to":{"kind":"hotbar","index":3}}
+             "to":{"kind":"hotbar","index":1}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         InventoryModel after = InventoryStateStore.snapshot();
         assertEquals(6L, after.gridItems().size() == 0 ? 6L : 6L);
         assertTrue(after.gridItems().isEmpty(), "item should leave grid");
-        InventoryItem hotbarItem = after.hotbar().get(3);
+        InventoryItem hotbarItem = after.hotbar().get(1);
         assertEquals(1001L, hotbarItem.instanceId());
     }
 
@@ -579,11 +645,12 @@ public class InventoryEventHandlerTest {
                 "hotbar slot 0 应在 dropped 事件应用后清空");
     }
 
-    @Test
-    void movedToEquipThroughRealProtoWireStripsEquipSlotEnumPrefix() {
-        // 锁死 InventoryLocation.location 的 proto-native "equip" 形状 {"equip":{"slot":
-        // "EQUIP_SLOT_CHEST",...}}：proto 枚举打印全名前缀（EQUIP_SLOT_CHEST），而
-        // EQUIP_SLOT_BY_WIRE_NAME 只认小写 wire 名（"chest"），parseLocation 须归一化。
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("equipSlotVariants")
+    void movedToEveryEquipSlotThroughRealProtoWireStripsEquipSlotEnumPrefix(
+            Envelope.EquipSlot wireSlot,
+            com.bong.client.inventory.model.EquipSlotType expectedSlot
+    ) {
         InventoryModel baseline = InventoryModel.builder()
                 .containers(InventoryModel.DEFAULT_CONTAINERS)
                 .gridItem(
@@ -612,25 +679,150 @@ public class InventoryEventHandlerTest {
                                 .setCol(0)))
                 .setTo(Envelope.InventoryLocation.newBuilder()
                         .setEquip(Envelope.InventoryLocationEquip.newBuilder()
-                                .setSlot(Envelope.EquipSlot.EQUIP_SLOT_CHEST)
-                                .setState(Envelope.EquipState.EQUIP_STATE_WORN)))
+                                .setSlot(wireSlot)
+                                .setState(expectedSlot.isHand()
+                                        ? Envelope.EquipState.EQUIP_STATE_HELD
+                                        : Envelope.EquipState.EQUIP_STATE_WORN)))
                 .build();
 
         ServerDataDispatch dispatch = dispatchThroughRealProtoWire(
                 Envelope.InventoryEvent.newBuilder().setMoved(moved));
 
         assertTrue(dispatch.handled(),
-                "moved(to=equip) 应被接受，实际 log=" + dispatch.logMessage()
-                + "；若 noOp，需检查 to 的 proto-native {\"equip\":{\"slot\":\"EQUIP_SLOT_CHEST\",...}}"
-                + " 形状是否被 parseLocation 正确识别并剥离 EQUIP_SLOT_ 前缀。");
-
+                "moved(to=equip) 应被接受，wire slot=" + wireSlot + "，实际 log="
+                        + dispatch.logMessage());
         assertEquals(
                 "armor_bone_chestplate",
-                InventoryStateStore.snapshot()
-                        .equipped()
-                        .get(com.bong.client.inventory.model.EquipSlotType.CHEST)
-                        .itemId(),
-                "instance 1005 应落进 CHEST 装备槽（EquipSlot 全名前缀被正确剥离归一化）"
+                InventoryStateStore.snapshot().equipped().get(expectedSlot).itemId(),
+                "instance 1005 应落进 " + expectedSlot + " 装备槽（EquipSlot 全名前缀被正确剥离归一化）"
+        );
+    }
+
+    @ParameterizedTest(name = "invalid equip state on {0}: {1}")
+    @MethodSource("invalidEquipStateLocations")
+    void equipLocationsThroughRealProtoWireRejectMissingOrMismatchedState(
+            String location,
+            String label,
+            Envelope.EquipSlot wireSlot,
+            Envelope.EquipState wireState,
+            boolean omitState
+    ) {
+        InventoryItem equippedItem = InventoryItem.createFull(
+                1005L,
+                "armor_bone_chestplate",
+                "骨甲胸甲",
+                1, 1, 1.4,
+                "common",
+                "fixture",
+                1, 0.8, 1.0
+        );
+        InventoryModel.Builder baselineBuilder = InventoryModel.builder()
+                .containers(InventoryModel.DEFAULT_CONTAINERS);
+        if (location.equals("moved.to")) {
+            baselineBuilder.gridItem(
+                    equippedItem,
+                    InventoryModel.PRIMARY_CONTAINER_ID,
+                    0, 0
+            );
+        } else {
+            baselineBuilder.equip(
+                    com.bong.client.inventory.model.EquipSlotType.CHEST,
+                    equippedItem
+            );
+        }
+        InventoryModel baseline = baselineBuilder.build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        Envelope.InventoryLocationEquip.Builder equip = Envelope.InventoryLocationEquip.newBuilder()
+                .setSlot(wireSlot);
+        if (!omitState) {
+            equip.setState(wireState);
+        }
+        Envelope.InventoryLocation equipLocation = Envelope.InventoryLocation.newBuilder()
+                .setEquip(equip)
+                .build();
+        Envelope.InventoryEvent.Builder event;
+        if (location.equals("dropped.from")) {
+            event = Envelope.InventoryEvent.newBuilder().setDropped(
+                    Envelope.InventoryEventDropped.newBuilder()
+                            .setRevision(6)
+                            .setInstanceId(1005)
+                            .setFrom(equipLocation)
+                            .setWorldPosX(8.5)
+                            .setWorldPosY(66.0)
+                            .setWorldPosZ(8.5)
+                            .setItem(baseItemView(1005, "armor_bone_chestplate", "骨甲胸甲"))
+            );
+        } else {
+            Envelope.InventoryLocation containerLocation = Envelope.InventoryLocation.newBuilder()
+                    .setContainer(Envelope.InventoryLocationContainer.newBuilder()
+                            .setContainerId("main_pack")
+                            .setRow(0)
+                            .setCol(0))
+                    .build();
+            event = Envelope.InventoryEvent.newBuilder().setMoved(
+                    Envelope.InventoryEventMoved.newBuilder()
+                            .setRevision(6)
+                            .setInstanceId(1005)
+                            .setFrom(location.equals("moved.from") ? equipLocation : containerLocation)
+                            .setTo(location.equals("moved.to") ? equipLocation : containerLocation)
+            );
+        }
+
+        ServerDataDispatch dispatch = dispatchThroughRealProtoWire(event);
+
+        String scenario = location + " / " + label;
+        assertFalse(dispatch.handled(), scenario + " must be rejected at the wire boundary");
+        assertEquals(5L, InventoryStateStore.revision(),
+                scenario + " must not advance the authoritative revision");
+        assertEquals(baseline, InventoryStateStore.snapshot(),
+                scenario + " must not mutate any inventory location");
+        assertTrue(DroppedItemStore.snapshot().isEmpty(),
+                scenario + " must not create a dropped-store entry");
+    }
+
+    private static java.util.stream.Stream<Arguments> invalidEquipStateLocations() {
+        return java.util.stream.Stream.of("moved.from", "moved.to", "dropped.from")
+                .flatMap(location -> invalidEquipStates().map(arguments -> Arguments.of(
+                        location,
+                        arguments.get()[0],
+                        arguments.get()[1],
+                        arguments.get()[2],
+                        arguments.get()[3]
+                )));
+    }
+
+    private static java.util.stream.Stream<Arguments> invalidEquipStates() {
+        return java.util.stream.Stream.of(
+                Arguments.of("omitted/default state", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_UNSPECIFIED, true),
+                Arguments.of("explicit unspecified state", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_UNSPECIFIED, false),
+                Arguments.of("armor slot marked held", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_HELD, false),
+                Arguments.of("hand slot marked worn", Envelope.EquipSlot.EQUIP_SLOT_MAIN_HAND,
+                        Envelope.EquipState.EQUIP_STATE_WORN, false)
+        );
+    }
+
+    private static java.util.stream.Stream<Arguments> equipSlotVariants() {
+        return java.util.stream.Stream.of(
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_HEAD,
+                        com.bong.client.inventory.model.EquipSlotType.HEAD),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        com.bong.client.inventory.model.EquipSlotType.CHEST),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_LEGS,
+                        com.bong.client.inventory.model.EquipSlotType.LEGS),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_FEET,
+                        com.bong.client.inventory.model.EquipSlotType.FEET),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_MAIN_HAND,
+                        com.bong.client.inventory.model.EquipSlotType.MAIN_HAND),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_OFF_HAND,
+                        com.bong.client.inventory.model.EquipSlotType.OFF_HAND),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_EXTRA_HAND_0,
+                        com.bong.client.inventory.model.EquipSlotType.EXTRA_HAND_0),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_EXTRA_HAND_1,
+                        com.bong.client.inventory.model.EquipSlotType.EXTRA_HAND_1)
         );
     }
 

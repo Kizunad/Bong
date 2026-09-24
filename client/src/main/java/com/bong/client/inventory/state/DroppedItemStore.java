@@ -104,6 +104,10 @@ public final class DroppedItemStore {
         insertionOrders.clear();
     }
 
+    static long insertionCounterForTests() {
+        return insertionCounter.get();
+    }
+
     public static void resetForTests() {
         entries.clear();
         insertionOrders.clear();

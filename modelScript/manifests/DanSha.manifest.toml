@@ -1,0 +1,35 @@
+# 丹砂 DanSha —— 特征点名清单
+#
+# 特征来源：`dan_sha.png` 原画图标与 `ore_dan_sha.png` 矿石方块贴图：
+# 1. rock_base: 破碎暗红风化岩基座（深色围岩层）
+# 2. main_crystal: 中央拔地高耸的六棱朱红主晶柱（带斜向切面与向阳高光）
+# 3. cluster_pencils: 环绕伴生的次级挺立晶锥（高低错落刺出）
+# 4. cinnabar_veins: 岩缝渗出的炽红丹砂脉络
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+rock_dark  = [28, 14, 14]
+rock_base  = [54, 24, 22]
+rock_mid   = [78, 36, 32]
+rock_lit   = [108, 52, 44]
+cryst_deep = [124, 18, 16]
+cryst_body = [186, 26, 22]
+cryst_lit  = [226, 58, 42]
+cryst_high = [252, 148, 126]
+vein_glow  = [218, 46, 30]
+
+[features]
+# 围岩基座
+rock_base = { elements = ["rock_bed_", "rock_wall_", "rock_back_", "rock_fr_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 中央六棱挺拔主晶
+main_crystal = { elements = ["cryst_main_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 2500 } }
+
+# 伴生小晶簇
+cluster_pencils = { elements = ["cryst_sub_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 1500 } }
+
+# 渗出细脉
+cinnabar_veins = { elements = ["vein_"], must_show_in = ["FRONT"], min_px = { FRONT = 200 } }

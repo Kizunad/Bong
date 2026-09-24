@@ -141,7 +141,7 @@ public final class BongWeaponModelRegistry {
             "pickaxe_iron",
             () -> Items.IRON_PICKAXE,
             "item/iron_pickaxe",
-            "bong:models/item/pickaxe_iron/pickaxe_iron.obj"
+            null
         ));
         // 工具手持模型：镐/斧/锄直接白嫖 vanilla 模型（bongObjModelPath=null → 宿主 item 即模型，
         // 不走 SML 劫持）。与 bone_sword→STONE_SWORD 同模式。server 现对 category=tool 下发
@@ -242,6 +242,10 @@ public final class BongWeaponModelRegistry {
 
     public static Optional<Entry> get(String templateId) {
         return Optional.ofNullable(ENTRIES.get(templateId));
+    }
+
+    public static Set<String> templateIds() {
+        return ENTRIES.keySet();
     }
 
     public static Set<String> vanillaModelPaths() {

@@ -4,13 +4,17 @@ pub mod gameplay;
 pub mod ping;
 pub mod registry_pin;
 
-use valence::prelude::{App, PostStartup};
+use valence::prelude::{App, ConnectionMode, NetworkSettings, PostStartup};
 use valence::EventLoopPreUpdate;
 
 pub fn register(app: &mut App) {
+    register_for_environment(app, dev::dev_mode_enabled(), dev::test_env_enabled());
+}
+
+fn register_for_environment(app: &mut App, dev_mode_enabled: bool, test_env: bool) {
     let _pinned_command_names = registry_pin::COMMAND_NAMES;
     ping::register(app);
-    dev::register(app);
+    dev::register_for_environment(app, dev_mode_enabled, test_env);
     gameplay::register(app);
     // Tab 补全：全部 add_command 完成后（PostStartup）标记 AskServer 节点，
     // 运行期在事件循环里应答客户端补全请求。
@@ -19,8 +23,21 @@ pub fn register(app: &mut App) {
 }
 
 /// 测试用：注册全部命令的最小 App（completions / registry_pin 测试共用）。
-#[cfg(test)]
 pub fn test_command_app() -> App {
+    test_command_app_with_connection_mode(ConnectionMode::Offline)
+}
+
+/// 测试用：使用生产 command registration，并保留可驱动 packet input 的 event loop。
+/// `connection_mode` 必须在 registration 前插入，因为 operator permission 在注册时快照它。
+pub fn test_command_app_with_connection_mode(connection_mode: ConnectionMode) -> App {
+    test_command_app_for_settings(connection_mode, true, true)
+}
+
+fn test_command_app_for_settings(
+    connection_mode: ConnectionMode,
+    dev_mode_enabled: bool,
+    test_env: bool,
+) -> App {
     use crate::combat::events::DebugCombatCommand;
     use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -31,7 +48,14 @@ pub fn test_command_app() -> App {
     use crate::world::tsy_dev_command::TsySpawnRequested;
 
     let mut app = App::new();
-    app.add_plugins(valence::command::manager::CommandPlugin);
+    app.insert_resource(NetworkSettings {
+        connection_mode,
+        ..Default::default()
+    });
+    app.add_plugins((
+        valence::event_loop::EventLoopPlugin,
+        valence::command::manager::CommandPlugin,
+    ));
     app.add_event::<DebugCombatCommand>();
     app.add_event::<RatPhaseChangeEvent>();
     app.add_event::<TsySpawnRequested>();
@@ -41,7 +65,17 @@ pub fn test_command_app() -> App {
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
-    register(&mut app);
+    let assets = crate::body_plan::resolve_assets_root().join("assets/body_plans");
+    let plans = crate::body_plan::BodyPlanRegistry::load_dir(assets.join("plans"))
+        .expect("checked-in body plans must load for command test app");
+    let races = crate::body_plan::RaceRegistry::load_file(assets.join("races.json"), &plans)
+        .expect("checked-in races must load for command test app");
+    let technique_registry =
+        crate::cultivation::known_techniques::TechniqueRegistry::load_default(&races)
+            .expect("checked-in technique catalog must load for command test app");
+    app.insert_resource(technique_registry);
+    register_for_environment(&mut app, dev_mode_enabled, test_env);
+    crate::identity::command::register(&mut app);
     app.finish();
     app.cleanup();
     app.update();
@@ -58,6 +92,43 @@ mod tests {
 
     fn setup_registry_app() -> App {
         test_command_app()
+    }
+
+    #[test]
+    fn production_command_registry_does_not_expose_dev_fixtures() {
+        let app = test_command_app_for_settings(ConnectionMode::Offline, false, false);
+        let registry = app.world().resource::<CommandRegistry>();
+        let roots = registry
+            .graph
+            .graph
+            .neighbors(registry.graph.root)
+            .filter_map(|node| match &registry.graph.graph[node].data {
+                NodeData::Literal { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for name in ["ambient_spawn", "botany_spawn", "scene"] {
+            assert!(
+                !roots.contains(&name),
+                "production command tree must not expose /{name} when test flags are disabled; roots={roots:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scene_registration_requires_test_env_independently_of_dev_mode() {
+        for (dev_mode, test_env) in [(true, false), (false, true)] {
+            let app = test_command_app_for_settings(ConnectionMode::Offline, dev_mode, test_env);
+            let registry = app.world().resource::<CommandRegistry>();
+            let has_scene = registry.graph.graph.neighbors(registry.graph.root).any(|node| {
+                matches!(&registry.graph.graph[node].data, NodeData::Literal { name } if name == "scene")
+            });
+            assert_eq!(
+                has_scene, test_env,
+                "BONG_DEV_MODE 不能代替 BONG_TEST_ENV 开启测试场景"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components><template name="content" /></components>
+    <templates>
+        <template name="content">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                <children>
+                    <flow-layout id="body-inspect-content" direction="vertical">
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                    </flow-layout>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="launcher">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                <gap>6</gap><padding><all>4</all></padding>
+                <children>
+                    <label id="open-physical-body"><text>体表 · 查看肢体</text><color>#D8C8A8</color><cursor-style>hand</cursor-style></label>
+                    <label id="open-meridians"><text>经脉 · 内观修炼</text><color>#D8C8A8</color><cursor-style>hand</cursor-style></label>
+                    <label><text>在模型中选择与聚焦</text><color>#8499A6</color></label>
+                </children>
+            </flow-layout>
+        </template>
+    </templates>
+</owo-ui>

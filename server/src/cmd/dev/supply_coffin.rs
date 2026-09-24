@@ -10,6 +10,9 @@
 //! - `cooldown <grade> <secs>` — 临时把指定 grade 的首个冷却推迟到
 //!   `now - cooldown_secs + <secs>`（等价于"还剩 secs 秒"）
 //! - `tp` — 传送执行者到最近的活跃物资棺
+//! - `lifecycle pause|resume` — 玩家级暂停 / 恢复物资棺 session cleanup，供 E2E 在
+//!   mapping/owner/source 仍有效时探测 move authority
+//! - `barrier` — 在 client_request → open → lifecycle 系统之后回 chat，作为黑盒处理水位
 //!
 //! dev-only：以上命令均绕过 worldview natural cultivation rules 与
 //! qi_physics ledger conservation，不得复用到生产 gameplay 路径。
@@ -23,10 +26,12 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, Client, Commands, EntityLayerId, EventReader, Look, Position, Query, ResMut, Update,
+    bevy_ecs, App, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter,
+    IntoSystemConfigs, Look, Position, Query, ResMut, Update,
 };
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
+use crate::supply_coffin::lifecycle::SupplyCoffinLifecyclePaused;
 use crate::supply_coffin::refresh::SupplyCoffinMarker;
 use crate::supply_coffin::{current_wall_clock_secs, SupplyCoffinGrade, SupplyCoffinRegistry};
 use crate::world::entity_model::{BongVisualEntity, BongVisualState};
@@ -58,7 +63,16 @@ pub enum SupplyCoffinCmd {
     Reset,
     Cooldown { grade: SupplyCoffinGrade, secs: u64 },
     Tp,
+    LifecyclePause,
+    LifecycleResume,
+    Barrier,
 }
+
+#[derive(bevy_ecs::event::Event, Debug, Clone, Copy, PartialEq, Eq)]
+struct SupplyCoffinBarrierRequested;
+
+#[derive(bevy_ecs::component::Component, Debug, Default)]
+struct SupplyCoffinBarrierPending;
 
 impl Command for SupplyCoffinCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
@@ -100,18 +114,51 @@ impl Command for SupplyCoffinCmd {
             .at(root)
             .literal("tp")
             .with_executable(|_| SupplyCoffinCmd::Tp);
+
+        let lifecycle = graph.at(root).literal("lifecycle").id();
+        graph
+            .at(lifecycle)
+            .literal("pause")
+            .with_executable(|_| SupplyCoffinCmd::LifecyclePause);
+        graph
+            .at(lifecycle)
+            .literal("resume")
+            .with_executable(|_| SupplyCoffinCmd::LifecycleResume);
+
+        graph
+            .at(root)
+            .literal("barrier")
+            .with_executable(|_| SupplyCoffinCmd::Barrier);
     }
 }
 
 pub fn register(app: &mut App) {
     app.add_command::<SupplyCoffinCmd>()
-        .add_systems(Update, handle_supply_coffin_cmd);
+        .add_event::<SupplyCoffinBarrierRequested>()
+        .add_systems(
+            Update,
+            handle_supply_coffin_cmd
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        )
+        .add_systems(
+            Update,
+            queue_supply_coffin_barriers
+                .after(handle_supply_coffin_cmd)
+                .after(crate::network::client_request_handler::handle_client_request_payloads)
+                .after(crate::supply_coffin::interact::handle_supply_coffin_interact)
+                .after(crate::supply_coffin::lifecycle::external_container_lifecycle_tick),
+        );
+    app.add_systems(
+        Update,
+        flush_supply_coffin_barriers.after(queue_supply_coffin_barriers),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn handle_supply_coffin_cmd(
     mut commands: Commands,
     mut events: EventReader<CommandResultEvent<SupplyCoffinCmd>>,
+    mut barriers: EventWriter<SupplyCoffinBarrierRequested>,
     registry: Option<ResMut<SupplyCoffinRegistry>>,
     mut clients: Query<&mut Client>,
     layers: Option<valence::prelude::Res<crate::world::dimension::DimensionLayers>>,
@@ -299,7 +346,58 @@ pub fn handle_supply_coffin_cmd(
                     );
                 }
             }
+            SupplyCoffinCmd::LifecyclePause => {
+                commands
+                    .entity(event.executor)
+                    .insert(SupplyCoffinLifecyclePaused);
+                reply(
+                    &mut clients,
+                    event.executor,
+                    "[dev] supply_coffin lifecycle paused for executor",
+                );
+            }
+            SupplyCoffinCmd::LifecycleResume => {
+                commands
+                    .entity(event.executor)
+                    .remove::<SupplyCoffinLifecyclePaused>();
+                reply(
+                    &mut clients,
+                    event.executor,
+                    "[dev] supply_coffin lifecycle resumed for executor",
+                );
+            }
+            SupplyCoffinCmd::Barrier => {
+                // Queue a typed request; the queue system adds a deferred marker and the flush
+                // system broadcasts it on the next Update so every observer gets a local marker.
+                barriers.send(SupplyCoffinBarrierRequested);
+            }
         }
+    }
+}
+
+fn queue_supply_coffin_barriers(
+    mut barriers: EventReader<SupplyCoffinBarrierRequested>,
+    mut commands: Commands,
+    clients: Query<Entity, bevy_ecs::query::With<Client>>,
+) {
+    for _ in barriers.read() {
+        for entity in &clients {
+            commands.entity(entity).insert(SupplyCoffinBarrierPending);
+        }
+    }
+}
+
+fn flush_supply_coffin_barriers(
+    mut commands: Commands,
+    mut clients: Query<(Entity, &mut Client), bevy_ecs::query::Added<SupplyCoffinBarrierPending>>,
+) {
+    // The marker is deferred by the queue system, so this runs in the next Update. Broadcasting
+    // then gives every socket its own local timestamp for a reliable cross-connection watermark.
+    for (entity, mut client) in &mut clients {
+        client.send_chat_message("[dev] supply_coffin barrier passed");
+        commands
+            .entity(entity)
+            .remove::<SupplyCoffinBarrierPending>();
     }
 }
 
@@ -318,12 +416,13 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::supply_coffin::SupplyCoffinRegistry;
-    use crate::world::dimension::{DimensionLayers, OverworldLayer};
+    use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
     use valence::prelude::{App, DVec3, Entity, Events};
 
     fn setup_app(with_layers: bool) -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         app.insert_resource(SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
             65.0,
@@ -399,6 +498,95 @@ mod tests {
             0,
             "expected /supply_coffin list to be read-only; registry.cooldowns grew to {}",
             r.cooldowns.len()
+        );
+    }
+
+    #[test]
+    fn lifecycle_pause_and_resume_toggle_player_marker() {
+        let mut app = setup_app(false);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+
+        send(&mut app, player, SupplyCoffinCmd::LifecyclePause);
+        run_update(&mut app);
+        assert!(
+            app.world()
+                .get::<SupplyCoffinLifecyclePaused>(player)
+                .is_some(),
+            "pause command must attach the player-scoped lifecycle marker"
+        );
+
+        send(&mut app, player, SupplyCoffinCmd::LifecycleResume);
+        run_update(&mut app);
+        assert!(
+            app.world()
+                .get::<SupplyCoffinLifecyclePaused>(player)
+                .is_none(),
+            "resume command must remove the player-scoped lifecycle marker"
+        );
+    }
+
+    #[test]
+    fn barrier_command_queues_typed_request_for_flush_system() {
+        use valence::protocol::packets::play::GameMessageS2c;
+        use valence::testing::create_mock_client;
+
+        let mut app = setup_app(false);
+        let (mut bundle, mut helper) = create_mock_client("Alice");
+        bundle.player.position = valence::prelude::Position::new([0.0, 0.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
+
+        send(&mut app, player, SupplyCoffinCmd::Barrier);
+        run_update(&mut app);
+        let requested = app
+            .world()
+            .resource::<Events<SupplyCoffinBarrierRequested>>();
+        assert_eq!(
+            requested.len(),
+            1,
+            "barrier command must enqueue one typed request for the ordered flush system"
+        );
+
+        app.add_systems(
+            Update,
+            (queue_supply_coffin_barriers, flush_supply_coffin_barriers),
+        );
+        run_update(&mut app);
+        run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("barrier chat should flush to the mock client");
+        }
+        let chat = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            chat,
+            vec!["[dev] supply_coffin barrier passed"],
+            "typed barrier request must produce exactly one authoritative chat watermark"
+        );
+
+        run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("second barrier flush should succeed");
+        }
+        assert!(
+            helper.collect_received().0.is_empty(),
+            "one barrier request must not produce duplicate acknowledgements"
         );
     }
 
@@ -516,6 +704,7 @@ mod tests {
         // 用与 cmd::tests 同型的最小化 App：不 insert SupplyCoffinRegistry
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         // 不 insert SupplyCoffinRegistry —— 模拟 cmd::register 早于运行时 register 的窗口
         app.add_systems(Update, handle_supply_coffin_cmd);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
@@ -584,6 +773,11 @@ mod tests {
         assert_eq!(r.active.len(), 1, "spawn 必须插入一个 active");
         let (_, rec) = r.active.iter().next().unwrap();
         assert_eq!(rec.grade, SupplyCoffinGrade::Rare);
+        assert_eq!(
+            rec.dimension,
+            DimensionKind::Overworld,
+            "dev spawn targets layers.overworld and must record the same logical dimension"
+        );
         assert!((rec.pos.x - 42.0).abs() < 0.01);
         assert!((rec.pos.y - 65.0).abs() < 0.01);
         assert!((rec.pos.z - 99.0).abs() < 0.01);

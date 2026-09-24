@@ -466,8 +466,10 @@ pub fn register(app: &mut App) {
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
                 emit_fuya_aura_vfx,
                 emit_fuya_pressure_hum_audio_system,
-                stop_fuya_pressure_hum_audio_on_death_system,
-                handle_npc_death_drop,
+                stop_fuya_pressure_hum_audio_on_death_system
+                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+                handle_npc_death_drop
+                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             ),
         );
 }
@@ -563,6 +565,7 @@ pub fn load_tsy_drop_table_registry_from_path(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_tsy_hostiles_for_family(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     registry: &TsySpawnPoolRegistry,
@@ -609,6 +612,7 @@ pub fn spawn_tsy_hostiles_for_family(
             commands,
             layer,
             family_id,
+            technique_registry,
             depth,
             zone,
             counts,
@@ -669,6 +673,7 @@ fn spawn_layer_hostiles(
     commands: &mut Commands,
     layer: Entity,
     family_id: &str,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     depth: TsyDepth,
     zone: &Zone,
     counts: TsyLayerSpawnCounts,
@@ -683,6 +688,7 @@ fn spawn_layer_hostiles(
         if let Some(pos) = sample_hostile_position(zone, family_id, depth, "daoxiang", i, tick) {
             spawn_tsy_daoxiang_at(
                 commands,
+                technique_registry,
                 layer,
                 family_id,
                 &zone.name,
@@ -700,6 +706,7 @@ fn spawn_layer_hostiles(
         if let Some(pos) = sample_hostile_position(zone, family_id, depth, "zhinian", i, tick) {
             spawn_tsy_zhinian_at(
                 commands,
+                technique_registry,
                 layer,
                 family_id,
                 &zone.name,
@@ -748,6 +755,7 @@ fn spawn_layer_hostiles(
 
 pub fn spawn_tsy_daoxiang_at(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     home_zone: &str,
@@ -779,9 +787,13 @@ pub fn spawn_tsy_daoxiang_at(
     ));
     // P1: NPC 功法（Daoxiang 默认 Induce 境界）
     let daoxiang_realm = Realm::Induce;
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(daoxiang_realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        daoxiang_realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
+        technique_registry,
         NpcArchetype::Daoxiang,
         daoxiang_realm,
         &meridian_sys,
@@ -893,6 +905,7 @@ impl TsyHostileSpawnedSummary {
 
 pub fn spawn_tsy_zhinian_at(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     home_zone: &str,
@@ -925,9 +938,13 @@ pub fn spawn_tsy_zhinian_at(
     ));
     // P1: NPC 功法（Zhinian 默认 Condense 境界）
     let zhinian_realm = Realm::Condense;
-    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(zhinian_realm);
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(
+        zhinian_realm,
+        crate::body_plan::humanoid_plan_static(),
+    );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
+        technique_registry,
         NpcArchetype::Zhinian,
         zhinian_realm,
         &meridian_sys,
@@ -1127,17 +1144,20 @@ pub fn emit_fuya_pressure_hum_audio_system(
 }
 
 pub fn stop_fuya_pressure_hum_audio_on_death_system(
-    mut deaths: EventReader<crate::combat::events::DeathEvent>,
-    fuya_auras: Query<&Position, With<FuyaAura>>,
+    mut deaths: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
+    fuya_auras: Query<&Position, (With<FuyaAura>, With<NpcMarker>)>,
     mut audio_events: EventWriter<StopSoundRecipeRequest>,
 ) {
     for death in deaths.read() {
-        let Ok(position) = fuya_auras.get(death.target) else {
+        if !death.authorize_loot {
+            continue;
+        }
+        let Ok(position) = fuya_auras.get(death.entity) else {
             continue;
         };
         let pos = position.get();
         audio_events.send(StopSoundRecipeRequest {
-            instance_id: fuya_pressure_audio_instance_id(death.target),
+            instance_id: fuya_pressure_audio_instance_id(death.entity),
             fade_out_ticks: 20,
             recipient: AudioRecipient::Radius {
                 origin: pos,
@@ -1756,7 +1776,7 @@ fn fuya_enrage_action_system(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_npc_death_drop(
     mut commands: Commands,
-    mut events: EventReader<crate::combat::events::DeathEvent>,
+    mut events: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
     npcs: Query<
         (
             &NpcArchetype,
@@ -1799,8 +1819,11 @@ pub fn handle_npc_death_drop(
     };
 
     for event in events.read() {
+        if !event.authorize_loot {
+            continue;
+        }
         let Ok((archetype, pos, hostile, sentinel, daoxiang_origin, issued)) =
-            npcs.get(event.target)
+            npcs.get(event.entity)
         else {
             continue;
         };
@@ -1828,7 +1851,7 @@ pub fn handle_npc_death_drop(
             source_class: source_class_for_family(family_id),
             guarding_container_kind: guarding_kind,
         };
-        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.target.index());
+        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.entity.index());
         let items = roll_drop_entry(entry, &ctx, item_registry, relic_pool, allocator, seed);
         for (idx, item) in items.into_iter().enumerate() {
             let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
@@ -1846,7 +1869,7 @@ pub fn handle_npc_death_drop(
                 },
             );
         }
-        commands.entity(event.target).insert(TsyNpcDropIssued);
+        commands.entity(event.entity).insert(TsyNpcDropIssued);
     }
 }
 
@@ -2175,10 +2198,13 @@ fn default_chance() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{ActorQiIdentity, ActorQiKind};
     use crate::inventory::{ItemCategory, ItemRarity, ItemTemplate};
+    use crate::npc::lifecycle::{NpcDeathReason, NpcTerminalSettlementSucceeded};
 
     fn template(id: &str) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
@@ -2204,6 +2230,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -2227,12 +2254,15 @@ mod tests {
 
     #[test]
     fn tsy_hostile_spawns_use_custom_visual_entity_kinds() {
+        let technique_registry =
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         let scenario = valence::testing::ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
 
         let daoxiang = spawn_tsy_daoxiang_at(
             &mut app.world_mut().commands(),
+            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_shallow",
@@ -2241,6 +2271,7 @@ mod tests {
         );
         let zhinian = spawn_tsy_zhinian_at(
             &mut app.world_mut().commands(),
+            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_mid",
@@ -2322,6 +2353,8 @@ mod tests {
 
     #[test]
     fn tsy_hostile_spawns_write_expected_realm_into_cultivation() {
+        let technique_registry =
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         // plan-npc-realm-distribution-v1 P0 R1 pin：这 5 处身份站点均实测走
         // 2-arg `npc_runtime_bundle`（非 `_with_age`），修复前 Cultivation.realm
         // 恒被吞成 Realm::Awaken，即使各自局部变量/字面量已定义了非默认境界。
@@ -2331,6 +2364,7 @@ mod tests {
 
         let daoxiang = spawn_tsy_daoxiang_at(
             &mut app.world_mut().commands(),
+            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_shallow",
@@ -2339,6 +2373,7 @@ mod tests {
         );
         let zhinian = spawn_tsy_zhinian_at(
             &mut app.world_mut().commands(),
+            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_mid",
@@ -2406,7 +2441,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_ignores_deaths_without_fuya_aura() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2414,16 +2449,27 @@ mod tests {
         );
         let commoner = app
             .world_mut()
-            .spawn((Position::new([0.0, 64.0, 0.0]), NpcArchetype::Commoner))
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NpcArchetype::Commoner,
+            ))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: commoner,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:no-aura"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: commoner,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2439,7 +2485,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_is_tied_to_fuya_aura_death_and_radius_recipient() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2448,16 +2494,23 @@ mod tests {
         let fuya_pos = Position::new([2.0, 64.0, 3.0]);
         let fuya = app
             .world_mut()
-            .spawn((fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
+            .spawn((NpcMarker, fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: fuya,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:fuya"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: fuya,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2482,7 +2535,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_follows_aura_even_when_archetype_is_not_fuya() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2491,16 +2544,28 @@ mod tests {
         let aura_pos = Position::new([4.0, 64.0, 5.0]);
         let entity = app
             .world_mut()
-            .spawn((aura_pos, NpcArchetype::SkullFiend, FuyaAura::default()))
+            .spawn((
+                NpcMarker,
+                aura_pos,
+                NpcArchetype::SkullFiend,
+                FuyaAura::default(),
+            ))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: entity,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:skull"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 

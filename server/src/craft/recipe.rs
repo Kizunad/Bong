@@ -7,8 +7,9 @@
 //! 与 `alchemy::Recipe` 的区别：
 //!   * **无火候 / 阶段投料** — 单步投料即起手搓
 //!   * **无残缺匹配** — 材料必须严格满足，缺料 reject 而不是降级出炉
-//!   * **qi_cost 走 ledger** — `start_craft` 内 `WorldQiAccount::transfer`
-//!     与 `Crafting` reason，禁止 plan 内 `cultivation.qi_current -= cost`
+//!   * **qi_cost 走 ledger** — `start_craft` 以 ECS `Cultivation` 为玩家真元权威，
+//!     先用 `transfer_external_qi_to_ledger` 写入 `Crafting` 审计与 pending 余额，
+//!     成功后再等额扣减 `qi_current`；禁止绕过 ledger 直接扣减
 //!
 //! §5 决策门 #1 = A（保留 6 类）。plan-anqi-v2 追加 Container 类目，
 //! 用于箭袋 / 裤袋 / 封灵匣这类非载体但同属流派装备的配方。
@@ -140,7 +141,7 @@ pub struct CraftRequirements {
     /// 当前用 main color 命中即视为满足（secondary 不参与）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qi_color_min: Option<(ColorKind, f32)>,
-    /// 流派技能等级下限（含）。后续 plan-skill-v2 接入后由 SkillSet::lv 校验。
+    /// 玩家任一已习得流派技能的有效等级下限（含）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_lv_min: Option<u8>,
 }
@@ -175,7 +176,7 @@ pub struct CraftRecipe {
     /// 材料清单：`(template_id, count)`。`template_id` 与 `inventory::ItemInstance.template_id`
     /// 对齐；count >= 1。重复的 template 不建议（应聚合到一条 entry）。
     pub materials: Vec<(String, u32)>,
-    /// 自身真元投入（一次性，不维持）。**走 ledger Crafting reason**。
+    /// 自身真元投入（一次性，不维持）。**走 external → ledger Crafting reason**。
     pub qi_cost: f64,
     /// in-game tick 推进时间。1 秒 = 20 tick；3 min = 3600 tick。
     /// 玩家 inventory 关闭时不推进（§0 设计轴心，下线暂停）。
@@ -203,7 +204,14 @@ impl CraftRecipe {
                 id: self.id.clone(),
             });
         }
-        for (template, count) in &self.materials {
+        let mut material_templates = std::collections::HashSet::new();
+        for (index, (template, count)) in self.materials.iter().enumerate() {
+            if !material_templates.insert(template) {
+                return Err(RecipeValidationError::DuplicateMaterialTemplate {
+                    id: self.id.clone(),
+                    template: template.clone(),
+                });
+            }
             if template.is_empty() {
                 return Err(RecipeValidationError::EmptyMaterialTemplate {
                     id: self.id.clone(),
@@ -212,6 +220,7 @@ impl CraftRecipe {
             if *count == 0 {
                 return Err(RecipeValidationError::ZeroCount {
                     id: self.id.clone(),
+                    index,
                     template: template.clone(),
                 });
             }
@@ -249,6 +258,14 @@ impl CraftRecipe {
                 });
             }
         }
+        if let Some(skill_lv_min) = self.requirements.skill_lv_min {
+            if skill_lv_min > crate::skill::curve::SKILL_MAX_LEVEL {
+                return Err(RecipeValidationError::SkillLevelTooHigh {
+                    id: self.id.clone(),
+                    skill_lv_min,
+                });
+            }
+        }
         // unlock_sources 内每个 string payload 非空（避免"永远无法匹配"的源）
         for src in &self.unlock_sources {
             match src {
@@ -282,6 +299,11 @@ pub enum RecipeValidationError {
     },
     ZeroCount {
         id: RecipeId,
+        index: usize,
+        template: String,
+    },
+    DuplicateMaterialTemplate {
+        id: RecipeId,
         template: String,
     },
     EmptyOutputTemplate {
@@ -304,6 +326,10 @@ pub enum RecipeValidationError {
     NoUnlockSources {
         id: RecipeId,
     },
+    SkillLevelTooHigh {
+        id: RecipeId,
+        skill_lv_min: u8,
+    },
     InvalidQiColorMinShare {
         id: RecipeId,
         color: ColorKind,
@@ -323,9 +349,15 @@ impl std::fmt::Display for RecipeValidationError {
             Self::EmptyMaterialTemplate { id } => {
                 write!(f, "recipe `{id}` has empty material template_id")
             }
-            Self::ZeroCount { id, template } => {
+            Self::ZeroCount {
+                id, template, ..
+            } => {
                 write!(f, "recipe `{id}` material `{template}` count is 0")
             }
+            Self::DuplicateMaterialTemplate { id, template } => write!(
+                f,
+                "recipe `{id}` declares duplicate material template `{template}`"
+            ),
             Self::EmptyOutputTemplate { id } => {
                 write!(f, "recipe `{id}` output template_id is empty")
             }
@@ -341,6 +373,11 @@ impl std::fmt::Display for RecipeValidationError {
                 f,
                 "recipe `{id}` has no unlock_sources (legacy; empty now means material-discovery path)"
             ),
+            Self::SkillLevelTooHigh { skill_lv_min, .. } => write!(
+                f,
+                "recipe skill_lv_min {skill_lv_min} exceeds runtime maximum {}",
+                crate::skill::curve::SKILL_MAX_LEVEL
+            ),
             Self::InvalidQiColorMinShare { id, color, share } => write!(
                 f,
                 "recipe `{id}` qi_color_min share for {color:?} is {share} (must be finite and in [0.0, 1.0])"
@@ -350,286 +387,5 @@ impl std::fmt::Display for RecipeValidationError {
                 "recipe `{id}` has empty {kind} unlock_source payload"
             ),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ok_recipe() -> CraftRecipe {
-        CraftRecipe {
-            id: RecipeId::new("craft.example.test"),
-            category: CraftCategory::Misc,
-            display_name: "测试配方".into(),
-            materials: vec![("herb_a".into(), 2)],
-            qi_cost: 5.0,
-            time_ticks: 60,
-            output: (("test_pill".into()), 1),
-            requirements: CraftRequirements::default(),
-            unlock_sources: vec![UnlockSource::Scroll {
-                item_template: "scroll_test".into(),
-            }],
-            station: None,
-        }
-    }
-
-    #[test]
-    fn recipe_id_roundtrip_serde() {
-        let id = RecipeId::new("dugu.eclipse_needle.iron");
-        let s = serde_json::to_string(&id).unwrap();
-        assert_eq!(s, "\"dugu.eclipse_needle.iron\"");
-        let back: RecipeId = serde_json::from_str(&s).unwrap();
-        assert_eq!(back, id);
-    }
-
-    #[test]
-    fn category_str_stable_and_all_unique() {
-        let strs: Vec<&str> = CraftCategory::ALL.iter().map(|c| c.as_str()).collect();
-        // 类目必须各不相同 — UI 分组依赖 str id 做 key
-        let mut sorted = strs.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            CraftCategory::ALL.len(),
-            "expected unique category str ids"
-        );
-        // 顺序固定（不能因为 enum order 改变破坏 UI 分组顺序）
-        assert_eq!(
-            strs,
-            [
-                "anqi_carrier",
-                "dugu_potion",
-                "tuike_skin",
-                "zhenfa_trap",
-                "tool",
-                "armor_craft",
-                "container",
-                "poison_powder",
-                "misc"
-            ]
-        );
-    }
-
-    #[test]
-    fn requirements_default_is_no_gate() {
-        let req = CraftRequirements::default();
-        assert!(req.realm_min.is_none());
-        assert!(req.qi_color_min.is_none());
-        assert!(req.skill_lv_min.is_none());
-    }
-
-    #[test]
-    fn validate_accepts_well_formed_recipe() {
-        assert!(ok_recipe().validate().is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_empty_id() {
-        let mut r = ok_recipe();
-        r.id = RecipeId::new("");
-        assert_eq!(r.validate(), Err(RecipeValidationError::EmptyId));
-    }
-
-    #[test]
-    fn validate_rejects_no_materials() {
-        let mut r = ok_recipe();
-        r.materials.clear();
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::NoMaterials { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_empty_material_template() {
-        let mut r = ok_recipe();
-        r.materials = vec![("".into(), 1)];
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::EmptyMaterialTemplate { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_zero_count_material() {
-        let mut r = ok_recipe();
-        r.materials = vec![("herb_a".into(), 0)];
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::ZeroCount { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_empty_output_template() {
-        let mut r = ok_recipe();
-        r.output = ("".into(), 1);
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::EmptyOutputTemplate { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_zero_output_count() {
-        let mut r = ok_recipe();
-        r.output = ("test_pill".into(), 0);
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::ZeroOutputCount { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_negative_qi_cost() {
-        let mut r = ok_recipe();
-        r.qi_cost = -1.0;
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::InvalidQiCost { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_nan_qi_cost() {
-        let mut r = ok_recipe();
-        r.qi_cost = f64::NAN;
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::InvalidQiCost { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_zero_time_ticks() {
-        let mut r = ok_recipe();
-        r.time_ticks = 0;
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::ZeroTimeTicks { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_accepts_empty_unlock_sources_for_material_discovery() {
-        // 空 unlock_sources 合法 = 材料发现路径（持有任一原料才解锁），
-        // 而非旧语义的"默认全解锁"。
-        let mut r = ok_recipe();
-        r.unlock_sources.clear();
-        assert!(r.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_accepts_zero_qi_cost() {
-        // qi_cost = 0 是合法的（凡器手搓，无真元投入）
-        let mut r = ok_recipe();
-        r.qi_cost = 0.0;
-        assert!(r.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_qi_color_min_share_above_one() {
-        let mut r = ok_recipe();
-        r.requirements.qi_color_min = Some((ColorKind::Insidious, 1.5));
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if (share - 1.5).abs() < 1e-6
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_qi_color_min_share_negative() {
-        let mut r = ok_recipe();
-        r.requirements.qi_color_min = Some((ColorKind::Insidious, -0.1));
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if share < 0.0
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_qi_color_min_share_nan() {
-        let mut r = ok_recipe();
-        r.requirements.qi_color_min = Some((ColorKind::Insidious, f32::NAN));
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::InvalidQiColorMinShare { share, .. }) if share.is_nan()
-        ));
-    }
-
-    #[test]
-    fn validate_accepts_qi_color_min_share_at_bounds() {
-        let mut r = ok_recipe();
-        // 0.0 边界
-        r.requirements.qi_color_min = Some((ColorKind::Insidious, 0.0));
-        assert!(r.validate().is_ok());
-        // 1.0 边界
-        r.requirements.qi_color_min = Some((ColorKind::Insidious, 1.0));
-        assert!(r.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_empty_scroll_unlock_payload() {
-        let mut r = ok_recipe();
-        r.unlock_sources = vec![UnlockSource::Scroll {
-            item_template: String::new(),
-        }];
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::EmptyUnlockSourceTemplate { kind: "scroll", .. })
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_empty_mentor_unlock_payload() {
-        let mut r = ok_recipe();
-        r.unlock_sources = vec![UnlockSource::Mentor {
-            npc_archetype: String::new(),
-        }];
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::EmptyUnlockSourceTemplate { kind: "mentor", .. })
-        ));
-    }
-
-    // ============= CraftStationKind pin tests =============
-
-    #[test]
-    fn craft_station_kind_workbench_str_stable() {
-        assert_eq!(
-            CraftStationKind::Workbench.as_str(),
-            "workbench",
-            "CraftStationKind::Workbench str repr must be 'workbench' for IPC/agent contract"
-        );
-    }
-
-    #[test]
-    fn craft_station_kind_serde_roundtrip() {
-        let kind = CraftStationKind::Workbench;
-        let json = serde_json::to_string(&kind).unwrap();
-        assert_eq!(json, "\"workbench\"");
-        let back: CraftStationKind = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, kind);
-    }
-
-    #[test]
-    fn craft_recipe_station_none_means_handcraft() {
-        let r = ok_recipe();
-        assert_eq!(
-            r.station, None,
-            "default ok_recipe must have station=None (handcraft)"
-        );
-    }
-
-    #[test]
-    fn craft_recipe_station_workbench_accepted() {
-        let mut r = ok_recipe();
-        r.station = Some(CraftStationKind::Workbench);
-        assert!(
-            r.validate().is_ok(),
-            "station=Workbench must pass validation"
-        );
     }
 }

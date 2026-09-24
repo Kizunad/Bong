@@ -40,5 +40,6 @@
       "type": "integer"
     },
     "metadata": {}
-  }
+  },
+  "x-bong-typebox-source-sha256": "1f6f71107d03d8018686567f9ed915b63014dba8a94785525cb940270c73f3b2"
 }

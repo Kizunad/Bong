@@ -17,6 +17,11 @@ public final class SeasonStateStore {
         STATE.set(next == null ? SeasonState.summerAt(0L) : next);
     }
 
+    /** 断线时恢复无服务端 season payload 的夏季基线。 */
+    public static void clearOnDisconnect() {
+        STATE.set(SeasonState.summerAt(0L));
+    }
+
     public static void resetForTests() {
         STATE.set(SeasonState.summerAt(0L));
     }

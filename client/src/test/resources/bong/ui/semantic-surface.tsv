@@ -1,0 +1,13 @@
+# field	kind	required	mutable	wire_owner	forbidden_shape
+surface_id	identity	true	false	R6_SCHEMA_AGENT	component-tree
+template_id	identity	true	false	R7-local-template-registry	owo-xml|html|css|javascript|url
+session_id	identity	true	false	R6_SCHEMA_AGENT	array-index
+revision	version	true	false	R6_SCHEMA_AGENT	wall-clock-only
+expires_at_ms	lifecycle	false	false	R6_SCHEMA_AGENT	implicit-client-timeout
+close_reason	lifecycle	false	false	R6_SCHEMA_AGENT	free-form-widget-callback
+view_data	state	true	false	R6_SCHEMA_AGENT	mutable-store-reference
+collection_identity	state	true	false	R6_SCHEMA_AGENT	array-position
+action_id	action	true	false	R7-action-registry	method-name
+args_schema	action	true	false	R7-action-registry	untyped-map
+available	action	true	false	R7-action-registry	client-optimistic-success
+rejection_reason	action	false	false	R6_SCHEMA_AGENT	pixel-or-text-only

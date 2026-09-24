@@ -20,5 +20,6 @@
       "maximum": 9007199254740991,
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "4703934d9e348be7a179af102c50ee2bf1b52290d84efad2fcb85349b63193b7"
 }

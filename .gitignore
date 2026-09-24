@@ -102,8 +102,16 @@ tmp/
 # Serena MCP 本仓库 local state
 .serena/
 
-# Reference 3D 模型（Tripo / 素材站下载），只作本地建模参考不进 repo
-local_models/
+# modelScript —— 离线 bbmodel 工具链
+# 渲染产物（三视图 / 动画 GIF / 预览拼版）一律不入库：跑一次脚本就重生成。
+modelScript/out/
+# 模型产物：生物流水线那几套动辄上百 M，不入库；小件与"没有生成器的手工源"必须留。
+modelScript/models/*/
+!modelScript/models/armor/
+!modelScript/models/baolongwang/
+!modelScript/models/handmade/
+!modelScript/models/lootcrate/
+!modelScript/models/rat/
 
 # pi-bench 产物（本地生成，含跑分结果，不入库）
 scripts/llm-bench/report.html

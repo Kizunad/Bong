@@ -28,5 +28,6 @@
       "const": "medical_contract",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "3370ec411977f88b35c2106aa166ad3fa2f2153d2e9a27b7639d750162946c9c"
 }

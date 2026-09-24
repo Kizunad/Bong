@@ -1,0 +1,10 @@
+{
+  "bong.menu.enter": "入世",
+  "bong.menu.entering": "入世",
+  "bong.menu.config_missing": "尚未配置服务器",
+  "bong.menu.config_invalid": "服务器配置无效",
+  "bong.menu.connection_failed": "暂时无法连接",
+  "bong.menu.disconnected": "连接已断开",
+  "bong.menu.retry": "重试",
+  "bong.menu.back": "返回"
+}

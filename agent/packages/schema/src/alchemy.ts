@@ -166,6 +166,7 @@ export const AlchemyInsightV1 = Type.Object(
     recipe_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
     accuracy: Type.Number({ minimum: 0, maximum: 1 }),
     ingredients: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 3 }),
+    ts: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
   },
   { additionalProperties: false },
 );

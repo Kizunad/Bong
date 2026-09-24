@@ -39,6 +39,9 @@ use crate::world::tsy_container_spawn::{
 };
 use crate::world::zone::{TsyDepth, Zone, ZoneRegistry};
 
+const DEV_PORTAL_TRIGGER_RADIUS: f64 = 1.5;
+const DEV_ENTRY_ESCAPE_MARGIN: f64 = 1.0;
+
 /// chat_collector → tsy_dev_command 桥事件。
 #[derive(Event, Debug, Clone)]
 pub struct TsySpawnRequested {
@@ -175,6 +178,7 @@ pub fn apply_tsy_spawn_requests(
     portals: Query<&RiftPortal>,
     container_specs: Option<Res<TsyContainerSpawnRegistry>>,
     hostile_specs: Option<Res<TsySpawnPoolRegistry>>,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     clock: Option<Res<CombatClock>>,
@@ -251,6 +255,12 @@ pub fn apply_tsy_spawn_requests(
             });
             continue;
         };
+        let tsy_entry_pos = shallow_center
+            + DVec3::new(
+                DEV_PORTAL_TRIGGER_RADIUS + DEV_ENTRY_ESCAPE_MARGIN,
+                0.0,
+                0.0,
+            );
 
         // 标记本 tick 已为该 family 触发 spawn —— 任何后续同 family 请求会
         // 在循环顶端 `family_handled_this_tick` 分支拦掉，避免 deferred Commands
@@ -264,9 +274,9 @@ pub fn apply_tsy_spawn_requests(
                 req.family_id.clone(),
                 DimensionAnchor {
                     dimension: DimensionKind::Tsy,
-                    pos: shallow_center,
+                    pos: tsy_entry_pos,
                 },
-                1.5,
+                DEV_PORTAL_TRIGGER_RADIUS,
             ),
         ));
 
@@ -279,7 +289,7 @@ pub fn apply_tsy_spawn_requests(
                     dimension: DimensionKind::Overworld,
                     pos: req.player_pos + DVec3::Y,
                 },
-                1.5,
+                DEV_PORTAL_TRIGGER_RADIUS,
                 RiftKind::MainRift,
             ),
         ));
@@ -322,6 +332,7 @@ pub fn apply_tsy_spawn_requests(
             let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or(0);
             let summary = spawn_tsy_hostiles_for_family(
                 &mut commands,
+                &technique_registry,
                 layers.tsy,
                 &req.family_id,
                 hostiles,
@@ -467,6 +478,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -538,6 +552,28 @@ mod tests {
     }
 
     #[test]
+    fn dev_entry_target_stays_outside_exit_trigger_radius() {
+        let mut app = run_with_world("tsy_lingxu_01");
+        let mut query = app.world_mut().query::<(&Position, &RiftPortal)>();
+        let mut entry_target = None;
+        let mut exit = None;
+        for (position, portal) in query.iter(app.world()) {
+            match portal.direction {
+                PortalDirection::Entry => entry_target = Some(portal.target.pos),
+                PortalDirection::Exit => exit = Some((position.get(), portal.trigger_radius)),
+            }
+        }
+
+        let entry_target = entry_target.expect("dev spawn must create an entry portal");
+        let (exit_pos, exit_radius) = exit.expect("dev spawn must create an exit portal");
+        let actual_distance = entry_target.distance(exit_pos);
+        assert!(
+            actual_distance > exit_radius,
+            "dev TSY entry target must remain outside the exit trigger; expected distance > {exit_radius}, actual distance={actual_distance}, target={entry_target:?} exit={exit_pos:?}"
+        );
+    }
+
+    #[test]
     fn gaoshou_zone_loads_with_experience_plan_poi_contract() {
         let blueprint = load_blueprint().expect("zones.tsy.json loads");
         let zones = pick_family(&blueprint, "tsy_gaoshou_01").expect("gaoshou family exists");
@@ -606,6 +642,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -654,6 +693,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -720,6 +762,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::world::entity_model::register(&mut app);
         app.add_systems(Update, apply_tsy_spawn_requests);
 

@@ -2,9 +2,9 @@
   "id": "dugu_poison_signature",
   "layers": [
     {
-      "sound": "minecraft:block.honey_block.break",
+      "sound": "bong:skill.dugu.infuse_poison",
       "volume": 0.24,
-      "pitch": 0.35,
+      "pitch": 1.0,
       "delay_ticks": 0
     },
     {

@@ -1,0 +1,16 @@
+# 蓑衣（straw_chestplate）视觉点名清单。
+#
+# 运行时由 ArmorPartModel 的 BODY cube 表承载；清单只声明人要在接触表里检查的外观
+# 契约。前襟位于 -z，因此正面朝 -z。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 领口/肩线是蓑衣上缘，不得在搬迁时丢掉。
+collar = { names = ["Collar"], must_show_in = ["FRONT", "SIDE_R", "BACK"], min_px = { FRONT = 700, SIDE_R = 400, BACK = 700 } }
+# 前后分层的垂坠片共同组成蓑衣主体，三类都要在不同轴面露出。
+layered_drape = { elements = ["Back_", "Front_", "Side_"], must_show_in = ["FRONT", "SIDE_R", "BACK"], min_px = { FRONT = 8000, SIDE_R = 3000, BACK = 9000 } }
+# 下摆毛穗是蓑衣区别于普通胸甲的轮廓。
+fringe = { elements = ["Fringe_"], must_show_in = ["FRONT", "SIDE_R", "BACK"], min_px = { FRONT = 1200, SIDE_R = 100, BACK = 1000 } }

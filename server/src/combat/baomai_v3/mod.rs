@@ -12,19 +12,10 @@ pub use skills::register_skills;
 
 use valence::prelude::{App, IntoSystemConfigs, Update};
 
-use crate::cultivation::meridian::severed::SkillMeridianDependencies;
-
 pub fn register(app: &mut App) {
-    if let Some(mut dependencies) = app
-        .world_mut()
-        .get_resource_mut::<SkillMeridianDependencies>()
-    {
-        skills::declare_meridian_dependencies(&mut dependencies);
-    } else {
-        let mut dependencies = SkillMeridianDependencies::default();
-        skills::declare_meridian_dependencies(&mut dependencies);
-        app.insert_resource(dependencies);
-    }
+    // P1 technique registry builds the complete dependency table before this combat module
+    // registers. Keeping a second late mutation path would either bypass startup validation or
+    // trigger the duplicate-declaration guard.
     app.add_event::<BaomaiSkillEvent>();
     app.add_event::<MountainShakeEvent>();
     app.add_event::<BloodBurnEvent>();

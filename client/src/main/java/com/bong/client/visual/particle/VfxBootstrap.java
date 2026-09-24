@@ -136,6 +136,12 @@ public final class VfxBootstrap {
         registry.register(PseudoVeinVisualPlayer.DISSIPATING,    pseudoVein);
         registry.register(PseudoVeinVisualPlayer.AFTERMATH,      pseudoVein);
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
+        // plan-beast-skill-vfx：五个兽类主动招式各自走独立 event_id，复用既有五种粒子原语。
+        // 漏注册任一路由会让 server 的粒子事件静默丢失。
+        BeastSkillVfxPlayer beastSkill = new BeastSkillVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : BeastSkillVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, beastSkill);
+        }
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         // plan-fauna-mimic-spider-v1 P1 — 拟态蛛暴起径向粒子 burst
         registry.register(SpiderAmbushVfxPlayer.EVENT_ID,        new SpiderAmbushVfxPlayer());
@@ -170,18 +176,32 @@ public final class VfxBootstrap {
         registry.register(YidaoPeacePulsePlayer.EMERGENCY_RESUSCITATE, yidao);
         registry.register(YidaoPeacePulsePlayer.LIFE_EXTENSION,        yidao);
         registry.register(YidaoPeacePulsePlayer.MASS_MERIDIAN_REPAIR,  yidao);
-        registry.register(
-            new net.minecraft.util.Identifier("bong", "jiemai_burst_blood"),
-            new SwordQiSlashPlayer()
-        );
-        registry.register(
-            new net.minecraft.util.Identifier("bong", "jiemai_neutralize_dust"),
-            new SwordQiSlashPlayer()
-        );
+        // plan-skill-anim-fidelity-v1 P5 — 真脉 5 招粒子去复用。
+        // 此前 5 招挤在 3 个 bong:jiemai_* 上且全部指向剑气 SwordQiSlashPlayer，
+        // 旁观者看真脉全是剑气斩弧；现各招独立 event_id → ZhenmaiPulsePlayer。
+        ZhenmaiPulsePlayer zhenmaiPulse = new ZhenmaiPulsePlayer();
+        for (net.minecraft.util.Identifier eventId : ZhenmaiPulsePlayer.EVENT_IDS) {
+            registry.register(eventId, zhenmaiPulse);
+        }
+        // bong:jiemai_burst_blood / bong:jiemai_neutralize_dust 的注册随 P5 一并撤除
+        // ——去复用后全仓无发射方（原发射方仅 zhenmai 与 npc.buff_speed）。
+        // bong:jiemai_sever_flash 保留：被动断脉叙事仍由 meridian_severed_emit.rs 发射。
         registry.register(
             new net.minecraft.util.Identifier("bong", "jiemai_sever_flash"),
             new SwordQiSlashPlayer()
         );
+        // plan-skill-anim-fidelity-v1 P5 — 爆脉 3 招形态分化（共用 #C58B3F，
+        // 靠 GroundDecal 冲击环 / Ribbon 步法残影 / Sprite 体表逆流纹读招）。
+        // 崩拳本尊仍由上方 BurstMeridianBengQuanPlayer 承接。
+        BurstMeridianFamilyPlayer burstFamily = new BurstMeridianFamilyPlayer();
+        for (net.minecraft.util.Identifier eventId : BurstMeridianFamilyPlayer.EVENT_IDS) {
+            registry.register(eventId, burstFamily);
+        }
+        // plan-skill-anim-fidelity-v1 P5 — NPC 3 招脱离借用（原借医道/真脉/崩拳粒子）。
+        NpcSkillAuraPlayer npcSkillAura = new NpcSkillAuraPlayer();
+        for (net.minecraft.util.Identifier eventId : NpcSkillAuraPlayer.EVENT_IDS) {
+            registry.register(eventId, npcSkillAura);
+        }
         VortexSpiralPlayer woliuVortex = new VortexSpiralPlayer();
         registry.register(VortexSpiralPlayer.EVENT_ID,           woliuVortex);
         // AV 差异化：woliu 基础 5 招专属 particle IDs（必须与 server visual_for() particle_id 精确一致）
@@ -216,7 +236,8 @@ public final class VfxBootstrap {
             new CombatHitDirectionPlayer(false));
         registry.register(CombatHitDirectionPlayer.HEAD_CRIT,
             new CombatHitDirectionPlayer(CombatHitDirectionPlayer.Kind.HEAD_CRIT));
-        // 腿伤减速触发时目标脚下血渍 decal（复用 lingqi_ripple 环形贴图，无新资产）。
+        // 腿伤减速触发时目标脚下血渍 decal（blood_splat / blood_streak 专用贴图 +
+        // BloodSplatterLayout 不规则散布；早先复用 lingqi_ripple 环形贴图会画成红色同心圆）。
         registry.register(LegWoundBloodDecalPlayer.EVENT_ID, new LegWoundBloodDecalPlayer());
         registry.register(ForgeHammerStrikePlayer.HAMMER,
             new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.HAMMER));
@@ -308,5 +329,7 @@ public final class VfxBootstrap {
         );
         // plan-scroll-reading-v1 P2 — 卷轴展开淡金色微光（server 在 ScrollOpen 同帧 emit）。
         registry.register(ScrollOpenGlowPlayer.EVENT_ID, new ScrollOpenGlowPlayer());
+        // plan-race-system-v1 PR-5b — 易形（morph.yixing）施法特效：淡青白螺旋 24 + 白雾 40。
+        registry.register(MorphVfxPlayer.EVENT_ID, new MorphVfxPlayer());
     }
 }

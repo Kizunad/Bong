@@ -64,7 +64,7 @@ pub struct CraftCompletedEvent {
 }
 
 /// 失败路径汇总：玩家取消 / 死亡清空 / 材料异常移除等。
-/// `material_returned` 是按 §5 决策门 #3 默认 70% 返还后实际写回 inventory 的份数；
+/// `material_returned` 是按 §5 决策门 #3 默认 70% 返还后实际入包或落地成功的份数；
 /// `qi_refunded` 当前固定 0（plan §5 决策门 #3 "qi 不退"）。
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct CraftFailedEvent {
@@ -106,7 +106,7 @@ pub enum UnlockEventSource {
 
 /// plan-craft-v1 P2 — client → server 起手搓 intent。
 /// `client_request_handler` 收到 `ClientRequestV1::CraftStart` 时 emit；
-/// craft 模块的 `apply_craft_intents` 系统读后跑 `start_craft`，
+/// craft bridge 的 `apply_craft_start_intents` 系统读后跑 `start_craft`，
 /// 成功则 emit `CraftStartedEvent`，失败 emit `CraftFailedEvent`。
 #[derive(Debug, Clone, Event, PartialEq, Eq)]
 pub struct CraftStartIntent {
@@ -122,6 +122,16 @@ pub struct CraftCancelIntent {
     pub caster: Entity,
 }
 
+#[derive(Debug, Clone, Event)]
+pub struct MaterialMoveIntent {
+    pub caster: Entity,
+    pub recipe_id: RecipeId,
+    pub instance_id: Option<u64>,
+    pub station_pos: Option<(i32, i32, i32)>,
+    pub returning: bool,
+    pub expected_revision: u64,
+}
+
 /// plan-craft-v1 P3 §0 设计轴心 —— 三渠道解锁通用 intent。
 ///
 /// 各 source plan（inventory ItemUse / social NPC dialog / cultivation
@@ -135,6 +145,8 @@ pub struct CraftCancelIntent {
 #[derive(Debug, Clone, Event, PartialEq, Eq)]
 pub struct CraftUnlockIntent {
     pub caster: Entity,
+    /// Canonical player identity captured before the queued intent crosses an entity lifecycle boundary.
+    pub player_id: String,
     pub recipe_id: RecipeId,
     pub source: UnlockEventSource,
 }

@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""stance_woliu —— 涡流功法习得亮相（P6，§8.1 #2 第 4 条遗留清偿）。
+
+**不是循环站桩**。原资产是 `isLoop:true` 的 40t 双掌开合 ping-pong，与梯队一
+接线的实际语义错配：`emit_technique_learned_stance_triggers` 在
+`TechniqueLearnedEvent` 上**单发一次** PlayAnim，全仓没有任何持续架势状态能驱动
+循环，也没有任何 StopAnim 停止路径——即 conventions §13 #6「循环动画必须同批
+交付停止路径」的红线违例。P6 按决议改成一次性亮相：`isLoop:false` + 收势回中立。
+
+原资产的另外两笔欠账一并清偿：① 只有 3 个帧点（0/20/40，间隔 20t）远超精度
+标准 #3 的「主轴 ≤4t 一帧」；② 除双臂外 legs/torso/head 全程不动，违反标准 #4
+「发力招必须有 torso 拧转 + body 位移，不许只挥手臂」。
+
+母题：涡流 = 吞噬 / 漩涡 / 真空。沉身塌腰把气收进丹田（吸），随即双掌自胸前
+向外旋开托举，掌心相对撑出一个看不见的涡场（吐），最后卸力归中立。开合的
+「合」在前、「开」在后，与吞噬意象同向。
+
+**双臂刻意不做完全镜像**（round 2 修正）：托举段右臂比左臂高约 22°、外分也更大，
+配合 torso.yaw +7 的轻微拧转，整体呈**螺旋**而非对称平举。round 1 的完全镜像
+版本三视图审下来只读作「举起双手」——涡流的旋转意象完全不可见，而「对称双臂
+上举」正是全仓最拥挤的剪影区间（远距离与其他托举类动作混淆）。螺旋化后正面
+剪影左右不等高，远距离可辨性显著提高。
+
+**easing 管辖语义**（PlayerAnimator 1.0.2 实证，非直觉）：本仓动画一律不声明
+`easeBeforeKeyframe`，`KeyframeAnimation.isEasingBefore` 因而取默认 false，
+`KeyframeAnimationPlayer#getValueFromKeyframes` 走 `before.ease`——即**某帧上
+写的 easing 管辖的是「本帧 → 下一帧」这一段**，不是「上一帧 → 本帧」。所以
+「发力用 easeIn 族」要落在 strike 段的**起始侧帧**（tick ∈ [strike_from,
+strike_to)），写在 strike 末帧上会跑去管收势段。由
+`AnimCastTicksAlignmentTest#strikePhaseCarriesEaseInDrive` 机械锁定。
+
+时序（精度标准 #1/#2/#3）：
+  anticipation 0→8    沉身收拢：body.y -0.06 下坐、torso.pitch +9 塌腰、
+                      双臂收到胸前（pitch -38 / bend 74），OUTQUAD 收得快
+  strike       8→20   外旋托举：右臂 pitch -38→-106 / 左臂 -38→-84（错开约
+                      22° 成螺旋）、yaw 外分 -36 / +32、bend 74→44/62 展开，
+                      torso.pitch +9→-5 挺身兼 yaw→+7 轻拧、
+                      body.y -0.06→+0.03 拔起；easing 按发力节奏排布——
+                      t8 INQUAD（起手加速）→ t12 INCUBIC（撑开主发力）→
+                      t16 OUTQUAD（逼近顶点减速定格）；t20 = 托举顶点
+  recovery     20→32  卸力归中立：全轴回零，INOUTSINE
+endTick=32，stopTick=34，非循环。主运动轴：rightArm.pitch / leftArm.pitch /
+torso.pitch / body.y。帧点 0,4,8,12,16,20,24,28,32 —— 全程间隔 ≤4t。
+收势段回到完全对称并归零（螺旋只存在于托举段，避免收势也歪着）。
+
+leg.pitch 全程 ≤ 12°（远在 §13 #5 的 40° 上限内），下盘只做微沉，重心表达
+交给 body.y + torso.pitch（§13 #4）。head/torso.roll 全程不写，规避
+BongAnimationAssetManifestTest 的 roll 归零约束。
+"""
+
+from __future__ import annotations
+
+from anim_common import emit_json
+
+POSE = {
+    # 中立起手（亮相从 vanilla 冷起手接入，server 侧 fade_in=3 铺垫）。
+    0: dict(
+        easing="OUTQUAD",
+        body=dict(x=0.0, y=0.0, z=0.0),
+        head=dict(pitch=0, yaw=0),
+        torso=dict(pitch=0, yaw=0),
+        rightArm=dict(pitch=0, yaw=0, bend=0, axis=180),
+        leftArm=dict(pitch=0, yaw=0, bend=0, axis=180),
+        leftLeg=dict(pitch=0, bend=0, z=0.0),
+        rightLeg=dict(pitch=0, bend=0, z=0.0),
+    ),
+    # 起吸：肩先沉，手臂开始抬向胸前（kinetic chain 由躯干先动，§2.2）。
+    4: dict(
+        easing="OUTQUAD",
+        body=dict(x=0.0, y=-0.035, z=-0.01),
+        head=dict(pitch=+5, yaw=0),
+        torso=dict(pitch=+6, yaw=0),
+        rightArm=dict(pitch=-20, yaw=-6, bend=40, axis=180),
+        leftArm=dict(pitch=-20, yaw=+6, bend=40, axis=180),
+        leftLeg=dict(pitch=-4, bend=6, z=-0.015),
+        rightLeg=dict(pitch=+4, bend=5, z=+0.015),
+    ),
+    # anticipation 末帧 / strike 起点：气收到底，双掌收拢在胸前。
+    # easing 归 strike：本帧 easing 管辖 8→12（库语义见模块 docstring），
+    # 是外旋发力的起手加速段，用 easeIn 族。
+    8: dict(
+        easing="INQUAD",
+        body=dict(x=0.0, y=-0.06, z=-0.02),
+        head=dict(pitch=+8, yaw=0),
+        torso=dict(pitch=+9, yaw=0),
+        rightArm=dict(pitch=-38, yaw=-10, bend=74, axis=180),
+        leftArm=dict(pitch=-38, yaw=+10, bend=74, axis=180),
+        leftLeg=dict(pitch=-7, bend=10, z=-0.025),
+        rightLeg=dict(pitch=+6, bend=9, z=+0.025),
+    ),
+    # 外旋起：掌根先向外翻，肘还没展开（load-snap，§2.4）。
+    # 管辖 12→16：涡场撑开的主发力段，加速度继续拉高（INQUAD→INCUBIC）。
+    12: dict(
+        easing="INCUBIC",
+        body=dict(x=0.0, y=-0.04, z=-0.01),
+        head=dict(pitch=+4, yaw=0),
+        torso=dict(pitch=+5, yaw=0),
+        rightArm=dict(pitch=-58, yaw=-20, bend=70, axis=180),
+        leftArm=dict(pitch=-58, yaw=+20, bend=70, axis=180),
+        leftLeg=dict(pitch=-6, bend=9, z=-0.02),
+        rightLeg=dict(pitch=+5, bend=8, z=+0.02),
+    ),
+    # 撑开中段：肘展、掌心相对，涡场被撑出来。
+    # 管辖 16→20：逼近托举顶点，减速定格（对齐 beng_quan 的 IN→IN→OUT 收束）。
+    16: dict(
+        easing="OUTQUAD",
+        body=dict(x=0.0, y=-0.01, z=0.0),
+        head=dict(pitch=0, yaw=+3),
+        torso=dict(pitch=0, yaw=+4),
+        rightArm=dict(pitch=-90, yaw=-30, bend=54, axis=180),
+        leftArm=dict(pitch=-74, yaw=+30, bend=66, axis=180),
+        leftLeg=dict(pitch=-4, bend=6, z=-0.012),
+        rightLeg=dict(pitch=+3, bend=5, z=+0.012),
+    ),
+    # strike 顶点：托举定格（挺身拔起，涡场最大）。
+    20: dict(
+        easing="INOUTSINE",
+        body=dict(x=0.0, y=+0.03, z=+0.01),
+        head=dict(pitch=-4, yaw=+5),
+        torso=dict(pitch=-5, yaw=+7),
+        rightArm=dict(pitch=-106, yaw=-36, bend=44, axis=180),
+        leftArm=dict(pitch=-84, yaw=+32, bend=62, axis=180),
+        leftLeg=dict(pitch=-2, bend=4, z=-0.008),
+        rightLeg=dict(pitch=+2, bend=3, z=+0.008),
+    ),
+    # recovery 起：撑住一拍后开始卸力（顶点后 4t 才落，避免一到顶就掉）。
+    24: dict(
+        easing="INOUTSINE",
+        body=dict(x=0.0, y=+0.015, z=+0.005),
+        head=dict(pitch=-2, yaw=+2),
+        torso=dict(pitch=-3, yaw=+3),
+        rightArm=dict(pitch=-80, yaw=-26, bend=40, axis=180),
+        leftArm=dict(pitch=-66, yaw=+22, bend=50, axis=180),
+        leftLeg=dict(pitch=-1, bend=3, z=-0.005),
+        rightLeg=dict(pitch=+1, bend=2, z=+0.005),
+    ),
+    # 落臂中段。
+    28: dict(
+        easing="INOUTSINE",
+        body=dict(x=0.0, y=-0.005, z=0.0),
+        head=dict(pitch=0, yaw=0),
+        torso=dict(pitch=+1, yaw=0),
+        rightArm=dict(pitch=-32, yaw=-10, bend=20, axis=180),
+        leftArm=dict(pitch=-32, yaw=+10, bend=20, axis=180),
+        leftLeg=dict(pitch=0, bend=1, z=0.0),
+        rightLeg=dict(pitch=0, bend=1, z=0.0),
+    ),
+    # 归中立（一次性亮相的收势终点，非循环故不需回绕补帧）。
+    32: dict(
+        easing="INOUTSINE",
+        body=dict(x=0.0, y=0.0, z=0.0),
+        head=dict(pitch=0, yaw=0),
+        torso=dict(pitch=0, yaw=0),
+        rightArm=dict(pitch=0, yaw=0, bend=0, axis=180),
+        leftArm=dict(pitch=0, yaw=0, bend=0, axis=180),
+        leftLeg=dict(pitch=0, bend=0, z=0.0),
+        rightLeg=dict(pitch=0, bend=0, z=0.0),
+    ),
+}
+
+
+def main() -> int:
+    emit_json(
+        POSE,
+        name="stance_woliu",
+        description=(
+            "涡流功法习得亮相（32t 非循环）：anticipation 0→8 沉身收拢"
+            "（body.y -0.06 / torso.pitch +9 / 双臂收胸前 bend 74），"
+            "strike 8→20 双掌外旋托举撑开涡场（右臂 -106 / 左臂 -84 "
+            "错开成螺旋、yaw 外分 -36/+32、torso.yaw +7 轻拧、挺身 "
+            "body.y +0.03），recovery 20→32 卸力归中立。"
+        ),
+        end_tick=32,
+        stop_tick=34,
+        is_loop=False,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

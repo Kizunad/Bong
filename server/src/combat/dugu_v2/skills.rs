@@ -7,6 +7,7 @@ use crate::combat::events::{emit_death_event_if_lethal, DeathEvent, DeathEventIf
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::known_techniques::TechniqueDefinition;
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -18,6 +19,11 @@ use crate::network::audio_event_emit::{
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+
+/// 蛊毒·灌毒签名 recipe——单一真源，供生产 emit（`network::audio_trigger::emit_dugu_v2_audio_triggers`
+/// 读 `ReverseTriggeredEvent` 发出）与 `audio::each_signature_skill_*` 运行时消费契约测试共同引用，
+/// 避免测试另抄一份 recipe id 造成映射漂移假绿。
+pub(crate) const DUGU_POISON_SIGNATURE_RECIPE: &str = "dugu_poison_signature";
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::{qi_release_to_zone, reverse_burst_all_marks};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -31,8 +37,8 @@ use super::events::{
 };
 use super::physics::{
     defender_resistance, dirty_qi_collision, eclipse_effect, fake_qi_color_for_realm,
-    penetrate_spec, reveal_probability, self_cure_gain_percent, shroud_spec, skill_spec,
-    SELF_CURE_REVEAL_THRESHOLD_PERCENT, SELF_CURE_SOFT_CAP_PERCENT,
+    penetrate_spec, reveal_probability, self_cure_gain_percent, shroud_spec,
+    skill_spec_with_definition, SELF_CURE_REVEAL_THRESHOLD_PERCENT, SELF_CURE_SOFT_CAP_PERCENT,
 };
 use super::state::{DuguState, ReverseAftermathCloud, ShroudActive, TaintMark};
 
@@ -121,13 +127,24 @@ pub fn resolve_dugu_v2_skill(
     skill: DuguSkillId,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if is_on_cooldown(world, caster, slot, now_tick) {
+    if is_on_cooldown(world, caster, skill.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
         return rejected(CastRejectReason::QiInsufficient);
     };
-    let spec = skill_spec(skill);
+    let definition = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|registry| registry.get(skill.as_str()))
+        .cloned();
+    if let Some(definition) = definition.as_ref() {
+        if crate::cultivation::technique_scroll::realm_rank(cultivation.realm)
+            < crate::cultivation::technique_scroll::realm_rank(definition.required_realm_value())
+        {
+            return rejected(CastRejectReason::RealmTooLow);
+        }
+    }
+    let spec = skill_spec_with_definition(skill, definition.as_ref());
     if cultivation.qi_current + f64::EPSILON < spec.qi_cost {
         return rejected(CastRejectReason::QiInsufficient);
     }
@@ -136,11 +153,33 @@ pub fn resolve_dugu_v2_skill(
     }
 
     let result = match skill {
-        DuguSkillId::Eclipse => apply_eclipse(world, caster, target, &cultivation, now_tick),
+        DuguSkillId::Eclipse => apply_eclipse(
+            world,
+            caster,
+            target,
+            &cultivation,
+            definition.as_ref(),
+            now_tick,
+        ),
         DuguSkillId::SelfCure => apply_self_cure(world, caster, &cultivation, now_tick),
-        DuguSkillId::Penetrate => apply_penetrate(world, caster, target, &cultivation, now_tick),
+        DuguSkillId::Penetrate => apply_penetrate(
+            world,
+            caster,
+            target,
+            &cultivation,
+            definition.as_ref(),
+            now_tick,
+        ),
         DuguSkillId::Shroud => apply_shroud(world, caster, &cultivation, now_tick),
-        DuguSkillId::Reverse => apply_reverse(world, caster, target, &cultivation, now_tick),
+        DuguSkillId::Reverse => apply_reverse(
+            world,
+            caster,
+            target,
+            &cultivation,
+            spec.qi_cost,
+            definition.as_ref(),
+            now_tick,
+        ),
     };
 
     if let Err(reason) = result {
@@ -168,6 +207,7 @@ fn apply_eclipse(
     caster: Entity,
     target: Option<Entity>,
     _caster_cultivation: &Cultivation,
+    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     let Some(target) = target else {
@@ -176,6 +216,11 @@ fn apply_eclipse(
     let Some(target_cultivation) = world.get::<Cultivation>(target).cloned() else {
         return Err(CastRejectReason::InvalidTarget);
     };
+    if let Some(definition) = definition {
+        if distance_between(world, caster, target) > f64::from(definition.range) {
+            return Err(CastRejectReason::InvalidTarget);
+        }
+    }
     // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）：
     // 杂色时 insidious_color_percent 加成不传入 eclipse_effect
     let is_caster_chaotic = world.get::<QiColor>(caster).is_some_and(|c| c.is_chaotic);
@@ -343,11 +388,17 @@ fn apply_penetrate(
     caster: Entity,
     target: Option<Entity>,
     cultivation: &Cultivation,
+    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     let Some(target) = target else {
         return Err(CastRejectReason::InvalidTarget);
     };
+    if let Some(definition) = definition {
+        if distance_between(world, caster, target) > f64::from(definition.range) {
+            return Err(CastRejectReason::InvalidTarget);
+        }
+    }
     let Some(mark) = world.get::<TaintMark>(target).cloned() else {
         return Err(CastRejectReason::InvalidTarget);
     };
@@ -384,6 +435,9 @@ fn apply_penetrate(
         .map(|mark| mark.tier)
         .unwrap_or(mark.tier);
     let reveal_probability = emit_reveal_if_needed(world, caster, target, now_tick);
+    // bughunt: 侵染的 runtime A/V 必须与自身 visual_for(Penetrate) 一致（针掷/针嘶），
+    // 不能借用 Reverse 的倒蚀远指/cackle——事件 metadata 和实际播放曾各说各话。
+    let visual = visual_for(DuguSkillId::Penetrate);
     send_event_if_present(
         world,
         PenetrateChainEvent {
@@ -399,13 +453,13 @@ fn apply_penetrate(
             // penetrate_zone_credit_tick so the world-qi ledger stays conserved.
             returned_zone_qi: total_qi_drained as f32,
             tick: now_tick,
-            visual: visual_for(DuguSkillId::Penetrate),
+            visual,
         },
     );
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
         emit_vfx(world, pos, "bong:poison_mist", "#228B22", 1.0, 16, 60);
-        emit_audio(world, "dugu_curse_cackle", pos);
-        emit_anim(world, caster, "bong:dugu_pointing_curse");
+        emit_audio(world, visual.sound_recipe_id, pos);
+        emit_anim(world, caster, visual.animation_id);
     }
     Ok(())
 }
@@ -449,10 +503,17 @@ fn apply_reverse(
     caster: Entity,
     target: Option<Entity>,
     cultivation: &Cultivation,
+    base_qi_cost: f64,
+    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     if cultivation.realm != Realm::Void {
         return Err(CastRejectReason::RealmTooLow);
+    }
+    if let (Some(target), Some(definition)) = (target, definition) {
+        if distance_between(world, caster, target) > f64::from(definition.range) {
+            return Err(CastRejectReason::InvalidTarget);
+        }
     }
     let targets = match target {
         Some(target) => affected_taint_targets(world, caster, target, 0.0, true),
@@ -462,9 +523,7 @@ fn apply_reverse(
         return Err(CastRejectReason::InvalidTarget);
     }
     let extra_qi_cost = REVERSE_QI_PER_TARGET * targets.len() as f64;
-    if cultivation.qi_current + f64::EPSILON
-        < skill_spec(DuguSkillId::Reverse).qi_cost + extra_qi_cost
-    {
+    if cultivation.qi_current + f64::EPSILON < base_qi_cost + extra_qi_cost {
         return Err(CastRejectReason::QiInsufficient);
     }
     let intensities: Vec<f64> = targets
@@ -547,7 +606,9 @@ fn apply_reverse(
         },
     );
     emit_vfx(world, center, "bong:poison_mist", "#006400", 1.0, 24, 80);
-    emit_audio(world, "dugu_poison_signature", center);
+    // 签名音效不再内联发（plan-fpv-cast-av-v1 P5 emit 架构统一）：上面已发的
+    // `ReverseTriggeredEvent` 由 `network::audio_trigger::emit_dugu_v2_audio_triggers`
+    // 消费 → 发 `DUGU_POISON_SIGNATURE_RECIPE`（音源同为 `center`）。
     emit_anim(world, caster, "bong:dugu_pointing_curse");
     emit_reveal_if_needed(world, caster, target.unwrap_or(caster), now_tick);
     Ok(())
@@ -735,7 +796,7 @@ fn insert_cast(
     now_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(cooldown_ticks));
+        bindings.set_cooldown(skill.as_str(), now_tick.saturating_add(cooldown_ticks));
     }
     let start_position = world
         .get::<Position>(caster)
@@ -756,10 +817,15 @@ fn insert_cast(
     });
 }
 
-fn is_on_cooldown(world: &bevy_ecs::world::World, caster: Entity, slot: u8, now_tick: u64) -> bool {
+fn is_on_cooldown(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+    now_tick: u64,
+) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn distance_between(world: &bevy_ecs::world::World, a: Entity, b: Entity) -> f64 {
@@ -991,35 +1057,35 @@ pub fn visual_for(skill: DuguSkillId) -> DuguSkillVisual {
             particle_id: "bong:dugu_taint_pulse",
             sound_recipe_id: "dugu_needle_hiss",
             hud_hint: "蚀针",
-            icon_texture: "bong:textures/gui/skill/dugu_eclipse.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png",
         },
         DuguSkillId::SelfCure => DuguSkillVisual {
             animation_id: "bong:dugu_self_cure_pose",
             particle_id: "bong:dugu_dark_green_mist",
             sound_recipe_id: "dugu_self_cure_drink",
             hud_hint: "自蕴",
-            icon_texture: "bong:textures/gui/skill/dugu_self_cure.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_self_cure.png",
         },
         DuguSkillId::Penetrate => DuguSkillVisual {
             animation_id: "bong:dugu_needle_throw",
             particle_id: "bong:dugu_taint_pulse",
             sound_recipe_id: "dugu_needle_hiss",
             hud_hint: "侵染",
-            icon_texture: "bong:textures/gui/skill/dugu_penetrate.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_penetrate.png",
         },
         DuguSkillId::Shroud => DuguSkillVisual {
             animation_id: "bong:dugu_shroud_activate",
             particle_id: "bong:dugu_dark_green_mist",
             sound_recipe_id: "dugu_self_cure_drink",
             hud_hint: "神识遮蔽",
-            icon_texture: "bong:textures/gui/skill/dugu_shroud.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_shroud.png",
         },
         DuguSkillId::Reverse => DuguSkillVisual {
             animation_id: "bong:dugu_pointing_curse",
             particle_id: "bong:dugu_reverse_burst",
             sound_recipe_id: "dugu_curse_cackle",
             hud_hint: "倒蚀",
-            icon_texture: "bong:textures/gui/skill/dugu_reverse.png",
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_reverse.png",
         },
     }
 }

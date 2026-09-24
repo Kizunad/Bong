@@ -17,7 +17,7 @@ class InspectScreenSkillRecentEventTest {
             1234L
         );
 
-        assertEquals("+6 XP", InspectScreen.formatSkillRecentEventLine(entry));
+        assertEquals("+6 XP", com.bong.client.practice.SkillExperienceView.formatSkillRecentEventLine(entry));
     }
 
     @Test
@@ -29,6 +29,6 @@ class InspectScreenSkillRecentEventTest {
             1234L
         );
 
-        assertEquals("升至 Lv.4", InspectScreen.formatSkillRecentEventLine(entry));
+        assertEquals("升至 Lv.4", com.bong.client.practice.SkillExperienceView.formatSkillRecentEventLine(entry));
     }
 }

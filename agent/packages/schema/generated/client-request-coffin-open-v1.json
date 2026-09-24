@@ -26,5 +26,6 @@
     "z": {
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "7a7057df322aa1cafb571a1c966e2d9af800ceaee1c517bf3b8203bb14b9a343"
 }

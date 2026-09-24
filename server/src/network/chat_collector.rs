@@ -9,7 +9,7 @@ use valence::prelude::{
 };
 
 use super::redis_bridge::RedisOutbound;
-use super::RedisBridgeResource;
+use super::{current_unix_timestamp_secs, RedisBridgeResource};
 use crate::combat::components::Lifecycle;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
@@ -51,10 +51,52 @@ pub struct ChatCollectorRateLimit {
 
 impl Resource for ChatCollectorRateLimit {}
 
+#[derive(Debug, Clone, Copy)]
+enum ChatObservationClockSource {
+    System,
+    #[cfg(test)]
+    Fixed(u64),
+}
+
+/// Trusted clock used only for the server→agent chat observation timestamp.
+///
+/// The C2S protocol timestamp remains available separately on
+/// [`PlayerChatCollected`] for existing server-internal consumers.
+#[derive(Debug, Clone, Copy, Resource)]
+pub(super) struct ChatObservationClock {
+    source: ChatObservationClockSource,
+}
+
+impl Default for ChatObservationClock {
+    fn default() -> Self {
+        Self {
+            source: ChatObservationClockSource::System,
+        }
+    }
+}
+
+impl ChatObservationClock {
+    fn now_unix_seconds(&self) -> u64 {
+        match self.source {
+            ChatObservationClockSource::System => current_unix_timestamp_secs(),
+            #[cfg(test)]
+            ChatObservationClockSource::Fixed(timestamp) => timestamp,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixed(timestamp: u64) -> Self {
+        Self {
+            source: ChatObservationClockSource::Fixed(timestamp),
+        }
+    }
+}
+
 #[derive(SystemParam)]
 pub struct ChatCollectorResources<'w> {
     zone_registry: Option<Res<'w, ZoneRegistry>>,
     clock: Option<Res<'w, CombatClock>>,
+    observation_clock: Res<'w, ChatObservationClock>,
     spirit_treasure_registry: Option<ResMut<'w, SpiritTreasureRegistry>>,
     rate_limit: ResMut<'w, ChatCollectorRateLimit>,
 }
@@ -130,6 +172,7 @@ pub fn collect_player_chat(
             player_entity: *client,
             message,
             timestamp: *timestamp,
+            observed_at_seconds: resources.observation_clock.now_unix_seconds(),
             now_tick,
         };
         let Some(classified) = classify_player_message(
@@ -202,7 +245,10 @@ fn broadcast_to_zone(
 struct ChatMessageContext<'a> {
     player_entity: Entity,
     message: &'a str,
+    /// Client-provided Minecraft protocol timestamp in milliseconds.
     timestamp: u64,
+    /// Server-observed timestamp for the Redis/agent freshness contract.
+    observed_at_seconds: u64,
     now_tick: u64,
 }
 
@@ -301,7 +347,7 @@ fn classify_player_message(
     Some(ClassifiedChat::PlayerChat {
         outbound: RedisOutbound::PlayerChat(ChatMessageV1 {
             v: 1,
-            ts: context.timestamp,
+            ts: context.observed_at_seconds,
             player: canonical_player,
             raw: context.message.to_string(),
             zone: zone.clone(),
@@ -467,6 +513,9 @@ mod chat_collector_tests {
     use valence::protocol::packets::play::GameMessageS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
+    const SERVER_OBSERVED_SECONDS: u64 = 1_712_345_700;
+    const UNIX_MILLIS_PER_SECOND: u64 = 1_000;
+
     fn setup_chat_collector_app(
         with_zone_registry: bool,
     ) -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
@@ -481,6 +530,7 @@ mod chat_collector_tests {
             rx_inbound,
         });
         app.insert_resource(ChatCollectorRateLimit::default());
+        app.insert_resource(ChatObservationClock::fixed(SERVER_OBSERVED_SECONDS));
         app.insert_resource(SpiritTreasureRegistry::default());
 
         if with_zone_registry {
@@ -554,10 +604,12 @@ mod chat_collector_tests {
     }
 
     #[test]
-    fn captures_plain_chat() {
+    fn captures_plain_chat_with_server_observed_wire_timestamp() {
         let (mut app, rx_outbound) = setup_chat_collector_app(true);
         let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
-        send_chat_event(&mut app, alice, "这里灵气真足", 1_712_345_700);
+        let forged_future_millis =
+            (SERVER_OBSERVED_SECONDS + 86_400) * UNIX_MILLIS_PER_SECOND + 999;
+        send_chat_event(&mut app, alice, "这里灵气真足", forged_future_millis);
 
         app.update();
 
@@ -568,12 +620,118 @@ mod chat_collector_tests {
         match outbound {
             RedisOutbound::PlayerChat(chat) => {
                 assert_eq!(chat.v, 1);
-                assert_eq!(chat.ts, 1_712_345_700);
+                assert_eq!(
+                    chat.ts, SERVER_OBSERVED_SECONDS,
+                    "ChatMessageV1.ts must use the server-observed Unix second instead of a client-controlled future timestamp"
+                );
                 assert_eq!(chat.player, "offline:Alice");
                 assert_eq!(chat.raw, "这里灵气真足");
+
+                let wire_payload = serde_json::to_string(&chat)
+                    .expect("ChatMessageV1 should serialize for the Redis list wire");
+                let wire_payload: serde_json::Value = serde_json::from_str(&wire_payload)
+                    .expect("serialized ChatMessageV1 should remain valid JSON");
+                assert_eq!(
+                    wire_payload["ts"],
+                    serde_json::json!(SERVER_OBSERVED_SECONDS),
+                    "the Redis JSON payload must carry the trusted server observation time"
+                );
             }
             other => panic!("expected player chat outbound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ignores_client_clock_offsets_without_changing_internal_milliseconds() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let observed_millis = SERVER_OBSERVED_SECONDS * UNIX_MILLIS_PER_SECOND;
+        let cases = [
+            (observed_millis - 60_000, "behind-one-minute"),
+            (observed_millis, "exact-client-clock"),
+            (observed_millis + 60_000, "ahead-one-minute"),
+        ];
+
+        for (protocol_millis, message) in cases {
+            send_chat_event(&mut app, alice, message, protocol_millis);
+        }
+        app.update();
+
+        let outbound_timestamps = (0..cases.len())
+            .map(|_| {
+                let outbound = rx_outbound
+                    .try_recv()
+                    .expect("each accepted chat should be forwarded to Redis");
+                match outbound {
+                    RedisOutbound::PlayerChat(chat) => {
+                        let wire_payload = serde_json::to_value(chat)
+                            .expect("ChatMessageV1 should serialize for the Redis list wire");
+                        wire_payload["ts"]
+                            .as_u64()
+                            .expect("ChatMessageV1.ts should serialize as a non-negative integer")
+                    }
+                    other => panic!("expected player chat outbound, got {other:?}"),
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outbound_timestamps,
+            vec![SERVER_OBSERVED_SECONDS; cases.len()],
+            "negative, exact, and positive client clock offsets must not influence the server-observed Redis timestamp"
+        );
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlayerChatCollected>>();
+        let mut reader = events.get_reader();
+        let collected_timestamps = reader
+            .read(events)
+            .map(|event| event.timestamp)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected_timestamps,
+            cases.map(|(protocol_millis, _)| protocol_millis),
+            "PlayerChatCollected.timestamp must retain each original C2S millisecond value for existing server-internal consumers"
+        );
+    }
+
+    #[test]
+    fn ignores_epoch_and_extreme_future_client_timestamps() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let cases = [(0, "epoch"), (u64::MAX, "max-u64")];
+
+        for (protocol_millis, message) in cases {
+            send_chat_event(&mut app, alice, message, protocol_millis);
+        }
+        app.update();
+
+        for _ in cases {
+            let outbound = rx_outbound
+                .try_recv()
+                .expect("each accepted chat should be forwarded to Redis");
+            match outbound {
+                RedisOutbound::PlayerChat(chat) => assert_eq!(
+                    chat.ts, SERVER_OBSERVED_SECONDS,
+                    "epoch and u64::MAX client timestamps must collapse to the fixed server observation time"
+                ),
+                other => panic!("expected player chat outbound, got {other:?}"),
+            }
+        }
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<PlayerChatCollected>>();
+        let mut reader = events.get_reader();
+        let collected_timestamps = reader
+            .read(events)
+            .map(|event| event.timestamp)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected_timestamps,
+            cases.map(|(protocol_millis, _)| protocol_millis),
+            "internal consumers must still observe the exact protocol millisecond extremes"
+        );
     }
 
     #[test]

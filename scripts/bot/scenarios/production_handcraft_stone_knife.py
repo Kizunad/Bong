@@ -15,8 +15,13 @@
 """
 
 import time
+from bot.scenarios._craft_helpers import stage_material
 
-from bot.scenarios._inventory_helpers import wait_inventory_contains, wait_join_and_inventory
+from bot.scenarios._inventory_helpers import (
+    wait_inventory_contains,
+    wait_inventory_revision_after,
+    wait_join_and_inventory,
+)
 from bot.scenarios._combat_helpers import last_event_time
 
 DESCRIPTION = "手搓石刀全链路：give 原料自动解锁 → craft_start → craft_outcome → 石刀入包"
@@ -28,16 +33,31 @@ OUTPUT_ID = "stone_knife"
 
 def run(env) -> None:
     with env.new_bot("Craft") as bot:
-        wait_join_and_inventory(bot)
+        initial = wait_join_and_inventory(bot)
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
+        cleared = wait_inventory_revision_after(bot, initial["revision"])
 
+        stone_give_anchor = last_event_time(bot)
         bot.cmd("give stone_chunk 1")
+        wood_give_anchor = last_event_time(bot)
         bot.cmd("give wood_handle 1")
-        wait_inventory_contains(bot, "stone_chunk")
-        wait_inventory_contains(bot, "wood_handle")
+        stone_snapshot = wait_inventory_contains(
+            bot,
+            "stone_chunk",
+            after_t=stone_give_anchor,
+            after_revision=cleared["revision"],
+        )
+        wood_snapshot = wait_inventory_contains(
+            bot,
+            "wood_handle",
+            after_t=wood_give_anchor,
+            after_revision=cleared["revision"],
+        )
         time.sleep(1.0)  # 材料发现解锁跑一个 inventory tick
 
+        staged = stage_material(bot, RECIPE_ID, "stone_chunk", snapshot=wood_snapshot)
+        stage_material(bot, RECIPE_ID, "wood_handle", snapshot=staged)
         anchor = last_event_time(bot)
         bot.intent({"type": "craft_start", "v": 1, "recipe_id": RECIPE_ID})
 

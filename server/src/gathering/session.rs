@@ -269,7 +269,7 @@ pub fn tick_gathering_sessions(
         }
     }
 
-    if now_tick % PROGRESS_SYNC_INTERVAL_TICKS != 0 {
+    if !now_tick.is_multiple_of(PROGRESS_SYNC_INTERVAL_TICKS) {
         return;
     }
     for session in store.iter() {

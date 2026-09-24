@@ -8,6 +8,7 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
 import com.bong.client.state.SeasonState;
 import com.bong.client.visual.season.SeasonVisuals;
 import org.junit.jupiter.api.AfterEach;
@@ -15,15 +16,18 @@ import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
 import java.util.List;
+import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MiniBodyHudPlannerTest {
     @AfterEach
     void tearDown() {
         StatusEffectStore.resetForTests();
+        BodyPlanLayoutStore.resetForTests();
     }
 
     @Test
@@ -46,26 +50,40 @@ class MiniBodyHudPlannerTest {
         List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
 
         assertFalse(cmds.isEmpty());
-        // Every command must be a rect and live on the MINI_BODY layer.
+        // 人体和状态条边框使用材质贴图，动态余量使用 rect。
         for (HudRenderCommand c : cmds) {
-            assertTrue(c.isRect(), "expected all rect: " + c.kind());
+            assertTrue(c.isRect() || c.isTexturedRect(), "expected rect or meter texture: " + c.kind());
             assertEquals(HudRenderLayer.MINI_BODY, c.layer());
         }
     }
 
     @Test
-    void woundDotsAreRenderedForNonIntactParts() {
+    void woundUsesPackagedTransparentIconAtBodyPartAndDisappearsAfterHealing() throws Exception {
         CombatHudState hud = CombatHudState.create(0.9f, 0.5f, 0.5f, DerivedAttrFlags.none());
         PhysicalBody body = PhysicalBody.builder()
             .wound(BodyPart.CHEST, WoundLevel.LACERATION)
-            .wound(BodyPart.LEFT_CALF, WoundLevel.FRACTURE)
             .build();
 
-        int noBodyCount = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).size();
-        int withBodyCount = MiniBodyHudPlanner.buildCommands(hud, body, null, 0L, 1920, 1080).size();
-
-        assertEquals(noBodyCount + 2, withBodyCount,
-            "two wounds should add exactly two rect commands");
+        var commands = MiniBodyHudPlanner.buildCommands(hud, body, null, 0L, 1920, 1080);
+        var icon = commands.stream()
+            .filter(command -> command.texturePath().endsWith("/wounds/laceration.png"))
+            .findFirst().orElseThrow(() -> new AssertionError("割裂伤必须有对应贴图，不能退回色块"));
+        int[] chest = MiniBodyHudPlanner.locatePartForTests(
+            MiniBodyHudPlanner.MARGIN_X + MiniBodyHudPlanner.BODY_X_OFFSET,
+            1080 - MiniBodyHudPlanner.PANEL_H - MiniBodyHudPlanner.MARGIN_Y + MiniBodyHudPlanner.BODY_Y_OFFSET,
+            BodyPart.CHEST);
+        assertEquals(chest[0], icon.x() + icon.width() / 2, "伤势图必须跟随胸部锚点");
+        assertEquals(chest[1], icon.y() + icon.height() / 2, "伤势图必须跟随胸部锚点");
+        String resource = "/assets/" + icon.texturePath().replace(':', '/');
+        try (var stream = getClass().getResourceAsStream(resource)) {
+            assertNotNull(stream, "伤势贴图必须打包进客户端: " + resource);
+            var image = ImageIO.read(stream);
+            assertNotNull(image, "伤势贴图必须可解码");
+            assertTrue(image.getColorModel().hasAlpha(), "伤势贴图必须支持透明背景");
+        }
+        var healed = MiniBodyHudPlanner.buildCommands(hud, PhysicalBody.builder().build(), null, 0L, 1920, 1080);
+        assertTrue(healed.stream().noneMatch(command -> command.texturePath().contains("/wounds/")),
+            "伤势恢复后的快照不能留下旧图标");
     }
 
     @Test

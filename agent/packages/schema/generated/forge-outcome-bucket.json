@@ -21,5 +21,6 @@
       "const": "explode",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "a812e4e05183903c6c0681b8a57a426fa9e339e350f2fbeff78557b7a2fbc56b"
 }

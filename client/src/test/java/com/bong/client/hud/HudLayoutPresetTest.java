@@ -19,7 +19,7 @@ class HudLayoutPresetTest {
     void presetSwitchesOnCombatState() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.THREAT_INDICATOR, 0, 0, 10, 2, 0xFFFF0000),
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> peace = HudLayoutPreset.filter(
@@ -47,6 +47,20 @@ class HudLayoutPresetTest {
     }
 
     @Test
+    void svgFrameFadesWithItsContentsWithoutLosingTheAssetSelection() {
+        List<HudRenderCommand> input = List.of(
+            HudRenderCommand.svg(HudRenderLayer.QUICK_BAR, "selected", 10, 20, 22, 24, 0xFFFFFFFF),
+            HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 13, 23, 14, 14, 0xFFFFFFFF)
+        );
+        List<HudRenderCommand> output = HudLayoutPreset.filter(
+            input, HudImmersionMode.Mode.PEACE, HudLayoutPreferenceStore.Density.STANDARD, 250L);
+        assertEquals(2, output.size());
+        assertEquals(output.get(1).color(), output.get(0).color(), "SVG 槽框必须与内容使用相同淡出系数");
+        assertTrue((output.get(0).color() >>> 24) < 255);
+        assertEquals("selected", output.get(0).svgAssetKey());
+    }
+
+    @Test
     void densityOverridesPreset() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF),
@@ -62,6 +76,29 @@ class HudLayoutPresetTest {
 
         assertTrue(minimal.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.COMPASS));
         assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.EVENT_STREAM));
+    }
+
+    @Test
+    void retiredCompassAndSpiritualSenseAreNeverRendered() {
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF),
+            HudRenderCommand.edgeIndicator(
+                HudRenderLayer.SPIRITUAL_SENSE, "LIVING_QI", 0, 0, 0xFFFFFFFF, 1.0
+            ),
+            HudRenderCommand.rect(HudRenderLayer.STATUS_EFFECTS, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> maximum = HudLayoutPreset.filter(
+            commands,
+            HudImmersionMode.Mode.COMBAT,
+            HudLayoutPreferenceStore.Density.MAXIMUM,
+            1_000L
+        );
+
+        assertTrue(maximum.stream().noneMatch(command ->
+            command.layer() == HudRenderLayer.COMPASS
+                || command.layer() == HudRenderLayer.SPIRITUAL_SENSE));
+        assertTrue(maximum.stream().anyMatch(command -> command.layer() == HudRenderLayer.STATUS_EFFECTS));
     }
 
     @Test

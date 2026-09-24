@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "type": "body_plan_layout",
+  "body_plan_id": "humanoid",
+  "silhouette": [
+    {
+      "part_id": "head",
+      "polygon": [
+        { "x": 0.434524, "y": 0.025424 },
+        { "x": 0.565476, "y": 0.025424 },
+        { "x": 0.565476, "y": 0.118644 },
+        { "x": 0.434524, "y": 0.118644 }
+      ]
+    },
+    {
+      "part_id": "chest",
+      "polygon": [
+        { "x": 0.369048, "y": 0.144068 },
+        { "x": 0.630952, "y": 0.144068 },
+        { "x": 0.630952, "y": 0.279661 },
+        { "x": 0.369048, "y": 0.279661 }
+      ]
+    }
+  ],
+  "anchors": [
+    { "part_id": "head", "point": { "x": 0.5, "y": 0.042373 } },
+    { "part_id": "chest", "point": { "x": 0.5, "y": 0.20339 } }
+  ],
+  "meridian_paths": [
+    {
+      "channel_id": "ren",
+      "points": [
+        { "x": 0.482143, "y": 0.415254 },
+        { "x": 0.482143, "y": 0.127119 }
+      ]
+    }
+  ],
+  "part_display_map": [
+    { "server_part_id": "head", "display_segment_id": "head" },
+    { "server_part_id": "chest", "display_segment_id": "chest" }
+  ],
+  "hud_anchors": [
+    { "part_id": "head", "point": { "x": 0.5, "y": 0.053333 } },
+    { "part_id": "chest", "point": { "x": 0.5, "y": 0.226667 } }
+  ]
+}

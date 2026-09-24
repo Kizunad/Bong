@@ -142,6 +142,13 @@ public final class ExtractStateStore {
         }
     }
 
+    /** 断线时清空 portal、撤离快照与坍缩 flash 状态。 */
+    public static synchronized void clearOnDisconnect() {
+        portals.clear();
+        snapshot = ExtractState.empty();
+        collapseFlashTriggered = false;
+    }
+
     public static synchronized void resetForTests() {
         portals.clear();
         snapshot = ExtractState.empty();

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 延寿棺菜单的组件树由 XML 持有，Java 只绑定两个 typed intent。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <padding><all>12</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="coffin-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fixed">240</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#181C24</flat>
+                        <outline>#5B5262</outline>
+                    </surface>
+                    <padding><all>10</all></padding>
+                    <gap>6</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="coffin-title">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#FFE9D9A6</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <button id="coffin-enter">
+                            <sizing>
+                                <horizontal method="fixed">148</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <text>入眠</text>
+                            <renderer><vanilla /></renderer>
+                        </button>
+                        <button id="coffin-reclaim">
+                            <sizing>
+                                <horizontal method="fixed">148</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <text>回收</text>
+                            <renderer><vanilla /></renderer>
+                        </button>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

@@ -11,6 +11,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,72 @@ class MusicStateMachineTest {
 
         assertEquals(-1L, sink.stoppedInstanceId);
         assertEquals(1, player.activeLoopCountForTests());
+    }
+
+    @Test
+    void clearOnDisconnectDelegatesToFullBusinessClear() throws Exception {
+        java.nio.file.Path workingDirectory = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot = java.nio.file.Files.isDirectory(workingDirectory.resolve("src"))
+            ? workingDirectory
+            : workingDirectory.resolve("client");
+        String source = java.nio.file.Files.readString(clientRoot.resolve(
+            "src/main/java/com/bong/client/audio/MusicStateMachine.java"
+        ));
+
+        assertTrue(
+            source.contains("public static void clearOnDisconnect() {\n        INSTANCE.clear();\n    }"),
+            "断线入口必须复用既有 clear()，保留 AMBIENT 复位与活动 transition 硬停语义"
+        );
+    }
+
+    @Test
+    void seasonModifierDisconnectClearTargetsReceiverInstance() {
+        MusicStateMachine singleton = MusicStateMachine.instance();
+        singleton.setSeasonModifier(com.bong.client.state.SeasonState.Phase.WINTER, 0.75);
+        try {
+            RecordingSink sink = new RecordingSink();
+            SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+            MusicStateMachine machine = new MusicStateMachine(player);
+            machine.setSeasonModifier(com.bong.client.state.SeasonState.Phase.SUMMER_TO_WINTER, 0.4);
+
+            machine.clearSeasonModifierOnDisconnect();
+
+            assertEquals(com.bong.client.state.SeasonState.Phase.SUMMER, machine.seasonModifierForTests().phase(),
+                "实例断线清理必须复位接收者自己的季节相位");
+            assertEquals(0.0, machine.seasonModifierForTests().progress(), 1e-6,
+                "实例断线清理必须复位接收者自己的季节进度");
+            assertEquals(com.bong.client.state.SeasonState.Phase.WINTER, singleton.seasonModifierForTests().phase(),
+                "清理注入实例不得误清全局 singleton");
+            assertEquals(0.75, singleton.seasonModifierForTests().progress(), 1e-6,
+                "清理注入实例不得改写全局 singleton 的季节进度");
+        } finally {
+            singleton.clearSeasonModifierForTests();
+        }
+    }
+
+    @Test
+    void clearDropsActiveMusicBeforeSinkRuntimeFailureSoSameUpdateCanRestart() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        MusicStateMachine machine = new MusicStateMachine(player);
+        MusicStateMachine.AmbientZoneUpdate update =
+            update("spawn", "ambient_spawn_plain", MusicStateMachine.State.COMBAT, "ambient_flag");
+
+        assertTrue(machine.apply(update), "前置：旧 session 必须建立 active music");
+        long oldInstanceId = machine.activeInstanceIdForTests();
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, machine::clear);
+
+        assertEquals("stop failed", failure.getMessage(), "RuntimeException 应交给中央 adjunct 隔离并记录");
+        assertEquals(0L, machine.activeInstanceIdForTests(), "sink 失败前必须先摘除旧 active music");
+        assertNull(machine.currentStateForTests(), "sink 失败不得保留旧 transition key");
+        assertFalse(EnvironmentAudioLoopState.isActive("ambient_flag"), "sink 失败不得保留旧 music loop flag");
+        assertEquals(1.0f, player.mixerForTests().effectiveVolume(AudioBus.ENVIRONMENT), 0.0001f,
+            "sink 失败前必须先恢复默认 music bus 状态");
+
+        sink.failStops = false;
+        assertTrue(machine.apply(update), "新 session 的同 key update 必须重新启动，而非被旧 key 短路");
+        assertTrue(machine.activeInstanceIdForTests() > oldInstanceId, "新 session 必须分配新的 music instance");
     }
 
     @Test
@@ -217,6 +284,22 @@ class MusicStateMachineTest {
         public void stop(long instanceId, int fadeOutTicks) {
             stoppedInstanceId = instanceId;
             stoppedFadeOutTicks = fadeOutTicks;
+        }
+    }
+
+    private static final class RuntimeFailingSink implements SoundSink {
+        boolean failStops = true;
+
+        @Override
+        public boolean play(AudioScheduledSound sound) {
+            return true;
+        }
+
+        @Override
+        public void stop(long instanceId, int fadeOutTicks) {
+            if (failStops) {
+                throw new IllegalStateException("stop failed");
+            }
         }
     }
 }

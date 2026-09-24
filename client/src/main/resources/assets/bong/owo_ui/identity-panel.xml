@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 身份面板的组件树与响应式安全区由 XML 持有，Java 只绑定状态和 typed action。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface><vanilla-translucent /></surface>
+            <padding><all>10</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="identity-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#101214</flat>
+                        <outline>#4A4A55</outline>
+                    </surface>
+                    <padding><all>10</all></padding>
+                    <gap>5</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="identity-title">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                            <text>◇ 身 份 面 板 ◇</text>
+                            <color>#FFFFFFFF</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="identity-cooldown">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                            <color>#FF9FD3A0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <text-box id="identity-name">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">20</vertical></sizing>
+                            <max-length>32</max-length>
+                            <show-background>true</show-background>
+                        </text-box>
+                        <flow-layout id="identity-name-actions" direction="horizontal">
+                            <sizing><horizontal method="fixed">190</horizontal><vertical method="fixed">20</vertical></sizing>
+                            <gap>6</gap>
+                            <children>
+                                <button id="identity-new">
+                                    <sizing><horizontal method="fixed">92</horizontal><vertical method="fixed">20</vertical></sizing>
+                                    <text>新建</text><renderer><vanilla /></renderer>
+                                </button>
+                                <button id="identity-rename">
+                                    <sizing><horizontal method="fixed">92</horizontal><vertical method="fixed">20</vertical></sizing>
+                                    <text>改名</text><renderer><vanilla /></renderer>
+                                </button>
+                            </children>
+                        </flow-layout>
+                        <label id="identity-empty">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">12</vertical></sizing>
+                            <color>#FFAAAAAA</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="identity-rows" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">132</vertical></sizing>
+                            <gap>0</gap>
+                            <children>
+                                <flow-layout id="identity-row-0" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-0"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-0"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                                <flow-layout id="identity-row-1" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-1"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-1"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                                <flow-layout id="identity-row-2" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-2"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-2"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                                <flow-layout id="identity-row-3" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-3"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-3"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                                <flow-layout id="identity-row-4" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-4"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-4"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                                <flow-layout id="identity-row-5" direction="horizontal"><sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing><children><label id="identity-entry-5"><sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">20</vertical></sizing></label><button id="identity-switch-5"><sizing><horizontal method="fixed">52</horizontal><vertical method="fixed">20</vertical></sizing><text>切换</text><renderer><vanilla /></renderer></button></children></flow-layout>
+                            </children>
+                        </flow-layout>
+                        <label id="identity-overflow">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">12</vertical></sizing>
+                            <color>#FF888888</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

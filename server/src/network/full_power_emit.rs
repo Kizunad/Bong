@@ -53,7 +53,7 @@ pub fn emit_full_power_charged_orb_vfx(
     charging_q: Query<(&ChargingState, &Position)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
-    if clock.tick % CHARGING_ORB_REFRESH_TICKS != 0 {
+    if !clock.tick.is_multiple_of(CHARGING_ORB_REFRESH_TICKS) {
         return;
     }
     for (charging, position) in &charging_q {
@@ -84,7 +84,9 @@ pub fn emit_full_power_charging_clear_payloads(
     }
 }
 
-/// 给 caster 发 StopAnim(bong:windup_charge)，停掉蓄力保持的循环动画。
+/// 给 caster 发 StopAnim(FULL_POWER_CHARGE_ANIM_ID)，停掉蓄力保持的循环动画。
+/// P3 借用解除：专属抱脉蓄力段（原 windup_charge），id 与 PlayAnim 侧共享
+/// `full_power_strike::FULL_POWER_CHARGE_ANIM_ID` 常量防漂移。
 fn stop_windup_charge_anim(
     caster: Entity,
     ids: &Query<&UniqueId>,
@@ -98,7 +100,7 @@ fn stop_windup_charge_anim(
         position.get(),
         VfxEventPayloadV1::StopAnim {
             target_player: unique_id.0.to_string(),
-            anim_id: "bong:windup_charge".to_string(),
+            anim_id: crate::cultivation::full_power_strike::FULL_POWER_CHARGE_ANIM_ID.to_string(),
             fade_out_ticks: Some(2),
         },
     ));
@@ -184,7 +186,7 @@ pub fn emit_full_power_exhausted_mist_refresh_vfx(
     exhausted_q: Query<(&StatusEffects, &Position)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
-    if clock.tick % EXHAUSTED_MIST_REFRESH_TICKS != 0 {
+    if !clock.tick.is_multiple_of(EXHAUSTED_MIST_REFRESH_TICKS) {
         return;
     }
     for (status, position) in &exhausted_q {
@@ -353,6 +355,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 75.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
 
         app.update();
@@ -443,8 +446,19 @@ mod tests {
                     .resource::<Events<VfxEventRequest>>()
                     .iter_current_update_events()
                     .any(|r| matches!(&r.payload,
+                        VfxEventPayloadV1::StopAnim { anim_id, .. }
+                            if anim_id == crate::cultivation::full_power_strike::FULL_POWER_CHARGE_ANIM_ID)),
+                "蓄力释放应 emit StopAnim(专属抱脉蓄力段) 停掉循环蓄力动画"
+            );
+            // P3 去复用回归锁：释放路径不得再对旧借用 id 发 StopAnim（播/停同源
+            // 常量后，任何一侧回退到 windup_charge 都会造成另一侧循环卡死）。
+            assert!(
+                !app.world()
+                    .resource::<Events<VfxEventRequest>>()
+                    .iter_current_update_events()
+                    .any(|r| matches!(&r.payload,
                         VfxEventPayloadV1::StopAnim { anim_id, .. } if anim_id == "bong:windup_charge")),
-                "蓄力释放应 emit StopAnim(bong:windup_charge) 停掉循环蓄力动画"
+                "去复用回归锁：全力一击蓄力段不得再借通用蓄力 bong:windup_charge"
             );
         }
         // 打断路径
@@ -468,8 +482,9 @@ mod tests {
                     .resource::<Events<VfxEventRequest>>()
                     .iter_current_update_events()
                     .any(|r| matches!(&r.payload,
-                        VfxEventPayloadV1::StopAnim { anim_id, .. } if anim_id == "bong:windup_charge")),
-                "蓄力被打断应 emit StopAnim(bong:windup_charge)"
+                        VfxEventPayloadV1::StopAnim { anim_id, .. }
+                            if anim_id == crate::cultivation::full_power_strike::FULL_POWER_CHARGE_ANIM_ID)),
+                "蓄力被打断应 emit StopAnim(专属抱脉蓄力段)"
             );
         }
     }
@@ -487,6 +502,7 @@ mod tests {
             started_at_tick: 10,
             qi_committed: 150.0,
             target_qi: 150.0,
+            qi_deposits: Vec::new(),
         });
 
         app.update();

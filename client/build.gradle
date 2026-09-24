@@ -106,6 +106,33 @@ sourceSets {
             srcDir "${rootProject.projectDir}/../proto"
         }
     }
+    gametest {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+loom {
+    mods {
+        'bong-client' {
+            sourceSet sourceSets.main
+        }
+        'bong-client-gametest' {
+            sourceSet sourceSets.gametest
+        }
+    }
+    runs {
+        gametest {
+            server()
+            source sourceSets.gametest
+            property 'fabric-api.gametest'
+            property 'fabric-api.gametest.report-file', file('build/gametest-results.xml').absolutePath
+            property 'geckolib.disable_examples', 'true'
+            runDir 'build/gametest'
+        }
+    }
 }
 
 def bongBlockManifest = file('../bong_blocks.json')
@@ -176,24 +203,80 @@ tasks.withType(Test) {
     useJUnitPlatform()
 }
 
-// runClientPreview — 用于 worldgen-snapshot 预览（plan-worldgen-snapshot-v1）。
+tasks.named('runGametest') {
+    doFirst {
+        // Dedicated GameTest servers require an explicit EULA acceptance even on a fresh CI runner.
+        def eulaFile = file('build/gametest/eula.txt')
+        eulaFile.parentFile.mkdirs()
+        eulaFile.setText('eula=true\n', 'UTF-8')
+    }
+}
+
+tasks.named('test') {
+    dependsOn(tasks.named('runGametest'))
+
+    // SkillParticleSpecDocTest 跨目录读 plan §P5.1 粒子 spec 表做对拍。该文件不在 test
+    // sourceSet 里，不声明成任务输入的话：只改 spec 表、不改测试代码时 gradle 会判
+    // UP-TO-DATE 直接跳过，漂移就悄悄溜过去了——正是这类对拍测试要防的事。
+    // （plan 归档后路径会从 docs/ 变到 docs/finished_plans/，两处都列。）
+    inputs.files(
+        files(
+            '../docs/plan-skill-anim-fidelity-v1.md',
+            '../docs/finished_plans/plan-skill-anim-fidelity-v1.md'
+        ).filter { it.exists() }
+    ).withPropertyName('skillParticleSpecDoc')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+// runClientPreview — Bong client/server headless preview handoff。
 // 行为：继承 fabric-loom 的 runClient，自动设 BONG_PREVIEW_HARNESS=1 并把
 // BONG_PREVIEW_CONFIG 默认指向 client/preview-harness.json（绝对路径，避免
 // client/run/ 作为 cwd 时的相对路径误解）。
 //
 // 调用：
-//   ./gradlew runClientPreview                      # 用默认 client/preview-harness.json
-//   BONG_PREVIEW_CONFIG=/abs/cfg.json ./gradlew runClientPreview
+//   ../scripts/build-token.sh gradle runClientPreview                      # 用默认 client/preview-harness.json
+//   BONG_PREVIEW_CONFIG=/abs/cfg.json ../scripts/build-token.sh gradle runClientPreview
 //
 // CI 上需 xvfb-run 包：
-//   xvfb-run -a --server-args='-screen 0 1280x720x24' ./gradlew runClientPreview
+//   xvfb-run -a --server-args='-screen 0 1280x720x24' ../scripts/build-token.sh gradle runClientPreview
 // loom 1.6-SNAPSHOT 不带 useXVFB，须显式包；ubuntu-24.04 预装 xvfb 21.x，无需 apt。
 //
 // 退出条件由 mod 内 PreviewSession 调用 client.scheduleStop()（不会自然退出）。
 tasks.register('runClientPreview') {
     group = 'fabric'
-    description = 'Run Fabric client with preview harness env enabled (worldgen-snapshot)'
+    description = 'Run Fabric client with preview harness env enabled (external raster handoff)'
     dependsOn('runClient')
+}
+
+// runClientUiPreview — 不连服务器，使用固定本地 fixture 打开真实 Screen 并截图。
+// 该入口验证的是 Minecraft 字体、GUI scale、owo inflate/mount 和 framebuffer，
+// 不以离线 XML 模拟图替代 production renderer。
+tasks.register('runClientUiPreview') {
+    group = 'fabric'
+    description = 'Run deterministic Fabric/owo UI screenshot scenarios'
+    dependsOn('runClient')
+    doLast {
+        def configuredPath = System.getenv('BONG_UI_PREVIEW_CONFIG')
+            ?: file('ui-preview-harness.json').absolutePath
+        def previewConfig = new groovy.json.JsonSlurper().parse(file(configuredPath))
+        def configuredOutput = new File(previewConfig.output_dir ?: 'ui-preview-screenshots')
+        def outputDir = configuredOutput.isAbsolute() ? configuredOutput : file('run/' + configuredOutput)
+        def resultFile = new File(outputDir, 'ui-preview-result.txt')
+        if (!resultFile.isFile()) {
+            throw new GradleException(
+                "UI preview 未生成本轮结果标记，客户端可能在状态机结束前退出: ${resultFile}")
+        }
+        def result = resultFile.readLines().findAll { it.contains('=') }.collectEntries { line ->
+            def parts = line.split('=', 2)
+            [(parts[0]): parts[1]]
+        }
+        def expectedCount = previewConfig.screenshots.size().toString()
+        if (result.status != 'passed' || result.completed != expectedCount) {
+            throw new GradleException(
+                "UI preview 失败: status=${result.status}, completed=${result.completed}/${expectedCount}, "
+                    + "phase=${result.phase}, shot=${result.shot}, detail=${result.detail}")
+        }
+    }
 }
 
 tasks.named('runClient').configure {
@@ -204,6 +287,9 @@ tasks.named('runClient').configure {
 
     def isPreviewRun = gradle.startParameter.taskNames.any {
         it == 'runClientPreview' || it.endsWith(':runClientPreview')
+    }
+    def isUiPreviewRun = gradle.startParameter.taskNames.any {
+        it == 'runClientUiPreview' || it.endsWith(':runClientUiPreview')
     }
     if (isPreviewRun) {
         environment 'BONG_PREVIEW_HARNESS', '1'
@@ -216,5 +302,18 @@ tasks.named('runClient').configure {
         // 退出 → artifact 0 张图（首轮 CI 实测命中此 bug）。
         def previewServer = System.getenv('BONG_PREVIEW_SERVER') ?: '127.0.0.1:25565'
         args '--quickPlayMultiplayer', previewServer
+    }
+    if (isUiPreviewRun) {
+        environment 'BONG_UI_PREVIEW_HARNESS', '1'
+        def configuredPath = System.getenv('BONG_UI_PREVIEW_CONFIG')
+            ?: file('ui-preview-harness.json').absolutePath
+        environment 'BONG_UI_PREVIEW_CONFIG', configuredPath
+        doFirst {
+            // 先清理旧结果，避免客户端启动阶段异常时误读上一次的成功标记。
+            def previewConfig = new groovy.json.JsonSlurper().parse(file(configuredPath))
+            def configuredOutput = new File(previewConfig.output_dir ?: 'ui-preview-screenshots')
+            def outputDir = configuredOutput.isAbsolute() ? configuredOutput : file('run/' + configuredOutput)
+            delete new File(outputDir, 'ui-preview-result.txt')
+        }
     }
 }

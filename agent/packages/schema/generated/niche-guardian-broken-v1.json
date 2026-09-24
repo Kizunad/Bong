@@ -30,5 +30,6 @@
     "intruder_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "cc162395c63be880a148256d95e048b14f5656d06d2ca8e9982fa5017cf03046"
 }

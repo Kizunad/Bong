@@ -34,6 +34,7 @@ use crate::combat::body_mass::BodyMass;
 use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
 use crate::combat::events::AttackSource;
 use crate::combat::knockback::KnockbackEvent;
+use crate::npc::scenario::PassiveTarget;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
     entity_collision, wall_collision, EntityCollisionInput, KnockbackResult, WallCollisionInput,
@@ -84,6 +85,8 @@ pub enum MovementMode {
     /// Navigator handles ground A* pathfinding. Default state.
     #[default]
     GroundNav,
+    /// 野生生物的俯冲、扑击或飞行负责位置；击退仍可覆盖此模式。
+    Wildlife,
     /// A short burst of speed — Navigator still drives, but speed is scaled.
     Sprinting(SprintState),
     /// An override ability has taken over Position writing.
@@ -93,7 +96,7 @@ pub enum MovementMode {
 impl MovementMode {
     /// Whether the Navigator should yield (not write Position this tick).
     pub fn navigator_should_yield(&self) -> bool {
-        matches!(self, Self::Override(_))
+        matches!(self, Self::Override(_) | Self::Wildlife)
     }
 
     /// Speed multiplier that the Navigator should apply. 1.0 when not sprinting.
@@ -429,17 +432,30 @@ type StalePendingKnockbackFilter = (
     Without<Client>,
 );
 
-fn apply_pending_knockback_system(
+type PassivePendingKnockbackFilter = (With<PendingKnockback>, With<PassiveTarget>);
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn apply_pending_knockback_system(
     mut commands: Commands,
-    mut controllable: Query<(
-        Entity,
-        &Position,
-        &PendingKnockback,
-        &mut MovementController,
-    )>,
+    mut controllable: Query<
+        (
+            Entity,
+            &Position,
+            &PendingKnockback,
+            &mut MovementController,
+        ),
+        (With<MovementController>, Without<PassiveTarget>),
+    >,
+    passive_targets: Query<Entity, PassivePendingKnockbackFilter>,
     stale: Query<Entity, StalePendingKnockbackFilter>,
 ) {
-    // Apply knockback to entities that have a MovementController (NPCs).
+    // Passive scenario targets are damageable but deliberately have no forced movement.
+    // Remove the request at the production movement boundary so direct attack knockback
+    // and collision-chain knockback obey the same contract.
+    for entity in &passive_targets {
+        commands.entity(entity).remove::<PendingKnockback>();
+    }
+    // Apply knockback to other entities that have a MovementController (NPCs).
     for (entity, position, knockback, mut ctrl) in &mut controllable {
         activate_knockback(&mut ctrl, knockback, position.get().y);
         commands.entity(entity).remove::<PendingKnockback>();
@@ -478,7 +494,7 @@ fn increment_game_tick(mut tick: ResMut<GameTick>) {
 /// - **Dash (Override)**: writes Position directly, Navigator yields.
 /// - When an ability expires, resets to `GroundNav` and writes cooldown.
 #[allow(clippy::type_complexity)]
-fn movement_ability_tick_system(
+pub(crate) fn movement_ability_tick_system(
     mut npcs: ParamSet<(
         Query<
             (
@@ -492,6 +508,7 @@ fn movement_ability_tick_system(
                 Option<&BodyMass>,
                 Option<&mut Wounds>,
                 Option<&EntityLayerId>,
+                Option<&PassiveTarget>,
             ),
             With<NpcMarker>,
         >,
@@ -526,11 +543,17 @@ fn movement_ability_tick_system(
         body_mass,
         mut wounds,
         npc_layer,
+        passive_target,
     ) in &mut npcs.p0()
     {
+        if passive_target.is_some() {
+            ctrl.reset_to_ground();
+            continue;
+        }
+
         let mut layer = npc_layer.and_then(|layer_id| layers.get_mut(layer_id.0).ok());
         match &mut ctrl.mode {
-            MovementMode::GroundNav => {
+            MovementMode::GroundNav | MovementMode::Wildlife => {
                 // Nothing to do — Navigator handles it.
             }
 
@@ -758,14 +781,14 @@ struct CollisionTargetSnapshot {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct GroundedSweepResult {
-    position: DVec3,
+pub(crate) struct GroundedSweepResult {
+    pub(crate) position: DVec3,
     ground_y: f64,
     distance_moved: f64,
     blocked: Option<(BlockPos, BlockState)>,
 }
 
-fn sweep_grounded_motion(
+pub(crate) fn sweep_grounded_motion(
     start: DVec3,
     direction: DVec3,
     requested_distance: f64,

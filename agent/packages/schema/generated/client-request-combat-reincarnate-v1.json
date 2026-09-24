@@ -14,5 +14,6 @@
       "const": "combat_reincarnate",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "bfccc6127b84e71ea5adeab3bbcf6343b60a37492924230f8262fcafe515323b"
 }

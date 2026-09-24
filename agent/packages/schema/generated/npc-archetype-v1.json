@@ -40,5 +40,6 @@
       "const": "skull_fiend",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "1a06f05c077c7ba2af4ff493a70e4c0de0521c0535487f20c118dd83ba7ce7b1"
 }

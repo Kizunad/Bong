@@ -30,5 +30,6 @@
     "place": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "a0386f612572b584c3dc9cb45e3f8f3c852d64d577e2c35fec9814ec6bafcf27"
 }

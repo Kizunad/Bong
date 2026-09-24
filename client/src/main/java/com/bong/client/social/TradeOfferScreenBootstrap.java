@@ -2,14 +2,10 @@ package com.bong.client.social;
 
 import com.bong.client.BongClient;
 import com.bong.client.hud.BongToast;
-import com.bong.client.inventory.model.InventoryItem;
-import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.intent.UiIntentResult;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
-
-import java.util.Comparator;
 
 public final class TradeOfferScreenBootstrap {
     // F4 fix — 交易邀请被其他 GUI 挡时 / 静默过期时的非阻塞提示色（沿用 BongToast.WARNING_COLOR 数值，
@@ -39,6 +35,8 @@ public final class TradeOfferScreenBootstrap {
         MATCHING_TRADE_OFFER,
         /** 当前打开的是一份陈旧的 TradeOfferScreen（对应另一个 offerId，需要换新）。 */
         OTHER_TRADE_OFFER,
+        /** 当前打开的是玩家主动发起交易时的出站 picker。 */
+        REQUEST_PICKER,
         /** 当前打开的是别的（非交易）GUI。 */
         OTHER
     }
@@ -69,7 +67,7 @@ public final class TradeOfferScreenBootstrap {
         if (screenKind == ScreenKind.MATCHING_TRADE_OFFER) {
             return Decision.NOOP;
         }
-        if (screenKind == ScreenKind.OTHER) {
+        if (screenKind == ScreenKind.OTHER || screenKind == ScreenKind.REQUEST_PICKER) {
             return Decision.BLOCKED_TOAST;
         }
         // NONE（没有屏幕）或 OTHER_TRADE_OFFER（陈旧的交易屏）都需要换一份新的 TradeOfferScreen。
@@ -84,13 +82,16 @@ public final class TradeOfferScreenBootstrap {
         switch (decision) {
             case CLOSE_SCREEN -> client.setScreen(null);
             case DECLINE_EXPIRED -> {
-                ClientRequestSender.sendTradeOfferResponse(offer.offerId(), false, null);
-                SocialStateStore.clearTradeOffer(offer.offerId());
-                if (current instanceof TradeOfferScreen) {
-                    client.setScreen(null);
+                UiIntentResult result = TradeOfferClientIntentSink.production().dispatch(
+                    new TradeOfferIntent.Respond(offer.offerId(), false, null)
+                );
+                if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+                    if (isIncomingTradeScreen(screenKind)) {
+                        client.setScreen(null);
+                    }
+                    notifyExpired();
+                    lastBlockedToastOfferId = "";
                 }
-                notifyExpired();
-                lastBlockedToastOfferId = "";
             }
             case OPEN_SCREEN -> {
                 client.setScreen(new TradeOfferScreen(offer));
@@ -102,13 +103,22 @@ public final class TradeOfferScreenBootstrap {
         }
     }
 
-    private static ScreenKind screenKindOf(Screen current, SocialStateStore.TradeOffer offer) {
+    static ScreenKind screenKindOf(Screen current, SocialStateStore.TradeOffer offer) {
         if (current instanceof TradeOfferScreen screen) {
+            if (screen.isRequestPicker()) {
+                // 出站 picker 不是 Store 持有的入站 offer；独立分类以避免过期清理误关。
+                return ScreenKind.REQUEST_PICKER;
+            }
             return offer != null && screen.offerIdForTests().equals(offer.offerId())
                 ? ScreenKind.MATCHING_TRADE_OFFER
                 : ScreenKind.OTHER_TRADE_OFFER;
         }
         return current == null ? ScreenKind.NONE : ScreenKind.OTHER;
+    }
+
+    static boolean isIncomingTradeScreen(ScreenKind screenKind) {
+        return screenKind == ScreenKind.MATCHING_TRADE_OFFER
+            || screenKind == ScreenKind.OTHER_TRADE_OFFER;
     }
 
     /**
@@ -132,15 +142,4 @@ public final class TradeOfferScreenBootstrap {
         lastBlockedToastOfferId = "";
     }
 
-    static InventoryItem firstTradeItem(InventoryModel model) {
-        if (model == null) return null;
-        return model.gridItems().stream()
-            .map(InventoryModel.GridEntry::item)
-            .filter(item -> item != null && !item.isEmpty() && item.instanceId() > 0)
-            .min(Comparator.comparing(InventoryItem::displayName).thenComparingLong(InventoryItem::instanceId))
-            .orElseGet(() -> model.hotbar().stream()
-                .filter(item -> item != null && !item.isEmpty() && item.instanceId() > 0)
-                .min(Comparator.comparing(InventoryItem::displayName).thenComparingLong(InventoryItem::instanceId))
-                .orElse(null));
-    }
 }

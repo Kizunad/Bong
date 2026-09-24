@@ -85,10 +85,6 @@
           "minItems": 3,
           "maxItems": 3
         },
-        "near_death_deadline_tick": {
-          "minimum": 0,
-          "type": "integer"
-        },
         "awaiting_decision": {
           "anyOf": [
             {
@@ -147,10 +143,6 @@
           "anyOf": [
             {
               "const": "Alive",
-              "type": "string"
-            },
-            {
-              "const": "NearDeath",
               "type": "string"
             },
             {
@@ -363,89 +355,9 @@
                     ],
                     "properties": {
                       "id": {
-                        "description": "20 条经脉（12 正经 + 8 奇经）",
-                        "anyOf": [
-                          {
-                            "const": "Lung",
-                            "type": "string"
-                          },
-                          {
-                            "const": "LargeIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Stomach",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Spleen",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Heart",
-                            "type": "string"
-                          },
-                          {
-                            "const": "SmallIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Bladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Kidney",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Pericardium",
-                            "type": "string"
-                          },
-                          {
-                            "const": "TripleEnergizer",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Gallbladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Liver",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Ren",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Du",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Chong",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Dai",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinWei",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangWei",
-                            "type": "string"
-                          }
-                        ]
+                        "minLength": 1,
+                        "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+                        "type": "string"
                       },
                       "tick": {
                         "minimum": 0,
@@ -471,89 +383,9 @@
                     ],
                     "properties": {
                       "id": {
-                        "description": "20 条经脉（12 正经 + 8 奇经）",
-                        "anyOf": [
-                          {
-                            "const": "Lung",
-                            "type": "string"
-                          },
-                          {
-                            "const": "LargeIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Stomach",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Spleen",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Heart",
-                            "type": "string"
-                          },
-                          {
-                            "const": "SmallIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Bladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Kidney",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Pericardium",
-                            "type": "string"
-                          },
-                          {
-                            "const": "TripleEnergizer",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Gallbladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Liver",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Ren",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Du",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Chong",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Dai",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinWei",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangWei",
-                            "type": "string"
-                          }
-                        ]
+                        "minLength": 1,
+                        "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+                        "type": "string"
                       },
                       "tick": {
                         "minimum": 0,
@@ -583,89 +415,9 @@
                     ],
                     "properties": {
                       "id": {
-                        "description": "20 条经脉（12 正经 + 8 奇经）",
-                        "anyOf": [
-                          {
-                            "const": "Lung",
-                            "type": "string"
-                          },
-                          {
-                            "const": "LargeIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Stomach",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Spleen",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Heart",
-                            "type": "string"
-                          },
-                          {
-                            "const": "SmallIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Bladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Kidney",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Pericardium",
-                            "type": "string"
-                          },
-                          {
-                            "const": "TripleEnergizer",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Gallbladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Liver",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Ren",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Du",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Chong",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Dai",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinWei",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangWei",
-                            "type": "string"
-                          }
-                        ]
+                        "minLength": 1,
+                        "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+                        "type": "string"
                       },
                       "tier": {
                         "minimum": 0,
@@ -696,89 +448,9 @@
                     ],
                     "properties": {
                       "id": {
-                        "description": "20 条经脉（12 正经 + 8 奇经）",
-                        "anyOf": [
-                          {
-                            "const": "Lung",
-                            "type": "string"
-                          },
-                          {
-                            "const": "LargeIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Stomach",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Spleen",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Heart",
-                            "type": "string"
-                          },
-                          {
-                            "const": "SmallIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Bladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Kidney",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Pericardium",
-                            "type": "string"
-                          },
-                          {
-                            "const": "TripleEnergizer",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Gallbladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Liver",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Ren",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Du",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Chong",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Dai",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinWei",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangWei",
-                            "type": "string"
-                          }
-                        ]
+                        "minLength": 1,
+                        "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+                        "type": "string"
                       },
                       "tier": {
                         "minimum": 0,
@@ -1044,89 +716,9 @@
                         "type": "string"
                       },
                       "meridian_id": {
-                        "description": "20 条经脉（12 正经 + 8 奇经）",
-                        "anyOf": [
-                          {
-                            "const": "Lung",
-                            "type": "string"
-                          },
-                          {
-                            "const": "LargeIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Stomach",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Spleen",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Heart",
-                            "type": "string"
-                          },
-                          {
-                            "const": "SmallIntestine",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Bladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Kidney",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Pericardium",
-                            "type": "string"
-                          },
-                          {
-                            "const": "TripleEnergizer",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Gallbladder",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Liver",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Ren",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Du",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Chong",
-                            "type": "string"
-                          },
-                          {
-                            "const": "Dai",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangQiao",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YinWei",
-                            "type": "string"
-                          },
-                          {
-                            "const": "YangWei",
-                            "type": "string"
-                          }
-                        ]
+                        "minLength": 1,
+                        "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
+                        "type": "string"
                       },
                       "tick": {
                         "minimum": 0,
@@ -1140,10 +732,10 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
-                  "NearDeath"
+                  "Death"
                 ],
                 "properties": {
-                  "NearDeath": {
+                  "Death": {
                     "type": "object",
                     "required": [
                       "cause",
@@ -1915,5 +1507,6 @@
         }
       }
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "6d8495fb61b9ba319d184075c655ef41172b792daf347abfff14191fea6c7038"
 }

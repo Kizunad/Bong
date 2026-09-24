@@ -94,7 +94,7 @@ pub struct BloodBurnEvent {
     pub hp_burned: f32,
     pub qi_multiplier: f32,
     pub active_until_tick: u64,
-    pub ended_in_near_death: bool,
+    pub ended_in_death: bool,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

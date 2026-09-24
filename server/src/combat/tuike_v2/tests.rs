@@ -8,11 +8,13 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, QiColor, Realm,
 };
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
     InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
 };
+use crate::player::state::canonical_player_id;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent,
@@ -80,6 +82,7 @@ fn inventory_with_skin(template_id: &str, spirit_quality: f64) -> PlayerInventor
         SlotContents::worn_single(skin_item(1001, template_id, spirit_quality)),
     );
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: Vec::new(),
@@ -98,6 +101,12 @@ fn add_tuike_events(world: &mut bevy_ecs::world::World) {
     world.insert_resource(Events::<PermanentTaintAbsorbedEvent>::default());
     world.insert_resource(Events::<crate::qi_physics::QiTransfer>::default());
     world.insert_resource(Events::<crate::skill::events::SkillXpGain>::default());
+}
+
+fn test_app() -> App {
+    let mut app = App::new();
+    app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+    app
 }
 
 fn world_with_player(
@@ -586,7 +595,7 @@ fn maintenance_discount_does_not_apply_below_threshold() {
 
 #[test]
 fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_systems(Update, false_skin_maintenance_tick);
@@ -693,6 +702,7 @@ fn sync_inventory_missing_preserves_empty_stack_until_naked_window_expires() {
         .world_mut()
         .spawn((
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: Vec::new(),
@@ -997,7 +1007,15 @@ fn cast_don_adds_outer_skin_and_event() {
 #[test]
 fn cast_don_rejects_duplicate_outer_skin_without_cooldown_event_or_xp() {
     let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
-    assert_started(cast_don(&mut world, entity, 0, None));
+    let cooldown_ticks = assert_started(cast_don(&mut world, entity, 0, None));
+    // bughunt skillbar-rebind-cooldown-reset 返工：冷却现在按 skill_id 记账，与
+    // 传给 cast_don 的 slot 参数无关——「换个 slot 调用」不再能绕开冷却门。要让
+    // 第二次调用真正走到"重复外层假皮"判定（而不是先被冷却门拦下、断言错方向的
+    // CastRejectReason），必须先把 clock 推过第一次施放设下的冷却窗口。
+    let post_cooldown_tick = 100 + cooldown_ticks;
+    world.insert_resource(CombatClock {
+        tick: post_cooldown_tick,
+    });
     let don_events_before = world
         .resource::<Events<DonFalseSkinEvent>>()
         .get_reader()
@@ -1016,7 +1034,7 @@ fn cast_don_rejects_duplicate_outer_skin_without_cooldown_event_or_xp() {
     assert!(!world
         .get::<SkillBarBindings>(entity)
         .unwrap()
-        .is_on_cooldown(1, 100));
+        .is_on_cooldown(TuikeSkillId::Don.as_str(), post_cooldown_tick));
     assert_eq!(
         world
             .resource::<Events<DonFalseSkinEvent>>()
@@ -1085,6 +1103,123 @@ fn cast_shed_routes_spent_qi_to_overflow_without_zone_context() {
     assert_eq!(
         transfers[0].to.kind,
         crate::qi_physics::QiAccountKind::Overflow
+    );
+}
+
+/// plan-fpv-cast-av-v1 P5 emit 架构统一 —— **端到端 emit-path 门**（主动施法路径）：
+/// 真跑一次 `cast_shed`，再跑真实音效系统 `emit_tuike_v2_audio_triggers`，断言实发的
+/// `PlaySoundRecipeRequest.recipe_id` == 签名 `SHED_SKIN_BURST_RECIPE`（引生产 const 单一真源），
+/// 且**只发一条**。
+///
+/// 重构前 `cast_shed` 内联再发一条**同 recipe 但不同路由**的请求（Pattern B：`pos: None`
+/// 听者锚点 + 64 格广播，不过 dedup），与 `FalseSkinSheddedEvent` 驱动的 Pattern A 那条
+/// （世界锚点 + 距离衰减）叠在一起播——「只发一条」正是锁这个；反过来若哪天 cast 不再发
+/// `FalseSkinSheddedEvent`、或系统不再读它，则一条都发不出来，同样撞红。
+///
+/// 删内联的代价已知并接受：主动蜕壳对 16~64 格外第三方由「有声」变「无声」（L0 volume 0.9
+/// 的世界锚点实际可听约 16 格）。蜕壳是发生在施法者身上的爆发，空间化才是正确表现，
+/// 被动掉壳一直如此；详见 `skills::cast_shed` 处注释。
+#[test]
+fn active_cast_shed_emits_signature_recipe_exactly_once_end_to_end() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_tuike_v2_audio_triggers;
+    use valence::prelude::Position;
+
+    use super::events::SHED_SKIN_BURST_RECIPE;
+
+    let mut app = App::new();
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_systems(Update, emit_tuike_v2_audio_triggers);
+    app.world_mut().insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(app.world_mut());
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin(FALSE_SKIN_ANCIENT_ITEM_ID, 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+            stack_with(FalseSkinTier::Ancient, 1.0),
+            Position::new([5.0, 64.0, -2.0]),
+        ))
+        .id();
+
+    assert_started(cast_shed(app.world_mut(), entity, 0, None));
+    app.update();
+
+    let emitted: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .collect();
+    let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+    assert_eq!(
+        recipes,
+        vec![SHED_SKIN_BURST_RECIPE],
+        "主动蜕壳应经真实 emit 系统实发签名 {SHED_SKIN_BURST_RECIPE}，且只发一条（内联 emit 与 \
+         Pattern A 系统各发一条 = 重复发声），实际 {recipes:?}"
+    );
+    assert_eq!(
+        emitted[0].pos,
+        Some([5, 64, -2]),
+        "音源应落在施法者 Position"
+    );
+}
+
+/// **拒绝路径必须无声**（PR #1262 review 补门）：身上没假皮层时 `cast_shed` 被 `Rejected`，
+/// 既不许发 `FalseSkinSheddedEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+#[test]
+fn rejected_cast_shed_emits_no_audio_and_no_shed_event() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_tuike_v2_audio_triggers;
+    use valence::prelude::Position;
+
+    let mut app = App::new();
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_systems(Update, emit_tuike_v2_audio_triggers);
+    app.world_mut().insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(app.world_mut());
+    // 无 StackedFalseSkins（没披假皮）→ InvalidTarget
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin("stone", 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+            Position::new([5.0, 64.0, -2.0]),
+        ))
+        .id();
+
+    assert_rejected(
+        cast_shed(app.world_mut(), entity, 0, None),
+        CastRejectReason::InvalidTarget,
+    );
+    app.update();
+
+    let shed_events: usize = {
+        let events = app.world().resource::<Events<FalseSkinSheddedEvent>>();
+        events.iter_current_update_events().count()
+    };
+    assert_eq!(
+        shed_events, 0,
+        "被拒绝的蜕壳不得发 FalseSkinSheddedEvent（发了就等于凭空掉了一层假皮）"
+    );
+    let recipes: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .map(|event| event.recipe_id)
+        .collect();
+    assert!(
+        recipes.is_empty(),
+        "被拒绝的蜕壳不得有任何招式音（含签名），实际 {recipes:?}"
     );
 }
 
@@ -1439,8 +1574,13 @@ fn maintenance_qi_per_sec_no_discount_when_chaotic() {
 ///   但 total == cost 的断言会失败。因此将 spirit_qi 清零（满满 50 units 容量）。
 ///
 /// 注意（pitfall b）：实体需要 CurrentDimension 才能 find_zone 成功；否则路由到 overflow。
+///
+/// 注意（pitfall c）：#1931 qi_flow 迁移后扣减在事务内完成，release_qi_amount_to_zone
+///   要求 canonical LifeRecord（玩家/NPC 生产必然携带）；缺它 fail-closed，qi 分文不扣。
 #[test]
 fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -1448,7 +1588,7 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
     use valence::prelude::Position;
 
     // Fan tier 维护费 = 0.1 qi/sec（无折扣），tick=120 整除 TICKS_PER_SECOND=20 触发维护。
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_event::<crate::qi_physics::QiTransfer>();
@@ -1461,6 +1601,8 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // pitfall (b): 必须插入 CurrentDimension；Position 在 spawn zone bounds 内（-128~128, 64~80, -128~128）
+    // pitfall (c): #1931 qi_flow 迁移后 release_qi_amount_to_zone 要求 canonical LifeRecord
+    // （扣减在事务内完成，缺 LifeRecord 直接 fail-closed，不扣不减）；生产玩家/NPC 均携带。
     let entity = app
         .world_mut()
         .spawn((
@@ -1476,6 +1618,7 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
             Position::new([0.0_f64, 66.0, 0.0]),
             CurrentDimension(DimensionKind::Overworld),
             PracticeLog::default(),
+            LifeRecord::new(canonical_player_id("tuike-maintenance")),
         ))
         .id();
 
@@ -1540,7 +1683,7 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Position;
 
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_event::<QiTransfer>();
@@ -1552,6 +1695,8 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // 实体有 Position 但无 CurrentDimension → release_qi_amount_to_zone 走 overflow 分支
+    // LifeRecord 是 R5 P0b qi_flow 契约的身份前提（#1931/#1941）：无 canonical 身份的
+    // release 会被 fail-closed 拒绝（InvalidActorIdentity），与 overflow 路由无关。
     let entity = app
         .world_mut()
         .spawn((
@@ -1567,6 +1712,7 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
             Position::new([0.0_f64, 66.0, 0.0]),
             // 故意不插入 CurrentDimension
             PracticeLog::default(),
+            LifeRecord::new(canonical_player_id("tuike-overflow-fixture")),
         ))
         .id();
 

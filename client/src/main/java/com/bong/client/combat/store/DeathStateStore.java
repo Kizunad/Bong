@@ -94,6 +94,10 @@ public final class DeathStateStore {
         snapshot = State.HIDDEN;
     }
 
+    public static void clearOnDisconnect() {
+        snapshot = State.HIDDEN;
+    }
+
     public static void resetForTests() {
         snapshot = State.HIDDEN;
     }

@@ -2,6 +2,42 @@
   "sources": [
     {
       "type": "single",
+      "resource": "bong:particle/blood_drop_0"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_drop_1"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_drop_2"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_splat_0"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_splat_1"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_splat_2"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_splat_3"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_streak_0"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/blood_streak_1"
+    },
+    {
+      "type": "single",
       "resource": "bong:particle/breakthrough_pillar"
     },
     {

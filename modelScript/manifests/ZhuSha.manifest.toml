@@ -1,0 +1,34 @@
+# 朱砂 ZhuSha —— 特征点名清单
+#
+# 特征来源：`zhu_sha.png` 物品图标与 `ore_zhu_sha.png` 矿石方块贴图：
+# 1. volcanic_crust: 火山熔岩玄武岩黑壳与基座
+# 2. blood_core: 多棱面阶梯切割的整块凝固血髓主石（带粉白冷高光）
+# 3. cluster_facets: 伴生参差错落的小原石棱角块
+# 4. magma_seams: 贯穿断口中露出的明亮橙红熔岩火脉
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+crust_dark = [24, 16, 18]
+crust_base = [46, 24, 28]
+crust_mid  = [68, 32, 36]
+blood_deep = [98, 22, 28]
+blood_body = [168, 34, 38]
+blood_lit  = [214, 58, 66]
+blood_high = [248, 162, 172]
+magma_glow = [255, 92, 42]
+
+[features]
+# 火山玄武岩外壳
+volcanic_crust = { elements = ["crust_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 3000 } }
+
+# 核心凝固血髓主石
+blood_core = { elements = ["core_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 5000, SIDE_R = 4000 } }
+
+# 伴生小多面体晶石
+cluster_facets = { elements = ["facet_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 1500 } }
+
+# 熔岩火脉裂隙
+magma_seams = { elements = ["magma_"], must_show_in = ["FRONT"], min_px = { FRONT = 200 } }

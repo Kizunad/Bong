@@ -23,34 +23,51 @@ on:
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
+# split 原则（不改任何测试脚本/场景代码）：
+# - 原单体 90min job 拆为 DAG，合入 main 新增的 fallback/契约测试后重解
+# - contract 预检中的重复 build-token 入口按 main 最新收敛
+# - 新增 BOT_E2E_FALLBACK_MODE=1 的 bot 片需独立 runner（与原 ambient fixture 互斥）
+
 jobs:
-  e2e:
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      RUN_LABEL: ci
-      REDIS_URL: redis://127.0.0.1:6379
-      CARGO_TERM_COLOR: always
-      CARGO_TARGET_DIR: /tmp/bong-target
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: |
-            agent/package-lock.json
-            agent/packages/schema/package-lock.json
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - working-directory: proto
+        run: buf lint
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: bash scripts/check-proto-breaking.sh
+      - name: Build-token and signal-boundary contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/e2e_redis_hang_guard_contract_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
+          bash scripts/tests/cargo_target_scope_test.sh
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Java 17
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+  client:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: temurin
           java-version: "17"
@@ -59,109 +76,698 @@ jobs:
             client/*.gradle
             client/gradle.properties
             client/gradle/wrapper/gradle-wrapper.properties
+      - run: ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle test
+        working-directory: client
+      - name: Run real owo XML UI preview
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a --server-args='-screen 0 1280x720x24' \
+            ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle runClientUiPreview
+        working-directory: client
+      - if: always()
+        name: Upload UI preview screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-client-ui-preview
+          path: client/run/ui-preview-screenshots/**
+          if-no-files-found: warn
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-client
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+  schema:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - working-directory: agent
+        run: npm ci
+      - working-directory: agent/packages/schema
+        run: |
+          npm run build
+          npm run check
+          npm test
+          npm run generate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: schema-dist
+          path: |
+            agent/packages/schema/dist/**
+            agent/packages/schema/generated/**
+          if-no-files-found: error
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-schema
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
 
-      - name: Cache Rust target
-        uses: actions/cache@v4
+  agent:
+    needs: [preflight, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - working-directory: agent/packages/tiandao
+        run: |
+          npm run check
+          npm test
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-agent
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+
+  server-test:
+    needs: [preflight, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
         with:
           path: |
             /tmp/bong-target
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install buf
-        uses: bufbuild/buf-action@v1
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
         with:
-          setup_only: true
-
-      - name: Proto lint (buf)
-        working-directory: proto
-        run: buf lint
-
-      - name: Proto breaking change check (buf)
-        if: github.event_name == 'pull_request'
-        working-directory: proto
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - name: Shadow server test-all and retain native Cargo test
+        working-directory: server
         run: |
-          if git ls-tree origin/${{ github.event.pull_request.base.ref }} proto/ | grep -q .; then
-            buf breaking --against '../.git#branch=origin/${{ github.event.pull_request.base.ref }},subdir=proto'
-          else
-            echo "proto/ not found on base branch — skipping breaking check (first PR)"
+          set -uo pipefail
+          set +e
+          repo_root="${GITHUB_WORKSPACE:-$(cd .. && pwd -P)}"
+          run_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
+          report_root="$repo_root/.sisyphus/evidence/test-all/server-shadow/$run_id"
+          shadow_report="$report_root/shadow"
+          native_report="$report_root/native"
+          if [[ -e "$report_root" || -L "$report_root" ]]; then
+            printf 'server-test shadow report 已存在，拒绝复用：%s\n' "$report_root" >&2
+            exit 3
+          fi
+          if ! mkdir -p -- "$native_report"; then
+            printf 'server-test shadow report 无法创建：%s\n' "$report_root" >&2
+            exit 3
+          fi
+          report_error=0
+
+          if ! printf '%s\n' 'cd server && ../scripts/test-all.sh --profile unit --suite server' \
+            > "$report_root/shadow-command.txt"; then
+            report_error=3
+          fi
+          ../scripts/test-all.sh \
+            --profile unit \
+            --suite server \
+            --report-dir "$shadow_report"
+          wrapper_exit=$?
+          if ! printf '%s\n' "$wrapper_exit" > "$report_root/wrapper-exit-code"; then
+            report_error=3
           fi
 
-      - name: Install agent workspace dependencies
-        working-directory: agent
-        run: npm ci
+          # 保留原有 working-directory=server 的原生命令；stdout 用 tee
+          # 复制，stderr 单独留存，避免 tracing 行插入 cargo 的测试结果。
+          # PIPESTATUS[0] 才是 build-token/cargo test 的真实退出码。
+          if ! printf '%s\n' 'cd server && ../scripts/build-token.sh cargo test' \
+            > "$native_report/command.txt"; then
+            report_error=3
+          fi
+          ../scripts/build-token.sh cargo test 2> "$native_report/stderr.log" | tee "$native_report/stdout.log"
+          native_pipeline_status=("${PIPESTATUS[@]}")
+          native_exit="${native_pipeline_status[0]:-125}"
+          native_tee_exit="${native_pipeline_status[1]:-125}"
+          if ! printf '%s\n' "$native_exit" > "$native_report/exit-code"; then
+            report_error=3
+          fi
+          if ! printf '%s\n' "$native_tee_exit" > "$native_report/tee-exit-code"; then
+            report_error=3
+          fi
+          if [[ "$native_exit" -eq 0 ]]; then
+            if ! printf '%s\n' PASS > "$native_report/status"; then report_error=3; fi
+          else
+            if ! printf '%s\n' FAIL > "$native_report/status"; then report_error=3; fi
+          fi
 
-      - name: Client stage (gradlew test)
-        working-directory: client
-        run: ./gradlew test
+          if [[ "$native_tee_exit" -ne 0 ]]; then report_error=3; fi
+          python3 - "$report_root" "$shadow_report" "$native_report" \
+            "$wrapper_exit" "$native_exit" "$native_tee_exit" "$report_error" <<'PY'
+          import difflib
+          import json
+          import pathlib
+          import re
+          import sys
 
-      - name: Pre-pull Redis image with retry
-        run: |
-          for attempt in 1 2 3; do
-            if docker compose -f docker-compose.test.yml pull redis; then
-              exit 0
-            fi
-            delay=$((attempt * 10))
-            echo "redis image pull failed on attempt ${attempt}; retrying in ${delay}s"
-            sleep "${delay}"
-          done
-          docker compose -f docker-compose.test.yml pull redis
+          report_root = pathlib.Path(sys.argv[1])
+          shadow_report = pathlib.Path(sys.argv[2])
+          native_report = pathlib.Path(sys.argv[3])
+          wrapper_process_exit = int(sys.argv[4])
+          native_process_exit = int(sys.argv[5])
+          native_tee_exit = int(sys.argv[6])
+          report_error = int(sys.argv[7])
 
-      - name: Bring up Redis test service
-        run: docker compose -f docker-compose.test.yml up -d redis --wait
+          differences = []
+          errors = []
+          ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+          result_re = re.compile(
+              r"test result:\s*(ok|FAILED)\.\s*"
+              r"(\d+) passed;\s*(\d+) failed;\s*(\d+) ignored;\s*"
+              r"(\d+) measured;\s*(\d+) filtered out;"
+          )
+          # Keep only the cargo test result token when a runner appends a
+          # tracing diagnostic to the same result line.
+          case_re = re.compile(r"^test\s+(.+?)\s+\.\.\.\s+(ok|FAILED|ignored)(?=\s|$)")
 
-      - name: Schema stage (build + check + test + generate)
-        working-directory: agent/packages/schema
-        run: |
-          npm run build
-          npm run check
-          npm test
-          npm run generate
+          def read(path, required=True):
+              try:
+                  return path.read_text(encoding="utf-8", errors="replace")
+              except OSError as exc:
+                  if required:
+                      errors.append(f"无法读取 {path}: {exc}")
+                  return ""
 
-      - name: Agent stage (check + test)
-        working-directory: agent/packages/tiandao
-        run: |
-          npm run check
-          npm test
+          def canonical_lines(text):
+              lines = []
+              for raw_line in text.splitlines():
+                  line = ansi.sub("", raw_line).strip()
+                  result = result_re.search(line)
+                  if result:
+                      status, passed, failed, ignored, measured, filtered = result.groups()
+                      lines.append(
+                          "test result: "
+                          f"{status}. {passed} passed; {failed} failed; {ignored} ignored; "
+                          f"{measured} measured; {filtered} filtered out;"
+                      )
+                      continue
+                  case = case_re.match(line)
+                  if case:
+                      lines.append(f"test {case.group(1)} ... {case.group(2)}")
+              return lines
 
-      - name: Build server release binary
-        working-directory: server
-        run: cargo build --release
+          def counts(lines):
+              records = []
+              for line in lines:
+                  result = result_re.search(line)
+                  if result:
+                      status, passed, failed, ignored, measured, filtered = result.groups()
+                      records.append(
+                          {
+                              "status": status,
+                              "passed": int(passed),
+                              "failed": int(failed),
+                              "ignored": int(ignored),
+                              "measured": int(measured),
+                              "filtered_out": int(filtered),
+                          }
+                      )
+              total = {
+                  "targets": len(records),
+                  "passed": sum(item["passed"] for item in records),
+                  "failed": sum(item["failed"] for item in records),
+                  "ignored": sum(item["ignored"] for item in records),
+                  "measured": sum(item["measured"] for item in records),
+                  "filtered_out": sum(item["filtered_out"] for item in records),
+              }
+              return total, records
 
-      - name: Server stage (cargo test)
-        working-directory: server
-        run: cargo test
+          def failed_tests(lines):
+              names = []
+              for line in lines:
+                  case = case_re.match(line)
+                  if case and case.group(2) == "FAILED":
+                      names.append(case.group(1))
+              return sorted(set(names))
 
-      - name: Smoke/E2E stage (Task 13 harness)
-        env:
-          RUN_LABEL: ci-smoke
-        run: bash scripts/smoke-test-e2e.sh
+          shadow_stdout = read(shadow_report / "server/stdout.log")
+          shadow_stderr = read(shadow_report / "server/stderr.log")
+          native_stdout = read(native_report / "stdout.log")
+          native_stderr = read(native_report / "stderr.log")
+          shadow_lines = canonical_lines(shadow_stdout + "\n" + shadow_stderr)
+          native_lines = canonical_lines(native_stdout + "\n" + native_stderr)
+          shadow_counts, shadow_records = counts(shadow_lines)
+          native_counts, native_records = counts(native_lines)
+          shadow_failed_tests = failed_tests(shadow_lines)
+          native_failed_tests = failed_tests(native_lines)
 
-      # AGENTS.md §15 —— 协议级黑盒玩家场景（复用上面已构建的 release 二进制和 redis）
-      - name: Bot e2e stage (protocol-level player scenarios)
-        env:
-          BOT_E2E_RUN_TAG: ci
-          BOT_E2E_KILL_STALE: "1"
-        run: bash scripts/bot-e2e.sh
+          summary_path = shadow_report / "summary.json"
+          try:
+              summary = json.loads(read(summary_path))
+          except (json.JSONDecodeError, TypeError) as exc:
+              summary = {}
+              errors.append(f"shadow summary.json 不是有效 JSON: {exc}")
 
-      - name: Upload e2e evidence artifacts
-        if: always()
+          suites = summary.get("suites", []) if isinstance(summary, dict) else []
+          server_suites = [item for item in suites if item.get("suite") == "server"]
+          if len(server_suites) != 1:
+              errors.append(f"shadow summary 必须恰好有一个 server suite，实际 {len(server_suites)}")
+              shadow_suite = {}
+          else:
+              shadow_suite = server_suites[0]
+          shadow_suite_status = shadow_suite.get("status")
+          shadow_suite_exit = shadow_suite.get("exit_code")
+          if not isinstance(shadow_suite_exit, int):
+              errors.append("shadow server suite 缺少整数 exit_code")
+              shadow_suite_exit = 125
+
+          shadow_failure_suites = [
+              item.get("suite")
+              for item in suites
+              if item.get("status") != "PASS" and item.get("suite")
+          ]
+          native_failure_suites = []
+          if native_process_exit != 0 or native_counts["failed"] > 0:
+              native_failure_suites.append("server")
+
+          if shadow_suite_status == "PASS" and shadow_suite_exit != 0:
+              differences.append("shadow server suite 标记 PASS 但 exit_code 非 0")
+          if shadow_suite_status != "PASS" and shadow_suite_exit == 0:
+              differences.append("shadow server suite 非 PASS 但 exit_code 为 0")
+          if shadow_suite_exit != native_process_exit:
+              differences.append(
+                  "shadow suite exit_code 与原生 cargo test exit_code 不一致："
+                  f"shadow={shadow_suite_exit} native={native_process_exit}"
+              )
+          if (wrapper_process_exit == 0) != (native_process_exit == 0):
+              differences.append(
+                  "wrapper/native 成功性不一致："
+                  f"wrapper={wrapper_process_exit} native={native_process_exit}"
+              )
+          if shadow_counts != native_counts:
+              differences.append(
+                  f"测试计数不一致：shadow={shadow_counts} native={native_counts}"
+              )
+          if shadow_failure_suites != native_failure_suites:
+              differences.append(
+                  f"失败 suite 不一致：shadow={shadow_failure_suites} native={native_failure_suites}"
+              )
+          if shadow_failed_tests != native_failed_tests:
+              differences.append(
+                  f"失败测试不一致：shadow={shadow_failed_tests} native={native_failed_tests}"
+              )
+          if not shadow_records:
+              errors.append("shadow 原生日志没有可解析的 test result 计数")
+          if not native_records:
+              errors.append("native Cargo 输出没有可解析的 test result 计数")
+          if native_tee_exit != 0:
+              errors.append(f"native Cargo 报告 tee 失败，tee_exit={native_tee_exit}")
+          if report_error != 0:
+              errors.append(f"报告写入/采集失败，report_error={report_error}")
+
+          report_diff = list(
+              difflib.unified_diff(
+                  sorted(shadow_lines),
+                  sorted(native_lines),
+                  fromfile="shadow/normalized-native-report",
+                  tofile="native/normalized-cargo-report",
+                  lineterm="",
+              )
+          )
+          if report_diff:
+              differences.append(
+                  f"规范化原生报告存在差异，共 {len(report_diff)} 行；详见 native-report.diff"
+              )
+          diff_path = report_root / "native-report.diff"
+          try:
+              diff_path.write_text(
+                  "\n".join(report_diff)
+                  + ("\n" if report_diff else "No normalized native report differences.\n"),
+                  encoding="utf-8",
+              )
+          except OSError as exc:
+              errors.append(f"无法写入 native-report.diff: {exc}")
+
+          status = "PASS" if not differences and not errors else "FAIL"
+          comparison = {
+              "status": status,
+              "report_root": str(report_root),
+              "shadow_report": str(shadow_report),
+              "native_report": str(native_report),
+              "wrapper_exit_code": wrapper_process_exit,
+              "native_exit_code": native_process_exit,
+              "wrapper": {
+                  "exit_code": wrapper_process_exit,
+                  "suite_exit_code": shadow_suite_exit,
+                  "suite_status": shadow_suite_status,
+                  "test_counts": shadow_counts,
+                  "test_result_records": shadow_records,
+                  "failed_tests": shadow_failed_tests,
+                  "failed_suites": shadow_failure_suites,
+              },
+              "native": {
+                  "exit_code": native_process_exit,
+                  "tee_exit_code": native_tee_exit,
+                  "test_counts": native_counts,
+                  "test_result_records": native_records,
+                  "failed_tests": native_failed_tests,
+                  "failed_suites": native_failure_suites,
+              },
+              "exit_code_comparison": {
+                  "wrapper_process_vs_native_outcome": (wrapper_process_exit == 0)
+                  == (native_process_exit == 0),
+                  "wrapper_suite_vs_native_exact": shadow_suite_exit == native_process_exit,
+              },
+              "test_count_comparison": shadow_counts == native_counts,
+              "failed_suite_comparison": shadow_failure_suites == native_failure_suites,
+              "native_report_diff": str(diff_path),
+              "native_report_diff_lines": len(report_diff),
+              "differences": differences,
+              "errors": errors,
+          }
+          try:
+              (report_root / "comparison.json").write_text(
+                  json.dumps(comparison, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              tsv_rows = [
+                  ("comparison_status", status, "", status == "PASS"),
+                  ("wrapper_process_exit_code", wrapper_process_exit, native_process_exit, wrapper_process_exit == native_process_exit),
+                  ("wrapper_suite_exit_code", shadow_suite_exit, native_process_exit, shadow_suite_exit == native_process_exit),
+                  ("test_counts", json.dumps(shadow_counts, sort_keys=True), json.dumps(native_counts, sort_keys=True), shadow_counts == native_counts),
+                  ("failed_suites", ",".join(shadow_failure_suites), ",".join(native_failure_suites), shadow_failure_suites == native_failure_suites),
+                  ("failed_tests", ",".join(shadow_failed_tests), ",".join(native_failed_tests), shadow_failed_tests == native_failed_tests),
+                  ("native_report_diff_lines", len(report_diff), "0", not report_diff),
+              ]
+              with (report_root / "comparison.tsv").open("w", encoding="utf-8") as handle:
+                  handle.write("metric\tshadow\tnative\tmatch\n")
+                  for metric, shadow, native, match in tsv_rows:
+                      handle.write(f"{metric}\t{shadow}\t{native}\t{str(match).upper()}\n")
+          except OSError as exc:
+              print(f"无法写入 comparison report: {exc}", file=sys.stderr)
+              sys.exit(3)
+
+          print(
+              f"server-test shadow comparison={status} "
+              f"wrapper_exit={wrapper_process_exit} suite_exit={shadow_suite_exit} "
+              f"native_exit={native_process_exit} "
+              f"shadow_tests={shadow_counts} native_tests={native_counts} "
+              f"report={report_root}"
+          )
+          if status != "PASS":
+              for message in differences + errors:
+                  print(f"server-test shadow difference: {message}", file=sys.stderr)
+              sys.exit(1)
+          PY
+          comparison_exit=$?
+
+          if [[ "$native_tee_exit" -ne 0 || "$report_error" -ne 0 ]]; then
+            exit 3
+          fi
+          if [[ "$native_exit" -ne 0 ]]; then
+            exit "$native_exit"
+          fi
+          if [[ "$wrapper_exit" -ne 0 ]]; then
+            exit "$wrapper_exit"
+          fi
+          if [[ "$comparison_exit" -ne 0 ]]; then
+            exit "$comparison_exit"
+          fi
+          exit 0
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-evidence
+          name: evidence-server-test
           path: .sisyphus/evidence/**
           if-no-files-found: warn
 
-      - name: Dump compose logs on failure
-        if: failure()
-        run: docker compose -f docker-compose.test.yml logs redis
+  build-release:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      manifest: ${{ steps.server-release-artifact.outputs.manifest }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Build one sequential server release artifact
+        id: server-release-artifact
+        working-directory: server
+        run: |
+          set -euo pipefail
+          build_binary="${CARGO_TARGET_DIR:?}/release/bong-server"
+          artifact_dir="${CARGO_TARGET_DIR:?}/release"
+          manifest="$artifact_dir/manifest.json"
+          mkdir -p -- "$artifact_dir"
+          rm -f -- "$manifest"
+          ../scripts/build-token.sh cargo build --release
+          test -f "$build_binary"
+          test ! -L "$build_binary"
+          commit="${GITHUB_SHA:?GITHUB_SHA must be provided by GitHub Actions}"
+          test "$(git rev-parse HEAD)" = "$commit"
+          sha256="$(sha256sum "$build_binary" | awk '{print $1}')"
+          python3 - "$manifest" "$build_binary" "$commit" "$sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
 
-      - name: Tear down Redis test service
-        if: always()
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "binary": str(pathlib.Path(sys.argv[2]).resolve(strict=True)),
+                      "commit": sys.argv[3],
+                      "profile": "release",
+                      "sha256": sys.argv[4],
+                  },
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python3 ../scripts/lib/bong_server_provenance.py check "$manifest" "$GITHUB_WORKSPACE"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "server release artifact commit=$commit sha256=$sha256 manifest=$manifest"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bong-server-release
+          path: |
+            /tmp/bong-target/release/bong-server
+            /tmp/bong-target/release/manifest.json
+          if-no-files-found: error
+
+  smoke:
+    needs: [schema, agent, server-test, build-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUN_LABEL: ci-smoke
+      REDIS_URL: redis://127.0.0.1:6379
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+      BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
+      BONG_SHUTDOWN_PROBE_BIN: /tmp/bong-target/release/bong-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      - run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          docker compose -f docker-compose.test.yml pull redis
+      - run: docker compose -f docker-compose.test.yml up -d redis --wait
+      - run: bash scripts/smoke-test-e2e.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-smoke
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+      - if: failure()
+        run: docker compose -f docker-compose.test.yml logs redis
+      - if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans
+
+  # Bot e2e stage (protocol-level player scenarios)
+  bot-e2e:
+    needs: [build-release, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      BOT_E2E_RUN_TAG: ci
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      # Sharding is by fixture mode (mutually exclusive world ownership),
+      # not by scenario list — each mode has independent evidence and cannot share a runner.
+      - if: matrix.shard == 1
+        env:
+          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}
+        run: bash scripts/bot-e2e.sh
+      # Bot fallback-flat e2e stage (spawn distribution coverage)
+      # BOT_E2E_RUN_TAG: ci
+      - if: matrix.shard == 2
+        env:
+          BOT_E2E_FALLBACK_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}
+        run: bash scripts/bot-e2e.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-bot-shard-${{ matrix.shard }}
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+
+  chat-window:
+    needs: [build-release, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+      CHAT_WINDOW_E2E_PROFILE: release
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      - run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          docker compose -f docker-compose.test.yml pull redis
+      - run: docker compose -f docker-compose.test.yml up -d redis --wait
+      # Bot chat timestamp -> Tiandao window e2e
+      - run: bash scripts/e2e-chat-signal-window.sh
+        env:
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-chat-window
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+      - if: always()
         run: docker compose -f docker-compose.test.yml down -v --remove-orphans

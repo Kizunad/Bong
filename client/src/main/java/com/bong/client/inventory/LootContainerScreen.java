@@ -1,14 +1,13 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DragState;
-import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.network.ClientRequestProtocol;
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.contract.DefaultUiScreenScope;
+import com.bong.client.ui.contract.UiScreenScope;
+import com.bong.client.ui.intent.UiIntentResult;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -35,7 +34,7 @@ import java.util.function.Consumer;
  * <p>左侧：玩家容器列表（body_pocket + 已装备的背包等）</p>
  * <p>右侧：棺材 loot 格子（根据 grade 不同大小）</p>
  * <p>底部：倒计时进度条</p>
- * <p>拖拽：共享 DragState，drop 时通过 ClientRequestSender 发送 ExternalContainerMove</p>
+ * <p>拖拽：共享 DragState，通过 typed intent 发送 ExternalContainerMove</p>
  */
 public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("物资棺");
@@ -62,10 +61,10 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout timerBarFill;
     private FlowLayout timerBarContainer;
 
-    private Consumer<InventoryModel> inventoryListener;
-    private LootContainerStateStore.Listener storeListener;
+    private final LootContainerScreenController controller;
+    private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
 
-    public LootContainerScreen(LootContainerStateStore.OpenSession session) {
+    public LootContainerScreen(LootContainerSession.Open session) {
         super(TITLE);
         this.sessionId = session.sessionId();
         this.sourceKind = session.sourceKind();
@@ -75,6 +74,8 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         this.timeoutWallSecs = session.timeoutWallSecs();
         this.openedAtSecs = System.currentTimeMillis() / 1000;
         this.extContainerId = "ext_" + sessionId;
+        this.controller = LootContainerScreenController.production(session, this::applyViewModel,
+            LootContainerScreen::executeOnClientThread);
     }
 
     long sessionId() { return sessionId; }
@@ -108,7 +109,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.gap(4);
         leftCol.child(Components.label(Text.literal("§f背包")));
 
-        InventoryModel model = InventoryStateStore.snapshot();
+        InventoryModel model = controller.viewModel().inventory();
         if (model != null) {
             for (InventoryModel.ContainerDef cdef : model.containers()) {
                 BackpackGridPanel grid = new BackpackGridPanel(cdef.id(), cdef.rows(), cdef.cols());
@@ -133,7 +134,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         rightCol.child(Components.label(Text.literal("§f棺内物品")));
 
         lootGrid = new BackpackGridPanel(extContainerId, lootRows, lootCols);
-        populateLootGrid();
+        populateLootGrid(controller.viewModel().openSession());
         rightCol.child(lootGrid.container());
 
         // Timer bar
@@ -153,30 +154,28 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         panel.child(content);
         root.child(panel);
 
-        // Listen for inventory changes
-        inventoryListener = inv -> {
-            MinecraftClient.getInstance().execute(() -> {
-                if (MinecraftClient.getInstance().currentScreen == this) {
-                    refreshPlayerGrids(inv);
-                }
-            });
-        };
-        InventoryStateStore.addListener(inventoryListener);
-
-        // Listen for loot container state changes
-        storeListener = session -> {
-            MinecraftClient.getInstance().execute(() -> {
-                if (session instanceof LootContainerStateStore.Closed) {
-                    close();
-                } else if (session instanceof LootContainerStateStore.OpenSession open
-                    && open.sessionId() == sessionId) {
-                    populateLootGrid();
-                }
-            });
-        };
-        LootContainerStateStore.addListener(storeListener);
-
         updateTimer();
+        if (!scope.isOpen()) {
+            scope.onOpen();
+            controller.onOpen(scope);
+        }
+    }
+
+    private static void executeOnClientThread(Runnable action) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) action.run();
+        else client.execute(action);
+    }
+
+    private void applyViewModel(LootContainerScreenViewModel model) {
+        if (!(model.session() instanceof LootContainerSession.Open open)
+            || open.sessionId() != sessionId) {
+            // Closed 或另一份 session 都意味着当前 screen 已过期，不能继续展示旧容器。
+            close();
+            return;
+        }
+        refreshPlayerGrids(model.inventory());
+        populateLootGrid(open);
     }
 
     private String containerTitle() {
@@ -191,11 +190,9 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    private void populateLootGrid() {
+    private void populateLootGrid(LootContainerSession.Open open) {
         lootGrid.clearAll();
-        LootContainerStateStore.Session session = LootContainerStateStore.current();
-        if (session instanceof LootContainerStateStore.OpenSession open
-            && open.sessionId() == sessionId) {
+        if (open != null && open.sessionId() == sessionId) {
             for (InventoryModel.GridEntry entry : open.placedItems()) {
                 lootGrid.place(entry.item(), entry.row(), entry.col());
             }
@@ -345,12 +342,9 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
 
     private void sendMove(long instanceId, String fromContainer, int fromRow, int fromCol,
                           String toContainer, int toRow, int toCol) {
-        ClientRequestSender.sendExternalContainerMove(
-            sessionId,
-            instanceId,
-            new ClientRequestProtocol.ContainerLoc(fromContainer, fromRow, fromCol),
-            new ClientRequestProtocol.ContainerLoc(toContainer, toRow, toCol)
-        );
+        controller.intentSink().dispatch(new LootContainerIntent.Move(
+            sessionId, instanceId, fromContainer, fromRow, fromCol, toContainer, toRow, toCol
+        ));
     }
 
     private void restoreItem(InventoryItem item, String containerId, int row, int col) {
@@ -406,7 +400,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-            ClientRequestSender.sendExternalContainerClose(sessionId);
+            controller.intentSink().dispatch(new LootContainerIntent.Close(sessionId));
             close();
             return true;
         }
@@ -415,14 +409,19 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public void close() {
-        if (inventoryListener != null) {
-            InventoryStateStore.removeListener(inventoryListener);
-            inventoryListener = null;
-        }
-        if (storeListener != null) {
-            LootContainerStateStore.removeListener(storeListener);
-            storeListener = null;
-        }
+        closeStateScope();
         super.close();
+    }
+
+    /** Minecraft 直接切屏时会走 removed()，同样需要关闭 source/controller。 */
+    @Override
+    public void removed() {
+        closeStateScope();
+        super.removed();
+    }
+
+    private void closeStateScope() {
+        if (scope != null && !scope.isClosed()) scope.close();
+        controller.onClose();
     }
 }

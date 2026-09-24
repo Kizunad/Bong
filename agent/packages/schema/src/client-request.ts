@@ -26,11 +26,11 @@ import { FalseSkinKindV1 } from "./tuike.js";
 import { VoidActionRequestV1 } from "./void-actions.js";
 import {
   AgentUiActionType,
-  AgentUiResponsePayloadV1,
+  AgentUiClientResponsePayloadV1,
 } from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
-const HOTBAR_SLOT_COUNT = 9;
+const HOTBAR_SLOT_COUNT = 2;
 
 export const SetMeridianTargetRequestV1 = Type.Object(
   {
@@ -401,7 +401,8 @@ export const QuickSlotBindRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("quick_slot_bind"),
     slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
-    item_id: Type.Union([Type.Null(), Type.String({ minLength: 1 })]),
+    instance_id: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
+    request_id: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },
 );
@@ -447,6 +448,21 @@ export const SkillBarBindRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type SkillBarBindRequestV1 = Static<typeof SkillBarBindRequestV1>;
+
+export const TechniqueBindRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("technique_bind"),
+    skill_id: Type.String({ minLength: 1 }),
+    target: Type.Union([
+      Type.Object({ kind: Type.Literal("combat"), slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }) }, { additionalProperties: false }),
+      Type.Object({ kind: Type.Literal("dash") }, { additionalProperties: false }),
+    ]),
+    expected_binding: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type TechniqueBindRequestV1 = Static<typeof TechniqueBindRequestV1>;
 
 export const SkillConfigIntentRequestV1 = Type.Object(
   {
@@ -1031,6 +1047,17 @@ export const ForgeStationPlaceRequestV1 = Type.Object(
 );
 export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV1>;
 
+/** 右键炼器砧。服务端按坐标校验真实工位、距离和使用权。 */
+export const ForgeStationOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_station_open"),
+    station_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+  },
+  { additionalProperties: false },
+);
+export type ForgeStationOpenRequestV1 = Static<typeof ForgeStationOpenRequestV1>;
+
 export const BlockPlaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1049,13 +1076,14 @@ export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
 
 /**
  * 玩家天道 UI 面板交互响应（client → server CustomPayload）。
- * 与 server→agent Redis 使用同一 payload 结构 AgentUiResponsePayloadV1。
+ * 真实 Fabric producer 只发 request_id/action/params；target_player 由 server 依
+ * 已认证连接实体权威确定，不得由 C2S 声明。
  */
 export const AgentUiResponseRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("agent_ui_response"),
-    ...AgentUiResponsePayloadV1.properties,
+    ...AgentUiClientResponsePayloadV1.properties,
   },
   { additionalProperties: false },
 );
@@ -1130,7 +1158,18 @@ export const BlockPickerActionV1 = Type.Object(
 );
 export type BlockPickerActionV1 = Static<typeof BlockPickerActionV1>;
 
+export const MaterialMoveRequestV1 = Type.Object({
+  v: Type.Literal(1),
+  type: Type.Literal('material_move'),
+  recipe_id: Type.String({ minLength: 1 }),
+  instance_id: Type.Union([Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), Type.Null()]),
+  station_pos: Type.Union([Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]), Type.Null()]),
+  returning: Type.Boolean(),
+  expected_revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+}, { additionalProperties: false });
+
 export const ClientRequestV1 = Type.Union([
+  MaterialMoveRequestV1,
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
   StartDuXuRequestV1,
@@ -1164,6 +1203,7 @@ export const ClientRequestV1 = Type.Union([
   QuickSlotBindRequestV1,
   SkillBarCastRequestV1,
   SkillBarBindRequestV1,
+  TechniqueBindRequestV1,
   SkillConfigIntentRequestV1,
   AlchemyOpenFurnaceRequestV1,
   AlchemyFeedSlotRequestV1,
@@ -1210,6 +1250,7 @@ export const ClientRequestV1 = Type.Union([
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  ForgeStationOpenRequestV1,
   BlockPlaceRequestV1,
   BlockPickerActionV1,
   RaiseShieldRequestV1,

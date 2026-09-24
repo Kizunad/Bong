@@ -54,11 +54,7 @@ impl NpcPerfProbe {
             .samples
             .iter()
             .map(|(name, sample)| {
-                let avg = if sample.count == 0 {
-                    0
-                } else {
-                    sample.total_us / sample.count
-                };
+                let avg = sample.total_us.checked_div(sample.count).unwrap_or(0);
                 format!(
                     "{}={}us_avg/{}us_max/{}calls",
                     name, avg, sample.max_us, sample.count

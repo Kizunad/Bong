@@ -64,10 +64,7 @@ pub fn handle_player_attack(
         };
 
         if let Some(lc) = target_lifecycle {
-            if matches!(
-                lc.state,
-                LifecycleState::NearDeath | LifecycleState::AwaitingRevival
-            ) {
+            if matches!(lc.state, LifecycleState::AwaitingRevival) {
                 continue;
             }
         }
@@ -514,11 +511,14 @@ mod tests {
     }
 
     #[test]
-    fn near_death_target_ignored() {
+    fn awaiting_revival_target_ignored() {
         let mut app = setup_app();
         let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(0);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            0,
+        );
         let target = app
             .world_mut()
             .spawn((NpcMarker, Position::new([1.0, 0.0, 0.0]), lifecycle))
@@ -535,7 +535,7 @@ mod tests {
         let events = app.world().resource::<Events<AttackIntent>>();
         assert!(
             events.iter_current_update_events().next().is_none(),
-            "NearDeath target must not be attacked"
+            "AwaitingRevival target must not be attacked"
         );
     }
 

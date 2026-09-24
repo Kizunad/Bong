@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use super::types::{BodyPartId, BodyPlan, HitGeometry, PartBox};
+use super::types::{BodyPartId, BodyPlan, HitGeometry, MeridianProfile, PartBox};
 
 pub fn validate_body_plan(plan: &BodyPlan) -> Result<(), String> {
     if plan.id.as_str().trim().is_empty() {
@@ -133,10 +133,125 @@ pub fn validate_body_plan(plan: &BodyPlan) -> Result<(), String> {
         }
     }
 
-    // P1 起 meridian_profile.channels 落地后，在此追加 channel id 唯一性 /
-    // realm_requirements 单调性 <= channel 总数的校验；P0 stub `MeridianProfile {}`
-    // 无字段可校验，本函数当前对 meridian_profile 内容免检（存在性本身已由类型系统
-    // 的 Option 语义 + types.rs 的 pin 测试锁定）。
+    // plan-race-system-v1 P1a：is_humanoid plan 的 meridian_profile 从 P0 的"可选"转为
+    // "必填"（§P1 决议——humanoid.json 缺该字段不再合法）。非 humanoid plan（P0 现存
+    // fixture / 未来非战斗构型）仍可留 `None`。
+    match (&plan.meridian_profile, plan.is_humanoid) {
+        (None, true) => {
+            return Err(format!(
+                "body plan {} is_humanoid=true but declares no meridian_profile (mandatory from \
+                 plan-race-system-v1 P1 onward)",
+                plan.id
+            ));
+        }
+        (Some(profile), _) => validate_meridian_profile(plan, profile)?,
+        (None, false) => {}
+    }
+
+    Ok(())
+}
+
+fn validate_meridian_profile(plan: &BodyPlan, profile: &MeridianProfile) -> Result<(), String> {
+    use super::types::MeridianFamily;
+    use crate::cultivation::components::MeridianChannelId;
+
+    if profile.channels.is_empty() {
+        return Err(format!(
+            "body plan {} meridian_profile.channels must declare at least one channel",
+            plan.id
+        ));
+    }
+
+    let part_ids: HashSet<&BodyPartId> = plan.parts.iter().map(|p| &p.id).collect();
+    let mut channel_ids: HashSet<MeridianChannelId> = HashSet::new();
+    let mut regular_count = 0usize;
+    let mut extraordinary_count = 0usize;
+    for channel in &profile.channels {
+        if channel.id.as_str().trim().is_empty() {
+            return Err(format!(
+                "body plan {} meridian_profile has a channel with an empty id",
+                plan.id
+            ));
+        }
+        if !channel_ids.insert(channel.id.clone()) {
+            return Err(format!(
+                "body plan {} meridian_profile has duplicate channel id {}",
+                plan.id, channel.id
+            ));
+        }
+        match channel.family {
+            MeridianFamily::Regular => regular_count += 1,
+            MeridianFamily::Extraordinary => extraordinary_count += 1,
+        }
+        if let Some(body_part) = &channel.body_part {
+            if !part_ids.contains(body_part) {
+                return Err(format!(
+                    "body plan {} meridian_profile channel {} references unknown body_part {}",
+                    plan.id, channel.id, body_part
+                ));
+            }
+        }
+    }
+
+    for edge in &profile.topology_edges {
+        if !channel_ids.contains(&edge.from) {
+            return Err(format!(
+                "body plan {} meridian_profile.topology_edges references unknown channel id {} \
+                 (from)",
+                plan.id, edge.from
+            ));
+        }
+        if !channel_ids.contains(&edge.to) {
+            return Err(format!(
+                "body plan {} meridian_profile.topology_edges references unknown channel id {} \
+                 (to)",
+                plan.id, edge.to
+            ));
+        }
+    }
+
+    let total_channels = profile.channels.len();
+    let mut previous_total: Option<u8> = None;
+    for (index, req) in profile.realm_requirements.iter().enumerate() {
+        if let Some(previous) = previous_total {
+            if req.total < previous {
+                return Err(format!(
+                    "body plan {} meridian_profile.realm_requirements must be monotonically \
+                     non-decreasing by total (index {index}: {} < previous {previous})",
+                    plan.id, req.total
+                ));
+            }
+        }
+        previous_total = Some(req.total);
+        if req.total as usize > total_channels {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].total={} exceeds \
+                 declared channel count {total_channels}",
+                plan.id, req.total
+            ));
+        }
+        if req.regular_min as usize > regular_count {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].regular_min={} \
+                 exceeds declared regular channel count {regular_count}",
+                plan.id, req.regular_min
+            ));
+        }
+        if req.extraordinary_min as usize > extraordinary_count {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}].extraordinary_min={} \
+                 exceeds declared extraordinary channel count {extraordinary_count}",
+                plan.id, req.extraordinary_min
+            ));
+        }
+        if (req.regular_min as usize + req.extraordinary_min as usize) > req.total as usize {
+            return Err(format!(
+                "body plan {} meridian_profile.realm_requirements[{index}] regular_min+\
+                 extraordinary_min ({}+{}) exceeds total ({})",
+                plan.id, req.regular_min, req.extraordinary_min, req.total
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -179,400 +294,197 @@ fn validate_part_boxes(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::body_plan::types::{
-        BodyPartDef, BodyPlanId, HeightBand, HeightBandAssignment, PartConsequence,
-        StandingAabbSpec,
-    };
-    use std::collections::HashMap;
+/// plan-race-system-v1 P2a — `BodyPlanLayoutV1` 的跨 registry 校验（需要同时持有目标
+/// `BodyPlan`，归属与 [`race_registry::RaceRegistry::load_file`] 的跨 registry 校验同一
+/// 设计：`layout::BodyPlanLayoutRegistry::load_dir`/`layout::humanoid_layout_static` 是
+/// 唯一调用方）。
+///
+/// 校验范围（**不**要求 `part_display_map.display_segment_id` 反向存在于 `silhouette`
+/// ——展示段 id 是一个符号性字符串，允许没有专属剪影多边形，例如人形 `back` 目前没有
+/// 独立于 `chest` 的可视区块，这是刻意的最小校验面，不是遗漏）：
+/// - `silhouette`：非空、`part_id` 非空且唯一、多边形至少 3 个顶点、坐标落在 `[0,1]`
+/// - `anchors`：`part_id` 非空且唯一、坐标落在 `[0,1]`
+/// - `meridian_paths`：`channel_id` 非空且唯一、至少 2 个点、坐标落在 `[0,1]`、
+///   引用的 channel id 必须存在于 `plan.meridian_profile.channels`（`plan` 未声明
+///   `meridian_profile` 时任何 `meridian_paths` 条目都是悬空引用）
+/// - `part_display_map`：`server_part_id`/`display_segment_id` 均非空、
+///   `server_part_id` 唯一、`server_part_id` 必须存在于 `plan.parts`
+pub fn validate_body_plan_layout(
+    layout: &crate::schema::server_data::BodyPlanLayoutV1,
+    plan: &BodyPlan,
+) -> Result<(), String> {
+    if layout.body_plan_id != plan.id.as_str() {
+        return Err(format!(
+            "body plan layout body_plan_id {} does not match target body plan id {}",
+            layout.body_plan_id, plan.id
+        ));
+    }
+    if layout.silhouette.is_empty() {
+        return Err(format!(
+            "body plan layout {} must declare at least one silhouette part",
+            layout.body_plan_id
+        ));
+    }
 
-    fn base_plan() -> BodyPlan {
-        BodyPlan {
-            id: BodyPlanId::new("humanoid_like"),
-            display_name: "测试人形".to_string(),
-            is_humanoid: true,
-            parts: vec![
-                BodyPartDef {
-                    id: "head".into(),
-                    damage_mul: 2.0,
-                    contam_mul: 1.5,
-                    bleed_mul: 1.5,
-                    consequence: PartConsequence::Sensory,
-                },
-                BodyPartDef {
-                    id: "chest".into(),
-                    damage_mul: 1.0,
-                    contam_mul: 1.0,
-                    bleed_mul: 1.0,
-                    consequence: PartConsequence::Core,
-                },
-            ],
-            hit_geometry: HitGeometry::HeightBands {
-                aabb: StandingAabbSpec {
-                    half_width: 0.3,
-                    height: 1.8,
-                },
-                bands: vec![
-                    HeightBand {
-                        min_rel_y: 0.5,
-                        assignment: HeightBandAssignment::Single {
-                            part: "head".into(),
-                        },
-                    },
-                    HeightBand {
-                        min_rel_y: -1.0,
-                        assignment: HeightBandAssignment::Single {
-                            part: "chest".into(),
-                        },
-                    },
-                ],
-                lateral_threshold: 0.19,
-            },
-            equip_slots: vec![],
-            meridian_profile: None,
-            mutation_slot_mapping: HashMap::new(),
+    fn point_in_unit_range(x: f64, y: f64) -> bool {
+        x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)
+    }
+
+    let mut silhouette_ids: HashSet<String> = HashSet::new();
+    for part in &layout.silhouette {
+        if part.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a silhouette part with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if part.polygon.len() < 3 {
+            return Err(format!(
+                "body plan layout {} silhouette part {} must declare at least 3 polygon vertices, got {}",
+                layout.body_plan_id, part.part_id, part.polygon.len()
+            ));
+        }
+        for p in &part.polygon {
+            if !point_in_unit_range(p.x, p.y) {
+                return Err(format!(
+                    "body plan layout {} silhouette part {} has an out-of-range vertex ({}, {}) — coordinates must be normalized to [0,1]",
+                    layout.body_plan_id, part.part_id, p.x, p.y
+                ));
+            }
+        }
+        if !silhouette_ids.insert(part.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate silhouette part_id {}",
+                layout.body_plan_id, part.part_id
+            ));
         }
     }
 
-    #[test]
-    fn happy_path_passes() {
-        assert!(validate_body_plan(&base_plan()).is_ok());
-    }
-
-    #[test]
-    fn empty_plan_id_rejected() {
-        let mut plan = base_plan();
-        plan.id = BodyPlanId::new("");
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("must not be empty"));
-    }
-
-    #[test]
-    fn empty_parts_rejected() {
-        let mut plan = base_plan();
-        plan.parts.clear();
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("at least one part"));
-    }
-
-    #[test]
-    fn duplicate_part_id_rejected() {
-        let mut plan = base_plan();
-        let dup = plan.parts[0].clone();
-        plan.parts.push(dup);
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("duplicate part id"));
-    }
-
-    #[test]
-    fn non_finite_damage_mul_rejected() {
-        let mut plan = base_plan();
-        plan.parts[0].damage_mul = f32::NAN;
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("damage_mul"));
-    }
-
-    #[test]
-    fn negative_bleed_mul_rejected() {
-        let mut plan = base_plan();
-        plan.parts[0].bleed_mul = -0.1;
-        assert!(validate_body_plan(&plan).unwrap_err().contains("bleed_mul"));
-    }
-
-    #[test]
-    fn zero_multiplier_is_allowed() {
-        let mut plan = base_plan();
-        plan.parts[0].damage_mul = 0.0;
-        assert!(validate_body_plan(&plan).is_ok(), "0.0 是合法的免疫倍率");
-    }
-
-    #[test]
-    fn height_bands_non_positive_half_width_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { aabb, .. } = &mut plan.hit_geometry {
-            aabb.half_width = 0.0;
+    let mut anchor_ids: HashSet<String> = HashSet::new();
+    for anchor in &layout.anchors {
+        if anchor.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has an anchor with an empty part_id",
+                layout.body_plan_id
+            ));
         }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("half_width"));
-    }
-
-    #[test]
-    fn height_bands_non_positive_height_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { aabb, .. } = &mut plan.hit_geometry {
-            aabb.height = -1.0;
+        if !point_in_unit_range(anchor.point.x, anchor.point.y) {
+            return Err(format!(
+                "body plan layout {} anchor {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                layout.body_plan_id, anchor.part_id, anchor.point.x, anchor.point.y
+            ));
         }
-        assert!(validate_body_plan(&plan).unwrap_err().contains("height"));
+        if !anchor_ids.insert(anchor.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate anchor for part_id {}",
+                layout.body_plan_id, anchor.part_id
+            ));
+        }
     }
 
-    #[test]
-    fn height_bands_negative_lateral_threshold_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands {
-            lateral_threshold, ..
-        } = &mut plan.hit_geometry
+    // plan-race-system-v1 P2 major 修复 — `hud_anchors` 是可选的第二套锚点组（mini
+    // HUD 专用画布比例），校验规则与 `anchors` 完全对称（同样允许留空，同样不要求
+    // 覆盖 plan.parts 全集——非人形构型可以只给部分部位配 mini HUD 锚点）。
+    let mut hud_anchor_ids: HashSet<String> = HashSet::new();
+    for anchor in &layout.hud_anchors {
+        if anchor.part_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a hud_anchor with an empty part_id",
+                layout.body_plan_id
+            ));
+        }
+        if !point_in_unit_range(anchor.point.x, anchor.point.y) {
+            return Err(format!(
+                "body plan layout {} hud_anchor {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                layout.body_plan_id, anchor.part_id, anchor.point.x, anchor.point.y
+            ));
+        }
+        if !hud_anchor_ids.insert(anchor.part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate hud_anchor for part_id {}",
+                layout.body_plan_id, anchor.part_id
+            ));
+        }
+    }
+
+    let plan_channel_ids: Option<HashSet<&str>> = plan
+        .meridian_profile
+        .as_ref()
+        .map(|profile| profile.channels.iter().map(|c| c.id.as_str()).collect());
+    let mut seen_channels: HashSet<String> = HashSet::new();
+    for mp in &layout.meridian_paths {
+        if mp.channel_id.trim().is_empty() {
+            return Err(format!(
+                "body plan layout {} has a meridian path with an empty channel_id",
+                layout.body_plan_id
+            ));
+        }
+        match &plan_channel_ids {
+            Some(ids) => {
+                if !ids.contains(mp.channel_id.as_str()) {
+                    return Err(format!(
+                        "body plan layout {} meridian_paths references unknown channel id {} \
+                         (not declared in body plan {} meridian_profile)",
+                        layout.body_plan_id, mp.channel_id, plan.id
+                    ));
+                }
+            }
+            None => {
+                return Err(format!(
+                    "body plan layout {} declares meridian_paths for channel {} but body plan {} \
+                     has no meridian_profile at all",
+                    layout.body_plan_id, mp.channel_id, plan.id
+                ));
+            }
+        }
+        if mp.points.len() < 2 {
+            return Err(format!(
+                "body plan layout {} meridian path {} must declare at least 2 points, got {}",
+                layout.body_plan_id,
+                mp.channel_id,
+                mp.points.len()
+            ));
+        }
+        for p in &mp.points {
+            if !point_in_unit_range(p.x, p.y) {
+                return Err(format!(
+                    "body plan layout {} meridian path {} has an out-of-range point ({}, {}) — coordinates must be normalized to [0,1]",
+                    layout.body_plan_id, mp.channel_id, p.x, p.y
+                ));
+            }
+        }
+        if !seen_channels.insert(mp.channel_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate meridian_paths entry for channel {}",
+                layout.body_plan_id, mp.channel_id
+            ));
+        }
+    }
+
+    let plan_part_ids: HashSet<&str> = plan.parts.iter().map(|p| p.id.as_str()).collect();
+    let mut seen_server_parts: HashSet<String> = HashSet::new();
+    for mapping in &layout.part_display_map {
+        if mapping.server_part_id.trim().is_empty() || mapping.display_segment_id.trim().is_empty()
         {
-            *lateral_threshold = -0.01;
+            return Err(format!(
+                "body plan layout {} has a part_display_map entry with an empty server_part_id or display_segment_id",
+                layout.body_plan_id
+            ));
         }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("lateral_threshold"));
-    }
-
-    #[test]
-    fn height_bands_empty_bands_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands.clear();
+        if !plan_part_ids.contains(mapping.server_part_id.as_str()) {
+            return Err(format!(
+                "body plan layout {} part_display_map references unknown server part id {} \
+                 (not declared on body plan {})",
+                layout.body_plan_id, mapping.server_part_id, plan.id
+            ));
         }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("at least one band"));
-    }
-
-    #[test]
-    fn height_bands_unsorted_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands.reverse();
-        }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("strictly descending"));
-    }
-
-    #[test]
-    fn height_bands_duplicate_min_rel_y_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands[1].min_rel_y = bands[0].min_rel_y;
-        }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("strictly descending"));
-    }
-
-    #[test]
-    fn height_bands_missing_full_coverage_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands[1].min_rel_y = 0.1; // 不是 <0.0，rel_y=0 会落空
-        }
-        let err = validate_body_plan(&plan).unwrap_err();
-        assert!(err.contains("min_rel_y < 0.0"), "got: {err}");
-    }
-
-    #[test]
-    fn height_bands_dangling_part_reference_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands[0].assignment = HeightBandAssignment::Single {
-                part: "ghost_part".into(),
-            };
-        }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("unknown part id"));
-    }
-
-    #[test]
-    fn height_bands_lateral_split_with_center_dangling_reference_rejected() {
-        let mut plan = base_plan();
-        if let HitGeometry::HeightBands { bands, .. } = &mut plan.hit_geometry {
-            bands[0].assignment = HeightBandAssignment::LateralSplitWithCenter {
-                left: "arm_l".into(),
-                right: "arm_r".into(),
-                center: "chest".into(),
-            };
-        }
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("unknown part id"));
-    }
-
-    #[test]
-    fn part_boxes_happy_path() {
-        let mut plan = base_plan();
-        plan.hit_geometry = HitGeometry::PartBoxes {
-            boxes: vec![PartBox {
-                part_id: "head".into(),
-                offset: [0.0, 1.5, 0.0],
-                half_extents: [0.3, 0.3, 0.3],
-                priority: 0,
-            }],
-        };
-        assert!(validate_body_plan(&plan).is_ok());
-    }
-
-    #[test]
-    fn part_boxes_empty_rejected() {
-        let mut plan = base_plan();
-        plan.hit_geometry = HitGeometry::PartBoxes { boxes: vec![] };
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("at least one part box"));
-    }
-
-    #[test]
-    fn part_boxes_dangling_part_id_rejected() {
-        let mut plan = base_plan();
-        plan.hit_geometry = HitGeometry::PartBoxes {
-            boxes: vec![PartBox {
-                part_id: "ghost".into(),
-                offset: [0.0, 0.0, 0.0],
-                half_extents: [0.3, 0.3, 0.3],
-                priority: 0,
-            }],
-        };
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("unknown part id"));
-    }
-
-    #[test]
-    fn part_boxes_non_positive_half_extent_rejected() {
-        let mut plan = base_plan();
-        plan.hit_geometry = HitGeometry::PartBoxes {
-            boxes: vec![PartBox {
-                part_id: "head".into(),
-                offset: [0.0, 0.0, 0.0],
-                half_extents: [0.0, 0.3, 0.3],
-                priority: 0,
-            }],
-        };
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("half_extents"));
-    }
-
-    #[test]
-    fn part_boxes_non_finite_offset_rejected() {
-        let mut plan = base_plan();
-        plan.hit_geometry = HitGeometry::PartBoxes {
-            boxes: vec![PartBox {
-                part_id: "head".into(),
-                offset: [f64::NAN, 0.0, 0.0],
-                half_extents: [0.3, 0.3, 0.3],
-                priority: 0,
-            }],
-        };
-        assert!(validate_body_plan(&plan).unwrap_err().contains("offset"));
-    }
-
-    #[test]
-    fn mutation_slot_mapping_dangling_reference_rejected() {
-        use crate::dandao::mutation::BodySlot;
-        let mut plan = base_plan();
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Head, "ghost_part".into());
-        assert!(validate_body_plan(&plan)
-            .unwrap_err()
-            .contains("mutation_slot_mapping"));
-    }
-
-    #[test]
-    fn mutation_slot_mapping_valid_reference_accepted() {
-        use crate::dandao::mutation::BodySlot;
-        let mut plan = base_plan();
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Head, "head".into());
-        assert!(validate_body_plan(&plan).is_ok());
-    }
-
-    #[test]
-    fn empty_mutation_slot_mapping_is_valid_for_non_humanoid_plans() {
-        let plan = base_plan();
-        assert!(plan.mutation_slot_mapping.is_empty());
-        assert!(validate_body_plan(&plan).is_ok());
-    }
-
-    /// 每个 `BodySlot` 变体各自专属 case：悬空引用必须被拒绝，且错误消息带上具体是
-    /// 哪个 slot 出的问题（`{slot:?}` 已格式进 reason，见 `validate_body_plan`）——
-    /// 覆盖全部 5 个变体，而非只测 `Head` 就假设其余变体"应该也一样"。
-    #[test]
-    fn mutation_slot_mapping_dangling_reference_rejected_for_every_body_slot_variant() {
-        use crate::dandao::mutation::BodySlot;
-        for slot in [
-            BodySlot::Head,
-            BodySlot::Forearm,
-            BodySlot::Back,
-            BodySlot::Torso,
-            BodySlot::Lower,
-        ] {
-            let mut plan = base_plan();
-            plan.mutation_slot_mapping.insert(slot, "ghost_part".into());
-            let err =
-                validate_body_plan(&plan).expect_err(&format!("{slot:?} 映射到悬空部位必须被拒绝"));
-            assert!(
-                err.contains("mutation_slot_mapping"),
-                "slot={slot:?}: 错误消息应带上 mutation_slot_mapping 定位信息，got: {err}"
-            );
+        if !seen_server_parts.insert(mapping.server_part_id.clone()) {
+            return Err(format!(
+                "body plan layout {} has duplicate part_display_map entry for server part {}",
+                layout.body_plan_id, mapping.server_part_id
+            ));
         }
     }
 
-    /// 每个 `BodySlot` 变体各自专属 case：映射到已声明部位（`base_plan()` 的 `head`）
-    /// 时必须通过校验——同样逐变体覆盖，不假设"Head 通过了其余变体也一定通过"。
-    #[test]
-    fn mutation_slot_mapping_valid_reference_accepted_for_every_body_slot_variant() {
-        use crate::dandao::mutation::BodySlot;
-        for slot in [
-            BodySlot::Head,
-            BodySlot::Forearm,
-            BodySlot::Back,
-            BodySlot::Torso,
-            BodySlot::Lower,
-        ] {
-            let mut plan = base_plan();
-            plan.mutation_slot_mapping.insert(slot, "head".into());
-            assert!(
-                validate_body_plan(&plan).is_ok(),
-                "slot={slot:?}: 映射到已声明部位应通过校验"
-            );
-        }
-    }
-
-    /// 缺失映射契约：`mutation_slot_mapping` 不要求覆盖全部 5 个 `BodySlot` 变体——
-    /// 只声明部分变体（其余变体查询走 `body_part_for_mutation_slot` 返回 `None`，
-    /// 见 `resolve.rs` 对应测试）本身是合法状态，不是校验错误。
-    #[test]
-    fn mutation_slot_mapping_partial_coverage_is_valid() {
-        use crate::dandao::mutation::BodySlot;
-        let mut plan = base_plan();
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Head, "head".into());
-        // 故意不声明 Forearm/Back/Torso/Lower——部分映射对非人形构型是正常状态。
-        assert!(
-            validate_body_plan(&plan).is_ok(),
-            "只声明部分 BodySlot 变体的映射必须合法（不要求全变体覆盖）"
-        );
-        assert_eq!(plan.mutation_slot_mapping.len(), 1);
-    }
-
-    /// 全部 5 个 `BodySlot` 变体同时映射到不同部位——多键场景下悬空检测必须逐一生效，
-    /// 不因为其余键合法就漏检其中一个悬空键。
-    #[test]
-    fn mutation_slot_mapping_all_five_variants_mapped_with_one_dangling_still_rejected() {
-        use crate::dandao::mutation::BodySlot;
-        let mut plan = base_plan();
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Head, "head".into());
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Forearm, "chest".into());
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Back, "chest".into());
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Torso, "chest".into());
-        // Lower 映射到悬空部位——即便其余 4 个变体都合法，也必须整体拒绝。
-        plan.mutation_slot_mapping
-            .insert(BodySlot::Lower, "ghost_part".into());
-        let err = validate_body_plan(&plan).unwrap_err();
-        assert!(err.contains("mutation_slot_mapping"), "got: {err}");
-    }
+    Ok(())
 }

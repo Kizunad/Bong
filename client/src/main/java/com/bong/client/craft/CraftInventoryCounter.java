@@ -39,7 +39,7 @@ public final class CraftInventoryCounter {
             states.add(new CraftMaterialState(
                 material.templateId(),
                 saturatingMultiply(Math.max(0, material.count()), multiplier),
-                countTemplate(inventory, material.templateId())
+                countPrepared(inventory, recipe.id(), material.templateId())
             ));
         }
         return states;
@@ -73,7 +73,7 @@ public final class CraftInventoryCounter {
             if (need == 0) {
                 continue;
             }
-            max = Math.min(max, countTemplate(inventory, material.templateId()) / need);
+            max = Math.min(max, countPrepared(inventory, recipe.id(), material.templateId()) / need);
         }
         if (recipe.qiCost() > 0.0) {
             max = Math.min(max, (int) Math.floor(inventory.qiCurrent() / recipe.qiCost()));
@@ -95,6 +95,11 @@ public final class CraftInventoryCounter {
             }
         }
         return false;
+    }
+
+    public static int countPrepared(InventoryModel inventory, String recipeId, String templateId) {
+        if (inventory == null || !recipeId.equals(inventory.craftRecipeId())) return 0;
+        return inventory.craftMaterials().stream().mapToInt(item -> countIfMatches(item, templateId)).sum();
     }
 
     private static int countIfMatches(InventoryItem item, String templateId) {

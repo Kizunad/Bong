@@ -14,7 +14,7 @@ public final class BlockPlaceIntentResolver {
     }
 
     public static InventoryItem selectedBlockItem(int selectedSlot, InventoryModel inventory) {
-        if (selectedSlot < 0 || selectedSlot >= SkillBarConfig.SLOT_COUNT || inventory == null) return null;
+        if (!SkillBarConfig.isAvailable(selectedSlot) || inventory == null) return null;
 
         SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
         if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return null;

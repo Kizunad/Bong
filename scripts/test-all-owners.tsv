@@ -1,0 +1,6 @@
+suite	owner_role	reviewer_path	evidence
+server	Server owner	server/	server/tests
+client	Client owner	client/	client/src/gametest
+schema	Schema owner	agent/packages/schema/	agent/packages/schema/tests
+tiandao	Tiandao owner	agent/packages/tiandao/	agent/packages/tiandao/tests
+scripts	CI/DevEx owner	scripts/	scripts/tests

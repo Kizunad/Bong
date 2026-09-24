@@ -230,6 +230,7 @@ mod tests {
 
     fn template(id: &str, category: ItemCategory) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category,
@@ -259,6 +260,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -320,6 +322,7 @@ mod tests {
 
     fn inventory_with(items: Vec<ItemInstance>) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

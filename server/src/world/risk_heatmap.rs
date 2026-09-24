@@ -240,7 +240,10 @@ pub fn update_risk_heatmap(
     // 由于 Bevy 的 Res<Time> 未在此系统参数列表中（避免与现有 territory.rs 约束冲突），
     // 此处以 update 调用次数作为粗粒度时钟。
     heatmap.last_eval_tick = heatmap.last_eval_tick.wrapping_add(1);
-    if heatmap.last_eval_tick % RISK_HEATMAP_EVAL_INTERVAL_TICKS != 0 {
+    if !heatmap
+        .last_eval_tick
+        .is_multiple_of(RISK_HEATMAP_EVAL_INTERVAL_TICKS)
+    {
         return;
     }
 
@@ -623,6 +626,7 @@ mod tests {
         use crate::world::zone::Zone;
         use valence::prelude::DVec3;
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: name.to_string(),
                 dimension: DimensionKind::Overworld,
@@ -794,6 +798,7 @@ mod tests {
         app.add_systems(Update, update_risk_heatmap);
         // 外层先注册，内层后注册——首匹配 bug 会错归属到 outer_large
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![outer, inner],
         });
 

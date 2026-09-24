@@ -11,7 +11,7 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventWriter, Query, Res};
 
-use super::components::{Cultivation, Meridian, MeridianId, MeridianSystem, Realm};
+use super::components::{Cultivation, Meridian, MeridianSystem, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 
@@ -65,6 +65,8 @@ pub fn close_meridian(m: &mut Meridian) {
 
 pub fn qi_zero_decay_tick(
     clock: Res<CultivationClock>,
+    plans: Option<Res<crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<crate::body_plan::RaceRegistry>>,
     mut outcomes: EventWriter<RealmRegressed>,
     mut entities: Query<(
         Entity,
@@ -99,22 +101,32 @@ pub fn qi_zero_decay_tick(
                 continue;
             };
             cultivation.realm = to;
-            let keep = to.required_meridians();
+            let keep = plans
+                .as_deref()
+                .zip(races.as_deref())
+                .and_then(|(plans, races)| {
+                    crate::body_plan::resolve_race_to_plan(&cultivation.race, plans, races)
+                })
+                .and_then(|plan| plan.meridian_profile.as_ref())
+                .map(|profile| profile.realm_requirements[to.rank() as usize - 1].total as usize)
+                .unwrap_or_else(|| to.required_meridians());
             let closures = pick_closures(&meridians, keep);
             let closed_count = closures.len();
             for (is_regular, idx) in closures {
-                let id: MeridianId = if is_regular {
+                // 闭脉针对实际构型的 channel，不要求可转换成人形枚举。
+                let channel_id = if is_regular {
                     let m = &mut meridians.regular[idx];
-                    let id = m.id;
+                    let channel_id = m.id.clone();
                     close_meridian(m);
-                    id
+                    channel_id
                 } else {
                     let m = &mut meridians.extraordinary[idx];
-                    let id = m.id;
+                    let channel_id = m.id.clone();
                     close_meridian(m);
-                    id
+                    channel_id
                 };
-                if let Some(life) = life.as_deref_mut() {
+                // 旧生平卷的 MeridianClosed 仅支持人形；非人形仍完成闭脉与降境。
+                if let (Some(life), Some(id)) = (life.as_deref_mut(), channel_id.to_meridian_id()) {
                     life.push(BiographyEntry::MeridianClosed {
                         id,
                         tick: now,
@@ -185,7 +197,7 @@ mod tests {
 
     #[test]
     fn close_meridian_preserves_tier() {
-        let mut m = Meridian::new(MeridianId::Lung);
+        let mut m = Meridian::from_meridian_id(MeridianId::Lung);
         m.opened = true;
         m.open_progress = 1.0;
         m.rate_tier = 2;

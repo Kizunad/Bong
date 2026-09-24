@@ -230,7 +230,7 @@ impl SpiritEyeRegistry {
     }
 
     pub fn tick_migration(&mut self, tick: u64) -> Vec<SpiritEyeMigrateV1> {
-        if tick > 0 && tick % TICKS_PER_DAY == 0 {
+        if tick > 0 && tick.is_multiple_of(TICKS_PER_DAY) {
             for eye in &mut self.eyes {
                 eye.usage_pressure =
                     (eye.usage_pressure - SPIRIT_EYE_DAILY_PRESSURE_DECAY).max(0.0);
@@ -629,6 +629,7 @@ mod tests {
     #[test]
     fn registry_initializes_active_eyes_from_non_negative_zone_count() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("qingyun_peaks", 0.9, 0.0),
                 zone("spring_marsh", 0.8, 700.0),
@@ -647,6 +648,7 @@ mod tests {
     #[test]
     fn discovery_is_private_and_idempotent() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("spawn", 0.9, 0.0)],
         };
         let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);
@@ -675,6 +677,7 @@ mod tests {
     #[test]
     fn perception_can_discover_beyond_touch_radius() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("spawn", 0.9, 0.0)],
         };
         let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);
@@ -694,6 +697,7 @@ mod tests {
     #[test]
     fn breakthrough_use_adds_pressure_and_known_death_insight_entry() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("spawn", 0.9, 0.0)],
         };
         let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);
@@ -716,6 +720,7 @@ mod tests {
     #[test]
     fn pressure_threshold_migrates_and_clears_discovered_by() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("spawn", 0.9, 0.0), zone("spring_marsh", 0.8, 800.0)],
         };
         let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);
@@ -736,6 +741,7 @@ mod tests {
     #[test]
     fn private_markers_do_not_cross_dimensions() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("spawn", 0.9, 0.0)],
         };
         let mut registry = SpiritEyeRegistry::from_zones(&zones, 0);

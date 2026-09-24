@@ -147,6 +147,10 @@ grid_h = 1
 base_weight = 0.5
 rarity = "common"
 spirit_quality_initial = 0.80
+# plan-gathering-tool-bind-v1 P0 §8.1 决议 #2：直接挂已存在的 fresh_herb_v1，
+# 不派生 bundled_herb_v1（避免本 plan 自定保鲜数值）。
+shelflife_profile = "fresh_herb_v1"
+shelflife_track = "spoil"
 description = "灵草扎束延缓散灵，批量存放减损耗。"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -377,6 +381,7 @@ base_weight = 0.1
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "粗布撕成条裹伤口，压迫止血。"
+quick_use = true
 effect = { kind = "wound_heal", magnitude = 1.0 }
 
 [[item]]
@@ -401,6 +406,7 @@ base_weight = 0.1
 rarity = "uncommon"
 spirit_quality_initial = 0.7
 description = "解蛊蕊雄黄研末，紧急解毒蛊。"
+quick_use = true
 effect = { kind = "contamination_cleanse", magnitude = 0.4 }
 
 [[item]]
@@ -413,6 +419,7 @@ base_weight = 0.1
 rarity = "uncommon"
 spirit_quality_initial = 0.6
 description = "清浊草丹砂研末，克染色浊乱。"
+quick_use = true
 effect = { kind = "contamination_cleanse", magnitude = 0.4 }
 
 [[item]]
@@ -425,6 +432,7 @@ base_weight = 0.2
 rarity = "common"
 spirit_quality_initial = 0.4
 description = "安神果煮水，镇心安神。"
+quick_use = true
 effect = { kind = "composure_restore", magnitude = 0.35 }
 
 [[item]]
@@ -448,6 +456,7 @@ base_weight = 0.05
 rarity = "uncommon"
 spirit_quality_initial = 0.13
 description = "丹砂画引灵符，修炼时增强灵气感应。"
+quick_use = true
 effect = { kind = "food_regen", magnitude = 0.30, duration_ticks = 36000 }
 
 [[item]]
@@ -483,6 +492,7 @@ base_weight = 0.3
 rarity = "uncommon"
 spirit_quality_initial = 0.5
 description = "回元芷简易煎法制剂，非炼丹产物。"
+quick_use = true
 effect = { kind = "qi_recovery", magnitude = 40.0 }
 
 [[item]]

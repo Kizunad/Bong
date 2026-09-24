@@ -10,14 +10,22 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::fauna::rat_phase::{
     chunk_pos_from_world, is_drained_chunk, remember_drained_chunk, MeditatingState, RatGroupId,
+    RatPhase,
 };
-use crate::npc::navigator::Navigator;
+use crate::npc::navigator::{within_goal_reach_xz, Navigator};
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const QI_SOURCE_SCAN_RANGE: f64 = 32.0;
-const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 0.8;
+/// 咬击的**贴脸即咬**水平（XZ）距离：够这么近就直接咬（快鼠扑咬）。判定用 [`xz_distance`]
+/// 而非 3D 欧氏——玩家跳起/在坡上时 Y 差不该让鼠够不到。
+///
+/// 注意这**不是**唯一咬击条件：真正闭合"跟而不咬"的是 `navigator::within_goal_reach_xz`——鼠
+/// **当前** floored 位置一旦在目标到达容差内（Chebyshev-`GOAL_REACH_XZ`，即 navigator 无法再靠近）
+/// 就咬，不看残余距离。因为 navigator 停距受子方块偏心 + NODE_REACH 收尾放大（对角可停在 ~3.5–4
+/// 格外），纯放大攻击半径既闭合不了、又会和"远距离不咬"语义打架。故此常量只管"贴脸速咬"这一支。
+const QI_SOURCE_ARRIVAL_DISTANCE: f64 = 1.5;
 const QI_SOURCE_SPEED_FACTOR: f64 = 1.0;
 const REGROUP_SUCCESS_DISTANCE: f64 = 4.0;
 const REGROUP_SPEED_FACTOR: f64 = 1.05;
@@ -28,8 +36,10 @@ const MEDITATING_QI_SOURCE_WEIGHT: f32 = 3.0;
 /// 玩家 harass 起评的最大距离（格）。比 `QI_SOURCE_SCAN_RANGE`（32）近得多——
 /// 表达"贴身骚扰"而非通用 qi 源索敌。
 const PLAYER_HARASS_RANGE: f64 = 8.0;
-/// 冲近到此距离内即视为"咬到"，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同量级但语义独立。
-const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 0.8;
+/// 骚扰咬击的**贴脸即咬**水平距离，与 `QI_SOURCE_ARRIVAL_DISTANCE` 同义（见其注释）；同样配合
+/// `navigator::within_goal_reach_xz`（鼠当前位置已在到达容差内）作为主闭合条件，此常量只管
+/// "贴脸速咬"这一支。
+const PLAYER_HARASS_ARRIVAL_DISTANCE: f64 = 1.5;
 /// "冲近咬一口"比常规索敌更急——纳维游戏速度系数略高于 `QI_SOURCE_SPEED_FACTOR`。
 const PLAYER_HARASS_SPEED_FACTOR: f64 = 1.3;
 /// 咬完立即进入 20s 逃逸/游荡冷却（20 tick/s × 20s）。冷却期间
@@ -73,6 +83,8 @@ type HarassPlayerQuery<'w, 's> = Query<
     ),
     (With<ClientMarker>, Without<NpcMarker>),
 >;
+/// `RatPhase` 是 `Option`：教程/脚本刷出的鼠可能没挂相位组件，
+/// 缺席按 `Solitary`（独行）处理，只影响招式选择，不影响咬击本身。
 type SeekRatQuery<'w, 's> = Query<
     'w,
     's,
@@ -81,6 +93,7 @@ type SeekRatQuery<'w, 's> = Query<
         Option<&'static CurrentDimension>,
         &'static mut RatBlackboard,
         &'static mut Navigator,
+        Option<&'static RatPhase>,
     ),
     With<NpcMarker>,
 >;
@@ -119,6 +132,37 @@ pub struct PlayerHarassScorer;
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct HarassBiteAction;
+
+/// plan-devour-rat-model P3 —— 噬元鼠出招种类，一一对应
+/// `devour_rat.animation.json` 里的一次性招式动画。
+///
+/// 语境映射（见各 action system 的 emit 点）：
+/// - [`RatAttackKind::Peck`]：`SeekQiSourceAction` 贴脸吸元——低头啄咬，最轻的一招。
+/// - [`RatAttackKind::Claw`]：独行/过渡期鼠的 `HarassBiteAction`——前爪抓挠骚扰。
+/// - [`RatAttackKind::Pounce`]：群居（`RatPhase::Gregarious`）鼠的 `HarassBiteAction`
+///   ——成群才敢整只扑上来，视觉上把"鼠患成潮"和"独鼠试探"区分开。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RatAttackKind {
+    Peck,
+    Claw,
+    Pounce,
+}
+
+/// plan-devour-rat-model P3 —— 鼠成功咬中那帧 emit；
+/// `network::rat_av_trigger` 消费并转成 `VfxEventPayloadV1::PlayEntityAnim`
+/// （按 MC 协议 entity_id 定位客户端 `FaunaEntity` 播一次性招式动画）。
+///
+/// 与 `RatBiteEvent` 分开的原因：`RatBiteEvent` 是**伤害/守恒**事件（4 个 emit 点，含
+/// 教程兽潮与蝗群脚本），只带 `qi_steal`，读不出"用的是哪一招"；招式表现需要 action
+/// 语境（吸元 / 独鼠骚扰 / 群鼠扑击），故由 action system 单独 emit。
+#[derive(Clone, Copy, Debug, PartialEq, valence::prelude::Event)]
+pub struct RatAttackAvEvent {
+    /// 出招的鼠（ECS Entity）；消费方据此查 `EntityId` 取 MC 协议 id。
+    pub rat: Entity,
+    pub kind: RatAttackKind,
+    /// 出招位置（鼠自身坐标）——`VfxEventRequest` 按此做 64 格广播过滤。
+    pub origin: DVec3,
+}
 
 impl ScorerBuilder for QiSourceProximityScorer {
     fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
@@ -191,6 +235,8 @@ impl ActionBuilder for HarassBiteAction {
 }
 
 pub fn register(app: &mut App) {
+    // plan-devour-rat-model P3 —— 招式动画事件；消费方见 `network::rat_av_trigger`。
+    app.add_event::<RatAttackAvEvent>();
     app.add_systems(
         PreUpdate,
         (
@@ -299,10 +345,12 @@ fn seek_qi_source_action_system(
     mut rats: SeekRatQuery<'_, '_>,
     targets: QiSourceTargetQuery<'_, '_>,
     mut bites: EventWriter<RatBiteEvent>,
+    mut attack_av: EventWriter<RatAttackAvEvent>,
     mut actions: Query<(&Actor, &mut ActionState), With<SeekQiSourceAction>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, dimension, mut blackboard, mut navigator)) = rats.get_mut(*actor) else {
+        let Ok((position, dimension, mut blackboard, mut navigator, _phase)) = rats.get_mut(*actor)
+        else {
             *state = ActionState::Failure;
             continue;
         };
@@ -318,11 +366,22 @@ fn seek_qi_source_action_system(
                     continue;
                 };
                 blackboard.last_pressure_target = Some(source.position);
-                if position.get().distance(source.position) <= QI_SOURCE_ARRIVAL_DISTANCE {
+                // 贴脸速咬 或 鼠当前位置已在 navigator 到达容差内（无法再靠近）——后者才是闭合
+                // "跟而不咬"的关键。用鼠**当前**floored 位置判据（对拍 navigator 到达语义），不看
+                // 残余欧氏距离，故任意偏心/对角/抬高几何都咬得到、且远离时不早咬。
+                if xz_distance(position.get(), source.position) <= QI_SOURCE_ARRIVAL_DISTANCE
+                    || within_goal_reach_xz(position.get(), source.position)
+                {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target: source.entity,
                         qi_steal: 1,
+                    });
+                    // P3：贴脸吸元 = 低头啄咬（peck）。
+                    attack_av.send(RatAttackAvEvent {
+                        rat: *actor,
+                        kind: RatAttackKind::Peck,
+                        origin: position.get(),
                     });
                     remember_drained_chunk(&mut blackboard, chunk_pos_from_world(position.get()));
                     navigator.stop();
@@ -348,15 +407,16 @@ fn harass_bite_action_system(
     mut rats: SeekRatQuery<'_, '_>,
     players: HarassPlayerQuery<'_, '_>,
     mut bites: EventWriter<RatBiteEvent>,
+    mut attack_av: EventWriter<RatAttackAvEvent>,
     mut actions: Query<(&Actor, &mut ActionState), With<HarassBiteAction>>,
 ) {
     let tick = clock.map(|clock| clock.tick).unwrap_or(0);
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, dimension, mut blackboard, mut navigator)) = rats.get_mut(*actor) else {
+        let Ok((position, dimension, mut blackboard, mut navigator, phase)) = rats.get_mut(*actor)
+        else {
             *state = ActionState::Failure;
             continue;
         };
-
         match *state {
             ActionState::Requested => *state = ActionState::Executing,
             ActionState::Executing => {
@@ -367,11 +427,25 @@ fn harass_bite_action_system(
                     *state = ActionState::Success;
                     continue;
                 };
-                if position.get().distance(target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE {
+                // 贴脸速咬 或 鼠当前位置已在到达容差内（闭合"追而不咬"，不早咬）。
+                if xz_distance(position.get(), target_position) <= PLAYER_HARASS_ARRIVAL_DISTANCE
+                    || within_goal_reach_xz(position.get(), target_position)
+                {
                     bites.send(RatBiteEvent {
                         rat: *actor,
                         target,
                         qi_steal: 1,
+                    });
+                    // 群居鼠敢整只扑上来，独行/过渡期鼠只敢前爪抓一下。相位组件缺席按独行处理。
+                    // 就地算：`Init/Success/Failure` 分支用不到，没必要每 actor 每 tick 都算。
+                    attack_av.send(RatAttackAvEvent {
+                        rat: *actor,
+                        kind: if matches!(phase, Some(RatPhase::Gregarious)) {
+                            RatAttackKind::Pounce
+                        } else {
+                            RatAttackKind::Claw
+                        },
+                        origin: position.get(),
                     });
                     blackboard.harass_cooldown_until_tick = tick + PLAYER_HARASS_COOLDOWN_TICKS;
                     remember_drained_chunk(&mut blackboard, chunk_pos_from_world(position.get()));
@@ -599,6 +673,7 @@ mod tests {
     fn seek_qi_source_action_triggers_rat_bite_at_close_range() {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
         app.add_systems(Update, seek_qi_source_action_system);
         let rat = app
             .world_mut()
@@ -640,10 +715,91 @@ mod tests {
         assert_eq!(event.qi_steal, 1);
     }
 
+    fn seek_qi_source_spawn_rat_at(app: &mut App, pos: [f64; 3]) -> Entity {
+        app.world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new(pos),
+                RatBlackboard {
+                    home_chunk: crate::fauna::rat_phase::chunk_pos_from_world(DVec3::ZERO),
+                    home_zone: "spawn".to_string(),
+                    group_id: RatGroupId(7),
+                    last_pressure_target: None,
+                    recently_drained: Vec::new(),
+                    drained_qi: 0.0,
+                    harass_cooldown_until_tick: 0,
+                },
+                Navigator::new(),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn seek_qi_source_bites_when_within_arrival_tolerance_offcenter_and_elevated() {
+        // 回归（对抗复验抓的真实最坏几何）：鼠当前 floored 位置 (0,0) 已在目标 floored (2,2) 的
+        // 到达容差内（Chebyshev-2），但目标位于其方块远半边 (2.99,2.99) 且抬高 6 格 → 欧氏 XZ≈4.2。
+        // 任何"放大攻击半径"数值方案都闭合不了；用 floored 到达判据（忽略 Y）才咬得到。真实几何，
+        // 不 force 任何状态。
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = seek_qi_source_spawn_rat_at(&mut app, [0.0, 64.0, 0.0]);
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([2.99, 70.0, 2.99]),
+                cultivation(5.0),
+                MeditatingState { since_tick: 1 },
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        let event = app
+            .world()
+            .resource::<Events<RatBiteEvent>>()
+            .iter_current_update_events()
+            .next()
+            .copied()
+            .expect("鼠当前位置已在到达容差内（floored Chebyshev-2）时应咬，无论残余 XZ/Y 距离");
+        assert_eq!(event.target, target);
+        assert_eq!(event.qi_steal, 1);
+    }
+
+    #[test]
+    fn seek_qi_source_does_not_bite_from_across_the_room() {
+        // 关键回归（对抗复验抓的 CRITICAL 隔空咬）：目标在探测范围内但离鼠 10 格
+        // （floored Chebyshev-10 ≫ 2、XZ 10 ≫ 1.5 速咬距）→ 鼠**绝不能**咬，必须继续冲近。
+        // 曾错用"A* 找到路(reached_goal)"当到达 → 锁定即从数十格外隔空啄咬。真实几何。
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = seek_qi_source_spawn_rat_at(&mut app, [0.0, 64.0, 0.0]);
+        app.world_mut().spawn((
+            Position::new([10.0, 64.0, 0.0]),
+            cultivation(5.0),
+            MeditatingState { since_tick: 1 },
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        assert!(
+            app.world().resource::<Events<RatBiteEvent>>().is_empty(),
+            "鼠离目标 10 格（远超到达容差与速咬距）绝不能隔空咬，应继续冲近"
+        );
+    }
+
     #[test]
     fn seek_qi_source_action_filters_targets_by_dimension() {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
         app.add_systems(Update, seek_qi_source_action_system);
         let rat = app
             .world_mut()
@@ -829,6 +985,7 @@ mod tests {
     fn harass_bite_action_triggers_rat_bite_at_close_range_and_sets_cooldown() {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
         app.insert_resource(CombatClock { tick: 200 });
         app.add_systems(Update, harass_bite_action_system);
         let rat = app
@@ -877,6 +1034,7 @@ mod tests {
     fn harass_bite_action_navigates_without_biting_when_out_of_arrival_range() {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
         app.insert_resource(CombatClock { tick: 10 });
         app.add_systems(Update, harass_bite_action_system);
         let rat = app
@@ -888,10 +1046,10 @@ mod tests {
                 Navigator::new(),
             ))
             .id();
-        // 在 harass 起评范围内(<=8)但超出咬击到达距离(>0.8)——应冲近而非直接咬。
+        // 在 harass 起评范围内(<=8)但超出贴脸速咬距(XZ >1.5)且不在到达容差内(floored Chebyshev >2)——应冲近而非直接咬。
         app.world_mut().spawn((
             ClientMarker,
-            Position::new([3.0, 64.0, 0.0]),
+            Position::new([4.0, 64.0, 0.0]),
             cultivation(5.0),
         ));
         app.world_mut()
@@ -901,7 +1059,7 @@ mod tests {
 
         assert!(
             app.world().resource::<Events<RatBiteEvent>>().is_empty(),
-            "rat still rushing in (distance 3.0 > arrival 0.8) must not have bitten yet"
+            "rat still rushing in (XZ 4.0 > 1.5 close-bite AND floored Chebyshev-4 > 2) must not have bitten yet"
         );
         let navigator = app
             .world()
@@ -915,6 +1073,241 @@ mod tests {
         assert_eq!(
             blackboard.harass_cooldown_until_tick, 0,
             "cooldown must only be armed on an actual bite, not while still rushing in"
+        );
+    }
+
+    // --- plan-devour-rat-model P3: 咬击 → 招式动画事件 -------------------------------
+
+    /// 抽出本 tick emit 的 (rat, kind)。
+    fn drain_attack_av(app: &App) -> Vec<(Entity, RatAttackKind)> {
+        app.world()
+            .resource::<Events<RatAttackAvEvent>>()
+            .iter_current_update_events()
+            .map(|event| (event.rat, event.kind))
+            .collect()
+    }
+
+    /// 会导航的 harass 鼠（比 `spawn_harass_rat` 多挂 `Navigator`，并可选相位组件）。
+    fn spawn_harass_rat_with_phase(app: &mut App, phase: Option<RatPhase>) -> Entity {
+        let mut entity = app.world_mut().spawn((
+            NpcMarker,
+            Position::new([0.0, 64.0, 0.0]),
+            rat_blackboard_with_cooldown(0),
+            Navigator::new(),
+        ));
+        if let Some(phase) = phase {
+            entity.insert(phase);
+        }
+        entity.id()
+    }
+
+    fn harass_bite_app() -> App {
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_systems(Update, harass_bite_action_system);
+        app
+    }
+
+    /// 贴脸吸元 = peck。
+    #[test]
+    fn seek_qi_source_bite_emits_peck_attack_av() {
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                rat_blackboard_with_cooldown(0),
+                Navigator::new(),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Position::new([0.2, 64.0, 0.0]), cultivation(5.0)));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        assert_eq!(
+            drain_attack_av(&app),
+            vec![(rat, RatAttackKind::Peck)],
+            "贴脸吸元应 emit Peck（低头啄咬）——没有招式事件 = 客户端只播 idle，\
+             玩家看不出鼠在咬人"
+        );
+    }
+
+    /// 独行鼠骚扰 = claw。
+    #[test]
+    fn solitary_harass_bite_emits_claw_attack_av() {
+        let mut app = harass_bite_app();
+        let rat = spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Solitary));
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.2, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        assert_eq!(
+            drain_attack_av(&app),
+            vec![(rat, RatAttackKind::Claw)],
+            "独行鼠只敢前爪抓挠（Claw），不该用群鼠才敢的扑击"
+        );
+    }
+
+    /// 群居鼠骚扰 = pounce（与独行鼠视觉可辨）。
+    #[test]
+    fn gregarious_harass_bite_emits_pounce_attack_av() {
+        let mut app = harass_bite_app();
+        let rat = spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Gregarious));
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.2, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        assert_eq!(
+            drain_attack_av(&app),
+            vec![(rat, RatAttackKind::Pounce)],
+            "群居（Gregarious）鼠应扑击（Pounce）——鼠患成潮与独鼠试探必须视觉可辨"
+        );
+    }
+
+    /// 过渡相位仍算"没成群"，走 Claw。
+    #[test]
+    fn transitioning_harass_bite_still_emits_claw() {
+        let mut app = harass_bite_app();
+        let rat =
+            spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Transitioning { progress: 300 }));
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.2, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        assert_eq!(
+            drain_attack_av(&app),
+            vec![(rat, RatAttackKind::Claw)],
+            "Transitioning 还没成群，应仍是 Claw；只有 Gregarious 才升级为 Pounce"
+        );
+    }
+
+    /// 无 `RatPhase` 组件（教程/脚本刷出的鼠）按独行处理，不 panic、不漏 emit。
+    #[test]
+    fn harass_bite_without_rat_phase_component_falls_back_to_claw() {
+        let mut app = harass_bite_app();
+        let rat = spawn_harass_rat_with_phase(&mut app, None);
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.2, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        assert_eq!(
+            drain_attack_av(&app),
+            vec![(rat, RatAttackKind::Claw)],
+            "缺 RatPhase 组件应按独行（Claw）兜底，而不是漏 emit 让鼠无动画"
+        );
+    }
+
+    /// 还在冲刺（未到咬击距离）不该 emit 招式动画——否则鼠会在半路上凭空挥爪。
+    #[test]
+    fn harass_bite_out_of_range_emits_no_attack_av() {
+        let mut app = harass_bite_app();
+        let rat = spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Gregarious));
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([4.0, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        assert!(
+            drain_attack_av(&app).is_empty(),
+            "XZ 4.0 > 1.5 速咬距 且 floored Chebyshev-4 > 2，鼠还在冲刺，不该播招式动画，实际 {:?}",
+            drain_attack_av(&app)
+        );
+    }
+
+    /// 没有目标时（qi 源全空）既不咬也不出招。
+    #[test]
+    fn seek_qi_source_without_target_emits_no_attack_av() {
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
+        app.add_systems(Update, seek_qi_source_action_system);
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                rat_blackboard_with_cooldown(0),
+                Navigator::new(),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, SeekQiSourceAction));
+
+        app.update();
+
+        assert!(
+            drain_attack_av(&app).is_empty(),
+            "无 qi 源目标时不该 emit 招式动画"
+        );
+    }
+
+    /// 招式事件必须与咬击事件**同帧成对**出现：漏了任一边都是接线断裂。
+    #[test]
+    fn attack_av_and_bite_are_emitted_together() {
+        let mut app = harass_bite_app();
+        let rat = spawn_harass_rat_with_phase(&mut app, Some(RatPhase::Gregarious));
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.2, 64.0, 0.0]),
+            cultivation(5.0),
+        ));
+        app.world_mut()
+            .spawn((Actor(rat), ActionState::Executing, HarassBiteAction));
+
+        app.update();
+
+        let bites: Vec<Entity> = app
+            .world()
+            .resource::<Events<RatBiteEvent>>()
+            .iter_current_update_events()
+            .map(|bite| bite.rat)
+            .collect();
+        let attacks: Vec<Entity> = drain_attack_av(&app)
+            .into_iter()
+            .map(|(rat, _)| rat)
+            .collect();
+        assert_eq!(
+            bites, attacks,
+            "同一次咬击必须同帧同时产出 RatBiteEvent（伤害/守恒）与 RatAttackAvEvent（表现）；\
+             只剩一边 = 要么无伤害的空动画，要么无动画的隐形咬击"
         );
     }
 
@@ -934,6 +1327,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(BigBrainPlugin::new(PreUpdate));
         app.add_event::<RatBiteEvent>();
+        app.add_event::<RatAttackAvEvent>();
         app.insert_resource(CombatClock { tick: 0 });
         app.insert_resource(RecordedBites::default());
         register(&mut app);

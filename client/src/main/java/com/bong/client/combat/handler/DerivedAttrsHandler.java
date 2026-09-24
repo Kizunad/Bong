@@ -43,13 +43,10 @@ public final class DerivedAttrsHandler implements ServerDataHandler {
         );
         DerivedAttrsStore.replace(next);
 
-        // Keep legacy DerivedAttrFlags inside CombatHudState in sync so existing
-        // HUD planners (MiniBodyHudPlanner / EdgeFeedbackHudPlanner) pick it up.
+        // 同步 CombatHudState 内的旧 DerivedAttrFlags，让现有 HUD planner 继续读取派生状态。
         CombatHudState current = CombatHudStateStore.snapshot();
         DerivedAttrFlags flags = DerivedAttrFlags.of(next.flying(), next.phasing(), next.tribulationLocked());
-        CombatHudState merged = CombatHudState.create(
-            current.hpPercent(), current.qiPercent(), current.staminaPercent(), flags
-        );
+        CombatHudState merged = current.withDerived(flags);
         CombatHudStateStore.replace(merged);
 
         return ServerDataDispatch.handled(

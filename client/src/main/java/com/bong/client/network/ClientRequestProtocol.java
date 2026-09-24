@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 客户端 → 服务端 {@code bong:client_request} 通道的协议常量与 JSON 编码。
@@ -23,13 +24,51 @@ public final class ClientRequestProtocol {
     public static final int VERSION = 1;
     public static final int MAX_CRAFT_QUANTITY = 64;
 
-    /** 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。 */
+    /**
+     * 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。
+     *
+     * <p>plan-race-system-v1 P1c：这个 PascalCase 名字本身<b>不再是</b>
+     * {@code set_meridian_target}/{@code forge_request}/{@code apply_pill} 三处
+     * wire 字段的编码形态——server 侧已把这三个字段从闭合 {@code MeridianId} 枚举
+     * 换轨为任意 snake_case {@code MeridianChannelId} 字符串（非 humanoid 构型的
+     * 经脉不在这 20 个 TCM 名字之列）。本枚举仍保留作 UI 内部值域（如
+     * {@link com.bong.client.combat.inspect.SkillConfigSchemaRegistry} 的
+     * {@code skill_config_intent} 配置面板，那是另一条独立 wire，未随本轮开放化），
+     * 但发往上述三个字段时必须经 {@link #wireId()} 取 snake_case channel id，
+     * 不能再用 {@link #name()}。</p>
+     */
     public enum MeridianId {
         // 12 正经
         Lung, LargeIntestine, Stomach, Spleen, Heart, SmallIntestine,
         Bladder, Kidney, Pericardium, TripleEnergizer, Gallbladder, Liver,
         // 8 奇经
-        Ren, Du, Chong, Dai, YinQiao, YangQiao, YinWei, YangWei
+        Ren, Du, Chong, Dai, YinQiao, YangQiao, YinWei, YangWei;
+
+        /** {@code MeridianChannelId} snake_case channel id（server {@code channel_id()} 同源）。 */
+        public String wireId() {
+            return switch (this) {
+                case Lung -> "lung";
+                case LargeIntestine -> "large_intestine";
+                case Stomach -> "stomach";
+                case Spleen -> "spleen";
+                case Heart -> "heart";
+                case SmallIntestine -> "small_intestine";
+                case Bladder -> "bladder";
+                case Kidney -> "kidney";
+                case Pericardium -> "pericardium";
+                case TripleEnergizer -> "triple_energizer";
+                case Gallbladder -> "gallbladder";
+                case Liver -> "liver";
+                case Ren -> "ren";
+                case Du -> "du";
+                case Chong -> "chong";
+                case Dai -> "dai";
+                case YinQiao -> "yin_qiao";
+                case YangQiao -> "yang_qiao";
+                case YinWei -> "yin_wei";
+                case YangWei -> "yang_wei";
+            };
+        }
     }
 
     /** 服务端 {@code ForgeAxis}（serde 默认 PascalCase）。 */
@@ -197,7 +236,7 @@ public final class ClientRequestProtocol {
 
     public static String encodeSetMeridianTarget(MeridianId meridian) {
         JsonObject obj = envelope("set_meridian_target");
-        obj.addProperty("meridian", meridian.name());
+        obj.addProperty("meridian", meridian.wireId());
         return obj.toString();
     }
 
@@ -246,27 +285,6 @@ public final class ClientRequestProtocol {
         return encodeVoidAction(request);
     }
 
-    public static String encodeVoidActionLegacyAssign(String inheritorId, List<Long> itemInstanceIds, String message) {
-        JsonObject request = voidActionRequest(VoidActionKind.LEGACY_ASSIGN);
-        request.addProperty("inheritor_id", requireNonBlank(inheritorId, "inheritorId"));
-        JsonArray items = new JsonArray();
-        if (itemInstanceIds != null) {
-            for (Long instanceId : itemInstanceIds) {
-                if (instanceId == null || instanceId < 0) {
-                    throw new IllegalArgumentException("itemInstanceIds must contain only non-negative ids");
-                }
-                items.add(instanceId.longValue());
-            }
-        }
-        request.add("item_instance_ids", items);
-        if (message == null || message.isBlank()) {
-            request.add("message", com.google.gson.JsonNull.INSTANCE);
-        } else {
-            request.addProperty("message", message.trim());
-        }
-        return encodeVoidAction(request);
-    }
-
     /** 心魔劫决定 C2S 回执。{@code chosenIdx = null} 表示超时或未选。 */
     public static String encodeHeartDemonDecision(Integer chosenIdx) {
         JsonObject obj = envelope("heart_demon_decision");
@@ -300,7 +318,7 @@ public final class ClientRequestProtocol {
 
     public static String encodeForgeRequest(MeridianId meridian, ForgeAxis axis) {
         JsonObject obj = envelope("forge_request");
-        obj.addProperty("meridian", meridian.name());
+        obj.addProperty("meridian", meridian.wireId());
         obj.addProperty("axis", axis.name());
         return obj.toString();
     }
@@ -511,7 +529,7 @@ public final class ClientRequestProtocol {
         public JsonObject toJson() {
             JsonObject o = new JsonObject();
             o.addProperty("kind", "meridian");
-            o.addProperty("meridian_id", meridianId.name());
+            o.addProperty("meridian_id", meridianId.wireId());
             return o;
         }
     }
@@ -1025,6 +1043,17 @@ public final class ClientRequestProtocol {
      * @param blueprintId 起炉所用图谱 id
      * @param materials   投料清单（material id → count），可为空列表
      */
+    public static String encodeForgeStationOpen(BlockPos pos) {
+        if (pos == null) throw new IllegalArgumentException("station position is required");
+        JsonObject obj = envelope("forge_station_open");
+        JsonArray position = new JsonArray();
+        position.add(pos.getX());
+        position.add(pos.getY());
+        position.add(pos.getZ());
+        obj.add("station_pos", position);
+        return obj.toString();
+    }
+
     public static String encodeForgeStartSession(BlockPos stationPos, String blueprintId, List<ForgeMaterial> materials) {
         if (stationPos == null) {
             throw new IllegalArgumentException("stationPos must not be null");
@@ -1070,6 +1099,12 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeForgeStepAdvance(long sessionId) {
+        JsonObject obj = envelope("forge_step_advance");
+        obj.addProperty("session_id", sessionId);
+        return obj.toString();
+    }
+
     public static String encodeForgeConsecrationInject(long sessionId, double qiAmount) {
         if (sessionId < 0) {
             throw new IllegalArgumentException("sessionId must be >= 0, got " + sessionId);
@@ -1100,15 +1135,21 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
-    /** itemId == null → 清空槽位。 */
-    public static String encodeQuickSlotBind(int slot, String itemId) {
+    /** instanceId == null → 清空使用链接。 */
+    public static String encodeQuickSlotBind(int slot, Long instanceId) {
+        return encodeQuickSlotBind(slot, instanceId, "untracked");
+    }
+
+    /** requestId 用于匹配服务端权威接受/拒绝。 */
+    public static String encodeQuickSlotBind(int slot, Long instanceId, String requestId) {
         JsonObject obj = envelope("quick_slot_bind");
         obj.addProperty("slot", slot);
-        if (itemId == null || itemId.isEmpty()) {
-            obj.add("item_id", com.google.gson.JsonNull.INSTANCE);
+        if (instanceId == null) {
+            obj.add("instance_id", com.google.gson.JsonNull.INSTANCE);
         } else {
-            obj.addProperty("item_id", itemId);
+            obj.addProperty("instance_id", instanceId);
         }
+        obj.addProperty("request_id", Objects.requireNonNull(requestId, "requestId"));
         return obj.toString();
     }
 
@@ -1129,6 +1170,19 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("skill_bar_bind");
         obj.addProperty("slot", slot);
         obj.add("binding", com.google.gson.JsonNull.INSTANCE);
+        return obj.toString();
+    }
+
+    public static String encodeTechniqueBind(boolean dash, int slot, String skillId, String expectedBinding) {
+        if (!dash && !com.bong.client.combat.SkillBarConfig.isAvailable(slot)) throw new IllegalArgumentException("slot unavailable");
+        if (skillId == null || skillId.isBlank() || expectedBinding == null) throw new IllegalArgumentException("invalid binding");
+        JsonObject obj = envelope("technique_bind");
+        obj.addProperty("skill_id", skillId);
+        obj.addProperty("expected_binding", expectedBinding);
+        JsonObject target = new JsonObject();
+        target.addProperty("kind", dash ? "dash" : "combat");
+        if (!dash) target.addProperty("slot", slot);
+        obj.add("target", target);
         return obj.toString();
     }
 
@@ -1359,6 +1413,32 @@ public final class ClientRequestProtocol {
     /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 session（70% 材料返还，qi 不退）。 */
     public static String encodeCraftCancel() {
         return envelope("craft_cancel").toString();
+    }
+
+    public static String encodeMaterialMove(String recipeId, long instanceId, boolean returning, long revision) {
+        return encodeMaterialMove(recipeId, null, instanceId, returning, revision);
+    }
+
+    public static String encodeMaterialMove(String recipeId, net.minecraft.util.math.BlockPos station,
+                                            Long instanceId, boolean returning, long revision) {
+        if (recipeId == null || recipeId.isBlank() || (instanceId != null && instanceId <= 0)
+            || (!returning && instanceId == null) || revision < 0) {
+            throw new IllegalArgumentException("invalid material move request");
+        }
+        JsonObject obj = envelope("material_move");
+        obj.addProperty("recipe_id", recipeId);
+        obj.addProperty("instance_id", instanceId);
+        if (station == null) obj.add("station_pos", com.google.gson.JsonNull.INSTANCE);
+        else {
+            JsonArray pos = new JsonArray();
+            pos.add(station.getX());
+            pos.add(station.getY());
+            pos.add(station.getZ());
+            obj.add("station_pos", pos);
+        }
+        obj.addProperty("returning", returning);
+        obj.addProperty("expected_revision", revision);
+        return obj.toString();
     }
 
     /** 通用请求编码（combat UI 系列使用）。payload 可为 {@code null}。 */

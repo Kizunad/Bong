@@ -29,6 +29,23 @@ public final class NpcFootstepAudioController {
         ClientTickEvents.END_CLIENT_TICK.register(NpcFootstepAudioController::tick);
     }
 
+    /** Clears entity-id footstep history without changing the registered client tick callback. */
+    public static void clearOnDisconnect() {
+        STATES.clear();
+    }
+
+    static void seedStateForTests(int entityId, StepState state) {
+        if (state == null) {
+            STATES.remove(entityId);
+        } else {
+            STATES.put(entityId, state);
+        }
+    }
+
+    static int trackedStateCountForTests() {
+        return STATES.size();
+    }
+
     static AudioRecipe recipeForMaterial(String material) {
         String recipeId = switch (material) {
             case "ash" -> "npc_footstep_ash";

@@ -1,0 +1,9 @@
+# modelScript 的 Python 依赖。
+#
+# 建模/渲染/门禁的通用底座已拆进独立 public repo，本仓库只保留「一个脚本一件资产」
+# 的生成器与生物流水线。**版本锁死在 tag 上**：库改动不会静默改变本仓库的资产产出。
+# 升级 = 改这里的 tag + 跑 modelScript/tests/test_golden_bytes.py 确认字节没漂。
+bbmodel-maker @ git+https://github.com/Kizunad/bbmodel-maker@v0.1.1
+
+numpy>=1.24
+pillow>=10

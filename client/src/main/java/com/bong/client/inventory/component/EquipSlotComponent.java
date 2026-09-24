@@ -7,6 +7,7 @@ import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.tooltip.TooltipComponent;
 import net.minecraft.text.Text;
 
 import java.util.List;
@@ -43,15 +44,21 @@ public class EquipSlotComponent extends BaseComponent {
     static final int DISABLE_TINT_COLOR = 0x8C000000;  // 双手锁对侧手：opacity 0.55 (0x8C≈140/255)
     static final int LOCK_ICON_COLOR = 0xFFB0B0B0;     // 灰色锁图标
 
+    // plan-race-system-v1 P3c — 种族门置灰 tint（比双手锁略深红调，区分语义）：opacity ~0.62。
+    static final int RACE_DIM_TINT_COLOR = 0x9E1A0000;
+
     private final EquipSlotType slotType;
     private SlotContents contents = SlotContents.empty();
     // 双手武器锁定本（对侧手）槽 → 不可交互 + disable tint。
     private boolean disabledByTwoHand = false;
+    // plan-race-system-v1 P3c — 槽内物品的 wearer_race 与当前形态不符 → 置灰（禁拖入/禁交互）。
+    private boolean disabledByRace = false;
     private GridSlotComponent.HighlightState highlightState = GridSlotComponent.HighlightState.NONE;
 
     public EquipSlotComponent(EquipSlotType slotType) {
         this.slotType = slotType;
         this.sizing(Sizing.fixed(SLOT_SIZE), Sizing.fixed(SLOT_SIZE));
+        updateConstraintTooltip();
     }
 
     public EquipSlotType slotType() { return slotType; }
@@ -77,9 +84,17 @@ public class EquipSlotComponent extends BaseComponent {
 
     public void setContents(SlotContents contents) {
         this.contents = contents == null ? SlotContents.empty() : contents;
+        updateConstraintTooltip();
     }
 
-    public void clearContents() { this.contents = SlotContents.empty(); }
+    public void clearContents() { setContents(SlotContents.empty()); }
+
+    private void updateConstraintTooltip() {
+        tooltip(List.of(
+            TooltipComponent.of(Text.literal(slotType.displayName()).asOrderedText()),
+            TooltipComponent.of(Text.literal(ItemTooltipPanel.slotConstraintLine(slotType, contents.wornCount())).asOrderedText())
+        ));
+    }
 
     /** worn 栈顶件（决议 #12：唯一可拖/可卸），无则 null。 */
     public InventoryItem wornTop() { return contents.wornTop(); }
@@ -95,6 +110,14 @@ public class EquipSlotComponent extends BaseComponent {
     public void setDisabledByTwoHand(boolean disabled) { this.disabledByTwoHand = disabled; }
 
     public boolean isDisabledByTwoHand() { return disabledByTwoHand; }
+
+    /** plan-race-system-v1 P3c — 种族门置灰（槽内物品当前形态不可穿）。 */
+    public void setDisabledByRace(boolean disabled) { this.disabledByRace = disabled; }
+
+    public boolean isDisabledByRace() { return disabledByRace; }
+
+    /** 任一不可交互原因命中（双手锁 / 种族门）→ 槽整体不可拖入/拖出。 */
+    public boolean isInteractionBlocked() { return disabledByTwoHand || disabledByRace; }
 
     public void setHighlightState(GridSlotComponent.HighlightState state) {
         this.highlightState = state;
@@ -134,7 +157,14 @@ public class EquipSlotComponent extends BaseComponent {
 
         if (disabledByTwoHand) {
             drawTwoHandDisable(context);
+        } else if (disabledByRace) {
+            drawRaceDisable(context);
         }
+    }
+
+    /** plan-race-system-v1 P3c — 种族门置灰：红调暗化 tint（无锁图标，与双手锁区分）。 */
+    private void drawRaceDisable(OwoUIDrawContext context) {
+        context.fill(x + 1, y + 1, x + SLOT_SIZE - 1, y + SLOT_SIZE - 1, RACE_DIM_TINT_COLOR);
     }
 
     /** worn 栈：栈底→栈顶逐层叠放，下层 dim 露底边，栈顶高亮 + 层数角标。 */

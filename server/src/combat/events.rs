@@ -363,6 +363,8 @@ pub struct DeathCinematicPublished {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RevivalActionKind {
+    /// 玩家开始掷骰；Reincarnate 为演出结束后的内部结算。
+    RollRebirth,
     Reincarnate,
     Terminate,
     CreateNewCharacter,

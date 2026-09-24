@@ -63,6 +63,10 @@ public final class ProcessingSessionStore {
         snapshot = next == null ? Snapshot.empty() : next;
     }
 
+    public static void clearOnDisconnect() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         snapshot = Snapshot.empty();
     }

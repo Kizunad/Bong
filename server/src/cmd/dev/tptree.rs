@@ -3,7 +3,7 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::{CommandArg, CommandArgParseError, ParseInput};
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Position, Query, Res, Update};
+use valence::prelude::{App, Client, EventReader, IntoSystemConfigs, Position, Query, Res, Update};
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
@@ -68,8 +68,11 @@ impl Command for TptreeCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_command::<TptreeCmd>()
-        .add_systems(Update, handle_tptree);
+    app.add_command::<TptreeCmd>().add_systems(
+        Update,
+        // fix-spec-1901-v2 §4.2 — 直接写 `Position`，纳入统一移动 commit set。
+        handle_tptree.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
 }
 
 pub fn target_y_for_tree(
@@ -109,6 +112,24 @@ pub fn handle_tptree(
             continue;
         };
         let center = zone.center();
+        if tree == TreeTarget::Spirit {
+            if let Some(provider) = providers.as_deref().map(|providers| &providers.overworld) {
+                let Some((log_pos, stand_position)) =
+                    crate::world::terrain::mega_tree::nearest_spiritwood_harvest_target(
+                        center, provider,
+                    )
+                else {
+                    client.send_chat_message("Spirit tree log not found in nearby seed cells.");
+                    continue;
+                };
+                position.set([stand_position.x, stand_position.y, stand_position.z]);
+                client.send_chat_message(format!(
+                    "Teleported to spirit tree log at ({}, {}, {}).",
+                    log_pos.x, log_pos.y, log_pos.z
+                ));
+                continue;
+            }
+        }
         let target_y = target_y_for_tree(center, providers.as_deref().map(|p| &p.overworld));
         position.set([center.x, target_y, center.z]);
         client.send_chat_message(format!(

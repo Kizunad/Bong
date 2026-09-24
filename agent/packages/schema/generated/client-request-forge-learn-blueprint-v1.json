@@ -18,5 +18,6 @@
     "blueprint_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "1ef4c7ed161a784f3661e2b53c2c124c130cc66305cfa72ea2774b2295fbdb79"
 }

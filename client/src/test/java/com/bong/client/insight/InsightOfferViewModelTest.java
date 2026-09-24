@@ -37,7 +37,7 @@ class InsightOfferViewModelTest {
     @Test
     void rejectsEmptyChoiceList() {
         assertThrows(IllegalArgumentException.class, () -> new InsightOfferViewModel(
-            "trig", "trig label", "realm", 0.5, 1, 1,
+            "offer:trig", "trig", "trig label", "realm", 0.5, 1, 1,
             System.currentTimeMillis() + 1000L,
             List.of()
         ));

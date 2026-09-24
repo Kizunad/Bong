@@ -1,49 +1,49 @@
 package com.bong.client.forge;
 
-import com.bong.client.BongClient;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import com.bong.client.entity.BongEntityModelKind;
+import com.bong.client.entity.BongModeledEntity;
+import com.bong.client.forge.state.ForgeStationStore;
+import com.bong.client.inventory.InspectScreen;
+import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.ui.window.UiWindowRuntime;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.util.math.BlockPos;
 
-/** plan-forge-v1 §3.3 — 右键砧方块 / 按键打开锻炉 UI 的启动器。 */
+/** 交互键请求经服务端授权后，打开真实炼器砧的窗口。 */
 public final class ForgeScreenBootstrap {
-    private static final String CATEGORY = "category.bong-client.controls";
-    private static final String OPEN_KEY_TRANSLATION = "key.bong-client.open_forge_screen";
-    private static KeyBinding openScreenKey;
-
     private ForgeScreenBootstrap() {}
 
-    public static void register() {
-        keyBinding();
-        ClientTickEvents.END_CLIENT_TICK.register(ForgeScreenBootstrap::onEndClientTick);
-        BongClient.LOGGER.info("Registered forge screen bootstrap keybinding on key: U");
+    public static void open(ForgeStationStore.Snapshot station) {
+        var client = MinecraftClient.getInstance();
+        if (!available(station.pos())
+            || (client.currentScreen != null && !(client.currentScreen instanceof InspectScreen))) return;
+        if (!(client.currentScreen instanceof InspectScreen)) {
+            client.setScreen(new InspectScreen(InventoryStateStore.snapshot()));
+        }
+        UiWindowRuntime.openForge(station.pos());
     }
 
-    private static void onEndClientTick(MinecraftClient client) {
-        if (client == null || client.player == null) return;
-        while (keyBinding().wasPressed()) {
-            requestOpenForgeScreen(client);
+    public static void openCarrier() {
+        var client = MinecraftClient.getInstance();
+        if (available(ForgeStationStore.snapshot().pos())) {
+            UiWindowRuntime.cancelInput();
+            client.setScreen(com.bong.client.combat.ForgeCarrierScreenBootstrap.create());
         }
     }
 
-    private static KeyBinding keyBinding() {
-        if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_U, CATEGORY)
-            );
-        }
-        return openScreenKey;
+    public static boolean available(BlockPos pos) {
+        return available(MinecraftClient.getInstance(), pos);
     }
 
-    private static void requestOpenForgeScreen(MinecraftClient client) {
-        client.execute(() -> {
-            if (client.currentScreen instanceof ForgeScreen) {
-                return;
-            }
-            client.setScreen(new ForgeScreen());
-        });
+    static boolean available(MinecraftClient client, BlockPos pos) {
+        if (pos == null || client == null || client.player == null || client.world == null) return false;
+        if (Math.abs(client.player.getX() - pos.getX()) > 3
+            || Math.abs(client.player.getY() - pos.getY()) > 3
+            || Math.abs(client.player.getZ() - pos.getZ()) > 3) return false;
+        for (var entity : client.world.getEntities()) {
+            if (entity instanceof BongModeledEntity modeled && !entity.isRemoved()
+                && modeled.modelKind() == BongEntityModelKind.FORGE_STATION && entity.getBlockPos().equals(pos)) return true;
+        }
+        return false;
     }
 }

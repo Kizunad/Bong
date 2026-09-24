@@ -1,0 +1,819 @@
+# plan-item-model-channel-v1 — 物品 3D 模型正式通道：template_id 直查 baked model，撤掉 vanilla 宿主
+
+> **一句话主题**：把 Bong 物品从「借 vanilla ItemStack + 覆盖 vanilla model JSON」迁到
+> `template_id → Bong 自有 baked model` 的正式查询通道，先建立能提供完整变换的通道，
+> 再逐批迁移存量，最后删除所有宿主覆盖。
+>
+> **状态**：骨架（skeleton）。升 active 前由人工收口 P0 的加载器、渲染入口、transform
+> 来源和 GUI/掉落边界；骨架阶段保留开放问题，不擅自把实现方案写成既成事实。
+
+| 阶段 | 主题 | 状态 |
+|------|------|------|
+| P0 | 直查 baked model 的可行性 spike、transform 来源和场景边界 | ⬜ |
+| P1 | 建立单一 canonical registry、资源定义和 fail-fast 校验 | ⬜ |
+| P2 | 迁移 39 条存量 entry，并撤掉 15 个 vanilla model 覆盖 | ⬜ |
+| P3 | 迁移五套 VanillaIconMap 的 Bong 路径和 FPV/TPV 消费者 | ⬜ |
+| P4 | 接入丹药 8 项、灵植 9 项，收口 3D 场景范围 | ⬜ |
+| P5 | 防复发门禁、资源包同步和全场景回归 | ⬜ |
+
+## 接入面
+
+- **进料**：服务端现有 `ServerDataPayloadV1::WeaponEquipped` / `WeaponEquippedV1`
+  的 `template_id`（`server/src/schema/combat_hud.rs:290-383`、
+  `server/src/network/weapon_equipped_emit.rs:99-190`）进入客户端
+  `WeaponEquippedHandler` → `WeaponEquippedStore`；手持渲染再由
+  `HeldItemStackResolver` 和 FPV/TPV mixin 消费。模型 manifest 的模板集合来自
+  `server/assets/items/*.toml`，几何、MTL、贴图和模型 definition 来自
+  `client/src/main/resources/assets/bong/` 及 `modelScript/core/held_item_common.py::write_assets`。
+  背包 GUI 的既有 2D 输入仍来自 `ItemIconRegistry`，不因 3D 通道而改成模型输入。
+- **出料**：canonical registry 输出按 `template_id` 查到的 Bong `BakedModel` 和各
+  `ModelTransformation` context，供 `MixinHeldItemRenderer`（FPV）与
+  `MixinPlayerEntityHeldItem`（TPV）直接渲染；纳入范围的 GUI/fixed/ground 场景写入
+  各自 owner。资源文件最终进入 `assets/bong/` 的资源包并由
+  `server/src/network/resourcepack.rs::DEFAULT_RESOURCE_PACK_MANIFEST` 校验。本 plan
+  不向 gameplay、inventory 状态、Redis 或 server event 产出新副作用。
+- **共享类型 / event**：复用已有 `WeaponEquippedV1`、`template_id`、
+  `WeaponEquippedStore`、`EquippedShieldStore`、`ItemIconRegistry` 以及现有 SML/模型
+  加载契约；不另建 `ItemStack` host 映射、装备态 store、wire event 或 schema。新的
+  model definition/registry 是 client 渲染内部类型，若实现需要新增类型，必须让 FPV、
+  TPV 和资源 reload 共用同一份，而不是为测试另开可见性 seam。
+- **跨仓库契约**：server 侧命中
+  `network::weapon_equipped_emit::emit_weapon_equipped_payloads`、
+  `ServerDataPayloadV1::WeaponEquipped` / `WeaponEquippedV1.template_id`；client 侧命中
+  `ProtoServerDataBridge`、`WeaponEquippedHandler`、`WeaponEquippedStore`。agent 侧
+  **不适用**：模型查询发生在 client resource/render 层，不经过 agent、Redis channel
+  或新的 IPC；本 plan 不改 server↔agent↔client 的 wire/schema，P5 只用既有
+  `weapon_equipped` 登录/装备场景做回归。
+- **worldview 锚点**：**不适用**。这是 client 资源加载和物品模型挂载基建，不新增
+  境界、经济、传承、阵法、区域或物品 gameplay 语义；丹药/灵植的世界观含义由既有
+  item/botany owner 维护，P4 只接模型，不在本 plan 改 `docs/worldview.md`。
+- **qi_physics 锚点**：**不适用**。模型 lookup、OBJ/MTL/贴图加载和 transform 不读写
+  真元/灵气、不实现衰减/逸散/距离损耗，也不改变任何 ledger；若未来要为模型添加会
+  影响真元数值的视觉/玩法效果，必须另行接入既有 `qi_physics`，不能在本 plan 自定
+  物理常数。
+
+## 0. 不可逆裁决、范围与完成定义
+
+### 0.1 所有者裁决（本 plan 的前提，不是待投票事项）
+
+- 新通道的 canonical 查询是 `template_id → Bong 自有 baked model`。渲染消费点直接
+  根据 `template_id` 查模型，不合成 fake vanilla `ItemStack`，不把任何 vanilla item
+  当宿主，也不依赖 `assets/minecraft/models/item/*.json` 覆盖 Bong 外观。
+- 存量也必须迁移：当前 `BongWeaponModelRegistry` 的 39 条 entry 和已覆盖的 vanilla
+  model 都是过渡债，不得以「新物品走新路、旧物品永久留宿主」作为终态。
+- 每个 Bong model definition 必须自己提供所需的 first-person / third-person
+  transform；不能继续从被借用的 vanilla JSON 的 `display` 块白嫖。GUI、fixed、ground
+  等实际使用的 context 也必须有明确来源，不能因移除宿主而静默退回默认姿态。
+- P0 → P1 → P2 的顺序是硬约束。通道尚未能渲染一个真实模板以前，不得删除 vanilla
+  覆盖；否则玩家手中的武器会直接退回原版外观或 missing model。
+- 不新增 server wire、template_id 协议或真元语义；本 plan 的默认范围是 client 渲染
+  基建与资源。若 P0 证明现有协议不足，先停在开放问题交人工，不在实现阶段私自扩展
+  server/agent 契约。
+- 不引入与本通道无关的新依赖。loader 或 Minecraft/Fabric API 的可行性必须先由 P0
+  spike 证明，再由 active plan 固化。
+
+### 0.2 触发本 plan 的实证
+
+现有做法覆盖 `minecraft/models/item/trident.json` 时，真正的原版三叉戟外观也会被
+改变。这个副作用不是可接受的命名或资源整理问题，而是「宿主 item → 一份 vanilla
+model」粒度错误的直接证据；因此本 plan 明确否掉「挑一个冷门 vanilla item 继续烧」
+的修补方向。
+
+### 0.3 完成定义
+
+本 plan 全部完成时必须同时成立：
+
+1. 所有在范围内的 Bong `template_id` 都有可核验的自有 model definition、几何/贴图
+   来源和 transform；有意复用也通过显式单向关系表达。
+2. FPV、TPV 和其他纳入范围的消费点走同一个生产 registry/model lookup；测试不能靠
+   一个生产路径不会调用的 test-only `pub` seam 通过。
+3. `BongWeaponModelRegistry.Entry` 不再承载 `hostItemSupplier` / `vanillaModelPath`，
+   `WeaponRenderBootstrap` 不再以 vanilla namespace 覆盖 Bong model。
+4. Bong 资源不再新增或依赖 `assets/minecraft/models/item/*.json` 覆盖；15 个现存
+   覆盖全部逐个清理并验证对应原版物品恢复。
+5. 未知或缺失 `template_id` 不得静默显示另一件物品；资源缺失、借用环、transform
+   缺失都要在启动/资源 reload 或明确的 missing 状态中可见，而不是伪装成功。
+
+## 1. 现状证据与迁移清单
+
+### 1.1 当前渲染链（迁移前基线）
+
+当前链路是：
+
+```text
+server 下发玩家手持 template_id
+  → WeaponEquippedHandler / WeaponEquippedStore 保存装备态
+  → HeldItemStackResolver 按 fallback 链合成 fake vanilla ItemStack
+  → MixinHeldItemRenderer（FPV，updateHeldItems @TAIL）
+    或 MixinPlayerEntityHeldItem（TPV，getMainHandStack/getOffHandStack @RETURN）
+  → vanilla item renderer
+  → vanilla model JSON
+  → Special Model Loader（SML）把被覆盖的宿主路径接到 Bong OBJ
+```
+
+可回查的接入点：
+
+- `client/src/main/java/com/bong/client/weapon/WeaponEquippedHandler.java:35-71`：
+  `weapon_equipped` 的模板状态进入客户端装备态。
+- `client/src/main/java/com/bong/client/weapon/HeldItemStackResolver.java:55-130`：
+  主手/副手 fallback 以及 `weaponFake` / shield fake stack 的当前入口。
+- `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java:47-63`：
+  FPV 把 resolver 返回值塞入 vanilla `HeldItemRenderer`。
+- `client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:46-65`：
+  TPV 改写 `getMainHandStack` / `getOffHandStack` 返回值。
+- `client/src/main/java/com/bong/client/weapon/WeaponRenderBootstrap.java:24-39`：
+  注册 SML `LOAD_SCOPE`，当前同时接管 `bong:*` 和被列入的 vanilla model 路径。
+- `client/src/main/java/com/bong/client/BongClient.java:157-160`：渲染 bootstrap 的客户端
+  初始化接线。
+
+P0 必须把这条链改成「template_id → model lookup → 直接模型渲染」的生产路径；仅在
+   mixin 中另开一个只供测试调用的入口，不算完成。
+
+### 1.2 `BongWeaponModelRegistry` 的 39 条存量 entry
+
+`client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java:13-18,20-238`
+当前 `Entry` 含 `hostItemSupplier`、`vanillaModelPath`、`bongObjModelPath`，共 39 条：
+
+```text
+iron_sword, rusted_blade, bronze_saber, bone_dagger, hand_wrap,
+bone_sword, lingmu_sword, wooden_staff, spirit_sword, flying_sword_feixuan,
+axe_bone, pickaxe_bone, axe_iron, pickaxe_iron, stone_pickaxe, stone_axe,
+pickaxe_copper, axe_copper, hoe_iron, hoe_lingtie, hoe_xuantie, bao_chu,
+cai_yao_dao, cao_lian, dun_qi_jia, gua_dao, gu_hai_qian, bing_jia_shou_tao,
+bone_spike, poison_needle, zhenyuan_mine, iron_sword_flawed, qing_feng_sword,
+qing_feng_sword_flawed, ling_feng_sword, ling_feng_sword_flawed, stone_knife,
+wooden_shield, bone_shield
+```
+
+现状统计要在 active 阶段重新以代码为准复核，但本骨架基线记录为：
+
+- server `assets/items/*.toml` 中 `category = "weapon" | "tool"` 共 43 个模板；registry
+  覆盖其中 34 个，缺失 9 个：`array_flag`、`blast_trap`、`bone_spike_crude`、
+  `eclipse_needle_iron`、`herb_knife_iron`、`iron_dagger`、`slow_trap`、
+  `warning_trap`、`wooden_club`。
+- registry 另有 5 个不在上述 43 项统计口径内的条目：`bone_shield`、`hoe_iron`、
+  `hoe_lingtie`、`hoe_xuantie`、`wooden_shield`。这 5 个不能在迁移时漏掉。
+- 当前有意或无意共享宿主的规模为：`STONE_SWORD ×6`、`IRON_SWORD ×3`，以及
+  `BONE`、`LEATHER`、`STONE_AXE`、`STONE_PICKAXE`、`FLINT_AND_STEEL` 各 ×2，
+  合计 19 个模板。新通道的显式 borrow 不得复刻这种无声的共宿主耦合。
+- 当前 39 条中约 14 条已有 Bong OBJ、25 条借用或白嫖原版形态；迁移时必须给每条
+  一个明确 model source，不能用未知模板 fallback 掩盖缺口。
+
+### 1.3 vanilla 覆盖资源
+
+当前 `client/src/main/resources/assets/minecraft/models/item/` 下被 Bong 覆盖的 15 个
+文件为：
+
+```text
+bone.json                 flint.json
+leather.json              nether_star.json
+nautilus_shell.json       phantom_membrane.json
+totem_of_undying.json     diamond_sword.json
+golden_sword.json         iron_sword.json
+netherite_sword.json      iron_axe.json
+iron_pickaxe.json         wooden_axe.json
+wooden_pickaxe.json
+```
+
+其中 `flint.json` 是指向 `crystal_shard_dagger` 的孤儿 override，当前 SML scope 并未
+真正接管它，可能表现为 missing model；清理时仍须把它作为独立条目核验，不能因它看似
+不生效就漏删。P2 删除一个覆盖就回归对应真实 vanilla item，至少包含「原版三叉戟不
+受 Bong 模型影响」的回归证据。
+
+### 1.4 五套 VanillaIconMap 与边界
+
+当前 Bong 模板仍从下列类合成 vanilla stack 或借用 vanilla 映射：
+
+| 类 | 当前职责 | 迁移要求 |
+|---|---|---|
+| `BlockVanillaIconMap`（`HOST_ITEMS` 当前 15 项） | Bong 方块预览；另支持 `vanilla:<short>` 的真正 vanilla 方块预览 | Bong template 路径改为正式 model lookup；`vanilla:<short>` 真实 vanilla 预览必须和 Bong 路径分界，不能误删 |
+| `HoeVanillaIconMap`（当前 4 项） | 锄头模板的 vanilla host 映射 | Bong 锄头不再走 host；保留真实 vanilla 预览边界 |
+| `ScrollVanillaIconMap`（当前 1 项） | 可阅读残卷的 vanilla fallback | Bong 模板路径迁移，非 Bong 的 vanilla fallback 另行保持 |
+| `ShieldVanillaIconMap` | 盾牌模板的 host 映射 | 盾牌走同一个 registry，不开第二套 SML scope |
+| `WeaponVanillaIconMap` | 武器/工具/暗器模板的 fake stack 缓存 | 删除 `template_id → host Item` 逻辑，改为模型查询/渲染适配 |
+
+`HeldItemStackResolver` 当前的优先级语义仍是契约：主手按武器 → 方块 → 锄头 → 残卷，
+副手按武器 → 盾牌；其中「已装备武器但没有模型时不下探到下一类」的 gate 也要在新
+渲染适配中保留。迁移不能为了去 stack 而改变游戏状态或 fallback 选择。
+
+### 1.5 新接入对象：丹药与灵植
+
+当前这些对象有 2D 图标或世界植物渲染，但没有本通道承诺的完整 3D 场景；P4 必须逐项
+建立 model source 矩阵，不得把「有 icon」写成「已有 3D 模型」。
+
+**丹药 8 项**（server item id）：
+
+```text
+guyuan_pill, kaimai_dan, huiyuan_pill, anti_spirit_pressure_pill,
+huo_xue_dan, jin_zhong_dan, ji_feng_dan, hui_li_dan
+```
+
+**灵植 9 项**：
+
+```text
+chi_sui_cao, gu_yuan_gen, hei_gu_jun, ling_yan_shi_zhi, hua_xing_gen,
+shou_xin_cao, tui_gu_teng, xu_yuan_rui, xue_po_lian
+```
+
+当前核验结果：
+
+- `chi_sui_cao`、`gu_yuan_gen`、`hei_gu_jun`、`ling_yan_shi_zhi`、`xue_po_lian`
+  有对应 server item id；另四个 `hua_xing_gen`、`shou_xin_cao`、`tui_gu_teng`、
+  `xu_yuan_rui` 当前是 `server/assets/botany/plants.toml` 的植物 id，不是同口径
+  的 server item。两类不得在 manifest 里混为一谈。
+- 2D 图标在 `client/src/main/java/com/bong/client/inventory/ItemIconRegistry.java`
+  及其 `bong-client:textures/gui/...` 资源中；默认保留 GUI 2D 图标，3D 通道的接入
+  不应为了统一而牺牲背包性能和可读性。
+- 世界植物当前由 `BotanyPlantRenderProfile`、`BotanyPlantStageWorldRenderer`
+  （`client/src/main/java/com/bong/client/botany/BotanyPlantStageWorldRenderer.java`）
+  和 `BotanyPlantEntityRenderer` 等 profile 驱动链路负责。P4 如果要替换这条已运行的
+  世界渲染，必须拆成单独可验收的子阶段；默认只给采收后的 item 形态接模型通道。
+
+### 1.6 掉落物和非手持边界
+
+`client/src/main/java/com/bong/client/dropped/DroppedItemWorldRenderer.java:27-38,55-68`
+当前从 `DroppedItemStore` 直接画 billboard，并非 vanilla `ItemRenderer`。P0 必须确认
+它是否需要新 registry；若不需要，ground/drop 继续由现有 owner 负责，并在 plan 的
+验收矩阵中明确「未纳入」；不得为了让每种场景看起来统一而偷偷替换掉这条链路。
+
+## 2. P0 — 直查 baked model 的可行性 spike与决策收口
+
+P0 是硬门。它不是把旧 fake stack 改个名字，而是证明 Minecraft/Fabric/SML 当前版本
+能让 Bong 根据 `template_id` 取得并渲染一个真正的 `BakedModel`。P0 未通过时不得升
+active，也不得删任何 vanilla override；失败时由人工选择另一种**无 vanilla 宿主**的
+直接绘制方案，不能退回继续烧宿主。
+
+### 2.1 canonical API 与模型加载
+
+需要用最小 spike 验证并记录以下事实：
+
+1. 选择并冻结 `BongItemModelRegistry`（或同等唯一 registry）的查询契约，例如
+   `template_id → ModelDefinition → BakedModel`；名称可在 active 前调整，但不得出现
+   `BongWeaponModelRegistry` 与另一份 registry 各自为真源的状态。
+2. 确认 Fabric 的模型加载入口（例如 `ModelLoadingPlugin` / `ModelResourceProvider`
+   或当前 SML 可用的等价入口）能加载 `bong:<template_id>`，并在 resource reload
+   后更新/失效 baked model 缓存。不要假定某个 API 在 1.20.1 已存在，必须把版本实测
+   结果写入决议证据。
+3. OBJ/MTL/贴图的资源 location、namespace、路径规范和 loader scope 必须全程在
+   `bong` 命名空间内；不得通过 `minecraft:item/<host>` 作为中转。
+4. FPV 的 `MixinHeldItemRenderer` 和 TPV 的 `MixinPlayerEntityHeldItem` 都必须能
+   消费同一个生产 model lookup。若 Minecraft 的 vanilla renderer API 只接受
+   `ItemStack`，P0 要验证直接模型渲染的 adapter/自绘入口，而不是偷偷注册一个只为
+   测试或宿主替代而存在的 fake vanilla stack。
+
+### 2.2 transform 来源是 P0 硬门
+
+去掉宿主后，第一/第三人称的 transform 不会凭空存在。P0 必须用一个真实模型证明：
+
+- `firstperson_righthand`、`firstperson_lefthand`、`thirdperson_righthand`、
+  `thirdperson_lefthand` 的旋转、平移、缩放来自 Bong 自己的 model definition 或
+  等价的 Bong-owned transform 表，而不是 vanilla host JSON 的 `display`；
+- 实际纳入范围的 `gui`、`fixed`、`ground`（以及需要时的 `head`）context 也有
+  明确来源；未纳入的 context 必须写明 owner 和原因；
+- 借用几何不等于借用变换：`borrows_from` 只表达单向几何/OBJ 关系，借用者仍拥有
+  自己的 transform，避免一个模型的姿态修改无声影响所有借用者；
+- FPV、TPV 左右手和资源 reload 后的姿态都能被截图或可重复的渲染断言锁住。
+
+任何仍从 `Items.*` 宿主 model 取得 display 变换的实现均判 P0 FAIL。
+
+### 2.3 场景和错误语义 spike
+
+P0 至少覆盖一个自有模型和一个显式 borrow 候选，并记录：
+
+- 装备 `template_id` 后 FPV/TPV 均显示正确 geometry 和 transform；
+- GUI/物品检视、创造栏/搜索、REI（如本客户端存在）是否能看到或误看到内部模型；
+  内部 Bong model 不得因技术注册而污染 vanilla 创造栏；
+- 2D icon、lang/tooltip 和 model lookup 的责任边界；不因 missing lang 而显示内部
+  `item.bong.<id>` 名称；
+- `DroppedItemWorldRenderer` 是否使用本通道；若不使用，明确保持现状；
+- unknown id、缺 JSON、缺 OBJ/MTL/贴图、borrow cycle、缺 transform 的行为。任何
+  不能渲染的条目必须 fail-fast 或进入可观测的 missing 状态，禁止随机借另一物品的
+  模型。
+
+### 2.4 P0 交付物与放行条件
+
+- 一个最小真实 `template_id` spike，使用生产将要走的 model lookup 和渲染 adapter；
+- 一份决议记录，逐条回答 §2.1–§2.3，并带实现 file:line、资源 location 和运行结果；
+- FPV/TPV、左右手、至少 GUI 或 fixed/ground 中纳入范围的 context 的可复核证据；
+- 明确 client-only 注册、ItemGroup/REI、lang、掉落物是否需要额外阶段；
+- 明确没有新 fake vanilla host、没有 `assets/minecraft` Bong override、没有 test-only
+  可见性 seam。
+
+## 3. P1 — 单一 canonical registry 与资源契约
+
+P0 通过后，建立一个唯一的 `template_id → ModelDefinition/BakedModel` 真源。具体类名
+可以在人工转 active 时依据 spike 调整，但不能保留两套平行 registry。
+
+- registry 的 entry 至少表达：`template_id`、Bong model resource location、几何/贴图
+  来源、各使用 context 的 transform，以及可选的显式 `borrows_from`。不得再有
+  `hostItemSupplier`、`vanillaModelPath` 或隐式共享 host 字段。
+- `registerAll`/资源 reload 的生产路径和 FPV/TPV lookup 使用同一份 entry；测试只验证
+  真实生产契约，不增设专供测试的 `pub`。
+- 用 manifest/生成校验覆盖当前范围，并与 `server/assets/items/*.toml` 的模板 id
+  对拍。复用 `plan-registry-datafication-v1` 已定的 manifest/fail-fast 范式，升 active
+  前先与该 plan 对齐格式，不另造互相矛盾的清单。
+- 每个 manifest id 都必须有 model definition；每个 definition 引用的 OBJ/MTL/贴图
+  都必须存在；每条 borrow 必须指向已知 id、不能形成环，且 borrow 者必须有自己的
+  transforms。缺失在启动或 resource reload 时显式失败。
+- unknown `template_id` 返回明确的 empty/error/missing 结果并留下可查日志，不能
+  fall through 到 `STONE_SWORD`、`BONE` 等默认宿主。
+- registry 缓存必须正确处理资源 reload；不能把第一次 bake 的旧 `BakedModel` 永久
+  留在 `ConcurrentHashMap` 中而不失效。
+
+P1 的测试至少包括：manifest 与 server id 集合/数量对拍、每项资源存在、重复 id、
+unknown id、borrow 目标和环、各 transform context、reload 后 lookup，以及一个 FPV/TPV
+    同时使用生产 lookup 的集成样例。
+
+## 4. P2 — 迁移 39 条 entry，并撤掉 15 个 vanilla 覆盖
+
+P2 只有在 P1 的最小模型通道和回归证据成立后开始。顺序是「一批 entry 有 Bong model
+definition → FPV/TPV 对拍通过 → 再移除该批依赖的 vanilla override」，不能先删资源再
+等待通道补齐。
+
+- 39 条 entry 逐条迁移，保留原有独立 OBJ；原先白嫖 vanilla 几何的条目改为显式
+  `borrowed_from` 或明确的 Bong-owned placeholder，不得把 `hostItemSupplier` 原样
+  藏在新类里。
+- 共享宿主的 19 个模板逐条验收：迁移后每个 template 的 geometry 和 transform 独立
+  可查，修改 `stone_knife` 不会连带 `bone_sword`、`gua_dao` 或 flawed swords。
+- 每个 model definition 都要有自己的 first/third-person 变换；即使几何借用，也不
+  能复用宿主 `display` 或继承没有声明的姿态。
+- 把 `BongWeaponModelRegistry.Entry` 迁成新语义，删除 `vanillaModelPaths()` 以及
+  依赖这些路径的 `WeaponRenderBootstrap` vanilla namespace 分支；SML 若仍用于 OBJ
+  加载，只接管 Bong namespace 的正式资源。
+- `modelScript/core/held_item_common.py::write_assets` 的输出路径同步为
+  `assets/bong/models/item/<template_id>.json`（或 P0 决定的 Bong-owned 等价路径），
+  不再写宿主 JSON。生成器的输出、资源包 manifest 和 committed manifest 要能对拍。
+- 15 个 vanilla 覆盖在对应迁移批次完成后逐个删除；每个删除都验证真实 vanilla item
+  恢复，特别记录 `flint.json` 孤儿和原版三叉戟副作用回归。
+- 迁移期间不动 server 的 `template_id` 下发和 gameplay 逻辑；出现协议不兼容先停下
+  由人工处理，不以渲染 fallback 掩盖。
+
+P2 交付物是逐条迁移矩阵（39/39：model source、transform、回归证据、override 清理
+状态）和 FPV/TPV 截图或等价可重复渲染报告。当前 `client/tools/render_held_item.py`
+缺少 `pyrender`，升 active 前要么补齐受批准的测试依赖，要么选能还原 MC display
+变换的等价工具；不能把无法还原 transform 的 `modelScript/core/render_bbmodel.py`
+截图当成完整验收。
+
+## 5. P3 — 迁移五套映射与所有消费者
+
+P3 处理「已有装备态如何进入新模型通道」，不是重新发明一套状态 store。
+
+- `WeaponVanillaIconMap`、`ShieldVanillaIconMap`、`HoeVanillaIconMap`、
+  `ScrollVanillaIconMap` 和 `BlockVanillaIconMap` 中所有 Bong template 路径改为
+  canonical model lookup/渲染 adapter；不再为 Bong template 合成 fake vanilla
+  `ItemStack`。
+- `BlockVanillaIconMap` 的 `vanilla:<short>` 是真正的 vanilla 方块预览，属于独立
+  owner；它可以继续使用真实 vanilla item 的预览机制，但不能被误判为 Bong template
+  的宿主路径，也不能因清理 `HOST_ITEMS` 而破坏 `/place` 的 client gate。
+- `HeldItemStackResolver` 需要改成或委托给模型 resolver，同时保留 §1.4 的优先级、
+  主/副手语义、空模型的 gate 和 vanilla fallback；不把渲染迁移误改成 gameplay 状态
+  或背包数据迁移。
+- `MixinHeldItemRenderer` 和 `MixinPlayerEntityHeldItem` 必须都调用同一个生产 lookup；
+  不能 FPV 已迁而 TPV 仍偷偷向 vanilla stack 注入，或反之。
+- `WeaponEquippedHandler` / `WeaponEquippedStore` 继续作为模板状态的 owner；本阶段不
+  新建重复 store/event。消费层只替换「模板到可渲染模型」这一步。
+
+验收覆盖：主手/副手、武器/工具/盾/锄/残卷 fallback、未知 id、真正 vanilla block
+preview、其他玩家 TPV 和本地玩家 FPV；每个分支都要有外部可观察的渲染结果或明确的
+empty/missing 结果。
+
+## 6. P4 — 丹药与灵植的 3D 接入
+
+P4 不是把 17 个名字强行塞进同一套场景。升 active 时人工决定范围，并为每一项填表：
+server/item 或 botany source、model source、transform、使用场景、2D icon 是否保留、
+缺资源时的可见状态。
+
+### 6.1 丹药 8 项
+
+逐项覆盖 `guyuan_pill`、`kaimai_dan`、`huiyuan_pill`、`anti_spirit_pressure_pill`、
+`huo_xue_dan`、`jin_zhong_dan`、`ji_feng_dan`、`hui_li_dan`。P4 必须先回答 3D 是否用于：
+
+- 背包格/物品检视；
+- 第一/第三人称手持；
+- 世界掉落物；
+- 炼丹炉成品展示。
+
+场景不同就拆成可验收子阶段。默认保留已有 `ItemIconRegistry` 2D icon 作为 GUI 路径，
+3D 接入不应让每个背包格都承担模型渲染成本。
+
+### 6.2 灵植 9 项
+
+逐项覆盖 `chi_sui_cao`、`gu_yuan_gen`、`hei_gu_jun`、`ling_yan_shi_zhi`、
+`hua_xing_gen`、`shou_xin_cao`、`tui_gu_teng`、`xu_yuan_rui`、`xue_po_lian`。
+
+- 有 server item id 的 5 项可按 item 形态接入正式 registry。
+- 当前只有 botany plant id 的 `hua_xing_gen`、`shou_xin_cao`、`tui_gu_teng`、
+  `xu_yuan_rui`，先明确采收物是否要新增 item model definition；不能把 plant world
+  profile 当成 item model source。
+- 如果产品要求替换 `BotanyPlantStageWorldRenderer` / `BotanyPlantEntityRenderer` 的
+  世界植物渲染，必须另列「世界植物 renderer 迁移」阶段并验收所有成长阶段；P4 默认
+  不替换既有 profile 驱动链路。
+
+### 6.3 P4 的错误与借用规则
+
+无专属几何时可以使用显式单向 `borrows_from`，但借用者仍必须有自己的 transform 和
+场景声明；不能用 vanilla host 或 silent fallback。若仅有占位资源，manifest 必须把
+`placeholder` 状态暴露给启动日志/测试，并列入后续清单，不得把开放问题伪装成完成。
+
+## 7. P5 — 防复发门禁与全场景回归
+
+P5 将资源结构问题变成可自动核验的门禁：
+
+- 静态检查拒绝新增 `client/src/main/resources/assets/minecraft/models/item/*.json`
+  作为 Bong model，并拒绝任何新 `hostItemSupplier`、`vanillaModelPath` 或 Bong
+  `template_id → vanilla host` 映射；终态证明现有 15 个 Bong override 已清零。
+- registry/manifest 与 server item source 的 id 集合对拍；39 条存量逐条有 model source，
+  后续 9 条缺口和 P4 17 项有独立状态，不以一个默认模型蒙混。
+- 借用关系必须单向、无环、可追踪；修改被借几何时，借用者的 transform 和预期外观
+  有独立回归，不发生共宿主式连带变形。
+- 资源包生成和校验覆盖新路径：`scripts/build-resourcepack.sh`、
+  `scripts/test_build_resourcepack.py`、`server/src/network/resourcepack.rs` 的
+  `DEFAULT_RESOURCE_PACK_MANIFEST`/sha1 同步；模型、OBJ、MTL、贴图变更不能让 committed
+  manifest 静默过期。
+- FPV/TPV 左右手、GUI、fixed/ground（若纳入）、真实 vanilla block preview、掉落物
+  owner 边界分别回归；不能以单张手持截图代替整个 transform 矩阵。
+- bot e2e 验证「登录 → 收到 `weapon_spec`/装备 template_id → 客户端解析并显示」的
+  协议链路不回归。server 不因 client model registry 变化而掉线；若 P0 判定有 client-only
+  registry 登录风险，必须把它变成显式 e2e 门。
+- unknown/missing/cycle/缺 transform 的负例必须失败且带修复线索；不得显示另一件
+  物品或悄悄回到 vanilla 宿主。
+
+建议验收矩阵：
+
+| 断言 | 证据 |
+|------|------|
+| 39 条存量全部可查 | registry/manifest 对拍 + 逐条 source matrix |
+| 15 个覆盖已撤 | 资源目录检查 + 原版物品回归（含三叉戟） |
+| 无 fake host | static grep + FPV/TPV 运行日志/调用链 |
+| transform 不依赖 host | 每 context 的 model definition/渲染对拍 |
+| 五套 map 无 Bong fake stack | 类级静态检查 + 主副手/fallback 集成回归 |
+| 资源包一致 | build/test resourcepack + sha1 manifest 对拍 |
+| 协议不回归 | bot e2e 登录、装备、`weapon_spec` 场景 |
+
+## 8. 接入面、依赖关系与 owner 边界
+
+### 8.1 既有 plan 的关系
+
+**Integration preflight 记录（2026-09-16）**：本次预检已检 `docs/worldview.md`（client 渲染基建，无对应章节）、
+`docs/finished_plans/`、`docs/plan-*.md`（active）、`docs/plans-skeleton/plan-*.md` 和
+`docs/plans-skeleton/reminder.md`（已检，41 行，无物品模型/渲染相关待办），对照相关 finished plan、active
+plan 和 `docs/plans-skeleton/` 的现有 owner，沿 `BongWeaponModelRegistry`、
+`WeaponRenderBootstrap`、`HeldItemStackResolver`、五套 `VanillaIconMap` 和
+`HeldItemRenderer` 接入面逐项核对。结果不是「没有重叠」，而是确认旧的手持注册骨架和
+craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在升 active 前与本 plan 的
+所有者裁决做 supersede/redirect 对表，不能让两个 plan 同时继续写同一条模型通道。
+
+- `docs/plans-skeleton/plan-held-item-registration-v1.md` 当前提出「每模板注册
+  render-only Fabric Item，再由 fake stack 走 vanilla HeldItemRenderer」。这与本所有者
+  已否决的 fake vanilla host 方向冲突；本 plan 是「物品模型来源/消费通道」主题的新唯一
+  owner。升 active 前由人工给旧 skeleton 写 supersede/redirect 或明确拆分边界；本 PR
+  只新增本 skeleton，不修改旧 plan。
+- `docs/plans-skeleton/plan-craft-chain-items-v1.md:11,22,81` 也命中同一接口面：其 P2
+  把「导出 OBJ → `BongWeaponModelRegistry` 条目」写成既定模型链路，并要求检查
+  `vanillaModelPaths` 后继续选择未占用的 vanilla item，甚至点名 `Items.TRIDENT` 候选。
+  这与所有者已经否掉的 vanilla 宿主方向直接冲突，且三叉戟正是宿主覆盖会污染真实
+  vanilla 物品的实证边界；该 skeleton 在人工 supersede/redirect 前不得按原文实施。
+  craft-chain 的物品接入应依赖本 plan 建成的 canonical `template_id → BakedModel`
+  通道。本 PR 只记录 preflight 和 owner 边界，不修改该旧 skeleton。
+- `plan-weapon-v1` / `plan-weapon-v1.1` 的武器 gameplay、OBJ 产物和既有加载器评估不
+  在本 plan 内重做；本 plan 只接管模型挂载和渲染消费路径。其 `§5.3.Y` 的加载器评估
+  仍需在 P0 对表，不能把「继续 SML」当未验证的永恒承诺。
+- `plan-armor-model-render-v1` 的护甲模型产物不与本 plan 的手持物 registry 混为一谈；
+  若未来共享 OBJ loader，需通过明确公共契约接入，不复制 registry。
+- `plan-tarkov-backpack-v1` / `plan-client-render-gap-v1` 的背包图标和 client render
+  接入只作为 P4/P5 场景依赖，不在本 plan 中改其既有 UI owner。
+- `plan-registry-datafication-v1` 提供清单数据化与 fail-fast 的范式；本 plan 复用它的
+  约定，但不另造一份相互独立的模板真源。
+- `plan-fpv-cast-av-v1` 可能触及同一条 `HeldItemRenderer` 链路；P2/P3 开始前必须
+  对表其 in-flight 变更，保证两个 plan 不各自重写同一个 mixin。
+- `plan-refactor-client-store-lifecycle-v1` 的 `WeaponEquippedStore` owner 保持不变；
+  本 plan 不新建并行装备态 store。
+
+### 8.2 非目标
+
+- 不改 Rust server 的 item 经济、战斗、真元、schema 或 wire event；已有
+  `template_id` 是输入，模型通道不凭空引入新的 gameplay 语义。
+- 不改 `docs/worldview.md`、命名正典、骨币经济或任何 qi ledger；本 plan 没有 worldview
+  / qi_physics 锚点。
+- 不把 `DroppedItemWorldRenderer`、botany 世界成长渲染、护甲 renderer 或背包 UI 在
+  没有 P0/P4 明确决议时顺手替换。
+- 不以「再找三个冷门 vanilla item」为过渡交付；也不把旧 host 逻辑藏进一个看似新的
+  `BongModelItem` 适配层。
+
+### 8.3 升 active 前的人工收口
+
+人工需要根据 P0 spike 结果决定：
+
+1. Fabric/SML 1.20.1 的直接 baked-model 加载和 FPV/TPV 绘制 API；
+2. model JSON `display` 与自有 transform 表的最终 schema；
+3. 是否需要 Bong-owned registry object、是否进入 ItemGroup/REI，以及如何保证不污染
+   vanilla 创造栏；
+4. GUI、fixed、ground、掉落物和 botany 世界渲染的明确 owner；
+5. 旧 `plan-held-item-registration-v1` 的 supersede/redirect 文字和与 active plan 的
+   文件级冲突窗口；
+6. P2 截图工具缺 `pyrender` 时采用的、能还原 Minecraft display 变换的验收工具。
+
+这些开放问题不阻止本 skeleton 作为规划入口，但在 P0 证据落盘前不得宣称通道已可用，
+也不得提前删除 vanilla override。
+
+## 9. P0 spike 证据（2026-09-18）
+
+本节是 P0 可行性证据，不把 skeleton 升为 active，也不删除现有 vanilla override。结论
+分成「API/最小 adapter 已编译」与「必须人工在 `runClient` 下目视确认」两层；后者没有
+在 headless 环境中冒充完成。
+
+### 9.1 A：加载入口与真实 baked lookup
+
+- 实际解析版本由 `client/gradle.properties:2-5` 与 `client/build.gradle:45-52` 确定为
+  Minecraft 1.20.1、loader 0.16.10、Fabric API 0.92.3+1.20.1。翻本机 Gradle 缓存的
+  实际依赖 JAR 后，`fabric-model-loading-api-v1-1.0.3+1802ada577.jar` 确实包含
+  `net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin`；同一解析树的
+  `fabric-models-v0-0.3.35+b3afc78b77.jar` 还包含旧的
+  `ModelLoadingRegistry`、`ModelResourceProvider`、`ModelVariantProvider`。因此本版本
+  不必猜测或退回旧 provider，spike 选择前者；类、方法签名均由 `javap` 对实际 JAR
+  验过，不是读文档推断。
+- 最小注册代码在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelChannel.java:59-71`，由
+  `client/src/main/java/com/bong/client/BongClient.java:158` 接入客户端 bootstrap。
+  `ModelLoadingPlugin` 的 callback 每次资源 reload 都重新 `addModels`；lookup 不缓存
+  baked 实例，在 `BongItemModelChannel.java:82-122` 每次从当前
+  `BakedModelManager` 查询，因而不会把第一次 bake 永久留在独立缓存里。
+- 真实模板 `wooden_shield` 的 model id 是
+  `bong:item/wooden_shield/wooden_shield#inventory`（代码
+  `BongItemModelChannel.java:28-33,125-127`），对应资源
+  `client/src/main/resources/assets/bong/models/item/wooden_shield/wooden_shield.json:1-124`。
+  OBJ/MTL/贴图均留在 `assets/bong`：
+  `models/item/wooden_shield/wooden_shield.{obj,mtl}` 与
+  `textures/item/wooden_shield/{0,1}.png`。现有 SML scope 在
+  `client/src/main/java/com/bong/client/weapon/WeaponRenderBootstrap.java:24-39` 对
+  `bong` namespace 放行；新 spike 没有把资源转发到 `minecraft:item/<host>`。
+- 通过旧 `assets/minecraft` override 加载的旧链路没有删除或改写；本次只把一个
+  Bong-owned model 加入 bake 列表，不能把这条 additive spike 误记成存量迁移完成。
+- 实测编译命令 `scripts/build-token.sh gradle compileJava` 返回 0（`BUILD SUCCESSFUL`）。
+- 定向 `scripts/build-token.sh gradle test --tests com.bong.client.itemmodel.BongItemModelChannelTest`
+  返回 0；随后卡片要求的完整
+  `scripts/build-token.sh gradle test build` 也返回 0（`BUILD SUCCESSFUL`，21 actionable
+  tasks；其中既有 3 个 GameTest 全部通过）。没有运行 `gradle runClient`，所以这里证明
+  的是实际 API/JAR + 生产代码可编译和契约测试通过，不是运行时画面验收。
+
+### 9.2 B：transform 来源
+
+- `BongItemModelChannel.ModelHandle` 在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelChannel.java:117-122`
+  直接携带 `BakedModel.getTransformation()`；没有从 `Items.*` 或旧宿主 model 读取
+  display。真实 Bong-owned JSON 的 `display` 块覆盖：
+  `thirdperson_righthand` `:5-20`、`thirdperson_lefthand` `:22-37`、
+  `firstperson_righthand` `:39-54`、`firstperson_lefthand` `:56-71`，以及
+  `ground` `:73-88`、`gui` `:90-105`、`fixed` `:107-123`。
+- 最小资源契约测试
+  `client/src/test/java/com/bong/client/itemmodel/BongItemModelChannelTest.java:40-71`
+  实际从 classpath 读该 JSON，核对 SML OBJ parent、Bong OBJ location、左右手四个
+  context 与 `ground/gui/fixed`，并拒绝 `minecraft:item/` 中转。它不把测试可见性 seam
+  加进生产代码。
+- 这只证明 `wooden_shield` 的自有 transform 来源。显式借用不等于借用 transform：
+  `qing_feng_sword → iron_sword` 只作为候选记录在
+  `BongItemModelChannel.java:35-44`，没有把 `iron_sword` 的 transform 偷塞给借用者；
+  候选在拥有自己的 model definition/transform 前保持不可渲染。
+
+### 9.3 C：FPV/TPV 共同 lookup 与直接绘制入口
+
+- 可供 FPV、TPV 共同调用的生产 adapter 在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelRenderAdapter.java:22-48`。
+  它调用同一个 `BongItemModelChannel.lookup(template_id)`，再使用实际 Minecraft 1.20.1
+  `ItemRenderer.renderItem(ItemStack, ModelTransformationMode, boolean, MatrixStack,
+  VertexConsumerProvider, int, int, BakedModel)` overload；签名由本机
+  `minecraft-merged` JAR 实测。`ItemStack.EMPTY` 只是该公开 overload 为 glint/dynamic
+  display 保留的参数，不是注册的 vanilla item、不是 fake host，也不参与 model 选择。
+- 截至本 spike，`BongItemModelRenderAdapter.render()` 没有生产调用方，测试也没有调用它。
+  因此 `register → bake → lookup → render` 整条运行时链路在 headless 环境下一次都没跑过；
+  本节证明的是 API 存在性、资源形状和可编译性，不是该运行时链路已经执行。
+- 当前两个 mixin 的接入点仍是旧的 stack-only 路径：
+  `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java:47-63`（FPV
+  更新 `mainHand/offHand`）和
+  `client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:46-65`
+  （TPV 改写 `getMainHandStack/getOffHandStack`）。本 spike 没有把它们伪装成已经完成
+  直接模型迁移；下一阶段必须把实际 FPV/TPV render hook 接到该 adapter/同一 lookup，
+  而不是继续在这里合成 fake stack。
+- 因 headless 限制，左右手 FPV/TPV、resource reload 后姿态的画面尚未实测，必须由人工
+  在 `runClient` 下确认：主/副手各一遍、第一/第三人称各一遍、reload 后再次确认
+  `wooden_shield` 仍来自 `bong:item/wooden_shield/wooden_shield#inventory`。
+
+### 9.4 D：场景边界与错误语义
+
+- 自有模型样本是 `wooden_shield`，资源位置见 §9.1；显式 borrow 候选是
+  `qing_feng_sword → iron_sword`，来源依据是旧注册表的明确注释
+  `client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java:205-206`。
+  新通道不把这个旧 host 关系当成已完成资源：
+  `BongItemModelChannel.java:98-105` 对候选返回 empty 并留下 warning；测试
+  `BongItemModelChannelTest.java:26-33` 锁住「不能静默加载 target 模型」。
+- unknown/空 `template_id` 在 `BongItemModelChannel.java:74-79,90-95` 返回 empty 并
+  warning；已登记但缺 bake 的资源在 `:108-115` 与当前 `missing model` 比较后同样
+  返回 empty。不会 fall through 到 `STONE_SWORD`、`BONE` 或其他默认宿主。
+- `ModelLoadingPlugin.addModels` 只加入 baked model，不注册 Item、ItemGroup 或搜索
+  条目；因此创造栏/搜索污染在静态接线层面没有新增入口，但实际 GUI/REI 画面仍待人工
+  `runClient` 确认。2D icon、lang/tooltip 继续由既有
+  `client/src/main/java/com/bong/client/inventory/ItemIconRegistry.java:12-20,75-85`
+  与 `assets/bong-client/lang/` 负责，本 spike 不把内部模型变成物品条目。
+- `DroppedItemWorldRenderer` 仍由
+  `client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-68`
+  直接画 billboard/GUI texture，不使用本 baked-model channel；掉落物保持既有 owner，
+  不因 P0 强行替换。
+- 缺 JSON、OBJ/MTL/贴图、borrow cycle、缺 transform 的逐项破坏性运行时注入没有在
+  headless 环境实际执行；本 spike 已实作的是缺 baked model/缺 definition/未完成 borrow
+  的可观测 missing 语义。OBJ 资源 reload 失败、借用环检测和完整 manifest/fail-fast
+  校验仍是 P1 交付物，不能在本节伪造为已验证。
+
+### 9.5 边界声明与结论
+
+- 本提交没有新 fake vanilla host，没有新增 `client/src/main/resources/assets/minecraft/`
+  下的 Bong override，没有 test-only production visibility seam，也没有改 server、agent
+  或任何 wire/schema 契约。
+- `BongItemModelRenderAdapter.render()` 当前没有生产调用方，测试也没有调用；因此
+  `register → bake → lookup → render` 整条运行时链路在 headless 环境下一次都没跑过。
+  本节证明的是 API 存在性、资源形状和可编译性，不能把它写成运行时链路或视觉验收通过。
+- P0 的 PASS 只覆盖 **API 存在性、资源形状与可编译性** 这三项；整条
+  `register → bake → lookup → render` 链路、视觉、FPV/TPV 实际 hook、GUI/搜索污染和
+  资源缺失负例等其余未决项，全部按 §9.6 归属，**不计入 P0 交付物**。若人工确认当前
+  `ItemRenderer` adapter 在 FPV/TPV 中无法满足最终画面，再另行决定无宿主自绘方案；本
+  spike 没有偷偷退回 vanilla host。
+
+### 9.6 待验证项的归属与放行标准
+
+下表把 §9 中仍未实际验证的项目逐项交给明确 owner，并把「可以放行」定义到可观察
+证据；这些项目在完成对应归属方的验收前，均不改变 §9.5 对 P0 的三项 PASS 范围。
+
+| 待验证项 | 归属方 | 通过标准（具体观察/断言） | 对应 §8.3 的人工决策 |
+|---|---|---|---|
+| `register → bake → lookup → render` 整条运行时链路 | P1 交付物接入真实 FPV/TPV hook；完成后人工 `runClient` | 资源 reload 触发注册回调并加入 `bong:item/wooden_shield/wooden_shield#inventory`；bake 结果不是 missing；同一 `template_id` 的 lookup 返回该 baked model；真实 FPV/TPV 消费点实际调用 `render`，且没有 fake vanilla `ItemStack` 宿主 | §8.3 #1、#2 |
+| FPV 左手/右手画面 | 人工 `runClient` | 手持 `wooden_shield` 分别观察主手和副手第一人称画面：两侧都显示 Bong-owned OBJ，左右手 transform 生效，无 missing model、vanilla host 或错误默认姿态 | §8.3 #1、#2 |
+| TPV 左手/右手画面 | 人工 `runClient` | 第三人称分别切换主手和副手并观察角色画面：两侧都显示同一 Bong-owned baked model，左右手 transform 生效，无回退到宿主物品 | §8.3 #1、#2 |
+| resource reload 后姿态 | 人工 `runClient` | 在资源已加载和 reload 后各观察 FPV/TPV；reload 后 lookup 仍指向同一 Bong model id，七个 display context 的姿态不丢失、不变 missing、不退回 vanilla host | §8.3 #1、#2 |
+| GUI 与创造栏/搜索污染 | 人工 `runClient` | 打开 GUI、创造栏和搜索（含 REI 如启用）：模型不会凭空注册成额外物品条目，不出现 Bong 内部模型污染或错误 vanilla 条目；纳入的 GUI/fixed 姿态按最终 owner 正确显示 | §8.3 #3、#4 |
+| `DroppedItemWorldRenderer` 边界 | P1 交付物 | 在迁移矩阵中明确 ground/drop owner；当前若保持排除，则断言掉落物仍由既有 billboard/GUI renderer 负责且不调用本 channel，不把「未纳入」写成已迁移；若纳入，另立可验收迁移项 | §8.3 #4 |
+| 缺 JSON | P1 交付物 | 删除或破坏目标 JSON 后执行资源 reload/启动，必须产生带 `template_id` 的可见诊断或明确 missing 状态；lookup 不得返回另一模板、STONE/BONE 等默认宿主 | §8.3 #1、#3 |
+| 缺 OBJ/MTL/贴图 | P1 交付物 | 分别移除或破坏 OBJ、MTL、贴图后执行资源 reload/启动，必须 fail-fast 或进入可见 missing 状态并指出资源；不得静默成功、使用旧 bake 或回退 vanilla host | §8.3 #1、#2 |
+| borrow cycle | P1 交付物 | 对含环的 borrow graph 做校验时，以涉及的 `template_id` 报错并拒绝加载/lookup；不得递归卡死、静默选宿主或把环当作已完成模型 | §8.3 #2、#3 |
+| 缺 transform | P1 交付物 | model definition 缺少最终 schema 要求的 transform/context 时，校验必须拒绝或返回可见 missing；不得从借用目标、vanilla host 或默认姿态静默补齐 | §8.3 #2 |
+
+## 10. §8.3 六条的调度侧建议（待人工裁决）
+
+本节是基于 §9 P0 证据的建议，不是决议；最终以用户对 §8.3 的裁决为准。它不改变
+§8.3 原文、不代表本 skeleton 已升 active，也不授权删除任何现有 vanilla override。
+
+### §8.3 #1 — 加载入口与 FPV/TPV 绘制 API
+
+**P0 证据说了什么**：这条关于加载入口的部分已经被回答。§9.1 在实际解析的
+Fabric API 0.92.3+1.20.1 JAR 中确认了 `ModelLoadingPlugin`，并以
+`BongItemModelChannel.java:59-71` 注册模型、以 `BongItemModelChannel.java:82-122` 从当前
+`BakedModelManager` 查找；`compileJava`、定向测试和完整 `gradle test build` 均通过。
+但 §9.3 也明确记载 `BongItemModelRenderAdapter.render()` 目前没有生产调用方，真实
+FPV/TPV 画面尚未在 `runClient` 中验证，所以这不是整条运行时链路已经验收。
+
+**推荐**：固化 `ModelLoadingPlugin` + `BongItemModelChannel.lookup(template_id)` 作为
+加载和 baked lookup 的基础，并让 P1 的 FPV/TPV hook 接到同一个
+`BongItemModelRenderAdapter`；不再为获得调用入口退回 vanilla host 或另造一条模型
+选择路径。
+
+**理由**：实际 JAR 和编译结果已经回答了 API 是否存在，且 callback 会在资源 reload
+时重新加入模型，lookup 不持有过期的 baked 实例。`BongItemModelChannel.java:25` 的
+类职责和 `BongItemModelRenderAdapter.java:22-48` 的公开渲染 overload 已把两端接触面
+收窄到同一条 `template_id` 查询，不需要把加载可行性再寄托在 fake vanilla stack 上。
+
+**如果选另一条路**：继续使用旧 provider 或在 mixin 中自己画，会引入版本相关的旧
+provider 维护成本，或重新实现 ItemRenderer 的显示模式、左右手和资源 reload 语义；
+若保留 vanilla host，则直接违背本 plan 消除宿主耦合的前提。
+
+**需要用户拍板的点**：加载 API 的选择建议直接采纳，无需再在这条上做 API 二选一；
+仍需保留 §9.6 所列的 `runClient` FPV/TPV 画面验收作为 P1 交付门，而不是把编译
+通过写成运行时已验收。
+
+### §8.3 #2 — `display` 与自有 transform schema
+
+**P0 证据说了什么**：§9.2 已给出方向性证据。Bong-owned 的
+`wooden_shield.json:5-123` 自带四个手部 context 以及 `ground`、`gui`、`fixed`，
+`BongItemModelChannel.ModelHandle` 在 `BongItemModelChannel.java:117-122` 携带该
+`BakedModel.getTransformation()`；契约测试还确认模型不经 `minecraft:item/` 中转。
+这证明 transform 可以由 Bong 自己的模型定义提供，但还没有在 `runClient` 对所有
+context 做画面验收。
+
+**推荐**：把七个 context（四手部 + `ground/gui/fixed`）定为 Bong 模型定义的
+schema 基线；每个 `template_id` 自己拥有 transform，缺 context 时显式 fail-fast 或
+进入带 id 的 missing 状态，绝不从 vanilla host 或 borrow 目标静默继承 `display`。
+
+**理由**：这样把第一/第三人称 transform 的来源和 baked model 绑定在同一份
+Bong-owned 定义上，符合 §9.2 的真实 JSON 与 `ModelHandle` 证据，也保留了缺 transform
+时可诊断的边界。借用几何不等于借用姿态，分开这两层可以避免再次把宿主 JSON 当成
+隐式契约。
+
+**如果选另一条路**：继承 vanilla host 的 `display` 会重新引入宿主选择和跨模板串形；
+在各个 FPV/TPV mixin 里手写矩阵则会形成多份 transform 真源，reload、左右手和 GUI
+很容易漂移。允许缺字段静默使用默认姿态还会把错误推迟到视觉验收。
+
+**需要用户拍板的点**：方向已有证据支撑，但「七个 context 是否全部为必填」以及缺失
+时采用 fail-fast 还是可见 missing 的最终 schema 契约仍需用户拍板；P0 没有替用户
+决定这些兼容性细节。
+
+### §8.3 #3 — Bong-owned registry、ItemGroup 与 REI
+
+**P0 证据说了什么**：§9.4 证明 `ModelLoadingPlugin.addModels` 只加入 baked model，
+不注册 Item、ItemGroup 或搜索条目；因此静态接线本身不会污染创造栏。现有
+`BongItemModelChannel.java:25-68` 已是 Bong-owned 的模型定义入口，而旧的
+`BongWeaponModelRegistry.java:9-23` 仍保存 `hostItemSupplier` / `vanillaModelPath`。
+但 GUI、创造栏和 REI 的实际画面尚未在 `runClient` 验证。
+
+**推荐**：让 Bong-owned 的 `template_id -> model definition/baked lookup` 通道成为
+长期唯一 owner；把 `BongWeaponModelRegistry` 只作为迁移期兼容 facade，完成迁移后
+移除其 vanilla host 语义。默认不注册 client-only ItemGroup 或 REI 条目；若 REI
+确实需要显示可检索物品，另以显式 UI 投影接入现有 icon/tooltip owner，而不是把模型
+通道伪装成物品注册表。
+
+**理由**：P0 已证明加载模型不需要注册 Item，现有
+`ItemIconRegistry.java:12-20,75-85` 也已经承担 2D icon/tooltip 接触面。单一通道
+owner 能把旧注册表的 39 条迁移集中起来，同时避免为了绕过 GUI 问题重新引入 fake
+stack 和 vanilla 搜索入口。
+
+**如果选另一条路**：另建 `BongModelItem` 并把它们加入 ItemGroup/REI，会产生重复
+条目、创造栏污染和第二套 `template_id` 映射；让旧注册表与新通道长期并存，则会使
+host、模型路径和 transform 的真源重新分裂。
+
+**需要用户拍板的点**：是否完全禁止 REI 投影、以及迁移期兼容 facade 保留到哪个阶段，
+P0 没有运行时 UI 证据，需用户拍板。若无额外产品需求，建议采纳上述「默认不进入
+ItemGroup/REI，必要时显式投影」的基线。
+
+### §8.3 #4 — GUI、fixed、ground、掉落物与 botany 的 owner
+
+**P0 证据说了什么**：§9.4 已确认 `DroppedItemWorldRenderer.java:27-38,55-68`
+目前直接画 billboard/GUI texture，不使用本 baked-model channel；§9.6 则把 GUI、
+reload、ground/drop owner 等列为待验收项。P0 没有验证 botany 世界渲染，也没有证明
+所有 `fixed/ground` consumer 已经接入该 channel。
+
+**推荐**：先冻结一个显式 owner 边界：FPV/TPV 由本 channel 的 adapter 消费，2D
+GUI/icon 继续由现有 `ItemIconRegistry` 负责，掉落物暂留
+`DroppedItemWorldRenderer`；`fixed/ground` 只作为模型 schema 的自有 transform，
+在找到真实 consumer 并完成 `runClient` 验收前，不宣称已迁移；botany 同样保持现有
+owner，不因本 plan 的模型通道自动接管。
+
+**理由**：掉落物 owner 是 P0 实际查到的事实，其余未验证面若直接接入，会把「有一段
+transform 数据」误写成「有一条可运行的渲染链路」。先写清谁负责、谁不负责，能让
+§9.6 的每个待验证项有明确归属，并阻止多个计划各自接管同一个世界渲染入口。
+
+**如果选另一条路**：把 ground/drop/botany/GUI 一次性全部改走 channel，需要同时补
+多个真实 consumer、显示模式和资源缺失语义；在没有 runClient 证据时容易出现掉落物
+消失、GUI 图标变 3D 或 botany 与物品模型串线。反过来继续不写 owner，则会把边界
+争议留到实现时，造成重复接线。
+
+**需要用户拍板的点**：掉落物是否最终纳入本 plan、`fixed/ground` 的长期 consumer
+分别归谁，以及 botany 是否另立迁移工作，P0 都没有回答；建议先采纳现有掉落物保留
+边界，其余三类在相应 spike/active 阶段拍板，不能凭本建议提前替用户决定。
+
+### §8.3 #5 — `plan-held-item-registration-v1` 的 supersede/redirect
+
+**P0 证据说了什么**：§9.1、§9.2 和 §9.5 已证明当前通道的目标是
+`template_id -> Bong-owned BakedModel + 自有 transform`，并明确没有新增 fake vanilla
+host；同时旧 `BongWeaponModelRegistry`、`WeaponRenderBootstrap` 和
+`assets/minecraft/models/item/*.json` 仍在，说明这是迁移期的真实文件级冲突，不是
+已经完成的替换。旧 skeleton 还计划改 `BongWeaponModelRegistry.Entry`、删除 vanilla
+model path 分支、改 `held_item_common.py::write_assets`，正好覆盖本 plan 的 owner
+边界。
+
+**推荐**：在旧 skeleton 转 active 前采用「模型承载路径由本 plan supersede，非重叠
+的物品清单/图标工作另行保留或拆分」的 redirect。可供用户直接裁决的文字草案是：
+
+> `plan-item-model-channel-v1` 取代本 plan 中「注册 render-only Item、借用 vanilla
+> host、写入 `assets/minecraft/models/item/` 以及以 fake stack 进入模型渲染」的路径。
+> 模型唯一 owner 改为 `template_id → Bong-owned baked model + 自有 transform`；本
+> plan 不再新增 vanilla host 或删除/新增 override。与模型承载无关的 icon、tooltip、
+> 清单核对工作若仍需要，须拆成独立交付并引用本 plan 的 channel 契约。
+
+本 PR 只记录建议，不修改 `plan-held-item-registration-v1.md`，也不删除任何 override。
+
+**如果选另一条路**：若不写 redirect，两份 skeleton 都可能声称拥有
+`BongWeaponModelRegistry`、`WeaponRenderBootstrap`、vanilla model override 和
+`held_item_common.write_assets`，后续 active 计划会互相覆盖；若把旧 plan 全量删除，
+又会丢掉其中可能仍独立有用的 icon/清单验收工作。
+
+**需要用户拍板的点**：需要用户决定 supersede 的精确范围，以及旧 skeleton 的非模型
+部分是保留、拆分还是关闭；上述文字是最小冲突面的推荐，不是对旧 plan 的自动改写。
+
+### §8.3 #6 — 缺 `pyrender` 时的 P2 截图验收工具
+
+**P0 证据说了什么**：本条 P0 未覆盖。现有接触表来自生成器自己的几何数据渲染，
+不经过 `OBJ + MTL → SML/Minecraft loader` 的实际链路，不能验证 Minecraft 的
+`display` transform、左右手模式或 GUI/ground/fixed 姿态；§9.6 也把截图和这些
+画面验收列为后续交付，不能把接触表当成已完成的 Minecraft 视觉验收。
+
+**推荐**：先补一个能走真实 Minecraft/SML 模型加载和 `ModelTransformation` 的 spike，
+优先用 `runClient` 截图或 client-side Java 渲染 harness，对七个 context 至少各有一
+个可复核输出；在这个 spike 证明变换一致前，不选择也不宣称 Python 接触表是替代工具。
+
+**理由**：验收工具必须覆盖最终实际链路，才能发现「模型几何正确但 display 姿态错」
+这类 P0 证据明确无法发现的问题。先验证工具本身再决定是否补 `pyrender`，比为了一条
+本地命令先固定一种可能不等价的渲染实现更省返工。
+
+**如果选另一条路**：直接用当前接触表或任意非 Minecraft zip/OBJ 渲染器作放行依据，
+会漏掉 display 变换、SML 资源解析、光照和左右手差异，模型可能在工具里通过而在游戏
+里穿模或倒置；硬装 `pyrender` 也不自动证明它复现了 Minecraft 的 transform 语义。
+
+**需要用户拍板的点**：本条 P0 未覆盖，建议先补 spike 再决；用户需要决定接受
+`runClient`/Java harness 的验收成本，还是另行指定一个已证明能还原 Minecraft
+display 变换的工具。在此之前不应把第六条写成已决议。

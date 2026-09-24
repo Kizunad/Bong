@@ -1,0 +1,15 @@
+# plan-race-system-v1 P4 —— 易形功法残卷。研读后学会 morph.yixing（需固元境 + 任督
+# 二脉贯通，见 body_plan::form_anchors_open）。
+
+[[item]]
+id = "yixing_scroll"
+name = "残卷·易形"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.4
+description = "卷面模糊难辨，似有异兽虚影浮沉其间。传闻研读者可暂借他相外壳，然任督二脉不通者，纵得此卷亦是废纸一张。"
+[item.technique_scroll]
+skill_id = "morph.yixing"

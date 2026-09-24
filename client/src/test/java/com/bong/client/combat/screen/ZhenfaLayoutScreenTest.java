@@ -1,6 +1,7 @@
 package com.bong.client.combat.screen;
 
 import com.bong.client.network.ClientRequestProtocol;
+import com.bong.client.combat.ZhenfaLayoutIntent;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.util.math.BlockPos;
@@ -13,7 +14,8 @@ final class ZhenfaLayoutScreenTest {
 
     @Test
     void defaultsClassicArrayToOriginTrapAndKeepsTrigger() {
-        ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(null, null, 0L, null);
+        ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(null, null, 0L, null,
+            ignored -> com.bong.client.ui.intent.UiIntentResult.accepted());
         JsonObject payload = payload(screen);
 
         assertString(payload, "type", "zhenfa_place", "the screen emits placement requests");
@@ -31,9 +33,10 @@ final class ZhenfaLayoutScreenTest {
     void fixedTrapOmitsTriggerAndForwardsItemAndTargetFace() {
         ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(
             new BlockPos(11, 64, -3),
-            ClientRequestProtocol.ZhenfaKind.BLAST_TRAP,
+            "blast_trap",
             9001L,
-            ClientRequestProtocol.ZhenfaTargetFace.NORTH
+            "north",
+            ignored -> com.bong.client.ui.intent.UiIntentResult.accepted()
         );
         JsonObject payload = payload(screen);
 
@@ -62,7 +65,8 @@ final class ZhenfaLayoutScreenTest {
             ClientRequestProtocol.ZhenfaKind kind = (ClientRequestProtocol.ZhenfaKind) entry[0];
             String wireName = (String) entry[1];
             ClientRequestProtocol.ZhenfaTargetFace face = (ClientRequestProtocol.ZhenfaTargetFace) entry[2];
-            ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(new BlockPos(11, 64, -3), kind, 9002L, face);
+            ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(new BlockPos(11, 64, -3), wireName, 9002L,
+                face.wireName(), ignored -> com.bong.client.ui.intent.UiIntentResult.accepted());
             JsonObject payload = payload(screen);
 
             assertString(payload, "kind", wireName, "trap runtime kind must preserve its dedicated wire name");
@@ -79,15 +83,17 @@ final class ZhenfaLayoutScreenTest {
     void nonPositiveItemIdsAreOmittedForFixedTraps() {
         ZhenfaLayoutScreen zeroItem = new ZhenfaLayoutScreen(
             new BlockPos(1, 65, 2),
-            ClientRequestProtocol.ZhenfaKind.SLOW_TRAP,
+            "slow_trap",
             0L,
-            ClientRequestProtocol.ZhenfaTargetFace.TOP
+            "top",
+            ignored -> com.bong.client.ui.intent.UiIntentResult.accepted()
         );
         ZhenfaLayoutScreen negativeItem = new ZhenfaLayoutScreen(
             new BlockPos(1, 65, 2),
-            ClientRequestProtocol.ZhenfaKind.WARNING_TRAP,
+            "warning_trap",
             -1L,
-            null
+            null,
+            ignored -> com.bong.client.ui.intent.UiIntentResult.accepted()
         );
         JsonObject zeroPayload = payload(zeroItem);
         JsonObject negativePayload = payload(negativeItem);
@@ -113,8 +119,32 @@ final class ZhenfaLayoutScreenTest {
         );
     }
 
+    @Test
+    void screenBuildsSemanticPlacementIntentWithoutProtocolTypes() {
+        ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(
+            new BlockPos(4, 65, 7), "trap", 42L, "top",
+            ignored -> com.bong.client.ui.intent.UiIntentResult.accepted());
+
+        ZhenfaLayoutIntent.Place intent = screen.placementIntentForTests();
+
+        assertEquals("trap", intent.kind());
+        assertEquals("common_stone", intent.carrier());
+        assertEquals(42L, intent.itemInstanceId());
+        assertEquals("top", intent.targetFace());
+        assertEquals("proximity", intent.trigger());
+    }
+
     private static JsonObject payload(ZhenfaLayoutScreen screen) {
-        return JsonParser.parseString(screen.encodePlacementRequestForTests()).getAsJsonObject();
+        ZhenfaLayoutIntent.Place intent = screen.placementIntentForTests();
+        return JsonParser.parseString(ClientRequestProtocol.encodeZhenfaPlace(
+            new BlockPos(intent.x(), intent.y(), intent.z()),
+            java.util.Arrays.stream(ClientRequestProtocol.ZhenfaKind.values())
+                .filter(value -> value.wireName().equals(intent.kind())).findFirst().orElseThrow(),
+            ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+            intent.qiInvestRatio(), intent.trigger(), intent.itemInstanceId(),
+            intent.targetFace() == null ? null : java.util.Arrays.stream(ClientRequestProtocol.ZhenfaTargetFace.values())
+                .filter(value -> value.wireName().equals(intent.targetFace())).findFirst().orElseThrow()
+        )).getAsJsonObject();
     }
 
     private static void assertString(JsonObject payload, String field, String expected, String reason) {

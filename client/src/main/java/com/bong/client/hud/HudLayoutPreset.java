@@ -6,7 +6,6 @@ import java.util.List;
 
 public enum HudLayoutPreset {
     COMBAT(EnumSet.of(
-        Widget.QI_RADAR,
         Widget.COMPASS,
         Widget.THREAT,
         Widget.MINI_BODY,
@@ -18,7 +17,6 @@ public enum HudLayoutPreset {
     )),
     EXPLORATION(EnumSet.of(
         Widget.COMPASS,
-        Widget.QI_RADAR,
         Widget.ZONE,
         Widget.BARS,
         Widget.EVENT_STREAM,
@@ -27,7 +25,6 @@ public enum HudLayoutPreset {
         Widget.CRITICAL
     )),
     CULTIVATION(EnumSet.of(
-        Widget.QI_RADAR,
         Widget.BARS,
         Widget.EVENT_STREAM,
         Widget.PROCESSING,
@@ -68,6 +65,9 @@ public enum HudLayoutPreset {
         if (baselineFiltered.isEmpty()) {
             return baselineFiltered;
         }
+        baselineFiltered = baselineFiltered.stream()
+            .filter(command -> !isRetired(command.layer()))
+            .toList();
         HudLayoutPreferenceStore.Density effectiveDensity =
             density == null ? HudLayoutPreferenceStore.Density.STANDARD : density;
         if (effectiveDensity == HudLayoutPreferenceStore.Density.MAXIMUM) {
@@ -84,6 +84,10 @@ public enum HudLayoutPreset {
             }
         }
         return List.copyOf(out);
+    }
+
+    private static boolean isRetired(HudRenderLayer layer) {
+        return layer == HudRenderLayer.COMPASS || layer == HudRenderLayer.SPIRITUAL_SENSE;
     }
 
     public static double alphaForWidget(boolean showing, long elapsedMillis) {
@@ -113,9 +117,8 @@ public enum HudLayoutPreset {
             case BASELINE -> Widget.ALWAYS;
             case ZONE, HUD_VARIANT -> Widget.ZONE;
             case COMPASS -> Widget.COMPASS;
-            case QI_RADAR -> Widget.QI_RADAR;
-            case THREAT_INDICATOR, EDGE_FEEDBACK, NEAR_DEATH, TRIBULATION -> Widget.THREAT;
-            case MINI_BODY, STAMINA_BAR, DERIVED_ATTR, STATUS_EFFECTS, MOVEMENT_HUD -> Widget.BARS;
+            case THREAT_INDICATOR, EDGE_FEEDBACK, TRIBULATION -> Widget.THREAT;
+            case MINI_BODY, DERIVED_ATTR, STATUS_EFFECTS, MOVEMENT_HUD -> Widget.BARS;
             case QUICK_BAR, CAST_BAR, SPELL_VOLUME, CARRIER, JIEMAI_RING, VORTEX_CHARGE, VORTEX_COOLDOWN,
                 VORTEX_BACKFIRE, VORTEX_TURBULENCE, DUGU_TAINT_WARNING, DUGU_TAINT_INDICATOR,
                 DUGU_REVEAL_RISK, DUGU_SELF_CURE_PROGRESS, DUGU_SHROUD, DUGU_QI_DECAY, POISON_TRAIT, COFFIN,
@@ -146,13 +149,15 @@ public enum HudLayoutPreset {
             // ZHENMAI_SEVER 是最长 60s 的增幅窗口倒计时条（与 ZHENMAI_HARDEN 同形），不是瞬态闪现，
             // 不能归 CRITICAL（否则极简密度下会满亮常驻整整一分钟）。
             case ZHENMAI_HARDEN, ZHENMAI_MULTIPOINT, ZHENMAI_NEUTRALIZE, ZHENMAI_SEVER -> Widget.BARS;
+            // plan-race-system-v1 PR-5b：易形形态图标 + 施法期 vignette，仅在易形/施法中
+            // 才出现（条件显示），归 CRITICAL 不受密度抑制。
+            case MORPH -> Widget.CRITICAL;
         };
     }
 
     public enum Widget {
         ALWAYS,
         ZONE,
-        QI_RADAR,
         COMPASS,
         THREAT,
         MINI_BODY,

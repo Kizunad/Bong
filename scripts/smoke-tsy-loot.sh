@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # plan-tsy-loot-v1 §9 — TSY loot 自动化 smoke 脚本
 #
-# 跑：server cargo test + schema vitest + grep 校验 DeathEvent 字段完整性 +
+# 跑：server 构建令牌 wrapper cargo test + schema vitest + grep 校验 DeathEvent 字段完整性 +
 # gradle test build（验证 MixinPlayerEntityDrop 加载）。
 #
 # 与 smoke-tsy-zone.sh 同样不跑 cargo clippy / fmt-check —— main 上 dead-code
@@ -11,8 +11,8 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-echo "[smoke-tsy-loot] running cargo test (server, all 1300+ tests)..."
-(cd server && cargo test --bin bong-server)
+echo "[smoke-tsy-loot] running wrapper cargo test (server, all 1300+ tests)..."
+(cd server && "$REPO_ROOT/scripts/build-token.sh" cargo test --bin bong-server)
 
 echo "[smoke-tsy-loot] running schema vitest + check..."
 (cd agent/packages/schema && npm test && npm run check)
@@ -32,6 +32,6 @@ for f in $emit_sites; do
 done
 
 echo "[smoke-tsy-loot] running gradle test + build (verify MixinPlayerEntityDrop loads)..."
-(cd client && ./gradlew test build --no-daemon)
+(cd client && "$REPO_ROOT/scripts/build-token.sh" gradle test build --no-daemon)
 
 echo "[smoke-tsy-loot] all green ✅"

@@ -29,7 +29,6 @@ use super::ledger_hooks::{
     borrow_explode_zone_qi, debit_caster_qi_to_account, schedule_barrier_return,
     VoidQiReturnSchedule,
 };
-use super::legacy::{apply_legacy_assignment, persist_legacy_letterbox, LegacyLetterbox};
 
 const JUEBI_VOID_ACTION_DELAY_TICKS: u64 = 30 * 20;
 
@@ -63,8 +62,6 @@ pub enum VoidActionError {
     TargetNotTsy,
     TsyStateRejected,
     InvalidBarrierGeometry,
-    LegacyAlreadyAssigned,
-    LegacyPersistFailed,
     LedgerRejected,
 }
 
@@ -79,8 +76,6 @@ impl VoidActionError {
             Self::TargetNotTsy => "target_not_tsy",
             Self::TsyStateRejected => "tsy_state_rejected",
             Self::InvalidBarrierGeometry => "invalid_barrier_geometry",
-            Self::LegacyAlreadyAssigned => "legacy_already_assigned",
-            Self::LegacyPersistFailed => "legacy_persist_failed",
             Self::LedgerRejected => "ledger_rejected",
         }
     }
@@ -255,20 +250,6 @@ pub fn resolve_void_action_intents(
                 &mut accounts,
                 &mut return_schedule,
                 qi_transfers.as_deref_mut(),
-            ),
-            VoidActionRequestV1::LegacyAssign {
-                inheritor_id,
-                item_instance_ids,
-                message,
-            } => cast_legacy_assign(
-                &actor_id,
-                &actor_name,
-                &mut life_record,
-                inheritor_id,
-                item_instance_ids.clone(),
-                message.clone(),
-                now_tick,
-                settings.as_deref(),
             ),
         };
 
@@ -544,43 +525,6 @@ fn cast_barrier(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cast_legacy_assign(
-    actor_id: &str,
-    actor_name: &str,
-    life_record: &mut LifeRecord,
-    inheritor_id: &str,
-    item_instance_ids: Vec<u64>,
-    message: Option<String>,
-    now_tick: u64,
-    settings: Option<&PersistenceSettings>,
-) -> Result<VoidActionOutcome, VoidActionError> {
-    if life_record.legacy_letterbox.is_some() {
-        return Err(VoidActionError::LegacyAlreadyAssigned);
-    }
-    let letterbox =
-        LegacyLetterbox::new(actor_id, inheritor_id, item_instance_ids, message, now_tick);
-    let settings = settings.ok_or(VoidActionError::LegacyPersistFailed)?;
-    if let Err(error) = persist_legacy_letterbox(settings, &letterbox) {
-        tracing::warn!(
-            "[bong][void-action] failed to persist legacy letterbox for {actor_id}: {error}"
-        );
-        return Err(VoidActionError::LegacyPersistFailed);
-    }
-    apply_legacy_assignment(life_record, letterbox);
-    life_record.push(BiographyEntry::VoidAction {
-        kind: VoidActionKind::LegacyAssign,
-        target: inheritor_id.to_string(),
-        qi_cost: 0.0,
-        lifespan_cost_years: 0,
-        tick: now_tick,
-    });
-    Ok(VoidActionOutcome {
-        public_text: format!("{actor_name} 留下临终遗令，道统指向 {inheritor_id}。"),
-        caused_death: false,
-    })
-}
-
 pub fn apply_barrier_dispel_system(
     mut history: ResMut<BarrierDispelHistory>,
     barriers: Query<(Entity, &BarrierField)>,
@@ -687,19 +631,6 @@ mod tests {
     }
 
     #[test]
-    fn precheck_legacy_allows_zero_cost() {
-        let input = VoidPrecheckInput {
-            qi_current: 0.0,
-            lifespan_remaining_years: 1.0,
-            ..input()
-        };
-        assert_eq!(
-            precheck_void_action(VoidActionKind::LegacyAssign, input),
-            Ok(())
-        );
-    }
-
-    #[test]
     fn explode_zone_void_action_emits_juebi_trigger() {
         use valence::prelude::{App, Update};
 
@@ -752,26 +683,6 @@ mod tests {
         assert_eq!(triggers[0].delay_ticks, JUEBI_VOID_ACTION_DELAY_TICKS);
         assert_eq!(triggers[0].triggered_at_tick, 42);
         assert_eq!(triggers[0].epicenter, Some([8.0, 66.0, 8.0]));
-    }
-
-    #[test]
-    fn legacy_assign_requires_persistence_settings_before_mutating_life_record() {
-        let mut life_record = LifeRecord::new("offline:Void");
-
-        let result = cast_legacy_assign(
-            "offline:Void",
-            "Void",
-            &mut life_record,
-            "offline:Heir",
-            vec![1001],
-            Some("留给后来人".to_string()),
-            42,
-            None,
-        );
-
-        assert_eq!(result, Err(VoidActionError::LegacyPersistFailed));
-        assert!(life_record.legacy_letterbox.is_none());
-        assert!(life_record.biography.is_empty());
     }
 
     #[test]

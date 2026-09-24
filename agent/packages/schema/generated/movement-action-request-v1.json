@@ -1,4 +1,5 @@
 {
   "const": "dash",
-  "type": "string"
+  "type": "string",
+  "x-bong-typebox-source-sha256": "e6eba578d4f8e6a422219c5f038dcf534d52466a168ad6d0813a2741a9a95099"
 }

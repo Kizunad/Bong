@@ -30,6 +30,7 @@ public final class ServerDataDispatch {
     private final RealmCollapseHudState realmCollapseHudState;
     private final UiOpenState uiOpenState;
     private final IdentityPanelState identityPanelState;
+    private final MineralProbeFeedbackSpec mineralProbeFeedback;
 
     private ServerDataDispatch(
         String routeType,
@@ -62,6 +63,7 @@ public final class ServerDataDispatch {
             alertToast,
             realmCollapseHudState,
             uiOpenState,
+            null,
             null
         );
     }
@@ -81,7 +83,8 @@ public final class ServerDataDispatch {
         ToastSpec alertToast,
         RealmCollapseHudState realmCollapseHudState,
         UiOpenState uiOpenState,
-        IdentityPanelState identityPanelState
+        IdentityPanelState identityPanelState,
+        MineralProbeFeedbackSpec mineralProbeFeedback
     ) {
         this.routeType = Objects.requireNonNull(routeType, "routeType");
         this.handled = handled;
@@ -98,6 +101,7 @@ public final class ServerDataDispatch {
         this.realmCollapseHudState = sanitizeRealmCollapseHudState(realmCollapseHudState);
         this.uiOpenState = sanitizeUiOpenState(uiOpenState);
         this.identityPanelState = identityPanelState;
+        this.mineralProbeFeedback = mineralProbeFeedback;
     }
 
     public static ServerDataDispatch handled(String routeType, String logMessage) {
@@ -242,7 +246,33 @@ public final class ServerDataDispatch {
             null,
             null,
             null,
-            Objects.requireNonNull(identityPanelState, "identityPanelState")
+            Objects.requireNonNull(identityPanelState, "identityPanelState"),
+            null
+        );
+    }
+
+    public static ServerDataDispatch handledWithMineralProbeFeedback(
+        String routeType,
+        MineralProbeFeedbackSpec feedback,
+        String logMessage
+    ) {
+        return new ServerDataDispatch(
+            routeType,
+            true,
+            logMessage,
+            null,
+            List.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Objects.requireNonNull(feedback, "feedback")
         );
     }
 
@@ -357,6 +387,10 @@ public final class ServerDataDispatch {
 
     public Optional<IdentityPanelState> identityPanelState() {
         return Optional.ofNullable(identityPanelState);
+    }
+
+    public Optional<MineralProbeFeedbackSpec> mineralProbeFeedback() {
+        return Optional.ofNullable(mineralProbeFeedback);
     }
 
     public record ToastSpec(String text, int color, long durationMillis) {

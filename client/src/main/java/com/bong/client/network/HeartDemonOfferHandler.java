@@ -34,12 +34,23 @@ public final class HeartDemonOfferHandler implements ServerDataHandler {
             );
         }
 
+        // R7 P4 窄接缝：offer_id 是实例唯一 identity（HeartDemonOfferDraftV1 必有，schema
+        // 约束 1-128 字符）；旧 payload 缺失时用 triggerId 派生，保证实例身份恒非空。
+        String offerId = readString(payload, "offer_id");
+        if (offerId == null || offerId.isBlank()) {
+            offerId = triggerId;
+        }
+        if (offerId.length() > 128) {
+            offerId = offerId.substring(0, 128);
+        }
+
         long nowMillis = System.currentTimeMillis();
         long expiresAtMillis = readLong(payload, "expires_at_ms", 0L);
         if (expiresAtMillis <= nowMillis) {
             expiresAtMillis = nowMillis + FALLBACK_TIMEOUT_MILLIS;
         }
         InsightOfferStore.replace(new InsightOfferViewModel(
+            offerId,
             triggerId,
             fallback(readString(payload, "trigger_label"), "心魔劫临身"),
             fallback(readString(payload, "realm_label"), "渡虚劫 · 心魔"),

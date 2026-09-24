@@ -17,7 +17,7 @@ pub use skills::register_skills;
 #[allow(unused_imports)]
 pub use state::{ScheduledEcho, VoidCoreState};
 
-use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
+use valence::prelude::{App, IntoSystemConfigs, Update};
 
 pub fn register(app: &mut App) {
     app.add_event::<VortexCastEvent>();
@@ -26,7 +26,9 @@ pub fn register(app: &mut App) {
     app.add_event::<TurbulenceFieldDecayed>();
     app.add_event::<EntityDisplacedByVortexPull>();
     app.add_event::<VoidErosionAdvanceEvent>();
-    app.add_systems(Startup, skills::declare_woliu_v2_meridian_dependencies);
+    // P1 technique registry builds the complete dependency table before combat registers.
+    // Do not append the same declarations in Startup: duplicate declarations are fatal so the
+    // table cannot silently drift after its startup wiring audit.
     app.add_systems(
         Update,
         (

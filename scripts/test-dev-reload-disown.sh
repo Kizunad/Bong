@@ -1,0 +1,1050 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEV_RELOAD="$ROOT/scripts/dev-reload.sh"
+TEST_TMP_PARENT="${TMPDIR:-$ROOT/.sisyphus/tmp}"
+mkdir -p "$TEST_TMP_PARENT"
+TEST_ROOT="$(mktemp -d "$TEST_TMP_PARENT/bong-dev-reload-disown.XXXXXX")"
+export BONG_SERVER_PID_FILE="$TEST_ROOT/managed-server.pid"
+STUB_SCRIPT="$TEST_ROOT/server-stub.sh"
+LAUNCHER_SCRIPT="$TEST_ROOT/launcher.sh"
+LAUNCHER_STDIN="$TEST_ROOT/launcher.stdin"
+ACTIVE_CHILD_PID=""
+ACTIVE_LAUNCHER_PID=""
+SLEEP_EXECUTABLE="$(readlink -f -- "$(command -v sleep)")"
+
+cleanup() {
+    [ "${BASHPID:-$$}" = "$$" ] || return 0
+    for pid in "$ACTIVE_CHILD_PID" "$ACTIVE_LAUNCHER_PID"; do
+        if [[ "$pid" =~ ^[0-9]+$ ]]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+    if [[ "$ACTIVE_LAUNCHER_PID" =~ ^[0-9]+$ ]]; then
+        wait "$ACTIVE_LAUNCHER_PID" 2>/dev/null || true
+    fi
+    rm -rf "$TEST_ROOT"
+}
+trap cleanup EXIT
+
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+process_is_running() {
+    local pid="$1"
+    local state
+
+    kill -0 "$pid" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+    [[ "$state" != Z* ]]
+}
+
+wait_for_file() {
+    local path="$1"
+    local description="$2"
+    local attempt
+
+    for ((attempt = 0; attempt < 300; attempt++)); do
+        if [ -s "$path" ]; then
+            return 0
+        fi
+        sleep 0.01
+    done
+    fail "timed out waiting for $description"
+}
+
+wait_for_process_exit() {
+    local pid="$1"
+    local attempt
+
+    for ((attempt = 0; attempt < 300; attempt++)); do
+        if ! process_is_running "$pid"; then
+            return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
+wait_for_process_command() {
+    local pid="$1"
+    local expected="$2"
+    local command
+    local attempt
+
+    for ((attempt = 0; attempt < 300; attempt++)); do
+        command="$(ps -o comm= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+        if [ "$command" = "$expected" ]; then
+            return 0
+        fi
+        process_is_running "$pid" || return 1
+        sleep 0.01
+    done
+    return 1
+}
+
+cat > "$STUB_SCRIPT" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -n "${STUB_PID_FILE:-}" ]; then
+    printf '%s\n' "$$" > "$STUB_PID_FILE"
+fi
+if [ "${STUB_IGNORE_TERM:-false}" = true ]; then
+    trap '' TERM
+fi
+printf 'ready\n' > "$READY_FILE"
+exec sleep 30
+STUB
+chmod +x "$STUB_SCRIPT"
+: > "$LAUNCHER_STDIN"
+
+cat > "$LAUNCHER_SCRIPT" <<'LAUNCHER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$DEV_RELOAD"
+
+job_table_contains() {
+    local expected_pid="$1"
+    local job_pid
+
+    while IFS= read -r job_pid; do
+        if [ "$job_pid" = "$expected_pid" ]; then
+            return 0
+        fi
+    done < <({ jobs -p; jobs -pr; } | sort -u)
+    return 1
+}
+
+case "$TEST_MODE" in
+    attached)
+        "$STUB_SCRIPT" <&0 &
+        child_pid=$!
+        ;;
+    detached)
+        ENV_ARGS=()
+        launch_bong_server "$EXPECTED_SERVER_EXECUTABLE"
+        child_pid="$SERVER_PID"
+        if [ "$SERVER_PID" = "$DETACHED_PID" ]; then
+            printf 'matched\n' > "$SERVER_PID_MATCH_FILE"
+        else
+            printf 'mismatch\n' > "$SERVER_PID_MATCH_FILE"
+        fi
+        if [ -f "$BONG_SERVER_PID_FILE" ]; then
+            printf 'recorded\n' > "$SERVER_RECORD_STATE_FILE"
+        else
+            printf 'missing\n' > "$SERVER_RECORD_STATE_FILE"
+        fi
+        if job_table_contains "$child_pid"; then
+            printf 'present\n' > "$JOB_TABLE_STATE_FILE"
+        else
+            printf 'detached\n' > "$JOB_TABLE_STATE_FILE"
+        fi
+        ;;
+    *)
+        echo "FAIL: unknown launcher mode: $TEST_MODE" >&2
+        exit 1
+        ;;
+esac
+
+printf '%s\n' "$child_pid" > "$CHILD_PID_FILE"
+printf '%s\n' "$$" > "$LAUNCHER_PID_FILE"
+while :; do
+    sleep 1
+done
+LAUNCHER
+chmod +x "$LAUNCHER_SCRIPT"
+
+run_hup_case() {
+    local mode="$1"
+    local expect_child_alive="$2"
+    local case_root="$TEST_ROOT/$mode"
+    local child_pid_file="$case_root/child.pid"
+    local launcher_pid_file="$case_root/launcher.pid"
+    local ready_file="$case_root/ready"
+    local launcher_log="$case_root/launcher.log"
+    local server_log="$case_root/server.log"
+    local server_pid_match_file="$case_root/server-pid-match"
+    local server_record_state_file="$case_root/server-record-state"
+    local job_table_state_file="$case_root/job-table-state"
+    local spawned_launcher_pid
+    local launcher_pgid
+    local child_pgid
+    local child_stdin
+
+    mkdir -p "$case_root"
+    export DEV_RELOAD STUB_SCRIPT
+    export TEST_MODE="$mode"
+    export CHILD_PID_FILE="$child_pid_file"
+    export LAUNCHER_PID_FILE="$launcher_pid_file"
+    export READY_FILE="$ready_file"
+    export SERVER_PID_MATCH_FILE="$server_pid_match_file"
+    export SERVER_RECORD_STATE_FILE="$server_record_state_file"
+    export JOB_TABLE_STATE_FILE="$job_table_state_file"
+    export BONG_SERVER_WORKDIR="$TEST_ROOT"
+    export BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+    export EXPECTED_SERVER_EXECUTABLE="$SLEEP_EXECUTABLE"
+    export BONG_SERVER_LOG="$server_log"
+    export BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+
+    setsid bash "$LAUNCHER_SCRIPT" < "$LAUNCHER_STDIN" \
+        > "$launcher_log" 2>&1 &
+    ACTIVE_LAUNCHER_PID=$!
+    spawned_launcher_pid="$ACTIVE_LAUNCHER_PID"
+
+    wait_for_file "$child_pid_file" "$mode child pid"
+    wait_for_file "$launcher_pid_file" "$mode launcher pid"
+    wait_for_file "$ready_file" "$mode child readiness"
+    if [ "$mode" = detached ]; then
+        wait_for_file "$server_pid_match_file" "production SERVER_PID assignment"
+        wait_for_file "$server_record_state_file" "managed server PID record"
+        wait_for_file "$job_table_state_file" "production job-table detach state"
+        grep -Fxq matched "$server_pid_match_file" \
+            || fail "production SERVER_PID must equal launch_detached_job DETACHED_PID"
+        grep -Fxq recorded "$server_record_state_file" \
+            || fail "successful production launch must atomically create a managed PID record"
+        grep -Fxq detached "$job_table_state_file" \
+            || fail "production launch must remove the live server pid from Bash's job table"
+    fi
+    read -r ACTIVE_CHILD_PID < "$child_pid_file"
+    read -r ACTIVE_LAUNCHER_PID < "$launcher_pid_file"
+
+    [[ "$ACTIVE_CHILD_PID" =~ ^[0-9]+$ ]] || fail "$mode returned an invalid child pid"
+    [[ "$ACTIVE_LAUNCHER_PID" =~ ^[0-9]+$ ]] || fail "$mode returned an invalid launcher pid"
+    [ "$ACTIVE_LAUNCHER_PID" = "$spawned_launcher_pid" ] \
+        || fail "$mode reported a launcher pid different from the process started by the test"
+    process_is_running "$ACTIVE_CHILD_PID" || fail "$mode child exited before SIGHUP"
+    process_is_running "$ACTIVE_LAUNCHER_PID" || fail "$mode launcher exited before SIGHUP"
+
+    launcher_pgid="$(ps -o pgid= -p "$ACTIVE_LAUNCHER_PID" | tr -d '[:space:]')"
+    child_pgid="$(ps -o pgid= -p "$ACTIVE_CHILD_PID" | tr -d '[:space:]')"
+    [[ "$launcher_pgid" =~ ^[0-9]+$ ]] || fail "$mode launcher has invalid pgid"
+    [ "$child_pgid" = "$launcher_pgid" ] \
+        || fail "$mode child must begin in the launcher's HUP-exposed process group"
+    wait_for_process_command "$ACTIVE_CHILD_PID" sleep \
+        || fail "$mode did not exec the final sleep process behind its returned pid"
+    child_stdin="$(readlink "/proc/$ACTIVE_CHILD_PID/fd/0")"
+    if [ "$mode" = detached ]; then
+        [ "$child_stdin" = /dev/null ] \
+            || fail "detached child stdin must be /dev/null, actual $child_stdin"
+    else
+        [ "$child_stdin" = "$LAUNCHER_STDIN" ] \
+            || fail "attached control must inherit launcher stdin, actual $child_stdin"
+    fi
+
+    # Direct kernel delivery to the shared process group models a terminal
+    # foreground-group hangup. It does not consult Bash's job table.
+    kill -HUP -- "-$launcher_pgid"
+    wait_for_process_exit "$ACTIVE_LAUNCHER_PID" \
+        || fail "$mode launcher did not exit after SIGHUP"
+
+    if [ "$expect_child_alive" = true ]; then
+        process_is_running "$ACTIVE_CHILD_PID" \
+            || fail "detached child did not survive launcher SIGHUP"
+        kill "$ACTIVE_CHILD_PID" 2>/dev/null || true
+    else
+        wait_for_process_exit "$ACTIVE_CHILD_PID" \
+            || fail "attached negative-control child survived launcher SIGHUP"
+    fi
+
+    wait "$ACTIVE_LAUNCHER_PID" 2>/dev/null || true
+    ACTIVE_CHILD_PID=""
+    ACTIVE_LAUNCHER_PID=""
+}
+
+command -v setsid >/dev/null 2>&1 || fail "util-linux setsid command is required"
+
+# Both children start in the launcher's process group. The negative control dies
+# on direct group HUP; the production path survives via its inherited HUP ignore.
+run_hup_case attached false
+run_hup_case detached true
+
+source "$DEV_RELOAD"
+
+ROLLBACK_CALL_MARKER="$TEST_ROOT/rollback-call.marker"
+original_write_record="$(declare -f bong_server_write_record)"
+original_rollback_managed="$(declare -f bong_server_rollback_pinned_managed_process)"
+bong_server_write_record() {
+    return 1
+}
+bong_server_rollback_pinned_managed_process() {
+    printf '%s\n' "$1" > "$ROLLBACK_CALL_MARKER"
+    eval "$original_rollback_managed"
+}
+READY_FILE="$TEST_ROOT/rollback-ready"
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/rollback-server.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE"; then
+    fail "managed PID publish failure unexpectedly succeeded"
+fi
+[ -s "$ROLLBACK_CALL_MARKER" ] \
+    || fail "production launch failure did not reach pinned managed rollback wrapper"
+[ -z "$SERVER_PID" ] || fail "rollback launch failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "rollback launch failure left DETACHED_PID=$DETACHED_PID"
+eval "$original_write_record"
+eval "$original_rollback_managed"
+ENV_ARGS=()
+
+original_stop_managed="$(declare -f bong_server_stop_managed)"
+managed_stop_status=0
+bong_server_stop_managed() { return "$managed_stop_status"; }
+for managed_stop_status in 0 "$BONG_SERVER_STOP_FORCED"; do
+    stop_managed_server_before_reload \
+        || fail "dev-reload must permit replacement after safe stop status $managed_stop_status"
+done
+for managed_stop_status in 1 2; do
+    if stop_managed_server_before_reload 2> "$TEST_ROOT/reload-stop-$managed_stop_status.err"; then
+        fail "dev-reload accepted unsafe managed stop status $managed_stop_status"
+    else
+        reload_stop_result=$?
+    fi
+    [ "$reload_stop_result" -eq "$managed_stop_status" ] \
+        || fail "dev-reload flattened managed stop status $managed_stop_status"
+done
+unset -f bong_server_stop_managed
+eval "$original_stop_managed"
+
+NO_COMMAND_LOG="$TEST_ROOT/no-command.err"
+if launch_detached_job 2> "$NO_COMMAND_LOG"; then
+    fail "launch accepted an empty command"
+fi
+grep -Fq "no background command provided" "$NO_COMMAND_LOG" \
+    || fail "empty command rejection did not include its diagnostic"
+[ -z "$DETACHED_PID" ] || fail "failed launch left a detached pid behind"
+
+# The child must author its own fork-time identity. If it cannot read that
+# identity, or reports malformed data, the parent must reject the handoff and
+# leave neither a published PID nor a live background job.
+original_identity_starttime="$(declare -f bong_server_process_starttime)"
+eval "${original_identity_starttime/bong_server_process_starttime/_identity_bong_server_process_starttime}"
+bong_server_process_starttime() {
+    case "${IDENTITY_REPORT_MODE:-valid}" in
+        unavailable) return 1 ;;
+        malformed) printf 'not-a-starttime\n' ;;
+        *) _identity_bong_server_process_starttime "$@" ;;
+    esac
+}
+for IDENTITY_REPORT_MODE in unavailable malformed; do
+    IDENTITY_REPORT_LOG="$TEST_ROOT/identity-report-$IDENTITY_REPORT_MODE.err"
+    if launch_detached_job /bin/sleep 30 2> "$IDENTITY_REPORT_LOG"; then
+        fail "launch accepted $IDENTITY_REPORT_MODE child identity report"
+    fi
+    if [ "$IDENTITY_REPORT_MODE" = unavailable ]; then
+        grep -Fq "did not report its fork-time identity" "$IDENTITY_REPORT_LOG" \
+            || fail "missing child identity report lacked its diagnostic"
+    else
+        grep -Fq "reported an invalid fork-time identity" "$IDENTITY_REPORT_LOG" \
+            || fail "malformed child identity report lacked its diagnostic"
+    fi
+    [ -z "$DETACHED_PID" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure left DETACHED_PID=$DETACHED_PID"
+    [ -z "$DETACHED_STARTTIME" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure left DETACHED_STARTTIME=$DETACHED_STARTTIME"
+    [ -z "$(jobs -pr)" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure leaked a background job"
+done
+unset IDENTITY_REPORT_MODE IDENTITY_REPORT_LOG
+unset -f _identity_bong_server_process_starttime
+eval "$original_identity_starttime"
+
+EMPTY_PID_LOG="$TEST_ROOT/empty-pid.err"
+if detach_background_job "" 2> "$EMPTY_PID_LOG"; then
+    fail "detach accepted an empty pid"
+fi
+grep -Fq "invalid background job pid: <empty>" "$EMPTY_PID_LOG" \
+    || fail "empty pid rejection did not include its diagnostic"
+
+NON_NUMERIC_PID_LOG="$TEST_ROOT/non-numeric-pid.err"
+if detach_background_job "not-a-pid" 2> "$NON_NUMERIC_PID_LOG"; then
+    fail "detach accepted a non-numeric pid"
+fi
+grep -Fq "invalid background job pid: not-a-pid" "$NON_NUMERIC_PID_LOG" \
+    || fail "non-numeric pid rejection did not include its diagnostic"
+
+COMPLETED_MARKER="$TEST_ROOT/completed"
+COMPLETED_JOB_LOG="$TEST_ROOT/completed-job.err"
+(printf 'done\n' > "$COMPLETED_MARKER") &
+completed_pid=$!
+wait_for_file "$COMPLETED_MARKER" "completed-job marker"
+wait_for_process_exit "$completed_pid" \
+    || fail "completed-job fixture did not exit naturally"
+
+completed_job_recorded=false
+while IFS= read -r job_pid; do
+    if [ "$job_pid" = "$completed_pid" ]; then
+        completed_job_recorded=true
+        break
+    fi
+done < <(jobs -p)
+[ "$completed_job_recorded" = true ] \
+    || fail "completed-job fixture disappeared from the job table before detach"
+
+# Deliberately do not wait: this locks the boundary where disown alone would
+# accept a completed job which still has an entry in Bash's job table.
+if detach_background_job "$completed_pid" 2> "$COMPLETED_JOB_LOG"; then
+    fail "detach accepted a completed background job"
+fi
+grep -Fq "is not running in this shell" "$COMPLETED_JOB_LOG" \
+    || fail "completed job rejection did not include its lifecycle diagnostic"
+
+MISSING_SERVER_LOG="$TEST_ROOT/missing-server.err"
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$TEST_ROOT/does-not-exist"
+BONG_SERVER_LOG="$TEST_ROOT/missing-server.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server 2> "$MISSING_SERVER_LOG"; then
+    fail "production server launch accepted an exec failure"
+fi
+grep -Fq "bong server executable is not executable" "$MISSING_SERVER_LOG" \
+    || fail "exec failure did not include its lifecycle diagnostic"
+[ -z "$SERVER_PID" ] || fail "failed production launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "failed production launch left DETACHED_PID=$DETACHED_PID"
+
+NON_EXECUTABLE_SERVER="$TEST_ROOT/non-executable-server"
+NON_EXECUTABLE_LOG="$TEST_ROOT/non-executable-server.err"
+: > "$NON_EXECUTABLE_SERVER"
+chmod 0644 "$NON_EXECUTABLE_SERVER"
+BONG_SERVER_EXECUTABLE="$NON_EXECUTABLE_SERVER"
+if launch_bong_server 2> "$NON_EXECUTABLE_LOG"; then
+    fail "production server launch accepted a non-executable file"
+fi
+grep -Fq "bong server executable is not executable" "$NON_EXECUTABLE_LOG" \
+    || fail "non-executable rejection did not include its diagnostic"
+[ -z "$SERVER_PID" ] || fail "non-executable launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "non-executable launch left DETACHED_PID=$DETACHED_PID"
+
+EMPTY_PATH_SERVER="$TEST_ROOT/empty-path-server"
+EMPTY_PATH_LOG="$TEST_ROOT/empty-path.log"
+EMPTY_PATH_READY="$TEST_ROOT/empty-path.ready"
+cat > "$EMPTY_PATH_SERVER" <<'EMPTY_PATH_SERVER'
+#!/bin/bash
+set -euo pipefail
+printf 'ready\n' > "$READY_FILE"
+exec /bin/sleep 30
+EMPTY_PATH_SERVER
+chmod +x "$EMPTY_PATH_SERVER"
+READY_FILE="$EMPTY_PATH_READY"
+ENV_ARGS=("PATH=")
+BONG_SERVER_EXECUTABLE="empty-path-server"
+BONG_SERVER_LOG="$EMPTY_PATH_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "production server launch rejected current-directory lookup with an empty ENV_ARGS PATH"
+ACTIVE_CHILD_PID="$SERVER_PID"
+wait_for_file "$EMPTY_PATH_READY" "empty PATH server readiness"
+wait_for_process_command "$SERVER_PID" sleep \
+    || fail "empty ENV_ARGS PATH launch did not reach its final executable"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "empty ENV_ARGS PATH cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+ENV_ARGS=()
+
+ISOLATED_PATH_BIN_DIR="$TEST_ROOT/isolated-path-bin"
+ISOLATED_PATH_SERVER="$ISOLATED_PATH_BIN_DIR/bong-isolated-path-server"
+ISOLATED_PATH_LOG="$TEST_ROOT/isolated-path.log"
+ISOLATED_PATH_READY="$TEST_ROOT/isolated-path.ready"
+mkdir -p "$ISOLATED_PATH_BIN_DIR"
+cat > "$ISOLATED_PATH_SERVER" <<'ISOLATED_PATH_SERVER'
+#!/bin/bash
+set -euo pipefail
+printf 'ready\n' > "$READY_FILE"
+exec /bin/sleep 30
+ISOLATED_PATH_SERVER
+chmod +x "$ISOLATED_PATH_SERVER"
+READY_FILE="$ISOLATED_PATH_READY"
+ENV_ARGS=("PATH=$ISOLATED_PATH_BIN_DIR")
+BONG_SERVER_EXECUTABLE="bong-isolated-path-server"
+BONG_SERVER_LOG="$ISOLATED_PATH_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "production server launch leaked its isolated ENV_ARGS PATH into launcher utilities"
+ACTIVE_CHILD_PID="$SERVER_PID"
+wait_for_file "$ISOLATED_PATH_READY" "isolated PATH server readiness"
+wait_for_process_command "$SERVER_PID" sleep \
+    || fail "isolated ENV_ARGS PATH launch did not reach its final executable"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "isolated ENV_ARGS PATH cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+ENV_ARGS=()
+
+INVALID_INTERPRETER_SERVER="$TEST_ROOT/invalid-interpreter-server"
+INVALID_INTERPRETER_LOG="$TEST_ROOT/invalid-interpreter-server.err"
+cat > "$INVALID_INTERPRETER_SERVER" <<'INVALID_INTERPRETER'
+#!/definitely/missing/bong-test-interpreter
+INVALID_INTERPRETER
+chmod +x "$INVALID_INTERPRETER_SERVER"
+: > "$INVALID_INTERPRETER_LOG"
+BONG_SERVER_EXECUTABLE="$INVALID_INTERPRETER_SERVER"
+for _ in $(seq 1 10); do
+    if launch_bong_server 2>> "$INVALID_INTERPRETER_LOG"; then
+        fail "zero-grace launch accepted an executable with a missing interpreter"
+    fi
+    [ -z "$SERVER_PID" ] \
+        || fail "missing interpreter launch left SERVER_PID=$SERVER_PID"
+    [ -z "$DETACHED_PID" ] \
+        || fail "missing interpreter launch left DETACHED_PID=$DETACHED_PID"
+done
+grep -Eq "is not running in this shell|exited during launch|did not exec expected executable" \
+    "$INVALID_INTERPRETER_LOG" \
+    || fail "missing interpreter rejection did not include its lifecycle diagnostic"
+
+BAD_EXPECTED_LOG="$TEST_ROOT/bad-expected-executable.err"
+BAD_EXPECTED_READY="$TEST_ROOT/bad-expected-executable.ready"
+READY_FILE="$BAD_EXPECTED_READY"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+if launch_bong_server "$TEST_ROOT/does-not-exist-expected" 2> "$BAD_EXPECTED_LOG"; then
+    fail "production server launch accepted a missing expected executable"
+fi
+grep -Fq "expected bong server executable is not executable" "$BAD_EXPECTED_LOG" \
+    || fail "missing expected executable rejection lacked its diagnostic"
+[ ! -e "$BAD_EXPECTED_READY" ] \
+    || fail "missing expected executable started the server before validation"
+[ -z "$SERVER_PID" ] || fail "missing expected executable left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "missing expected executable left DETACHED_PID=$DETACHED_PID"
+
+BAD_WORKDIR_LOG="$TEST_ROOT/bad-workdir.err"
+BAD_WORKDIR_READY="$TEST_ROOT/bad-workdir.ready"
+READY_FILE="$BAD_WORKDIR_READY"
+STUB_PID_FILE=""
+BONG_SERVER_WORKDIR="$TEST_ROOT/does-not-exist"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/bad-workdir.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+if launch_bong_server 2> "$BAD_WORKDIR_LOG"; then
+    fail "production server launch accepted a missing workdir"
+fi
+grep -Fq "could not enter bong server workdir" "$BAD_WORKDIR_LOG" \
+    || fail "missing workdir rejection did not include its diagnostic"
+[ ! -e "$BAD_WORKDIR_READY" ] \
+    || fail "missing workdir still executed the absolute server stub"
+[ -z "$SERVER_PID" ] || fail "missing workdir left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "missing workdir left DETACHED_PID=$DETACHED_PID"
+
+invalid_grace_case=0
+for invalid_grace in not-a-duration -1; do
+    ((invalid_grace_case += 1))
+    INVALID_GRACE_LOG="$TEST_ROOT/invalid-grace-$invalid_grace_case.err"
+    INVALID_GRACE_READY="$TEST_ROOT/invalid-grace-$invalid_grace_case.ready"
+    READY_FILE="$INVALID_GRACE_READY"
+    BONG_SERVER_WORKDIR="$TEST_ROOT"
+    BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+    BONG_SERVER_LOG="$TEST_ROOT/invalid-grace-$invalid_grace_case.log"
+    BONG_SERVER_STARTUP_GRACE_SECONDS="$invalid_grace"
+    if launch_bong_server 2> "$INVALID_GRACE_LOG"; then
+        fail "production server launch accepted invalid startup grace $invalid_grace"
+    fi
+    grep -Fq "BONG_SERVER_STARTUP_GRACE_SECONDS must be a non-negative number" "$INVALID_GRACE_LOG" \
+        || fail "invalid startup grace $invalid_grace rejection lacked its diagnostic"
+    [ ! -e "$INVALID_GRACE_READY" ] \
+        || fail "invalid startup grace $invalid_grace started the server before validation"
+    [ -z "$SERVER_PID" ] \
+        || fail "invalid startup grace $invalid_grace left SERVER_PID=$SERVER_PID"
+    [ -z "$DETACHED_PID" ] \
+        || fail "invalid startup grace $invalid_grace left DETACHED_PID=$DETACHED_PID"
+done
+
+# Zero grace must never fork an external sleep, for every textual shape the
+# format check accepts: plain zero (0, 00), integer-dot (0., 00.), leading-dot
+# (.0, .00), and integer-dot-fraction (0.0, 0.00, 000.000). A recording sleep
+# mock at the front of PATH proves the negative: a zero form that still forked
+# sleep would leave a call record, while the launch itself stays green. The
+# mock ignores the exec poll's 0.01 ticks so they cannot pollute the record.
+ZERO_GRACE_BIN_DIR="$TEST_ROOT/zero-grace-bin"
+ZERO_GRACE_SERVER="$ZERO_GRACE_BIN_DIR/bong-zero-grace-server"
+ZERO_GRACE_SLEEP_MOCK="$ZERO_GRACE_BIN_DIR/sleep"
+ZERO_GRACE_CALL_LOG="$TEST_ROOT/zero-grace-sleep-calls.log"
+mkdir -p "$ZERO_GRACE_BIN_DIR"
+# Absolute /bin/bash shebang and absolute sleep path: the bin dir shadows
+# PATH for the server wrapper, and the mock must never be reached by the
+# final exec either.
+cat > "$ZERO_GRACE_SERVER" <<ZERO_GRACE_SERVER_STUB
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "\$\$" > "\${STUB_PID_FILE:-/dev/null}"
+printf 'ready\n' > "\${READY_FILE:-/dev/null}"
+exec "$SLEEP_EXECUTABLE" 30
+ZERO_GRACE_SERVER_STUB
+chmod +x "$ZERO_GRACE_SERVER"
+cat > "$ZERO_GRACE_SLEEP_MOCK" <<ZERO_GRACE_SLEEP_STUB
+#!/bin/bash
+if [ "\${1:-}" != "0.01" ]; then
+    printf 'sleep-called:%s\n' "\$*" >> "\${ZERO_GRACE_CALL_LOG:-/dev/null}"
+fi
+exec /bin/sleep "\$@"
+ZERO_GRACE_SLEEP_STUB
+chmod +x "$ZERO_GRACE_SLEEP_MOCK"
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="bong-zero-grace-server"
+export ZERO_GRACE_CALL_LOG
+ORIGINAL_TEST_PATH="$PATH"
+# The grace wait forks sleep from this test process's own PATH, so the mock
+# must lead the test PATH, not just the server wrapper's env.
+export PATH="$ZERO_GRACE_BIN_DIR:$PATH"
+for ZERO_FORM in 0 0.0 0. 00 00. .0 .00 0.00 000.000; do
+    ZERO_GRACE_LOG="$TEST_ROOT/zero-grace-$ZERO_FORM.log"
+    ZERO_GRACE_READY="$TEST_ROOT/zero-grace-$ZERO_FORM.ready"
+    ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace-$ZERO_FORM.pid"
+    READY_FILE="$ZERO_GRACE_READY"
+    export STUB_PID_FILE="$ZERO_GRACE_PID_FILE"
+    BONG_SERVER_LOG="$ZERO_GRACE_LOG"
+    BONG_SERVER_STARTUP_GRACE_SECONDS="$ZERO_FORM"
+    : > "$ZERO_GRACE_CALL_LOG"
+    launch_bong_server "$SLEEP_EXECUTABLE" \
+        || fail "zero startup grace $ZERO_FORM rejected a server which completed its final exec"
+    [ ! -s "$ZERO_GRACE_CALL_LOG" ] \
+        || fail "zero startup grace $ZERO_FORM forked an external sleep: $(cat "$ZERO_GRACE_CALL_LOG")"
+    ACTIVE_CHILD_PID="$SERVER_PID"
+    wait_for_file "$ZERO_GRACE_READY" "zero-grace $ZERO_FORM server readiness"
+    wait_for_file "$ZERO_GRACE_PID_FILE" "zero-grace $ZERO_FORM server pid"
+    grep -Fxq "$SERVER_PID" "$ZERO_GRACE_PID_FILE" \
+        || fail "zero-grace $ZERO_FORM launch returned a pid different from the final server pid"
+    wait_for_process_command "$SERVER_PID" sleep \
+        || fail "zero-grace $ZERO_FORM launch returned before the final sleep exec"
+    terminate_background_process "$ACTIVE_CHILD_PID"
+    if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+        fail "zero-grace $ZERO_FORM success cleanup did not reap pid $ACTIVE_CHILD_PID"
+    fi
+    SERVER_PID=""
+    DETACHED_PID=""
+    ACTIVE_CHILD_PID=""
+    unset STUB_PID_FILE
+done
+# Positive control: a non-zero grace must fork sleep exactly once, proving the
+# mock actually records (and the production code still sleeps through grace).
+ZERO_GRACE_LOG="$TEST_ROOT/zero-grace-0.5.log"
+ZERO_GRACE_READY="$TEST_ROOT/zero-grace-0.5.ready"
+ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace-0.5.pid"
+READY_FILE="$ZERO_GRACE_READY"
+export STUB_PID_FILE="$ZERO_GRACE_PID_FILE"
+BONG_SERVER_LOG="$ZERO_GRACE_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.5
+: > "$ZERO_GRACE_CALL_LOG"
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "non-zero startup grace 0.5 rejected a server which completed its final exec"
+grep -Fxq "sleep-called:0.5" "$ZERO_GRACE_CALL_LOG" \
+    || fail "non-zero startup grace 0.5 did not fork sleep as recorded by the mock: $(cat "$ZERO_GRACE_CALL_LOG")"
+terminate_background_process "$SERVER_PID"
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+unset STUB_PID_FILE
+ENV_ARGS=()
+PATH="$ORIGINAL_TEST_PATH"
+unset ORIGINAL_TEST_PATH
+unset ZERO_GRACE_CALL_LOG
+
+DELAYED_EXEC_FAILURE_SCRIPT="$TEST_ROOT/delayed-exec-failure.sh"
+DELAYED_EXEC_FAILURE_LOG="$TEST_ROOT/delayed-exec-failure.err"
+DELAYED_EXEC_SERVER_LOG="$TEST_ROOT/delayed-exec-failure-server.log"
+cat > "$DELAYED_EXEC_FAILURE_SCRIPT" <<'DELAYED_EXEC_FAILURE'
+#!/usr/bin/env bash
+set -euo pipefail
+/bin/sleep 0.1
+exec "$DELAYED_MISSING_EXECUTABLE"
+DELAYED_EXEC_FAILURE
+chmod +x "$DELAYED_EXEC_FAILURE_SCRIPT"
+export DELAYED_MISSING_EXECUTABLE="$TEST_ROOT/does-not-exist-after-delay"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="$DELAYED_EXEC_FAILURE_SCRIPT"
+BONG_SERVER_LOG="$DELAYED_EXEC_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DELAYED_EXEC_FAILURE_LOG"; then
+    fail "zero-grace launch returned success before a delayed final exec failure"
+fi
+grep -Fq "did not exec expected executable" "$DELAYED_EXEC_FAILURE_LOG" \
+    || fail "delayed exec failure did not include its executable identity diagnostic"
+[ -z "$SERVER_PID" ] || fail "delayed exec failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "delayed exec failure left DETACHED_PID=$DETACHED_PID"
+unset DELAYED_MISSING_EXECUTABLE
+
+# Regression pin for the flake: a wrapper that completes its entire life inside
+# launch_detached_job's detach window must still be reported with the standard
+# exec-identity diagnostic, not a scheduling-dependent alternative.
+FAST_EXEC_FAILURE_SCRIPT="$TEST_ROOT/fast-exec-failure.sh"
+FAST_EXEC_FAILURE_LOG="$TEST_ROOT/fast-exec-failure.err"
+FAST_EXEC_SERVER_LOG="$TEST_ROOT/fast-exec-failure-server.log"
+cat > "$FAST_EXEC_FAILURE_SCRIPT" <<'FAST_EXEC_FAILURE'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$FAST_MISSING_EXECUTABLE"
+FAST_EXEC_FAILURE
+chmod +x "$FAST_EXEC_FAILURE_SCRIPT"
+export FAST_MISSING_EXECUTABLE="$TEST_ROOT/does-not-exist-fast"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="$FAST_EXEC_FAILURE_SCRIPT"
+BONG_SERVER_LOG="$FAST_EXEC_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$FAST_EXEC_FAILURE_LOG"; then
+    fail "zero-grace launch returned success before an immediate final exec failure"
+fi
+grep -Fq "did not exec expected executable" "$FAST_EXEC_FAILURE_LOG" \
+    || fail "immediate exec failure did not include its executable identity diagnostic"
+[ -z "$SERVER_PID" ] || fail "immediate exec failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "immediate exec failure left DETACHED_PID=$DETACHED_PID"
+unset FAST_MISSING_EXECUTABLE
+
+# Regression pin for the fail-closed tri-state contract (W9 preverify finding):
+# after a detach failure, an UNKNOWN inspection (kill -0 alive but ps check
+# failed) must fail closed - a still-live, never-detached process must never be
+# published as a managed server pid.
+DETACH_FAIL_STUB_SCRIPT="$TEST_ROOT/detach-fail-stub.sh"
+DETACH_FAIL_LOG="$TEST_ROOT/detach-fail.err"
+DETACH_FAIL_SERVER_LOG="$TEST_ROOT/detach-fail-server.log"
+DETACH_FAIL_PID_FILE="$TEST_ROOT/detach-fail.pid"
+cat > "$DETACH_FAIL_STUB_SCRIPT" <<'DETACH_FAIL_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /bin/sleep 30
+DETACH_FAIL_STUB
+chmod +x "$DETACH_FAIL_STUB_SCRIPT"
+
+original_detach_background_job="$(declare -f detach_background_job)"
+original_bong_server_process_is_running="$(declare -f bong_server_process_is_running)"
+_bong_server_process_is_running_impl() {
+    eval "$original_bong_server_process_is_running"
+    bong_server_process_is_running "$@"
+}
+detach_background_job() {
+    printf '%s\n' "${1:-}" > "$DETACH_FAIL_PID_FILE"
+    return 1
+}
+bong_server_process_is_running() {
+    if [ -z "${BONG_STUB_FIRST_INSPECTION_DONE:-}" ]; then
+        BONG_STUB_FIRST_INSPECTION_DONE=1
+        return 2
+    fi
+    _bong_server_process_is_running_impl "$@"
+}
+BONG_STUB_FIRST_INSPECTION_DONE=""
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$DETACH_FAIL_STUB_SCRIPT"
+BONG_SERVER_LOG="$DETACH_FAIL_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DETACH_FAIL_LOG"; then
+    fail "detach failure with a live never-detached process did not fail closed"
+fi
+grep -Eq "could not inspect background job [0-9]+ after detach failure; failing closed" "$DETACH_FAIL_LOG" \
+    || fail "detach-failure launch did not report its UNKNOWN-inspection fail-closed diagnostic"
+[ -z "$SERVER_PID" ] || fail "detach-failure launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "detach-failure launch left DETACHED_PID=$DETACHED_PID"
+read -r DETACH_FAIL_PID < "$DETACH_FAIL_PID_FILE"
+[[ "$DETACH_FAIL_PID" =~ ^[0-9]+$ ]] \
+    || fail "detach-failure fixture did not record a numeric wrapper pid"
+wait_for_process_exit "$DETACH_FAIL_PID" \
+    || fail "detach-failure launch leaked live never-detached pid $DETACH_FAIL_PID"
+unset BONG_STUB_FIRST_INSPECTION_DONE
+eval "$original_detach_background_job"
+eval "$original_bong_server_process_is_running"
+unset -f _bong_server_process_is_running_impl
+
+# Regression pin for the handoff contract (1973 rework finding 2): a wrapper
+# confirmed dead in the detach window must never publish its pid - a recycled
+# pid running the same binary could be accepted as the server and rollback
+# would then signal a process we do not own.
+DETACH_DEAD_STUB_SCRIPT="$TEST_ROOT/detach-dead-stub.sh"
+DETACH_DEAD_LOG="$TEST_ROOT/detach-dead.err"
+DETACH_DEAD_SERVER_LOG="$TEST_ROOT/detach-dead-server.log"
+DETACH_DEAD_PID_FILE="$TEST_ROOT/detach-dead.pid"
+cat > "$DETACH_DEAD_STUB_SCRIPT" <<'DETACH_DEAD_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+DETACH_DEAD_STUB
+chmod +x "$DETACH_DEAD_STUB_SCRIPT"
+
+original_detach_dead_job="$(declare -f detach_background_job)"
+original_detach_dead_running="$(declare -f bong_server_process_is_running)"
+_detach_dead_running_impl() {
+    eval "$original_detach_dead_running"
+    bong_server_process_is_running "$@"
+}
+detach_background_job() {
+    printf '%s\n' "${1:-}" > "$DETACH_DEAD_PID_FILE"
+    return 1
+}
+# Deterministic confirmed-dead: the first probe reports death regardless of
+# whether the wrapper has actually exited yet, so the refusal branch is hit
+# on every run instead of racing the wrapper's exit.
+bong_server_process_is_running() {
+    if [ -z "${BONG_STUB_DEAD_DONE:-}" ]; then
+        BONG_STUB_DEAD_DONE=1
+        return 1
+    fi
+    _detach_dead_running_impl "$@"
+}
+BONG_STUB_DEAD_DONE=""
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$DETACH_DEAD_STUB_SCRIPT"
+BONG_SERVER_LOG="$DETACH_DEAD_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DETACH_DEAD_LOG"; then
+    fail "detach failure with a confirmed-dead wrapper did not fail closed"
+fi
+grep -Fq "died before detach completed; refusing to publish its pid" "$DETACH_DEAD_LOG" \
+    || fail "confirmed-dead wrapper refusal lacked its diagnostic"
+[ -z "$SERVER_PID" ] || fail "confirmed-dead refusal left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "confirmed-dead refusal left DETACHED_PID=$DETACHED_PID"
+read -r DETACH_DEAD_PID < "$DETACH_DEAD_PID_FILE"
+[[ "$DETACH_DEAD_PID" =~ ^[0-9]+$ ]] \
+    || fail "confirmed-dead fixture did not record a numeric wrapper pid"
+wait_for_process_exit "$DETACH_DEAD_PID" \
+    || fail "confirmed-dead refusal leaked pid $DETACH_DEAD_PID"
+unset BONG_STUB_DEAD_DONE
+eval "$original_detach_dead_job"
+eval "$original_detach_dead_running"
+unset -f _detach_dead_running_impl
+unset DETACH_DEAD_STUB_SCRIPT DETACH_DEAD_LOG DETACH_DEAD_SERVER_LOG DETACH_DEAD_PID_FILE DETACH_DEAD_PID
+
+# Regression pin for the confirmed-live detach-failure branch (1973 rework
+# finding 5): when detach fails but the wrapper is still running, the launch
+# must kill the never-detached process and fail closed - it must not publish
+# a still-live, never-detached pid. The wrapper lives for 30s, so the real
+# tri-state probe deterministically reports live (status 0) on this path.
+DETACH_LIVE_STUB_SCRIPT="$TEST_ROOT/detach-live-stub.sh"
+DETACH_LIVE_LOG="$TEST_ROOT/detach-live.err"
+DETACH_LIVE_SERVER_LOG="$TEST_ROOT/detach-live-server.log"
+DETACH_LIVE_PID_FILE="$TEST_ROOT/detach-live.pid"
+cat > "$DETACH_LIVE_STUB_SCRIPT" <<'DETACH_LIVE_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /bin/sleep 30
+DETACH_LIVE_STUB
+chmod +x "$DETACH_LIVE_STUB_SCRIPT"
+
+original_detach_live_job="$(declare -f detach_background_job)"
+detach_background_job() {
+    printf '%s\n' "${1:-}" > "$DETACH_LIVE_PID_FILE"
+    return 1
+}
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$DETACH_LIVE_STUB_SCRIPT"
+BONG_SERVER_LOG="$DETACH_LIVE_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DETACH_LIVE_LOG"; then
+    fail "detach failure with a live never-detached process did not fail closed"
+fi
+grep -Fq "still running after detach failure; failing closed" "$DETACH_LIVE_LOG" \
+    || fail "confirmed-live detach-failure launch did not report its fail-closed diagnostic"
+[ -z "$SERVER_PID" ] || fail "confirmed-live detach failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "confirmed-live detach failure left DETACHED_PID=$DETACHED_PID"
+[ -z "$DETACHED_STARTTIME" ] || fail "confirmed-live detach failure left DETACHED_STARTTIME=$DETACHED_STARTTIME"
+read -r DETACH_LIVE_PID < "$DETACH_LIVE_PID_FILE"
+[[ "$DETACH_LIVE_PID" =~ ^[0-9]+$ ]] \
+    || fail "confirmed-live fixture did not record a numeric wrapper pid"
+wait_for_process_exit "$DETACH_LIVE_PID" \
+    || fail "confirmed-live detach failure leaked live never-detached pid $DETACH_LIVE_PID"
+eval "$original_detach_live_job"
+unset DETACH_LIVE_STUB_SCRIPT DETACH_LIVE_LOG DETACH_LIVE_SERVER_LOG DETACH_LIVE_PID_FILE DETACH_LIVE_PID
+
+# Exec-poll start time contract (1973 rework finding 2): the ack must reject a
+# pid whose start time differs from the handoff moment - a recycled pid running
+# the same binary is NOT-OUR-PROCESS, never the server.
+POLLER_PID="$$"
+POLLER_EXE="$(readlink -f -- "/proc/$POLLER_PID/exe")"
+POLLER_STARTTIME="$(bong_server_process_starttime "$POLLER_PID")" \
+    || fail "poll fixture could not capture its own start time"
+wait_for_process_executable "$POLLER_PID" "$POLLER_EXE" "$POLLER_STARTTIME" \
+    || fail "exec poll rejected a live pid with a matching start time"
+if wait_for_process_executable "$POLLER_PID" "$POLLER_EXE" "not-$POLLER_STARTTIME"; then
+    fail "exec poll accepted a pid with a non-matching start time (PID reuse would publish a foreign process)"
+fi
+unset POLLER_PID POLLER_EXE POLLER_STARTTIME
+
+# Production wiring contract (1973 rework finding 3): the exec poll must be
+# invoked by launch_bong_server with the start time pinned at fork inside
+# launch_detached_job - not re-captured at handoff. The order log proves the
+# pin precedes the detach call; the call log proves the poll received the pin.
+WIRING_READY="$TEST_ROOT/wiring.ready"
+WIRING_PID_FILE="$TEST_ROOT/wiring.pid"
+WIRING_SERVER_LOG="$TEST_ROOT/wiring-server.log"
+WIRING_ORDER_LOG="$TEST_ROOT/wiring-order.log"
+WIRING_CALL_LOG="$TEST_ROOT/wiring-call.log"
+WIRING_STARTTIME_COUNT="$TEST_ROOT/wiring-starttime-count"
+original_wiring_wait="$(declare -f wait_for_process_executable)"
+original_wiring_detach="$(declare -f detach_background_job)"
+original_wiring_starttime="$(declare -f bong_server_process_starttime)"
+eval "${original_wiring_wait/wait_for_process_executable/_wiring_wait_for_process_executable}"
+eval "${original_wiring_detach/detach_background_job/_wiring_detach_background_job}"
+eval "${original_wiring_starttime/bong_server_process_starttime/_wiring_bong_server_process_starttime}"
+wait_for_process_executable() {
+    printf '%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "$WIRING_CALL_LOG"
+    _wiring_wait_for_process_executable "$@"
+}
+detach_background_job() {
+    printf 'detach\n' >> "$WIRING_ORDER_LOG"
+    _wiring_detach_background_job "$@"
+}
+bong_server_process_starttime() {
+    local value call_no
+    value="$(_wiring_bong_server_process_starttime "$@")" || return $?
+    call_no=1
+    if [ -f "$WIRING_STARTTIME_COUNT" ]; then
+        call_no="$(cat "$WIRING_STARTTIME_COUNT")"
+    fi
+    call_no=$((call_no + 1))
+    printf '%s\n' "$call_no" > "$WIRING_STARTTIME_COUNT"
+    printf 'starttime:%s\n' "$value" >> "$WIRING_ORDER_LOG"
+    if [ -n "${WIRING_FORCE_REUSE_FROM_CALL:-}" ] && [ "$call_no" -ge "$WIRING_FORCE_REUSE_FROM_CALL" ]; then
+        # A recycled pid has a different, still-numeric kernel start time. Keep
+        # returning that identity so both exec acknowledgement and rollback see
+        # the same replacement process.
+        printf '%s\n' "$((value + 1))"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
+READY_FILE="$WIRING_READY"
+export STUB_PID_FILE="$WIRING_PID_FILE"
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$WIRING_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+: > "$WIRING_ORDER_LOG"
+: > "$WIRING_CALL_LOG"
+: > "$WIRING_STARTTIME_COUNT"
+unset WIRING_FORCE_REUSE_FROM_CALL
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "production launch failed in the start-time wiring fixture"
+ACTIVE_CHILD_PID="$SERVER_PID"
+IFS='|' read -r wired_pid wired_exe wired_starttime < "$WIRING_CALL_LOG" \
+    || fail "production launch never invoked the exec poll"
+[ "$wired_pid" = "$SERVER_PID" ] \
+    || fail "production exec poll observed pid $wired_pid, expected $SERVER_PID"
+[ "$wired_exe" = "$SLEEP_EXECUTABLE" ] \
+    || fail "production exec poll observed executable $wired_exe, expected $SLEEP_EXECUTABLE"
+[[ "$wired_starttime" =~ ^[0-9]+$ ]] \
+    || fail "production exec poll observed a non-numeric start time '$wired_starttime' (guard disarmed)"
+wired_pin="$(head -n1 "$WIRING_ORDER_LOG")"
+[ "$wired_pin" = "starttime:$wired_starttime" ] \
+    || fail "production exec poll did not receive the fork-time pin (call log $wired_starttime, order log $wired_pin)"
+wired_detach_order="$(sed -n '2p' "$WIRING_ORDER_LOG")"
+[ "$wired_detach_order" = "detach" ] \
+    || fail "fork-time pin did not precede the detach call (order: $(tr '\n' ' ' < "$WIRING_ORDER_LOG"))"
+wait_for_file "$WIRING_READY" "wiring server readiness"
+wait_for_file "$WIRING_PID_FILE" "wiring server pid"
+terminate_background_process "$ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "wiring success cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+SERVER_PID=""
+DETACHED_PID=""
+ACTIVE_CHILD_PID=""
+unset STUB_PID_FILE
+
+# Simulated identity change through the production wiring: every identity read
+# from the poll onward returns a different start time, exactly as a recycled
+# pid would. The launch must fail closed with the standard diagnostic, and
+# rollback must preserve the replacement process instead of signalling it.
+WIRING_REUSE_READY="$TEST_ROOT/wiring-reuse.ready"
+WIRING_REUSE_PID_FILE="$TEST_ROOT/wiring-reuse.pid"
+WIRING_REUSE_LOG="$TEST_ROOT/wiring-reuse.err"
+WIRING_REUSE_SERVER_LOG="$TEST_ROOT/wiring-reuse-server.log"
+READY_FILE="$WIRING_REUSE_READY"
+export STUB_PID_FILE="$WIRING_REUSE_PID_FILE"
+BONG_SERVER_LOG="$WIRING_REUSE_SERVER_LOG"
+: > "$WIRING_ORDER_LOG"
+: > "$WIRING_CALL_LOG"
+: > "$WIRING_STARTTIME_COUNT"
+export WIRING_FORCE_REUSE_FROM_CALL=2
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$WIRING_REUSE_LOG"; then
+    fail "production launch accepted a simulated recycled pid in the exec poll"
+fi
+grep -Fq "did not exec expected executable" "$WIRING_REUSE_LOG" \
+    || fail "simulated pid reuse did not fail with the exec-identity diagnostic"
+[ -z "$SERVER_PID" ] || fail "simulated pid reuse left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "simulated pid reuse left DETACHED_PID=$DETACHED_PID"
+[ -z "$DETACHED_STARTTIME" ] || fail "simulated pid reuse left DETACHED_STARTTIME=$DETACHED_STARTTIME"
+IFS='|' read -r wired_pid wired_exe wired_starttime < "$WIRING_CALL_LOG" \
+    || fail "simulated pid reuse never invoked the exec poll"
+[[ "$wired_starttime" =~ ^[0-9]+$ ]] \
+    || fail "simulated pid reuse poll received a non-numeric pin (guard bypassed)"
+wired_pin="$(head -n1 "$WIRING_ORDER_LOG")"
+[ "$wired_pin" = "starttime:$wired_starttime" ] \
+    || fail "simulated pid reuse poll did not receive the fork-time pin (call log $wired_starttime, order log $wired_pin)"
+wait_for_file "$WIRING_REUSE_PID_FILE" "simulated pid reuse server pid"
+read -r ACTIVE_CHILD_PID < "$WIRING_REUSE_PID_FILE"
+process_is_running "$ACTIVE_CHILD_PID" \
+    || fail "simulated pid reuse rollback signalled replacement pid $ACTIVE_CHILD_PID"
+grep -Fq "is no longer the launched process (recycled); nothing to roll back" "$WIRING_REUSE_LOG" \
+    || fail "simulated pid reuse rollback did not report preserving the replacement process"
+unset WIRING_FORCE_REUSE_FROM_CALL
+terminate_background_process "$ACTIVE_CHILD_PID"
+wait_for_process_exit "$ACTIVE_CHILD_PID" \
+    || fail "simulated pid reuse cleanup leaked replacement pid $ACTIVE_CHILD_PID"
+eval "$original_wiring_wait"
+eval "$original_wiring_detach"
+eval "$original_wiring_starttime"
+unset -f _wiring_wait_for_process_executable _wiring_detach_background_job _wiring_bong_server_process_starttime
+unset WIRING_READY WIRING_PID_FILE WIRING_SERVER_LOG WIRING_ORDER_LOG WIRING_CALL_LOG WIRING_STARTTIME_COUNT
+unset WIRING_REUSE_READY WIRING_REUSE_PID_FILE WIRING_REUSE_LOG WIRING_REUSE_SERVER_LOG
+unset ACTIVE_CHILD_PID
+
+FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
+FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"
+RUNTIME_SLEEP_LOG="$TEST_ROOT/runtime-sleep.err"
+RUNTIME_SLEEP_READY="$TEST_ROOT/runtime-sleep.ready"
+RUNTIME_SLEEP_PID_FILE="$TEST_ROOT/runtime-sleep.pid"
+mkdir -p "$FAIL_SLEEP_DIR"
+cat > "$FAIL_SLEEP_SCRIPT" <<'SLEEP_STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "0.05" ]; then
+    for _ in $(seq 1 100); do
+        [ -s "${READY_FILE:-}" ] && exit 1
+        /bin/sleep 0.01
+    done
+    exit 1
+fi
+exec /bin/sleep "$@"
+SLEEP_STUB
+chmod +x "$FAIL_SLEEP_SCRIPT"
+
+READY_FILE="$RUNTIME_SLEEP_READY"
+export STUB_PID_FILE="$RUNTIME_SLEEP_PID_FILE"
+export STUB_IGNORE_TERM=true
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/runtime-sleep.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.05
+ORIGINAL_PATH="$PATH"
+PATH="$FAIL_SLEEP_DIR:$PATH"
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$RUNTIME_SLEEP_LOG"; then
+    PATH="$ORIGINAL_PATH"
+    fail "production server launch accepted a runtime startup grace failure"
+fi
+PATH="$ORIGINAL_PATH"
+grep -Fq "startup grace wait failed" "$RUNTIME_SLEEP_LOG" \
+    || fail "runtime startup grace failure did not include its diagnostic"
+wait_for_file "$RUNTIME_SLEEP_PID_FILE" "runtime sleep failure server pid"
+read -r ACTIVE_CHILD_PID < "$RUNTIME_SLEEP_PID_FILE"
+wait_for_process_exit "$ACTIVE_CHILD_PID" \
+    || fail "runtime startup grace failure leaked detached server pid $ACTIVE_CHILD_PID"
+if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+    fail "runtime startup grace cleanup did not reap pid $ACTIVE_CHILD_PID"
+fi
+[ -z "$SERVER_PID" ] || fail "runtime startup grace failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "runtime startup grace failure left DETACHED_PID=$DETACHED_PID"
+ACTIVE_CHILD_PID=""
+unset STUB_IGNORE_TERM
+
+echo "PASS: production launch survived SIGHUP, confirmed final exec, and cleaned all initialization failures"

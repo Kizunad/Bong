@@ -34,6 +34,8 @@ pub struct HeavenGateChanneling {
     pub start_tick: u64,
     /// 施法位置（用于 AoE 范围 / 盲区 / QiTransfer zone 查找）。
     pub position: DVec3,
+    /// cast 时从 `TechniqueRegistry` 快照的 AoE / 盲区半径。
+    pub range: f64,
     /// cast 时快照的 qi_max（aftermath 结算基准，不受 charge 阶段影响）。
     pub qi_max: f64,
     /// cast 时快照的 bond.stored_qi（aftermath 结算基准）。
@@ -83,10 +85,11 @@ impl TiandaoBlindZoneRegistry {
 pub fn create_blind_zone_from_cast(
     event: &HeavenGateCastEvent,
     current_tick: u64,
+    radius: f64,
 ) -> TiandaoBlindZone {
     TiandaoBlindZone {
         center: event.position,
-        radius: effects::HEAVEN_GATE_RADIUS,
+        radius,
         ttl_ticks: effects::HEAVEN_GATE_BLIND_ZONE_TTL_TICKS,
         created_tick: current_tick,
     }
@@ -185,17 +188,18 @@ mod tests {
     }
 
     #[test]
-    fn create_blind_zone_uses_plan_constants() {
+    fn create_blind_zone_uses_explicit_radius_and_plan_ttl() {
         let event = HeavenGateCastEvent {
             caster: Entity::from_raw(1),
             position: DVec3::new(100.0, 64.0, 200.0),
             qi_max: 10700.0,
             stored_qi: 3000.0,
         };
-        let zone = create_blind_zone_from_cast(&event, 5000);
+        let configured_radius = 37.5;
+        let zone = create_blind_zone_from_cast(&event, 5000, configured_radius);
         assert!(
-            (zone.radius - 100.0).abs() < 1e-6,
-            "radius should be HEAVEN_GATE_RADIUS=100"
+            (zone.radius - configured_radius).abs() < 1e-6,
+            "blind-zone radius must use the caller's TechniqueRegistry range"
         );
         assert_eq!(
             zone.ttl_ticks,

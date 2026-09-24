@@ -51,6 +51,11 @@ public final class NicheGuardianStore {
         recordIntrusion(new NicheIntrusionAlert(List.of(), fallback(intruderId), 0.0, System.currentTimeMillis()));
     }
 
+    public static synchronized void clearOnDisconnect() {
+        intrusionAlerts = List.of();
+        guardianStatuses = Map.of();
+    }
+
     public static void resetForTests() {
         intrusionAlerts = List.of();
         guardianStatuses = Map.of();

@@ -122,6 +122,51 @@ public class BongParticleGeometryTest {
     }
 
     @Test
+    void groundDecalRectSeparatesLengthAndWidth() {
+        // halfLength 沿本地 +X、halfWidth 沿本地 +Z；未旋转时直接落在世界 X / Z 上。
+        float[] quad = BongParticleGeometry.buildGroundDecalQuad(
+            new double[]{0, 0, 0}, 0.9, 0.15, 0.0, 0.0);
+        float maxX = Math.max(Math.max(quad[0], quad[3]), Math.max(quad[6], quad[9]));
+        float maxZ = Math.max(Math.max(quad[2], quad[5]), Math.max(quad[8], quad[11]));
+        assertEquals(0.9f, maxX, EPS, "长轴半长应落在世界 X");
+        assertEquals(0.15f, maxZ, EPS, "短轴半宽应落在世界 Z");
+    }
+
+    @Test
+    void groundDecalRectLongAxisFollowsRotation() {
+        // 血溅拖尾靠这条：rotation = 从血溅中心指向该 splat 的方位角时，长轴必须沿该方位。
+        double rotation = Math.PI / 2;
+        float[] quad = BongParticleGeometry.buildGroundDecalQuad(
+            new double[]{0, 0, 0}, 1.0, 0.1, rotation, 0.0);
+        // 本地 +X 端（顶点 2、3 的中点）旋转 90° 后应指向世界 +Z
+        double midX = (quad[6] + quad[9]) / 2.0;
+        double midZ = (quad[8] + quad[11]) / 2.0;
+        assertEquals(0.0, midX, EPS, "旋转 90° 后长轴端点不应再留在 X 轴上");
+        assertEquals(1.0, midZ, EPS, "旋转 90° 后长轴端点应指向 +Z，长度仍为 halfLength");
+    }
+
+    @Test
+    void groundDecalSquareOverloadMatchesRectWithEqualExtents() {
+        float[] square = BongParticleGeometry.buildGroundDecalQuad(
+            new double[]{1, 2, 3}, 0.7, 0.4, 0.05);
+        float[] rect = BongParticleGeometry.buildGroundDecalQuad(
+            new double[]{1, 2, 3}, 0.7, 0.7, 0.4, 0.05);
+        assertArrayEquals(square, rect, (float) EPS,
+            "方形重载必须与长宽相等的矩形版逐顶点一致——既有符阵 decal 不能因为加长宽分离而位移");
+    }
+
+    @Test
+    void groundDecalRectStaysHorizontalAndFinite() {
+        float[] quad = BongParticleGeometry.buildGroundDecalQuad(
+            new double[]{-5, 70.25, 12}, 0.02, 1.8, -2.3, 0.03);
+        assertEquals((float) (70.25 + 0.03), quad[1], EPS);
+        assertEquals((float) (70.25 + 0.03), quad[4], EPS);
+        assertEquals((float) (70.25 + 0.03), quad[7], EPS);
+        assertEquals((float) (70.25 + 0.03), quad[10], EPS);
+        assertAllFinite(quad, "groundDecalRect");
+    }
+
+    @Test
     void groundDecalFitChoosesHighestNearbySurface() {
         double fitted = BongParticleGeometry.fitGroundDecalY(
             64.2,

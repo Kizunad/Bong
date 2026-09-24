@@ -1,0 +1,29 @@
+# 粗铁锭 IronIngot —— 特征点名清单
+#
+# 特征来源：`iron_ingot.png` 物品原画与工坊生铁方块：
+# 1. ingot_body: 横卧梯形生铁锭身（下宽上窄、拔模斜面、四周倒角棱线）
+# 2. hammer_dimples: 顶面重锤锻打凹痕与氧化铁皮斑
+# 3. cooling_embers: 铁锭缝隙处隐隐透出的未冷透暗红余烬火痕
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+scale_void = [24, 20, 20]
+scale_dark = [44, 38, 36]
+scale_mid  = [72, 64, 62]
+scale_lit  = [106, 98, 96]
+scale_high = [144, 136, 132]
+ember_dark = [96, 44, 34]
+ember_glow = [188, 72, 42]
+
+[features]
+# 铁锭梯形主体
+ingot_body = { elements = ["ingot_tier", "ingot_edge_", "ingot_cap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 5000, SIDE_R = 2500 } }
+
+# 锻打凹痕与氧化皮
+hammer_dimples = { elements = ["dimple_", "scale_patch_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 600, SIDE_R = 200 } }
+
+# 冷却余火暗纹
+cooling_embers = { elements = ["ember_"], must_show_in = ["FRONT"], min_px = { FRONT = 80 } }

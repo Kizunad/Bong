@@ -249,6 +249,14 @@ fn switch_template(item: &mut ItemInstance, template_id: &str, registry: &ItemRe
         return false;
     };
 
+    if item.template_id == template_id
+        && item.display_name == template.display_name
+        && item.description == template.description
+        && item.rarity == template.rarity
+    {
+        return false;
+    }
+
     item.template_id = template_id.to_string();
     item.display_name = template.display_name.clone();
     item.description = template.description.clone();
@@ -315,6 +323,7 @@ mod tests {
 
     fn dead_template(id: &str) -> crate::inventory::ItemTemplate {
         crate::inventory::ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: format!("死·{}", id),
             category: ItemCategory::Misc,
@@ -340,6 +349,7 @@ mod tests {
             shelflife_profile: None,
             shield_spec: None,
             shelflife_track: None,
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
         }
     }
 
@@ -356,6 +366,7 @@ mod tests {
         map.insert(
             "rotten_bone_coin".to_string(),
             crate::inventory::ItemTemplate {
+                quick_use: false,
                 id: "rotten_bone_coin".to_string(),
                 display_name: "腐骨币".to_string(),
                 category: ItemCategory::BoneCoin,
@@ -381,12 +392,14 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         );
         // plan-food-v1 P1：food.spirit_wine.chen_cu 是 age_spoil_variant_mapping 的目标 ID。
         map.insert(
             "food.spirit_wine.chen_cu".to_string(),
             crate::inventory::ItemTemplate {
+                quick_use: false,
                 id: "food.spirit_wine.chen_cu".to_string(),
                 display_name: "陈醋".to_string(),
                 category: ItemCategory::Food,
@@ -412,6 +425,7 @@ mod tests {
                 shield_spec: None,
                 shelflife_profile: Some("chen_cu_v1".to_string()),
                 shelflife_track: Some(crate::shelflife::DecayTrack::Spoil),
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         );
         ItemRegistry::from_map(map)
@@ -512,6 +526,12 @@ mod tests {
         ));
         assert_eq!(item.template_id, "dead_mineral_ling_shi_fan");
         assert_eq!(item.display_name, "死·dead_mineral_ling_shi_fan");
+        let after_first_switch = item.clone();
+        assert!(
+            !apply_variant_switch(&mut item, &profile_r, &item_r, now, 1.0),
+            "a second dead-template switch with every target field already matching must be a no-op"
+        );
+        assert_eq!(item, after_first_switch);
     }
 
     #[test]

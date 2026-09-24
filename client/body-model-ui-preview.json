@@ -1,0 +1,109 @@
+{
+  "output_dir": "body-model-ui-preview",
+  "wait_client_ticks": 1000,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 50,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "meridian-animation",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-overview",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-focus",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-back",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-empty",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "physical-focus",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "physical-leg",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-details",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-overlap",
+      "scene_id": "body-model",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 900,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 450,
+      "expected_template_id": "body-inspect"
+    },
+    {
+      "name": "meridian-minimum",
+      "scene_id": "body-model",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "body-inspect"
+    }
+  ]
+}

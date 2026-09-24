@@ -23,7 +23,16 @@ import java.util.Set;
 
 public final class EnvironmentAudioController {
     private final Map<String, ActiveLoop> loops = new LinkedHashMap<>();
+    private final SoundRecipePlayer player;
     private long nextInstanceId = 30_000L;
+
+    public EnvironmentAudioController() {
+        this(SoundRecipePlayer.instance());
+    }
+
+    EnvironmentAudioController(SoundRecipePlayer player) {
+        this.player = player;
+    }
 
     public void update(Collection<ActiveEmitter> activeEmitters, Vec3d playerPos) {
         Set<String> keep = new HashSet<>();
@@ -54,19 +63,45 @@ public final class EnvironmentAudioController {
         return loops.size();
     }
 
+    /** Stops environment loops with their configured fade for ordinary runtime/world changes. */
     public void clear() {
-        for (String key : List.copyOf(loops.keySet())) {
-            stopLoop(key);
-        }
+        clearLoops(false);
+    }
+
+    /** Hard-stops every old-session environment loop, including layers still pending in the player. */
+    public void clearOnDisconnect() {
+        clearLoops(true);
+    }
+
+    private void clearLoops(boolean hardStop) {
+        List<ActiveLoop> stopped = new ArrayList<>(loops.values());
         loops.clear();
-        EnvironmentAudioLoopState.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
+        RuntimeException failure = null;
+        for (ActiveLoop loop : stopped) {
+            try {
+                player.stop(new AudioEventPayload.StopSoundRecipe(
+                    loop.instanceId,
+                    hardStop ? 0 : loop.fadeOutTicks
+                ));
+            } catch (RuntimeException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else if (exception != failure) {
+                    failure.addSuppressed(exception);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     private ActiveLoop startLoop(String key, String recipeId, EnvironmentEffect effect, Vec3d playerPos) {
         long instanceId = ++nextInstanceId;
         String flag = loopFlag(key);
         EnvironmentAudioLoopState.activate(flag);
-        SoundRecipePlayer.instance().play(new AudioEventPayload.PlaySoundRecipe(
+        player.play(new AudioEventPayload.PlaySoundRecipe(
             recipeId,
             instanceId,
             Optional.of(positionFrom(effect.anchor(), playerPos)),
@@ -88,7 +123,7 @@ public final class EnvironmentAudioController {
             return;
         }
         EnvironmentAudioLoopState.deactivate(loop.flag);
-        SoundRecipePlayer.instance().stop(new AudioEventPayload.StopSoundRecipe(
+        player.stop(new AudioEventPayload.StopSoundRecipe(
             loop.instanceId,
             loop.fadeOutTicks
         ));

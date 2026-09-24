@@ -986,7 +986,7 @@ mod tests {
         //   zone_a: x=[-50,50], z=[-50,50] —— trigger 方所在 zone
         //   zone_b: x=[1000,1100], z=[1000,1100] —— 另一 HalfStep 实体所在 zone（远离 zone_a）
         // 注意：ZoneRegistry 必须含 spawn zone，否则 try_from 校验失败；
-        // 但这里我们直接构造 ZoneRegistry { zones } 跳过文件验证。
+        // 但这里我们直接构造 ZoneRegistry { zones, spatial_revision } 跳过文件验证。
         let zone_a = Zone {
             name: "zone_a".to_string(),
             dimension: DimensionKind::Overworld,
@@ -1018,6 +1018,7 @@ mod tests {
             qi_inflow_per_min: 0.0,
         };
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_a, zone_b],
         };
         app.insert_resource(registry);
@@ -1093,6 +1094,7 @@ mod tests {
             qi_inflow_per_min: 0.0,
         };
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![qingyun],
         };
         app.insert_resource(registry);

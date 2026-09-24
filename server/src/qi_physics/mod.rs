@@ -10,6 +10,7 @@ pub mod channeling;
 pub mod collision;
 pub mod constants;
 pub mod container;
+pub mod cost;
 pub mod distance;
 pub mod env;
 pub mod excretion;
@@ -17,6 +18,7 @@ pub mod field;
 pub mod healing;
 pub mod knockback;
 pub mod ledger;
+pub mod prepare;
 pub mod projectile;
 pub mod release;
 pub mod tiandao;
@@ -27,9 +29,9 @@ pub mod zone_inflow;
 use valence::prelude::App;
 
 pub use attrition::{
-    apply_attrition, apply_attrition_checked, dead_tsy_family_id, env_multiplier,
-    is_attrition_exempt, release_attrition_to_zone, AttritionApplyOutcome, AttritionConfig,
-    AttritionSkipReason,
+    apply_attrition, apply_attrition_checked, apply_attrition_checked_with_ledger,
+    dead_tsy_family_id, env_multiplier, is_attrition_exempt, release_attrition_to_zone,
+    AttritionApplyOutcome, AttritionConfig, AttritionSkipReason,
 };
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
 pub use collision::{
@@ -37,6 +39,7 @@ pub use collision::{
     qi_woliu_vortex_field_strength_for_realm, reverse_clamp, CollisionOutcome, QI_ZHENMAI_BETA,
 };
 pub use container::{abrasion_loss, AbrasionDirection, AbrasionOutcome, AnqiContainerKind};
+pub use cost::proportional_qi_cost;
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};
@@ -48,8 +51,7 @@ pub use field::{
     InverseDiffusionOutcome, ShedToCarrierOutcome, TiandaoSignalDistortionOutcome,
 };
 pub use healing::{
-    contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
-    yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,
+    contam_purge, mass_meridian_repair, meridian_repair, yidao_cast_ticks, ContamPurgeOutcome,
     MassMeridianRepairOutcome, MeridianRepairOutcome,
 };
 pub use knockback::{
@@ -59,10 +61,17 @@ pub use knockback::{
 };
 pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
-    pending_inflow_account, snapshot_for_ipc, summarize_world_qi, AttritionOpKind, QiAccountId,
-    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
-    WorldQiBudget, WorldQiSnapshot, PENDING_INFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    dying_elder_dan_excess_account, dying_elder_release_overflow_account, pending_inflow_account,
+    persistent_runtime_qi_accounts, qi_flow_overflow_account, reject_audit_only_qi_reason,
+    rift_drain_account, snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
+    transfer_ledger_qi_to_external, transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger,
+    AttritionOpKind, QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer,
+    QiTransferReason, WorldQiAccount, WorldQiBudget, WorldQiSnapshot,
+    DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    PENDING_INFLOW_ACCOUNT_ID, PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_FLOW_OVERFLOW_ACCOUNT_ID,
+    QI_LEDGER_ACCOUNT_FIELD_PREFIX, RIFT_DRAIN_ACCOUNT_ID,
 };
+pub use prepare::{prepare_transfer, TransferPlan};
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,
     ConeDispersionShot, HighDensityInjectionOutcome,
@@ -82,6 +91,11 @@ pub enum QiPhysicsError {
         field: &'static str,
         value: f64,
     },
+    UnrepresentableChange {
+        field: &'static str,
+        before: f64,
+        amount: f64,
+    },
     InsufficientQi {
         account: String,
         available: f64,
@@ -97,6 +111,11 @@ pub enum QiPhysicsError {
     AuditOnlyReason {
         reason: &'static str,
     },
+    /// 外部物理权威转入 ledger 时 source 与 sink 相同；这会让临时 source 恢复步骤
+    /// 抹掉看似成功的 sink credit，因此必须在任何余额变更前拒绝。
+    SameAccountTransfer {
+        account: String,
+    },
 }
 
 impl std::fmt::Display for QiPhysicsError {
@@ -105,6 +124,14 @@ impl std::fmt::Display for QiPhysicsError {
             Self::InvalidAmount { field, value } => {
                 write!(f, "invalid qi amount `{field}`: {value}")
             }
+            Self::UnrepresentableChange {
+                field,
+                before,
+                amount,
+            } => write!(
+                f,
+                "qi change cannot make representable progress for {field}: before={before}, amount={amount}"
+            ),
             Self::InsufficientQi {
                 account,
                 available,
@@ -123,8 +150,14 @@ impl std::fmt::Display for QiPhysicsError {
             ),
             Self::AuditOnlyReason { reason } => write!(
                 f,
-                "QiTransferReason::{reason} is audit-only and must not mutate WorldQiAccount balance"
+                "QiTransferReason::{reason} is audit-only and must not mutate physical qi owners"
             ),
+            Self::SameAccountTransfer { account } => {
+                write!(
+                    f,
+                    "qi transfer source and destination are identical: {account}"
+                )
+            }
         }
     }
 }
@@ -137,6 +170,23 @@ pub(crate) fn finite_non_negative(value: f64, field: &'static str) -> Result<f64
     } else {
         Err(QiPhysicsError::InvalidAmount { field, value })
     }
+}
+
+/// 判断有限非负真元值的正向扣减是否会让 IEEE-754 `f64` 产生可观察进展。
+///
+/// 该 helper 只负责数值可表示性，不替调用方判断 `amount` 是否不超过余额；调用方仍须
+/// 先执行自己的业务边界校验。把判据放在 `qi_physics`，避免各 gameplay 路径各自拍 epsilon。
+pub(crate) fn subtraction_makes_progress(before: f64, amount: f64) -> Result<bool, QiPhysicsError> {
+    let before = finite_non_negative(before, "subtraction.before")?;
+    let amount = finite_non_negative(amount, "subtraction.amount")?;
+    let after = before - amount;
+    if !after.is_finite() {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "subtraction.after",
+            value: after,
+        });
+    }
+    Ok(amount > 0.0 && after != before)
 }
 
 pub fn register(app: &mut App) {
@@ -155,13 +205,12 @@ mod tests {
     use super::*;
     use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
 
-    /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1（历史注水清算 = 起服重置，不迁移）：
-    /// `WorldQiAccount`（含独立待分配池账户）从不持久化（`persistence::mod` 文档锚点：
-    /// "持久层完全不碰 WorldQiAccount / ledger"），每次 `register(app)`（服务器启动路径）
-    /// 都通过 `init_resource::<WorldQiAccount>()` 得到一个全新的空账本——旧 bug 攒下的错误
-    /// 余额天然清零，不需要额外迁移逻辑。
+    /// `qi_physics::register` 本身只创建空运行期账本，不携带上一进程的审计轨迹或镜像。
+    /// 生产 Startup 随后由 persistence 从各自物理权威恢复：zone 账户来自 zones_runtime；
+    /// 没有 ECS/zone 字段承载的三项稳定 runtime 池由 qi_runtime_accounts 白名单恢复。
+    /// 本测试刻意只调用 register，锁住“资源初始化不暗中注水”的边界。
     #[test]
-    fn register_resets_ledger_and_pending_inflow_pool_to_empty_on_every_boot() {
+    fn register_starts_empty_before_persistence_hydration() {
         let mut app = App::new();
         register(&mut app);
 
@@ -189,5 +238,19 @@ mod tests {
              BONG_SPIRIT_QI_TOTAL overrides it — no carry-over from a prior run"
         );
         assert_eq!(budget.era_decay_accum, 0.0);
+    }
+
+    #[test]
+    fn subtraction_progress_uses_f64_result_without_a_gameplay_epsilon() {
+        assert!(!subtraction_makes_progress(1.0, 1e-17).unwrap());
+        assert!(subtraction_makes_progress(1.0, f64::EPSILON).unwrap());
+        assert!(!subtraction_makes_progress(1.0, 0.0).unwrap());
+        assert!(matches!(
+            subtraction_makes_progress(f64::NAN, 1.0),
+            Err(QiPhysicsError::InvalidAmount {
+                field: "subtraction.before",
+                ..
+            })
+        ));
     }
 }

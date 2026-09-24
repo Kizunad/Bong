@@ -64,8 +64,21 @@ public final class TechniquesListPanel {
         float qiCost,
         int castTicks,
         int cooldownTicks,
-        float range
+        float range,
+        float staminaCost,
+        String category,
+        String inputKind,
+        String iconTexture
     ) {
+        public Technique(String id, String displayName, List<String> aliases, Grade grade,
+                         float proficiency, String proficiencyLabel, boolean active, String castKey,
+                         String description, String requiredRealm, List<RequiredMeridian> requiredMeridians,
+                         float qiCost, int castTicks, int cooldownTicks, float range) {
+            this(id, displayName, aliases, grade, proficiency, proficiencyLabel, active, castKey,
+                description, requiredRealm, requiredMeridians, qiCost, castTicks, cooldownTicks, range,
+                0, "", "skill", "");
+        }
+
         public Technique(
             String id,
             String displayName,
@@ -140,7 +153,7 @@ public final class TechniquesListPanel {
             displayName = displayName == null ? "" : displayName;
             aliases = aliases == null ? List.of() : List.copyOf(aliases);
             grade = grade == null ? Grade.MORTAL : grade;
-            if (proficiency < 0f) proficiency = 0f;
+            if (!Float.isFinite(proficiency) || proficiency < 0f) proficiency = 0f;
             if (proficiency > 1f) proficiency = 1f;
             proficiencyLabel = normalizeProficiencyLabel(proficiencyLabel, proficiency);
             castKey = castKey == null ? "" : castKey;
@@ -153,6 +166,10 @@ public final class TechniquesListPanel {
             castTicks = Math.max(0, castTicks);
             cooldownTicks = Math.max(0, cooldownTicks);
             if (!Float.isFinite(range) || range < 0f) range = 0f;
+            if (!Float.isFinite(staminaCost) || staminaCost < 0f) staminaCost = 0f;
+            category = category == null ? "" : category;
+            inputKind = inputKind == null ? "skill" : inputKind;
+            iconTexture = iconTexture == null ? "" : iconTexture;
         }
     }
 
@@ -263,6 +280,11 @@ public final class TechniquesListPanel {
 
     public static void clearListenersForTests() {
         listeners.clear();
+    }
+
+    /** Clears the disconnected server snapshot while preserving long-lived UI listeners. */
+    public static void clearOnDisconnect() {
+        replace(List.of());
     }
 
     public static void resetForTests() {

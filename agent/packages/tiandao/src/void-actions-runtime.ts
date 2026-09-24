@@ -14,14 +14,12 @@ const {
   VOID_ACTION_SUPPRESS_TSY,
   VOID_ACTION_EXPLODE_ZONE,
   VOID_ACTION_BARRIER,
-  VOID_ACTION_LEGACY_ASSIGN,
 } = CHANNELS;
 
 const VOID_ACTION_CHANNELS = [
   VOID_ACTION_SUPPRESS_TSY,
   VOID_ACTION_EXPLODE_ZONE,
   VOID_ACTION_BARRIER,
-  VOID_ACTION_LEGACY_ASSIGN,
 ] as const;
 
 export interface VoidActionNarrationRuntimeClient {
@@ -78,8 +76,6 @@ function fallbackText(payload: VoidActionBroadcastV1): string {
       return `${payload.actor_name} 引爆 ${payload.target}，灵机骤盛，六月后只余空壳。`;
     case "barrier":
       return `${payload.actor_name} 在 ${payload.target} 立下化虚障，道伥过线自折其气。`;
-    case "legacy_assign":
-      return `${payload.actor_name} 留下临终遗令，道统指向 ${payload.target}。`;
   }
 }
 
@@ -140,8 +136,6 @@ function channelForPayload(payload: VoidActionBroadcastV1): string {
       return VOID_ACTION_EXPLODE_ZONE;
     case "barrier":
       return VOID_ACTION_BARRIER;
-    case "legacy_assign":
-      return VOID_ACTION_LEGACY_ASSIGN;
   }
 }
 

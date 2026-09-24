@@ -1,0 +1,19 @@
+{
+  "anticipation": [
+    0,
+    2
+  ],
+  "strike": [
+    2,
+    4
+  ],
+  "recovery": [
+    4,
+    8
+  ],
+  "strike_axes": [
+    "rightArm.yaw",
+    "leftArm.yaw",
+    "body.z"
+  ]
+}

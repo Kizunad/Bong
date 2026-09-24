@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 
 public final class GatheringSessionStore {
     private static volatile GatheringSessionViewModel snapshot = GatheringSessionViewModel.empty();
+    private static volatile GatheringPresentation presentation = GatheringPresentation.of(snapshot);
     private static final List<Consumer<GatheringSessionViewModel>> listeners = new CopyOnWriteArrayList<>();
 
     private GatheringSessionStore() {
@@ -18,8 +19,13 @@ public final class GatheringSessionStore {
         return snapshot;
     }
 
+    public static GatheringPresentation presentation() {
+        return presentation;
+    }
+
     public static void replace(GatheringSessionViewModel next) {
         GatheringSessionViewModel current = next == null ? GatheringSessionViewModel.empty() : next;
+        presentation = presentation.update(current);
         snapshot = current;
         for (Consumer<GatheringSessionViewModel> listener : listeners) {
             try {
@@ -52,6 +58,7 @@ public final class GatheringSessionStore {
 
     public static void resetForTests() {
         snapshot = GatheringSessionViewModel.empty();
+        presentation = GatheringPresentation.of(snapshot);
         listeners.clear();
     }
 }

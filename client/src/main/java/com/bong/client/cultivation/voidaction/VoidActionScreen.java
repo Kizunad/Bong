@@ -26,12 +26,6 @@ public final class VoidActionScreen extends Screen {
         addActionButton(VoidActionKind.SUPPRESS_TSY, cx - 154, top);
         addActionButton(VoidActionKind.EXPLODE_ZONE, cx + 6, top);
         addActionButton(VoidActionKind.BARRIER, cx - 154, top + 28);
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal(VoidActionKind.LEGACY_ASSIGN.label()),
-                b -> openLegacyPanel()
-            )
-            .dimensions(cx + 6, top + 28, 148, 20)
-            .build());
     }
 
     @Override
@@ -92,15 +86,10 @@ public final class VoidActionScreen extends Screen {
                 double z = mc.player.getZ();
                 yield VoidActionHandler.dispatchBarrier(snapshot.targetZoneId(), x, y, z, nowTick);
             }
-            case LEGACY_ASSIGN -> false;
         };
         if (sent && mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
         }
-    }
-
-    private void openLegacyPanel() {
-        MinecraftClient.getInstance().setScreen(new LegacyAssignPanel());
     }
 
     private static String describe(VoidActionKind kind, VoidActionStore.Snapshot snapshot, long nowTick) {

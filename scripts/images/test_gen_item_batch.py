@@ -21,6 +21,7 @@ id = "bone_coin_5"
 name = "封灵骨币·五"
 category = "bone_coin"
 rarity = "common"
+description = "以低阶兽骨封入真元的骨币。"
 """,
                 encoding="utf-8",
             )
@@ -30,8 +31,8 @@ rarity = "common"
         item = items["bone_coin_5"]
         self.assertEqual("封灵骨币·五", item.name)
         self.assertEqual("bone_coin", item.category)
-        self.assertIn("透明背景", batch.prompt_for(item))
-        self.assertIn("128×128 icon", batch.prompt_for(item))
+        command = batch.gen_command(item, Path("out"), "cliproxy")
+        self.assertIn("以低阶兽骨封入真元的骨币。", " ".join(command))
 
     def test_selected_items_filters_existing_textures_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -49,13 +49,13 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
         );
         InventoryModel inventory = InventoryModel.builder()
             .hotbar(0, fallback)
-            .hotbar(2, selected)
+            .hotbar(1, selected)
             .build();
 
-        SkillBarStore.updateSlot(2, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
 
-        assertSame(selected, BlockPlaceIntentResolver.selectedBlockItem(2, inventory));
-        assertEquals(42L, BlockPlaceIntentResolver.selectedBlockItem(2, inventory).instanceId());
+        assertSame(selected, BlockPlaceIntentResolver.selectedBlockItem(1, inventory));
+        assertEquals(42L, BlockPlaceIntentResolver.selectedBlockItem(1, inventory).instanceId());
     }
 
     @Test
@@ -83,15 +83,15 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
         );
         InventoryModel inventory = InventoryModel.builder()
             .hotbar(0, fallback)
-            .hotbar(3, selected)
+            .hotbar(1, selected)
             .build();
         BlockPos hitPos = new BlockPos(10, 64, -3);
 
-        SkillBarStore.updateSlot(3, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
 
         BlockPlaceIntentResolver.Intent intent =
             BlockPlaceIntentResolver.selectedBlockPlaceIntent(
-                3, inventory, hitPos, Direction.EAST
+                1, inventory, hitPos, Direction.EAST
             );
 
         assertNotNull(intent);

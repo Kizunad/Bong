@@ -16,7 +16,6 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Lifecycle;
-use crate::combat::events::DeathEvent;
 use crate::economy::{estimate_item_price_with_index, neutral_price_index, EconomyPriceIndex};
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::brain::canonical_npc_id;
@@ -24,6 +23,7 @@ use crate::npc::faction::{
     FactionMembership, FactionRelation, FactionRelationMatrix, NamedFactionMembership,
     NAMED_HOSTILE_BIAS, NAMED_PACT_BIAS,
 };
+use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::perf::NpcPerfProbe;
@@ -95,23 +95,27 @@ pub fn register(app: &mut App) {
         PreUpdate,
         socialize_action_system.in_set(BigBrainSet::Actions),
     )
-    .add_systems(Update, record_npc_death_feud_from_death_event);
+    .add_systems(
+        Update,
+        record_npc_death_feud_after_terminal_settlement
+            .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+    );
 }
 
-fn record_npc_death_feud_from_death_event(
-    mut deaths: EventReader<DeathEvent>,
+fn record_npc_death_feud_after_terminal_settlement(
+    mut deaths: EventReader<NpcTerminalSettlementSucceeded>,
     npc_victims: Query<&Lifecycle, With<NpcMarker>>,
     lifecycles: Query<&Lifecycle>,
     mut relationships: EventWriter<SocialRelationshipEvent>,
 ) {
     for death in deaths.read() {
-        let Ok(victim_lifecycle) = npc_victims.get(death.target) else {
+        let Ok(victim_lifecycle) = npc_victims.get(death.entity) else {
             continue;
         };
         let Some(attacker_entity) = death.attacker else {
             continue;
         };
-        if attacker_entity == death.target {
+        if attacker_entity == death.entity {
             continue;
         }
 
@@ -396,9 +400,11 @@ pub fn estimate_trade_value(items: &[ItemInstance]) -> u64 {
 mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
-    use crate::combat::events::DeathEvent;
+    use crate::cultivation::components::{ActorQiIdentity, ActorQiKind};
+    use crate::cultivation::life_record::LifeRecord;
     use crate::inventory::ItemInstance;
     use crate::npc::faction::{FactionId, FactionRank, MissionQueue, Reputation};
+    use crate::npc::lifecycle::{NpcDeathReason, NpcTerminalSettlementSucceeded};
     use crate::social::events::SocialRelationshipEvent;
     use valence::prelude::{App, DVec3, Events, PreUpdate, Update};
 
@@ -542,9 +548,9 @@ mod tests {
     #[test]
     fn npc_death_feud_records_relationship_event() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<SocialRelationshipEvent>();
-        app.add_systems(Update, record_npc_death_feud_from_death_event);
+        app.add_systems(Update, record_npc_death_feud_after_terminal_settlement);
 
         let victim = app
             .world_mut()
@@ -556,20 +562,21 @@ mod tests {
                 },
             ))
             .id();
-        let attacker = app
-            .world_mut()
-            .spawn(Lifecycle {
-                character_id: "offline:Killer".to_string(),
-                ..Default::default()
-            })
-            .id();
+        let attacker = app.world_mut().spawn_empty().id();
 
-        app.world_mut().send_event(DeathEvent {
-            target: victim,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: victim,
+            at_tick: 77,
             cause: "attack_intent:offline:Killer".into(),
+            reason: NpcDeathReason::Combat,
             attacker: Some(attacker),
             attacker_player_id: Some("offline:Killer".into()),
-            at_tick: 77,
+            authorize_loot: true,
+            actor_qi_identity: ActorQiIdentity::from_life_record(
+                &LifeRecord::new("npc:victim"),
+                ActorQiKind::Npc,
+            )
+            .expect("terminal event fixture must use canonical NPC identity"),
         });
         app.update();
 
@@ -585,9 +592,9 @@ mod tests {
     #[test]
     fn npc_death_feud_ignores_environment_death() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<SocialRelationshipEvent>();
-        app.add_systems(Update, record_npc_death_feud_from_death_event);
+        app.add_systems(Update, record_npc_death_feud_after_terminal_settlement);
 
         let victim = app
             .world_mut()
@@ -600,12 +607,19 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(DeathEvent {
-            target: victim,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: victim,
+            at_tick: 77,
             cause: "environment".into(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
-            at_tick: 77,
+            authorize_loot: true,
+            actor_qi_identity: ActorQiIdentity::from_life_record(
+                &LifeRecord::new("npc:victim"),
+                ActorQiKind::Npc,
+            )
+            .expect("terminal event fixture must use canonical NPC identity"),
         });
         app.update();
 

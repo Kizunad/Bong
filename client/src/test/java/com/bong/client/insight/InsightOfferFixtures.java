@@ -12,6 +12,7 @@ final class InsightOfferFixtures {
 
     static InsightOfferViewModel firstInduceBreakthrough(long expiresAtMillis) {
         return new InsightOfferViewModel(
+            "insight:1001:first_breakthrough_to_Induce",
             "first_breakthrough_to_Induce",
             "首次突破到引气境",
             "引气境 (3 正经)",
@@ -57,8 +58,58 @@ final class InsightOfferFixtures {
         );
     }
 
+    /** 同 triggerId 的"新实例"（wire offer_id 不同）——用于 stale A 不能清 B 的回归。 */
+    static InsightOfferViewModel secondInduceBreakthrough(long expiresAtMillis) {
+        return new InsightOfferViewModel(
+            "insight:1001:first_breakthrough_to_Induce#2",
+            "first_breakthrough_to_Induce",
+            "首次突破到引气境",
+            "引气境 (3 正经)",
+            0.78,
+            2,
+            2,
+            expiresAtMillis,
+            List.of(
+                new InsightChoice(
+                    "fixture_choice_E1",
+                    InsightCategory.BREAKTHROUGH,
+                    InsightAlignment.CONVERGE,
+                    "下次冲关稳",
+                    "next_breakthrough_success_rate +5% (一次性)",
+                    "沉重色效率 -15%",
+                    "你已知冲关时神识凝聚的诀窍，下次心会更稳。",
+                    "越专精越偏科，沉重一路会变得生涩。",
+                    "保下一关"
+                ),
+                new InsightChoice(
+                    "fixture_choice_C3",
+                    InsightCategory.COMPOSURE,
+                    InsightAlignment.NEUTRAL,
+                    "闭关心如止",
+                    "composure_immune_during BreakthroughState",
+                    "心境冲击敏感 +3%",
+                    "闭关时外界纷扰再不能扰你——下次突破基线提升。",
+                    "心湖恢复更快，也更容易被冲击搅动。",
+                    "稀有强力，提升突破基线"
+                ),
+                new InsightChoice(
+                    "fixture_choice_G1",
+                    InsightCategory.PERCEPTION,
+                    InsightAlignment.DIVERGE,
+                    "灵气浓淡可见",
+                    "unlock_perception zone_qi_density (方圆 100m)",
+                    "锋利色效率 -10%",
+                    "你能感知方圆百米灵气浓淡，再不会盲目静坐于枯地。",
+                    "转向感知会让旧有锋锐肌肉记忆衰去。",
+                    "战略侦察"
+                )
+            )
+        );
+    }
+
     static InsightOfferViewModel heartDemonOffer() {
         return new InsightOfferViewModel(
+            "heart_demon_offer:1:1000",
             "heart_demon:1:1000",
             "心魔劫临身",
             "渡虚劫 · 心魔",

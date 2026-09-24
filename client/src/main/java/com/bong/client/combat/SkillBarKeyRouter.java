@@ -15,6 +15,7 @@ public final class SkillBarKeyRouter {
         CAST_SENT,
         CONTAINER_SWITCH_SENT,
         COOLDOWN_BLOCKED,
+        SLOT_UNAVAILABLE,
         SAME_CAST_IGNORED
     }
 
@@ -27,6 +28,7 @@ public final class SkillBarKeyRouter {
             || result == RouteResult.ITEM_SELECTED
             || result == RouteResult.ITEM_DESELECTED
             || result == RouteResult.COOLDOWN_BLOCKED
+            || result == RouteResult.SLOT_UNAVAILABLE
             || result == RouteResult.SAME_CAST_IGNORED;
     }
 
@@ -36,7 +38,8 @@ public final class SkillBarKeyRouter {
     }
 
     public static RouteResult route(int slot, long nowMs, java.util.function.IntConsumer castSender) {
-        if (slot < 0 || slot >= SkillBarConfig.SLOT_COUNT) return RouteResult.NOOP;
+        if (slot < 0 || slot >= 9) return RouteResult.NOOP;
+        if (!SkillBarConfig.isAvailable(slot)) return RouteResult.SLOT_UNAVAILABLE;
         SkillBarConfig config = SkillBarStore.snapshot();
         SkillBarEntry entry = config.slot(slot);
         if (entry == null) return RouteResult.PASS_THROUGH;
@@ -49,6 +52,12 @@ public final class SkillBarKeyRouter {
             return RouteResult.ITEM_SELECTED;
         }
         if (config.isOnCooldown(slot, nowMs)) return RouteResult.COOLDOWN_BLOCKED;
+
+        if (entry.id().equals(com.bong.client.movement.DashSkill.ID)) {
+            SkillBarStore.clearSelectedSlot();
+            castSender.accept(slot);
+            return RouteResult.CAST_SENT;
+        }
 
         CastState current = CastStateStore.snapshot();
         if (current.isCasting()) {
@@ -74,6 +83,11 @@ public final class SkillBarKeyRouter {
     }
 
     private static void sendCastWithCrosshairTarget(int slot) {
+        var entry = SkillBarStore.snapshot().slot(slot);
+        if (entry != null && entry.id().equals(com.bong.client.movement.DashSkill.ID)) {
+            com.bong.client.movement.MovementKeybindings.performDash();
+            return;
+        }
         ClientRequestSender.sendSkillBarCast(slot, crosshairEntityTarget());
     }
 

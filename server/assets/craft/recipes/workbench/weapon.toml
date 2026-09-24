@@ -1,0 +1,87 @@
+[[recipes]]
+id = "workbench.weapon.bone_spike_crude"
+category = "anqi_carrier"
+display_name = "粗骨刺"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 2
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 1
+
+[recipes.output]
+template_id = "bone_spike_crude"
+count = 3
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.weapon.iron_dagger"
+category = "misc"
+display_name = "凡铁匕首"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "iron_dagger"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.weapon.stone_knife"
+category = "misc"
+display_name = "石刃"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 1
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "stone_knife"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.weapon.wooden_club"
+category = "misc"
+display_name = "木棍"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 2
+
+[recipes.output]
+template_id = "wooden_club"
+count = 1
+
+[recipes.requirements]

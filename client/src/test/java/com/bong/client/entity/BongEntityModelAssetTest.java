@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class BongEntityModelAssetTest {
     private static final Path CLIENT_ROOT = resolveClientRoot();
     private static final Path RESOURCES = CLIENT_ROOT.resolve(Path.of("src", "main", "resources"));
-    private static final Path LOCAL_MODELS = CLIENT_ROOT.getParent().resolve("local_models");
+    private static final Path MODEL_SOURCES = CLIENT_ROOT.getParent().resolve(Path.of("modelScript", "models"));
 
     private static Path resolveClientRoot() {
         Path cwd = Path.of("").toAbsolutePath().normalize();
@@ -33,7 +33,7 @@ public class BongEntityModelAssetTest {
     @Test
     void blockbenchSourcesExistForEveryGameEntity() {
         for (BongEntityModelKind kind : BongEntityModelKind.values()) {
-            Path file = LOCAL_MODELS.resolve(kind.blockbenchFileName());
+            Path file = MODEL_SOURCES.resolve(kind.blockbenchFileName());
             assertTrue(Files.exists(file), "Missing BlockBench source: " + file.toAbsolutePath());
         }
     }

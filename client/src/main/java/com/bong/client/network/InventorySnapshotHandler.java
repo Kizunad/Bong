@@ -128,6 +128,24 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             }
         }
 
+        JsonObject preparation = readRequiredObject(payload, "material_preparation");
+        if (preparation != null) {
+            JsonArray entries = readRequiredArray(preparation, "materials");
+            if (entries == null) return ServerDataDispatch.noOp(envelope.type(), "Invalid craft materials");
+            List<InventoryItem> materials = new ArrayList<>();
+            for (JsonElement entry : entries) {
+                InventoryItem item = entry.isJsonObject() ? parseInventoryItem(entry.getAsJsonObject()) : null;
+                if (item == null) return ServerDataDispatch.noOp(envelope.type(), "Invalid craft material");
+                materials.add(item);
+            }
+            net.minecraft.util.math.BlockPos station = null;
+            if (preparation.has("station_pos") && !preparation.get("station_pos").isJsonNull()) {
+                var pos = preparation.getAsJsonArray("station_pos");
+                if (pos.size() != 3) return ServerDataDispatch.noOp(envelope.type(), "Invalid material station");
+                station = new net.minecraft.util.math.BlockPos(pos.get(0).getAsInt(), pos.get(1).getAsInt(), pos.get(2).getAsInt());
+            }
+            builder.materialPreparation(readOptionalString(preparation, "recipe_id"), station, materials);
+        }
         InventoryModel model = builder.build();
         InventoryStateStore.applyAuthoritativeSnapshot(model, revision);
         return ServerDataDispatch.handled(
@@ -296,7 +314,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         return hotbarItems;
     }
 
-    static InventoryItem parseInventoryItem(JsonObject itemObject) {
+    public static InventoryItem parseInventoryItem(JsonObject itemObject) {
         Long instanceId = readRequiredLong(itemObject, "instance_id");
         String itemId = readRequiredString(itemObject, "item_id");
         String displayName = readRequiredString(itemObject, "display_name");

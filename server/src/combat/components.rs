@@ -12,14 +12,12 @@ const DEFAULT_FORTUNE_REMAINING: u8 = 3;
 pub const TICKS_PER_SECOND: u64 = 20;
 pub const ATTACK_STAMINA_COST: f32 = 3.0;
 pub const IN_COMBAT_WINDOW_TICKS: u64 = 15 * TICKS_PER_SECOND;
-pub const NEAR_DEATH_WINDOW_TICKS: u64 = 30 * TICKS_PER_SECOND;
 pub const REVIVAL_CONFIRM_WINDOW_TICKS: u64 = 60 * TICKS_PER_SECOND;
 pub const REVIVE_WEAKENED_TICKS: u64 = 180 * TICKS_PER_SECOND;
 pub const BLEED_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const HEALTH_REGEN_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const STAMINA_TICK_INTERVAL_TICKS: u64 = 4;
 pub const COMBAT_STATE_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
-pub const NEAR_DEATH_HEALTH_FRACTION: f32 = 0.05;
 pub const REVIVE_HEALTH_FRACTION: f32 = 0.20;
 pub const STATUS_EFFECT_TICK_INTERVAL_TICKS: u64 = 4;
 pub const LEG_SLOWED_SEVERITY_THRESHOLD: f32 = 0.3;
@@ -184,6 +182,10 @@ pub struct CombatState {
     pub incoming_window: Option<DefenseWindow>,
 }
 
+/// 仅挂在存在战斗窗口的实体上，供逐 tick 到期检查避免扫描全部战斗组件。
+#[derive(Debug, Clone, Copy, Component, Default)]
+pub struct ActiveCombatWindow;
+
 impl CombatState {
     pub fn refresh_combat_window(&mut self, now_tick: u64) {
         let until_tick = now_tick.saturating_add(IN_COMBAT_WINDOW_TICKS);
@@ -194,7 +196,6 @@ impl CombatState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LifecycleState {
     Alive,
-    NearDeath,
     AwaitingRevival,
     Terminated,
 }
@@ -236,11 +237,12 @@ pub struct Lifecycle {
     #[serde(default)]
     pub spawn_anchor_damaged: bool,
     #[serde(default)]
-    pub near_death_deadline_tick: Option<u64>,
-    #[serde(default)]
     pub awaiting_decision: Option<RevivalDecision>,
     #[serde(default)]
     pub revival_decision_deadline_tick: Option<u64>,
+    /// 掷骰开始时锁定的服务端结果；随生命周期存档，重连不能重新掷骰。
+    #[serde(default)]
+    pub revival_roll_survived: Option<bool>,
     pub weakened_until_tick: Option<u64>,
     pub state: LifecycleState,
 }
@@ -255,9 +257,9 @@ impl Default for Lifecycle {
             last_revive_tick: None,
             spawn_anchor: None,
             spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
+            revival_roll_survived: None,
             weakened_until_tick: None,
             state: LifecycleState::Alive,
         }
@@ -265,24 +267,13 @@ impl Default for Lifecycle {
 }
 
 impl Lifecycle {
-    pub fn enter_near_death(&mut self, now_tick: u64) {
-        if self.state == LifecycleState::NearDeath {
-            return;
-        }
-
-        self.death_count = self.death_count.saturating_add(1);
-        self.last_death_tick = Some(now_tick);
-        self.near_death_deadline_tick = Some(now_tick.saturating_add(NEAR_DEATH_WINDOW_TICKS));
-        self.state = LifecycleState::NearDeath;
-    }
-
     pub fn revive(&mut self, now_tick: u64) {
         self.revive_with_weakened_multiplier(now_tick, 1);
     }
 
     pub fn revive_with_weakened_multiplier(&mut self, now_tick: u64, weakened_multiplier: u64) {
+        self.revival_roll_survived = None;
         self.last_revive_tick = Some(now_tick);
-        self.near_death_deadline_tick = None;
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
         self.weakened_until_tick = Some(
@@ -291,16 +282,22 @@ impl Lifecycle {
         self.state = LifecycleState::Alive;
     }
 
-    pub fn await_revival_decision(&mut self, decision: RevivalDecision, deadline_tick: u64) {
-        self.near_death_deadline_tick = None;
+    pub fn await_revival_decision(&mut self, decision: RevivalDecision, now_tick: u64) {
+        if self.state != LifecycleState::Alive {
+            return;
+        }
+        self.revival_roll_survived = None;
+        self.death_count = self.death_count.saturating_add(1);
+        self.last_death_tick = Some(now_tick);
         self.awaiting_decision = Some(decision);
-        self.revival_decision_deadline_tick = Some(deadline_tick);
+        self.revival_decision_deadline_tick =
+            Some(now_tick.saturating_add(REVIVAL_CONFIRM_WINDOW_TICKS));
         self.state = LifecycleState::AwaitingRevival;
     }
 
     pub fn terminate(&mut self, now_tick: u64) {
+        self.revival_roll_survived = None;
         self.last_death_tick = Some(now_tick);
-        self.near_death_deadline_tick = None;
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
         self.state = LifecycleState::Terminated;
@@ -472,13 +469,14 @@ impl Default for UnlockedStyles {
 /// 同时跟踪每个 slot 的 cooldown（plan §4.4）。
 #[derive(Debug, Clone, Component, Default)]
 pub struct QuickSlotBindings {
-    pub slots: [Option<u64>; 9],
+    pub slots: [Option<u64>; Self::SLOT_COUNT],
     /// 每个 slot 下次可用的 server tick；0 表示无冷却。
-    pub cooldown_until_tick: [u64; 9],
+    pub cooldown_until_tick: [u64; Self::SLOT_COUNT],
 }
 
 impl QuickSlotBindings {
-    pub const SLOT_COUNT: usize = 9;
+    /// 默认两格；后续由背包/装备扩展，最多十格。
+    pub const SLOT_COUNT: usize = 2;
 
     pub fn get(&self, slot: u8) -> Option<u64> {
         if slot as usize >= Self::SLOT_COUNT {
@@ -523,14 +521,36 @@ pub enum SkillSlot {
 }
 
 /// plan-hotbar-modify-v1 §3.1 玩家 1-9 技能栏绑定 + 冷却。
+///
+/// bughunt skillbar-rebind-cooldown-reset（返工裁决）：冷却曾按**槽位**记账
+/// （`cooldown_until_tick: [u64; 9]`），`set()` 在换绑时清零对应槽——这不仅让
+/// "把同一招式重新拖回原槽位"变成免费冷却重置，连"清空槽位→重新绑定"
+/// "A→B→A 往返换绑"都同样清零冷却（换绑到 B 时即已清零 A 的冷却，绑回 A 时
+/// A 冷却已不在）；且同一招式绑到多个槽位时，每个槽位各算各的冷却，等价于把
+/// 冷却复制了 N 份，同样可无限连发。这两条路径都与"changed 才清零"的判断条件
+/// 无关——只要冷却还挂在槽位上，任何槽位内容变更都是一次潜在的重置/复制手段。
+///
+/// 根治：冷却按 **skill_id** 归属而非槽位。`set()` 现在只改槽内容，从不触碰
+/// 任何冷却 entry；`is_on_cooldown`/`set_cooldown` 只认 skill_id 字符串，
+/// 与该 skill 当前绑在哪个槽、绑了几个槽都无关，天然消除上述两条攻击面。
 #[derive(Debug, Clone, Component, Default)]
 pub struct SkillBarBindings {
-    pub slots: [SkillSlot; 9],
-    pub cooldown_until_tick: [u64; 9],
+    /// None 使用初始闪避；未习得时服务端拥有门仍然拒绝执行。
+    pub dash_skill_id: Option<String>,
+    pub slots: [SkillSlot; Self::SLOT_COUNT],
+    /// key = skill_id（如 `"dugu.eclipse"`），value = cooldown_until_tick。
+    /// 没有 entry 视为无冷却（就绪）。
+    pub cooldowns: HashMap<String, u64>,
 }
 
 impl SkillBarBindings {
-    pub const SLOT_COUNT: usize = 9;
+    pub fn dash_skill_id(&self) -> &str {
+        self.dash_skill_id
+            .as_deref()
+            .unwrap_or(crate::movement::dash_proficiency::DASH_TECHNIQUE_ID)
+    }
+    /// 当前默认两格；后续由身体条件（如手部数量）和功法扩展。
+    pub const SLOT_COUNT: usize = crate::schema::inventory::HOTBAR_SLOT_COUNT;
 
     pub fn get(&self, slot: u8) -> Option<&SkillSlot> {
         if slot as usize >= Self::SLOT_COUNT {
@@ -539,26 +559,35 @@ impl SkillBarBindings {
         Some(&self.slots[slot as usize])
     }
 
+    /// 绑定/换绑 `slot`。**绝不触碰任何冷却 entry**——冷却按 skill_id 归属，
+    /// 与槽位内容变更完全解耦，杜绝"清空→重绑同招""A→B→A 往返换绑""同招绑
+    /// 多槽"等冷却重置/复制手段（bughunt skillbar-rebind-cooldown-reset）。
     pub fn set(&mut self, slot: u8, value: SkillSlot) -> bool {
         if slot as usize >= Self::SLOT_COUNT {
             return false;
         }
         self.slots[slot as usize] = value;
-        self.cooldown_until_tick[slot as usize] = 0;
         true
     }
 
-    pub fn is_on_cooldown(&self, slot: u8, now_tick: u64) -> bool {
-        if slot as usize >= Self::SLOT_COUNT {
-            return false;
-        }
-        self.cooldown_until_tick[slot as usize] > now_tick
+    /// `skill_id` 从未 cast 过（无 cooldowns entry）视为不在冷却中。
+    pub fn is_on_cooldown(&self, skill_id: &str, now_tick: u64) -> bool {
+        self.cooldowns
+            .get(skill_id)
+            .is_some_and(|&until| now_tick < until)
     }
 
-    pub fn set_cooldown(&mut self, slot: u8, until_tick: u64) {
-        if (slot as usize) < Self::SLOT_COUNT {
-            self.cooldown_until_tick[slot as usize] = until_tick;
-        }
+    pub fn set_cooldown(&mut self, skill_id: &str, until_tick: u64) {
+        self.cooldowns.insert(skill_id.to_string(), until_tick);
+    }
+
+    /// baomai_v3 肉身超脱（Body Transcendence）窗口刻意设计的"冷却全清"奖励
+    /// （`combat/baomai_v3/skills.rs::apply_transcendence_window`）——一次性
+    /// 清空该玩家全部技能冷却 entry。这是本 bug 修复范围之外的既有设计，语义
+    /// 上等价于旧 `cooldown_until_tick = [0; SLOT_COUNT]`，迁移到 skill_id
+    /// 记账后同样保留为唯一的批量清零入口。
+    pub fn clear_all_cooldowns(&mut self) {
+        self.cooldowns.clear();
     }
 }
 
@@ -598,5 +627,225 @@ mod tests {
         assert_eq!(normalized.recover_per_sec, 0.0);
         assert_eq!(normalized.last_drain_tick, Some(12));
         assert_eq!(normalized.state, StaminaState::Exhausted);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // bughunt skillbar-rebind-cooldown-reset — 冷却曾按槽位记账，`set()` 换绑时
+    // 清零该槽冷却；返工后彻底改为按 skill_id 记账，`set()` 不再触碰任何冷却，
+    // `is_on_cooldown`/`set_cooldown` 只认 skill_id，与槽位内容/数量无关。
+    // ─────────────────────────────────────────────────────────────────
+
+    const BENG_QUAN: &str = "burst_meridian.beng_quan";
+    const TIE_SHAN_KAO: &str = "burst_meridian.tie_shan_kao";
+
+    #[test]
+    fn set_same_value_never_touches_cooldown() {
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+        bindings.set_cooldown(BENG_QUAN, 500);
+
+        // 重新绑定完全相同的技能——`set()` 根本不看冷却，必须原封不动。
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+
+        assert_eq!(
+            bindings.cooldowns.get(BENG_QUAN).copied(),
+            Some(500),
+            "同值重绑不该触碰 cooldowns map，期望 entry 仍为 500，实际 {:?}",
+            bindings.cooldowns.get(BENG_QUAN)
+        );
+        assert!(bindings.is_on_cooldown(BENG_QUAN, 0));
+    }
+
+    #[test]
+    fn set_different_value_never_touches_either_skills_cooldown() {
+        // 换绑到不同技能是正常换绑体验，但**不再**清零任何技能的冷却——
+        // 冷却按 skill_id 归属，与槽位内容变化完全解耦（否则就是 A→B→A 换绑
+        // 清空 A 冷却的攻击面，见 skill_bar_bindings_rebind_a_to_b_back_to_a_preserves_a_cooldown）。
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+        bindings.set_cooldown(BENG_QUAN, 500);
+
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: TIE_SHAN_KAO.to_string()
+            }
+        ));
+
+        assert!(
+            bindings.is_on_cooldown(BENG_QUAN, 0),
+            "换绑走的槽位与 beng_quan 的冷却记账完全无关，beng_quan 的冷却必须原样保留"
+        );
+        assert!(
+            !bindings.is_on_cooldown(TIE_SHAN_KAO, 0),
+            "tie_shan_kao 从未被 set_cooldown 过，理应不在冷却中"
+        );
+    }
+
+    #[test]
+    fn set_empty_to_value_boundary_never_touches_cooldown() {
+        // 边界：从默认 Empty 绑定到具体值——历史上这是"changed=true → 清零冷却"的
+        // 边界分支；现在 set() 完全不查 changed，也就不存在这个分支了，行为统一为
+        // "冷却 map 岿然不动"。
+        let mut bindings = SkillBarBindings::default();
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+        bindings.set_cooldown(BENG_QUAN, 500);
+
+        assert!(bindings.set(0, SkillSlot::Item { instance_id: 42 }));
+
+        assert!(matches!(
+            bindings.slots[0],
+            SkillSlot::Item { instance_id: 42 }
+        ));
+        assert!(
+            bindings.is_on_cooldown(BENG_QUAN, 0),
+            "Empty→Item 换绑不应清零任何技能的冷却"
+        );
+    }
+
+    #[test]
+    fn set_out_of_range_returns_false_and_leaves_state_untouched() {
+        let mut bindings = SkillBarBindings::default();
+        bindings.set_cooldown(BENG_QUAN, 500);
+
+        let ok = bindings.set(
+            SkillBarBindings::SLOT_COUNT as u8,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string(),
+            },
+        );
+
+        assert!(!ok, "越界 slot 必须返回 false");
+        // 越界写入不应影响任何已有状态（槽位内容 + 冷却）。
+        assert_eq!(bindings.cooldowns.get(BENG_QUAN).copied(), Some(500));
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+    }
+
+    #[test]
+    fn skill_bar_bindings_rebind_a_to_b_back_to_a_preserves_a_cooldown() {
+        // bughunt skillbar-rebind-cooldown-reset 阻塞问题 A（往返换绑路径）：
+        // 施放 beng_quan（冷却 500）→ 换绑同槽到 tie_shan_kao → 再换绑回
+        // beng_quan——beng_quan 的冷却必须全程原样保留，不能被中途的换绑动作
+        // 以任何方式清零一次。
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+        bindings.set_cooldown(BENG_QUAN, 500);
+
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: TIE_SHAN_KAO.to_string()
+            }
+        ));
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+
+        assert!(
+            bindings.is_on_cooldown(BENG_QUAN, 0),
+            "A→B→A 往返换绑不得作为清空 A 冷却的手段"
+        );
+        assert_eq!(bindings.cooldowns.get(BENG_QUAN).copied(), Some(500));
+    }
+
+    #[test]
+    fn skill_bar_bindings_same_skill_bound_to_multiple_slots_shares_one_cooldown() {
+        // bughunt skillbar-rebind-cooldown-reset 阻塞问题 B（同技能绑多槽路径）：
+        // 冷却按 skill_id 而非槽位记账，同一招式绑在几个槽上都共享同一份冷却，
+        // 不会被"每槽各算各的"复制成 N 份可连发的冷却。
+        let mut bindings = SkillBarBindings::default();
+        assert!(bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+        assert!(bindings.set(
+            1,
+            SkillSlot::Skill {
+                skill_id: BENG_QUAN.to_string()
+            }
+        ));
+
+        // 只需在任意一个绑定槽施放一次——set_cooldown 不接收 slot，天然全局生效。
+        bindings.set_cooldown(BENG_QUAN, 200);
+
+        assert!(
+            bindings.is_on_cooldown(BENG_QUAN, 0),
+            "施放后 beng_quan 应进入冷却，且与从哪个槽施放无关"
+        );
+        assert_eq!(
+            bindings.cooldowns.len(),
+            1,
+            "一个 skill_id 只应有一条 cooldowns entry"
+        );
+    }
+
+    #[test]
+    fn is_on_cooldown_boundary_ticks() {
+        // 与 QuickSlotBindings 的边界语义对齐：now_tick < until 才算冷却中，
+        // 恰好相等（到期瞬间）及之后均视为就绪。
+        let mut bindings = SkillBarBindings::default();
+        assert!(
+            !bindings.is_on_cooldown(BENG_QUAN, 100),
+            "从未 cast 过的技能不应报冷却中"
+        );
+
+        bindings.set_cooldown(BENG_QUAN, 130);
+        assert!(bindings.is_on_cooldown(BENG_QUAN, 100));
+        assert!(bindings.is_on_cooldown(BENG_QUAN, 129));
+        assert!(
+            !bindings.is_on_cooldown(BENG_QUAN, 130),
+            "恰好到期（等号）应视为就绪"
+        );
+        assert!(!bindings.is_on_cooldown(BENG_QUAN, 131));
+    }
+
+    #[test]
+    fn is_on_cooldown_unknown_skill_id_is_always_ready() {
+        // 从未 set_cooldown 过的 skill_id（包括压根没在任何槽绑定过的）没有 map
+        // entry，必须视为就绪，而不是 panic 或误报冷却中。
+        let bindings = SkillBarBindings::default();
+        assert!(!bindings.is_on_cooldown("no.such.skill", u64::MAX));
+    }
+
+    #[test]
+    fn clear_all_cooldowns_resets_every_tracked_skill() {
+        // baomai_v3 肉身超脱窗口的刻意设计：一次性清空全部冷却，与本 bug 修复
+        // 目标（防止玩家自行触发的清零）不冲突——这是唯一被保留的批量清零入口。
+        let mut bindings = SkillBarBindings::default();
+        bindings.set_cooldown(BENG_QUAN, 500);
+        bindings.set_cooldown(TIE_SHAN_KAO, 999);
+        assert!(bindings.is_on_cooldown(BENG_QUAN, 0));
+        assert!(bindings.is_on_cooldown(TIE_SHAN_KAO, 0));
+
+        bindings.clear_all_cooldowns();
+
+        assert!(!bindings.is_on_cooldown(BENG_QUAN, 0));
+        assert!(!bindings.is_on_cooldown(TIE_SHAN_KAO, 0));
+        assert!(bindings.cooldowns.is_empty());
     }
 }

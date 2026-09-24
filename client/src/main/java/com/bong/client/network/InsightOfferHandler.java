@@ -75,10 +75,23 @@ public final class InsightOfferHandler implements ServerDataHandler {
             );
         }
 
+        // R7 P4 窄接缝：wire 已有 offer_id（server 形如 insight:{entity}:{trigger}，
+        // schema 约束 1-128 字符），作为 offer 实例唯一 settlement identity；旧 payload
+        // 缺失时用 triggerId 派生，保证实例身份恒非空（r7-insight-settlement.tsv
+        // identity_rule）。
+        String offerId = readString(payload, "offer_id");
+        if (offerId == null || offerId.isBlank()) {
+            offerId = triggerId;
+        }
+        if (offerId.length() > 128) {
+            offerId = offerId.substring(0, 128);
+        }
+
         long nowMillis = System.currentTimeMillis();
         long expiresAtMillis = nowMillis + DEFAULT_TIMEOUT_MILLIS;
 
         InsightOfferStore.replace(new InsightOfferViewModel(
+            offerId,
             triggerId,
             DEFAULT_TRIGGER_LABEL,
             DEFAULT_REALM_LABEL,

@@ -12,5 +12,6 @@
       "const": "dual_phase",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "7585c38844408204fba7530539bce9b46cd405423ea4e19fa1f2f540c5ce1cbe"
 }

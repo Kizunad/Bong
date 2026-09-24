@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -54,6 +53,12 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ZONE_INFO, "zone_info");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.PLAYER_STATE, "player_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.CULTIVATION_DETAIL, "cultivation_detail");
+        // plan-race-system-v1 P2b
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.BODY_PLAN_LAYOUT, "body_plan_layout");
+        // plan-race-system-v1 P3c
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.RACE_GATE_META, "race_gate_meta");
+        // plan-race-system-v1 P4/PR-5b —— 易形状态（渲染消费见 MorphStateHandler）
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.MORPH_STATE, "morph_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SKILL_XP_GAIN, "skill_xp_gain");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_SNAPSHOT, "inventory_snapshot");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE, "combat_hud_state");
@@ -353,8 +358,7 @@ public final class ProtoServerDataBridge {
                     new String[] {"skill", "SKILL_ID_"});
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED) {
-            return bridgeStripEnums(envelope.getAlchemyOutcomeResolved(), typeString,
-                    new String[] {"bucket", "ALCHEMY_OUTCOME_BUCKET_"});
+            return bridgeAlchemyOutcomeResolved(envelope.getAlchemyOutcomeResolved(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_CONTAMINATION) {
             return bridgeAlchemyContamination(envelope.getAlchemyContamination(), typeString);
@@ -419,6 +423,17 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.RECIPE_UNLOCKED) {
             return bridgeRecipeUnlocked(envelope.getRecipeUnlocked(), typeString);
         }
+        // ─── plan-bughunt-niche-guardian-proto-kind: guardian_kind 顶层枚举 ──────
+        // 灵龛守护 fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_ 前缀，
+        // 玩家会在 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET" 而非 "puppet"。
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_FATIGUE) {
+            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianFatigue(), typeString,
+                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_BROKEN) {
+            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianBroken(), typeString,
+                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+        }
 
         // Extract the inner oneof message.
         MessageOrBuilder inner = extractInner(envelope, payloadCase);
@@ -456,6 +471,9 @@ public final class ProtoServerDataBridge {
             case ZONE_INFO: return envelope.getZoneInfo();
             case PLAYER_STATE: return envelope.getPlayerState();
             case CULTIVATION_DETAIL: return envelope.getCultivationDetail();
+            case BODY_PLAN_LAYOUT: return envelope.getBodyPlanLayout();
+            case RACE_GATE_META: return envelope.getRaceGateMeta();
+            case MORPH_STATE: return envelope.getMorphState();
             case SKILL_XP_GAIN: return envelope.getSkillXpGain();
             case INVENTORY_SNAPSHOT: return envelope.getInventorySnapshot();
             case COMBAT_HUD_STATE: return envelope.getCombatHudState();
@@ -759,6 +777,21 @@ public final class ProtoServerDataBridge {
                 root.add("hotbar", unwrappedHotbar);
             }
             // plan-wire-format-bridge-v1 P1／RC2 warn：InventoryItemView.forge_color
+            if (root.has("material_preparation")) {
+                JsonObject preparation = root.getAsJsonObject("material_preparation");
+                if (preparation.has("station_pos") && preparation.get("station_pos").isJsonObject()) {
+                    var position = preparation.getAsJsonObject("station_pos");
+                    var array = new JsonArray();
+                    for (String axis : new String[]{"x", "y", "z"}) array.add(position.has(axis) ? position.get(axis).getAsInt() : 0);
+                    preparation.add("station_pos", array);
+                }
+                if (preparation.has("materials")) {
+                    for (JsonElement material : preparation.getAsJsonArray("materials")) {
+                        if (material.isJsonObject()) stripForgeColorFromItem(material.getAsJsonObject());
+                    }
+                }
+            }
+            // 普通库存物品使用同一颜色规范。
             // (optional ColorKind) 在 placed_items[].item / equipped.*_worn[] /
             // equipped.*_held / hotbar[] 四处都可能出现，proto3 JSON 打成
             // "COLOR_KIND_SHARP" 全名；ItemTooltipPanel.forgeColorLabel() 只认 Rust
@@ -897,7 +930,7 @@ public final class ProtoServerDataBridge {
     //   - DeathScreen.zoneLabel  期望 "death"/"negative"（zone_kind）
     //   - DeathCinematicState.Phase.fromWire 期望 "roll"/"insight_overlay"/… (phase)
     //   - DeathCinematicState.RollResult.fromWire 期望 "survive"/"fall"/… (roll.result)
-    // 不剥则死亡界面阶段标签永远 default、cinematic 永远卡 PREDEATH。
+    // 不剥则死亡界面阶段标签永远 default、cinematic 阶段名无法识别。
     // cinematic.zone_kind 当前无消费方，一并归一化保持桥输出统一。
 
     private static BridgeResult bridgeDeathScreen(
@@ -983,63 +1016,44 @@ public final class ProtoServerDataBridge {
 
     // ─── cultivation_detail: AoS→SoA + enum normalization ──────────
 
-    private static final Map<String, Integer> MERIDIAN_ID_TO_INDEX;
-    static {
-        Map<String, Integer> m = new HashMap<>();
-        m.put("MERIDIAN_ID_LUNG", 0);
-        m.put("MERIDIAN_ID_LARGE_INTESTINE", 1);
-        m.put("MERIDIAN_ID_STOMACH", 2);
-        m.put("MERIDIAN_ID_SPLEEN", 3);
-        m.put("MERIDIAN_ID_HEART", 4);
-        m.put("MERIDIAN_ID_SMALL_INTESTINE", 5);
-        m.put("MERIDIAN_ID_BLADDER", 6);
-        m.put("MERIDIAN_ID_KIDNEY", 7);
-        m.put("MERIDIAN_ID_PERICARDIUM", 8);
-        m.put("MERIDIAN_ID_TRIPLE_ENERGIZER", 9);
-        m.put("MERIDIAN_ID_GALLBLADDER", 10);
-        m.put("MERIDIAN_ID_LIVER", 11);
-        m.put("MERIDIAN_ID_REN", 12);
-        m.put("MERIDIAN_ID_DU", 13);
-        m.put("MERIDIAN_ID_CHONG", 14);
-        m.put("MERIDIAN_ID_DAI", 15);
-        m.put("MERIDIAN_ID_YIN_QIAO", 16);
-        m.put("MERIDIAN_ID_YANG_QIAO", 17);
-        m.put("MERIDIAN_ID_YIN_WEI", 18);
-        m.put("MERIDIAN_ID_YANG_WEI", 19);
-        MERIDIAN_ID_TO_INDEX = Map.copyOf(m);
-    }
-
     private static BridgeResult bridgeCultivationDetail(
             MessageOrBuilder msg, String typeString) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
 
+            // plan-race-system-v1 P1c：wire 上 meridians 是 AoS（repeated MeridianState，
+            // 每条自带 snake_case channel id）；CultivationDetailHandler 期望 SoA——并行
+            // channel_ids[] + opened[]/flow_rate[]/... 同序同长，handler 按 channel_ids[i]
+            // keyed 查 MeridianChannel。此处忠实 AoS→SoA 解包：channel id 原样透传进
+            // channel_ids（不再经固定 20 位 TCM 索引表映射，非 humanoid 构型的 channel
+            // 也照常保留），数组元素顺序 == meridians 顺序 == server 发送顺序。
             if (root.has("meridians") && root.get("meridians").isJsonArray()) {
                 JsonArray meridians = root.getAsJsonArray("meridians");
-                int size = 20;
-                JsonArray opened = initArray(size, false);
-                JsonArray flowRate = initDoubleArray(size);
-                JsonArray flowCapacity = initDoubleArray(size);
-                JsonArray integrity = initDoubleArray(size);
-                JsonArray openProgress = initDoubleArray(size);
-                JsonArray cracksCount = initArray(size, 0);
+                JsonArray channelIds = new JsonArray();
+                JsonArray opened = new JsonArray();
+                JsonArray flowRate = new JsonArray();
+                JsonArray flowCapacity = new JsonArray();
+                JsonArray integrity = new JsonArray();
+                JsonArray openProgress = new JsonArray();
+                JsonArray cracksCount = new JsonArray();
 
                 for (JsonElement el : meridians) {
                     if (el == null || !el.isJsonObject()) continue;
                     JsonObject m = el.getAsJsonObject();
-                    String idStr = m.has("id") ? m.get("id").getAsString() : null;
-                    Integer idx = idStr != null ? MERIDIAN_ID_TO_INDEX.get(idStr) : null;
-                    if (idx == null) continue;
-                    if (m.has("opened")) opened.set(idx, m.get("opened"));
-                    if (m.has("flow_rate")) flowRate.set(idx, m.get("flow_rate"));
-                    if (m.has("flow_capacity")) flowCapacity.set(idx, m.get("flow_capacity"));
-                    if (m.has("integrity")) integrity.set(idx, m.get("integrity"));
-                    if (m.has("open_progress")) openProgress.set(idx, m.get("open_progress"));
-                    if (m.has("cracks_count")) cracksCount.set(idx, m.get("cracks_count"));
+                    String id = meridianString(m, "id");
+                    if (id == null || id.isEmpty()) continue;  // 无 channel key 无法定位，跳过
+                    channelIds.add(id);
+                    opened.add(meridianBool(m, "opened"));
+                    flowRate.add(meridianDouble(m, "flow_rate"));
+                    flowCapacity.add(meridianDouble(m, "flow_capacity"));
+                    integrity.add(meridianDouble(m, "integrity"));
+                    openProgress.add(meridianDouble(m, "open_progress"));
+                    cracksCount.add(meridianInt(m, "cracks_count"));
                 }
 
                 root.remove("meridians");
+                root.add("channel_ids", channelIds);
                 root.add("opened", opened);
                 root.add("flow_rate", flowRate);
                 root.add("flow_capacity", flowCapacity);
@@ -1050,12 +1064,14 @@ public final class ProtoServerDataBridge {
 
             normalizeRealmField(root, "realm");
 
-            if (root.has("target_meridian") && root.get("target_meridian").isJsonPrimitive()
-                    && root.get("target_meridian").getAsJsonPrimitive().isString()) {
-                Integer idx = MERIDIAN_ID_TO_INDEX.get(root.get("target_meridian").getAsString());
-                if (idx != null) {
-                    root.addProperty("target_meridian", idx);
-                } else {
+            // plan-race-system-v1 P1c：target_meridian 现为 channel id 字符串，client 直接
+            // MeridianChannel.fromChannelId 解析——保持字符串原样，不再转 int 下标。仅剥掉
+            // 空串（proto optional 未设的边角），避免下游把空当作有效 channel。
+            if (root.has("target_meridian")) {
+                JsonElement tm = root.get("target_meridian");
+                boolean validString = tm.isJsonPrimitive() && tm.getAsJsonPrimitive().isString()
+                        && !tm.getAsString().isEmpty();
+                if (!validString) {
                     root.remove("target_meridian");
                 }
             }
@@ -1227,16 +1243,50 @@ public final class ProtoServerDataBridge {
      */
     private static BridgeResult bridgeStripEnums(
             MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
+        return bridgeStripEnums(msg, typeString, false, fieldPrefixPairs);
+    }
+
+    /**
+     * 与 {@link #bridgeStripEnums(MessageOrBuilder, String, String[]...)} 相同，但会移除
+     * proto3 默认枚举 {@code *_UNSPECIFIED}。灵龛 legacy schema 只接受三个真实守护类型；
+     * missing 与显式 UNSPECIFIED 在 wire bytes 上等价，均应让下游 required-field gate
+     * 安全 no-op，而不是伪造一个名为 {@code unspecified} 的 HUD/store key。
+     */
+    private static BridgeResult bridgeStripEnumsOmittingUnspecified(
+            MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
+        return bridgeStripEnums(msg, typeString, true, fieldPrefixPairs);
+    }
+
+    private static BridgeResult bridgeStripEnums(
+            MessageOrBuilder msg,
+            String typeString,
+            boolean omitUnspecified,
+            String[]... fieldPrefixPairs) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             for (String[] pair : fieldPrefixPairs) {
+                if (omitUnspecified && removeUnspecifiedEnum(root, pair[0], pair[1])) {
+                    continue;
+                }
                 stripEnumPrefix(root, pair[0], pair[1]);
             }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
         }
+    }
+
+    private static boolean removeUnspecifiedEnum(JsonObject root, String field, String prefix) {
+        JsonElement value = root.get(field);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            return false;
+        }
+        if (!(prefix + "UNSPECIFIED").equals(value.getAsString())) {
+            return false;
+        }
+        root.remove(field);
+        return true;
     }
 
     // ─── player_state: realm enum normalization ─────────────────────
@@ -1252,6 +1302,23 @@ public final class ProtoServerDataBridge {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             normalizeRealmField(root, "realm");
+            if (root.has("season_state") && root.get("season_state").isJsonObject()) {
+                stripEnumPrefix(root.getAsJsonObject("season_state"), "season", "SEASON_");
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    private static BridgeResult bridgeAlchemyOutcomeResolved(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "bucket", "ALCHEMY_OUTCOME_BUCKET_");
+            if (!removeUnspecifiedEnum(root, "toxin_color", "COLOR_KIND_")) {
+                stripEnumPrefixCapitalized(root, "toxin_color", "COLOR_KIND_");
+            }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1431,20 +1498,32 @@ public final class ProtoServerDataBridge {
         }
     }
 
-    private static JsonArray initDoubleArray(int size) {
-        JsonArray arr = new JsonArray(size);
-        for (int i = 0; i < size; i++) arr.add(0.0);
-        return arr;
+    // ── cultivation_detail meridian AoS→SoA 字段读取。proto includingDefaultValueFields
+    //    保证 present MeridianState 的标量字段齐全，此处仍做防御式类型校验：printer 选项
+    //    未来变动或畸形 payload 都优雅退化到默认值，不 NPE。 ──
+    private static String meridianString(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return (e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isString())
+                ? e.getAsString() : null;
     }
 
-    private static JsonArray initArray(int size, Object defaultVal) {
-        JsonArray arr = new JsonArray(size);
-        for (int i = 0; i < size; i++) {
-            if (defaultVal instanceof Boolean b) arr.add(b);
-            else if (defaultVal instanceof Number n) arr.add(n);
-            else arr.add(JsonNull.INSTANCE);
-        }
-        return arr;
+    private static boolean meridianBool(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isBoolean()
+                && e.getAsBoolean();
+    }
+
+    private static double meridianDouble(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) return 0.0;
+        double v = e.getAsDouble();
+        return Double.isFinite(v) ? v : 0.0;
+    }
+
+    private static int meridianInt(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) return 0;
+        return (int) Math.max(0L, e.getAsLong());
     }
 
     private static final Pattern INT64_STRING = Pattern.compile("-?\\d{1,20}");

@@ -25,6 +25,10 @@ public final class QiColorObservedStore {
         replace(null);
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     public static void addListener(Consumer<QiColorObservedState> listener) {
         listeners.add(listener);
     }

@@ -1,8 +1,8 @@
 package com.bong.client.identity;
 
 import com.bong.client.BongClient;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -18,14 +18,18 @@ public final class IdentityPanelScreenBootstrap {
 
     private IdentityPanelScreenBootstrap() {}
 
+    /** 应用组合根：将生产状态源与命令 sink 注入 XML 屏幕。 */
+    public static IdentityPanelScreen create() {
+        return new IdentityPanelScreenFactory(
+            IdentityPanelUiStateSource.production(),
+            IdentityPanelClientIntentSink.production()
+        ).create();
+    }
+
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(IdentityPanelScreenBootstrap::onEndClientTick);
-        // plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelScreen 是
-        // 普通 vanilla Screen，ButtonWidget 的 onPress 回调在 init() 时把 identityId /
-        // cooldown 固化进 lambda，不像 owo 组件能就地 refresh。面板已打开时若只靠 render()
-        // 重画文字，新 snapshot 到达也改不动按钮，出现"文字新、按钮仍绑旧 identityId"的
-        // split-brain（含断线清理触发的清空快照）。订阅 store，面板开着就整份重建。
+        // 断线清理或新快照到达时，重新创建 XML 宿主，确保按钮回调和显示状态来自同一份快照。
         IdentityPanelStateStore.addListener(IdentityPanelScreenBootstrap::onStoreChanged);
         BongClient.LOGGER.info("Registered identity panel bootstrap keybinding on key: O");
     }
@@ -37,7 +41,7 @@ public final class IdentityPanelScreenBootstrap {
         }
         client.execute(() -> {
             if (client.currentScreen instanceof IdentityPanelScreen) {
-                client.setScreen(new IdentityPanelScreen());
+                client.setScreen(create());
             }
         });
     }
@@ -53,8 +57,14 @@ public final class IdentityPanelScreenBootstrap {
 
     private static KeyBinding keyBinding() {
         if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, DEFAULT_KEY, CATEGORY)
+            openScreenKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("identity.open_panel"),
+                    OPEN_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    DEFAULT_KEY,
+                    CATEGORY
+                )
             );
         }
         return openScreenKey;
@@ -65,7 +75,7 @@ public final class IdentityPanelScreenBootstrap {
             if (client.currentScreen instanceof IdentityPanelScreen) {
                 return;
             }
-            client.setScreen(new IdentityPanelScreen());
+            client.setScreen(create());
         });
     }
 }

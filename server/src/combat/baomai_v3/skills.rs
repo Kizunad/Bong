@@ -1,6 +1,6 @@
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 
-use crate::combat::components::{BodyPart, Lifecycle, SkillBarBindings, Wound, WoundKind, Wounds};
+use crate::combat::components::{BodyPart, SkillBarBindings, Wound, WoundKind, Wounds};
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind, FIST_REACH,
 };
@@ -97,14 +97,14 @@ pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencie
 pub fn cast_beng_quan(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
     let Some(target) = target else {
         return rejected(CastRejectReason::InvalidTarget);
     };
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::BengQuan.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some((caster_pos, target_pos)) = caster_target_positions(world, caster, target) else {
@@ -143,7 +143,7 @@ pub fn cast_beng_quan(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::BengQuan.as_str(),
         now_tick.saturating_add(beng_quan_cooldown_ticks(mastery)),
     );
     world.send_event(AttackIntent {
@@ -243,7 +243,9 @@ pub fn cast_full_power_charge(
         record_practice(world, caster, BaomaiSkillId::FullPowerCharge);
         if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
             emit_audio(world, "charge_start", pos);
-            emit_anim(world, caster, "bong:windup_charge");
+            // P3 借用解除：专属抱脉蓄力循环段（原借通用 windup_charge），StopAnim
+            // 侧共享同一常量（full_power_emit.rs 释放/打断双路）。
+            emit_anim(world, caster, full_power_strike::FULL_POWER_CHARGE_ANIM_ID);
         }
     }
     result
@@ -310,7 +312,8 @@ pub fn cast_full_power_release(
         record_practice(world, caster, BaomaiSkillId::FullPowerRelease);
         if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
             emit_audio(world, "charge_release", pos);
-            emit_anim(world, caster, "bong:release_burst");
+            // P3 借用解除：专属崩拳双锤释放段（原借通用 release_burst 4t 模板）。
+            emit_anim(world, caster, full_power_strike::FULL_POWER_RELEASE_ANIM_ID);
         }
     }
     result
@@ -319,11 +322,16 @@ pub fn cast_full_power_release(
 pub fn cast_mountain_shake(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(
+        world,
+        caster,
+        BaomaiSkillId::MountainShake.as_str(),
+        now_tick,
+    ) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_MOUNTAIN_SHAKE_SKILL_ID) {
@@ -349,7 +357,7 @@ pub fn cast_mountain_shake(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::MountainShake.as_str(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     let targets = targets_in_radius(world, caster, position, outcome.radius_blocks);
@@ -421,11 +429,11 @@ pub fn cast_mountain_shake(
 pub fn cast_blood_burn(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::BloodBurn.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_BLOOD_BURN_SKILL_ID) {
@@ -465,10 +473,14 @@ pub fn cast_blood_burn(
             inflicted_by: Some("baomai:blood_burn".to_string()),
         });
     }
-    if outcome.ends_in_near_death {
-        if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(caster) {
-            lifecycle.enter_near_death(now_tick);
-        }
+    if outcome.ends_in_death {
+        world.send_event(crate::combat::events::DeathEvent {
+            target: caster,
+            cause: "baomai:blood_burn".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: now_tick,
+        });
         apply_blood_burn_contamination(world, caster, now_tick);
     } else {
         world.entity_mut(caster).insert(BloodBurnActive {
@@ -482,7 +494,7 @@ pub fn cast_blood_burn(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::BloodBurn.as_str(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     world.send_event(BloodBurnEvent {
@@ -491,7 +503,7 @@ pub fn cast_blood_burn(
         hp_burned: outcome.hp_burned,
         qi_multiplier: outcome.qi_multiplier,
         active_until_tick: now_tick.saturating_add(outcome.duration_ticks),
-        ended_in_near_death: outcome.ends_in_near_death,
+        ended_in_death: outcome.ends_in_death,
     });
     emit_skill_event(
         world,
@@ -530,11 +542,11 @@ pub fn cast_blood_burn(
 pub fn cast_disperse(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_slot_on_cooldown(world, caster, slot, now_tick) {
+    if is_slot_on_cooldown(world, caster, BaomaiSkillId::Disperse.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -592,7 +604,7 @@ pub fn cast_disperse(
     set_slot_cooldown(
         world,
         caster,
-        slot,
+        BaomaiSkillId::Disperse.as_str(),
         now_tick.saturating_add(profile.duration_ticks.max(20)),
     );
     world.send_event(DispersedQiEvent {
@@ -675,22 +687,22 @@ fn current_tick(world: &bevy_ecs::world::World) -> u64 {
 fn is_slot_on_cooldown(
     world: &bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     now_tick: u64,
 ) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn set_slot_cooldown(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    skill_id: &str,
     until_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, until_tick);
+        bindings.set_cooldown(skill_id, until_tick);
     }
 }
 
@@ -792,7 +804,7 @@ fn apply_transcendence_window(
         Vec::new()
     };
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.cooldown_until_tick = [0; SkillBarBindings::SLOT_COUNT];
+        bindings.clear_all_cooldowns();
     }
     world.entity_mut(caster).insert(BodyTranscendence {
         started_at_tick: now_tick,

@@ -7,6 +7,7 @@
     "integrity",
     "owner_name",
     "has_session",
+    "open_screen",
     "station_pos_x",
     "station_pos_y",
     "station_pos_z"
@@ -31,6 +32,9 @@
     "has_session": {
       "type": "boolean"
     },
+    "open_screen": {
+      "type": "boolean"
+    },
     "station_pos_x": {
       "type": "integer"
     },
@@ -40,5 +44,6 @@
     "station_pos_z": {
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "47f7b862fc5d4a84b69a540f5db90f92a2acc7e294c02346dcd6f2552d7c32ac"
 }

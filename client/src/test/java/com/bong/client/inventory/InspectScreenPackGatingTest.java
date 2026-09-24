@@ -75,7 +75,7 @@ public class InspectScreenPackGatingTest {
     /** bug #2：套包在快捷栏 —— 携带面之一，应放行。 */
     private InventoryModel snapshotWithPackInHotbar() {
         return InventoryModel.builder()
-            .hotbar(3, pouch())
+            .hotbar(1, pouch())
             .build();
     }
 

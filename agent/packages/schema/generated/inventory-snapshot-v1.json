@@ -15,6 +15,617 @@
     "body_level"
   ],
   "properties": {
+    "material_preparation": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "recipe_id",
+        "station_pos",
+        "materials"
+      ],
+      "properties": {
+        "recipe_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "station_pos": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "instance_id",
+              "item_id",
+              "display_name",
+              "grid_width",
+              "grid_height",
+              "weight",
+              "rarity",
+              "description",
+              "stack_count",
+              "spirit_quality",
+              "durability"
+            ],
+            "properties": {
+              "instance_id": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "item_id": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+              },
+              "grid_width": {
+                "minimum": 1,
+                "maximum": 4,
+                "type": "integer"
+              },
+              "grid_height": {
+                "minimum": 1,
+                "maximum": 4,
+                "type": "integer"
+              },
+              "weight": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "rarity": {
+                "anyOf": [
+                  {
+                    "const": "common",
+                    "type": "string"
+                  },
+                  {
+                    "const": "uncommon",
+                    "type": "string"
+                  },
+                  {
+                    "const": "rare",
+                    "type": "string"
+                  },
+                  {
+                    "const": "epic",
+                    "type": "string"
+                  },
+                  {
+                    "const": "legendary",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ancient",
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "stack_count": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "spirit_quality": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "durability": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "freshness": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "created_at_tick",
+                  "initial_qi",
+                  "track",
+                  "profile"
+                ],
+                "properties": {
+                  "created_at_tick": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "initial_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track": {
+                    "anyOf": [
+                      {
+                        "const": "Decay",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoil",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Age",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profile": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "frozen_accumulated": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "frozen_since_tick": {
+                    "anyOf": [
+                      {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "freshness_current": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "current_qi",
+                  "track_state"
+                ],
+                "properties": {
+                  "current_qi": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "track_state": {
+                    "anyOf": [
+                      {
+                        "const": "Fresh",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Declining",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Dead",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Spoiled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "Peaking",
+                        "type": "string"
+                      },
+                      {
+                        "const": "PastPeak",
+                        "type": "string"
+                      },
+                      {
+                        "const": "AgePostPeakSpoiled",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              "mineral_id": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "scroll_kind": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "scroll_skill_id": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "scroll_xp_grant": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "charges": {
+                "minimum": 0,
+                "maximum": 5,
+                "type": "integer"
+              },
+              "forge_quality": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "forge_color": {
+                "description": "十种真元染色",
+                "anyOf": [
+                  {
+                    "const": "Sharp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Heavy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Mellow",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Solid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Light",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Intricate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Gentle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Insidious",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Violent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Turbid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "forge_side_effects": {
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "type": "string"
+                }
+              },
+              "forge_achieved_tier": {
+                "minimum": 1,
+                "maximum": 4,
+                "type": "integer"
+              },
+              "alchemy": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "recipe_id",
+                      "quality_tier",
+                      "effect_multiplier",
+                      "consecrated"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "pill",
+                        "type": "string"
+                      },
+                      "recipe_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "quality_tier": {
+                        "minimum": 1,
+                        "maximum": 5,
+                        "type": "integer"
+                      },
+                      "effect_multiplier": {
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "consecrated": {
+                        "type": "boolean"
+                      },
+                      "side_effect": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "tag"
+                        ],
+                        "properties": {
+                          "tag": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "duration_s": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "weight": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "perm": {
+                            "type": "boolean"
+                          },
+                          "color": {
+                            "description": "十种真元染色",
+                            "anyOf": [
+                              {
+                                "const": "Sharp",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Heavy",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Mellow",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Solid",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Light",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Intricate",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Gentle",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Insidious",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Violent",
+                                "type": "string"
+                              },
+                              {
+                                "const": "Turbid",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "amount": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "fragment"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "recipe_fragment",
+                        "type": "string"
+                      },
+                      "fragment": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "recipe_id",
+                          "known_stages",
+                          "max_quality_tier"
+                        ],
+                        "properties": {
+                          "recipe_id": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "known_stages": {
+                            "type": "array",
+                            "items": {
+                              "minimum": 0,
+                              "maximum": 255,
+                              "type": "integer"
+                            }
+                          },
+                          "max_quality_tier": {
+                            "minimum": 1,
+                            "maximum": 3,
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "hint"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "recipe_hint",
+                        "type": "string"
+                      },
+                      "hint": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "source_pill",
+                          "accuracy",
+                          "ingredients"
+                        ],
+                        "properties": {
+                          "source_pill": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "recipe_id": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "accuracy": {
+                            "minimum": 0,
+                            "maximum": 1,
+                            "type": "number"
+                          },
+                          "ingredients": {
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "residue_kind",
+                      "produced_at_tick",
+                      "expires_at_tick"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "pill_residue",
+                        "type": "string"
+                      },
+                      "residue_kind": {
+                        "anyOf": [
+                          {
+                            "const": "failed_pill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "flawed_pill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "processing_dregs",
+                            "type": "string"
+                          },
+                          {
+                            "const": "aging_scraps",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "produced_at_tick": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "expires_at_tick": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                ]
+              },
+              "lingering_owner_qi": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "owner",
+                  "expire_at"
+                ],
+                "properties": {
+                  "owner": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "expire_at": {
+                    "minimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "revision": {
       "minimum": 0,
       "type": "integer"
@@ -9745,8 +10356,8 @@
       }
     },
     "hotbar": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "anyOf": [
@@ -10358,5 +10969,6 @@
       "minimum": 0,
       "type": "number"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "b7a2b722c9c58834be2f92b5f9ab0f197a322a4c722663151ab77528c16fbca6"
 }

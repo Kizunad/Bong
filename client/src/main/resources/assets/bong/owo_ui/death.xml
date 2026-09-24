@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components>
+        <flow-layout direction="vertical">
+            <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+            <padding><all>16</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="death-panel" direction="vertical">
+                    <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                    <gap>8</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="death-title">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">28</vertical></sizing>
+                        </label>
+                        <label id="death-cause">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">14</vertical></sizing>
+                            <color>#FF9AA79F</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="death-dice" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">120</vertical></sizing>
+                        </flow-layout>
+                        <scroll id="death-content-scroll" direction="vertical">
+                            <flow-layout id="death-scroll-content" direction="vertical">
+                                <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                <horizontal-alignment>center</horizontal-alignment><gap>9</gap>
+                                <children>
+                                    <label id="death-luck">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <color>#FFADC8B9</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                                    </label>
+                                    <flow-layout id="death-luck-track" direction="horizontal">
+                                        <sizing><horizontal method="fixed">220</horizontal><vertical method="fixed">3</vertical></sizing>
+                                        <surface><flat>#FF35463C</flat></surface>
+                                        <children><flow-layout id="death-luck-fill" direction="horizontal">
+                                            <sizing><horizontal method="fixed">0</horizontal><vertical method="fill">100</vertical></sizing>
+                                        </flow-layout></children>
+                                    </flow-layout>
+                                    <label id="death-phase">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <color>#FFA1ADA5</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                                    </label>
+                                    <label id="death-countdown">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <color>#FFD5A18D</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                                    </label>
+                                    <label id="death-lifespan">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <color>#FFA1ADA5</color><horizontal-text-alignment>center</horizontal-text-alignment><line-height>13</line-height>
+                                    </label>
+                                    <label id="death-final-words-title">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <text>未尽之言</text><color>#FFB7A089</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                                    </label>
+                                    <label id="death-final-words">
+                                        <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                                        <color>#FFC8D0C9</color><horizontal-text-alignment>center</horizontal-text-alignment><line-height>15</line-height>
+                                    </label>
+                                </children>
+                            </flow-layout>
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">150</vertical></sizing>
+                            <scrollbar-thiccness>2</scrollbar-thiccness>
+                        </scroll>
+                        <label id="death-feedback">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
+                            <color>#FFD5A18D</color><horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="death-actions" direction="horizontal">
+                            <sizing><horizontal method="fixed">248</horizontal><vertical method="fixed">28</vertical></sizing>
+                            <gap>12</gap>
+                            <children>
+                                <button id="death-reincarnate">
+                                    <sizing><horizontal method="fixed">118</horizontal><vertical method="fixed">28</vertical></sizing>
+                                    <text>再续此身</text>
+                                </button>
+                                <button id="death-terminate">
+                                    <sizing><horizontal method="fixed">118</horizontal><vertical method="fixed">28</vertical></sizing>
+                                    <text>终结此生</text>
+                                </button>
+                            </children>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

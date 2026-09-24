@@ -45,13 +45,14 @@ public class BongHudOrchestratorTest {
         NicheGuardianStore.resetForTests();
         com.bong.client.tsy.TsyBossHealthStore.resetForTests();
         com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
+        SearchHudStateStore.resetForTests();
         HudImmersionMode.resetForTests();
-        ForgeProgressHudPlanner.resetForTests();
+        HudLayoutPreferenceStore.resetForTests();
         HomeSequence.resetForTests();
     }
 
     @Test
-    void emptyStateBuildsBaselineOnly() {
+    void emptyStateBuildsNoConnectionMarker() {
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(),
             0L,
@@ -59,15 +60,11 @@ public class BongHudOrchestratorTest {
             220
         );
 
-        assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(BongHudOrchestrator.BASELINE_LABEL, commands.get(0).text());
-        assertEquals(10, commands.get(0).x());
-        assertEquals(10, commands.get(0).y());
+        assertTrue(commands.isEmpty(), "empty state must not emit a development connection marker");
     }
 
     @Test
-    void renderOrderStaysBaselineZoneToastVisual() {
+    void renderOrderStaysZoneToastVisual() {
         BongHudStateSnapshot snapshot = BongHudStateSnapshot.create(
             ZoneState.create("jade_valley", "Jade Valley", 0.74, 3, 100L),
             NarrationState.create("zone", "jade_valley", "The valley formation is shifting.", "system_warning"),
@@ -81,7 +78,6 @@ public class BongHudOrchestratorTest {
             .toList();
 
         assertEquals(List.of(
-            HudRenderLayer.BASELINE,
             HudRenderLayer.ZONE,
             HudRenderLayer.TOAST,
             HudRenderLayer.VISUAL
@@ -161,8 +157,10 @@ public class BongHudOrchestratorTest {
         );
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 0L, FIXED_WIDTH, 72);
-        HudRenderCommand zoneCommand = commands.get(1);
-        HudRenderCommand toastCommand = commands.get(2);
+        HudRenderCommand zoneCommand = commands.stream()
+            .filter(command -> command.layer() == HudRenderLayer.ZONE).findFirst().orElseThrow();
+        HudRenderCommand toastCommand = commands.stream()
+            .filter(HudRenderCommand::isToast).findFirst().orElseThrow();
 
         assertEquals(HudRenderLayer.ZONE, zoneCommand.layer());
         assertEquals(HudRenderLayer.TOAST, toastCommand.layer());
@@ -171,7 +169,6 @@ public class BongHudOrchestratorTest {
         assertTrue(toastCommand.text().endsWith("..."));
         assertTrue(FIXED_WIDTH.measure(zoneCommand.text()) <= 72);
         assertTrue(FIXED_WIDTH.measure(toastCommand.text()) <= 72);
-        assertEquals(3, commands.size());
     }
 
     @Test
@@ -187,14 +184,14 @@ public class BongHudOrchestratorTest {
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(laterSnapshot, 4_000L, FIXED_WIDTH, 220);
 
-        assertEquals(2, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(HudRenderLayer.TOAST, commands.get(1).layer());
-        assertTrue(commands.get(1).text().startsWith("天道警示：") || commands.get(1).text().startsWith("天道警示"));
+        assertTrue(commands.stream().anyMatch(command -> command.isToast()
+            && command.text().startsWith("天道警示")));
+        assertTrue(BongHudOrchestrator.buildCommands(laterSnapshot, 10_000L, FIXED_WIDTH, 220)
+            .stream().noneMatch(HudRenderCommand::isToast), "warning must disappear after expiry");
     }
 
     @Test
-    void overlyNarrowWidthDropsOversizedContentWithoutBreakingBaseline() {
+    void overlyNarrowWidthDropsOversizedContentSafely() {
         BongHudStateSnapshot snapshot = BongHudStateSnapshot.create(
             ZoneState.create("jade_valley", "Ancient Jade Valley", 0.8, 2, 100L),
             NarrationState.create("zone", "jade_valley", "Danger rises swiftly.", "system_warning"),
@@ -203,12 +200,11 @@ public class BongHudOrchestratorTest {
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 0L, FIXED_WIDTH, 2);
 
-        assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+        assertTrue(commands.isEmpty());
     }
 
     @Test
-    void overweightIndicatorAppearsBelowBaselineWhenInventoryExceedsLimit() {
+    void overweightIndicatorRemainsWhenInventoryExceedsLimit() {
         InventoryStateStore.applyAuthoritativeSnapshot(
             InventoryModel.builder()
                 .containers(InventoryModel.DEFAULT_CONTAINERS)
@@ -224,10 +220,8 @@ public class BongHudOrchestratorTest {
             220
         );
 
-        assertEquals(2, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(1).layer());
-        assertTrue(commands.get(1).text().contains("超载"));
+        assertTrue(commands.stream().anyMatch(command -> command.text().contains("超载")),
+            "removing the connection marker must preserve overweight feedback");
     }
 
     @Test
@@ -285,6 +279,38 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
+    void targetOverviewAndScrollingEventsStayOutOfProductionHud() {
+        TargetInfoStateStore.replaceForTests(TargetInfoState.create(
+            TargetInfoState.Kind.NPC, "entity:42", "不应显示的目标名", "Solidify", 0.8, 0.5, 1_000L
+        ));
+        var events = new com.bong.client.combat.UnifiedEventStream();
+        events.publish(com.bong.client.combat.UnifiedEvent.Channel.COMBAT,
+            com.bong.client.combat.UnifiedEvent.Priority.P0_CRITICAL,
+            "hud-retirement", "不应显示的事件", 0xFFFFFFFF, 1_000L);
+        CombatHudSnapshot combat = CombatHudSnapshot.create(
+            com.bong.client.combat.CombatHudState.create(0.8f, 0.7f, 0.4f,
+                com.bong.client.combat.DerivedAttrFlags.none()),
+            null, com.bong.client.combat.QuickSlotConfig.empty(),
+            com.bong.client.combat.SkillBarConfig.empty(), -1,
+            com.bong.client.combat.CastState.idle(), events,
+            com.bong.client.combat.SpellVolumeState.idle(),
+            com.bong.client.combat.store.CarrierStateStore.State.NONE,
+            com.bong.client.combat.DefenseWindowState.idle(),
+            com.bong.client.combat.UnlockedStyles.none()
+        );
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(), combat, 1_200L, FIXED_WIDTH, 220, 683, 384
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR),
+            "测试必须进入有效战斗 HUD，不能因全局隐藏产生假绿");
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("不应显示")),
+            "即使有目标快照和事件，默认 HUD 也不得恢复已停用的总览和滚动列表");
+        assertEquals(1, events.size(), "移除列表表现不得丢弃其它消费者共享的事件");
+    }
+
+    @Test
     void hudModeSwitchesHideCombatOnlyLayersInPeaceAndQuickBarInCultivation() {
         CombatHudSnapshot combat = CombatHudSnapshot.create(
             com.bong.client.combat.CombatHudState.create(
@@ -308,7 +334,6 @@ public class BongHudOrchestratorTest {
         List<HudRenderCommand> combatCommands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(), combat, 1_000L, FIXED_WIDTH, 220, 320, 180
         );
-        assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
         assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR));
         assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.MINI_BODY));
 
@@ -316,8 +341,6 @@ public class BongHudOrchestratorTest {
         List<HudRenderCommand> peaceCommands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(), CombatHudSnapshot.empty(), 12_000L, FIXED_WIDTH, 220, 320, 180
         );
-        assertTrue(peaceCommands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
-
         BongHudStateSnapshot meditation = BongHudStateSnapshot.create(
             ZoneState.empty(),
             NarrationState.empty(),
@@ -330,30 +353,108 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
-    void productionHudDoesNotRenderQiRadarArrayDisk() {
-        PlayerStateStore.replace(PlayerStateViewModel.create(
-            "Condense",
-            "offline:Azure",
-            80.0,
-            100.0,
-            0.0,
-            0.5,
-            PlayerStateViewModel.PowerBreakdown.empty(),
-            PlayerStateViewModel.SocialSnapshot.empty(),
-            "jade_valley",
-            "青谷",
-            0.75
-        ));
+    void completedSearchFlashUsesExactTtlInFinalHudCommandFlow() {
+        long startedAtNanos = 10_000L;
+        SearchHudStateStore.markCompletedAtNanos("残棺", startedAtNanos);
 
-        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+        List<HudRenderCommand> beforeBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS - 1L
+        );
+        assertTrue(
+            beforeBoundary.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮完成：残棺".equals(cmd.text())
+            ),
+            "completed flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流，实际命令=" + beforeBoundary
+        );
+
+        List<HudRenderCommand> atBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS
+        );
+        assertTrue(
+            atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "completed flash 在 TTL 精确边界必须从最终命令流消失，实际命令=" + atBoundary
+        );
+
+        List<HudRenderCommand> afterBoundary = buildCombatFrame(
+            HudRuntimeContext.empty(),
+            startedAtNanos + SearchHudStateStore.COMPLETED_FLASH_TTL_NANOS + 1L
+        );
+        assertTrue(
+            afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "completed flash 在 TTL+1ns 必须保持消失，不能重新进入最终命令流，实际命令=" + afterBoundary
+        );
+    }
+
+    @Test
+    void abortedSearchFlashUsesExactTtlAcrossCombatAndMovementContexts() {
+        long startedAtNanos = 20_000L;
+        SearchHudStateStore.markAbortedAtNanos("残柜", "combat", startedAtNanos);
+
+        List<HudRenderCommand> beforeBoundary = buildCombatFrame(
+            new HudRuntimeContext(45.0, 12.0, 64.0, -8.0, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS - 1L
+        );
+        assertTrue(
+            beforeBoundary.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.SEARCH_PROGRESS && "搜刮中断：进入战斗".equals(cmd.text())
+            ),
+            "aborted flash 在 TTL-1ns 必须仍进入最终 SEARCH_PROGRESS 命令流，实际命令=" + beforeBoundary
+        );
+
+        List<HudRenderCommand> atBoundary = buildCombatFrame(
+            new HudRuntimeContext(225.0, 18.5, 64.0, -2.5, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS
+        );
+        assertTrue(
+            atBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "aborted flash 在移动与战斗上下文变化后的 TTL 精确边界必须消失，实际命令=" + atBoundary
+        );
+
+        List<HudRenderCommand> afterBoundary = buildCombatFrame(
+            new HudRuntimeContext(270.0, 21.0, 64.0, 1.0, false, List.of()),
+            startedAtNanos + SearchHudStateStore.ABORTED_FLASH_TTL_NANOS + 1L
+        );
+        assertTrue(
+            afterBoundary.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.SEARCH_PROGRESS),
+            "aborted flash 在 TTL+1ns 必须保持消失，不能因上下文变化重新出现，实际命令=" + afterBoundary
+        );
+    }
+
+    private static List<HudRenderCommand> buildCombatFrame(
+        HudRuntimeContext runtimeContext,
+        long nowNanos
+    ) {
+        CombatHudSnapshot combat = CombatHudSnapshot.create(
+            com.bong.client.combat.CombatHudState.create(
+                0.8f,
+                0.7f,
+                0.4f,
+                com.bong.client.combat.DerivedAttrFlags.none()
+            ),
+            null,
+            com.bong.client.combat.QuickSlotConfig.empty(),
+            com.bong.client.combat.SkillBarConfig.empty(),
+            -1,
+            com.bong.client.combat.CastState.idle(),
+            com.bong.client.combat.UnifiedEventStream.empty(),
+            com.bong.client.combat.SpellVolumeState.idle(),
+            com.bong.client.combat.store.CarrierStateStore.State.NONE,
+            com.bong.client.combat.DefenseWindowState.idle(),
+            com.bong.client.combat.UnlockedStyles.none()
+        );
+        return BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(),
+            combat,
             1_000L,
             FIXED_WIDTH,
             220,
             320,
-            180
+            180,
+            null,
+            runtimeContext,
+            nowNanos
         );
-
-        assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QI_RADAR));
     }
 }

@@ -1,16 +1,58 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CombatBodyPartV1 {
-    Head,
-    Chest,
-    Back,
-    Abdomen,
-    ArmL,
-    ArmR,
-    LegL,
-    LegR,
+/// 战斗命中部位 id（plan-race-system-v1 P1c——闭合 8 段人形 enum 开放化为 string，
+/// 与 `body_plan::BodyPartId` 同型）。humanoid 沿用现有 8 个 snake_case wire 字符串
+/// （见下方关联常量），非 humanoid 构型（P5 飞鲸等）的部位不在这 8 段之列，物理上
+/// 装不下闭合 enum——本类型不做兼容层，直接开放为任意 string id。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct CombatBodyPartV1(pub String);
+
+impl CombatBodyPartV1 {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    // humanoid 8 段 wire 字符串常量（`combat::components::BodyPart` 现有 snake_case
+    // 惯例，`network::cast_emit::parse_wound_heal_body_part` 同源）——保留作为向后
+    // 兼容的构造捷径，不代表本类型仍是闭合枚举。
+    pub const HEAD: &'static str = "head";
+    pub const CHEST: &'static str = "chest";
+    pub const BACK: &'static str = "back";
+    pub const ABDOMEN: &'static str = "abdomen";
+    pub const ARM_L: &'static str = "arm_l";
+    pub const ARM_R: &'static str = "arm_r";
+    pub const LEG_L: &'static str = "leg_l";
+    pub const LEG_R: &'static str = "leg_r";
+
+    pub fn head() -> Self {
+        Self::new(Self::HEAD)
+    }
+    pub fn chest() -> Self {
+        Self::new(Self::CHEST)
+    }
+    pub fn back() -> Self {
+        Self::new(Self::BACK)
+    }
+    pub fn abdomen() -> Self {
+        Self::new(Self::ABDOMEN)
+    }
+    pub fn arm_l() -> Self {
+        Self::new(Self::ARM_L)
+    }
+    pub fn arm_r() -> Self {
+        Self::new(Self::ARM_R)
+    }
+    pub fn leg_l() -> Self {
+        Self::new(Self::LEG_L)
+    }
+    pub fn leg_r() -> Self {
+        Self::new(Self::LEG_R)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,7 +157,7 @@ mod tests {
             tick: 42,
             target_id: "offline:Crimson".to_string(),
             attacker_id: Some("offline:Azure".to_string()),
-            body_part: Some(CombatBodyPartV1::Chest),
+            body_part: Some(CombatBodyPartV1::chest()),
             wound_kind: Some(CombatWoundKindV1::Blunt),
             source: Some(CombatAttackSourceV1::Melee),
             damage: Some(20.0),
@@ -133,7 +175,7 @@ mod tests {
             serde_json::from_str(realtime_json.as_str()).expect("deserialize realtime");
         assert_eq!(realtime_back.v, 1);
         assert_eq!(realtime_back.tick, 42);
-        assert_eq!(realtime_back.body_part, Some(CombatBodyPartV1::Chest));
+        assert_eq!(realtime_back.body_part, Some(CombatBodyPartV1::chest()));
         assert_eq!(realtime_back.wound_kind, Some(CombatWoundKindV1::Blunt));
         assert_eq!(realtime_back.source, Some(CombatAttackSourceV1::Melee));
         assert_eq!(realtime_back.damage, Some(20.0));
@@ -258,7 +300,7 @@ mod tests {
             tick: 84011,
             target_id: "offline:Crimson".to_string(),
             attacker_id: Some("offline:Azure".to_string()),
-            body_part: Some(CombatBodyPartV1::Chest),
+            body_part: Some(CombatBodyPartV1::chest()),
             wound_kind: Some(CombatWoundKindV1::Cut),
             source: Some(CombatAttackSourceV1::SwordPathHeavenGate),
             damage: Some(480.0),
@@ -325,5 +367,72 @@ mod tests {
                 "旧变体 {expected_wire} 反序列化后再序列化应一致"
             );
         }
+    }
+
+    // plan-race-system-v1 P1c — `CombatBodyPartV1` 闭合 8 段人形 enum 开放化为
+    // string。以下三条锁住：① 8 段 humanoid 常量 wire 串不变（回归）② 非 humanoid
+    // 任意 part id（如 P5 飞鲸尾鳍）可合法构造/往返 ③ 旧闭合枚举无法表达的值不再是
+    // "拒绝"而是"开放接受"——这正是本轮 wire 开放化要达成的效果。
+    #[test]
+    fn all_eight_humanoid_body_parts_still_roundtrip() {
+        let cases = [
+            (CombatBodyPartV1::head(), "\"head\""),
+            (CombatBodyPartV1::chest(), "\"chest\""),
+            (CombatBodyPartV1::back(), "\"back\""),
+            (CombatBodyPartV1::abdomen(), "\"abdomen\""),
+            (CombatBodyPartV1::arm_l(), "\"arm_l\""),
+            (CombatBodyPartV1::arm_r(), "\"arm_r\""),
+            (CombatBodyPartV1::leg_l(), "\"leg_l\""),
+            (CombatBodyPartV1::leg_r(), "\"leg_r\""),
+        ];
+        for (variant, expected_wire) in cases {
+            let json = serde_json::to_string(&variant)
+                .unwrap_or_else(|e| panic!("serialize {expected_wire}: {e}"));
+            assert_eq!(
+                json, expected_wire,
+                "humanoid part id wire 值不得改变：期望 {expected_wire}，实际 {json}"
+            );
+            let back: CombatBodyPartV1 = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("deserialize {expected_wire}: {e}"));
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn non_humanoid_body_part_id_roundtrips() {
+        // P5 飞鲸草案部位——不在 8 段 humanoid 之列，wire 开放化前无法表达。
+        let v = CombatBodyPartV1::new("tail_fin");
+        let json = serde_json::to_string(&v).expect("serialize tail_fin");
+        assert_eq!(json, "\"tail_fin\"");
+        let back: CombatBodyPartV1 = serde_json::from_str(&json).expect("deserialize tail_fin");
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn body_part_embedded_in_combat_event_roundtrips_for_non_humanoid_id() {
+        let event = CombatRealtimeEventV1 {
+            v: 1,
+            kind: CombatRealtimeKindV1::CombatEvent,
+            tick: 100,
+            target_id: "npc:whale_1".to_string(),
+            attacker_id: None,
+            body_part: Some(CombatBodyPartV1::new("dorsal_fin")),
+            wound_kind: Some(CombatWoundKindV1::Blunt),
+            source: Some(CombatAttackSourceV1::Melee),
+            damage: Some(5.0),
+            physical_damage: None,
+            contam_delta: None,
+            description: None,
+            cause: None,
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        };
+        let json = serde_json::to_string(&event).expect("serialize dorsal_fin event");
+        assert!(json.contains("\"dorsal_fin\""));
+        let back: CombatRealtimeEventV1 =
+            serde_json::from_str(&json).expect("deserialize dorsal_fin event");
+        assert_eq!(back.body_part, Some(CombatBodyPartV1::new("dorsal_fin")));
     }
 }

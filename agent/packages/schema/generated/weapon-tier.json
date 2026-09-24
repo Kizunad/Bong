@@ -17,5 +17,6 @@
       "const": 4,
       "type": "number"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "98717932d2c4c73c969dae610e79da5da684e54312e84faa2259ee2fdebb8e24"
 }

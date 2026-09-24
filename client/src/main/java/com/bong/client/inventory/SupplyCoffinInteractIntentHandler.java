@@ -23,7 +23,17 @@ import java.util.Optional;
  * request that the server handles in {@code client_request_handler.rs}.</p>
  */
 public final class SupplyCoffinInteractIntentHandler implements IntentHandler {
-    private static final double MAX_INTERACT_DISTANCE_SQ = 5.0 * 5.0;
+    /**
+     * 物资棺交互半径的平方（方块数），必须与 server 侧
+     * {@code OPEN_RANGE_BLOCKS + OPEN_RANGE_TOLERANCE}（4.0 + 0.5 = 4.5，
+     * server/src/supply_coffin/interact.rs）保持一致，两端都是欧氏距离，只要
+     * 数值对齐即可——不对齐会出现 client 候选可交互、server 却拒绝的假交互带
+     * （plan-bughunt-entity-interact-range-desync-v1）。此路径 server reject
+     * 默认无 chat 反馈，drift 体感上比其它容器更像“按键没反应”。
+     */
+    private static final double MAX_INTERACT_DISTANCE_BLOCKS = 4.5;
+    private static final double MAX_INTERACT_DISTANCE_SQ =
+        MAX_INTERACT_DISTANCE_BLOCKS * MAX_INTERACT_DISTANCE_BLOCKS;
 
     @Override
     public Optional<InteractCandidate> candidate(MinecraftClient client) {
@@ -41,7 +51,7 @@ public final class SupplyCoffinInteractIntentHandler implements IntentHandler {
             return Optional.empty();
         }
         double distSq = client.player.squaredDistanceTo(hit.getEntity());
-        if (distSq > MAX_INTERACT_DISTANCE_SQ) {
+        if (!isWithinInteractRange(distSq)) {
             return Optional.empty();
         }
         return Optional.of(InteractCandidate.of(
@@ -66,7 +76,11 @@ public final class SupplyCoffinInteractIntentHandler implements IntentHandler {
         return true;
     }
 
-    private static int candidateEntityId(InteractCandidate candidate) {
+    static boolean isWithinInteractRange(double distSq) {
+        return distSq <= MAX_INTERACT_DISTANCE_SQ;
+    }
+
+    static int candidateEntityId(InteractCandidate candidate) {
         if (candidate == null || candidate.debugLabel() == null) {
             return -1;
         }

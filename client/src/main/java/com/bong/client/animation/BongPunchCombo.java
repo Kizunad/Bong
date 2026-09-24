@@ -220,6 +220,35 @@ public final class BongPunchCombo {
         }
     }
 
+    /**
+     * 断线时丢弃尚未到 impact 帧的 player/world closure。
+     *
+     * <p>这些 action 捕获旧 {@code AbstractClientPlayerEntity}，后续会读取旧 world 并播放粒子、音效
+     * 与 HUD 效果；它们属于旧会话，不能等到下一次 client tick 才自然消费。
+     */
+    public static void clearOnDisconnect() {
+        synchronized (PENDING) {
+            PENDING.clear();
+        }
+    }
+
+    /** 测试/诊断用：尚未执行的 impact action 数量。 */
+    static int pendingActionsForTest() {
+        synchronized (PENDING) {
+            return PENDING.size();
+        }
+    }
+
+    /** 测试 seam：同步推进一次队列，避免依赖 Fabric client tick。 */
+    static void tickPendingForTest() {
+        tickPending();
+    }
+
+    /** 测试 seam：不依赖玩家实体，直接创建一个延迟 closure。 */
+    static void scheduleForTest(int ticks, Runnable action) {
+        scheduleAfter(ticks, action);
+    }
+
     /** 可变 remainingTicks 的小容器——record 不能 mutate，这里只能用普通类。 */
     private static final class Delayed {
         int remainingTicks;

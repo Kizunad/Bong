@@ -22,8 +22,6 @@ public final class DeathCinematicRenderer {
         }
 
         return switch (current.phase()) {
-            case PREDEATH -> NearDeathCollapsePlanner.buildCommands(current, width, height);
-            case DEATH_MOMENT -> ScreenShatterEffect.buildCommands(current, width, height);
             case ROLL -> DeathRollUI.buildCommands(current, width, height);
             case INSIGHT_OVERLAY -> InsightOverlayRenderer.buildCommands(current, width, height);
             case DARKNESS -> darknessCommands(width, height, nowMillis);

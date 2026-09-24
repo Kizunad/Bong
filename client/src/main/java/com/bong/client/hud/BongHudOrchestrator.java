@@ -1,9 +1,9 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
-import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
+import com.bong.client.gathering.GatheringSessionStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
@@ -15,6 +15,7 @@ import com.bong.client.tsy.ExtractState;
 import com.bong.client.tsy.ExtractStateStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.ConnectionStatusIndicator;
+import com.bong.client.util.TextureProbe;
 import com.bong.client.visual.realm_vision.PerceptionEdgeState;
 import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 
@@ -23,10 +24,8 @@ import java.util.List;
 import java.util.Locale;
 
 public final class BongHudOrchestrator {
-    public static final String BASELINE_LABEL = "Bong Client Connected";
-
-    private static final int BASELINE_X = 10;
-    private static final int BASELINE_Y = 10;
+    private static final int HUD_TEXT_X = 10;
+    private static final int HUD_TEXT_Y = 10;
     private static final int LINE_HEIGHT = 12;
     private static final int DEFAULT_TEXT_WIDTH = 220;
 
@@ -107,6 +106,32 @@ public final class BongHudOrchestrator {
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext
     ) {
+        return buildCommands(
+            snapshot,
+            combat,
+            nowMillis,
+            widthMeasurer,
+            maxTextWidth,
+            screenWidth,
+            screenHeight,
+            botanyAnchor,
+            runtimeContext,
+            System.nanoTime()
+        );
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        BongHudStateSnapshot snapshot,
+        CombatHudSnapshot combat,
+        long nowMillis,
+        HudTextHelper.WidthMeasurer widthMeasurer,
+        int maxTextWidth,
+        int screenWidth,
+        int screenHeight,
+        BotanyProjection.Anchor botanyAnchor,
+        HudRuntimeContext runtimeContext,
+        long nowNanos
+    ) {
         BongHudStateSnapshot safeSnapshot = snapshot == null ? BongHudStateSnapshot.empty() : snapshot;
         CombatHudSnapshot combatSnapshot = combat == null ? CombatHudSnapshot.empty() : combat;
         HudRuntimeContext runtime = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
@@ -121,16 +146,14 @@ public final class BongHudOrchestrator {
         HudEnvironmentVariant environmentVariant = HudEnvironmentVariant.from(safeSnapshot.zoneState(), extractState);
         int normalizedWidth = normalizeWidth(maxTextWidth);
         List<HudRenderCommand> commands = new ArrayList<>();
-        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, BASELINE_LABEL, BASELINE_X, BASELINE_Y, 0xFFFFFF));
-
-        int nextY = BASELINE_Y + LINE_HEIGHT;
+        int nextY = HUD_TEXT_Y;
         if (ZoneHudRenderer.append(
             commands,
             safeSnapshot.zoneState(),
             nowMillis,
             widthMeasurer,
             normalizedWidth,
-            BASELINE_X,
+            HUD_TEXT_X,
             nextY,
             screenWidth,
             screenHeight
@@ -142,14 +165,14 @@ public final class BongHudOrchestrator {
             PlayerStateStore.snapshot(),
             widthMeasurer,
             normalizedWidth,
-            BASELINE_X,
+            HUD_TEXT_X,
             nextY
         )) {
             nextY += LINE_HEIGHT;
         }
 
         if (BongClientFeatures.ENABLE_TOASTS
-            && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, BASELINE_X, nextY)) {
+            && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, HUD_TEXT_X, nextY)) {
             nextY += LINE_HEIGHT;
         }
 
@@ -218,30 +241,6 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
-        // 暂时停用阵盘 HUD，保留 QiDensityRadarHudPlanner 代码作为 dead code 便于后续恢复。
-        // commands.addAll(QiDensityRadarHudPlanner.buildCommands(
-        //     playerState,
-        //     safeSnapshot.zoneState(),
-        //     perceptionState,
-        //     mode,
-        //     environmentVariant,
-        //     runtime,
-        //     nowMillis,
-        //     screenWidth,
-        //     screenHeight
-        // ));
-        if (HudRealmGate.atLeastCondense(playerState.realm())) {
-            commands.addAll(DirectionalCompassHudPlanner.buildCommands(
-                safeSnapshot.zoneState(),
-                extractState,
-                mode,
-                runtime,
-                widthMeasurer,
-                screenWidth,
-                screenHeight,
-                nowMillis
-            ));
-        }
         commands.addAll(ThreatIndicatorHudPlanner.buildCommands(
             playerState,
             perceptionState,
@@ -282,17 +281,12 @@ public final class BongHudOrchestrator {
                 nowMillis,
                 screenWidth,
                 screenHeight,
-                HudTextureProbe::exists
+                TextureProbe::exists
             ));
             // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
             commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));
-            commands.addAll(EventStreamHudPlanner.buildCommands(
-                combatSnapshot.eventStream(),
-                nowMillis,
-                widthMeasurer,
-                screenWidth,
-                screenHeight
-            ));
+            // 滚动事件列表已退出 HUD；共享事件缓冲仍按原生命周期过期。
+            combatSnapshot.eventStream().expire(nowMillis);
             commands.addAll(JiemaiRingHudPlanner.buildCommands(
                 combatSnapshot.defenseWindowState(),
                 nowMillis,
@@ -340,17 +334,6 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
-            FalseSkinHudStateStore.State falseSkinSnapshot = FalseSkinHudStateStore.snapshot();
-            commands.addAll(FalseSkinStackHud.buildCommands(
-                falseSkinSnapshot,
-                screenWidth,
-                screenHeight
-            ));
-            commands.addAll(ContamLoadHud.buildCommands(
-                falseSkinSnapshot,
-                screenWidth,
-                screenHeight
-            ));
             commands.addAll(PoisonTraitHudPlanner.buildCommands(
                 PoisonTraitHudStateStore.snapshot(),
                 screenWidth,
@@ -373,26 +356,14 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
-            commands.addAll(StaminaBarHudPlanner.buildCommands(
-                combatSnapshot.combatHudState(), screenWidth, screenHeight
-            ));
             commands.addAll(MovementHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            commands.addAll(ThroughputPeakHudPlanner.buildCommands(
-                combatSnapshot.combatHudState(), screenWidth, screenHeight
-            ));
-            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis, widthMeasurer));
             commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（右上角）。
             commands.addAll(HalfStepRechallengeHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            commands.addAll(TargetInfoHudPlanner.buildCommands(
-                TargetInfoStateStore.snapshot(),
-                nowMillis,
-                widthMeasurer,
-                screenWidth,
-                screenHeight
-            ));
+            // 目标总览暂不显示；生命、名称、境界、真元感知需分别由能力解锁后接入。
             commands.addAll(com.bong.client.tsy.TsyBossHealthBar.buildCommands(
                 com.bong.client.tsy.TsyBossHealthStore.snapshot(),
                 nowMillis,
@@ -414,10 +385,9 @@ public final class BongHudOrchestrator {
             ));
             // F5 fix — 灵龛守护状态（NicheGuardianStore）此前只进不出，从未被任何 HUD planner 消费。
             commands.addAll(NicheGuardianHudPlanner.buildCommands(screenWidth, screenHeight));
+            // plan-race-system-v1 PR-5b — 易形形态图标 + 施法期 vignette。
+            commands.addAll(MorphHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
-            commands.addAll(NearDeathOverlayPlanner.buildCommands(
-                combatSnapshot.combatHudState(), screenWidth, screenHeight
-            ));
             // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
             // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
             // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));
@@ -431,12 +401,12 @@ public final class BongHudOrchestrator {
             ));
         }
         commands.addAll(GatheringProgressHud.buildCommands(
+            GatheringSessionStore.presentation(),
             widthMeasurer,
             screenWidth,
             screenHeight,
             nowMillis
         ));
-        commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         // plan-dying-elder-v1 P3: 垂死大能遭遇 HUD（遭遇激活时在屏幕底部中央显示面板）
         commands.addAll(DyingElderHudPlanner.buildCommands(screenWidth, screenHeight));
@@ -464,7 +434,7 @@ public final class BongHudOrchestrator {
             nowMillis
         ));
         commands.addAll(SearchProgressHudPlanner.buildCommands(
-            SearchHudStateStore.snapshot(),
+            SearchHudStateStore.snapshotAtNanos(nowNanos),
             screenWidth,
             screenHeight
         ));

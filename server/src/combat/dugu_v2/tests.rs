@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use valence::prelude::{App, Events, Position};
 
 use crate::combat::components::{SkillBarBindings, Wounds};
@@ -19,15 +21,23 @@ use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::known_techniques::{
+    SkillCategory, TechniqueDefinition, TechniqueDispatch, TechniqueRegistry,
+    TechniqueRequiredMeridian,
+};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
+use crate::player::state::canonical_player_id;
 
 fn setup_app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 1 });
+    app.insert_resource(crate::qi_physics::ledger::WorldQiAccount::default());
+    app.add_event::<crate::qi_physics::QiTransfer>();
     app.add_event::<EclipseNeedleEvent>();
     app.add_event::<SelfCureProgressEvent>();
     app.add_event::<PenetrateChainEvent>();
@@ -47,6 +57,8 @@ fn actor(
     qi_max: f64,
     x: f64,
 ) -> valence::prelude::Entity {
+    static NEXT_ACTOR_ID: AtomicU64 = AtomicU64::new(1);
+    let actor_id = NEXT_ACTOR_ID.fetch_add(1, Ordering::Relaxed);
     app.world_mut()
         .spawn((
             Cultivation {
@@ -55,12 +67,86 @@ fn actor(
                 qi_max,
                 ..Default::default()
             },
+            LifeRecord::new(canonical_player_id(&format!("dugu-v2-test-{actor_id}"))),
             QiColor::default(),
             SkillBarBindings::default(),
             Wounds::default(),
             Position::new([x, 64.0, 0.0]),
         ))
         .id()
+}
+
+#[test]
+fn dugu_resolver_uses_nonlegacy_metadata_for_cast_contract() {
+    let mut app = setup_app();
+    app.insert_resource(TechniqueRegistry::load_for_tests_with_definition(
+        TechniqueDefinition {
+            id: DUGU_ECLIPSE_SKILL_ID.to_string(),
+            display_name: "蚀针".to_string(),
+            grade: "yellow".to_string(),
+            description: "test metadata extension".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: vec![TechniqueRequiredMeridian {
+                channel: "Liver".to_string(),
+                min_health: 0.01,
+            }],
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 0.0,
+            cast_ticks: 1,
+            cooldown_ticks: 20,
+            range: 8.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+                .to_string(),
+            category: SkillCategory::Attack,
+            dispatch: TechniqueDispatch::MetadataBacked,
+        },
+    ));
+    let mut dependencies = SkillMeridianDependencies::default();
+    crate::combat::dugu_v2::declare_meridian_dependencies(&mut dependencies);
+    app.insert_resource(dependencies);
+
+    let caster = actor(&mut app, Realm::Awaken, 2.0, 10.0, 0.0);
+    let target = actor(&mut app, Realm::Awaken, 5.0, 10.0, 4.0);
+    let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        2,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert_eq!(
+        result,
+        CastResult::Started {
+            cooldown_ticks: 20,
+            anim_duration_ticks: 1,
+        },
+        "metadata-backed Dugu extension must return its declared cooldown and cast duration, not legacy resolver values"
+    );
+
+    let caster_cultivation = app.world().get::<Cultivation>(caster).unwrap();
+    assert_eq!(
+        caster_cultivation.qi_current,
+        qi_before - 1.0,
+        "metadata qi_cost=1 must be the authoritative cast cost; legacy Eclipse cost 13 must not be charged"
+    );
+    let casting = app
+        .world()
+        .get::<crate::combat::components::Casting>(caster)
+        .expect("successful resolver cast must install Casting");
+    assert_eq!(casting.duration_ticks, 1);
+    assert_eq!(casting.complete_cooldown_ticks, 20);
+    assert_eq!(
+        app.world()
+            .get::<SkillBarBindings>(caster)
+            .unwrap()
+            .cooldowns
+            .get(DUGU_ECLIPSE_SKILL_ID),
+        Some(&21),
+        "metadata cooldown_ticks=20 must be applied from CombatClock tick 1"
+    );
 }
 
 #[test]
@@ -506,7 +592,10 @@ fn dugu_visual_ids_pin_eclipse() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "蚀针");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_eclipse.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+    );
 }
 
 #[test]
@@ -517,7 +606,10 @@ fn dugu_visual_ids_pin_self_cure() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "自蕴");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_self_cure.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_self_cure.png"
+    );
 }
 
 #[test]
@@ -528,7 +620,10 @@ fn dugu_visual_ids_pin_penetrate() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "侵染");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_penetrate.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_penetrate.png"
+    );
 }
 
 #[test]
@@ -539,7 +634,10 @@ fn dugu_visual_ids_pin_shroud() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "神识遮蔽");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_shroud.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_shroud.png"
+    );
 }
 
 #[test]
@@ -550,7 +648,10 @@ fn dugu_visual_ids_pin_reverse() {
     assert_eq!(v.particle_id, "bong:dugu_reverse_burst");
     assert_eq!(v.sound_recipe_id, "dugu_curse_cackle");
     assert_eq!(v.hud_hint, "倒蚀");
-    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_reverse.png");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/items/skill_scroll_dugu_reverse.png"
+    );
 }
 
 #[test]
@@ -608,6 +709,84 @@ fn dugu_emit_anim_skips_without_unique_id() {
         0,
         "emit_anim should skip PlayAnim when entity has no UniqueId"
     );
+}
+
+// ── bughunt: 侵染 runtime A/V 必须与 visual_for(Penetrate) 一致 ─────────────
+
+/// 回归：`apply_penetrate` 曾经硬编码播放 `dugu_curse_cackle` / `bong:dugu_pointing_curse`
+/// （倒蚀语义），与 `PenetrateChainEvent.visual == visual_for(Penetrate)` 的针掷/针嘶
+/// metadata 错接。本测试钉住实际 S2C 播放 payload 必须与侵染自身 visual 一致。
+#[test]
+fn penetrate_runtime_av_matches_own_visual_not_reverse() {
+    use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+    use valence::prelude::UniqueId;
+
+    let mut app = setup_app();
+    app.add_event::<VfxEventRequest>();
+    app.add_event::<PlaySoundRecipeRequest>();
+
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(UniqueId::default());
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(target).insert(TaintMark {
+        caster,
+        intensity: 10.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 9.9,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        1,
+        Some(target),
+        DuguSkillId::Penetrate,
+    );
+    assert!(matches!(result, CastResult::Started { .. }));
+
+    let sounds = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+    let sound_events: Vec<_> = sounds.iter_current_update_events().collect();
+    assert_eq!(
+        sound_events.len(),
+        1,
+        "penetrate should emit exactly one PlaySoundRecipeRequest"
+    );
+    assert_eq!(
+        sound_events[0].recipe_id, "dugu_needle_hiss",
+        "penetrate runtime audio must be its own needle_hiss, not reverse's curse_cackle"
+    );
+    assert!(
+        matches!(sound_events[0].recipient, AudioRecipient::Radius { .. }),
+        "expected radius-broadcast recipient for penetrate audio"
+    );
+
+    let vfx = app.world().resource::<Events<VfxEventRequest>>();
+    let anim_events: Vec<_> = vfx
+        .iter_current_update_events()
+        .filter(|event| matches!(event.payload, VfxEventPayloadV1::PlayAnim { .. }))
+        .collect();
+    assert_eq!(
+        anim_events.len(),
+        1,
+        "penetrate should emit exactly one PlayAnim event"
+    );
+    match &anim_events[0].payload {
+        VfxEventPayloadV1::PlayAnim { anim_id, .. } => {
+            assert_eq!(
+                anim_id, "bong:dugu_needle_throw",
+                "penetrate runtime animation must be its own needle_throw, not reverse's pointing_curse"
+            );
+        }
+        other => panic!("expected PlayAnim, got {other:?}"),
+    }
 }
 
 // ── minor②: dugu is_chaotic guard 专项 case ─────────────────────────────
@@ -748,7 +927,6 @@ fn dugu_chaotic_caster_cast_not_rejected_for_non_eclipse_skills() {
 
 /// 辅助：构建带 ZoneRegistry + WorldQiAccount 的最小 App（含所有 dugu v2 系统）。
 fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
-    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::DVec3;
@@ -772,8 +950,10 @@ fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
-    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 
@@ -990,6 +1170,144 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
     );
 }
 
+/// plan-fpv-cast-av-v1 P5 emit 架构统一 —— **端到端 emit-path 门**：真跑一次倒蚀施法
+/// （`resolve_dugu_v2_skill(.., Reverse)`），再跑真实音效系统 `emit_dugu_v2_audio_triggers`，
+/// 断言实发的 `PlaySoundRecipeRequest.recipe_id` == 蛊道签名 `DUGU_POISON_SIGNATURE_RECIPE`
+/// （recipe id 引生产 const 单一真源，测试内不另抄）。
+///
+/// 重构前签名内联在 `apply_reverse` 里发（Pattern B）无独立门；现在锁整条链：
+/// cast 不发 `ReverseTriggeredEvent` / 音效系统没读它 / 系统没接线，任一处断都撞红。
+#[test]
+fn reverse_cast_emits_signature_recipe_end_to_end() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_dugu_v2_audio_triggers;
+    use valence::prelude::Update;
+
+    let mut app = setup_zone_credit_app(0.0);
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_event::<crate::combat::needle::QiNeedleChargedEvent>();
+    app.add_event::<crate::cultivation::dugu::DuguObfuscationDisruptedEvent>();
+    app.add_systems(Update, emit_dugu_v2_audio_triggers);
+
+    let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: void_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        void_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功（前置不足会让本断言先撞红），实际={result:?}"
+    );
+    app.update();
+
+    let emitted: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .collect();
+    let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+    assert_eq!(
+        recipes,
+        vec![DUGU_POISON_SIGNATURE_RECIPE],
+        "倒蚀施法应经真实 emit 系统实发签名 {DUGU_POISON_SIGNATURE_RECIPE}（不多不少一条），实际 {recipes:?}"
+    );
+    // 路由与重构前内联 emit 逐字段一致：听者位置发声（无空间衰减）+ 以爆发中心（目标位置 x=1）
+    // 为圆心的 64 格广播。改成世界锚点 + recipe 的 MELEE 8 格会让实机几乎听不见（PR #1262 review）。
+    assert_eq!(
+        emitted[0].pos, None,
+        "签名应 pos=None（听者位置、无空间衰减），与重构前一致"
+    );
+    assert_eq!(
+        emitted[0].recipient,
+        crate::network::audio_event_emit::AudioRecipient::Radius {
+            origin: valence::prelude::DVec3::new(1.0, 64.0, 0.0),
+            radius: crate::network::audio_event_emit::AUDIO_BROADCAST_RADIUS,
+        },
+        "签名收听范围应是以爆发中心（目标位置）为圆心的 64 格广播"
+    );
+}
+
+/// **拒绝路径必须无声**（PR #1262 review 补门）：境界不足（非化虚）被 `Rejected` 的倒蚀，
+/// 既不许发 `ReverseTriggeredEvent`，跑完真实音效系统后也不许有任何 `PlaySoundRecipeRequest`。
+#[test]
+fn rejected_reverse_emits_no_audio_and_no_domain_event() {
+    use crate::audio::implementation::AudioImplementationDedup;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::audio_trigger::emit_dugu_v2_audio_triggers;
+    use valence::prelude::Update;
+
+    let mut app = setup_zone_credit_app(0.0);
+    app.init_resource::<AudioImplementationDedup>();
+    app.add_event::<PlaySoundRecipeRequest>();
+    app.add_event::<crate::combat::needle::QiNeedleChargedEvent>();
+    app.add_event::<crate::cultivation::dugu::DuguObfuscationDisruptedEvent>();
+    app.add_systems(Update, emit_dugu_v2_audio_triggers);
+
+    // 倒蚀要求化虚（Realm::Void）；通灵施法者必被拒（RealmTooLow）。
+    let low_caster = actor(&mut app, Realm::Spirit, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: low_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        low_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Rejected { .. }),
+        "通灵境施倒蚀应被拒（RealmTooLow），实际={result:?}"
+    );
+    app.update();
+
+    let reverse_events: usize = {
+        let events = app.world().resource::<Events<ReverseTriggeredEvent>>();
+        events.iter_current_update_events().count()
+    };
+    assert_eq!(
+        reverse_events, 0,
+        "被拒绝的倒蚀不得发 ReverseTriggeredEvent"
+    );
+    let recipes: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<PlaySoundRecipeRequest>>()
+        .drain()
+        .map(|event| event.recipe_id)
+        .collect();
+    assert!(
+        recipes.is_empty(),
+        "被拒绝的倒蚀不得有任何招式音（含签名），实际 {recipes:?}"
+    );
+}
+
 /// 守恒不变式：Eclipse 前后，zone_qi 增量 == returned_zone_qi（容差内）。
 ///
 /// 修法 ② 后 Eclipse.returned_zone_qi = rejected_qi × 0.99，仅覆盖被排斥立即散逸部分。
@@ -1050,12 +1368,12 @@ fn eclipse_conservation_total_observed_invariant() {
     let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY; // = -40.0（裸值，保留负缺口）
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 90.0
     let accepted = returned_abs.min(room); // = returned_abs (no overflow)
-                                           // Expected zone_after (normalized, clamped) = (zone_current_abs + accepted) / CAP
-    let expected_zone_after =
-        ((zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                                           // `summarize_world_qi.zone_qi` 已统一为 absolute qi 单位，因此预期值也保持 absolute：
+                                           // zone_current_abs + accepted。不要再除一次 CAP，也不要 clamp signed 负灵压。
+    let expected_zone_after = zone_current_abs + accepted;
     assert!(
         (snap_after.zone_qi - expected_zone_after).abs() < 1e-9,
-        "守恒失败：zone.spirit_qi after({:.9}) 应精确等于 (zone_current({zone_current_abs})+accepted({accepted}))/CAP={expected_zone_after:.9}。\
+        "守恒失败：absolute zone qi after({:.9}) 应精确等于 zone_current({zone_current_abs})+accepted({accepted})={expected_zone_after:.9}。\
          zone_before={zone_qi_before}, returned={returned_abs:.6}, room={room:.1}。\
          若 snap_after.zone_qi > expected_zone_after 说明仍在裸加 returned（MF3 bug 未修复）；\
          若 snap_after.zone_qi << expected_zone_after 说明 CAP 换算出错",
@@ -1764,8 +2082,6 @@ fn reverse_zero_returned_zone_qi_no_audit() {
 /// - zone 初始为空（spirit_qi=0.0）→ room=50，所有 cost 均全额入账，无 split。
 /// - 注册 QiTransfer event，以便验证 release_cast_cost_to_zone 发出的审计事件。
 fn setup_cast_cost_zone_app() -> App {
-    use crate::qi_physics::ledger::QiTransfer;
-    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::DVec3;
@@ -1774,7 +2090,6 @@ fn setup_cast_cost_zone_app() -> App {
     // NOTE: 不调 crate::combat::dugu_v2::register(&mut app)，
     //       避免 eclipse_zone_credit_tick 在 update() 时消费 EclipseNeedleEvent 干扰 zone delta。
     // 施法成本 zone credit 在 resolve_dugu_v2_skill() 内同步完成，不需要 tick 系统。
-    app.add_event::<QiTransfer>();
 
     // 空 zone（spirit_qi=0.0）覆盖玩家坐标 [0,64,0]，确保 room=50 >> 任何单次施法成本
     let zone = Zone {
@@ -1792,8 +2107,10 @@ fn setup_cast_cost_zone_app() -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
-    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 
@@ -2651,4 +2968,29 @@ fn dugu_reverse_victim_qi_reason_pin_test() {
         "DuguReverseVictimQi 应区别于 ReleaseToZone（招式释放）"
     );
     assert_eq!(reason, reason, "DuguReverseVictimQi 与自身应相等");
+}
+
+/// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：五招 `visual_for`
+/// 的 `icon_texture` 逐条对应 client main resources 磁盘真实资产（经
+/// `CARGO_MANIFEST_DIR/../client` 解析），防 payload 下发悬空引用——2026-07-18
+/// 之前这五条引用的 `bong:textures/gui/skill/dugu_*.png` 全仓无文件、HUD 侧
+/// 探测恒失败，本 pin 锁住收编后不再漂移。
+#[test]
+fn every_dugu_v2_visual_icon_texture_points_at_real_client_asset() {
+    for skill in DuguSkillId::ALL {
+        let icon = crate::combat::dugu_v2::skills::visual_for(skill).icon_texture;
+        let (namespace, path) = icon.split_once(':').unwrap_or_else(|| {
+            panic!("dugu_v2 visual icon `{icon}` 缺少 `namespace:path` 冒号分隔")
+        });
+        let disk = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../client/src/main/resources/assets")
+            .join(namespace)
+            .join(path);
+        assert!(
+            disk.is_file(),
+            "dugu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
+             server payload 会下发悬空引用，client TextureProbe 探测必失败",
+            disk.display()
+        );
+    }
 }

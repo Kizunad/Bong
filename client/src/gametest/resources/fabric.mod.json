@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "bong-client-gametest",
+  "version": "1.0.0",
+  "name": "Bong Client GameTest",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": [
+      "com.bong.client.hud.TargetInfoPlayerGameTest"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "1.20.1",
+    "java": ">=17",
+    "fabric-api": "*"
+  }
+}

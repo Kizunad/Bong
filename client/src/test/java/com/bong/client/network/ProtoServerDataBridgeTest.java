@@ -4,6 +4,7 @@ import bong.Common;
 import bong.Envelope;
 import com.bong.client.combat.DefenseWindowState;
 import com.bong.client.combat.DefenseWindowStore;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
@@ -15,10 +16,19 @@ import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.hud.PoisonTraitHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.social.NicheGuardianPanel;
 import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.PlayerStateViewModel;
+import com.bong.client.inventory.model.MeridianBody;
+import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.inventory.state.BodyPlanLayoutStore;
+import com.bong.client.inventory.state.MeridianStateStore;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
+import com.bong.client.skill.SkillMilestoneStore;
+import com.bong.client.skill.SkillSetStore;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.protobuf.Descriptors;
@@ -48,6 +58,7 @@ class ProtoServerDataBridgeTest {
         LootContainerStateStore.clear();
         DefenseWindowStore.resetForTests();
         DeathStateStore.resetForTests();
+        com.bong.client.combat.store.TerminateStateStore.resetForTests();
         FullPowerStateStore.resetForTests();
         WoundsStore.resetForTests();
         FalseSkinHudStateStore.resetForTests();
@@ -56,6 +67,29 @@ class ProtoServerDataBridgeTest {
         com.bong.client.gathering.GatheringSessionStore.resetForTests();
         com.bong.client.insight.InsightOfferStore.resetForTests();
         com.bong.client.scroll.ScrollReadStore.resetForTests();
+        com.bong.client.lingtian.state.LingtianSessionStore.clearOnDisconnect();
+    }
+
+    @Test
+    void terminationSummarySurvivesProtoBridgeWithoutInventingMissingAttributes() {
+        var envelope = Envelope.ServerDataEnvelope.newBuilder().setTerminateScreen(
+            Envelope.TerminateScreen.newBuilder().setVisible(true).setSummary(
+                Envelope.TerminationSummary.newBuilder().setCharacterName("行客").setRealm("Condense")
+                    .setDeathCount(4).setYearsLived(47.5).setQiMax(88).setHealthMax(72).setMeridiansOpen(3)
+            )).build();
+        var bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(), bridge.errorMessage());
+        var route = ServerDataRouter.createDefault().route(bridge.legacyJson(), bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled());
+        var summary = com.bong.client.combat.store.TerminateStateStore.snapshot().summary();
+        assertEquals("行客", summary.characterName());
+        assertEquals("Condense", summary.realm());
+        assertEquals(88.0, summary.qiMax());
+        assertEquals(72.0, summary.healthMax());
+        assertEquals(47.5, summary.yearsLived());
+        assertEquals(4, summary.deathCount());
+        assertEquals(3, summary.meridiansOpen());
+        assertNull(summary.techniquesLearned(), "未记录的功法数不能伪造成零");
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -159,7 +193,8 @@ class ProtoServerDataBridgeTest {
                 .setCombatHudState(Envelope.CombatHudState.newBuilder()
                         .setHpPercent(0.75f)
                         .setQiPercent(0.5f)
-                        .setStaminaPercent(1.0f))
+                        .setStaminaPercent(1.0f)
+                        .setCombatActive(true))
                 .build();
 
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
@@ -167,6 +202,7 @@ class ProtoServerDataBridgeTest {
 
         JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
         assertEquals("combat_hud_state", json.get("type").getAsString());
+        assertTrue(json.get("combat_active").getAsBoolean());
     }
 
     // ─── Happy path: CoffinState ─────────────────────────────────────
@@ -254,7 +290,7 @@ class ProtoServerDataBridgeTest {
                 "顶层 zone_kind 剥成 'negative'（DeathScreen.zoneLabel）");
         JsonObject cinematic = json.getAsJsonObject("cinematic");
         assertEquals("roll", cinematic.get("phase").getAsString(),
-                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场永远卡 PREDEATH");
+                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场阶段名无法识别");
         assertEquals("death", cinematic.get("zone_kind").getAsString(),
                 "cinematic.zone_kind 一并归一化为 'death' 保持桥输出统一");
         assertEquals("survive", cinematic.getAsJsonObject("roll").get("result").getAsString(),
@@ -363,6 +399,9 @@ class ProtoServerDataBridgeTest {
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED,
                     Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE
+                    // morph_state（易形状态，proto field 142）：PR-5a 只交付 server 机制 +
+                    // 协议/schema/bot 解码，client 消费留白；PR-5b 已补 MorphStateHandler
+                    // 映射（见 CASE_TO_TYPE），故从本排除清单移除。
             );
 
     @Test
@@ -576,7 +615,7 @@ class ProtoServerDataBridgeTest {
     private static Object nonDefaultScalarOrMessage(Descriptors.FieldDescriptor field, int depth) {
         switch (field.getJavaType()) {
             case INT:
-                return 7;
+                return "bong.CastSync.slot".equals(field.getFullName()) ? 1 : 7;
             case LONG:
                 return 7L;
             case FLOAT:
@@ -586,6 +625,9 @@ class ProtoServerDataBridgeTest {
             case BOOLEAN:
                 return true;
             case STRING:
+                if ("bong.WeaponEquipped.slot".equals(field.getFullName())) {
+                    return "main_hand";
+                }
                 return "rt_probe_" + field.getName();
             case BYTE_STRING:
                 return com.google.protobuf.ByteString.copyFromUtf8("rt_probe");
@@ -1096,29 +1138,35 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void quickSlotConfigUnwrapsEntryAndNullifiesEmpty() {
-        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder();
+        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder().addEligibleItemIds("healing_pill");
         // slot 0: filled
         qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder()
                 .setEntry(Envelope.QuickSlotEntry.newBuilder()
+                        .setInstanceId(4_294_967_338L)
+                        .setStackCount(2)
                         .setItemId("healing_pill")
                         .setDisplayName("灵息丸")
                         .setCastDurationMs(500)));
-        // slots 1-8: empty
-        for (int i = 1; i < 9; i++) {
+        // 首格有绑定，其余槽为空。
+        for (int i = 1; i < com.bong.client.combat.QuickSlotConfig.SLOT_COUNT; i++) {
             qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder());
         }
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < com.bong.client.combat.QuickSlotConfig.SLOT_COUNT; i++) {
             qsc.addCooldownUntilMs(0);
         }
+        qsc.setAckRequestId("bind-1");
+        qsc.setBindAccepted(true);
 
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setQuickSlotConfig(qsc).build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("quickslot_config", json.get("type").getAsString());
+        assertEquals("bind-1", json.get("ack_request_id").getAsString());
+        assertTrue(json.get("bind_accepted").getAsBoolean());
 
         JsonArray slots = json.getAsJsonArray("slots");
-        assertEquals(9, slots.size(), "should have 9 slots");
+        assertEquals(com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, slots.size());
 
         // slot 0: unwrapped from wrapper — should have item_id directly
         assertTrue(slots.get(0).isJsonObject(), "filled slot should be an object");
@@ -1128,10 +1176,26 @@ class ProtoServerDataBridgeTest {
         assertFalse(slot0.has("entry"),
                 "wrapper 'entry' field should be removed after unwrapping");
 
-        // slots 1-8: empty wrapper {} → JsonNull
-        for (int i = 1; i < 9; i++) {
+        // 空 wrapper {} → JsonNull
+        for (int i = 1; i < slots.size(); i++) {
             assertTrue(slots.get(i).isJsonNull(),
                     "empty slot " + i + " should be null (not empty object {})");
+        }
+
+        try {
+            var router = ServerDataRouter.createDefault();
+            assertTrue(router.route(json.toString(), 0).isHandled());
+            var config = com.bong.client.combat.QuickUseSlotStore.snapshot();
+            assertEquals(4_294_967_338L, config.slot(0).instanceId());
+            assertEquals(2, config.slot(0).stackCount());
+            assertTrue(config.allowsItem("healing_pill"));
+            qsc.setSlots(0, Envelope.OptionalQuickSlotEntry.newBuilder());
+            var empty = Envelope.ServerDataEnvelope.newBuilder().setQuickSlotConfig(qsc).build();
+            assertTrue(router.route(bridgeAndParse(empty).toString(), 0).isHandled());
+            assertNull(com.bong.client.combat.QuickUseSlotStore.snapshot().slot(0),
+                "服务器移除最后一份实例后必须清空 HUD Store");
+        } finally {
+            com.bong.client.combat.QuickUseSlotStore.resetForTests();
         }
     }
 
@@ -1158,11 +1222,7 @@ class ProtoServerDataBridgeTest {
                                 .setDisplayName("火球术")
                                 .setCastDurationMs(2000)
                                 .setCooldownMs(5000))));
-        // slots 2-8: empty
-        for (int i = 2; i < 9; i++) {
-            sbc.addSlots(Envelope.OptionalSkillBarEntry.newBuilder());
-        }
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < SkillBarConfig.SLOT_COUNT; i++) {
             sbc.addCooldownUntilMs(0);
         }
 
@@ -1188,11 +1248,6 @@ class ProtoServerDataBridgeTest {
         assertEquals("skill", slot1.get("kind").getAsString());
         assertEquals("fireball", slot1.get("skill_id").getAsString());
 
-        // slots 2-8: null
-        for (int i = 2; i < 9; i++) {
-            assertTrue(slots.get(i).isJsonNull(),
-                    "empty slot " + i + " should be null");
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1371,7 +1426,7 @@ class ProtoServerDataBridgeTest {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setCastSync(Envelope.CastSync.newBuilder()
                         .setPhase(Envelope.CastPhase.CAST_PHASE_CASTING)
-                        .setSlot(3)
+                        .setSlot(1)
                         .setDurationMs(1500)
                         .setStartedAtMs(1_700_000_000_000L)
                         .setOutcome(Envelope.CastOutcome.CAST_OUTCOME_NONE))
@@ -2122,6 +2177,531 @@ class ProtoServerDataBridgeTest {
                 + "HudRealmGate.tier() 小写后比对），否则所有境界门控 HUD 恒判醒灵");
     }
 
+    // ─── plan-bughunt-niche-guardian-proto-kind: guardian_kind 顶层枚举 ─────
+    // niche_guardian_fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_
+    // 前缀，玩家会在灵龛守护 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET"。
+
+    @Test
+    void bridgeNicheGuardianFatigueStripsGuardianKindPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_PUPPET)
+                        .setChargesRemaining(4))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_fatigue", json.get("type").getAsString());
+        assertEquals("puppet", json.get("guardian_kind").getAsString(),
+                "guardian_kind 必须从 GUARDIAN_KIND_PUPPET 剥成 'puppet'（SocialServerDataHandler."
+                + "handleNicheGuardianFatigue 只认 legacy snake_case），否则 HUD/事件流显示裸"
+                + "proto 常量");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenStripsMultiSegmentGuardianKind() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("niche_guardian_broken", json.get("type").getAsString());
+        assertEquals("zhenfa_trap", json.get("guardian_kind").getAsString(),
+                "多段 GUARDIAN_KIND_ZHENFA_TRAP 必须整体剥成 'zhenfa_trap'（保留下划线分段），"
+                + "只测 PUPPET 会漏掉多段 case");
+    }
+
+    @Test
+    void bridgeNicheGuardianRouteUpdatesGuardianStoreWithoutRawEnum() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_BONDED_DAOXIANG)
+                        .setChargesRemaining(2))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_guardian_fatigue: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        assertTrue(NicheGuardianStore.guardianStatuses().containsKey("bonded_daoxiang"),
+                "真实 proto bytes 经 bridge+router 后 NicheGuardianStore 只应出现 'bonded_daoxiang' "
+                + "key，不应出现 'GUARDIAN_KIND_BONDED_DAOXIANG'（否则灵龛守护 HUD 泄漏 proto 常量）");
+        assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
+                .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
+                "NicheGuardianStore 不应出现任何裸 GUARDIAN_KIND_ 前缀 key");
+
+        NicheGuardianStore.GuardianStatus status =
+                NicheGuardianStore.guardianStatuses().get("bonded_daoxiang");
+        assertNotNull(status, "fatigue route 必须写入规范化后的守护状态");
+        assertEquals(2, status.chargesRemaining(), "fatigue route 必须保留剩余触发次数");
+        assertFalse(status.broken(), "fatigue 不得误把守护状态标成 broken");
+        assertEquals(List.of("bonded_daoxiang x2"), NicheGuardianPanel.buildLines(),
+                "常驻守护 HUD 必须显示 legacy snake_case，不能泄漏 proto 枚举");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(), "fatigue route 必须生成且只生成一条玩家可见事件");
+        UnifiedEvent event = events.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, event.channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, event.priority());
+        assertEquals("niche_guardian_fatigue:bonded_daoxiang", event.sourceTag());
+        assertEquals("守家载体损耗：bonded_daoxiang 剩余 2 次", event.text(),
+                "事件流文本必须使用规范化 guardian_kind");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenRouteRecordsNormalizedBrokenStateAndIntruder() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_guardian_broken: " + result.errorMessage());
+        assertFalse(result.legacyJson().contains("GUARDIAN_KIND_"),
+                "proto bytes 经 bridge 后不得向 router/HUD 泄漏 GUARDIAN_KIND_ 原始枚举");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "niche_guardian_broken 应完成 bridge→router 路由：" + route.logMessage());
+
+        NicheGuardianStore.GuardianStatus status = NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(status,
+                "broken 路由必须用规范化后的 'zhenfa_trap' key 更新 NicheGuardianStore");
+        assertEquals("zhenfa_trap", status.guardianKind(),
+                "HUD 消费的 GuardianStatus.guardianKind 不得保留 proto 枚举前缀");
+        assertEquals(0, status.chargesRemaining(), "broken 守护状态的剩余次数必须归零");
+        assertTrue(status.broken(), "niche_guardian_broken 必须把守护状态转换为 broken=true");
+        assertEquals(1, NicheGuardianStore.intrusionAlerts().size(),
+                "broken 路由必须同时登记一条入侵告警供 HUD 展示");
+        assertEquals("char:raider", NicheGuardianStore.intrusionAlerts().get(0).intruderId(),
+                "入侵告警必须保留 proto payload 中的 intruder_id");
+        assertFalse(NicheGuardianStore.guardianStatuses().keySet().stream()
+                .anyMatch(key -> key.startsWith("GUARDIAN_KIND_")),
+                "broken route 完成后 store 中不得出现裸 GUARDIAN_KIND_ key");
+        assertEquals(List.of("zhenfa_trap x0 broken", "龛侵 char:raider 物品 0"),
+                NicheGuardianPanel.buildLines(),
+                "常驻守护 HUD 必须同时显示规范化 broken 状态与入侵者");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(), "broken route 必须生成且只生成一条玩家可见事件");
+        UnifiedEvent event = events.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, event.channel());
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, event.priority());
+        assertEquals("niche_guardian_broken:zhenfa_trap", event.sourceTag());
+        assertEquals("守家载体破损：zhenfa_trap", event.text(),
+                "broken 事件流文本必须使用规范化 guardian_kind");
+    }
+
+    @Test
+    void bridgeNicheGuardianSameKindTransitionsFromFatigueToBrokenWithoutDuplicateState() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        Envelope.ServerDataEnvelope fatigueEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setChargesRemaining(3))
+                .build();
+        ProtoServerDataBridge.BridgeResult fatigueResult =
+                ProtoServerDataBridge.bridge(fatigueEnvelope.toByteArray());
+        assertTrue(fatigueResult.isSuccess(),
+                "fatigue proto bytes 必须成功进入 bridge：" + fatigueResult.errorMessage());
+        assertFalse(fatigueResult.legacyJson().contains("GUARDIAN_KIND_"),
+                "fatigue bridge 输出不得泄漏 proto enum 前缀");
+        ServerDataRouter.RouteResult fatigueRoute = router.route(
+                fatigueResult.legacyJson(),
+                fatigueResult.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(fatigueRoute.isHandled(),
+                "fatigue proto→bridge→router 必须被处理：" + fatigueRoute.logMessage());
+
+        assertEquals(Set.of("zhenfa_trap"), NicheGuardianStore.guardianStatuses().keySet(),
+                "fatigue 后 store 必须且只能保留一个规范化 guardian key");
+        NicheGuardianStore.GuardianStatus fatigueStatus =
+                NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(fatigueStatus, "fatigue 后必须存在 zhenfa_trap 状态");
+        assertEquals(3, fatigueStatus.chargesRemaining(),
+                "连续转换前 fatigue 状态必须保留正数 chargesRemaining");
+        assertFalse(fatigueStatus.broken(),
+                "连续转换前 fatigue 状态必须是 broken=false");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "仅 fatigue 时不得提前生成 broken intrusion alert");
+        assertEquals(List.of("zhenfa_trap x3"), NicheGuardianPanel.buildLines(),
+                "fatigue HUD 必须只显示当前正数 charges，不得有重复或 broken 旧态");
+
+        List<UnifiedEvent> fatigueEvents = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, fatigueEvents.size(), "fatigue 阶段必须且只能产生第一条统一事件");
+        UnifiedEvent fatigueEvent = fatigueEvents.get(0);
+        assertEquals(UnifiedEvent.Channel.SOCIAL, fatigueEvent.channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, fatigueEvent.priority());
+        assertEquals("niche_guardian_fatigue:zhenfa_trap", fatigueEvent.sourceTag());
+        assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", fatigueEvent.text());
+        assertEquals(1, fatigueEvent.foldCount(),
+                "fatigue route 不得重复发布后被 UnifiedEventStream 折叠成假单条");
+        assertEquals(fatigueEvent.text(), fatigueEvent.displayText(),
+                "fatigue 玩家文本不得出现 ×N 折叠后缀");
+
+        Envelope.ServerDataEnvelope brokenEnvelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_ZHENFA_TRAP)
+                        .setIntruderId("char:raider"))
+                .build();
+        ProtoServerDataBridge.BridgeResult brokenResult =
+                ProtoServerDataBridge.bridge(brokenEnvelope.toByteArray());
+        assertTrue(brokenResult.isSuccess(),
+                "broken proto bytes 必须成功进入 bridge：" + brokenResult.errorMessage());
+        assertFalse(brokenResult.legacyJson().contains("GUARDIAN_KIND_"),
+                "broken bridge 输出不得泄漏 proto enum 前缀");
+        ServerDataRouter.RouteResult brokenRoute = router.route(
+                brokenResult.legacyJson(),
+                brokenResult.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(brokenRoute.isHandled(),
+                "broken proto→bridge→router 必须被处理：" + brokenRoute.logMessage());
+
+        assertEquals(Set.of("zhenfa_trap"), NicheGuardianStore.guardianStatuses().keySet(),
+                "broken 必须原位替换同一规范化 key，不得保留旧 key 或产生重复状态");
+        NicheGuardianStore.GuardianStatus brokenStatus =
+                NicheGuardianStore.guardianStatuses().get("zhenfa_trap");
+        assertNotNull(brokenStatus, "broken 后同一 zhenfa_trap 状态必须仍存在");
+        assertEquals(0, brokenStatus.chargesRemaining(),
+                "broken 必须把同一 guardian 的旧正数 charges 归零");
+        assertTrue(brokenStatus.broken(),
+                "broken 必须把同一 guardian 从 broken=false 转成 true");
+
+        List<NicheGuardianStore.NicheIntrusionAlert> alerts = NicheGuardianStore.intrusionAlerts();
+        assertEquals(1, alerts.size(), "fatigue→broken 连续链最终必须且只能产生一条入侵告警");
+        assertEquals("char:raider", alerts.get(0).intruderId(),
+                "连续链的 broken 告警必须保留 intruder_id");
+        assertEquals(List.of(), alerts.get(0).itemsTaken(),
+                "guardian broken 告警不应伪造被取走物品");
+        assertEquals(0.0, alerts.get(0).taintDelta(),
+                "guardian broken 告警不应伪造污染增量");
+
+        List<String> finalHud = NicheGuardianPanel.buildLines();
+        assertEquals(List.of("zhenfa_trap x0 broken", "龛侵 char:raider 物品 0"), finalHud,
+                "broken 后 HUD 必须只显示最终状态与单条告警，不得残留 x3 或重复 guardian 行");
+        assertFalse(finalHud.stream().anyMatch(line -> line.contains("x3") || line.contains("GUARDIAN_KIND_")),
+                "最终 HUD 不得残留 fatigue charges 或 proto enum 前缀");
+
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(2, events.size(),
+                "连续 fatigue→broken 必须按发生顺序保留恰好两条统一事件");
+        assertEquals(UnifiedEvent.Channel.SOCIAL, events.get(0).channel());
+        assertEquals(UnifiedEvent.Priority.P2_NORMAL, events.get(0).priority());
+        assertEquals("niche_guardian_fatigue:zhenfa_trap", events.get(0).sourceTag());
+        assertEquals("守家载体损耗：zhenfa_trap 剩余 3 次", events.get(0).text());
+        assertEquals(1, events.get(0).foldCount(),
+                "最终事件流中的 fatigue 事件不得折叠重复发布");
+        assertEquals(events.get(0).text(), events.get(0).displayText(),
+                "最终 fatigue displayText 不得带 ×N 后缀");
+        assertEquals(UnifiedEvent.Channel.SOCIAL, events.get(1).channel());
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, events.get(1).priority());
+        assertEquals("niche_guardian_broken:zhenfa_trap", events.get(1).sourceTag());
+        assertEquals("守家载体破损：zhenfa_trap", events.get(1).text());
+        assertEquals(1, events.get(1).foldCount(),
+                "最终事件流中的 broken 事件不得折叠重复发布");
+        assertEquals(events.get(1).text(), events.get(1).displayText(),
+                "最终 broken displayText 不得带 ×N 后缀");
+        assertFalse(events.stream().anyMatch(event -> event.sourceTag().contains("GUARDIAN_KIND_")
+                || event.text().contains("GUARDIAN_KIND_")),
+                "连续链统一事件不得泄漏 proto enum 前缀");
+    }
+
+    @Test
+    void bridgeNicheGuardianFatigueWithoutGuardianKindRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setChargesRemaining(4))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should safely accept fatigue payload without guardian_kind");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("guardian_kind"),
+                "未设置 guardian_kind 时 proto3 JSON 应省略该字段，不能伪造有效 wire 值");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "缺 guardian_kind 的 fatigue payload 必须安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "缺 guardian_kind 的 payload 不得污染守护状态 store");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "缺 guardian_kind 的 payload 不得产生入侵/HUD 事件");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "缺 guardian_kind 的 payload 不得写入统一事件流");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "缺 guardian_kind 时 HUD 必须保持空态，不能显示 unspecified");
+    }
+
+    @Test
+    void bridgeNicheGuardianBrokenUnspecifiedKindRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianBroken(Envelope.NicheGuardianBroken.newBuilder()
+                        .setGuardianKind(Envelope.GuardianKind.GUARDIAN_KIND_UNSPECIFIED)
+                        .setIntruderId("char:raider"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should safely accept explicit GUARDIAN_KIND_UNSPECIFIED");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("guardian_kind"),
+                "proto3 默认枚举 UNSPECIFIED 即使由 builder 显式设置也应在 bytes→JSON 时省略，"
+                + "不能被 normalize 成可路由的 'unspecified'");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "GUARDIAN_KIND_UNSPECIFIED 的 broken payload 必须安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "UNSPECIFIED 不得创建名为 'unspecified' 或带 proto 前缀的守护状态");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "UNSPECIFIED broken payload 不得仅凭 intruder_id 产生入侵/HUD 事件");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "UNSPECIFIED 不得生成名为 unspecified 的统一事件");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "UNSPECIFIED 必须保留 HUD 空态，不能显示 unspecified");
+    }
+
+    @Test
+    void bridgeNicheGuardianUnknownKindNumberRoutesNoOpWithoutStatePollution() {
+        NicheGuardianStore.resetForTests();
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheGuardianFatigue(Envelope.NicheGuardianFatigue.newBuilder()
+                        .setGuardianKindValue(999)
+                        .setChargesRemaining(1))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should preserve protobuf unknown-enum forward compatibility");
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertTrue(json.get("guardian_kind").getAsJsonPrimitive().isNumber(),
+                "未知 enum number 应保持数值，不能伪装成 legacy guardian_kind 字符串");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "未知 guardian enum number 必须由 legacy string gate 安全 no-op，实际：" + route.logMessage());
+        assertTrue(NicheGuardianStore.guardianStatuses().isEmpty(),
+                "未知 enum number 不得污染守护状态 store");
+        assertTrue(NicheGuardianStore.intrusionAlerts().isEmpty(),
+                "未知 enum number 不得产生入侵告警");
+        assertEquals(0, UnifiedEventStore.stream().size(),
+                "未知 enum number 不得写入统一事件流");
+        assertEquals(List.of("无守家载体"), NicheGuardianPanel.buildLines(),
+                "未知 enum number 必须保留 HUD 空态");
+    }
+
+    // ─── plan-bughunt-season-state-proto-enum: player_state.season_state.season 嵌套枚举 ───
+    // bridgePlayerState 之前只 normalizeRealmField("realm")，season_state.season 全名
+    // "SEASON_WINTER" 未剥前缀，导致 SeasonState.Phase.fromWire 解析失败，
+    // SeasonStateStore 永远停在默认夏季（或旧值）。
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateSummer() {
+        assertEquals(1, Envelope.Season.SEASON_SUMMER.getNumber(),
+                "SEASON_SUMMER 的 protobuf wire numeric 必须固定为 1，重编号应立即撞红");
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(1)
+                                .setTickIntoPhase(100)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("summer",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "SEASON_SUMMER 必须剥成唯一合法 wire 值 'summer'；四个有效 Season variant "
+                + "都需要专属 pin，不能靠 WINTER 用例推定单段前缀分支正确");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateWinter() {
+        assertEquals(3, Envelope.Season.SEASON_WINTER.getNumber(),
+                "SEASON_WINTER 的 protobuf wire numeric 必须固定为 3，重编号应立即撞红");
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(3)
+                                .setTickIntoPhase(100)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("winter",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "season_state.season 必须从 SEASON_WINTER 剥成 'winter'（SeasonState.Phase."
+                + "fromWire 只认小写无前缀），否则 SeasonStateStore 永远停在默认夏季");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateSummerToWinter() {
+        assertEquals(2, Envelope.Season.SEASON_SUMMER_TO_WINTER.getNumber(),
+                "SEASON_SUMMER_TO_WINTER 的 protobuf wire numeric 必须固定为 2，重编号应立即撞红");
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(2)
+                                .setTickIntoPhase(1)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("summer_to_winter",
+                json.getAsJsonObject("season_state").get("season").getAsString(),
+                "多段 SEASON_SUMMER_TO_WINTER 必须整体剥成 'summer_to_winter'（保留下划线分段），"
+                + "只测 WINTER 会漏掉多段 case");
+    }
+
+    @Test
+    void bridgePlayerStateNormalizesSeasonStateWinterToSummer() {
+        assertEquals(4, Envelope.Season.SEASON_WINTER_TO_SUMMER.getNumber(),
+                "SEASON_WINTER_TO_SUMMER 的 protobuf wire numeric 必须固定为 4，重编号应立即撞红");
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1")
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(4)
+                                .setTickIntoPhase(1)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("winter_to_summer",
+                json.getAsJsonObject("season_state").get("season").getAsString());
+    }
+
+    @Test
+    void bridgePlayerStateUnspecifiedSeasonStaysUnparseable() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(completeSeasonPlayerState()
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_UNSPECIFIED)
+                                .setTickIntoPhase(0)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        String season = json.getAsJsonObject("season_state").get("season").getAsString();
+        assertEquals("unspecified", season,
+                "SEASON_UNSPECIFIED 剥前缀后应为 'unspecified'（非法 wire 值），"
+                + "不得被误映射为 'summer' 掩盖坏包");
+        assertTrue(com.bong.client.state.SeasonState.Phase.fromWire(season).isEmpty(),
+                "'unspecified' 必须让 SeasonState.Phase.fromWire 返回空，SeasonStateStore 不应"
+                + "被伪造出的夏季覆盖");
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "非法可选 season 不应吞掉其余合法 player_state：" + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "SEASON_UNSPECIFIED 必须在 router 的 season 分支安全 no-op，不能覆盖现有 store");
+    }
+
+    @Test
+    void bridgePlayerStateMissingSeasonStateLeavesSeasonDispatchEmpty() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(completeSeasonPlayerState())
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "missing optional season_state must still bridge: " + result.errorMessage());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertFalse(json.has("season_state"),
+                "未设置的 nested season_state 必须保持缺席，不能由 bridge 伪造默认夏季对象");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "missing optional season must not discard player_state: " + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "missing season_state 应只让季节分支 no-op，不能产生默认值覆盖现有 store");
+    }
+
+    @Test
+    void bridgePlayerStateUnknownNumericSeasonStaysNumericAndDoesNotDispatchSeason() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(completeSeasonPlayerState()
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeasonValue(99)
+                                .setTickIntoPhase(10)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(3)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "unknown enum numeric must not crash proto bridge: " + result.errorMessage());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        JsonElement season = json.getAsJsonObject("season_state").get("season");
+        assertTrue(season.isJsonPrimitive() && season.getAsJsonPrimitive().isNumber(),
+                "protobuf unknown enum numeric 应保持 JSON number，不能被 SEASON_ helper 误当字符串改写");
+        assertEquals(99, season.getAsInt(), "bridge 必须原样保留未知 numeric，便于诊断未来 schema drift");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "unknown optional season must not discard valid player_state: " + route.logMessage());
+        assertTrue(route.dispatch().seasonState().isEmpty(),
+                "unknown numeric season 必须在 router 的 season 分支 no-op，不能映射成任一合法季节");
+    }
+
+    @Test
+    void bridgePlayerStateRouteUpdatesSeasonStateStoreDispatch() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setPlayer("offline:Steve")
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setSpiritQi(50.0)
+                        .setSpiritQiMax(100.0)
+                        .setZone("zone-1")
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1))
+                        .setSeasonState(Envelope.SeasonState.newBuilder()
+                                .setSeason(Envelope.Season.SEASON_WINTER)
+                                .setTickIntoPhase(42)
+                                .setPhaseTotalTicks(1000)
+                                .setYearIndex(2)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for player_state: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+        assertTrue(route.dispatch().seasonState().isPresent(),
+                "真实 proto bytes 经 bridge+router 后 dispatch.seasonState() 必须非空，"
+                + "否则 BongNetworkHandler.applyDispatch 不写 SeasonStateStore，季节视觉停在默认夏季");
+        assertEquals(com.bong.client.state.SeasonState.Phase.WINTER,
+                route.dispatch().seasonState().get().phase());
+    }
+
     @Test
     void bridgeSocialExposureStripsKindEnumPrefix() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
@@ -2245,16 +2825,67 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
-    void bridgeAlchemyOutcomeResolvedStripsBucketEnumPrefix() {
+    void bridgeAlchemyOutcomeResolvedNormalizesBucketAndToxinColor() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
-                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT))
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_TURBID))
                 .build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("perfect", json.get("bucket").getAsString(),
                 "bucket 必须剥成 'perfect'（AlchemyProgressHudPlanner/AlchemyScreen switch），"
                 + "否则炼丹结果 HUD/试药史恒显示灰色默认'炼废'标签");
+        assertEquals("Turbid", json.get("toxin_color").getAsString(),
+                "toxin_color 必须符合 TypeBox ColorKind 的 PascalCase 字面量");
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedOmitsAbsentOrUnspecifiedToxinColor() {
+        for (Envelope.AlchemyOutcomeResolved outcome : new Envelope.AlchemyOutcomeResolved[] {
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .build(),
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_UNSPECIFIED)
+                        .build()
+        }) {
+            JsonObject json = bridgeAndParse(Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(outcome)
+                    .build());
+            assertFalse(json.has("toxin_color"),
+                    "absent/unspecified optional toxin_color 不得伪造成 TypeBox 非法值");
+        }
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedPinsEveryValidColorKindVariantToPascalCase() {
+        record ColorKindWire(Common.ColorKind wire, String pascalCase) {}
+        List<ColorKindWire> variants = List.of(
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SHARP, "Sharp"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_HEAVY, "Heavy"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_MELLOW, "Mellow"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SOLID, "Solid"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_LIGHT, "Light"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INTRICATE, "Intricate"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_GENTLE, "Gentle"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INSIDIOUS, "Insidious"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_VIOLENT, "Violent"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_TURBID, "Turbid"));
+
+        for (ColorKindWire variant : variants) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
+                            .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                            .setToxinColor(variant.wire))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(variant.pascalCase, json.get("toxin_color").getAsString(),
+                    () -> variant.wire + " 必须剥成 TypeBox ColorKind PascalCase '" + variant.pascalCase
+                            + "'；每个有效变体都要命中规范化，不能只有 TURBID 单变体特判而其余返回 "
+                            + "原始 proto 字面量/错误拼写");
+        }
     }
 
     @Test
@@ -2757,7 +3388,8 @@ class ProtoServerDataBridgeTest {
                         .addEntries(Envelope.TechniqueEntry.newBuilder()
                                 .setId("technique.flying_sword")
                                 .setDisplayName("御剑术")
-                                .setGrade("earth")))
+                                .setGrade("earth")
+                                .setQiCost(0.4f)))
                 .build();
 
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
@@ -2768,6 +3400,7 @@ class ProtoServerDataBridgeTest {
 
         List<TechniquesListPanel.Technique> snapshot = TechniquesListPanel.snapshot();
         assertEquals(1, snapshot.size());
+        assertEquals(0.4f, snapshot.get(0).qiCost());
         assertTrue(snapshot.get(0).aliases().isEmpty(),
                 "aliases 在 proto TechniqueEntry 里从未存在过，恒空列表（无源数据可补，属"
                 + "已知优雅降级——alias 搜索永远不命中，但 id/display_name 搜索仍可用）");
@@ -3218,6 +3851,23 @@ class ProtoServerDataBridgeTest {
         return JsonParser.parseString(result.legacyJson()).getAsJsonObject();
     }
 
+    private static Envelope.PlayerState.Builder completeSeasonPlayerState() {
+        return Envelope.PlayerState.newBuilder()
+                .setPlayer("offline:SeasonAudit")
+                .setRealm(Common.Realm.REALM_CONDENSE)
+                .setSpiritQi(50.0)
+                .setSpiritQiMax(100.0)
+                .setKarma(0.2)
+                .setCompositePower(0.35)
+                .setZone("zone-1")
+                .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                        .setCombat(0.2)
+                        .setWealth(0.4)
+                        .setSocial(0.65)
+                        .setKarma(0.2)
+                        .setTerritory(0.1));
+    }
+
     /**
      * 定位 {@code ServerDataEnvelope.payload} oneof 的 descriptor。protobuf-java 4.28.3 的
      * {@code Descriptor} 没有 {@code findOneofByName}（旧版本 API 里有，这个版本没有），
@@ -3231,5 +3881,181 @@ class ProtoServerDataBridgeTest {
             }
         }
         return null;
+    }
+
+    // ─── cultivation_detail: AoS→SoA meridian 解包（plan-race-system-v1 P1c 回归护栏）──
+    //
+    // wire 上 meridians 是 repeated MeridianState（AoS，每条自带 snake_case channel id）；
+    // CultivationDetailHandler 期望 SoA——channel_ids[] + opened[]/flow_rate[]/... 并行数组。
+    // bridge 负责 AoS→SoA 解包。历史回归：bridge 一直用 pre-P1c 的固定 20 位枚举名索引表
+    // （"MERIDIAN_ID_LUNG"）映射 P1c 的 string id（"lung"）→ 每条查不到 → 全跳过 → opened 恒
+    // false（玩家 /meridian open_all 后 UI 仍显示未开启），且不产出 channel_ids、错把
+    // target_meridian 转成 int 下标。以下测试锁死 SoA 解包契约。
+
+    private static Envelope.ServerDataEnvelope cultivationEnvelope(Envelope.CultivationDetail detail) {
+        return Envelope.ServerDataEnvelope.newBuilder().setCultivationDetail(detail).build();
+    }
+
+    private static Envelope.MeridianState meridian(String id, boolean opened) {
+        return Envelope.MeridianState.newBuilder().setId(id).setOpened(opened).build();
+    }
+
+    private static JsonObject bridgeCultivation(Envelope.CultivationDetail detail) {
+        ProtoServerDataBridge.BridgeResult result =
+                ProtoServerDataBridge.bridge(cultivationEnvelope(detail).toByteArray());
+        assertTrue(result.isSuccess(), () -> "bridge cultivation_detail 应成功，实际: " + result.legacyJson());
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("cultivation_detail", json.get("type").getAsString());
+        return json;
+    }
+
+    private static List<String> stringList(JsonArray arr) {
+        List<String> out = new ArrayList<>(arr.size());
+        for (JsonElement el : arr) out.add(el.getAsString());
+        return out;
+    }
+
+    // 用户实测 bug：/meridian open_all 后仍显示"未开启经脉"。旧 bridge 用 stale 索引表映射
+    // snake_case id → 全跳过 → opened 恒 false。锁死：20 条全 opened 原样透传。
+    @Test
+    void openAllMeridiansSurviveBridgeAsOpened() {
+        Envelope.CultivationDetail.Builder detail = Envelope.CultivationDetail.newBuilder();
+        for (MeridianChannel ch : MeridianChannel.values()) {
+            detail.addMeridians(meridian(ch.channelId(), true));
+        }
+        JsonObject json = bridgeCultivation(detail.build());
+
+        JsonArray opened = json.getAsJsonArray("opened");
+        JsonArray channelIds = json.getAsJsonArray("channel_ids");
+        assertEquals(20, opened.size(),
+                "20 条经脉必须全部出现在 opened 数组（旧 bridge 因索引表失配全跳过 → 空数组）");
+        assertEquals(20, channelIds.size(), "channel_ids 必须与 opened 同长同序");
+        for (int i = 0; i < opened.size(); i++) {
+            assertTrue(opened.get(i).getAsBoolean(),
+                    "channel_ids[" + i + "]=" + channelIds.get(i).getAsString()
+                            + " open_all 后应为 opened=true，实测 false 即回归");
+        }
+        assertFalse(json.has("meridians"), "AoS meridians 键必须已被解包移除");
+    }
+
+    // 真 e2e：proto bytes → bridge → ServerDataEnvelope.parse → CultivationDetailHandler →
+    // MeridianStateStore。锁死整条链路——open_all 后每条 channel 在 store 里 blocked=false。
+    @Test
+    void openAllReachesStoreUnblockedEndToEnd() {
+        Envelope.CultivationDetail.Builder detail = Envelope.CultivationDetail.newBuilder();
+        for (MeridianChannel ch : MeridianChannel.values()) {
+            detail.addMeridians(meridian(ch.channelId(), true));
+        }
+        try {
+            MeridianStateStore.resetForTests();
+            BodyPlanLayoutStore.resetForTests();
+            PlayerRaceIdentityStore.resetForTests();
+
+            ProtoServerDataBridge.BridgeResult result =
+                    ProtoServerDataBridge.bridge(cultivationEnvelope(detail.build()).toByteArray());
+            assertTrue(result.isSuccess());
+            String legacyJson = result.legacyJson();
+            ServerPayloadParseResult parsed = ServerDataEnvelope.parse(legacyJson, legacyJson.length());
+            assertTrue(parsed.isSuccess(), () -> "bridged json 应能解析成 envelope: " + parsed.errorMessage());
+
+            new CultivationDetailHandler().handle(parsed.envelope());
+
+            MeridianBody body = MeridianStateStore.snapshot();
+            for (MeridianChannel ch : MeridianChannel.values()) {
+                ChannelStateProbe.assertUnblocked(body, ch);
+            }
+        } finally {
+            MeridianStateStore.resetForTests();
+            BodyPlanLayoutStore.resetForTests();
+            PlayerRaceIdentityStore.resetForTests();
+            SkillSetStore.resetForTests();
+            SkillMilestoneStore.resetForTests();
+        }
+    }
+
+    /** 小工具：断言某 channel 已在 store 里、且未被阻塞（打通即 blocked=false）。 */
+    private static final class ChannelStateProbe {
+        static void assertUnblocked(MeridianBody body, MeridianChannel ch) {
+            var state = body.channel(ch);
+            assertNotNull(state, ch.channelId() + " 打通后应存在于 MeridianStateStore");
+            assertFalse(state.blocked(),
+                    ch.channelId() + " 打通后 UI 应显示未阻塞（blocked=false），实测阻塞即回归");
+        }
+    }
+
+    // 每 channel 字段按 meridians 顺序原样映射（不再经固定位置重排），channel_ids 保序。
+    @Test
+    void perChannelFieldsPreserveOrderAndValues() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(Envelope.MeridianState.newBuilder()
+                        .setId("lung").setOpened(true).setFlowRate(2.5).setFlowCapacity(9.0)
+                        .setIntegrity(0.9).setOpenProgress(1.0).setCracksCount(0).build())
+                .addMeridians(Envelope.MeridianState.newBuilder()
+                        .setId("ren").setOpened(false).setFlowRate(0.0).setFlowCapacity(3.0)
+                        .setIntegrity(0.3).setOpenProgress(0.42).setCracksCount(2).build())
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+
+        assertIterableEquals(List.of("lung", "ren"), stringList(json.getAsJsonArray("channel_ids")),
+                "channel_ids 顺序必须等于 meridians 顺序");
+        assertTrue(json.getAsJsonArray("opened").get(0).getAsBoolean());
+        assertFalse(json.getAsJsonArray("opened").get(1).getAsBoolean());
+        assertEquals(2.5, json.getAsJsonArray("flow_rate").get(0).getAsDouble(), 1e-9);
+        assertEquals(3.0, json.getAsJsonArray("flow_capacity").get(1).getAsDouble(), 1e-9);
+        assertEquals(0.9, json.getAsJsonArray("integrity").get(0).getAsDouble(), 1e-9);
+        assertEquals(0.42, json.getAsJsonArray("open_progress").get(1).getAsDouble(), 1e-9);
+        assertEquals(2, json.getAsJsonArray("cracks_count").get(1).getAsInt());
+    }
+
+    // 非 humanoid 构型（P5 飞鲸等）的 channel id 不在 20 条 TCM 之列；旧固定索引表会整条丢弃。
+    // 新解包必须原样透传（是否有 UI 由 handler 侧决定，不是 bridge 丢数据）。
+    @Test
+    void nonHumanoidChannelIdPassesThroughInsteadOfBeingDropped() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("whale_dorsal_line", true))
+                .addMeridians(meridian("lung", true))
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertIterableEquals(List.of("whale_dorsal_line", "lung"),
+                stringList(json.getAsJsonArray("channel_ids")),
+                "非 humanoid channel 必须原样保留在 channel_ids（旧 bridge 会丢弃）");
+        assertEquals(2, json.getAsJsonArray("opened").size());
+        assertTrue(json.getAsJsonArray("opened").get(0).getAsBoolean());
+    }
+
+    // target_meridian 现为 channel id 字符串，client 直接 fromChannelId 解析——不再转 int。
+    @Test
+    void targetMeridianStaysStringChannelId() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("kidney", true))
+                .setTargetMeridian("kidney")
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertTrue(json.has("target_meridian"), "设了 target_meridian 应透传");
+        assertTrue(json.get("target_meridian").getAsJsonPrimitive().isString(),
+                "P1c 起 target_meridian 是 channel id 字符串，不再是 int 下标");
+        assertEquals("kidney", json.get("target_meridian").getAsString());
+    }
+
+    // proto optional string 未设 → 不应出现 target_meridian 键（空串边角也被剥）。
+    @Test
+    void targetMeridianUnsetIsAbsent() {
+        Envelope.CultivationDetail detail = Envelope.CultivationDetail.newBuilder()
+                .addMeridians(meridian("lung", false))
+                .build();
+        JsonObject json = bridgeCultivation(detail);
+        assertFalse(json.has("target_meridian"),
+                "未设 target_meridian 时不应出现该键（空串被剥），避免下游误当有效 channel");
+    }
+
+    // 边界：零条经脉不 crash，AoS 键被移除。
+    @Test
+    void emptyMeridiansHandledWithoutCrash() {
+        JsonObject json = bridgeCultivation(Envelope.CultivationDetail.newBuilder().build());
+        assertFalse(json.has("meridians"), "空 meridians 也应被解包移除，不残留 AoS 键");
+        if (json.has("channel_ids")) {
+            assertEquals(0, json.getAsJsonArray("channel_ids").size());
+            assertEquals(0, json.getAsJsonArray("opened").size());
+        }
     }
 }

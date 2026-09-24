@@ -6,8 +6,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillBarKeyRouterTest {
@@ -25,6 +27,55 @@ class SkillBarKeyRouterTest {
     void tearDown() {
         SkillBarStore.resetForTests();
         CastStateStore.resetForTests();
+    }
+
+    @Test
+    void disconnectClearRestoresFullNeutralStateAndPreservesListener() {
+        AtomicInteger notifications = new AtomicInteger();
+        SkillBarStore.addListener(config -> notifications.incrementAndGet());
+        SkillBarStore.replace(SkillBarConfig.of(
+            new SkillBarEntry[] { SkillBarEntry.item("earth_crumb", "土块", 0, 0, "") },
+            new long[] { 2_000L }
+        ));
+        SkillBarStore.setSelectedSlot(0);
+        assertEquals(1, notifications.get(), "前置：旧 session 写入必须通知长期 listener");
+
+        SkillBarStore.clearOnDisconnect();
+
+        assertSame(SkillBarConfig.empty(), SkillBarStore.snapshot(),
+            "断线必须恢复完整 empty config，而非只清一个槽位");
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot(),
+            "断线必须独立清除旧 session selected slot");
+        assertEquals(2, notifications.get(), "clear 必须通知且不得删除长期 listener");
+
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("fresh", "新物", 0, 0, ""));
+
+        assertEquals("fresh", SkillBarStore.snapshot().slot(1).id());
+        assertEquals(3, notifications.get(), "新 session 写入仍必须通知原 listener");
+    }
+
+    @Test
+    void unavailableSlotCannotSelectOrInterruptCasting() {
+        int locked = SkillBarConfig.SLOT_COUNT;
+        CastStateStore.beginSkillBarCast(0, 1000, 0);
+        CastState casting = CastStateStore.snapshot();
+
+        assertEquals(SkillBarKeyRouter.RouteResult.SLOT_UNAVAILABLE,
+            SkillBarKeyRouter.route(locked, 100, sent::add));
+        assertTrue(SkillBarKeyRouter.shouldCancelHotbarKey(locked), "未开放数字键不能落到原版隐藏栏");
+        assertSame(casting, CastStateStore.snapshot(), "未开放槽不能打断正在进行的施法");
+        assertTrue(sent.isEmpty());
+        SkillBarStore.setSelectedSlot(locked);
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot());
+    }
+
+    @Test
+    void dashSlotDoesNotCreateGenericCastState() {
+        SkillBarStore.replace(SkillBarConfig.empty().withSlot(0, SkillBarEntry.skill(
+            com.bong.client.movement.DashSkill.ID, "闪避", 0, 2000, "")));
+        assertEquals(SkillBarKeyRouter.RouteResult.CAST_SENT, SkillBarKeyRouter.route(0, 0, sent::add));
+        assertEquals(List.of(0), sent);
+        assertTrue(!CastStateStore.snapshot().isCasting(), "身法由 movement 驱动，不能留下通用施法中的假状态");
     }
 
     @Test

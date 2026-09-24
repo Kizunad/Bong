@@ -8,6 +8,7 @@ public record MovementState(
     Action action,
     ZoneKind zoneKind,
     long dashCooldownRemainingTicks,
+    long dashCooldownTotalTicks,
     double hitboxHeightBlocks,
     double staminaCurrent,
     double staminaMax,
@@ -23,6 +24,7 @@ public record MovementState(
         action = action == null ? Action.NONE : action;
         zoneKind = zoneKind == null ? ZoneKind.NORMAL : zoneKind;
         dashCooldownRemainingTicks = Math.max(0L, dashCooldownRemainingTicks);
+        dashCooldownTotalTicks = Math.max(0L, dashCooldownTotalTicks);
         hitboxHeightBlocks = finiteNonNegative(hitboxHeightBlocks);
         staminaCurrent = finiteNonNegative(staminaCurrent);
         staminaMax = Math.max(1.0, finiteNonNegative(staminaMax));
@@ -45,6 +47,7 @@ public record MovementState(
             Action.NONE,
             ZoneKind.NORMAL,
             0L,
+            0L,
             1.8,
             0.0,
             1.0,
@@ -64,6 +67,7 @@ public record MovementState(
             action,
             zoneKind,
             dashCooldownRemainingTicks,
+            dashCooldownTotalTicks,
             hitboxHeightBlocks,
             staminaCurrent,
             staminaMax,

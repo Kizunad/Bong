@@ -1,0 +1,27 @@
+# 粗铁矿 CuTie —— 特征点名清单
+#
+# 特征来源：`cu_tie.png` 物品原画与深板岩粗铁矿方块：
+# 1. mineral_lobes: 水滴卵形原矿互锁矿体（左瓣泥岩风化坡与右瓣深黑生铁金属断层）
+# 2. thermal_chasm_veins: 沿中央咬合裂谷深陷纵贯的曲折金橙地热火脉网
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+iron_void = [24, 18, 14]
+iron_dark = [42, 32, 26]
+iron_lit  = [98, 82, 74]
+iron_spec = [142, 126, 114]
+mud_mid   = [78, 58, 44]
+mud_lit   = [116, 88, 66]
+fire_deep = [158, 54, 18]
+fire_mid  = [226, 128, 32]
+fire_high = [255, 204, 88]
+
+[features]
+# 矿体互锁双瓣（泥岩与生铁）
+mineral_lobes = { elements = ["lobe_", "nodule_", "back_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 10000, SIDE_R = 10000 } }
+
+# 纵贯深谷火脉
+thermal_chasm_veins = { elements = ["chasm_", "vein_"], must_show_in = ["FRONT"], min_px = { FRONT = 2000 } }

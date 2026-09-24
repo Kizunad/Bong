@@ -1,0 +1,4 @@
+interface:
+  display_name: "BugFix 主干调度"
+  short_description: "并行闭环 skeleton bugfix、验证、PR 与 e2e"
+  default_prompt: "使用 $bugfix 持续调度并闭环 Bong 的 bug skeleton plan。"

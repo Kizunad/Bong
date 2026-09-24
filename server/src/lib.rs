@@ -44,6 +44,11 @@ pub mod audio;
 #[allow(dead_code)]
 pub mod body_plan;
 pub mod botany;
+// cast：R9 P1 C-13 contract-first registration shape。这里只暴露 inert
+// declarations/ledger/consumer interface；Wave 2 atomic activation 前不得接入生产
+// producer，也不得把它当作现有 SkillRegistry 的第二条 live path。
+#[allow(dead_code)]
+pub mod cast;
 pub mod cmd;
 pub mod coffin;
 pub mod combat;
@@ -93,9 +98,12 @@ pub mod qi_physics;
 // BONG_PREVIEW_MODE=1 env 下激活实际 system；register() 一定会注册 event 类型
 // 让 chat_collector 编译通过。
 pub mod preview;
+pub mod reach;
 #[allow(dead_code)]
 pub mod schema;
+pub mod server_readiness;
 pub mod shader;
+pub mod shutdown;
 pub mod skin;
 pub mod social;
 pub mod spiritwood;

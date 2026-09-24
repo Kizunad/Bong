@@ -20,6 +20,7 @@ use valence::prelude::{
     bevy_ecs, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Look, Position,
 };
 
+use crate::body_plan::{IntrinsicRace, RaceId};
 use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::npc::brain_whale::{WhaleDriftAction, WhaleDriftScorer};
@@ -204,6 +205,15 @@ pub fn spawn_whale_npc_at(
                 baseline_y: home_position.y,
                 ..Default::default()
             },
+            // plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 曾经零处 insert；飞鲸
+            // NPC 本体种族真源标记为独立的 "whale" 种族（`races.json` 现已把
+            // `whale.body_plan_id` 换成真非人 `whale.json`，见该文件）。注意：战斗
+            // 命中几何解析（`resolve_body_plan` Tier1）仍按 `FaunaTag::BeastKind`
+            // 经 `RaceRegistry::race_id_for_beast_kind` 派生（当前指向
+            // `beast_common`，沿用 humanoid 命中几何）——`IntrinsicRace` 是本体身份
+            // 标记，不参与、也不改变现有 Tier1 优先级，二者是两条独立契约
+            // （消费 `IntrinsicRace` 做几何解析归后续 plan，不在本 PR 范围）。
+            IntrinsicRace(RaceId::new("whale")),
             // 标记：narration system 下一 tick 读这个 → 广播 spawn 叙事 → 移除标记
             WhaleSpawnNarrationPending,
         ))
@@ -252,6 +262,28 @@ mod tests {
         assert_eq!(bb.home_altitude, 96.0);
         assert_eq!(bb.wander_radius_xz, DEFAULT_WANDER_RADIUS_XZ);
         assert_eq!(bb.retarget_seq, 0);
+    }
+
+    #[test]
+    fn spawn_whale_attaches_intrinsic_race_whale() {
+        // plan-race-system-v1 P5/PR-6c —— IntrinsicRace 孤岛闭合的 NPC 侧断言：
+        // 曾经零处 insert，飞鲸 spawn 后必须携带 IntrinsicRace("whale")。
+        let scenario = ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+        let whale = spawn_whale_npc_at(
+            &mut app.world_mut().commands(),
+            layer,
+            DVec3::new(0.0, 96.0, 0.0),
+            DEFAULT_WANDER_RADIUS_XZ,
+        );
+        app.world_mut().flush();
+
+        let intrinsic = app
+            .world()
+            .get::<IntrinsicRace>(whale)
+            .expect("whale NPC must receive IntrinsicRace on spawn");
+        assert_eq!(intrinsic.0, RaceId::new("whale"));
     }
 
     #[test]

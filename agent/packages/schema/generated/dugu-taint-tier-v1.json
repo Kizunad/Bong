@@ -12,5 +12,6 @@
       "const": "permanent",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "75890ab2cedcf39f01c6eff605ce481e53ae63b9378281fc3c1d321021c417a0"
 }

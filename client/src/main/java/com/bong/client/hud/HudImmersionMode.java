@@ -33,7 +33,6 @@ public final class HudImmersionMode {
     private static final EnumSet<HudRenderLayer> VISIBLE_CULTIVATION = EnumSet.of(
         HudRenderLayer.BASELINE,
         HudRenderLayer.ZONE,
-        HudRenderLayer.QI_RADAR,
         HudRenderLayer.THREAT_INDICATOR,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.MINI_BODY,
@@ -45,6 +44,7 @@ public final class HudImmersionMode {
         HudRenderLayer.MERIDIAN_OPEN,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.AGENT_UI,
         HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY,
         HudRenderLayer.REALM_COLLAPSE
@@ -53,7 +53,6 @@ public final class HudImmersionMode {
         HudRenderLayer.BASELINE,
         HudRenderLayer.ZONE,
         HudRenderLayer.COMPASS,
-        HudRenderLayer.QI_RADAR,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.TARGET_INFO,
         HudRenderLayer.MINI_BODY,
@@ -66,6 +65,7 @@ public final class HudImmersionMode {
         HudRenderLayer.EVENT_STREAM,
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
+        HudRenderLayer.AGENT_UI,
         HudRenderLayer.COFFIN,
         HudRenderLayer.LINGTIAN_OVERLAY
     );
@@ -237,10 +237,10 @@ public final class HudImmersionMode {
     private static boolean criticalLayer(HudRenderLayer layer) {
         return layer == HudRenderLayer.THREAT_INDICATOR
             || layer == HudRenderLayer.EDGE_FEEDBACK
-            || layer == HudRenderLayer.NEAR_DEATH
             || layer == HudRenderLayer.TSY_EXTRACT
             || layer == HudRenderLayer.REALM_COLLAPSE
-            || layer == HudRenderLayer.HUD_VARIANT;
+            || layer == HudRenderLayer.HUD_VARIANT
+            || layer == HudRenderLayer.AGENT_UI;
     }
 
     private static boolean isMeditating(VisualEffectState visualEffectState, long nowMs) {

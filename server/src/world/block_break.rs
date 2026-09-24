@@ -1,9 +1,20 @@
 //! 默认方块破坏 apply 系统：把 valence `DiggingEvent` 转成实际的方块状态变更。
 //!
-//! valence 不会自动把 `DiggingEvent` 转成方块更新。Bong 内现有 3 个模块消费
-//! `DiggingEvent`（mineral / spiritwood / social niche），它们各自只做 drop / index
-//! 记账，不调 `set_block(AIR)` —— 没人抹平 chunk 状态时，server 内存里的方块原样
-//! 保留，client 预测被覆盖回来 → 玩家看到"挖了又复原"。
+//! valence 不会自动把 `DiggingEvent` 转成方块更新。Bong 内现有 7 个模块各自
+//! `EventReader<DiggingEvent>`（本系统 + block_drop / mineral / spiritwood /
+//! social niche / container_block / workbench），它们各自判 `(state, mode)` 决定
+//! 归不归自己管、各自只做 drop / index 记账，不调 `set_block(AIR)` —— 没人抹平
+//! chunk 状态时，server 内存里的方块原样保留，client 预测被覆盖回来 → 玩家看到
+//! "挖了又复原"。
+//!
+//! TODO(plan-block-break-integration-v1): 上述 7 个消费者各自为政是碎片化根因——
+//! 无统一 `BreakReason`（怎么破的）/ `BreakCause`（谁破的）、无 pre-break veto 阶段
+//! （灵龛保护靠每个消费者自觉 check，漏一个就穿透）、服务端破坏来源（爆炸 / 招式 /
+//! 陷阱 / 天道世界事件）无法复用这条掉落/清理链路只能裸 `set_block(AIR)` 绕过。
+//! 规划把它们收拢成「单一 funnel `BlockBreakEvent` + 注册式有序 hook（veto → apply →
+//! effect）+ 程序化 `BlockBreakRequest` API」，为 worldview §858 死信箱「非对应破坏
+//! 触发阵法」这类破坏原因驱动的机关玩法打基座。详见
+//! `docs/plans-skeleton/plan-block-break-integration-v1.md`。
 //!
 //! 本系统按 vanilla 规则统一处理"破坏完成"：
 //!

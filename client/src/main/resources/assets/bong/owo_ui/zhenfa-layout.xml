@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 阵法布置组件树由 XML 持有，Java 只绑定语义状态和 typed action。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface><vanilla-translucent /></surface>
+            <padding><all>12</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="zhenfa-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fixed">300</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#101830</flat>
+                        <outline>#506080</outline>
+                    </surface>
+                    <padding><all>12</all></padding>
+                    <gap>7</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="zhenfa-title">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                            <text>◇ 阵 法 布 置 ◇</text>
+                            <color>#FF80B0FF</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="zhenfa-summary">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content">0</vertical></sizing>
+                            <color>#FFD0D0D0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="zhenfa-trigger-actions" direction="horizontal">
+                            <sizing><horizontal method="fixed">270</horizontal><vertical method="fixed">20</vertical></sizing>
+                            <gap>5</gap>
+                            <children>
+                                <button id="zhenfa-trigger-proximity">
+                                    <sizing><horizontal method="fixed">86</horizontal><vertical method="fixed">20</vertical></sizing>
+                                    <text>近接</text><renderer><vanilla /></renderer>
+                                </button>
+                                <button id="zhenfa-trigger-contact">
+                                    <sizing><horizontal method="fixed">86</horizontal><vertical method="fixed">20</vertical></sizing>
+                                    <text>触气</text><renderer><vanilla /></renderer>
+                                </button>
+                                <button id="zhenfa-trigger-timed">
+                                    <sizing><horizontal method="fixed">86</horizontal><vertical method="fixed">20</vertical></sizing>
+                                    <text>定时</text><renderer><vanilla /></renderer>
+                                </button>
+                            </children>
+                        </flow-layout>
+                        <slider id="zhenfa-qi-slider">
+                            <sizing><horizontal method="fixed">270</horizontal><vertical method="fixed">20</vertical></sizing>
+                            <value>0.1</value>
+                            <text>真元投入</text>
+                        </slider>
+                        <label id="zhenfa-feedback">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">12</vertical></sizing>
+                            <color>#FFFF8080</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <button id="zhenfa-place">
+                            <sizing><horizontal method="fixed">140</horizontal><vertical method="fixed">20</vertical></sizing>
+                            <text>落定</text><renderer><vanilla /></renderer>
+                        </button>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

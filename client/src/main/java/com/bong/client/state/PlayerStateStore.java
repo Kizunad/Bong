@@ -14,6 +14,11 @@ public final class PlayerStateStore {
         snapshot = nextSnapshot == null ? PlayerStateViewModel.empty() : nextSnapshot;
     }
 
+    /** 断线时仅清除本会话的玩家状态快照。 */
+    public static void clearOnDisconnect() {
+        snapshot = PlayerStateViewModel.empty();
+    }
+
     public static void resetForTests() {
         snapshot = PlayerStateViewModel.empty();
     }

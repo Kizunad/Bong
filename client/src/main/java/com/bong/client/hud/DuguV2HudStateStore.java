@@ -46,6 +46,19 @@ public final class DuguV2HudStateStore {
         snapshot = next == null ? State.NONE : next;
     }
 
+    /**
+     * plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 — 生产态断线清理入口。server 的
+     * dugu_v2_* / permanent_qi_max_decay_applied bridge 只在毒蛊 v2 事件发生时推增量/状态，
+     * 没有 join/disconnect 时的 inactive/reset payload；断线切 session 不会自动清空。
+     * {@code revealRisk} 没有 expiry 字段、{@code selfRevealed} 是 sticky merge，新 session
+     * 若角色本身没再触发毒蛊 v2 事件，也不会有 payload 覆盖旧快照，导致上一局的“暴露 xx%”
+     * “自蕴 xx% 已露”或遮蔽 tint 无限期跨 session 残留到下一局。必须显式归零，不能复用
+     * resetForTests()。
+     */
+    public static void clearOnDisconnect() {
+        snapshot = State.NONE;
+    }
+
     public static void resetForTests() {
         snapshot = State.NONE;
     }

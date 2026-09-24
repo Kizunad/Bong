@@ -240,11 +240,119 @@ pub(crate) fn is_spiritwood_log_at(pos: BlockPos, terrain: &TerrainProvider) -> 
     false
 }
 
+/// Find a real outer trunk log and a collision-free standing position for a player.
+///
+/// The seed/base block is deliberately not used as the interaction point: SpiritWood's
+/// trunk radius is several blocks wide, so teleporting to the base center leaves a player
+/// inside solid logs and the normal physics correction looks like movement to gathering
+/// sessions.  The returned stand point is adjacent to the furthest verified log on the
+/// surface-facing ring of the same production tree instance.
+pub(crate) fn nearest_spiritwood_harvest_target(
+    origin: DVec3,
+    terrain: &TerrainProvider,
+) -> Option<(BlockPos, DVec3)> {
+    let profile = TREE_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| matches!(profile.kind, MegaTreeKind::SpiritWood))?;
+    let origin_cell_x = (origin.x.floor() as i32).div_euclid(profile.seed_spacing);
+    let origin_cell_z = (origin.z.floor() as i32).div_euclid(profile.seed_spacing);
+    let mut best: Option<(f64, BlockPos, DVec3)> = None;
+
+    for cell_z in (origin_cell_z - 1)..=(origin_cell_z + 1) {
+        for cell_x in (origin_cell_x - 1)..=(origin_cell_x + 1) {
+            let Some(instance) = instantiate_tree(
+                profile,
+                cell_x,
+                cell_z,
+                super::MIN_Y,
+                super::WORLD_HEIGHT as i32,
+                terrain,
+            ) else {
+                continue;
+            };
+            let base = instance.base;
+            let search_radius = instance.params.trunk_base_radius.ceil() as i32 + 4;
+            let placement_bounds = ChunkBounds {
+                min_x: base.x - search_radius - 4,
+                max_x: base.x + search_radius + 4,
+                min_z: base.z - search_radius - 4,
+                max_z: base.z + search_radius + 4,
+            };
+            let log_placements = spiritwood_log_placements_for_y_range(
+                &placement_bounds,
+                &instance,
+                base.y - profile.max_slope - 2,
+                base.y + profile.max_slope + 3,
+            );
+            let mut collision_placements = log_placements.clone();
+            rasterize_roots(
+                &mut collision_placements,
+                &placement_bounds,
+                &instance,
+                super::MIN_Y,
+            );
+            let mut candidate: Option<(f64, BlockPos, DVec3)> = None;
+            for dx in -search_radius..=search_radius {
+                for dz in -search_radius..=search_radius {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let radius_sq = (dx * dx + dz * dz) as f64;
+                    if candidate.is_some_and(|(best_radius, _, _)| radius_sq <= best_radius) {
+                        continue;
+                    }
+                    let pos = BlockPos::new(base.x + dx, base.y, base.z + dz);
+                    if !is_spiritwood_log_placement(log_placements.get(&(pos.x, pos.y, pos.z))) {
+                        continue;
+                    }
+                    let length = radius_sq.sqrt();
+                    let stand_x = pos.x as f64 + 0.5 + dx as f64 / length * 2.0;
+                    let stand_z = pos.z as f64 + 0.5 + dz as f64 / length * 2.0;
+                    let stand_sample =
+                        terrain.sample(stand_x.floor() as i32, stand_z.floor() as i32);
+                    let stand_y = column::surface_y_for_sample(
+                        &stand_sample,
+                        super::MIN_Y,
+                        super::WORLD_HEIGHT as i32,
+                    ) + 1;
+                    let stand = DVec3::new(stand_x, f64::from(stand_y), stand_z);
+                    if tree_placements_intersect_player(&collision_placements, stand) {
+                        continue;
+                    }
+                    candidate = Some((radius_sq, pos, stand));
+                }
+            }
+            let Some((_, pos, stand)) = candidate else {
+                continue;
+            };
+            let dx = f64::from(pos.x) - origin.x;
+            let dz = f64::from(pos.z) - origin.z;
+            let distance_sq = dx * dx + dz * dz;
+            if best.is_none_or(|(best_distance, _, _)| distance_sq < best_distance) {
+                best = Some((distance_sq, pos, stand));
+            }
+        }
+    }
+
+    best.map(|(_, pos, stand)| (pos, stand))
+}
+
 fn spiritwood_log_placement_contains(
     pos: BlockPos,
     chunk_bounds: &ChunkBounds,
     instance: &MegaTreeInstance,
 ) -> bool {
+    let placements = spiritwood_log_placements_for_y_range(chunk_bounds, instance, pos.y, pos.y);
+    is_spiritwood_log_placement(placements.get(&(pos.x, pos.y, pos.z)))
+}
+
+fn spiritwood_log_placements_for_y_range(
+    chunk_bounds: &ChunkBounds,
+    instance: &MegaTreeInstance,
+    min_y: i32,
+    max_y: i32,
+) -> HashMap<(i32, i32, i32), Placement> {
     let skeleton = cached_skeleton(instance);
     let mut placements = HashMap::new();
 
@@ -253,20 +361,45 @@ fn spiritwood_log_placement_contains(
             continue;
         };
         let parent = &skeleton[parent_index];
+        let radius = segment_radius(instance, node);
+        let segment_min_y = parent.pos.y.min(node.pos.y).floor() as i32 - radius.ceil() as i32 - 1;
+        let segment_max_y = parent.pos.y.max(node.pos.y).ceil() as i32 + radius.ceil() as i32 + 1;
+        if segment_max_y < min_y || segment_min_y > max_y {
+            continue;
+        }
         rasterize_segment(
             &mut placements,
             chunk_bounds,
             parent.pos,
             node.pos,
-            segment_radius(instance, node),
+            radius,
             log_block(instance.params.kind),
             2,
         );
     }
 
+    placements.retain(|(_, y, _), _| (min_y..=max_y).contains(y));
     placements
-        .get(&(pos.x, pos.y, pos.z))
-        .is_some_and(|placement| placement.block == BlockState::OAK_LOG)
+}
+
+fn is_spiritwood_log_placement(placement: Option<&Placement>) -> bool {
+    placement.is_some_and(|placement| placement.block == BlockState::OAK_LOG)
+}
+
+fn tree_placements_intersect_player(
+    placements: &HashMap<(i32, i32, i32), Placement>,
+    position: DVec3,
+) -> bool {
+    let min_x = (position.x - 0.3).floor() as i32;
+    let max_x = (position.x + 0.3).floor() as i32;
+    let min_y = position.y.floor() as i32;
+    let max_y = (position.y + 1.8).floor() as i32;
+    let min_z = (position.z - 0.3).floor() as i32;
+    let max_z = (position.z + 0.3).floor() as i32;
+
+    (min_x..=max_x).any(|x| {
+        (min_y..=max_y).any(|y| (min_z..=max_z).any(|z| placements.contains_key(&(x, y, z))))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -377,17 +510,7 @@ fn instantiate_tree(
     world_height: i32,
     terrain: &TerrainProvider,
 ) -> Option<MegaTreeInstance> {
-    let base_seed = hash_coords(cell_x, cell_z, profile.kind as u64 + 31);
-    let span = profile.seed_spacing - profile.offset_margin * 2;
-    if span <= 0 {
-        return None;
-    }
-
-    let seed_x =
-        cell_x * profile.seed_spacing + profile.offset_margin + range_i32(base_seed, 0, span - 1);
-    let seed_z = cell_z * profile.seed_spacing
-        + profile.offset_margin
-        + range_i32(base_seed.rotate_left(17), 0, span - 1);
+    let (base_seed, seed_x, seed_z) = tree_seed_position(profile, cell_x, cell_z)?;
 
     let sample = terrain.sample(seed_x, seed_z);
     if !(profile.biome_matches)(&sample) {
@@ -495,6 +618,24 @@ fn instantiate_tree(
             max_z: seed_z + horizontal_extent,
         },
     })
+}
+
+fn tree_seed_position(
+    profile: MegaTreeProfile,
+    cell_x: i32,
+    cell_z: i32,
+) -> Option<(u64, i32, i32)> {
+    let base_seed = hash_coords(cell_x, cell_z, profile.kind as u64 + 31);
+    let span = profile.seed_spacing - profile.offset_margin * 2;
+    if span <= 0 {
+        return None;
+    }
+    let seed_x =
+        cell_x * profile.seed_spacing + profile.offset_margin + range_i32(base_seed, 0, span - 1);
+    let seed_z = cell_z * profile.seed_spacing
+        + profile.offset_margin
+        + range_i32(base_seed.rotate_left(17), 0, span - 1);
+    Some((base_seed, seed_x, seed_z))
 }
 
 fn place_tree_in_chunk(
@@ -1091,5 +1232,21 @@ impl SimpleRng {
 
     fn range_f64(&mut self, min: f64, max: f64) -> f64 {
         range_f64(self.next_u64(), min, max)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spiritwood_cell_zero_seed_position_is_stable_for_bot_fixture() {
+        let profile = TREE_PROFILES
+            .iter()
+            .copied()
+            .find(|profile| matches!(profile.kind, MegaTreeKind::SpiritWood))
+            .expect("SpiritWood profile should exist");
+        let (_, x, z) = tree_seed_position(profile, 0, 0).expect("valid SpiritWood seed cell");
+        assert_eq!((x, z), (1292, 1519));
     }
 }

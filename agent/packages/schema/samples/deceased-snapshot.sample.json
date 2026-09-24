@@ -14,7 +14,7 @@
     "character_id": "offline:Ancestor",
     "created_at": 0,
     "biography": [
-      { "NearDeath": { "cause": "cultivation:NaturalAging", "tick": 84000 } },
+      { "Death": { "cause": "cultivation:NaturalAging", "tick": 84000 } },
       { "Terminated": { "cause": "natural_end", "tick": 84000 } }
     ],
     "insights_taken": [],

@@ -93,7 +93,7 @@ class BongHudStateStoreTest {
         BongHudStateStore.replace(BongHudStateSnapshot.create(
             ZoneState.empty(),
             NarrationState.empty(),
-            VisualEffectState.create("near_death_vignette", 0.8, 10_000L, 0L)
+            VisualEffectState.create("poison_tint", 0.8, 10_000L, 0L)
         ));
         assertFalse(BongHudStateStore.snapshot().visualEffectState().isEmpty(), "测试前置：必须先写入非空 visualEffectState");
 

@@ -18,6 +18,11 @@ public final class TsyBossHealthStore {
         state = TsyBossHealthState.empty();
     }
 
+
+    public static void clearOnDisconnect() {
+        reset();
+    }
+
     public static void resetForTests() {
         reset();
     }

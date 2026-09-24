@@ -37,40 +37,9 @@
       "type": "string"
     },
     "body_part": {
-      "anyOf": [
-        {
-          "const": "head",
-          "type": "string"
-        },
-        {
-          "const": "chest",
-          "type": "string"
-        },
-        {
-          "const": "abdomen",
-          "type": "string"
-        },
-        {
-          "const": "back",
-          "type": "string"
-        },
-        {
-          "const": "arm_l",
-          "type": "string"
-        },
-        {
-          "const": "arm_r",
-          "type": "string"
-        },
-        {
-          "const": "leg_l",
-          "type": "string"
-        },
-        {
-          "const": "leg_r",
-          "type": "string"
-        }
-      ]
+      "minLength": 1,
+      "description": "命中部位 id（humanoid 沿用 8 段既有名字，非 humanoid 构型可为任意 id）",
+      "type": "string"
     },
     "wound_kind": {
       "anyOf": [
@@ -193,5 +162,6 @@
       "minimum": 0,
       "type": "number"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "0656dc5c3cceddac77e2336fdd659da01c165a9fd7f95dded396b17789762c64"
 }

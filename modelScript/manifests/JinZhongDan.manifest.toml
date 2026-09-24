@@ -1,0 +1,18 @@
+# 金钟丹 JinZhongDan —— 特征点名清单
+#
+# 特征来源：`jin_zhong_dan.png` 叠放金丹群重做版：
+# 1. golden_cluster: 四面体金字塔叠放的金钟宝丹群（底层三足鼎立 + 顶峰耸立主金丹 + 前侧伴生滚落金丹）
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+gold_spec   = [255, 246, 154]
+gold_lit    = [252, 218, 76]
+gold_base   = [224, 172, 42]
+gold_shadow = [138, 96, 22]
+
+[features]
+# 金字塔叠放金钟宝丹群
+golden_cluster = { elements = ["p_base_", "p_top_", "p_out_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = { FRONT = 3000, SIDE_R = 3000, "3/4" = 4000, TOP = 4000 } }

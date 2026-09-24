@@ -590,6 +590,7 @@ mod tests {
         (
             template_id.to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: template_id.to_string(),
                 display_name: template_id.to_string(),
                 category: ItemCategory::Misc,
@@ -615,12 +616,14 @@ mod tests {
                 shelflife_profile: None,
                 shield_spec: None,
                 shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
             },
         )
     }
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

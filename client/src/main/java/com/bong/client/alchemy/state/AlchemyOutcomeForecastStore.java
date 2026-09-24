@@ -20,6 +20,10 @@ public final class AlchemyOutcomeForecastStore {
                 "q0.4 · Turbid 0.80"
             );
         }
+
+        public static Snapshot neutral() {
+            return new Snapshot(0f, 0f, 0f, 0f, 0f, "", "", "");
+        }
     }
 
     private static volatile Snapshot snapshot = Snapshot.empty();
@@ -33,6 +37,10 @@ public final class AlchemyOutcomeForecastStore {
 
     public static void replace(Snapshot next) {
         snapshot = next == null ? Snapshot.empty() : next;
+    }
+
+    public static void clearOnDisconnect() {
+        replace(Snapshot.neutral());
     }
 
     public static void resetForTests() {

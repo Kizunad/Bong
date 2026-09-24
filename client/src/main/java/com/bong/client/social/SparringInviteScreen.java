@@ -85,19 +85,27 @@ public final class SparringInviteScreen extends Screen {
     private void settle(boolean accepted, boolean timedOut) {
         if (settled) return;
         settled = true;
-        ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), accepted, timedOut);
-        SocialStateStore.clearSparringInvite(invite.inviteId());
+        boolean claimed = accepted
+            ? SocialStateStore.acceptSparringInvite(invite.inviteId())
+            : SocialStateStore.clearSparringInvite(invite.inviteId());
+        if (claimed) {
+            ClientRequestSender.sendSparringInviteResponse(invite.inviteId(), accepted, timedOut);
+        }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
         }
     }
 
+    void acceptForTests() {
+        settle(true, false);
+    }
+
     private long remainingMillis() {
         return Math.max(0L, invite.expiresAtMs() - System.currentTimeMillis());
     }
 
-    public String inviteIdForTests() {
+    public String inviteId() {
         return invite.inviteId();
     }
 

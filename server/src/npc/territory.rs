@@ -289,7 +289,7 @@ fn beast_reproduction_tick_system(
     mut reproduction_requests: EventWriter<NpcReproductionRequest>,
 ) {
     tick.0 = tick.0.wrapping_add(1);
-    if tick.0 % REPRODUCTION_TICK_INTERVAL != 0 {
+    if !tick.0.is_multiple_of(REPRODUCTION_TICK_INTERVAL) {
         return;
     }
 

@@ -21,6 +21,7 @@
 //! 已砍伐位置继续判定为不可采。
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,6 +31,18 @@ use valence::prelude::{BlockPos, ChunkPos, ResMut, Resource};
 use crate::world::dimension::DimensionKind;
 
 const DEFAULT_HARVESTED_PATH: &str = "data/spiritwood/harvested.json";
+const SPIRITWOOD_HARVESTED_PATH_ENV_VAR: &str = "BONG_SPIRITWOOD_HARVESTED_PATH";
+
+fn harvested_path_from_override(override_path: Option<OsString>) -> PathBuf {
+    override_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_HARVESTED_PATH))
+}
+
+fn configured_harvested_path() -> PathBuf {
+    harvested_path_from_override(std::env::var_os(SPIRITWOOD_HARVESTED_PATH_ENV_VAR))
+}
 
 /// 落盘 schema 版本 — writer（[`SpiritWoodHarvestedLogs::flush`]）与 loader
 /// （[`load_harvested_log`]）必须共用同一常量，避免两处字面量漂移
@@ -223,9 +236,11 @@ impl SpiritWoodHarvestedLogs {
         log
     }
 
-    /// 默认路径（`data/spiritwood/harvested.json`）hydrator — `register` 启动路径用。
+    /// `register` 启动路径用 hydrator。生产默认读取
+    /// `data/spiritwood/harvested.json`，e2e 可通过
+    /// `BONG_SPIRITWOOD_HARVESTED_PATH` 隔离运行态。
     pub fn hydrated() -> Self {
-        Self::hydrated_from_path(DEFAULT_HARVESTED_PATH)
+        Self::hydrated_from_path(configured_harvested_path())
     }
 }
 
@@ -277,6 +292,27 @@ mod tests {
     use super::*;
     use std::env;
     use valence::prelude::{App, Update};
+
+    #[test]
+    fn harvested_path_defaults_when_override_is_missing_or_empty() {
+        assert_eq!(
+            harvested_path_from_override(None),
+            PathBuf::from(DEFAULT_HARVESTED_PATH)
+        );
+        assert_eq!(
+            harvested_path_from_override(Some(OsString::new())),
+            PathBuf::from(DEFAULT_HARVESTED_PATH)
+        );
+    }
+
+    #[test]
+    fn harvested_path_uses_non_empty_override() {
+        let override_path = PathBuf::from("isolated/spiritwood-harvested.json");
+        assert_eq!(
+            harvested_path_from_override(Some(override_path.clone().into_os_string())),
+            override_path
+        );
+    }
 
     fn unique_tmp_path(name: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()

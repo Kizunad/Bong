@@ -81,7 +81,8 @@ mod tests {
             animation_id: "bong:dugu_needle_throw".to_string(),
             particle_id: "bong:dugu_taint_pulse".to_string(),
             sound_recipe_id: "dugu_needle_hiss".to_string(),
-            icon_texture: "bong:textures/gui/skill/dugu_eclipse.png".to_string(),
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+                .to_string(),
         };
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains(r#""skill":"eclipse""#));

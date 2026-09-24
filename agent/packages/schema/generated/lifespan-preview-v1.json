@@ -48,5 +48,6 @@
     "is_wind_candle": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "0116680fb4a61f0b919f341efa51d7f79d18aacadf060369986770ab0913e0df"
 }

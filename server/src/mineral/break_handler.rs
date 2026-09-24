@@ -562,6 +562,7 @@ mod tests {
             SlotContents::held_single(item(template_id)),
         );
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

@@ -6,7 +6,7 @@
 mod tests {
     use crate::cultivation::components::{Cultivation, MeridianId, Realm};
     use crate::cultivation::known_techniques::{
-        technique_definition, KnownTechnique, KnownTechniques,
+        KnownTechnique, KnownTechniques, TechniqueRegistry,
     };
     use crate::cultivation::meridian::severed::{
         check_meridian_dependencies, MeridianSeveredPermanent, SeveredSource,
@@ -28,6 +28,10 @@ mod tests {
     use valence::prelude::Entity;
 
     // ─── helpers ────────────────────────────────────────────────────────────────
+
+    fn registry() -> TechniqueRegistry {
+        TechniqueRegistry::load_for_tests()
+    }
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
@@ -68,7 +72,8 @@ mod tests {
         }
 
         // 2. MeridianSystem — via npc_meridian_system_for_realm
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let opened_count = MeridianId::ALL
             .iter()
             .filter(|id| meridian_sys.get(**id).opened)
@@ -83,7 +88,16 @@ mod tests {
 
         // 3. KnownTechniques
         let deps = empty_deps();
-        let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
+        let technique_registry = registry();
+        let techniques = assign_npc_techniques(
+            &technique_registry,
+            archetype,
+            realm,
+            &meridian_sys,
+            &deps,
+            None,
+            seed,
+        );
         assert!(
             !techniques.entries.is_empty(),
             "Rogue Condense should have at least 1 technique"
@@ -96,14 +110,11 @@ mod tests {
 
         // 4. Verify each technique's meridian deps satisfied by MeridianSystem
         for entry in &techniques.entries {
-            let def = technique_definition(&entry.id).unwrap_or_else(|| {
-                panic!(
-                    "technique {} should exist in TECHNIQUE_DEFINITIONS",
-                    entry.id
-                )
+            let def = technique_registry.get(&entry.id).unwrap_or_else(|| {
+                panic!("technique {} should exist in TechniqueRegistry", entry.id)
             });
             // Check realm gating
-            let required_realm_str = def.required_realm;
+            let required_realm_str = def.required_realm.as_str();
             assert!(
                 realm_rank(match required_realm_str {
                     "Awaken" => Realm::Awaken,
@@ -120,9 +131,9 @@ mod tests {
                 realm
             );
             // Check meridian deps in definition
-            for req in def.required_meridians {
+            for req in &def.required_meridians {
                 if let Some(channel) =
-                    crate::cultivation::technique_scroll::parse_meridian_id(req.channel)
+                    crate::cultivation::technique_scroll::parse_meridian_id(&req.channel)
                 {
                     let m = meridian_sys.get(channel);
                     assert!(
@@ -157,9 +168,19 @@ mod tests {
             "Disciple should always have main_hand weapon"
         );
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
+        let technique_registry = registry();
+        let techniques = assign_npc_techniques(
+            &technique_registry,
+            archetype,
+            realm,
+            &meridian_sys,
+            &deps,
+            None,
+            seed,
+        );
         assert!(
             techniques.entries.len() >= 2,
             "Disciple should have >= 2 techniques, got {}",
@@ -168,12 +189,12 @@ mod tests {
 
         // Verify each technique's realm + meridian deps
         for entry in &techniques.entries {
-            let def = technique_definition(&entry.id).unwrap();
+            let def = technique_registry.get(&entry.id).unwrap();
             assert!(entry.proficiency >= 0.3 && entry.proficiency <= 0.8);
             // Meridian deps check same as above test
-            for req in def.required_meridians {
+            for req in &def.required_meridians {
                 if let Some(channel) =
-                    crate::cultivation::technique_scroll::parse_meridian_id(req.channel)
+                    crate::cultivation::technique_scroll::parse_meridian_id(&req.channel)
                 {
                     assert!(
                         meridian_sys.get(channel).opened,
@@ -209,9 +230,19 @@ mod tests {
         assert_eq!(main.quality_tier, 2);
         assert!(equipment.armor_slots().count() >= 2);
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
+        let technique_registry = registry();
+        let techniques = assign_npc_techniques(
+            &technique_registry,
+            archetype,
+            realm,
+            &meridian_sys,
+            &deps,
+            None,
+            seed,
+        );
         assert!(
             techniques.entries.len() >= 3,
             "GuardianRelic should have >= 3 techniques, got {}",
@@ -229,9 +260,19 @@ mod tests {
         let archetype = NpcArchetype::Rogue;
         let seed = 99u64;
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let techniques = assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, seed);
+        let technique_registry = registry();
+        let techniques = assign_npc_techniques(
+            &technique_registry,
+            archetype,
+            realm,
+            &meridian_sys,
+            &deps,
+            None,
+            seed,
+        );
 
         // Create cultivation with enough qi
         let cultivation = Cultivation {
@@ -245,6 +286,7 @@ mod tests {
 
         // select_technique should return Some
         let selected = select_technique(
+            &technique_registry,
             &techniques,
             &cultivation,
             &deps,
@@ -264,10 +306,11 @@ mod tests {
 
         // Verify selected technique exists and has valid qi_cost
         let sel = selected.unwrap();
-        let def = technique_definition(&sel.technique_id)
+        let def = technique_registry
+            .get(&sel.technique_id)
             .unwrap_or_else(|| panic!("selected technique {} should exist", sel.technique_id));
         assert!(
-            f64::from(def.qi_cost) <= cultivation.qi_current,
+            def.qi_cost <= cultivation.qi_current,
             "selected technique {} qi_cost={} should be <= qi_current={}",
             sel.technique_id,
             def.qi_cost,
@@ -318,6 +361,7 @@ mod tests {
     /// P3.1 - 经脉 SEVERED 集成: MeridianSeveredPermanent → select_technique 排除
     #[test]
     fn integration_severed_meridian_excludes_dependent_technique() {
+        let technique_registry = registry();
         // woliu.burst depends on Lung and is Attack category (not excluded by Defense filter)
         let known = KnownTechniques {
             entries: vec![KnownTechnique {
@@ -341,6 +385,7 @@ mod tests {
 
         // Without SEVERED: should be selectable
         let result_ok = select_technique(
+            &technique_registry,
             &known,
             &cultivation,
             &deps,
@@ -363,6 +408,7 @@ mod tests {
         severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 50);
 
         let result_severed = select_technique(
+            &technique_registry,
             &known,
             &cultivation,
             &deps,
@@ -391,6 +437,7 @@ mod tests {
     /// P3.1 - 经脉 SEVERED 集成: 多功法时仅排除依赖被断经脉的功法
     #[test]
     fn integration_severed_excludes_only_dependent_techniques() {
+        let technique_registry = registry();
         let known = KnownTechniques {
             entries: vec![
                 KnownTechnique {
@@ -425,6 +472,7 @@ mod tests {
         let mut selected_ids = std::collections::HashSet::new();
         for tick in 0..500u64 {
             if let Some(sel) = select_technique(
+                &technique_registry,
                 &known,
                 &cultivation,
                 &deps,
@@ -459,9 +507,14 @@ mod tests {
     #[test]
     fn integration_protocol_full_metadata_roundtrip() {
         let equipment = assign_npc_equipment(NpcArchetype::Rogue, Realm::Condense, None, 42);
-        let meridian_sys = npc_meridian_system_for_realm(Realm::Condense);
+        let meridian_sys = npc_meridian_system_for_realm(
+            Realm::Condense,
+            crate::body_plan::humanoid_plan_static(),
+        );
         let deps = empty_deps();
+        let technique_registry = registry();
         let techniques = assign_npc_techniques(
+            &technique_registry,
             NpcArchetype::Rogue,
             Realm::Condense,
             &meridian_sys,
@@ -472,6 +525,7 @@ mod tests {
         let trade = assign_npc_trade_inventory(NpcArchetype::Rogue, Realm::Condense, 42);
 
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 100,
             archetype: NpcArchetype::Rogue,
             cultivation: Some(&Cultivation {
@@ -549,8 +603,10 @@ mod tests {
     /// will not crash.
     #[test]
     fn integration_protocol_old_client_new_server_null_safe() {
+        let technique_registry = registry();
         // Beast NPC: no equipment, no techniques, no trade
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 200,
             archetype: NpcArchetype::Beast,
             cultivation: None,
@@ -593,7 +649,9 @@ mod tests {
     /// client-side build_npc_metadata with None inputs should produce empty collections.
     #[test]
     fn integration_protocol_new_client_old_server_fallback() {
+        let technique_registry = registry();
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 300,
             archetype: NpcArchetype::Rogue,
             cultivation: Some(&Cultivation {
@@ -637,8 +695,10 @@ mod tests {
     /// P3.2 - 协议兼容: NpcEquipment::default() (all None) produces empty HashMap in metadata
     #[test]
     fn integration_protocol_empty_equipment_produces_empty_map() {
+        let technique_registry = registry();
         let empty_eq = NpcEquipment::default();
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 301,
             archetype: NpcArchetype::Commoner,
             cultivation: None,
@@ -675,8 +735,10 @@ mod tests {
         let realm = Realm::Awaken;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 0 = 60
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
 
         let mut technique_uses = 0u64;
         let mut total_attacks = 0u64;
@@ -684,6 +746,7 @@ mod tests {
         // Test across multiple NPC instances (different seeds)
         for seed in 0..20u64 {
             let techniques = assign_npc_techniques(
+                &technique_registry,
                 NpcArchetype::Rogue,
                 realm,
                 &meridian_sys,
@@ -719,6 +782,7 @@ mod tests {
 
                 // Check if a technique is available
                 let selected = select_technique(
+                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -761,14 +825,17 @@ mod tests {
         let realm = Realm::Condense;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 20 = 80
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
 
         let mut technique_uses = 0u64;
         let mut total_attacks = 0u64;
 
         for seed in 0..20u64 {
             let techniques = assign_npc_techniques(
+                &technique_registry,
                 NpcArchetype::Disciple,
                 realm,
                 &meridian_sys,
@@ -800,6 +867,7 @@ mod tests {
                 }
 
                 let selected = select_technique(
+                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -841,14 +909,17 @@ mod tests {
         let realm = Realm::Spirit;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 40 = 100
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
 
         let mut technique_uses = 0u64;
         let mut total_attacks = 0u64;
 
         for seed in 0..20u64 {
             let techniques = assign_npc_techniques(
+                &technique_registry,
                 NpcArchetype::GuardianRelic,
                 realm,
                 &meridian_sys,
@@ -881,6 +952,7 @@ mod tests {
                 }
 
                 let selected = select_technique(
+                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -922,14 +994,17 @@ mod tests {
         let realm = Realm::Induce;
         let min_interval: u64 = 60 + realm_rank(realm) as u64 * 10; // 60 + 10 = 70
 
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
 
         let mut technique_uses = 0u64;
         let mut total_attacks = 0u64;
 
         for seed in 0..20u64 {
             let techniques = assign_npc_techniques(
+                &technique_registry,
                 NpcArchetype::Daoxiang,
                 realm,
                 &meridian_sys,
@@ -964,6 +1039,7 @@ mod tests {
                 }
 
                 let selected = select_technique(
+                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -1021,9 +1097,12 @@ mod tests {
         );
 
         // Techniques
-        let meridian_sys = npc_meridian_system_for_realm(realm);
+        let meridian_sys =
+            npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
         let techniques = assign_npc_techniques(
+            &technique_registry,
             NpcArchetype::Zhinian,
             realm,
             &meridian_sys,
@@ -1045,6 +1124,7 @@ mod tests {
 
         // Protocol metadata contains all three
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 500,
             archetype: NpcArchetype::Zhinian,
             cultivation: Some(&Cultivation {
@@ -1090,7 +1170,8 @@ mod tests {
             Realm::Spirit,
             Realm::Void,
         ] {
-            let sys = npc_meridian_system_for_realm(realm);
+            let sys =
+                npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
             let opened = MeridianId::ALL
                 .iter()
                 .filter(|id| sys.get(**id).opened)
@@ -1111,9 +1192,12 @@ mod tests {
     fn integration_protocol_max_payload_not_exceeded() {
         // Worst case: GuardianRelic with full equipment + 5 techniques + trade offers
         let equipment = assign_npc_equipment(NpcArchetype::GuardianRelic, Realm::Void, None, 42);
-        let meridian_sys = npc_meridian_system_for_realm(Realm::Void);
+        let meridian_sys =
+            npc_meridian_system_for_realm(Realm::Void, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
+        let technique_registry = registry();
         let techniques = assign_npc_techniques(
+            &technique_registry,
             NpcArchetype::GuardianRelic,
             Realm::Void,
             &meridian_sys,
@@ -1125,6 +1209,7 @@ mod tests {
         let trade = assign_npc_trade_inventory(NpcArchetype::Disciple, Realm::Void, 42);
 
         let metadata = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &technique_registry,
             entity_id: 600,
             archetype: NpcArchetype::GuardianRelic,
             cultivation: Some(&Cultivation {
@@ -1198,10 +1283,19 @@ mod tests {
                     archetype
                 );
 
-                let meridian_sys = npc_meridian_system_for_realm(realm);
+                let meridian_sys =
+                    npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
                 let deps = empty_deps();
-                let techniques =
-                    assign_npc_techniques(archetype, realm, &meridian_sys, &deps, None, 42);
+                let technique_registry = registry();
+                let techniques = assign_npc_techniques(
+                    &technique_registry,
+                    archetype,
+                    realm,
+                    &meridian_sys,
+                    &deps,
+                    None,
+                    42,
+                );
                 assert!(
                     techniques.entries.is_empty(),
                     "{:?} should have no techniques",
