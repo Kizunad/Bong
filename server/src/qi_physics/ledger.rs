@@ -144,6 +144,14 @@ pub enum QiTransferReason {
     ReleaseToZone,
     Collision,
     Channeling,
+    /// 全力一击蓄力被打断时，把已沉积进 zone 或运行期 overflow 池的真元退还玩家。
+    ///
+    /// 守恒约束：
+    /// - zone 来源先减少 `zone.spirit_qi`，再等量增加 `Cultivation.qi_current`；
+    /// - overflow 来源走真实 `WorldQiAccount::transfer` 扣减余额，玩家侧仅保留审计影子；
+    /// - 实际退还不得超过沉积台账、来源当前可扣余额或玩家剩余容量；
+    /// - 任一不足都计入打断损失，绝不凭空铸造。
+    ChargeInterruptRefund,
     /// bughunt r5 — 经脉打通进度消耗 `qi_current` 后，真元逸散回所在 zone ledger。
     ///
     /// 守恒约束：`cultivation.qi_current -= cost`；同 tick 内必须把 cost 记入
@@ -361,6 +369,7 @@ impl QiTransferReason {
             | Self::ReleaseToZone
             | Self::Collision
             | Self::Channeling
+            | Self::ChargeInterruptRefund
             | Self::MeridianOpen
             | Self::Breakthrough
             | Self::MeridianForge
@@ -389,12 +398,13 @@ impl QiTransferReason {
 }
 
 #[cfg(test)]
-pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 36] = [
+pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 37] = [
     QiTransferReason::CultivationRegen,
     QiTransferReason::Excretion,
     QiTransferReason::ReleaseToZone,
     QiTransferReason::Collision,
     QiTransferReason::Channeling,
+    QiTransferReason::ChargeInterruptRefund,
     QiTransferReason::MeridianOpen,
     QiTransferReason::Breakthrough,
     QiTransferReason::MeridianForge,
@@ -779,6 +789,41 @@ pub fn transfer_external_qi_to_ledger(
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
     account.with_transaction(|transaction| {
         transaction.transfer_external_qi_to_ledger(from, to, amount, reason)
+    })
+}
+
+/// 将 [`WorldQiAccount`] 内的真实余额转入 ECS 等外部物理权威。
+///
+/// 目标账户只在本次事务期间作为审计影子存在，成功后恢复调用前的精确余额；源账户
+/// 则被真实扣减。这样调用方可以在 helper 成功后把同一份真元写回外部字段，不会在
+/// ledger 与 ECS 中同时保留余额。
+pub fn transfer_ledger_qi_to_external(
+    account: &mut WorldQiAccount,
+    from: QiAccountId,
+    to: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) -> Result<Option<QiTransfer>, QiPhysicsError> {
+    if amount == 0.0 {
+        return Ok(None);
+    }
+    let transfer = QiTransfer::new(from, to.clone(), amount, reason)?;
+    if transfer.from == transfer.to {
+        return Err(QiPhysicsError::SameAccountTransfer {
+            account: transfer.from.to_string(),
+        });
+    }
+
+    account.with_transaction(|transaction| {
+        let destination_existed = transaction.has_account(&to);
+        let destination_before = transaction.balance(&to);
+        transaction.transfer(transfer.clone())?;
+        if destination_existed {
+            transaction.set_balance(to, destination_before)?;
+        } else {
+            transaction.remove_balance(&to);
+        }
+        Ok(Some(transfer))
     })
 }
 
