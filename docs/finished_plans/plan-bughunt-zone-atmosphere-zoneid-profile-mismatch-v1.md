@@ -15,6 +15,10 @@
 - **进料**：server `zone_info.zone` 的 live zone id，经 `BongHudStateStore` / `ZoneState.zoneId()` 进入 `ZoneAtmosphereRenderer`。
 - **出料**：`ZoneAtmosphereProfileRegistry.forZone` 返回既有 `ZoneAtmosphereProfile`，继续供 `ZoneAtmospherePlanner` 生成雾色、天空 tint、粒子与入场转场；不新增视觉资产。
 - **共享契约**：保留现有 `zone_info` wire 和 `ZoneState`，只在 client registry 对明确的 live zone id 做归一化；不扩 schema、不让 server 下发第二套可漂移字段。
+- **server 发送入口**：`server/src/network/mod.rs:emit_zone_info_on_zone_transition` 构造 `ServerDataPayloadV1::ZoneInfo`，调用同文件 `send_server_data_payload` 下发；`zone_name_for_position` 提供 live zone id。
+- **agent 参与面**：不涉及运行时；`agent/packages/tiandao/src` 无 `zone_info` 消费，server 入口直接发送而不经 Redis/agent IPC；`agent/packages/schema/src/server-data.ts:ServerDataZoneInfoV1` 只是既有静态定义。
+- **client 调用链**：`client/src/main/java/com/bong/client/network/ZoneInfoHandler.java:ZoneInfoHandler.handle` 产出 `ZoneState`，`ZoneAtmosphereRenderer.update` 交给 `ZoneAtmospherePlanner.plan`，再以 `zoneState.zoneId()` 调 `ZoneAtmosphereProfileRegistry.forZone`。
+- **契约边界**：本修复不改 `server/src/schema/server_data.rs:ServerDataPayloadV1::ZoneInfo`、`agent/packages/schema/src/server-data.ts:ServerDataZoneInfoV1` 或 agent runtime；只改 client registry 的 live-zone alias。
 - **worldview 锚点**：区域视觉辨识对应 `worldview.md §十三` 的初醒原、灵泉湿地、幽暗地穴地理差异。
 - **决策**：live zone id 是运行时 source of truth；terrain profile id 是 client 资源键。最小修复由 client registry 持有显式 alias，不改 server/IPC，也不根据字符串形态猜测。
 
