@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/stone_casket/stone_casket.obj",
+  "model": "bong:models/block/stone_casket_v2/stone_casket_v2.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [
@@ -83,7 +83,7 @@
       ],
       "translation": [
         0.0,
-        -0.412,
+        2.0,
         0.0
       ]
     },
@@ -99,8 +99,8 @@
         0.9
       ],
       "translation": [
-        3.411,
-        -3.411,
+        0.0,
+        0.0,
         0.0
       ]
     },
@@ -117,7 +117,7 @@
       ],
       "translation": [
         0.0,
-        -5.36,
+        0.0,
         0.0
       ]
     },
@@ -134,7 +134,7 @@
       ],
       "translation": [
         0.0,
-        6.64,
+        12.0,
         0.0
       ]
     }

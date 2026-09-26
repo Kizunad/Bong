@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/skull_fiend/skull_fiend.obj",
+  "model": "bong:models/block/spirit_eye_v2/spirit_eye_v2.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [
@@ -83,7 +83,7 @@
       ],
       "translation": [
         0.0,
-        -0.785,
+        2.0,
         0.0
       ]
     },
@@ -99,8 +99,8 @@
         0.9
       ],
       "translation": [
-        3.939,
-        -3.939,
+        0.0,
+        0.0,
         0.0
       ]
     },
@@ -117,7 +117,7 @@
       ],
       "translation": [
         0.0,
-        -6.19,
+        0.0,
         0.0
       ]
     },
@@ -134,7 +134,7 @@
       ],
       "translation": [
         0.0,
-        5.81,
+        12.0,
         0.0
       ]
     }
