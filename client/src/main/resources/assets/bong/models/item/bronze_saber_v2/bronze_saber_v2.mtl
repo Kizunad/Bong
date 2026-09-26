@@ -1,0 +1,10 @@
+# bronze_saber_v2 materials -- source bbmodel atlas
+
+newmtl bronze_saber_v2_atlas
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/bronze_saber_v2/atlas
