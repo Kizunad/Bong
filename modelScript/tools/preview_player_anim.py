@@ -498,9 +498,17 @@ def _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views=VIEWS):
             for label, yaw, pitch in views]
 
 
-def _gif_views(args):
-    """--gif-views 选出的视角；缺省三视图全要。"""
-    if not args.gif_views:
+def _selected_views(args):
+    """本次要画的视角。--camera 给了就只画这一个自定义机位（PNG 和 GIF 都认）；
+    否则 GIF 按 --gif-views 挑，缺省三视图全要。
+
+    自定义机位的用处：刃面水平的横砍，三个固定视角都几乎侧对刃面，斧头看着像根棍，
+    要从高处俯看才读得出刃口朝哪。
+    """
+    if args.camera is not None:
+        yaw, pitch = args.camera
+        return ((f"CAM yaw={yaw:g} pitch={pitch:g}", yaw, pitch),)
+    if not (args.gif and args.gif_views):
         return VIEWS
     wanted = [name.strip() for name in args.gif_views.split(",")]
     known = {label: (label, yaw, pitch) for label, yaw, pitch in VIEWS}
@@ -524,7 +532,7 @@ def _end_tick(emote) -> float:
 
 def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
     end = _end_tick(emote)
-    views = _gif_views(args)
+    views = _selected_views(args)
     n = max(2, int(round(end * args.subdiv)))
     gap, lab = 8, 16
     w = args.size * len(views) + gap * (len(views) + 1) + 54
@@ -591,6 +599,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"GIF 只画这几个视角（逗号分隔，可选 {[v[0] for v in VIEWS]}）；缺省全画")
     ap.add_argument("--end-hold-ms", type=non_negative_int, default=0,
                     help="一次性动画播完在收势帧停多久再重播（GIF 用，非负毫秒）；循环动画忽略")
+    ap.add_argument("--camera", nargs=2, type=float, metavar=("YAW", "PITCH"), default=None,
+                    help="只画一个自定义机位（度，与 VIEWS 同一约定：FRONT=180、SIDE=96、pitch 为俯角）；"
+                         "PNG 与 GIF 都生效，给了就忽略 --gif-views")
     return ap
 
 
@@ -621,6 +632,7 @@ def main() -> int:
     if args.gif:
         return _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus)
 
+    views = _selected_views(args)
     rows = []
     for tick in ticks:
         seg = segment_transforms(kfs, tick)
@@ -630,14 +642,14 @@ def main() -> int:
             for hid in held_ids:
                 xform[hid] = hm
         tiles = []
-        for label, yaw, pitch in VIEWS:
+        for label, yaw, pitch in views:
             img, _ = render(scene, yaw=yaw, pitch=pitch, size=args.size,
                             xform=xform, focus=focus, shading="mc")
             tiles.append((label, img))
         rows.append((tick, tiles))
 
     gap, lab = 8, 16
-    w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
+    w = args.size * len(views) + gap * (len(views) + 1) + 54
     h = (args.size + lab + gap) * len(rows) + gap
     canvas = Image.new("RGB", (w, h), (16, 17, 20))
     draw = ImageDraw.Draw(canvas)
