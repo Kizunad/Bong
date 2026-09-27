@@ -67,7 +67,7 @@ use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
@@ -1055,19 +1055,29 @@ fn handle_sparring_invite_responses(
 fn dispatch_trade_offers(
     mut requests: EventReader<TradeOfferRequest>,
     mut registry: ResMut<TradeOfferRegistry>,
-    players: Query<(Entity, &Lifecycle, &Position, &PlayerInventory), With<Client>>,
+    players: Query<
+        (
+            Entity,
+            &Lifecycle,
+            &Position,
+            Option<&CurrentDimension>,
+            &PlayerInventory,
+        ),
+        With<Client>,
+    >,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for request in requests.read() {
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_dimension, initiator_inventory)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory)) = players.get(request.target)
+        let Ok((_, target_lifecycle, target_pos, target_dimension, target_inventory)) =
+            players.get(request.target)
         else {
             continue;
         };
@@ -1075,6 +1085,12 @@ fn dispatch_trade_offers(
             || target_lifecycle.state == LifecycleState::Terminated
             || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
         {
+            continue;
+        }
+        if dimension_or_overworld(initiator_dimension) != dimension_or_overworld(target_dimension) {
+            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
+                initiator_client.send_chat_message("对方不在此界，无法交易");
+            }
             continue;
         }
         let Some(offered_item) =
@@ -1127,6 +1143,7 @@ fn handle_trade_offer_responses(
             Entity,
             &Lifecycle,
             &Position,
+            Option<&CurrentDimension>,
             &mut PlayerInventory,
             Option<&mut LifeRecord>,
         ),
@@ -1160,7 +1177,21 @@ fn handle_trade_offer_responses(
 
         let mut exchanged = false;
         if let Ok(
-            [(_, initiator_lifecycle, initiator_pos, mut initiator_inventory, initiator_life_record), (_, target_lifecycle, target_pos, mut target_inventory, target_life_record)],
+            [(
+                _,
+                initiator_lifecycle,
+                initiator_pos,
+                initiator_dimension,
+                mut initiator_inventory,
+                initiator_life_record,
+            ), (
+                _,
+                target_lifecycle,
+                target_pos,
+                target_dimension,
+                mut target_inventory,
+                target_life_record,
+            )],
         ) = players.get_many_mut([pending.initiator, pending.target])
         {
             if initiator_lifecycle.state == LifecycleState::Terminated
@@ -1169,6 +1200,14 @@ fn handle_trade_offer_responses(
                 || target_lifecycle.character_id != pending.target_char_id
                 || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
             {
+                continue;
+            }
+            if dimension_or_overworld(initiator_dimension)
+                != dimension_or_overworld(target_dimension)
+            {
+                if let Ok((_, mut client)) = clients.get_mut(response.player) {
+                    client.send_chat_message("交易双方不在同一界，无法交易");
+                }
                 continue;
             }
             let Some(offered_item) =
@@ -1234,6 +1273,12 @@ fn handle_trade_offer_responses(
             zone: None,
         });
     }
+}
+
+fn dimension_or_overworld(current_dimension: Option<&CurrentDimension>) -> DimensionKind {
+    current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or_default()
 }
 
 fn trade_item_summary(item: &ItemInstance) -> TradeItemSummaryV1 {

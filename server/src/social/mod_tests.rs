@@ -21,6 +21,7 @@ use crate::persistence::{bootstrap_sqlite, identity as identity_db};
 use crate::schema::server_data::ServerDataType;
 use crate::schema::social::RenownTagV1;
 use crate::social::events::PlayerChatCollected;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{App, Events, Position, Update};
@@ -1360,6 +1361,57 @@ fn trade_offer_dispatches_payload_only_to_target_and_hides_ids() {
 }
 
 #[test]
+fn trade_offer_dispatch_rejects_cross_dimension_players() {
+    let mut app = qi_test_app();
+    app.init_resource::<TradeOfferRegistry>();
+    app.add_event::<TradeOfferRequest>();
+    app.add_systems(Update, dispatch_trade_offers);
+
+    let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+    initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+    let initiator = app.world_mut().spawn(initiator_bundle).id();
+    app.world_mut().entity_mut(initiator).insert((
+        Lifecycle {
+            character_id: "char:initiator".to_string(),
+            ..Default::default()
+        },
+        CurrentDimension(DimensionKind::Overworld),
+        trade_inventory(1001, "出物"),
+    ));
+
+    let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+    target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+    let target = app.world_mut().spawn(target_bundle).id();
+    app.world_mut().entity_mut(target).insert((
+        Lifecycle {
+            character_id: "char:target".to_string(),
+            ..Default::default()
+        },
+        CurrentDimension(DimensionKind::Tsy),
+        trade_inventory(2002, "回物"),
+    ));
+
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
+    assert!(collect_server_data_payloads(&mut target_helper).is_empty());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut initiator_helper)
+        .iter()
+        .any(|message| message.contains("对方不在此界，无法交易")));
+}
+
+#[test]
 fn trade_offer_dispatch_allows_low_and_wanted_initiators_between_players() {
     for (tier, notoriety) in [("Low", 0), ("Wanted", 30)] {
         let mut app = qi_test_app();
@@ -1656,6 +1708,58 @@ fn trade_acceptance_exchanges_items_records_life_and_exposure() {
         .resource::<TradeOfferRegistry>()
         .pending
         .is_empty());
+}
+
+#[test]
+fn trade_response_rejects_dimension_changed_before_acceptance() {
+    let mut app = setup_trade_app();
+    let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+    let (target, mut target_helper) =
+        spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    let offer_id = app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .keys()
+        .next()
+        .expect("trade offer should be pending")
+        .clone();
+
+    app.world_mut()
+        .entity_mut(target)
+        .insert(CurrentDimension(DimensionKind::Tsy));
+    app.world_mut().send_event(TradeOfferResponseEvent {
+        player: target,
+        offer_id,
+        accepted: true,
+        requested_instance_id: Some(2002),
+        tick: 50,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
+    let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+    let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+    assert!(inventory_item_by_instance(initiator_inventory, 1001).is_some());
+    assert!(inventory_item_by_instance(initiator_inventory, 2002).is_none());
+    assert!(inventory_item_by_instance(target_inventory, 2002).is_some());
+    assert!(inventory_item_by_instance(target_inventory, 1001).is_none());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut target_helper)
+        .iter()
+        .any(|message| message.contains("交易双方不在同一界，无法交易")));
 }
 
 #[test]
