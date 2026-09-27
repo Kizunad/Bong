@@ -1,5 +1,36 @@
 # plan-bughunt-player-trade-cross-dimension-v1
 
+> **Active BugFix Plan（2026-09-27）**。一句话主题：玩家交易的发起与接受阶段都必须校验双方当前位面，禁止仅凭相近 XYZ 坐标完成跨维换货。
+
+| 阶段 | 主题 | 状态 |
+|------|------|------|
+| P0 | 第一性原理复现与边界确认 | ✅ 2026-09-27 |
+| P1 | 发起/接受双阶段同维门禁与拒绝反馈 | ✅ 2026-09-27 |
+| P2 | 跨维、切维、同维与既有拒绝契约测试 | ✅ 2026-09-27 |
+| P3 | server 完整门禁、主线同步、归档与最终验证 | ✅ 2026-09-27 |
+
+## Preflight（2026-09-27）
+
+- `docs/worldview.md`：已只读核对位面、面对面交易与交易暴露相关锚点，本 plan 不修改该文件。
+- `docs/finished_plans/`、`docs/plan-*.md`：grep `player-trade-cross-dimension` / `TradeOffer` / `CurrentDimension`，仅命中 `plan-refactor-c2s-gate-v1` 的矩阵记录与已归档的相邻交易计划；没有重复的 active plan。
+- `docs/plans-skeleton/`：确认本 skeleton 是唯一同名占位，已升格为本 active plan；相邻 NPC 交易门禁属于不同根因。
+- `reminder.md`：不存在。
+
+## 接入面与决议
+
+- **进料**：`TradeOfferRequest`、`TradeOfferResponseEvent`、双方 `Position` / `CurrentDimension` / `Lifecycle` / `PlayerInventory`。
+- **出料**：仅同维且在 `CHAT_EXPOSURE_RADIUS` 内时生成 `PendingTradeOffer`、发送既有 `TradeOfferPayloadV1` 并调用 `exchange_inventory_items`；跨维请求向请求方发送拒绝提示。
+- **共享类型 / event**：复用 `world::dimension::{CurrentDimension, DimensionKind}`，不新增位面枚举、pending 字段或协议字段；缺失 `CurrentDimension` 通过 `dimension_or_overworld` 回退 `Overworld`。
+- **跨仓库契约**：继续消费 `trade_offer_request` / `trade_offer_response`，发送既有 `TradeOfferPayloadV1`；本修复只改变 server 门禁，client / agent / schema 无需改动。
+- **worldview 锚点**：`worldview.md §九` 面对面交易、`§十一` 交易暴露、`§十六` 坍缩渊独立位面；面对面不能跨位面只靠 XYZ 成立。
+- **qi_physics 锚点**：本 plan 只交换既有物品实例，不生成、衰减或转移真元，无新增 ledger 路径。
+
+## P0 验真结论
+
+- 对拍 C2S `resolve_trade_offer_target`、`dispatch_trade_offers` 与 `handle_trade_offer_responses`：主线在两个 social 阶段都只比较 `Position`，没有上游同维 gate 或下游补偿；漏洞仍真实存在。
+- 旧本地提交 `04b203f21` 只把 skeleton 升格为 active plan，没有代码修复；本次按主线现状重写，不 cherry-pick 旧代码。
+- `SparringInvite` 路径已复查，属于独立交互链路，本 plan 不混入；若后续确认需要同维约束，另开独立 plan。
+
 ## Bug 摘要
 
 玩家对玩家交易的服务端链路只按 `Position` 三维距离判断双方是否“附近”，没有校验 `CurrentDimension`。因此两个玩家若处在 Overworld / TSY 的相近坐标，只要发起端能提交目标玩家的 protocol entity id，服务端会允许发出交易 offer；目标接受后，`handle_trade_offer_responses` 会再次只按坐标距离放行，并真实交换双方 `PlayerInventory` 中的物品。
@@ -38,24 +69,61 @@
 
 第二轮反方结论：仍成立，不是误报。反方继续核对客户端路径、Valence entity id 解析、跨维传送位置语义和重复 PR，结论是服务端交易链路没有“同维度”约束；#930 是 social witness/exposure 跨维，#940 是 NPC 拒交易误套，#882 是发起端自动选物，均不覆盖本 bug 的玩家交易成交链路。
 
-## Skeleton Fix Plan
+## P1：最小修复
 
-- [ ] 在 `TradeOfferRequest` 派发前，按发起者与目标玩家的 `CurrentDimension` 做同维度校验；缺失维度时采用和邻近交互一致的默认策略，并写清测试期望。
-- [ ] 在 `PendingTradeOffer` 中记录发起时双方维度，或在 `handle_trade_offer_responses` 接受阶段重新查询双方 `CurrentDimension`，确保接受时仍同维。
-- [ ] 若跨维拒绝，向发起者或接受者发送明确反馈，例如“对方不在此界，无法交易”，避免 UI 静默。
-- [ ] 保持现有距离、终止态、character id、物品存在、装备物品拒绝等交易保护不回退。
-- [ ] 复查 `SparringInvite` 是否同样只按距离建立运行态；若发现同类跨维缺口，另开独立 plan，不混入本修复。
+- [x] 在 `dispatch_trade_offers` 派发前按双方当前 `CurrentDimension` 做同维度校验；缺失组件由 `dimension_or_overworld` 按 `Overworld` 处理。
+- [x] 在 `handle_trade_offer_responses` 接受阶段重新查询双方当前 `CurrentDimension`，成交瞬间不再依赖发起时快照。
+- [x] 跨维发起和接受都发送明确拒绝反馈，且不生成或消费物品交换状态。
+- [x] 保持现有距离、终止态、character id、物品存在、装备物品拒绝与容量拒绝保护不回退。
+- [x] 已复查 `SparringInvite`；该独立链路不在本修复范围内。
 
-## 验收测试计划
+## P2：验收测试
 
-- [ ] server 单测：Overworld 发起者与 TSY 目标同坐标时，`dispatch_trade_offers` 不生成 pending trade，也不向目标发送 `TradeOffer` payload。
-- [ ] server 单测：发起时同维、接受前目标切到 TSY，同一 offer 接受不得交换物品，pending 应被清理或拒绝。
-- [ ] server 单测：同维且距离内的正常玩家交易仍能完成，双方 inventory revision、LifeRecord、SocialExposure 行为保持现有预期。
-- [ ] server 单测：同维但超距、终止态、物品缺失、装备物品等既有拒绝用例继续通过。
-- [ ] 协议/集成测试：伪造 `target: "entity:<id>"` 指向跨维玩家时，服务端拒绝而不是依赖客户端准星可见性。
+- [x] server 单测：Overworld 发起者与 TSY 目标同坐标时，`dispatch_trade_offers` 不生成 pending trade，也不向目标发送 `TradeOffer` payload。
+- [x] server 单测：发起时同维、接受前目标切到 TSY，同一 offer 接受不得交换物品，pending 被清理并反馈拒绝。
+- [x] server 单测：同维且距离内的正常玩家交易仍能完成，双方 inventory revision、LifeRecord、SocialExposure 行为保持现有预期。
+- [x] server 单测：同维但超距、终止态、物品缺失、装备物品与容量拒绝等既有用例继续通过。
+- [x] 协议路径沿用既有 `entity:<id>` resolver，跨维目标在 social server gate 被拒绝，不依赖客户端准星可见性。
+
+## P3：闭环门禁
+
+- [x] `git fetch origin && git merge origin/main`：Already up to date，修复基于最新主线复验。
+- [x] `scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 全部通过。
+- [x] 归档前 HEAD 与关键文件未被主线更新覆盖；门禁与主线复验已完成，推送和 PR 将在归档提交后执行。
 
 ## 风险
 
 - `CurrentDimension` 缺失实体的默认语义必须与现有 server 交互门禁一致；否则测试 helper 需要补齐维度组件，避免误把测试默认当生产行为。
 - 如果 pending 中记录维度，跨维返回后是否允许继续接受需要明确：建议接受阶段必须“当前同维”，而不是只要求“发起时同维”。
 - 交易拒绝反馈要避免泄露目标实体是否存在；面向普通玩家只提示“不在此界/无法交易”即可。
+
+## Finish Evidence
+
+### 落地清单
+
+- `server/src/social/mod.rs`：`dispatch_trade_offers` 与 `handle_trade_offer_responses` 使用 `CurrentDimension` 双阶段同维门禁；`dimension_or_overworld` 统一缺省维度语义并发送拒绝反馈。
+- `server/src/social/mod_tests.rs`：新增发起跨维拒绝、接受前切维拒绝两条最小契约测试；既有 11 条交易相关测试继续通过。
+- `docs/plan-bughunt-player-trade-cross-dimension-v1.md`：记录 Preflight、验真、接入面、阶段状态与最终证据。
+
+### 关键 commit
+
+- `7ce8f9562`（2026-09-27）：将同名 skeleton 升格为 active plan。
+- `9ebc8b9c0`（2026-09-27）：在交易发起与接受阶段加入当前位面校验并锁定回归测试，`Model: gpt-6-luna`。
+- 旧本地提交 `04b203f21`（2026-07-18）仅含文档升格，已保留为 `backup/plan-bughunt-player-trade-cross-dimension-v1-local-20260927`，代码修复按今日主线重写。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo test -p bong-server 'social::tests::trade_'`：13 passed，0 failed。
+- `scripts/build-token.sh cargo fmt --check`：passed。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：passed。
+- `scripts/build-token.sh cargo test`：passed；lib 10,378 tests、各 integration/unit binaries 与 doc-tests 均通过（doc-tests 3 passed、5 ignored）。
+
+### 跨仓库核验
+
+- server 命中 `TradeOfferRequest`、`TradeOfferResponseEvent`、`TradeOfferPayloadV1`、`CurrentDimension` 与 `exchange_inventory_items`。
+- client / agent / schema 的既有 `trade_offer_request` / `trade_offer_response` wire shape 未改变，无需改动。
+
+### 遗留 / 后续
+
+- `SparringInvite` 未并入本 plan；若确认其独立链路需要同维约束，另开 plan。
+- PR 合并前保留 slot-2、远端 claim 与 backup 分支；由主干在 PR 合并后统一清理。
