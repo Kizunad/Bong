@@ -44,6 +44,36 @@ pub fn guangbo_ticao_limb_defense(proficiency: f32) -> f32 {
 #[derive(Debug, Clone, Event)]
 pub struct GuangboTicaoPracticeEvent {
     pub entity: Entity,
+    settlement: Option<PracticeSettlement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PracticeSettlement {
+    QiLedger,
+}
+
+impl GuangboTicaoPracticeEvent {
+    /// Create the only production-valid practice event: the generic cast has
+    /// already settled its qi cost through the canonical ledger.
+    pub(crate) fn settled(entity: Entity) -> Self {
+        Self {
+            entity,
+            settlement: Some(PracticeSettlement::QiLedger),
+        }
+    }
+
+    /// Test and diagnostic seam for an event without an upstream qi receipt.
+    #[cfg(test)]
+    pub(crate) fn unverified(entity: Entity) -> Self {
+        Self {
+            entity,
+            settlement: None,
+        }
+    }
+
+    fn has_qi_settlement(&self) -> bool {
+        matches!(self.settlement, Some(PracticeSettlement::QiLedger))
+    }
 }
 
 pub fn guangbo_proficiency_gain(current: f32) -> f32 {
@@ -81,6 +111,13 @@ pub fn consume_guangbo_practice_events(
     mut q: Query<&mut KnownTechniques>,
 ) {
     for event in events.read() {
+        if !event.has_qi_settlement() {
+            tracing::warn!(
+                entity = ?event.entity,
+                "[bong][combat] ignoring guangbo practice without qi ledger settlement"
+            );
+            continue;
+        }
         let Ok(mut known) = q.get_mut(event.entity) else {
             continue;
         };
@@ -412,7 +449,7 @@ mod tests {
                 .id();
             app.world_mut()
                 .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
-                .send(GuangboTicaoPracticeEvent { entity });
+                .send(GuangboTicaoPracticeEvent::settled(entity));
 
             app.update();
 
@@ -445,7 +482,7 @@ mod tests {
                 .id();
             app.world_mut()
                 .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
-                .send(GuangboTicaoPracticeEvent { entity });
+                .send(GuangboTicaoPracticeEvent::settled(entity));
 
             app.update();
 
@@ -469,7 +506,7 @@ mod tests {
                 .id();
             app.world_mut()
                 .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
-                .send(GuangboTicaoPracticeEvent { entity });
+                .send(GuangboTicaoPracticeEvent::settled(entity));
 
             app.update();
 
@@ -477,6 +514,26 @@ mod tests {
                 app.world().get::<Cultivation>(entity).unwrap().qi_current,
                 5.0,
                 "无 KnownTechniques 的完成事件不得触碰玩家真元"
+            );
+        }
+
+        #[test]
+        fn unverified_completion_event_does_not_grant_proficiency() {
+            let mut app = build_app();
+            let entity = app
+                .world_mut()
+                .spawn(KnownTechniques { entries: vec![] })
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent::unverified(entity));
+
+            app.update();
+
+            let known = app.world().get::<KnownTechniques>(entity).unwrap();
+            assert!(
+                known.entries.is_empty(),
+                "未经 qi ledger 结算的完成事件不得创建或增长广播体操熟练度"
             );
         }
     }

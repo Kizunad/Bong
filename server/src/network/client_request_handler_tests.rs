@@ -12867,6 +12867,188 @@ dispatch = "direct_generic"
         }
 
         #[test]
+        fn same_update_skill_bar_requests_charge_generic_cast_once() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let mut skill_bar = SkillBarBindings::default();
+            assert!(skill_bar.set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: "body.guangbo_ticao".to_string(),
+                },
+            ));
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert((
+                Position::new([0.0, 0.0, 0.0]),
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
+                known(&["body.guangbo_ticao"]),
+            ));
+
+            // Let the normal qi account bootstrap settle before measuring this cast.
+            app.update();
+            let before = summarize_world_qi(app.world_mut());
+            for _ in 0..2 {
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                            v: 1,
+                            slot: 0,
+                            target: None,
+                        })
+                        .unwrap()
+                        .into_boxed_slice(),
+                    });
+            }
+
+            app.update();
+
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current,
+                SPIRIT_QI_TOTAL - 1.0,
+                "同一 update 的重复技能栏请求只能扣一次 generic cast 真元"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<crate::combat::components::Stamina>(entity)
+                    .unwrap()
+                    .current,
+                95.0,
+                "同一 update 的重复技能栏请求只能扣一次体力"
+            );
+            assert!(
+                app.world().get::<Casting>(entity).is_some(),
+                "首个请求应创建 Casting"
+            );
+            assert!(
+                app.world().get::<QiSettledCast>(entity).is_some(),
+                "generic cast 只有在 qi ledger 结算后才能携带完成凭据"
+            );
+            let after = summarize_world_qi(app.world_mut());
+            assert_conservation(&before, &after, 0.0)
+                .expect("重复请求的单次 generic 扣费必须保持 qi 守恒");
+        }
+
+        #[test]
+        fn failed_generic_resource_preflight_preserves_active_cast() {
+            const EXPENSIVE_ID: &str = "test.runtime_only_direct";
+
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(load_runtime_only_direct_generic_registry(EXPENSIVE_ID));
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let mut skill_bar = SkillBarBindings::default();
+            assert!(skill_bar.set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: "body.guangbo_ticao".to_string(),
+                },
+            ));
+            assert!(skill_bar.set(
+                1,
+                SkillSlot::Skill {
+                    skill_id: EXPENSIVE_ID.to_string(),
+                },
+            ));
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert((
+                Position::new([0.0, 0.0, 0.0]),
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina {
+                    current: 5.0,
+                    max: 100.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
+                known(&["body.guangbo_ticao", EXPENSIVE_ID]),
+                Casting {
+                    source: CastSource::SkillBar,
+                    slot: 0,
+                    started_at_tick: 0,
+                    duration_ticks: 60,
+                    started_at_ms: 0,
+                    duration_ms: 3000,
+                    bound_instance_id: None,
+                    start_position: DVec3::ZERO,
+                    complete_cooldown_ticks: 200,
+                    skill_id: Some("body.guangbo_ticao".to_string()),
+                    skill_config: None,
+                },
+                QiSettledCast,
+            ));
+
+            app.update();
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                        v: 1,
+                        slot: 1,
+                        target: None,
+                    })
+                    .unwrap()
+                    .into_boxed_slice(),
+                });
+
+            app.update();
+
+            let casting = app
+                .world()
+                .get::<Casting>(entity)
+                .expect("资源预检失败时原有 Casting 必须保留");
+            assert_eq!(casting.slot, 0);
+            assert_eq!(casting.skill_id.as_deref(), Some("body.guangbo_ticao"));
+            assert!(
+                app.world().get::<QiSettledCast>(entity).is_some(),
+                "资源预检失败不得移除原 cast 的 qi 结算凭据"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<crate::combat::components::Stamina>(entity)
+                    .unwrap()
+                    .current,
+                5.0,
+                "被拒绝的异槽技能不得扣体力"
+            );
+        }
+
+        #[test]
         fn skill_bar_cast_requires_config_for_schema_fixture() {
             let mut app = App::new();
             register_request_app(&mut app);

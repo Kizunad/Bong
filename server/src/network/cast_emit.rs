@@ -21,7 +21,8 @@ use valence::prelude::{
 use crate::alchemy::pill::apply_wound_heal;
 use crate::combat::body_conditioning::{GuangboTicaoPracticeEvent, GUANGBO_TICAO_ID};
 use crate::combat::components::{
-    BodyPart, CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
+    BodyPart, CastSource, Casting, QiSettledCast, QuickSlotBindings, SkillBarBindings,
+    StatusEffects, Wounds,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::yidao::YidaoCastCompleteEvent;
@@ -137,6 +138,7 @@ type CastTickQueryItem<'a> = (
     &'a mut Client,
     &'a Username,
     &'a Casting,
+    Option<&'a QiSettledCast>,
     &'a mut Wounds,
     &'a Position,
     &'a mut PlayerInventory,
@@ -191,6 +193,7 @@ pub fn tick_casts_or_interrupt(
         mut client,
         username,
         casting,
+        qi_settled_cast,
         mut wounds,
         position,
         mut inventory,
@@ -210,7 +213,7 @@ pub fn tick_casts_or_interrupt(
                 .any(|e| e.kind == StatusEffectKind::Stunned && e.remaining_ticks > 0)
         });
         if stunned {
-            commands.entity(entity).remove::<Casting>();
+            commands.entity(entity).remove::<(Casting, QiSettledCast)>();
             set_cast_cooldown(
                 casting,
                 &mut bindings,
@@ -253,7 +256,7 @@ pub fn tick_casts_or_interrupt(
             .iter()
             .any(|w| w.created_at_tick == clock.tick);
         if damaged_this_tick {
-            commands.entity(entity).remove::<Casting>();
+            commands.entity(entity).remove::<(Casting, QiSettledCast)>();
             set_cast_cooldown(
                 casting,
                 &mut bindings,
@@ -288,7 +291,7 @@ pub fn tick_casts_or_interrupt(
         // 移动中断（plan §4.3）：当前位置与 cast 起始位置距离超阈值。
         let moved_distance = position.get().distance(casting.start_position);
         if moved_distance > CAST_MOVEMENT_INTERRUPT_THRESHOLD_M {
-            commands.entity(entity).remove::<Casting>();
+            commands.entity(entity).remove::<(Casting, QiSettledCast)>();
             set_cast_cooldown(
                 casting,
                 &mut bindings,
@@ -328,7 +331,8 @@ pub fn tick_casts_or_interrupt(
         }
         // 自然完成
         if clock.tick >= casting.started_at_tick + casting.duration_ticks {
-            commands.entity(entity).remove::<Casting>();
+            let qi_settled = qi_settled_cast.is_some();
+            commands.entity(entity).remove::<(Casting, QiSettledCast)>();
             // §8.1 #3：自然完成也显式停循环蓄力段（防御性兜底——release 段由各招
             // 完成系统同拍接力播出，重复 StopAnim 对不同 anim_id 的 release 无影响）。
             stop_cast_loop_anim(
@@ -360,8 +364,9 @@ pub fn tick_casts_or_interrupt(
                 .skill_id
                 .as_deref()
                 .is_some_and(has_direct_generic_completion_consumer)
+                && qi_settled
             {
-                guangbo_practice_events.send(GuangboTicaoPracticeEvent { entity });
+                guangbo_practice_events.send(GuangboTicaoPracticeEvent::settled(entity));
                 emit_recipe_audio_with_context(
                     &mut audio_events,
                     "guangbo_ticao_practice",
