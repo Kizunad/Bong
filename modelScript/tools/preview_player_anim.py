@@ -485,8 +485,8 @@ def _fit_focus(kfs, display, scene, ids, held_ids, end, samples=17, margin=1.10)
     return center, span
 
 
-def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
-    """一个 tick 的三视图横排。GIF 和静态网格共用，保证两者画的是同一套变换。"""
+def _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views=VIEWS):
+    """一个 tick 的若干视角横排。GIF 和静态网格共用，保证两者画的是同一套变换。"""
     seg = segment_transforms(kfs, tick)
     xform = {ids[n]: m for n, m in seg.items()}
     if held_ids:
@@ -495,7 +495,19 @@ def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
             xform[hid] = hm
     return [(label, render(scene, yaw=yaw, pitch=pitch, size=args.size,
                            xform=xform, focus=focus, shading="mc")[0])
-            for label, yaw, pitch in VIEWS]
+            for label, yaw, pitch in views]
+
+
+def _gif_views(args):
+    """--gif-views 选出的视角；缺省三视图全要。"""
+    if not args.gif_views:
+        return VIEWS
+    wanted = [name.strip() for name in args.gif_views.split(",")]
+    known = {label: (label, yaw, pitch) for label, yaw, pitch in VIEWS}
+    missing = [name for name in wanted if name not in known]
+    if missing:
+        raise SystemExit(f"--gif-views 里有未知视角 {missing}，可选 {list(known)}")
+    return tuple(known[name] for name in wanted)
 
 
 def _end_tick(emote) -> float:
@@ -512,15 +524,21 @@ def _end_tick(emote) -> float:
 
 def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
     end = _end_tick(emote)
+    views = _gif_views(args)
     n = max(2, int(round(end * args.subdiv)))
     gap, lab = 8, 16
-    w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
+    w = args.size * len(views) + gap * (len(views) + 1) + 54
     h = args.size + lab + gap * 2
 
+    # 循环动画不含 end：末帧 == 首帧时循环会顿一拍。
+    # 一次性动画要带上 end（收势那一帧），并按 --end-hold-ms 停一下再重播，
+    # 否则看图器会从收势直接跳回起手，看不出动作已经结束。
+    one_shot = not emote.get("isLoop", False)
+    ticks = [end * i / n for i in range(n)] + ([end] if one_shot else [])
+
     frames = []
-    for i in range(n):
-        tick = end * i / n            # 不含 end：末帧==首帧时循环会顿一拍
-        tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick)
+    for tick in ticks:
+        tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views)
         canvas = Image.new("RGB", (w, h), (16, 17, 20))
         draw = ImageDraw.Draw(canvas)
         draw.text((6, h // 2), f"t{tick:4.1f}", fill=(232, 232, 224))
@@ -532,11 +550,14 @@ def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
         frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
 
     per = max(20, int(round(50.0 / args.subdiv / args.speed)))
+    durations = [per] * len(frames)
+    if one_shot:
+        durations[-1] += args.end_hold_ms
     out = args.out or (LIB / "out" / f"{args.json.stem}.gif")
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:],
-                   duration=per, loop=0, disposal=2, optimize=False)
-    print(f"{out}  {n} 帧 / {per}ms 每帧 / 循环 {n * per}ms（原速 {end * 50:.0f}ms）")
+                   duration=durations, loop=0, disposal=2, optimize=False)
+    print(f"{out}  {len(frames)} 帧 / {per}ms 每帧 / 一轮 {sum(durations)}ms（原速 {end * 50:.0f}ms）")
     return 0
 
 
@@ -558,6 +579,10 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=0.35,
                     help="GIF 播放速度倍率（GIF 用）。默认 0.35 倍慢放：原速 8 tick 只有"
                          "400ms，且多数看图器把 <50ms 的帧延迟钳到 100ms，原速反而失真")
+    ap.add_argument("--gif-views", default=None,
+                    help=f"GIF 只画这几个视角（逗号分隔，可选 {[v[0] for v in VIEWS]}）；缺省全画")
+    ap.add_argument("--end-hold-ms", type=int, default=0,
+                    help="一次性动画播完在收势帧停多久再重播（GIF 用）；循环动画忽略")
     args = ap.parse_args()
 
     # **先剥到 emote 再用**。这里曾经拿整份文档当 emote 使：`collect_keyframes` 那行
