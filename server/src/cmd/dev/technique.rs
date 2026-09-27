@@ -174,6 +174,7 @@ pub fn handle_technique(
                 let removed = techniques.entries.len() != before;
                 let cleared = prune_stale_bindings_after_mutation(
                     &techniques,
+                    registry,
                     skill_bar,
                     username,
                     persistence.as_deref(),
@@ -225,6 +226,7 @@ pub fn handle_technique(
                 *techniques = KnownTechniques::dev_default(registry);
                 let cleared = prune_stale_bindings_after_mutation(
                     &techniques,
+                    registry,
                     skill_bar,
                     username,
                     persistence.as_deref(),
@@ -244,20 +246,21 @@ pub fn handle_technique(
 /// 避免已经解绑的功法仍带着旧冷却，在重新授予后复活。
 fn prune_stale_bindings_after_mutation(
     known: &KnownTechniques,
+    registry: &TechniqueRegistry,
     skill_bar: Option<impl std::ops::DerefMut<Target = SkillBarBindings>>,
     username: Option<&Username>,
     persistence: Option<&PlayerStatePersistence>,
 ) -> usize {
     let mut cleared = 0;
     if let Some(mut bindings) = skill_bar {
-        if prune_unknown_dash_binding(&mut bindings.dash_skill_id, known) {
+        if prune_unknown_dash_binding(&mut bindings.dash_skill_id, known, registry) {
             cleared += 1;
         }
         cleared += prune_unknown_skill_slots(&mut bindings, known);
     }
     if let (Some(persistence), Some(username)) = (persistence, username) {
         if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
-            prune_unknown_dash_binding(&mut prefs.dash_skill_id, known);
+            prune_unknown_dash_binding(&mut prefs.dash_skill_id, known, registry);
             prune_unknown_persisted_skill_slots(&mut prefs.skill_bar, known);
         }) {
             tracing::warn!(
@@ -269,10 +272,17 @@ fn prune_stale_bindings_after_mutation(
     cleared
 }
 
-fn prune_unknown_dash_binding(dash_skill_id: &mut Option<String>, known: &KnownTechniques) -> bool {
-    let stale = dash_skill_id
-        .as_deref()
-        .is_some_and(|skill_id| !known_contains(known, skill_id));
+fn prune_unknown_dash_binding(
+    dash_skill_id: &mut Option<String>,
+    known: &KnownTechniques,
+    registry: &TechniqueRegistry,
+) -> bool {
+    let stale = dash_skill_id.as_deref().is_some_and(|skill_id| {
+        !known_contains(known, skill_id)
+            || registry
+                .get(skill_id)
+                .is_none_or(|definition| definition.input_kind() != "dash")
+    });
     if stale {
         *dash_skill_id = None;
     }
@@ -947,6 +957,51 @@ mod tests {
     }
 
     #[test]
+    fn technique_remove_clears_known_non_dash_binding() {
+        let mut app = setup_app();
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques {
+                entries: vec![
+                    KnownTechnique {
+                        id: BENG_QUAN.to_string(),
+                        proficiency: 0.5,
+                        active: true,
+                    },
+                    KnownTechnique {
+                        id: NEEDLE.to_string(),
+                        proficiency: 0.5,
+                        active: true,
+                    },
+                ],
+            },
+        );
+        let bindings = SkillBarBindings {
+            dash_skill_id: Some(BENG_QUAN.to_string()),
+            ..Default::default()
+        };
+        app.world_mut().entity_mut(player).insert(bindings);
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Remove {
+                id: NEEDLE.to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert_eq!(
+            app.world()
+                .get::<SkillBarBindings>(player)
+                .unwrap()
+                .dash_skill_id,
+            None,
+            "a known non-dash technique must not survive as a dash binding"
+        );
+    }
+
+    #[test]
     fn technique_reset_all_prunes_bindings_absent_from_runtime_defaults() {
         let mut app = setup_app();
         let player = spawn_known(
@@ -1061,24 +1116,51 @@ mod tests {
     }
 
     #[test]
-    fn prune_persisted_dash_binding_clears_only_unknown_id() {
+    fn prune_persisted_dash_binding_requires_known_dash_definition() {
+        let registry = runtime_registry();
         let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: BENG_QUAN.to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
+            entries: vec![
+                KnownTechnique {
+                    id: BENG_QUAN.to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: crate::movement::dash_proficiency::DASH_TECHNIQUE_ID.to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                },
+            ],
         };
         let mut prefs = crate::player::state::PlayerUiPrefs {
             dash_skill_id: Some("legacy.dash".to_string()),
             ..Default::default()
         };
-        assert!(prune_unknown_dash_binding(&mut prefs.dash_skill_id, &known));
+        assert!(prune_unknown_dash_binding(
+            &mut prefs.dash_skill_id,
+            &known,
+            &registry
+        ));
         assert_eq!(prefs.dash_skill_id, None);
 
-        let mut known_dash = Some(BENG_QUAN.to_string());
-        assert!(!prune_unknown_dash_binding(&mut known_dash, &known));
-        assert_eq!(known_dash.as_deref(), Some(BENG_QUAN));
+        let mut known_non_dash = Some(BENG_QUAN.to_string());
+        assert!(prune_unknown_dash_binding(
+            &mut known_non_dash,
+            &known,
+            &registry
+        ));
+        assert_eq!(known_non_dash, None);
+
+        let mut known_dash = Some(crate::movement::dash_proficiency::DASH_TECHNIQUE_ID.to_string());
+        assert!(!prune_unknown_dash_binding(
+            &mut known_dash,
+            &known,
+            &registry
+        ));
+        assert_eq!(
+            known_dash.as_deref(),
+            Some(crate::movement::dash_proficiency::DASH_TECHNIQUE_ID)
+        );
     }
 
     #[test]
