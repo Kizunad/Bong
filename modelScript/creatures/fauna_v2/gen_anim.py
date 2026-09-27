@@ -277,8 +277,8 @@ def skull_fiend_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
         hit = math.sin(math.pi * t)
         poser.turn(pose, "body", rot=(-10 * hit, 0, 0), pos=(0, 0, -1.2 * hit))
         poser.turn(pose, "head", rot=(0, 0, 8 * math.sin(math.tau * 1.5 * t)))
-        for bone, phase in SKULL_SATELLITES.items():
-            poser.turn(pose, bone, rot=(0, 10 * hit * wave(phase), 0))
+        for bone, phase in SKULL_SATELLITES.items():  # 受击时各颗小颅错相抖一下半
+            poser.turn(pose, bone, rot=(0, 10 * hit * wave(t, 1.5, phase), 0))
         poser.turn(pose, "eye_fire", scale=[1 - 0.5 * hit] * 3)
         return pose
 
