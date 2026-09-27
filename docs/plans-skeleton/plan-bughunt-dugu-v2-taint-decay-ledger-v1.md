@@ -36,7 +36,7 @@
 
 ### P0：临时标记终止结算
 
-- 在 `taint_decay_tick` 选择明确的终止语义：若 intensity 尚未被 Reverse 消费，则把它按目标位置/维度释放到 zone，zone 不可达时进入 overflow；成功记账后再移除 mark。
+- 在 `taint_decay_tick` 选择明确的终止语义：若 intensity 尚未被 Reverse 消费，则调用 `qi_release_to_zone` 按目标位置/维度释放到 zone，zone 不可达时进入 overflow；真实账户回流用 `ledger.transfer(QiTransfer { from, to, amount, reason })`，成功记账后再移除 mark。
 - 保持 `temporary_qi_max_loss` 恢复与 residue 释放为同一原子状态转换；重复 tick、已被 Reverse 移除的 mark 和零 intensity 必须幂等。
 
 ### P1：回归契约
@@ -48,3 +48,10 @@
 ## §6 验证计划
 
 实现后运行 server 栈 fmt、clippy、cargo test，重点覆盖 `dugu_v2::tick` 的过期、Reverse 竞态和 overflow 分支。守恒断言引用 `QI_ZONE_UNIT_CAPACITY`/`assert_conservation`；本 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** 生命周期入口是 `dugu_v2::tick::taint_decay_tick`；对照结算是 `eclipse_zone_credit_tick` 与 `reverse_zone_credit_tick`，overflow 兜底为 `route_dugu_qi_to_overflow`。测试必须证明过期分支在移除 `TaintMark` 前完成 intensity 结算，并覆盖无 `Position`/无 zone 的分支。
+- **Qi：** zone 归还先调用 `qi_release_to_zone(amount, from, zone, zone_current, QI_ZONE_UNIT_CAPACITY)`，按 `ZoneReleaseOutcome` 更新 `ZoneRegistry`，再写唯一审计。`QiTransferReason::DuguReturnToZone` 是 audit-only：只能 `push_transfer_audit`/发送 `QiTransfer`，不能写成 `ledger.transfer`；若未消费的金额已经在真实 overflow/container 账户，才用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })` 完成余额搬运。测试使用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；fixture 可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation`。
+- **Agent：无变更。** 证据是 `TaintMark`、`CombatClock`、`ZoneRegistry` 和 `WorldQiAccount` 均为 server ECS 组件/资源，未新增 IPC 消息。
+- **Client：无变更。** 证据是过期结算只影响真元、zone 和既有战斗事件，不修改 Fabric payload 或渲染协议。

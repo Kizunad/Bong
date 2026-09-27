@@ -37,7 +37,7 @@
 ### P0：治疗真元结算
 
 - 选定明确的治疗合同：成功净化的 qi 是患者可吸收的 credit，超出患者 `qi_max` 的部分通过 `qi_release_to_zone`/overflow 回灌；或在设计确认后将全部成本释放到患者所在 zone，但必须有唯一物理去向。
-- 让余额变更与 `QiTransfer` 审计原子提交，禁止把 `Events<QiTransfer>` 当作自动 consumer；拒绝/污染为零的路径不扣真元。
+- 让余额变更与 `QiTransfer` 审计原子提交：真实 payer/receiver 账户调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Healing })`，禁止把 `Events<QiTransfer>` 当作自动 consumer；拒绝/污染为零的路径不扣真元。
 
 ### P1：回归契约
 
@@ -47,3 +47,10 @@
 ## §6 验证计划
 
 实现后运行 server 栈 fmt、clippy、cargo test，重点覆盖 `combat::yidao` 和 qi ledger。守恒断言使用生产常量与 `assert_conservation`；本 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** 施法入口是 `yidao::resolve_contam_purge_skill`，完成系统是 `complete_yidao_casts`，缺口函数是 `apply_contam_purge` → `debit_caster_qi`/`emit_qi_transfer`；患者入账可复用同文件的 `credit_patient_qi`，失败回灌对照 `release_failed_repair_qi_to_zone`。回归测试必须观察施术者、患者和 zone 的真实余额，不只读 `YidaoEventV1`。
+- **Qi：** 成功治疗的 payer/receiver 交易必须在真实账本边界提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Healing })`；超出患者容量或患者不可达的部分走 `qi_release_to_zone`/overflow，并用 `QiTransferReason::ReleaseToZone` 的 transfer。`Events<QiTransfer>` 只是审计输出，不是余额 consumer。测试引用 `QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；现有 fixture 的 `SPIRIT_QI_TOTAL` 在 `schema::common`）与 `assert_conservation`。
+- **Agent：无变更。** 证据是 `YidaoEventV1` 仍由 server 产生，agent 没有新的字段或处理分支。
+- **Client：无变更。** 证据是治疗动画/事件 payload 保持现有 `YidaoEventV1`，只修 server 余额落点。

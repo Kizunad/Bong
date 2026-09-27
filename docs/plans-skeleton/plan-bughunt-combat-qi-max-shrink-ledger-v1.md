@@ -36,7 +36,7 @@
 
 ### P0：统一缩容释放事务
 
-- 把三处缩容改为先计算 `excess = (qi_current - new_qi_max).max(0.0)`，用统一的 release context 将 excess 记入目标 zone 或固定 overflow，只有完整提交后才写入新 `qi_max`/`qi_current`。
+- 把三处缩容改为先计算 `excess = (qi_current - new_qi_max).max(0.0)`，用 `qi_release_to_zone` 拆分 zone/overflow；对 ledger 账户提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，只有完整提交后才写入新 `qi_max`/`qi_current`。
 - 区分真实余额变更与 `PermanentQiMaxDecayApplied` 等审计事件，禁止新增全局 event-only consumer。
 
 ### P1：回归契约
@@ -47,3 +47,10 @@
 ## §6 验证计划
 
 实现后运行 server 栈完整 fmt、clippy、cargo test，并覆盖 `baomai_v3`、`woliu`、`dugu_v2::tick` 相关测试。守恒断言引用 qi_physics 常量与 `assert_conservation`，不写 `100.0` 等总量字面量。本 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** 三个 producer 是 `baomai_v3::skills::cast_disperse` → `apply_qi_max_loss`、`combat::woliu::vortex_maintain_tick` 和 `combat::dugu_v2::tick::permanent_qi_max_decay_tick`。回归测试必须在这些函数/系统的输入输出上观察 `Cultivation.qi_current`、zone 与 overflow，而不是只检查 `PermanentQiMaxDecayApplied` 事件。
+- **Qi：** 先算 `excess`，用 `qi_release_to_zone`（`QI_ZONE_UNIT_CAPACITY`）拆出 zone 接收量和 overflow；对 ledger 持有的来源/去向，提交必须落到 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`（即 `WorldQiAccount::transfer`），成功后才写回缩容余额。ECS 玩家余额仍按现有外部余额语义扣减并留下同一 `QiTransfer` 审计，不能把事件当 consumer。测试引用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；旧测试夹具可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation`。
+- **Agent：无变更。** 证据是 `Cultivation`、`ZoneRegistry`、`WorldQiAccount` 和战斗系统均在 server 内部，未改变 Redis 消息或 schema。
+- **Client：无变更。** 证据是缩容只影响 qi 数值与 zone/overflow 账本；既有战斗事件和 HUD wire 不新增字段。

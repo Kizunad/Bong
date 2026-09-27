@@ -47,3 +47,10 @@
 ## §6 验证计划
 
 实现后在 server 栈运行 fmt、clippy 与测试；至少运行相关 `zhenmai_v2`、`tribulation`、`dugu` 单测及非人形回归测试。此 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** 修复范围固定为 `combat::zhenmai_v2::meridian_channel_id_to_legacy`、`first_open_meridian`、`open_meridians`、`cultivation::tribulation::apply_tribulation_failure_penalty`，并审计 `cultivation::dugu` 的同类转换点（当前约 `server/src/cultivation/dugu.rs:566`）。回归测试应直接调用这些函数或它们所属系统，证明 `MeridianChannelId::to_meridian_id() == None` 走 `Option`/拒绝分支而不是 panic。
+- **Qi：** 该 bug 不产生新的真元流动，修复不得偷偷增加或删除 transfer；保留调用点已有的 `QiTransfer` 语义。若测试建立守恒快照，使用 `crate::schema::common::SPIRIT_QI_TOTAL`（现有测试锚点）、`QI_EPSILON` 与 `assert_conservation`，而不是写总量字面量；本 plan 不要求 `ledger.transfer`。
+- **Agent：无变更。** 证据是上述调用链只读 server ECS 的经脉与境界状态，不触及 Redis IPC 或 `agent/packages/schema`。
+- **Client：无变更。** 证据是该边界在 server 内部把通道映射为 `Option`，不改变 Fabric payload、HUD 或技能 wire id。

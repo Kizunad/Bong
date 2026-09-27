@@ -37,7 +37,7 @@
 ### P0：Eclipse debit 与 residue 对齐
 
 - 计算并保存实际扣除量，限制 taint intensity、returned residue 和后续 Reverse 返还不超过该量；明确 collision 只是公式结果，真实余额变更必须先提交。
-- 为 Immediate tier 增加明确的 zone/overflow `ReleaseToZone` 路径，或建立能承载 residue 的状态，但不能让事件成为唯一 consumer。
+- 为 Immediate tier 增加明确的 zone/overflow `ReleaseToZone` 路径，或建立能承载 residue 的状态；真实账户间提交 `ledger.transfer(QiTransfer { from, to, amount, reason })`，不能让 `EclipseNeedleEvent` 成为唯一 consumer。
 - Temporary/Permanent 的 `qi_max` 缩容若产生 current excess，沿统一缩容释放合同处理，避免在 Eclipse 修复中引入第二套账本。
 
 ### P1：回归契约
@@ -48,3 +48,10 @@
 ## §6 验证计划
 
 实现后运行 server 栈 fmt、clippy、cargo test，重点覆盖 `dugu_v2::skills`、`dugu_v2::tick` 与 ledger helper。守恒测试引用 `SPIRIT_QI_TOTAL`/`QI_ZONE_UNIT_CAPACITY` 等生产常量，不写裸总量。本 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** producer 是 `dugu_v2::skills::resolve_dugu_v2_skill` 中的 `apply_eclipse`；消费者/对照是 `dugu_v2::tick::eclipse_zone_credit_tick`、`reverse_zone_credit_tick` 与 `apply_reverse`。测试应直接观察目标 `Cultivation.qi_current`、`TaintMark.intensity`、`EclipseNeedleEvent` 和 zone/overflow。
+- **Qi：** Immediate 的实际扣除必须由真实余额结算承载；zone 回灌使用 `qi_release_to_zone` 与 `QI_ZONE_UNIT_CAPACITY`，overflow 使用 `QiAccountId::overflow`。任何真正的 ledger 账户搬运都明确调用 `ledger.transfer(QiTransfer { from, to, amount, reason })`，其中 `QiTransferReason::Healing`/`ReleaseToZone` 按去向选择；`QiTransferReason::DuguReturnToZone` 与 `DuguReverseVictimQi` 是当前枚举标记的 audit-only reason，只能 `push_transfer_audit`，不得误调 `WorldQiAccount::transfer`。守恒断言引用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；现有 combat fixture 的 `SPIRIT_QI_TOTAL` 来自 `schema::common`）和 `assert_conservation`。
+- **Agent：无变更。** 证据是 `EclipseNeedleEvent`、`ReverseTriggeredEvent` 与 `DuguReverseVictimQiEvent` 都是 server 内部事件，agent 不消费其字段。
+- **Client：无变更。** 证据是 Eclipse/Reverse 的现有技能与视觉事件 wire 保持原 payload；本修复只校正 server 余额和账本去向。

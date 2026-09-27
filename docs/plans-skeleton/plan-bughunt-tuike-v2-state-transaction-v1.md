@@ -43,7 +43,7 @@
 
 ### P0：两个状态转换原子化
 
-- `transfer_taint` 先做 qi 可行性预检/事务试算，再一次性提交 stack、污染、永久 decay marker 与 qi 扣减；任何拒绝都恢复原状态且不发成功事件。
+- `transfer_taint` 先做 qi 可行性预检/事务试算，再一次性提交 stack、污染、永久 decay marker 与 qi 扣减；真实账户结算调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，任何拒绝都恢复原状态且不发成功事件。
 - inventory 同步发现 chest 已无伪皮时，明确 detach 语义：清理/冻结非空层栈，或把它转为可见的独立残留状态；维护系统不能继续按“已穿戴”扣费。shed 消耗物品前必须核验 instance 仍归该装备路径，避免销毁背包物。
 
 ### P1：回归契约
@@ -54,3 +54,10 @@
 ## §6 验证计划
 
 实现后运行 server 栈 fmt、clippy、cargo test，重点覆盖 `tuike_v2::skills` 与 `tuike_v2::tick`。涉及 qi 的断言必须核对 zone/overflow 与 `QiTransfer`；本 skeleton 阶段不编译。
+
+## §7 跨仓契约与可核验锚点
+
+- **Server：** 施法事务是 `tuike_v2::skills::cast_transfer_taint` → `transfer_taint_to_outer_skin` → `spend_qi`；装备同步/维护是 `tuike_v2::tick::sync_false_skin_stack_from_inventory`、`false_skin_maintenance_tick` 和 `shed_outer_layer_for_maintenance`。测试要对照 chest 当前 instance、`StackedFalseSkins`、`WornFalseSkin` 与 `Cultivation` 的提交顺序。
+- **Qi：** 成功扣费必须先通过可回滚的 balance 事务，再把结果写入状态；真实账户间的转移写成 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，ECS 玩家扣费/zone 回灌沿 `release_qi_amount_to_zone` → `qi_release_to_zone` 的既有边界，overflow 也必须有 `QiTransfer`。使用 `QI_EPSILON`、`QI_ZONE_UNIT_CAPACITY`、`DEFAULT_SPIRIT_QI_TOTAL`（fixture 可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation` 锁定拒绝无副作用和成功守恒。
+- **Agent：无变更。** 证据是伪皮 stack、inventory 和 maintenance 都在 server ECS，未触及 IPC/schema。
+- **Client：无变更。** 证据是 cast/maintenance 现有事件与动画 wire 不变；修复只避免 server 侧 phantom 状态和错误扣费。
