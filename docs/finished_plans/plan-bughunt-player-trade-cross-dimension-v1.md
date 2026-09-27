@@ -124,7 +124,8 @@
 - `scripts/build-token.sh cargo test -p bong-server 'social::tests::trade_'`：16 passed，0 failed。
 - `scripts/build-token.sh cargo fmt --check`：passed。
 - `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：passed。
-- `scripts/build-token.sh cargo test`：passed；lib 10,378 tests、各 integration/unit binaries 与 doc-tests 均通过（doc-tests 3 passed、5 ignored）。
+- `scripts/build-token.sh cargo test`：passed；lib 10,381 tests、各 integration/unit binaries 与 doc-tests 均通过（doc-tests 3 passed、5 ignored）。
+- PR check run `36293023250`：`bot-e2e (1)`、`bot-e2e (2)` 及全套 checks 均 passed；重跑的 `production_craft_preparation_return` 已通过，与本 PR 交易改动无关。
 
 ### 跨仓库核验
 
