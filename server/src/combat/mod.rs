@@ -28,6 +28,7 @@ pub mod raycast;
 pub mod realm_gap;
 pub mod resolve;
 pub mod shield_block;
+pub mod skill_cost;
 pub mod status;
 pub mod style_telemetry;
 pub mod sword_basics;
