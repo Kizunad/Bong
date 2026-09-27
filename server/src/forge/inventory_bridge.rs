@@ -164,7 +164,7 @@ pub fn forge_outcome_to_inventory(
                 template_id,
                 1,
                 current_tick,
-                &customize,
+                customize,
             ) {
                 Ok(receipt) => Ok(GrantOrGroundOutcome::Granted(receipt)),
                 Err(err) if err.starts_with("inventory full:") => {
