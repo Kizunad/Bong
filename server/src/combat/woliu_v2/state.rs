@@ -114,10 +114,11 @@ pub struct PassiveVortex {
     pub toggled_at_tick: u64,
 }
 
-/// 涡流回响——被动延迟重播涡流招式。
-///
-/// 当 VortexCastEvent 触发时（且 `is_echo == false`），写入一条 ScheduledEcho。
-/// tick system 到 `replay_at_tick` 后 emit 弱化版 VortexCastEvent（`is_echo = true`）。
+/// 涡流回响——被动延迟重播涡流招式。**尚未接线**：本 component 从未被任何
+/// system 写入，回响 tick system 与 `VortexCastEvent` 的 echo 标记字段均不存在
+///（防递归设计要求重播事件可与原始施法区分，接线时需补）。接入归属
+/// `plan-combat-skill-feedback-bridges-v1` §8 #5（`woliu_event_bridge.rs`
+/// TODO(P3-ext) 同源）。
 #[allow(dead_code)]
 #[derive(bevy_ecs::component::Component, Debug, Clone, PartialEq)]
 pub struct ScheduledEcho {
