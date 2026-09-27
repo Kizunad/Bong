@@ -116,6 +116,7 @@
 
 - `7ce8f9562`（2026-09-27）：将同名 skeleton 升格为 active plan。
 - `9ebc8b9c0`（2026-09-27）：在交易发起与接受阶段加入当前位面校验并锁定回归测试，`Model: gpt-6-luna`。
+- `5f7c4c89a`（2026-09-27）：按 Kody review 修复交易调度时序与跨维距离校验顺序，补充同 tick 契约测试，`Model: gpt-6-luna`。
 - 旧本地提交 `04b203f21`（2026-07-18）仅含文档升格，已保留为 `backup/plan-bughunt-player-trade-cross-dimension-v1-local-20260927`，代码修复按今日主线重写。
 
 ### 测试结果
