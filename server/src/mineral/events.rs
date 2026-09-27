@@ -120,7 +120,7 @@ impl MineralFeedbackEvent {
             player,
             message_id: MSG_FORGE_OUTCOME_DROPPED,
             text: format!(
-                "背包已满，锻造成品《{}》已落在脚下，请及时拾取",
+                "背包已满，锻造成品《{}》已落地，请及时拾取",
                 item_name.as_ref()
             ),
         }
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(dropped.message_id, MSG_FORGE_OUTCOME_DROPPED);
         assert_eq!(
             dropped.text,
-            "背包已满，锻造成品《采药刀》已落在脚下，请及时拾取"
+            "背包已满，锻造成品《采药刀》已落地，请及时拾取"
         );
     }
 

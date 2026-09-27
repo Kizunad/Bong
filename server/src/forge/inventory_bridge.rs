@@ -1,16 +1,34 @@
 //! plan-forge-leftovers-v1 §2.3 — forge outcome 写回玩家背包。
 
-use valence::prelude::{EventReader, EventWriter, Position, Query, Res, ResMut};
+use std::collections::HashMap;
+
+use valence::prelude::{
+    bevy_ecs, EventReader, EventWriter, Position, Query, Res, ResMut, Resource,
+};
 
 use super::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use super::events::{ForgeBucket, ForgeOutcomeEvent};
+use super::session::{ForgeSessionId, ForgeSessions};
+use super::station::WeaponForgeStation;
 use crate::combat::CombatClock;
 use crate::inventory::{
-    add_item_to_player_inventory_or_ground, DroppedLootRegistry, GrantOrGroundOutcome,
-    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlayerInventory,
+    add_customized_item_to_player_inventory, add_item_to_player_inventory_or_ground,
+    DroppedLootRegistry, GrantOrGroundOutcome, InventoryInstanceIdAllocator, ItemInstance,
+    ItemRegistry, PlayerInventory,
 };
 use crate::mineral::MineralFeedbackEvent;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+
+#[derive(Default, Resource)]
+pub struct PendingForgeOutcomes {
+    outcomes: HashMap<ForgeSessionId, ForgeOutcomeEvent>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ForgeDropTarget {
+    position: [f64; 3],
+    dimension: DimensionKind,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn forge_outcome_to_inventory(
@@ -22,8 +40,15 @@ pub fn forge_outcome_to_inventory(
     mut feedback: EventWriter<MineralFeedbackEvent>,
     player_positions: Query<(&Position, Option<&CurrentDimension>)>,
     combat_clock: Option<Res<CombatClock>>,
+    mut pending: ResMut<PendingForgeOutcomes>,
+    sessions: Option<Res<ForgeSessions>>,
+    stations: Query<&WeaponForgeStation>,
 ) {
-    for event in events.read() {
+    let mut queued_events: Vec<ForgeOutcomeEvent> =
+        pending.outcomes.drain().map(|(_, event)| event).collect();
+    queued_events.extend(events.read().cloned());
+
+    for event in queued_events {
         if !matches!(
             event.bucket,
             ForgeBucket::Perfect | ForgeBucket::Good | ForgeBucket::Flawed
@@ -80,10 +105,11 @@ pub fn forge_outcome_to_inventory(
 
         let Ok(mut inventory) = inventories.get_mut(event.caster) else {
             tracing::warn!(
-                "[bong][forge] outcome for session {:?} caster {:?} has no inventory; grant skipped",
+                "[bong][forge] outcome for session {:?} caster {:?} has no inventory; grant deferred",
                 event.session,
                 event.caster
             );
+            pending.outcomes.insert(event.session, event);
             continue;
         };
 
@@ -113,29 +139,47 @@ pub fn forge_outcome_to_inventory(
                 write_artifact_state_to_item(instance, state);
             }
         };
-        let (ground_pos, ground_dimension) = player_positions
-            .get(event.caster)
-            .map(|(position, dimension)| {
-                (
-                    [position.0.x, position.0.y, position.0.z],
-                    dimension.map(|value| value.0).unwrap_or_default(),
-                )
-            })
-            .unwrap_or(([0.0, 64.0, 0.0], DimensionKind::default()));
         let current_tick = combat_clock.as_ref().map_or(0, |clock| clock.tick);
 
-        match add_item_to_player_inventory_or_ground(
-            &mut inventory,
-            &registry,
-            &mut allocator,
-            Some(&mut dropped_loot),
-            template_id,
-            1,
-            current_tick,
-            ground_pos,
-            ground_dimension,
-            Some(&customize),
-        ) {
+        let grant_result = if let Some(drop_target) =
+            forge_drop_target(&event, &player_positions, sessions.as_deref(), &stations)
+        {
+            add_item_to_player_inventory_or_ground(
+                &mut inventory,
+                &registry,
+                &mut allocator,
+                Some(&mut dropped_loot),
+                template_id,
+                1,
+                current_tick,
+                drop_target.position,
+                drop_target.dimension,
+                Some(&customize),
+            )
+        } else {
+            match add_customized_item_to_player_inventory(
+                &mut inventory,
+                &registry,
+                &mut allocator,
+                template_id,
+                1,
+                current_tick,
+                &customize,
+            ) {
+                Ok(receipt) => Ok(GrantOrGroundOutcome::Granted(receipt)),
+                Err(err) if err.starts_with("inventory full:") => {
+                    tracing::warn!(
+                        "[bong][forge] outcome for session {:?} has no valid player or forge-station drop context; grant deferred",
+                        event.session
+                    );
+                    pending.outcomes.insert(event.session, event);
+                    continue;
+                }
+                Err(err) => Err(err),
+            }
+        };
+
+        match grant_result {
             Ok(GrantOrGroundOutcome::Granted(_)) => {}
             Ok(GrantOrGroundOutcome::DroppedToGround(entry)) => {
                 tracing::info!(
@@ -161,6 +205,34 @@ pub fn forge_outcome_to_inventory(
     }
 }
 
+fn forge_drop_target(
+    event: &ForgeOutcomeEvent,
+    player_positions: &Query<(&Position, Option<&CurrentDimension>)>,
+    sessions: Option<&ForgeSessions>,
+    stations: &Query<&WeaponForgeStation>,
+) -> Option<ForgeDropTarget> {
+    if let Ok((position, Some(dimension))) = player_positions.get(event.caster) {
+        let coordinates = [position.0.x, position.0.y, position.0.z];
+        if coordinates.iter().all(|coordinate| coordinate.is_finite()) {
+            return Some(ForgeDropTarget {
+                position: coordinates,
+                dimension: dimension.0,
+            });
+        }
+    }
+
+    // WeaponForgeStation 目前只能放置在 OverworldLayer；用会话绑定的锻炉位置
+    // 作为缺失玩家位置/维度组件时的可靠落点，避免伪造固定世界坐标。
+    let station = sessions
+        .and_then(|sessions| sessions.get(event.session))
+        .and_then(|session| stations.get(session.station).ok())?;
+    let (x, y, z) = station.pos?;
+    Some(ForgeDropTarget {
+        position: [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5],
+        dimension: DimensionKind::Overworld,
+    })
+}
+
 fn valid_achieved_tier(value: u8) -> Option<u8> {
     (1..=4).contains(&value).then_some(value)
 }
@@ -170,7 +242,8 @@ mod tests {
     use super::*;
     use crate::cultivation::components::ColorKind;
     use crate::forge::blueprint::BlueprintId;
-    use crate::forge::session::ForgeSessionId;
+    use crate::forge::session::{ForgeSession, ForgeSessionId, ForgeSessions};
+    use crate::forge::station::WeaponForgeStation;
     use crate::inventory::{
         find_free_slot, instantiate_inventory_from_loadout, load_default_loadout,
         load_item_registry, ContainerState, DroppedLootRegistry, InventoryRevision, ItemCategory,
@@ -180,7 +253,7 @@ mod tests {
     use crate::mineral::{events::MSG_FORGE_OUTCOME_DROPPED, MineralFeedbackEvent};
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use std::collections::HashMap;
-    use valence::prelude::{App, Entity, Events, Position, Update};
+    use valence::prelude::{App, BlockPos, Entity, Events, Position, Update};
 
     fn weapon_template(id: &str) -> ItemTemplate {
         ItemTemplate {
@@ -321,6 +394,7 @@ mod tests {
         app.insert_resource(registry);
         app.insert_resource(InventoryInstanceIdAllocator::new(100));
         app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(PendingForgeOutcomes::default());
         app.add_event::<ForgeOutcomeEvent>();
         app.add_event::<MineralFeedbackEvent>();
         app.add_systems(Update, forge_outcome_to_inventory);
@@ -584,6 +658,89 @@ mod tests {
         assert_eq!(messages.len(), 1, "背包满掉地时应给玩家一条可见反馈");
         assert_eq!(messages[0].message_id, MSG_FORGE_OUTCOME_DROPPED);
         assert!(messages[0].text.contains("cai_yao_dao"));
+    }
+
+    #[test]
+    fn outcome_without_player_context_uses_forge_station_location() {
+        let mut templates = HashMap::new();
+        templates.insert("cai_yao_dao".to_string(), tool_template("cai_yao_dao"));
+        let mut app = app_with_templates(templates);
+        let caster = app.world_mut().spawn(full_carried_inventory()).id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(20, 70, -5),
+                2,
+                caster,
+            ))
+            .id();
+        let mut sessions = ForgeSessions::new();
+        sessions.insert(ForgeSession::new(
+            ForgeSessionId(9),
+            BlueprintId::from("ling_feng_v0"),
+            station,
+            caster,
+        ));
+        app.world_mut().insert_resource(sessions);
+
+        app.world_mut()
+            .send_event(outcome(caster, ForgeBucket::Good, Some("cai_yao_dao")));
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped
+            .entries
+            .values()
+            .find(|entry| entry.item.template_id == "cai_yao_dao")
+            .expect("无玩家位置时锻造成品应落在已知锻炉位置");
+        assert_eq!(entry.world_pos, [20.5, 70.0, -4.5]);
+        assert_eq!(entry.dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn outcome_without_drop_context_is_deferred_until_context_returns() {
+        let mut templates = HashMap::new();
+        templates.insert("cai_yao_dao".to_string(), tool_template("cai_yao_dao"));
+        let mut app = app_with_templates(templates);
+        let caster = app.world_mut().spawn(full_carried_inventory()).id();
+
+        app.world_mut()
+            .send_event(outcome(caster, ForgeBucket::Good, Some("cai_yao_dao")));
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<DroppedLootRegistry>()
+            .entries
+            .is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<PendingForgeOutcomes>()
+                .outcomes
+                .len(),
+            1,
+            "没有可信落点时必须保留待结算 outcome，不能静默丢失"
+        );
+
+        app.world_mut().entity_mut(caster).insert((
+            Position::new([8.0, 65.0, 2.0]),
+            CurrentDimension(DimensionKind::Tsy),
+        ));
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped
+            .entries
+            .values()
+            .find(|entry| entry.item.template_id == "cai_yao_dao")
+            .expect("恢复玩家位置后应结算此前保留的锻造成品");
+        assert_eq!(entry.world_pos, [8.0, 65.0, 2.0]);
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert!(app
+            .world()
+            .resource::<PendingForgeOutcomes>()
+            .outcomes
+            .is_empty());
     }
 
     #[test]

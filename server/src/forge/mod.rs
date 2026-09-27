@@ -93,6 +93,7 @@ pub fn register(app: &mut App) {
     );
     app.insert_resource(registry);
     app.insert_resource(ForgeSessions::new());
+    app.insert_resource(inventory_bridge::PendingForgeOutcomes::default());
 
     app.add_event::<StartForgeRequest>();
     app.add_event::<TemperingHit>();
