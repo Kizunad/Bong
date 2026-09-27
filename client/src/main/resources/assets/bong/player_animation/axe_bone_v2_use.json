@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "axe_bone_v2_use",
-  "description": "骨斧 v2 单手横砍：guard 斧提右前、左手前伸 → windup 斧甩右后方、躯干右拧 +34° → impact 斧头横扫停在左前方、躯干反拧 -30°（64° 扭矩）→ overshoot 再往左 8° → 回 guard。与生铁斧的双手过顶劈刻意区分。只落资产未接线。",
+  "description": "骨斧 v2 单手横砍：guard 斧提右前、左手前伸 → windup 斧甩右后方、躯干右拧 +34° → impact 斧头横扫停在左前方、躯干反拧 -30°（64° 扭矩）→ overshoot 再往左 8° → 回 guard。斧头在手里绕握柄转 90°，刃口全程朝左领着挥砍方向。与生铁斧的双手过顶劈刻意区分。只落资产未接线。",
   "emote": {
     "beginTick": 0,
     "endTick": 10,
@@ -188,6 +188,27 @@
         }
       },
       {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "roll": -1.5707963
+        }
+      },
+      {
         "tick": 2,
         "easing": "INOUTSINE",
         "body": {
@@ -360,6 +381,27 @@
         "easing": "INOUTSINE",
         "leftLeg": {
           "z": -0.1
+        }
+      },
+      {
+        "tick": 2,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 2,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 2,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "roll": -1.5707963
         }
       },
       {
@@ -538,6 +580,27 @@
         }
       },
       {
+        "tick": 4,
+        "easing": "INQUAD",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INQUAD",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INQUAD",
+        "rightItem": {
+          "roll": -1.5707963
+        }
+      },
+      {
         "tick": 5,
         "easing": "OUTQUAD",
         "body": {
@@ -710,6 +773,27 @@
         "easing": "OUTQUAD",
         "leftLeg": {
           "z": -0.12
+        }
+      },
+      {
+        "tick": 5,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 5,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 5,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "roll": -1.5707963
         }
       },
       {
@@ -888,6 +972,27 @@
         }
       },
       {
+        "tick": 6,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTQUAD",
+        "rightItem": {
+          "roll": -1.5707963
+        }
+      },
+      {
         "tick": 10,
         "easing": "INOUTSINE",
         "body": {
@@ -1060,6 +1165,27 @@
         "easing": "INOUTSINE",
         "leftLeg": {
           "z": -0.1
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "yaw": 0.1745329
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "rightItem": {
+          "roll": -1.5707963
         }
       }
     ]

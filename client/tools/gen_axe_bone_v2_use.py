@@ -11,6 +11,12 @@
 display 把斧柄摆成顺着前臂延长，斧头方向 ≈ 前臂方向；手臂 pitch 保持在 -80°～-95°
 （接近水平），斧头就在腰胸高度扫过。
 
+刃口朝向（用户审阅 axe_bone_v2@ANIM2：「横批方向斧头也是反的，向下，应该向左」）：
+  模型 display 已让斧刃在手臂前伸时朝下（适合竖劈，见 export_item_assets.HAFT_TURN_DEG）。
+  横砍要刃口领着挥砍方向，也就是朝左。所以整段动画让斧头在手里绕握柄轴转
+  HAFT_SPIN_DEG（``rightItem`` 骨头，换算走 anim_common.item_spin），
+  起手、发力、收势每一帧都一样，刃口始终朝左。
+
 节奏：
   tick 0  guard       斧提在右前，左手前伸
   tick 2  windup      斧甩到右后方，躯干右拧到极限
@@ -20,7 +26,17 @@ display 把斧柄摆成顺着前臂延长，斧头方向 ≈ 前臂方向；手�
   tick 10 guard
 """
 
-from anim_common import emit_json
+import json
+from pathlib import Path
+
+from anim_common import emit_json, item_spin
+
+MODEL_JSON = (Path(__file__).resolve().parents[1]
+              / "src/main/resources/assets/bong/models/item/axe_bone_v2/axe_bone_v2.json")
+DISPLAY_ROTATION = json.loads(MODEL_JSON.read_text(encoding="utf-8"))["display"]["thirdperson_righthand"]["rotation"]
+HAFT_AXIS = (0.0, 1.0, 0.0)  # 模型局部 +Y = 握柄轴
+HAFT_SPIN_DEG = 90.0  # 刃口从「朝下」转到「朝左」
+EDGE_LEFT = item_spin(DISPLAY_ROTATION, HAFT_AXIS, HAFT_SPIN_DEG)
 
 GUARD = dict(
     easing="INOUTSINE",
@@ -78,10 +94,13 @@ POSE = {
     10: GUARD,
 }
 
+# 每一帧都带同一个手持物旋转：刃口全程朝左，插值时不会中途翻面。
+POSE = {tick: {**frame, "rightItem": dict(EDGE_LEFT)} for tick, frame in POSE.items()}
+
 DESCRIPTION = (
     "骨斧 v2 单手横砍：guard 斧提右前、左手前伸 → windup 斧甩右后方、躯干右拧 +34° → "
     "impact 斧头横扫停在左前方、躯干反拧 -30°（64° 扭矩）→ overshoot 再往左 8° → 回 guard。"
-    "与生铁斧的双手过顶劈刻意区分。只落资产未接线。"
+    "斧头在手里绕握柄转 90°，刃口全程朝左领着挥砍方向。与生铁斧的双手过顶劈刻意区分。只落资产未接线。"
 )
 
 if __name__ == "__main__":
