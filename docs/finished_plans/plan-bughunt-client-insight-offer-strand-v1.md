@@ -1,5 +1,7 @@
 # plan-bughunt-client-insight-offer-strand-v1
 
+> **Preflight（2026-09-27，PR #2329 返工复核）**：已检查 `docs/worldview.md §六.3`、相关 `docs/finished_plans/`、当前 `docs/plan-*.md`、`docs/plans-skeleton/plan-refactor-master-v1.md`、`docs/plans-skeleton/reminder.md` 与 UI/client 相关 skeleton。`plan-insight-alignment-v1` 已拥有顿悟三轨语义，`plan-bughunt-scroll-read-transition-esc-close-loss-v1` 明确将 #942 的 InsightOffer 切屏吞决策排除在其范围外；当前 `plan-refactor-client-ui-base-v1` 的 R7/P6a 仅拥有后续窗口管理整轨。本次只补既有 `InsightOfferScreen` 的 `removed()` 生命周期，不新建或重复消费匹配 plan。worldview §六.3 的“顿悟是关键时刻的人生选择、不可重选”支持保留终态收口；`qi_physics`、agent/schema producer 与 server domain 不涉及。
+
 > **Active BugFix（2026-09-27 接续本地未推送提交）**。一句话主题：client flow / screen flow / open-close sequencing 角度修复 **`InsightOfferScreen`（普通顿悟 + 心魔共用）被其他 client-only screen 顶掉后没有提交决定**，导致 `InsightOfferStore` 悬挂、server/client 两侧没有终态。已避开 sparring invite hijack、identity stale session、preview pause、client input 双绑。
 
 ## 阶段总览
@@ -76,6 +78,7 @@
 
 - P0：核对 `client/src/main/java/com/bong/client/insight/InsightOfferScreen.java`、`InsightOfferStore.java`、`ScreenTransitionController.java` 与五个本地 screen bootstrap；真实 `InsightOfferScreen.removed()` 回归测试在修复前失败。
 - P1：`InsightOfferScreen.removed()` 调用 `decisionForImplicitRemoval()` 和 `settle(decision, false)`；`client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java` 覆盖 exactly-once 与 store 清空。
+- PR #2329 返工：`removed()` 以 `try/catch/finally` 隔离本地传输拒绝并保证 `super.removed()`；新增 `removalTransportRejectionDoesNotAbortLifecycleOrRepeatSettlement` 契约测试。
 - P2：client 完整门禁通过；fetch 后 merge `origin/main` 已是最新。
 - P3：本节已填写，随后将 plan 归档到 `docs/finished_plans/`，推送同一 claim 分支并创建 PR。
 
@@ -88,7 +91,8 @@
 
 - 修复前定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest.exceptionalRemovalSettlesDeclinedExactlyOnce` 按预期失败，证明真实 `removed()` 不会结算。
 - 修复后定向测试：同一命令通过。
-- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,055 tests、0 failures，GameTest 3/3，通过 jar/remap 构建。
+- PR #2329 返工定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest` 通过，包含传输拒绝后的 `removed()` exactly-once 契约。
+- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,056 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建。
 - 主线同步：`git fetch origin && git merge origin/main` 输出 `Already up to date.`，没有带入需要重跑的 client 变更。
 
 ### 跨仓库核验

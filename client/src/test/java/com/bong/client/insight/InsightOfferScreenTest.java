@@ -7,9 +7,11 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -184,6 +186,26 @@ class InsightOfferScreenTest {
 
         assertEquals(1, sentPayloads.size(), "真实 removed() 异常移除只能发送一条 declined");
         assertNull(InsightOfferStore.snapshot(), "真实 removed() 后必须清空当前 offer，不能留下无 UI 悬挂");
+    }
+
+    @Test
+    void removalTransportRejectionDoesNotAbortLifecycleOrRepeatSettlement() {
+        AtomicInteger attempts = new AtomicInteger();
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> {
+            attempts.incrementAndGet();
+            return false;
+        });
+        InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
+        InsightOfferStore.replace(offer);
+        InsightOfferScreen screen = new InsightOfferScreen(offer);
+
+        assertDoesNotThrow(screen::removed,
+            "removed() 必须隔离本地传输拒绝，不能中断 vanilla 屏幕移除");
+        screen.removed();
+
+        assertEquals(1, attempts.get(), "传输拒绝后重复 removed() 不得重复结算");
+        assertNull(InsightOfferStore.snapshot(), "传输拒绝仍应清空已 claim 的 offer");
     }
 
     // ─── 转场仲裁：同 token 延续 vs 新实例覆盖 ─────────────────────────────

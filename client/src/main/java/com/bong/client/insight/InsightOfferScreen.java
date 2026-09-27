@@ -1,5 +1,6 @@
 package com.bong.client.insight;
 
+import com.bong.client.BongClient;
 import com.bong.client.ui.ScreenTransitionController;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
@@ -128,10 +129,20 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
      */
     @Override
     public void removed() {
-        if (!settled) {
-            settle(decisionForImplicitRemoval(), false);
+        try {
+            if (!settled) {
+                settle(decisionForImplicitRemoval(), false);
+            }
+        } catch (RuntimeException error) {
+            // 结算传输失败不能阻断 vanilla 的屏幕移除。
+            BongClient.LOGGER.warn(
+                "[bong][insight] failed to settle offer during screen removal: {}",
+                offer.offerId(),
+                error
+            );
+        } finally {
+            super.removed();
         }
-        super.removed();
     }
 
     /** 转场取消直接移除当前屏（ESC 中途取消 current→next 转场）。 */
