@@ -89,6 +89,7 @@
 - P0：核对 `client/src/main/java/com/bong/client/insight/InsightOfferScreen.java`、`InsightOfferStore.java`、`ScreenTransitionController.java` 与五个本地 screen bootstrap；真实 `InsightOfferScreen.removed()` 回归测试在修复前失败。
 - P1：`InsightOfferScreen.removed()` 调用 `decisionForImplicitRemoval()` 和 `settle(decision, false)`；`client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java` 覆盖 exactly-once、失败恢复与 store 清空。
 - PR #2329 返工：`removed()` 保存结算主异常、继续执行 `super.removed()` 并把清理异常作为 suppressed 后经日志上报；`InsightOfferStore` 在 dispatch 成功前保留 current，新增 `removalTransportRejectionRestoresOfferForRetry` 契约测试。
+- PR #2329 Kody 意见 `4114666208` 验真：构造相同 `offerId` 的两个不同 `InsightOfferViewModel` 会生成不同 `SessionToken`；旧屏 `removed()` 在修复前误 dispatch 并清空新 current，现由 token-aware `settleIfCurrent(offerId, expectedToken, decision)` 拒绝旧会话，回归测试 `staleScreenWithSameOfferIdCannotClearNewSession` 锁定该契约。
 - P2：client 完整门禁通过；fetch 后 merge `origin/main` 已是最新。
 - P3：本节已填写，随后将 plan 归档到 `docs/finished_plans/`，推送同一 claim 分支并创建 PR。
 
@@ -98,13 +99,15 @@
 - `f64a862fe`（2026-09-27）：补齐 `InsightOfferScreen.removed()` 终态收口及真实生命周期回归测试，使用 `Model: gpt-6-luna`。
 - `f36680e7b`（2026-09-27）：修复 dispatch 失败后的 current 保留/屏幕重试，并在 removed 清理后保留主异常日志，使用 `Model: gpt-6-luna`。
 - `57f857270`（2026-09-27）：补齐 PR #2329 返工所需的 Pre-P0 代码与 plan 章节锚点，使用 `Model: gpt-6-luna`。
+- `dbb8dd754`（2026-09-27）：为屏幕结算增加 `SessionToken` 身份校验并补同 `offerId` 旧屏回归测试，使用 `Model: gpt-6-luna`。
 
 ### 测试结果
 
 - 修复前定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest.exceptionalRemovalSettlesDeclinedExactlyOnce` 按预期失败，证明真实 `removed()` 不会结算。
 - 修复后定向测试：同一命令通过。
 - PR #2329 返工定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest` 通过，包含传输拒绝后的 `removed()` 恢复重试契约。
-- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,056 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建；主线 merge 后复跑同一门禁仍通过。
+- Kody `4114666208` 复现定向测试：未修复实现按预期在 `staleScreenWithSameOfferIdCannotClearNewSession` 失败；加入 token 校验后该测试通过。
+- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,057 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建；主线 merge 后复跑同一门禁仍通过。
 - 主线同步：`git fetch origin && git merge origin/main` 生成合并提交 `86b24ef991f2753b41cb774d5e72d6b5e817ecc2`，带入另一条 server/social 与 finished-plan 变更，未触及本 plan 的 client 文件；合并后 client 门禁已复验。
 
 ### 跨仓库核验
