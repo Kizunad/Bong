@@ -238,9 +238,10 @@ pub fn handle_technique(
     }
 }
 
-/// remove/reset_all 后技能栏里指向已不再拥有功法的槽位必须一并清掉：
+/// remove/reset_all 后技能栏里指向已不再拥有功法的绑定必须一并清掉：
 /// 运行时不清会留死图标（cast 被 ownership 门拒但 HUD 仍显示），持久化
-/// 不清则旧偏好仍会保留无效绑定。
+/// 不清则旧偏好仍会保留无效绑定。冷却按 skill_id 全量按 known 集合裁剪，
+/// 避免已经解绑的功法仍带着旧冷却，在重新授予后复活。
 fn prune_stale_bindings_after_mutation(
     known: &KnownTechniques,
     skill_bar: Option<impl std::ops::DerefMut<Target = SkillBarBindings>>,
@@ -249,10 +250,14 @@ fn prune_stale_bindings_after_mutation(
 ) -> usize {
     let mut cleared = 0;
     if let Some(mut bindings) = skill_bar {
-        cleared = prune_unknown_skill_slots(&mut bindings, known);
+        if prune_unknown_dash_binding(&mut bindings.dash_skill_id, known) {
+            cleared += 1;
+        }
+        cleared += prune_unknown_skill_slots(&mut bindings, known);
     }
     if let (Some(persistence), Some(username)) = (persistence, username) {
         if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+            prune_unknown_dash_binding(&mut prefs.dash_skill_id, known);
             prune_unknown_persisted_skill_slots(&mut prefs.skill_bar, known);
         }) {
             tracing::warn!(
@@ -264,29 +269,35 @@ fn prune_stale_bindings_after_mutation(
     cleared
 }
 
+fn prune_unknown_dash_binding(dash_skill_id: &mut Option<String>, known: &KnownTechniques) -> bool {
+    let stale = dash_skill_id
+        .as_deref()
+        .is_some_and(|skill_id| !known_contains(known, skill_id));
+    if stale {
+        *dash_skill_id = None;
+    }
+    stale
+}
+
 fn known_contains(known: &KnownTechniques, skill_id: &str) -> bool {
     known.entries.iter().any(|entry| entry.id == skill_id)
 }
 
 fn prune_unknown_skill_slots(bindings: &mut SkillBarBindings, known: &KnownTechniques) -> usize {
     let mut cleared = 0;
-    let mut stale_skill_ids = Vec::new();
     for slot in 0..SkillBarBindings::SLOT_COUNT {
-        let stale_skill_id = match &bindings.slots[slot] {
-            SkillSlot::Skill { skill_id } if !known_contains(known, skill_id) => {
-                Some(skill_id.clone())
-            }
-            _ => None,
-        };
-        if let Some(skill_id) = stale_skill_id {
+        let stale = matches!(
+            &bindings.slots[slot],
+            SkillSlot::Skill { skill_id } if !known_contains(known, skill_id)
+        );
+        if stale {
             bindings.set(slot as u8, SkillSlot::Empty);
-            stale_skill_ids.push(skill_id);
             cleared += 1;
         }
     }
-    for skill_id in stale_skill_ids {
-        bindings.cooldowns.remove(&skill_id);
-    }
+    bindings
+        .cooldowns
+        .retain(|skill_id, _| known_contains(known, skill_id));
     cleared
 }
 
@@ -863,6 +874,77 @@ mod tests {
     }
 
     #[test]
+    fn technique_remove_clears_cooldown_for_unbound_removed_skill() {
+        let mut app = setup_app();
+        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let mut bindings = bindings_with(&[(
+            0,
+            SkillSlot::Skill {
+                skill_id: ECHO.to_string(),
+            },
+        )]);
+        bindings.set_cooldown(NEEDLE, 12_345);
+        app.world_mut().entity_mut(player).insert(bindings);
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Remove {
+                id: NEEDLE.to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let bindings = app.world().get::<SkillBarBindings>(player).unwrap();
+        assert!(
+            !bindings.cooldowns.contains_key(NEEDLE),
+            "removing a skill must clear its cooldown even when no slot still references it"
+        );
+        assert_eq!(
+            bindings.slots[0],
+            SkillSlot::Skill {
+                skill_id: ECHO.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn technique_remove_clears_stale_dash_binding() {
+        let mut app = setup_app();
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: "legacy.dash".to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                }],
+            },
+        );
+        let mut bindings = SkillBarBindings::default();
+        bindings.dash_skill_id = Some("legacy.dash".to_string());
+        app.world_mut().entity_mut(player).insert(bindings);
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Remove {
+                id: "legacy.dash".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert_eq!(
+            app.world()
+                .get::<SkillBarBindings>(player)
+                .unwrap()
+                .dash_skill_id,
+            None,
+            "remove must clear the runtime dash binding when its technique is no longer known"
+        );
+    }
+
+    #[test]
     fn technique_reset_all_prunes_bindings_absent_from_runtime_defaults() {
         let mut app = setup_app();
         let player = spawn_known(
@@ -974,6 +1056,25 @@ mod tests {
             }
         );
         assert_eq!(skill_bar[1], SkillSlotPersist::Empty);
+    }
+
+    #[test]
+    fn prune_persisted_dash_binding_clears_only_unknown_id() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: BENG_QUAN.to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let mut prefs = crate::player::state::PlayerUiPrefs::default();
+        prefs.dash_skill_id = Some("legacy.dash".to_string());
+        assert!(prune_unknown_dash_binding(&mut prefs.dash_skill_id, &known));
+        assert_eq!(prefs.dash_skill_id, None);
+
+        let mut known_dash = Some(BENG_QUAN.to_string());
+        assert!(!prune_unknown_dash_binding(&mut known_dash, &known));
+        assert_eq!(known_dash.as_deref(), Some(BENG_QUAN));
     }
 
     #[test]
