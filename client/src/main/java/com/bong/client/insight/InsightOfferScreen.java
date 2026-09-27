@@ -39,8 +39,8 @@ import java.util.function.LongSupplier;
  * </ul>
  *
  * <p>实例身份：本屏在创建时捕获自己 offer 实例的 {@link SessionToken}，所有结算路径
- * 都经 {@code InsightOfferStore.settleIfCurrent(offerId, ...)} 按实例身份匹配 current
- * 槽；被替换后，旧屏的任何迟到回调都不能清除后来的 offer B。
+ * 都经 token-aware 的 {@code InsightOfferStore.settleIfCurrent(offerId, token, ...)}
+ * 按实例身份匹配 current 槽；被替换后，旧屏的任何迟到回调都不能清除后来的 offer B。
  */
 public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
     implements ScreenTransitionController.PendingOpenCancellationHandler,
@@ -200,9 +200,9 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
         if (settled) {
             return;
         }
-        // 1) 对 exact offerId 的 current 实例 dispatch；2) dispatch 成功后清空 current；
+        // 1) 对 exact offerId + SessionToken 的 current 实例 dispatch；2) dispatch 成功后清空 current；
         //    失败则保留 offer 并由 store listener 恢复可见重试路径。3) 若仍是当前屏则关闭。
-        InsightOfferStore.settleIfCurrent(offer.offerId(), decision);
+        InsightOfferStore.settleIfCurrent(offer.offerId(), sessionToken, decision);
         settled = true;
         if (closeCurrentScreen) {
             MinecraftClient mc = MinecraftClient.getInstance();

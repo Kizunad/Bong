@@ -123,16 +123,30 @@ public final class InsightOfferStore {
     }
 
     /**
-     * 精确结算当前槽中该 offer 实例。先 dispatch，再清空 current；传输失败会保留 offer，
-     * 让调用方能够恢复 UI 并重试。此方法与所有 current/pending 写入在类 monitor 内串行化，
-     * 因而 dispatch 期间不会被并发替换。非匹配或已空为幂等 no-op。
+     * 外部提交路径按 offerId 结算当前 offer；没有屏幕实例 token 时保留兼容入口。
      */
     public static synchronized void settleIfCurrent(String offerId, InsightDecision decision) {
+        settleIfCurrent(offerId, null, decision);
+    }
+
+    /**
+     * 屏幕结算必须同时匹配捕获的 SessionToken，避免旧屏与新屏复用 offerId 时误结算。
+     * 先 dispatch，再清空 current；传输失败会保留 offer，让调用方能够恢复 UI 并重试。
+     * 此方法与所有 current/pending 写入在类 monitor 内串行化，因而 dispatch 期间不会被并发替换。
+     * 非匹配或已空为幂等 no-op。
+     */
+    static synchronized void settleIfCurrent(
+        String offerId,
+        SessionToken expectedToken,
+        InsightDecision decision
+    ) {
         if (offerId == null || offerId.isBlank() || decision == null) {
             return;
         }
         ActiveOffer active = current.get();
-        if (active == null || !active.viewModel().offerId().equals(offerId)) {
+        if (active == null
+            || (expectedToken != null && active.token() != expectedToken)
+            || !active.viewModel().offerId().equals(offerId)) {
             return;
         }
         try {

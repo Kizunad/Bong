@@ -143,6 +143,33 @@ class InsightOfferScreenTest {
         assertTrue(sentPayloads.isEmpty());
     }
 
+    @Test
+    void staleScreenWithSameOfferIdCannotClearNewSession() {
+        bindWireBackend();
+        InsightOfferViewModel first = InsightOfferFixtures.firstInduceBreakthrough();
+        InsightOfferViewModel second = new InsightOfferViewModel(
+            first.offerId(),
+            first.triggerId(),
+            first.triggerLabel(),
+            first.realmLabel(),
+            first.composure(),
+            first.quotaRemaining(),
+            first.quotaTotal(),
+            first.expiresAtMillis(),
+            first.choices());
+
+        InsightOfferStore.replace(first);
+        InsightOfferScreen staleScreen = new InsightOfferScreen(first);
+        InsightOfferStore.replace(second);
+
+        staleScreen.removed();
+
+        assertSame(second, InsightOfferStore.snapshot(),
+            "相同 offerId 但不同 SessionToken 的旧屏不能清除新会话");
+        assertTrue(sentPayloads.isEmpty(),
+            "旧屏不得把 declined 发送给同 offerId 的新会话，实际=" + sentPayloads);
+    }
+
     // ─── ANIMATED_OPEN_CANCELLED / REMOVED_EXCEPTIONALLY ───────────────────
 
     @Test
