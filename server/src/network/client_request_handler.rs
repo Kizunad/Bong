@@ -32,8 +32,8 @@ use crate::coffin::{CoffinEnterRequest, CoffinLeaveRequest, CoffinPlaceRequest};
 use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
-    CastSource, Casting, Lifecycle, LifecycleState, QuickSlotBindings, SkillBarBindings, SkillSlot,
-    Stamina, Wounds,
+    CastSource, Casting, Lifecycle, LifecycleState, QiSettledCast, QuickSlotBindings,
+    SkillBarBindings, SkillSlot, Stamina, Wounds,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
@@ -1233,6 +1233,10 @@ pub fn handle_client_request_payloads(
     }
 
     let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
+    // Commands are applied after this system returns. Keep an immediate
+    // request-cycle reservation so multiple skill-bar intents for one entity
+    // cannot all pass the pre-cast gates before the first `Casting` is inserted.
+    let mut pending_skillbar_casts = HashSet::new();
     let combat_clock = &ingress.combat_clock;
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
@@ -2534,6 +2538,8 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                     alchemy_params.vfx_events.as_deref_mut(),
                     &skill_scroll_params.known_techniques,
+                    alchemy_params.qi_ledger.is_some(),
+                    &mut pending_skillbar_casts,
                 );
             }
             ClientRequestV1::TechniqueBind {
@@ -3085,6 +3091,8 @@ fn handle_skill_bar_cast(
     combat_params: &mut CombatRequestParams,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     known_techniques: &Query<&mut KnownTechniques>,
+    qi_ledger_available: bool,
+    pending_skillbar_casts: &mut HashSet<valence::prelude::Entity>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
         tracing::warn!(
@@ -3112,6 +3120,12 @@ fn handle_skill_bar_cast(
         );
         return;
     };
+    if pending_skillbar_casts.contains(&entity) {
+        tracing::debug!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} ignored: another skill-bar cast is pending this update"
+        );
+        return;
+    }
     // Ownership gate: reject if the player has not learned this technique.
     let player_has_technique = known_techniques
         .get(entity)
@@ -3123,6 +3137,31 @@ fn handle_skill_bar_cast(
             "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
              rejected: not in player KnownTechniques"
         );
+        return;
+    }
+
+    // 专属输入招由独立 gameplay consumer 驱动：dash 走闪避键，shield_block 走持盾
+    // 长按。若从技能栏进入 generic cast，只会播放 Casting→Complete 而没有位移或格挡；
+    // 这里对存量持久化绑定做 cast 侧兜底，和 bind 侧门保持一致。
+    if crate::cultivation::known_techniques::has_dedicated_input_consumer(&skill_id) {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+             rejected: dedicated input technique is not skill-bar castable"
+        );
+        if let Ok((username, mut client)) = clients.get_mut(entity) {
+            push_cast_sync(
+                &mut client,
+                CastSyncV1 {
+                    phase: CastPhaseV1::Idle,
+                    slot,
+                    duration_ms: 0,
+                    started_at_ms: current_unix_millis(),
+                    outcome: CastOutcomeV1::RejectDedicatedExecution,
+                },
+                username.0.as_str(),
+                entity,
+            );
+        }
         return;
     }
 
@@ -3284,6 +3323,24 @@ fn handle_skill_bar_cast(
         // MeridianSystem component 缺失（pre-init 玩家 / entity 无经脉）→ 放行
     }
 
+    // Generic casts must pass every resource gate before an active cast is
+    // cancelled. The actual ledger transfer remains in the deferred world
+    // command, but this read-only preflight preserves the current cast when
+    // the new request cannot possibly start.
+    if skill_fn.is_none() {
+        if let Err(reason) =
+            generic_skillbar_cast_preflight(entity, &definition, combat_params, qi_ledger_available)
+        {
+            push_skill_cast_rejected_sync_to_client(clients, entity, slot, reason);
+            return;
+        }
+    }
+
+    // Reserve the entity immediately. `commands.add` is deferred until the
+    // end of this update, so the live `Casting` query cannot serialize a
+    // second request by itself.
+    pending_skillbar_casts.insert(entity);
+
     if let Ok(prev) = combat_params.casting_q.get(entity) {
         if prev.source == CastSource::SkillBar && prev.slot == slot {
             tracing::debug!(
@@ -3334,16 +3391,19 @@ fn handle_skill_bar_cast(
             }
         });
     } else {
-        start_generic_skillbar_cast(
-            entity,
-            slot,
-            &skill_id,
-            &definition,
-            clock,
-            commands,
-            clients,
-            combat_params,
-        );
+        // generic cast 的成本门与 resolver 同序，但需要 deferred World 才能在同一事务
+        // 内检查并结算真元 ledger、体力，再插入 Casting。
+        let generic_skill_id = skill_id.clone();
+        let generic_definition = definition.clone();
+        commands.add(move |world: &mut bevy_ecs::world::World| {
+            start_generic_skillbar_cast(
+                world,
+                entity,
+                slot,
+                &generic_skill_id,
+                &generic_definition,
+            );
+        });
     }
     tracing::info!(
         "[bong][network] skill cast queued entity={entity:?} slot={slot} skill={skill_id} target={target:?} resolved_target={resolved_target:?} duration_ticks={} cooldown_ticks={} tick={}",
@@ -3380,63 +3440,144 @@ fn validate_skill_config_before_cast(
     validate_skill_config(skill_id, config.fields.clone(), schemas).map(|_| ())
 }
 
-#[allow(clippy::too_many_arguments)]
+fn generic_skillbar_cast_preflight(
+    entity: Entity,
+    definition: &TechniqueDefinition,
+    combat_params: &CombatRequestParams,
+    qi_ledger_available: bool,
+) -> Result<(), CastRejectReason> {
+    let cultivation = combat_params
+        .cultivations
+        .get(entity)
+        .map_err(|_| CastRejectReason::RealmTooLow)?;
+    if crate::cultivation::technique_scroll::realm_rank(cultivation.realm)
+        < crate::cultivation::technique_scroll::realm_rank(definition.required_realm_value())
+    {
+        return Err(CastRejectReason::RealmTooLow);
+    }
+    if definition.qi_cost > crate::qi_physics::constants::QI_EPSILON
+        && cultivation.qi_current + crate::qi_physics::constants::QI_EPSILON < definition.qi_cost
+    {
+        return Err(CastRejectReason::QiInsufficient);
+    }
+    if definition.stamina_cost > f32::EPSILON {
+        let stamina_ok = combat_params
+            .staminas
+            .get(entity)
+            .map(|stamina| {
+                stamina.state != crate::combat::components::StaminaState::Exhausted
+                    && stamina.current > 0.0
+                    && stamina.current + f32::EPSILON >= definition.stamina_cost
+            })
+            .unwrap_or(true);
+        if !stamina_ok {
+            return Err(CastRejectReason::InRecovery);
+        }
+    }
+    if definition.qi_cost > crate::qi_physics::constants::QI_EPSILON
+        && (!qi_ledger_available || combat_params.life_records.get(entity).is_err())
+    {
+        return Err(CastRejectReason::QiInsufficient);
+    }
+    Ok(())
+}
+
+fn push_skill_cast_rejected_sync_to_client(
+    clients: &mut Query<(&Username, &mut Client)>,
+    entity: Entity,
+    slot: u8,
+    reason: CastRejectReason,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    push_cast_sync(
+        &mut client,
+        CastSyncV1 {
+            phase: CastPhaseV1::Idle,
+            slot,
+            duration_ms: 0,
+            started_at_ms: current_unix_millis(),
+            outcome: reason.to_cast_outcome(),
+        },
+        username.0.as_str(),
+        entity,
+    );
+}
+
 fn start_generic_skillbar_cast(
+    world: &mut bevy_ecs::world::World,
     entity: valence::prelude::Entity,
     slot: u8,
     skill_id: &str,
     definition: &TechniqueDefinition,
-    clock: &CombatClock,
-    commands: &mut Commands,
-    clients: &mut Query<(&Username, &mut Client)>,
-    combat_params: &CombatRequestParams,
 ) {
+    use crate::combat::skill_cost;
+
+    if world.get::<Casting>(entity).is_some() {
+        tracing::debug!(
+            "[bong][network] generic skill-bar cast entity={entity:?} slot={slot} ignored: a cast is already active"
+        );
+        return;
+    }
+    if !skill_cost::realm_sufficient(world, entity, definition.required_realm_value()) {
+        push_skill_cast_rejected_sync(world, entity, slot, CastRejectReason::RealmTooLow);
+        return;
+    }
+    if !skill_cost::qi_sufficient(world, entity, definition.qi_cost) {
+        push_skill_cast_rejected_sync(world, entity, slot, CastRejectReason::QiInsufficient);
+        return;
+    }
+    if !skill_cost::stamina_sufficient(world, entity, definition.stamina_cost) {
+        push_skill_cast_rejected_sync(world, entity, slot, CastRejectReason::InRecovery);
+        return;
+    }
+    if !skill_cost::spend_qi_conserved(world, entity, definition.qi_cost, "generic_skillbar_cast") {
+        push_skill_cast_rejected_sync(world, entity, slot, CastRejectReason::QiInsufficient);
+        return;
+    }
+    skill_cost::spend_stamina(world, entity, definition.stamina_cost);
+
+    let now_tick = world
+        .get_resource::<CombatClock>()
+        .map_or(0, |clock| clock.tick);
     let duration_ticks = u64::from(definition.cast_ticks).max(1);
     let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
     let duration_ms = definition
         .cast_ticks
         .saturating_mul(crate::time::MILLIS_PER_TICK as u32);
     let started_at_ms = current_unix_millis();
-    let start_position = combat_params
-        .positions
-        .get(entity)
+    let start_position = world
+        .get::<valence::prelude::Position>(entity)
         .map(|position| position.get())
         .unwrap_or(valence::prelude::DVec3::ZERO);
-    let skill_config = clients.get_mut(entity).ok().and_then(|(username, _)| {
-        let player_id = canonical_player_id(username.0.as_str());
-        skill_config_snapshot_for_cast(
-            combat_params.skill_config_store.as_deref(),
-            player_id.as_str(),
-            skill_id,
-        )
-    });
-    commands.entity(entity).insert(Casting {
-        source: CastSource::SkillBar,
-        slot,
-        started_at_tick: clock.tick,
-        duration_ticks,
-        started_at_ms,
-        duration_ms,
-        bound_instance_id: None,
-        start_position,
-        complete_cooldown_ticks,
-        skill_id: Some(skill_id.to_string()),
-        skill_config,
-    });
-    if let Ok((username, mut client)) = clients.get_mut(entity) {
-        push_cast_sync(
-            &mut client,
-            CastSyncV1 {
-                phase: CastPhaseV1::Casting,
-                slot,
-                duration_ms,
-                started_at_ms,
-                outcome: CastOutcomeV1::None,
-            },
-            username.0.as_str(),
-            entity,
-        );
-    }
+    let skill_config = world
+        .get::<Username>(entity)
+        .map(|username| canonical_player_id(username.0.as_str()))
+        .and_then(|player_id| {
+            skill_config_snapshot_for_cast(
+                world.get_resource::<SkillConfigStore>(),
+                player_id.as_str(),
+                skill_id,
+            )
+        });
+    world.entity_mut(entity).insert((
+        Casting {
+            source: CastSource::SkillBar,
+            slot,
+            started_at_tick: now_tick,
+            duration_ticks,
+            started_at_ms,
+            duration_ms,
+            bound_instance_id: None,
+            start_position,
+            complete_cooldown_ticks,
+            skill_id: Some(skill_id.to_string()),
+            skill_config,
+        },
+        QiSettledCast,
+    ));
+    push_skill_cast_started_sync(world, entity, slot);
 }
 
 fn resolve_skill_cast_target(
@@ -3671,7 +3812,7 @@ fn cancel_previous_cast(
             vfx_events.send(request);
         }
     }
-    commands.entity(entity).remove::<Casting>();
+    commands.entity(entity).remove::<(Casting, QiSettledCast)>();
     match prev_source {
         CastSource::QuickSlot => {
             if let Ok(mut bindings) = combat_params.bindings_q.get_mut(entity) {
@@ -3953,6 +4094,13 @@ fn handle_skill_bar_bind(
             if technique_registry.get(skill_id).is_none() {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            }
+            if crate::cultivation::known_techniques::has_dedicated_input_consumer(skill_id) {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: \
+                     `{skill_id}` is driven by a dedicated input consumer"
                 );
                 return;
             }
