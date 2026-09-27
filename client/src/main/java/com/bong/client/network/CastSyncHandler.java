@@ -113,6 +113,7 @@ public final class CastSyncHandler implements ServerDataHandler {
             case "reject_realm_too_low" -> CastOutcome.REJECT_REALM_TOO_LOW;
             case "reject_no_weapon" -> CastOutcome.REJECT_NO_WEAPON;
             case "reject_technique_inactive" -> CastOutcome.REJECT_TECHNIQUE_INACTIVE;
+            case "reject_dedicated_execution" -> CastOutcome.REJECT_DEDICATED_EXECUTION;
             default -> CastOutcome.NONE;
         };
     }

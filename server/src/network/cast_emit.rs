@@ -352,8 +352,9 @@ pub fn tick_casts_or_interrupt(
                 });
             }
             // 广播体操（body.guangbo_ticao）：cast 自然完成 = 一次练习。
-            // 发 GuangboTicaoPracticeEvent → consume_guangbo_practice_events 走真元门
-            // 扣 qi_cost 并递增 proficiency（守恒在消费侧；此处只负责"练习发生了"）。
+            // 发 GuangboTicaoPracticeEvent → consume_guangbo_practice_events 递增
+            // proficiency。qi/stamina 已在 generic cast 起手由 skill_cost 结算；消费侧
+            // 只负责"练习发生了"，不能再次扣费。
             // AV（练习姿态 + 轻量正反馈粒子 + 伸展音）纯加法 cosmetic。
             if casting
                 .skill_id

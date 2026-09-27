@@ -12462,6 +12462,92 @@ mod external_ingress_tests {
             assert_eq!(casting.complete_cooldown_ticks, 83);
         }
 
+        #[test]
+        fn dedicated_input_techniques_cannot_bind_or_cast_from_skill_bar() {
+            for skill_id in ["movement.dash", "shield_block"] {
+                let mut app = App::new();
+                register_request_app(&mut app);
+                let (client_bundle, mut helper) = create_mock_client("Azure");
+                let entity = app
+                    .world_mut()
+                    .spawn((
+                        client_bundle,
+                        SkillBarBindings::default(),
+                        QuickSlotBindings::default(),
+                        empty_inventory(),
+                        known(&[skill_id]),
+                    ))
+                    .id();
+
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&ClientRequestV1::SkillBarBind {
+                            v: 1,
+                            slot: 0,
+                            binding: Some(SkillBarBindingV1::Skill {
+                                skill_id: skill_id.to_string(),
+                            }),
+                        })
+                        .unwrap()
+                        .into_boxed_slice(),
+                    });
+                app.update();
+                assert_eq!(
+                    app.world().get::<SkillBarBindings>(entity).unwrap().get(0),
+                    Some(&SkillSlot::Empty),
+                    "{skill_id} 有独立输入消费者，bind 必须被拒"
+                );
+
+                // 模拟 bind 门上线前已经落盘的历史绑定，验证两类专属入口都不走
+                // generic cast：dash 进入真实身法消费者，shield_block 由 cast 侧拒绝。
+                let mut stale = SkillBarBindings::default();
+                assert!(stale.set(
+                    0,
+                    SkillSlot::Skill {
+                        skill_id: skill_id.to_string(),
+                    }
+                ));
+                app.world_mut().entity_mut(entity).insert(stale);
+                if skill_id == "movement.dash" {
+                    // 当前主线在 ingress 层把 dash 技能栏请求转入真实身法消费者；它
+                    // 必须继续经过 movement 的拥有/体力/冷却门，而不是 generic cast。
+                    app.add_event::<crate::movement::MovementActionIntent>();
+                    send_skill_bar_cast(&mut app, entity);
+                    assert!(
+                        app.world().get::<Casting>(entity).is_none(),
+                        "movement.dash 不得进入 generic Casting"
+                    );
+                    assert_eq!(
+                        app.world()
+                            .resource::<valence::prelude::Events<crate::movement::MovementActionIntent>>()
+                            .len(),
+                        1,
+                        "movement.dash 技能栏请求必须交给真实身法消费者"
+                    );
+                } else {
+                    // shield_block 没有 ingress shortcut；存量绑定必须在 cast 入口被拒，
+                    // 并用专属 outcome 告知客户端正确的持盾触发方式。
+                    send_skill_bar_cast(&mut app, entity);
+                    assert!(
+                        app.world().get::<Casting>(entity).is_none(),
+                        "shield_block 从技能栏 cast 不得进入 generic Casting"
+                    );
+                    flush_all_client_packets(&mut app);
+                    let syncs = collect_cast_syncs(&mut helper);
+                    assert!(
+                        syncs.iter().any(|sync| {
+                            sync.phase == CastPhaseV1::Idle
+                                && sync.outcome == CastOutcomeV1::RejectDedicatedExecution
+                        }),
+                        "shield_block 拒绝必须通过专属 CastOutcome 反馈，实际 syncs={syncs:?}"
+                    );
+                }
+            }
+        }
+
         /// 通过公开文件 loader 加载一个仅存在于本测试 catalog 的 direct-generic 技法。
         /// 这样仍保留原来 17/83 的 fixture 语义，但不依赖 integration test 无法访问的
         /// `#[cfg(test)] TechniqueRegistry::load_for_tests_with_definition`。
@@ -12686,11 +12772,14 @@ dispatch = "direct_generic"
 
         #[test]
         fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
-            // body.guangbo_ticao 是仍未实装 resolver 的 skeleton 招（不在 SkillRegistry 内，
-            // 无 required_meridians、无 SkillMeridianDependencies）→ 走通用施法路径，
-            // 通用路径无条件插入 Casting 并把 SkillConfigStore 里的配置带入 Casting.skill_config。
+            // body.guangbo_ticao 没有 SkillRegistry resolver，走通用施法路径；起手必须
+            // 先按 TechniqueRegistry metadata 结算 qi/stamina，再插入 Casting。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -12716,8 +12805,24 @@ dispatch = "direct_generic"
                 skill_bar,
                 QuickSlotBindings::default(),
                 empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
+            // `register_request_app` also wires the lingtian facade, whose first idle update
+            // mirrors its legacy `default=5.0` account into `WorldQiAccount`.  Establish the
+            // snapshot after that one-time synchronization so the cast test measures only its
+            // own qi transfer.
+            app.update();
+            let before = summarize_world_qi(app.world_mut());
+            assert_eq!(before.budget_initial_total, SPIRIT_QI_TOTAL);
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
@@ -12748,6 +12853,17 @@ dispatch = "direct_generic"
                     .and_then(|config| config.fields.get("stance")),
                 Some(&serde_json::json!("short"))
             );
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL - 1.0);
+            let stamina = app
+                .world()
+                .get::<crate::combat::components::Stamina>(entity)
+                .unwrap();
+            assert_eq!(stamina.current, 95.0);
+            let after = summarize_world_qi(app.world_mut());
+            assert_eq!(after.budget_initial_total, SPIRIT_QI_TOTAL);
+            assert_conservation(&before, &after, 0.0)
+                .expect("generic cast 起手扣费必须通过 qi ledger 守恒");
         }
 
         #[test]
@@ -13611,10 +13727,15 @@ dispatch = "direct_generic"
         #[test]
         fn skill_bar_cast_meridian_gate_passes_when_no_meridian_system_component() {
             // entity 无 MeridianSystem component（pre-init 玩家）→ 经脉门应 skip 放行。
-            // 用 body.guangbo_ticao（仍是 skeleton：无 resolver、无 required_meridians、无 deps）
-            // 作载体：经脉门放行后走通用路径，无条件插入 Casting，纯粹锁住「无 MeridianSystem 放行」语义。
+            // 用 body.guangbo_ticao（generic 路径、无经脉依赖）作载体；成本门所需的
+            // Cultivation/LifeRecord/ledger 仍按真实玩家夹具提供，避免把 pre-init 的
+            // 经脉兼容语义与 generic cast 的守恒前置条件混在一起。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
             let mut skill_bar = SkillBarBindings::default();
@@ -13631,6 +13752,15 @@ dispatch = "direct_generic"
                 QuickSlotBindings::default(),
                 empty_inventory(),
                 // 故意不插入 MeridianSystem
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
@@ -13648,12 +13778,16 @@ dispatch = "direct_generic"
 
         #[test]
         fn skill_bar_cast_meridian_gate_regression_no_deps_generic_path_still_works() {
-            // body.guangbo_ticao 是无 resolver / 无 required_meridians / 无 deps 的 skeleton 招，
+            // body.guangbo_ticao 是无 resolver / 无 required_meridians / 无 deps 的 generic 招，
             // entity 有 MeridianSystem → 经脉门无依赖可查直接放行 → 走通用路径成功施放。
             // 这是对 "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证：
             // 引入经脉门后，无依赖招的通用路径行为不变。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -13688,13 +13822,22 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 ms,
                 crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
             send_skill_bar_cast(&mut app, entity);
 
             let casting = app.world().get::<Casting>(entity).expect(
-            "回归：body.guangbo_ticao（无依赖 skeleton 招）有 MeridianSystem 时应成功施放（与引入 gate 前行为一致）",
+            "回归：body.guangbo_ticao（无依赖 generic 招）有 MeridianSystem 时应成功施放（与引入 gate 前行为一致）",
         );
             assert_eq!(casting.source, CastSource::SkillBar);
             assert_eq!(
