@@ -28,19 +28,19 @@ import java.util.function.LongSupplier;
 /**
  * 顿悟邀约弹窗——展示 trigger 上下文 + 2-3 个候选 + "心未契机" 拒绝按钮 + 倒计时。
  *
- * <p>关闭方式（全部收敛为 exactly-once settlement，先 claim 后 dispatch 后 close，
+ * <p>关闭方式（全部收敛为 exactly-once settlement，dispatch 成功后清槽再 close，
  * 见 r7-insight-settlement.tsv commit_order）：
  * <ul>
- *   <li>点击候选卡 → claim offerId → 提交 CHOSEN → 关闭。</li>
- *   <li>点击底部"心未契机" → claim offerId → 提交 DECLINED → 关闭。</li>
- *   <li>倒计时归零 (tick 检测) → claim offerId → 提交 TIMED_OUT → 关闭。</li>
+ *   <li>点击候选卡 → 提交 CHOSEN → dispatch 成功后清槽并关闭。</li>
+ *   <li>点击底部"心未契机" → 提交 DECLINED → dispatch 成功后清槽并关闭。</li>
+ *   <li>倒计时归零 (tick 检测) → 提交 TIMED_OUT → dispatch 成功后清槽并关闭。</li>
  *   <li>ESC / 转场取消 (ANIMATED_OPEN_CANCELLED) / 异常移除 (REMOVED_EXCEPTIONALLY)：
- *       与"心未契机"等价，claim 只作用于本屏 own 的 offerId。</li>
+ *       与"心未契机"等价，只作用于本屏 own 的 offerId。</li>
  * </ul>
  *
  * <p>实例身份：本屏在创建时捕获自己 offer 实例的 {@link SessionToken}，所有结算路径
- * 都经 {@code InsightOfferStore.settleIfCurrent(offerId, ...)} compare-and-clear 匹配
- * current/pending 实例；被替换后，旧屏的任何迟到回调都不能清除后来的 offer B。
+ * 都经 {@code InsightOfferStore.settleIfCurrent(offerId, ...)} 按实例身份匹配 current
+ * 槽；被替换后，旧屏的任何迟到回调都不能清除后来的 offer B。
  */
 public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
     implements ScreenTransitionController.PendingOpenCancellationHandler,
@@ -91,7 +91,7 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    // ─── 生命周期收口：所有 terminal 路径都收敛到 settle()，claim 先于 dispatch 先于 close ───
+    // ─── 生命周期收口：所有 terminal 路径都收敛到 settle()，dispatch 成功后清槽再 close ───
 
     @Override
     public void tick() {
@@ -129,19 +129,37 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
      */
     @Override
     public void removed() {
+        RuntimeException primary = null;
         try {
             if (!settled) {
                 settle(decisionForImplicitRemoval(), false);
             }
         } catch (RuntimeException error) {
-            // 结算传输失败不能阻断 vanilla 的屏幕移除。
-            BongClient.LOGGER.warn(
-                "[bong][insight] failed to settle offer during screen removal: {}",
-                offer.offerId(),
-                error
-            );
+            primary = error;
         } finally {
-            super.removed();
+            try {
+                super.removed();
+            } catch (RuntimeException cleanupError) {
+                if (primary == null) {
+                    primary = cleanupError;
+                } else if (cleanupError != primary) {
+                    primary.addSuppressed(cleanupError);
+                }
+            }
+        }
+        if (primary != null) {
+            try {
+                // 结算或 vanilla 清理失败不能阻断 vanilla 的屏幕移除；日志保留主异常。
+                BongClient.LOGGER.warn(
+                    "[bong][insight] failed to finish offer screen removal: {}",
+                    offer.offerId(),
+                    primary
+                );
+            } catch (RuntimeException logError) {
+                if (logError != primary) {
+                    primary.addSuppressed(logError);
+                }
+            }
         }
     }
 
@@ -182,11 +200,10 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
         if (settled) {
             return;
         }
-        settled = true;
-        // 1) 先对 exact offerId 原子 claim（compare-and-clear 只作用于 matching current 实例）；
-        //    失败 = stale/duplicate，幂等 no-op。2) dispatch 发送。3) 若仍是当前屏则关闭。
-        // 发送失败不影响 close 尝试（send failure 是 primary，但 close 仍尝试，tsv send_failure）。
+        // 1) 对 exact offerId 的 current 实例 dispatch；2) dispatch 成功后清空 current；
+        //    失败则保留 offer 并由 store listener 恢复可见重试路径。3) 若仍是当前屏则关闭。
         InsightOfferStore.settleIfCurrent(offer.offerId(), decision);
+        settled = true;
         if (closeCurrentScreen) {
             MinecraftClient mc = MinecraftClient.getInstance();
             if (mc != null && mc.currentScreen == this) {

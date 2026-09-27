@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -189,23 +190,33 @@ class InsightOfferScreenTest {
     }
 
     @Test
-    void removalTransportRejectionDoesNotAbortLifecycleOrRepeatSettlement() {
+    void removalTransportRejectionRestoresOfferForRetry() {
         AtomicInteger attempts = new AtomicInteger();
+        List<InsightOfferViewModel> storeChanges = new ArrayList<>();
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> {
-            attempts.incrementAndGet();
-            return false;
+            return attempts.incrementAndGet() > 1;
         });
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
+        InsightOfferStore.addListener(storeChanges::add);
         InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         InsightOfferStore.replace(offer);
         InsightOfferScreen screen = new InsightOfferScreen(offer);
 
         assertDoesNotThrow(screen::removed,
             "removed() 必须隔离本地传输拒绝，不能中断 vanilla 屏幕移除");
+        assertEquals(1, attempts.get(), "第一次 removed() 应只尝试一次传输");
+        assertSame(offer, InsightOfferStore.snapshot(),
+            "传输拒绝后必须恢复 current，保留终态重试路径");
+        assertSame(offer, storeChanges.get(storeChanges.size() - 1),
+            "传输拒绝必须通知现有 bootstrap 重新展示 offer");
+        assertFalse(screen.settledForTests(),
+            "传输拒绝后本屏不得标记为已结算，否则后续 removed() 无法重试");
+
         screen.removed();
 
-        assertEquals(1, attempts.get(), "传输拒绝后重复 removed() 不得重复结算");
-        assertNull(InsightOfferStore.snapshot(), "传输拒绝仍应清空已 claim 的 offer");
+        assertEquals(2, attempts.get(), "重试 removed() 应再次尝试传输");
+        assertNull(InsightOfferStore.snapshot(), "重试成功后 current 才应清空");
+        assertTrue(screen.settledForTests(), "重试成功后本屏才标记为已结算");
     }
 
     // ─── 转场仲裁：同 token 延续 vs 新实例覆盖 ─────────────────────────────
