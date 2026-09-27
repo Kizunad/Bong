@@ -921,8 +921,10 @@ mod tests {
                 }],
             },
         );
-        let mut bindings = SkillBarBindings::default();
-        bindings.dash_skill_id = Some("legacy.dash".to_string());
+        let bindings = SkillBarBindings {
+            dash_skill_id: Some("legacy.dash".to_string()),
+            ..Default::default()
+        };
         app.world_mut().entity_mut(player).insert(bindings);
 
         send(
@@ -1067,8 +1069,10 @@ mod tests {
                 active: true,
             }],
         };
-        let mut prefs = crate::player::state::PlayerUiPrefs::default();
-        prefs.dash_skill_id = Some("legacy.dash".to_string());
+        let mut prefs = crate::player::state::PlayerUiPrefs {
+            dash_skill_id: Some("legacy.dash".to_string()),
+            ..Default::default()
+        };
         assert!(prune_unknown_dash_binding(&mut prefs.dash_skill_id, &known));
         assert_eq!(prefs.dash_skill_id, None);
 
