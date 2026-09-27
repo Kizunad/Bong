@@ -12,6 +12,7 @@ use crate::inventory::{
 use crate::mineral::MineralFeedbackEvent;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
+#[allow(clippy::too_many_arguments)]
 pub fn forge_outcome_to_inventory(
     mut events: EventReader<ForgeOutcomeEvent>,
     registry: Res<ItemRegistry>,
