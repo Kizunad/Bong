@@ -104,6 +104,7 @@ pub fn spend_qi_conserved(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_qi(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -143,6 +144,7 @@ fn settle_qi(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_qi_with_ledger(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -150,7 +152,7 @@ fn settle_qi_with_ledger(
     position: Option<&Position>,
     dimension: Option<&CurrentDimension>,
     life_record: &LifeRecord,
-    mut zones: Option<&mut ZoneRegistry>,
+    zones: Option<&mut ZoneRegistry>,
     transfers: Option<&mut Events<QiTransfer>>,
     source: &'static str,
 ) -> bool {
@@ -164,7 +166,7 @@ fn settle_qi_with_ledger(
             position,
             dimension,
             Some(life_record),
-            zones.as_deref_mut(),
+            zones,
             &mut ledger,
             transfers,
             source,
