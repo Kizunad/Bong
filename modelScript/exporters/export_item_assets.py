@@ -67,6 +67,20 @@ class ExportOptions:
     firstperson_scale: float | None = None
     gui_scale: float = 0.9
     centre_px: float = 0.0
+    # 手持时绕握柄轴（模型 Y）再转多少度，只作用于一 / 三人称四个手持模式。
+    # 用途见 HAFT_TURN_DEG 的说明；对称的剑、镐保持 0。
+    haft_turn_deg: float = 0.0
+
+
+# 单侧开刃的工具，刃口朝哪边由建模方向决定。标准手持 display（rotation [-80, 90, 0]）
+# 下，建模稿里朝 -X 的那一侧在「手臂前伸」时朝上。v2 两把斧的斧刃都建在 -X 侧，
+# 于是劈砍时刃口朝天、斧背朝下 —— 用户在动画审阅页判「斧头方向上下反了」。
+# 修在 display 层：绕握柄轴转半圈，刃口朝下，几何和贴图一个字节都不改。
+# 握柄轴在方块中心 (8, *, 8)，而 display 的旋转枢轴正是方块中心，所以握点不会跟着挪。
+HAFT_TURN_DEG = {
+    "axe_iron_v2": 180.0,
+    "axe_bone_v2": 180.0,
+}
 
 
 # 这三个预设不是另造一套转换逻辑，而是三件已验收资产的 compatibility oracle。
@@ -334,30 +348,47 @@ def _centre_translation(
     return [round(target[index] - moved[index], 3) for index in range(3)]
 
 
+def _hand_rotation(base_y: float, haft_turn_deg: float) -> list[float]:
+    """手持模式的 display 旋转 [-80, y, 0]，再绕模型 Y 轴附加 haft_turn_deg。
+
+    MC 按 ``rotationXYZ(x, y, z)`` = Rx·Ry·Rz 应用 display 旋转；z 为 0 时右乘 Ry(t)
+    恰好等于把 y 加上 t，所以这里直接加角度，再归一到 (-180, 180]。
+    """
+
+    y = base_y + haft_turn_deg
+    while y > 180.0:
+        y -= 360.0
+    while y <= -180.0:
+        y += 360.0
+    return [-80, int(y) if float(y).is_integer() else y, 0]
+
+
 def build_display(options: ExportOptions) -> dict:
     firstperson_scale = (
         options.firstperson_scale
         if options.firstperson_scale is not None
         else round(options.hand_scale - 0.04, 4)
     )
+    right = _hand_rotation(90, options.haft_turn_deg)
+    left = _hand_rotation(-90, options.haft_turn_deg)
     return {
         "thirdperson_righthand": {
-            "rotation": [-80, 90, 0],
+            "rotation": right,
             "translation": [0, -2.0, 1.5],
             "scale": [options.hand_scale] * 3,
         },
         "thirdperson_lefthand": {
-            "rotation": [-80, -90, 0],
+            "rotation": left,
             "translation": [0, -2.0, 1.5],
             "scale": [options.hand_scale] * 3,
         },
         "firstperson_righthand": {
-            "rotation": [-80, 90, 0],
+            "rotation": right,
             "translation": [0, -2.0, -4.0],
             "scale": [firstperson_scale] * 3,
         },
         "firstperson_lefthand": {
-            "rotation": [-80, -90, 0],
+            "rotation": left,
             "translation": [0, -2.0, -4.0],
             "scale": [firstperson_scale] * 3,
         },
@@ -414,7 +445,8 @@ def _default_options(bb: dict, identifier: str) -> ExportOptions:
         8.0 if minimum[2] < 0.0 else 0.0,
     )
     centre_px = (minimum[1] + maximum[1]) / 2.0
-    return ExportOptions(offset=offset, centre_px=centre_px)
+    return ExportOptions(offset=offset, centre_px=centre_px,
+                         haft_turn_deg=HAFT_TURN_DEG.get(identifier, 0.0))
 
 
 def _with_overrides(
