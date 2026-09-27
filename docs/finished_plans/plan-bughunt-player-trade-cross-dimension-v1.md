@@ -21,6 +21,7 @@
 - **进料**：`TradeOfferRequest`、`TradeOfferResponseEvent`、双方 `Position` / `CurrentDimension` / `Lifecycle` / `PlayerInventory`。
 - **出料**：仅同维且在 `CHAT_EXPOSURE_RADIUS` 内时生成 `PendingTradeOffer`、发送既有 `TradeOfferPayloadV1` 并调用 `exchange_inventory_items`；跨维请求向请求方发送拒绝提示。
 - **共享类型 / event**：复用 `world::dimension::{CurrentDimension, DimensionKind}`，不新增位面枚举、pending 字段或协议字段；缺失 `CurrentDimension` 通过 `dimension_or_overworld` 回退 `Overworld`。
+- **Pending 决议（2026-09-27）**：`PendingTradeOffer` 只保存交易双方实体、character id、物品实例与过期 tick，不保存发起时位面；接受阶段重新读取双方当前 `CurrentDimension`，成交必须同维，跨维响应清理 pending 并反馈拒绝。
 - **跨仓库契约**：继续消费 `trade_offer_request` / `trade_offer_response`，发送既有 `TradeOfferPayloadV1`；本修复只改变 server 门禁，client / agent / schema 无需改动。
 - **worldview 锚点**：`worldview.md §九` 面对面交易、`§十一` 交易暴露、`§十六` 坍缩渊独立位面；面对面不能跨位面只靠 XYZ 成立。
 - **qi_physics 锚点**：本 plan 只交换既有物品实例，不生成、衰减或转移真元，无新增 ledger 路径。
@@ -94,15 +95,21 @@
 ## 风险
 
 - `CurrentDimension` 缺失实体的默认语义必须与现有 server 交互门禁一致；否则测试 helper 需要补齐维度组件，避免误把测试默认当生产行为。
-- 如果 pending 中记录维度，跨维返回后是否允许继续接受需要明确：建议接受阶段必须“当前同维”，而不是只要求“发起时同维”。
+- 已决（2026-09-27）：`PendingTradeOffer` 不保存发起时位面；接受阶段重新读取双方当前 `CurrentDimension`，只有当前同维才允许成交，跨维响应清理 pending 并反馈拒绝。
 - 交易拒绝反馈要避免泄露目标实体是否存在；面向普通玩家只提示“不在此界/无法交易”即可。
 
 ## Finish Evidence
 
+### Kody review 修订（2026-09-27）
+
+- 调度时序意见成立：`dispatch_trade_offers` 与 `handle_trade_offer_responses` 均显式排在 `DimensionTransferSet` 后，接受处理另排在派发之后，避免同 tick 传送仍读取旧位面。
+- 校验顺序意见成立：发起与接受都先完成生命周期与当前位面门禁，再执行 `CHAT_EXPOSURE_RADIUS` 距离校验；超距跨维请求仍收到跨维拒绝反馈。
+- 文档意见成立：本节与上方风险项已收口 pending 规则；pending 不记录位面，成交瞬间重新读取双方当前位面并要求同维。
+
 ### 落地清单
 
-- `server/src/social/mod.rs`：`dispatch_trade_offers` 与 `handle_trade_offer_responses` 使用 `CurrentDimension` 双阶段同维门禁；`dimension_or_overworld` 统一缺省维度语义并发送拒绝反馈。
-- `server/src/social/mod_tests.rs`：新增发起跨维拒绝、接受前切维拒绝两条最小契约测试；既有 11 条交易相关测试继续通过。
+- `server/src/social/mod.rs`：`dispatch_trade_offers` 与 `handle_trade_offer_responses` 使用 `CurrentDimension` 双阶段同维门禁；两者均排在 `DimensionTransferSet` 后，`dimension_or_overworld` 统一缺省维度语义并发送拒绝反馈。
+- `server/src/social/mod_tests.rs`：新增超距跨维反馈、同 tick 发起传送、同 tick 接受传送三条调度与顺序契约测试；既有交易行为继续通过。
 - `docs/plan-bughunt-player-trade-cross-dimension-v1.md`：记录 Preflight、验真、接入面、阶段状态与最终证据。
 
 ### 关键 commit
@@ -113,7 +120,7 @@
 
 ### 测试结果
 
-- `scripts/build-token.sh cargo test -p bong-server 'social::tests::trade_'`：13 passed，0 failed。
+- `scripts/build-token.sh cargo test -p bong-server 'social::tests::trade_'`：16 passed，0 failed。
 - `scripts/build-token.sh cargo fmt --check`：passed。
 - `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：passed。
 - `scripts/build-token.sh cargo test`：passed；lib 10,378 tests、各 integration/unit binaries 与 doc-tests 均通过（doc-tests 3 passed、5 ignored）。

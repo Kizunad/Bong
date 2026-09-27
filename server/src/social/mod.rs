@@ -259,9 +259,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             handle_sparring_invite_responses.after(dispatch_sparring_invites),
-            dispatch_trade_offers,
+            dispatch_trade_offers.after(crate::world::dimension_transfer::DimensionTransferSet),
             handle_trade_offer_responses
                 .after(dispatch_trade_offers)
+                .after(crate::world::dimension_transfer::DimensionTransferSet)
                 .in_set(SocialSystemSet::TradeOfferResponse),
             expire_sparring_sessions.after(handle_sparring_invite_responses),
             expire_trade_offers.after(handle_trade_offer_responses),
@@ -1083,7 +1084,6 @@ fn dispatch_trade_offers(
         };
         if initiator_lifecycle.state == LifecycleState::Terminated
             || target_lifecycle.state == LifecycleState::Terminated
-            || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
         {
             continue;
         }
@@ -1091,6 +1091,9 @@ fn dispatch_trade_offers(
             if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
                 initiator_client.send_chat_message("对方不在此界，无法交易");
             }
+            continue;
+        }
+        if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
             continue;
         }
         let Some(offered_item) =
@@ -1198,7 +1201,6 @@ fn handle_trade_offer_responses(
                 || target_lifecycle.state == LifecycleState::Terminated
                 || initiator_lifecycle.character_id != pending.initiator_char_id
                 || target_lifecycle.character_id != pending.target_char_id
-                || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
             {
                 continue;
             }
@@ -1208,6 +1210,9 @@ fn handle_trade_offer_responses(
                 if let Ok((_, mut client)) = clients.get_mut(response.player) {
                     client.send_chat_message("交易双方不在同一界，无法交易");
                 }
+                continue;
+            }
+            if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
                 continue;
             }
             let Some(offered_item) =
