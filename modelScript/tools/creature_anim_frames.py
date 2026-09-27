@@ -41,6 +41,15 @@ GAME_FACING = "-z"
 CLIP_VIEWS = ("3/4", "SIDE_R", "TOP")
 
 
+def non_negative_int(text: str) -> int:
+    """argparse 类型：非负整数。GIF 帧时长加上负数会让 Pillow 报错或写出坏 GIF。"""
+
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"必须是非负整数，收到 {value}")
+    return value
+
+
 def load_rig(name: str, geo: Path, texture: Path, scratch: Path) -> tuple[PoseRig, Path]:
     geometry = json.loads(geo.read_text(encoding="utf-8"))
     bbmodel = scratch / f"{name}.bbmodel"
@@ -124,7 +133,7 @@ def render_bind(name: str, rig: PoseRig, bbmodel: Path, size: int, facing: str) 
     return framing.contact_sheet(tiles, title=f"{name} | bind pose | {facing_note(facing)}", columns=3)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", required=True, help="资源名，例如 fuya_v2")
     parser.add_argument("--assets", type=Path, default=CLIENT, help="bong 资源根，默认 client 资源树")
@@ -138,9 +147,13 @@ def main() -> None:
                         help="模型正面朝哪个轴；缺省按游戏约定 -z")
     parser.add_argument("--gif", action="store_true",
                         help=f"每段动画出一张 {GIF_FPS}fps、{GIF_VIEW} 单机位的原速 GIF（代替关键帧 PNG）")
-    parser.add_argument("--end-hold-ms", type=int, default=500,
-                        help="一次性动画播完在末帧停多久再重播（GIF 用）；循环动画无缝")
-    args = parser.parse_args()
+    parser.add_argument("--end-hold-ms", type=non_negative_int, default=500,
+                        help="一次性动画播完在末帧停多久再重播（GIF 用，非负毫秒）；循环动画无缝")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     geo = args.assets / "geo" / f"{args.name}.geo.json"
     texture = args.assets / "textures" / "entity" / "fauna" / f"{args.name}.png"
