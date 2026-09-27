@@ -77,6 +77,37 @@ class ItemAssetExporterTest(unittest.TestCase):
                         f"{identifier}/{relative.name} 必须逐字节复现已验收产物",
                     )
 
+    def test_single_edged_axes_turn_blade_side_to_the_opposite_face_in_hand(self) -> None:
+        """v2 斧的斧刃建在 -X 侧；标准手持 display 下它朝上（用户判「上下反了」）。
+
+        契约：导出的手持 display 等于标准 display 再绕握柄轴（模型 Y）转半圈，
+        于是 -X 侧在手里落到与标准 display 相反的一面；几何不动。
+        """
+
+        import numpy as np
+
+        def rotation(degrees: list[float]) -> np.ndarray:
+            x, y, z = np.radians(degrees)
+            rx = np.array([[1, 0, 0], [0, np.cos(x), -np.sin(x)], [0, np.sin(x), np.cos(x)]])
+            ry = np.array([[np.cos(y), 0, np.sin(y)], [0, 1, 0], [-np.sin(y), 0, np.cos(y)]])
+            rz = np.array([[np.cos(z), -np.sin(z), 0], [np.sin(z), np.cos(z), 0], [0, 0, 1]])
+            return rx @ ry @ rz  # MC: Quaternionf.rotationXYZ
+
+        standard = export.build_display(export.ExportOptions(offset=(0.0, 0.0, 0.0)))
+        blade_side = np.array([-1.0, 0.0, 0.0])
+        committed = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "models" / "item"
+        for identifier in export.HAFT_TURN_DEG:
+            display = json.loads((committed / identifier / f"{identifier}.json").read_text(encoding="utf-8"))["display"]
+            for mode in ("thirdperson_righthand", "thirdperson_lefthand",
+                         "firstperson_righthand", "firstperson_lefthand"):
+                with self.subTest(item=identifier, mode=mode):
+                    turned = rotation(display[mode]["rotation"]) @ blade_side
+                    plain = rotation(standard[mode]["rotation"]) @ blade_side
+                    np.testing.assert_allclose(
+                        turned, -plain, atol=1e-9,
+                        err_msg=f"{identifier} {mode}: 斧刃侧应落到标准 display 的反面（刃口朝下）",
+                    )
+
     def test_pill_mapping_names_are_explicit_and_assets_are_complete(self) -> None:
         self.assertEqual(8, len(export.PILL_ASSETS))
         for identifier, filename in export.PILL_ASSETS.items():

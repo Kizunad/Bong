@@ -1,6 +1,6 @@
 {
   "parent": "sml:builtin/obj",
-  "model": "bong:models/item/axe_iron_v2/axe_iron_v2.obj",
+  "model": "bong:models/item/axe_bone_v2/axe_bone_v2.obj",
   "display": {
     "thirdperson_righthand": {
       "rotation": [
@@ -83,7 +83,7 @@
       ],
       "translation": [
         0.0,
-        -4.782,
+        -3.715,
         0.0
       ]
     },
@@ -99,8 +99,8 @@
         0.9
       ],
       "translation": [
-        9.59,
-        -9.59,
+        8.082,
+        -8.082,
         0.0
       ]
     },
@@ -117,7 +117,7 @@
       ],
       "translation": [
         0.0,
-        -15.07,
+        -12.7,
         0.0
       ]
     },
@@ -134,7 +134,7 @@
       ],
       "translation": [
         0.0,
-        -3.07,
+        -0.7,
         0.0
       ]
     }
