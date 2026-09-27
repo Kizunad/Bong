@@ -96,14 +96,16 @@
 
 - `478a34411`（2026-09-27）：重新升格 plan，接续旧本地验真并使用 `Model: gpt-6-luna`。
 - `f64a862fe`（2026-09-27）：补齐 `InsightOfferScreen.removed()` 终态收口及真实生命周期回归测试，使用 `Model: gpt-6-luna`。
+- `f36680e7b`（2026-09-27）：修复 dispatch 失败后的 current 保留/屏幕重试，并在 removed 清理后保留主异常日志，使用 `Model: gpt-6-luna`。
+- `57f857270`（2026-09-27）：补齐 PR #2329 返工所需的 Pre-P0 代码与 plan 章节锚点，使用 `Model: gpt-6-luna`。
 
 ### 测试结果
 
 - 修复前定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest.exceptionalRemovalSettlesDeclinedExactlyOnce` 按预期失败，证明真实 `removed()` 不会结算。
 - 修复后定向测试：同一命令通过。
 - PR #2329 返工定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest` 通过，包含传输拒绝后的 `removed()` 恢复重试契约。
-- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,056 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建。
-- 主线同步：`git fetch origin && git merge origin/main` 输出 `Already up to date.`，没有带入需要重跑的 client 变更。
+- 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,056 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建；主线 merge 后复跑同一门禁仍通过。
+- 主线同步：`git fetch origin && git merge origin/main` 生成合并提交 `86b24ef991f2753b41cb774d5e72d6b5e817ecc2`，带入另一条 server/social 与 finished-plan 变更，未触及本 plan 的 client 文件；合并后 client 门禁已复验。
 
 ### 跨仓库核验
 
