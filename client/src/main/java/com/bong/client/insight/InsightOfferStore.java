@@ -46,7 +46,7 @@ public final class InsightOfferStore {
      * 推送新邀约 (null = 当前 offer 已结算 / 取消)。新 offer 实例总是取得新 session token；
      * 若当前槽已有主，先把 outgoing offerId 结算为本地终态 tombstone，再原子替换。
      */
-    public static void replace(InsightOfferViewModel next) {
+    public static synchronized void replace(InsightOfferViewModel next) {
         if (next == null) {
             clearCurrent(null);
             return;
@@ -91,28 +91,14 @@ public final class InsightOfferStore {
     }
 
     /**
-     * 玩家做出决定——先对 exact offerId 原子 claim（compare-and-clear 只作用于 matching
-     * current 实例），claim 成功才 dispatch 并清空当前 slot；claim 失败 (stale/duplicate) 为
-     * 幂等 no-op，绝不触碰后来 offer 的 current/pending 实例。
+     * 玩家做出决定——只对 exact offerId 的 current 实例 dispatch；dispatch 成功后才清空
+     * current。失败时 current 保留并通知监听器恢复 UI，调用方可以安全重试。
      */
-    public static void submit(InsightDecision decision, String offerId) {
+    public static synchronized void submit(InsightDecision decision, String offerId) {
         if (offerId == null || offerId.isBlank()) {
             return;
         }
-        while (true) {
-            ActiveOffer active = current.get();
-            if (active == null) {
-                return;
-            }
-            if (!active.viewModel().offerId().equals(offerId)) {
-                return;
-            }
-            if (current.compareAndSet(active, null)) {
-                dispatcher.dispatch(decision, active.viewModel());
-                notifyListeners(null);
-                return;
-            }
-        }
+        settleIfCurrent(offerId, decision);
     }
 
     /** 与 {@link #submit(InsightDecision, String)} 等价的便捷入口。 */
@@ -121,7 +107,7 @@ public final class InsightOfferStore {
     }
 
     /** 仅当快照仍是该 offer 实例时替换（同实例刷新保留 token）。 */
-    public static void replaceIfCurrent(InsightOfferViewModel next) {
+    public static synchronized void replaceIfCurrent(InsightOfferViewModel next) {
         Objects.requireNonNull(next, "next");
         while (true) {
             ActiveOffer active = current.get();
@@ -137,26 +123,46 @@ public final class InsightOfferStore {
     }
 
     /**
-     * 精确结算当前槽中该 offer 实例（compare-and-clear）。claim 成功后以 {@code decision}
-     * 发送终态并清空当前 slot；不匹配或已空为幂等 no-op。
+     * 外部提交路径按 offerId 结算当前 offer；没有屏幕实例 token 时保留兼容入口。
      */
-    public static void settleIfCurrent(String offerId, InsightDecision decision) {
+    public static synchronized void settleIfCurrent(String offerId, InsightDecision decision) {
+        settleIfCurrent(offerId, null, decision);
+    }
+
+    /**
+     * 屏幕结算必须同时匹配捕获的 SessionToken，避免旧屏与新屏复用 offerId 时误结算。
+     * 先 dispatch，再清空 current；传输失败会保留 offer，让调用方能够恢复 UI 并重试。
+     * 此方法与所有 current/pending 写入在类 monitor 内串行化，因而 dispatch 期间不会被并发替换。
+     * 非匹配或已空为幂等 no-op。
+     */
+    static synchronized void settleIfCurrent(
+        String offerId,
+        SessionToken expectedToken,
+        InsightDecision decision
+    ) {
         if (offerId == null || offerId.isBlank() || decision == null) {
             return;
         }
-        while (true) {
-            ActiveOffer active = current.get();
-            if (active == null) {
-                return;
+        ActiveOffer active = current.get();
+        if (active == null
+            || (expectedToken != null && active.token() != expectedToken)
+            || !active.viewModel().offerId().equals(offerId)) {
+            return;
+        }
+        try {
+            dispatcher.dispatch(decision, active.viewModel());
+        } catch (RuntimeException error) {
+            try {
+                notifyListeners(active.viewModel());
+            } catch (RuntimeException recoveryError) {
+                if (recoveryError != error) {
+                    error.addSuppressed(recoveryError);
+                }
             }
-            if (!active.viewModel().offerId().equals(offerId)) {
-                return;
-            }
-            if (current.compareAndSet(active, null)) {
-                dispatcher.dispatch(decision, active.viewModel());
-                notifyListeners(null);
-                return;
-            }
+            throw error;
+        }
+        if (current.compareAndSet(active, null)) {
+            notifyListeners(null);
         }
     }
 
@@ -164,7 +170,7 @@ public final class InsightOfferStore {
      * 无条件清空当前槽（不发送任何 wire 终态）。断线清理、服务端撤回等无玩家语义的
      * 场景使用；有玩家语义的结算必须走 {@link #settleIfCurrent}。
      */
-    public static void clearCurrent(InsightOfferViewModel expected) {
+    public static synchronized void clearCurrent(InsightOfferViewModel expected) {
         while (true) {
             ActiveOffer active = current.get();
             if (active == null) {
@@ -215,12 +221,12 @@ public final class InsightOfferStore {
      * <p>之前此处误用 {@link #resetForTests()} —— 它会一并拆掉监听器和真实
      * dispatcher，导致重连后 offer 不再开屏、玩家选择也不再回传服务端。
      */
-    public static void clearOnDisconnect() {
+    public static synchronized void clearOnDisconnect() {
         clearCurrent(null);
         pending.set(null);
     }
 
-    public static void resetForTests() {
+    public static synchronized void resetForTests() {
         current.set(null);
         pending.set(null);
         dispatcher = InsightChoiceDispatcher.LOGGING;
