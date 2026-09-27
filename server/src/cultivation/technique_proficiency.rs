@@ -103,6 +103,9 @@ pub struct ProficiencyScalars {
     pub cooldown_mult: f32,
 }
 
+/// **孤儿（无生产调用方）**：dash 的实际缩放走 `dash_proficiency.rs` 专属曲线，
+/// beng_quan 等其余招式未接任何通用熟练度缩放；本函数只是候选公式，接线前
+/// 保持 `#[allow(dead_code)]`，测试仅锁纯函数值。
 #[allow(dead_code)]
 pub fn generic_proficiency_scalars(proficiency: f32) -> ProficiencyScalars {
     let prof = proficiency.clamp(0.0, 1.0);
@@ -466,52 +469,56 @@ mod tests {
         );
     }
 
+    // 下面两条只锁 `generic_proficiency_scalars` 纯函数四轴数值——该函数是无
+    // 调用方的孤儿公式；dash 实际缩放在 dash_proficiency.rs，beng_quan 未接
+    // 任何缩放。旧测试名 `dash/beng_quan_applies_proficiency_scalars` 谎称已
+    // 接线，已如实更名。
     #[test]
-    fn dash_applies_proficiency_scalars() {
+    fn generic_scalars_prof_0_all_axes_pinned() {
         let scalars = generic_proficiency_scalars(0.0);
         assert!(
             (scalars.cast_ticks_mult - 1.2).abs() < 1e-6,
-            "dash at prof=0: cast_ticks_mult should be 1.2, got {}",
+            "orphan formula at prof=0: cast_ticks_mult should be 1.2, got {}",
             scalars.cast_ticks_mult
         );
         assert!(
             (scalars.qi_cost_mult - 1.1).abs() < 1e-6,
-            "dash at prof=0: qi_cost_mult should be 1.1, got {}",
+            "orphan formula at prof=0: qi_cost_mult should be 1.1, got {}",
             scalars.qi_cost_mult
         );
         assert!(
             (scalars.stamina_cost_mult - 1.1).abs() < 1e-6,
-            "dash at prof=0: stamina_cost_mult should be 1.1, got {}",
+            "orphan formula at prof=0: stamina_cost_mult should be 1.1, got {}",
             scalars.stamina_cost_mult
         );
         assert!(
             (scalars.cooldown_mult - 1.0).abs() < 1e-6,
-            "dash at prof=0: cooldown_mult should be 1.0, got {}",
+            "orphan formula at prof=0: cooldown_mult should be 1.0, got {}",
             scalars.cooldown_mult
         );
     }
 
     #[test]
-    fn beng_quan_applies_proficiency_scalars() {
+    fn generic_scalars_prof_1_all_axes_pinned() {
         let scalars = generic_proficiency_scalars(1.0);
         assert!(
             (scalars.cast_ticks_mult - 0.9).abs() < 1e-6,
-            "beng_quan at prof=1: cast_ticks_mult should be 0.9, got {}",
+            "orphan formula at prof=1: cast_ticks_mult should be 0.9, got {}",
             scalars.cast_ticks_mult
         );
         assert!(
             (scalars.qi_cost_mult - 0.85).abs() < 1e-6,
-            "beng_quan at prof=1: qi_cost_mult should be 0.85, got {}",
+            "orphan formula at prof=1: qi_cost_mult should be 0.85, got {}",
             scalars.qi_cost_mult
         );
         assert!(
             (scalars.stamina_cost_mult - 0.85).abs() < 1e-6,
-            "beng_quan at prof=1: stamina_cost_mult should be 0.85, got {}",
+            "orphan formula at prof=1: stamina_cost_mult should be 0.85, got {}",
             scalars.stamina_cost_mult
         );
         assert!(
             (scalars.cooldown_mult - 0.8).abs() < 1e-6,
-            "beng_quan at prof=1: cooldown_mult should be 0.8, got {}",
+            "orphan formula at prof=1: cooldown_mult should be 0.8, got {}",
             scalars.cooldown_mult
         );
     }
