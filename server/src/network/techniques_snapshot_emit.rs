@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
 use valence::prelude::{Added, Changed, Client, Entity, Query, Res, Username, With};
@@ -18,6 +18,36 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 type TechniquesSnapshotFilter = (With<Client>, Changed<KnownTechniques>);
 type JoinTechniquesSnapshotFilter = (With<Client>, Added<KnownTechniques>);
 type TechniquesSnapshotQueryItem<'a> = (Entity, &'a mut Client, &'a Username, &'a KnownTechniques);
+
+/// 只保留最近一批未知功法告警的去重 key，避免长时间运行进程的诊断缓存无限增长。
+const UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY: usize = 1024;
+
+#[derive(Default)]
+struct WarningDedupCache {
+    keys: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl WarningDedupCache {
+    fn insert(&mut self, key: String) -> bool {
+        if self.keys.contains(&key) {
+            return false;
+        }
+        if self.order.len() >= UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.keys.remove(&evicted);
+            }
+        }
+        self.keys.insert(key.clone());
+        self.order.push_back(key);
+        true
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+}
 
 pub fn emit_techniques_snapshot_payloads(
     registry: Res<TechniqueRegistry>,
@@ -115,20 +145,21 @@ fn unknown_technique_ids<'a>(
         .collect()
 }
 
-/// 快照丢弃未知持久化功法时保留可诊断信号；按 `(username, technique_id)` 去重，避免
-/// `Changed<KnownTechniques>` 在战斗中重复刷屏。
+/// 快照丢弃未知持久化功法时保留可诊断信号；按 `(username, technique_id)` 在有界的
+/// FIFO 缓存中去重，避免 `Changed<KnownTechniques>` 在战斗中重复刷屏，同时不让进程级
+/// 诊断状态随玩家和残留 ID 永久增长。
 fn warn_unknown_technique_ids(
     registry: &TechniqueRegistry,
     username: &str,
     known: &KnownTechniques,
 ) {
-    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    static WARNED: OnceLock<Mutex<WarningDedupCache>> = OnceLock::new();
+    let mut warned = WARNED
+        .get_or_init(|| Mutex::new(WarningDedupCache::default()))
+        .lock()
+        .expect("unknown-technique warning dedup mutex poisoned");
     for technique_id in unknown_technique_ids(registry, known) {
         let key = format!("{username}\u{0}{technique_id}");
-        let mut warned = WARNED
-            .get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-            .expect("unknown-technique warning dedup mutex poisoned");
         if warned.insert(key) {
             tracing::warn!(
                 player = %username,
@@ -280,6 +311,26 @@ mod tests {
             vec!["unknown.removed", "unknown.other"],
             "stale snapshot diagnostics should deduplicate ids without changing first-seen order"
         );
+    }
+
+    #[test]
+    fn warning_dedup_cache_evicts_oldest_key_at_capacity() {
+        let mut cache = WarningDedupCache::default();
+        for index in 0..UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY {
+            assert!(cache.insert(format!("stale-{index}")));
+        }
+        assert_eq!(cache.len(), UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY);
+        assert!(!cache.insert(format!(
+            "stale-{}",
+            UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY - 1
+        )));
+        assert!(cache.insert("stale-new".to_string()));
+        assert_eq!(cache.len(), UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY);
+        assert!(
+            cache.insert("stale-0".to_string()),
+            "the oldest key must be evicted so a repeated old warning can be observed again"
+        );
+        assert!(!cache.insert("stale-new".to_string()));
     }
 
     #[test]
