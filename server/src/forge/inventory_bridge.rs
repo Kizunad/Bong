@@ -1,19 +1,26 @@
 //! plan-forge-leftovers-v1 §2.3 — forge outcome 写回玩家背包。
 
-use valence::prelude::{EventReader, Query, Res, ResMut};
+use valence::prelude::{EventReader, EventWriter, Position, Query, Res, ResMut};
 
 use super::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use super::events::{ForgeBucket, ForgeOutcomeEvent};
+use crate::combat::CombatClock;
 use crate::inventory::{
-    bump_revision, find_free_slot, ContainerState, InventoryInstanceIdAllocator, ItemInstance,
-    ItemRegistry, PlacedItemState, PlayerInventory, BODY_POCKET_CONTAINER_ID,
+    add_item_to_player_inventory_or_ground, DroppedLootRegistry, GrantOrGroundOutcome,
+    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlayerInventory,
 };
+use crate::mineral::MineralFeedbackEvent;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 pub fn forge_outcome_to_inventory(
     mut events: EventReader<ForgeOutcomeEvent>,
     registry: Res<ItemRegistry>,
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut dropped_loot: ResMut<DroppedLootRegistry>,
+    mut feedback: EventWriter<MineralFeedbackEvent>,
+    player_positions: Query<(&Position, Option<&CurrentDimension>)>,
+    combat_clock: Option<Res<CombatClock>>,
 ) {
     for event in events.read() {
         if !matches!(
@@ -78,108 +85,83 @@ pub fn forge_outcome_to_inventory(
             );
             continue;
         };
-        let Some((container_index, row, col)) =
-            find_forge_output_slot(&inventory, template.grid_w, template.grid_h)
-        else {
-            tracing::warn!(
-                "[bong][forge] outcome for session {:?} caster {:?} has no free carried slot for `{}`; grant skipped",
-                event.session,
-                event.caster,
-                template_id
-            );
-            continue;
-        };
 
-        let instance_id = match allocator.next_id() {
-            Ok(id) => id,
-            Err(err) => {
-                tracing::warn!(
-                    "[bong][forge] outcome for session {:?} could not allocate inventory id: {err}",
-                    event.session
-                );
-                continue;
-            }
-        };
-
-        let mut instance = ItemInstance {
-            instance_id,
-            template_id: template.id.clone(),
-            display_name: template.display_name.clone(),
-            grid_w: template.grid_w,
-            grid_h: template.grid_h,
-            weight: template.base_weight,
-            rarity: template.rarity,
-            description: template.description.clone(),
-            stack_count: 1,
-            spirit_quality: template.spirit_quality_initial,
-            durability: 1.0,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: Some(event.quality.clamp(0.0, 1.0)),
-            forge_color: event.color,
-            forge_side_effects: event.side_effects.clone(),
-            forge_achieved_tier: Some(achieved_tier),
-            alchemy: None,
-            lingering_owner_qi: None,
-        };
-
-        if template.weapon_spec.is_some()
+        let forge_quality = event.quality.clamp(0.0, 1.0);
+        let forge_color = event.color;
+        let forge_side_effects = event.side_effects.clone();
+        let artifact_state = if template.weapon_spec.is_some()
             || crate::combat::carrier::CarrierKind::from_template_id(template_id).is_some()
         {
-            let state = artifact_state_for_outcome(
+            Some(artifact_state_for_outcome(
                 template_id,
                 achieved_tier,
                 event.quality,
                 event.color,
                 event.consecration_qi_amount,
                 0,
-            );
-            write_artifact_state_to_item(&mut instance, &state);
-        }
+            ))
+        } else {
+            None
+        };
+        let customize = |instance: &mut ItemInstance| {
+            instance.forge_quality = Some(forge_quality);
+            instance.forge_color = forge_color;
+            instance.forge_side_effects = forge_side_effects.clone();
+            instance.forge_achieved_tier = Some(achieved_tier);
+            if let Some(state) = artifact_state.as_ref() {
+                write_artifact_state_to_item(instance, state);
+            }
+        };
+        let (ground_pos, ground_dimension) = player_positions
+            .get(event.caster)
+            .map(|(position, dimension)| {
+                (
+                    [position.0.x, position.0.y, position.0.z],
+                    dimension.map(|value| value.0).unwrap_or_default(),
+                )
+            })
+            .unwrap_or(([0.0, 64.0, 0.0], DimensionKind::default()));
+        let current_tick = combat_clock.as_ref().map_or(0, |clock| clock.tick);
 
-        inventory.containers[container_index]
-            .items
-            .push(PlacedItemState { row, col, instance });
-        bump_revision(&mut inventory);
+        match add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            template_id,
+            1,
+            current_tick,
+            ground_pos,
+            ground_dimension,
+            Some(&customize),
+        ) {
+            Ok(GrantOrGroundOutcome::Granted(_)) => {}
+            Ok(GrantOrGroundOutcome::DroppedToGround(entry)) => {
+                tracing::info!(
+                    "[bong][forge] outcome for session {:?} caster {:?} full inventory; `{}` dropped at {:?}",
+                    event.session,
+                    event.caster,
+                    template_id,
+                    entry.world_pos
+                );
+                feedback.send(MineralFeedbackEvent::forge_outcome_dropped(
+                    event.caster,
+                    &template.display_name,
+                ));
+            }
+            Err(err) => {
+                tracing::error!(
+                    "[bong][forge] outcome for session {:?} could not grant `{}` to inventory or ground: {err}",
+                    event.session,
+                    template_id
+                );
+            }
+        }
     }
 }
 
 fn valid_achieved_tier(value: u8) -> Option<u8> {
     (1..=4).contains(&value).then_some(value)
-}
-
-fn forge_container_order(containers: &[ContainerState]) -> Vec<usize> {
-    containers
-        .iter()
-        .enumerate()
-        .filter_map(|(index, container)| {
-            (container.id != BODY_POCKET_CONTAINER_ID).then_some(index)
-        })
-        .chain(
-            containers
-                .iter()
-                .enumerate()
-                .filter_map(|(index, container)| {
-                    (container.id == BODY_POCKET_CONTAINER_ID).then_some(index)
-                }),
-        )
-        .collect()
-}
-
-fn find_forge_output_slot(
-    inventory: &PlayerInventory,
-    grid_w: u8,
-    grid_h: u8,
-) -> Option<(usize, u8, u8)> {
-    for container_index in forge_container_order(&inventory.containers) {
-        if let Some((row, col)) =
-            find_free_slot(&inventory.containers[container_index], grid_w, grid_h)
-        {
-            return Some((container_index, row, col));
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -189,12 +171,15 @@ mod tests {
     use crate::forge::blueprint::BlueprintId;
     use crate::forge::session::ForgeSessionId;
     use crate::inventory::{
-        instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
-        ContainerState, InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec,
-        BODY_POCKET_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
+        find_free_slot, instantiate_inventory_from_loadout, load_default_loadout,
+        load_item_registry, ContainerState, DroppedLootRegistry, InventoryRevision, ItemCategory,
+        ItemRarity, ItemTemplate, PlacedItemState, WeaponSpec, BODY_POCKET_CONTAINER_ID,
+        MAIN_PACK_CONTAINER_ID,
     };
+    use crate::mineral::{events::MSG_FORGE_OUTCOME_DROPPED, MineralFeedbackEvent};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
     use std::collections::HashMap;
-    use valence::prelude::{App, Entity, Update};
+    use valence::prelude::{App, Entity, Events, Position, Update};
 
     fn weapon_template(id: &str) -> ItemTemplate {
         ItemTemplate {
@@ -334,7 +319,9 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(registry);
         app.insert_resource(InventoryInstanceIdAllocator::new(100));
+        app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<ForgeOutcomeEvent>();
+        app.add_event::<MineralFeedbackEvent>();
         app.add_systems(Update, forge_outcome_to_inventory);
         app
     }
@@ -544,11 +531,18 @@ mod tests {
     }
 
     #[test]
-    fn outcome_with_no_free_carried_slot_does_not_mutate_inventory() {
+    fn outcome_with_no_free_carried_slot_drops_item_and_notifies_player() {
         let mut templates = HashMap::new();
         templates.insert("cai_yao_dao".to_string(), tool_template("cai_yao_dao"));
         let mut app = app_with_templates(templates);
-        let caster = app.world_mut().spawn(full_carried_inventory()).id();
+        let caster = app
+            .world_mut()
+            .spawn((
+                full_carried_inventory(),
+                Position::new([12.0, 66.0, -3.0]),
+                CurrentDimension(DimensionKind::Tsy),
+            ))
+            .id();
 
         app.world_mut()
             .send_event(outcome(caster, ForgeBucket::Good, Some("cai_yao_dao")));
@@ -558,7 +552,7 @@ mod tests {
         assert_eq!(
             inventory.revision,
             InventoryRevision(7),
-            "没有任何随身空槽时锻造产物应 skip，不能递增 revision"
+            "背包无空槽时产物应落地，不能伪造入包并递增 revision"
         );
         assert!(
             inventory.containers.iter().all(|container| {
@@ -569,6 +563,26 @@ mod tests {
             }),
             "没有任何随身空槽时不能把锻造产物硬塞进已有格子"
         );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped
+            .entries
+            .values()
+            .find(|entry| entry.item.template_id == "cai_yao_dao")
+            .expect("背包满时锻造成品必须进入世界掉落注册表，不能静默丢失");
+        assert_eq!(entry.world_pos, [12.0, 66.0, -3.0]);
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert_eq!(entry.item.forge_quality, Some(0.93));
+        assert_eq!(entry.item.forge_achieved_tier, Some(2));
+
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let messages: Vec<_> = feedback
+            .iter_current_update_events()
+            .filter(|event| event.player == caster)
+            .collect();
+        assert_eq!(messages.len(), 1, "背包满掉地时应给玩家一条可见反馈");
+        assert_eq!(messages[0].message_id, MSG_FORGE_OUTCOME_DROPPED);
+        assert!(messages[0].text.contains("cai_yao_dao"));
     }
 
     #[test]
