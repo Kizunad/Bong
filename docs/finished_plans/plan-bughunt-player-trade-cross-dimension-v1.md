@@ -22,6 +22,9 @@
 - **出料**：仅同维且在 `CHAT_EXPOSURE_RADIUS` 内时生成 `PendingTradeOffer`、发送既有 `TradeOfferPayloadV1` 并调用 `exchange_inventory_items`；跨维请求向请求方发送拒绝提示。
 - **共享类型 / event**：复用 `world::dimension::{CurrentDimension, DimensionKind}`，不新增位面枚举、pending 字段或协议字段；缺失 `CurrentDimension` 通过 `dimension_or_overworld` 回退 `Overworld`。
 - **Pending 决议（2026-09-27）**：`PendingTradeOffer` 只保存交易双方实体、character id、物品实例与过期 tick，不保存发起时位面；接受阶段重新读取双方当前 `CurrentDimension`，成交必须同维，跨维响应清理 pending 并反馈拒绝。
+  - **代码调研依据**：`server/src/social/mod.rs:127-136` 定义 pending 字段且没有位面快照；`server/src/social/mod.rs:1090-1097` 与 `server/src/social/mod.rs:1207-1216` 分别在发起、接受时重新读取双方位面并先于距离门禁拒绝跨维；`server/src/social/mod.rs:262-266` 将派发与接受排在 `DimensionTransferSet` 之后。
+  - **测试依据**：`server/src/social/mod_tests.rs:1442` 的 `trade_offer_dispatch_reports_cross_dimension_before_distance_gate`、`server/src/social/mod_tests.rs:1493` 的 `trade_offer_dispatch_runs_after_same_tick_dimension_transfer`、`server/src/social/mod_tests.rs:1835` 的 `trade_response_rejects_dimension_changed_before_acceptance`、`server/src/social/mod_tests.rs:1887` 的 `trade_response_runs_after_same_tick_dimension_transfer` 覆盖反馈顺序、同 tick 调度和接受前切维。
+  - **plan 锚点**：决议对应本 plan「接入面与决议·跨仓库契约」、`§P0 验真结论`、`§P1 最小修复` 与 `§P2 验收测试`；实现与验证证据汇总在 `§Finish Evidence`。
 - **跨仓库契约**：继续消费 `trade_offer_request` / `trade_offer_response`，发送既有 `TradeOfferPayloadV1`；本修复只改变 server 门禁，client / agent / schema 无需改动。
 - **worldview 锚点**：`worldview.md §九` 面对面交易、`§十一` 交易暴露、`§十六` 坍缩渊独立位面；面对面不能跨位面只靠 XYZ 成立。
 - **qi_physics 锚点**：本 plan 只交换既有物品实例，不生成、衰减或转移真元，无新增 ledger 路径。
@@ -105,6 +108,7 @@
 - 调度时序意见成立：`dispatch_trade_offers` 与 `handle_trade_offer_responses` 均显式排在 `DimensionTransferSet` 后，接受处理另排在派发之后，避免同 tick 传送仍读取旧位面。
 - 校验顺序意见成立：发起与接受都先完成生命周期与当前位面门禁，再执行 `CHAT_EXPOSURE_RADIUS` 距离校验；超距跨维请求仍收到跨维拒绝反馈。
 - 文档意见成立：本节与上方风险项已收口 pending 规则；pending 不记录位面，成交瞬间重新读取双方当前位面并要求同维。
+- 文档可核验性意见成立：决议已补 `server/src/social/mod.rs` 文件/行号、四个交易契约测试名及 `§跨仓库契约`、`§P0`、`§P1`、`§P2`、`§Finish Evidence` 章节锚点。
 
 ### 落地清单
 
