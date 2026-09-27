@@ -37,7 +37,7 @@
 
 ### P0：脱靶完整结算
 
-- 在 miss/OutOfRange/HitBlock/NaturalDecay 释放 `qi_evaporated + residual_qi` 的完整实际余额；对 carrier/zone/overflow 账户调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，若 payload 已在命中效果中消费，则保持 HitTarget 的零 residual 语义并证明消费去向。
+- 在 miss/OutOfRange/HitBlock/NaturalDecay 释放 `qi_evaporated + residual_qi` 的完整实际余额；carrier ledger 到外部 zone 用 `transfer_ledger_qi_to_zone`，外部 source 到 ledger 用 `transfer_external_qi_to_ledger`，只有纯 ledger 账户间才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，若 payload 已在命中效果中消费，则保持 HitTarget 的零 residual 语义并证明消费去向。
 - 将实际 carrier account/source identity 传入释放 helper，落点优先使用投射物当前位置，zone 不可达时走 overflow；不可把“evaporated”当作系统外流。
 
 ### P1：回归契约
@@ -51,7 +51,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 脱靶链是 `projectile::residual_qi_after_miss` → `carrier::emit_projectile_despawn` → `carrier::projectile_miss_qi_release_system` → `release_residual_to_zone`/`release_account_to_zone`。测试按 `ProjectileDespawnedEvent.reason` 覆盖 OutOfRange、HitBlock、NaturalDecay 与 HitTarget，确认完整 payload 只结算一次。
-- **Qi：** `qi_release_to_zone` 负责 `QI_ZONE_UNIT_CAPACITY` 下的 zone/overflow 拆分；当 carrier/container 与 zone/overflow 是真实 `WorldQiAccount` 账户时，必须提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，而不是只 `EventWriter<QiTransfer>::send`。来源账户用 `carrier_qi_account`/`QiAccountId::container`，金额校验用 `QI_EPSILON`；守恒测试引用 `DEFAULT_SPIRIT_QI_TOTAL`（以及仍由 `schema::common` 提供的 `SPIRIT_QI_TOTAL` fixture）和 `assert_conservation`。
-- **Agent：无变更。** 证据是 agent 继续读取既有 `ProjectileDespawnedEvent`/narration 语义，未改 Redis 或 schema。
-- **Client：无变更。** 证据是投射物 despawn 的现有 VFX/事件 payload 不变，修复只补完整真元结算。
+- **Inputs：** `residual_qi_after_miss`、`emit_projectile_despawn` 和 `projectile_miss_qi_release_system` 输入 `QiProjectile`、`AnqiProjectileFlight`、despawn reason、位置及 carrier source account。
+- **Outputs：** OutOfRange/HitBlock/NaturalDecay 的完整剩余 payload 进入同维 zone 或 overflow；HitTarget 保持零 residual 且有已消费证据。
+- **共享类型/事件：** `ProjectileDespawnedEvent`、`QiAccountId`、`QiTransfer`、`QiTransferReason::ReleaseToZone`、`ZoneRegistry`；server 符号为 `emit_projectile_despawn`、`projectile_miss_qi_release_system`、`release_residual_to_zone`、`release_account_to_zone`。
+- **三端契约符号：** Server 负责 payload 结算和账本；Agent：无变更，理由是继续读取既有 `ProjectileDespawnedEvent`/narration；Client：无变更，理由是投射物 despawn VFX/事件 payload 不增字段。
+- **Qi：** `qi_release_to_zone` 用 `QI_ZONE_UNIT_CAPACITY` 拆 zone/overflow；ECS/物品外部 source 先用 `transfer_external_qi_to_ledger`，真实 ledger source 对外部 zone 用 `transfer_ledger_qi_to_zone`，只有纯 ledger→ledger 才直接 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`。断言调用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的投射物衰减不销毁真元和总量守恒。

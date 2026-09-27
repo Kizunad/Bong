@@ -51,7 +51,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 生命周期入口是 `dugu_v2::tick::taint_decay_tick`；对照结算是 `eclipse_zone_credit_tick` 与 `reverse_zone_credit_tick`，overflow 兜底为 `route_dugu_qi_to_overflow`。测试必须证明过期分支在移除 `TaintMark` 前完成 intensity 结算，并覆盖无 `Position`/无 zone 的分支。
-- **Qi：** zone 归还先调用 `qi_release_to_zone(amount, from, zone, zone_current, QI_ZONE_UNIT_CAPACITY)`，按 `ZoneReleaseOutcome` 更新 `ZoneRegistry`，再写唯一审计。`QiTransferReason::DuguReturnToZone` 是 audit-only：只能 `push_transfer_audit`/发送 `QiTransfer`，不能写成 `ledger.transfer`；若未消费的金额已经在真实 overflow/container 账户，才用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })` 完成余额搬运。测试使用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；fixture 可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation`。
-- **Agent：无变更。** 证据是 `TaintMark`、`CombatClock`、`ZoneRegistry` 和 `WorldQiAccount` 均为 server ECS 组件/资源，未新增 IPC 消息。
-- **Client：无变更。** 证据是过期结算只影响真元、zone 和既有战斗事件，不修改 Fabric payload 或渲染协议。
+- **Inputs：** `taint_decay_tick` 输入 `CombatClock.tick`、`Cultivation`、`TaintMark.intensity/temporary_qi_max_loss`、目标 `Position/CurrentDimension` 和 `ZoneRegistry`。
+- **Outputs：** 过期 mark 在移除前把未消费 intensity 结算到 zone 或 overflow，恢复 `qi_max` 且只产生一次审计。
+- **共享类型/事件：** `TaintMark`、`CombatClock`、`ZoneRegistry`、`WorldQiAccount`、`QiTransfer`；server 符号为 `taint_decay_tick`、`eclipse_zone_credit_tick`、`reverse_zone_credit_tick`、`route_dugu_qi_to_overflow`。
+- **三端契约符号：** Server 负责 mark 生命周期与 zone 结算；Agent：无变更，理由是所有输入/输出都是 server ECS；Client：无变更，理由是既有战斗事件和 Fabric payload 不增字段。
+- **Qi：** zone 回灌先调用 `qi_release_to_zone(amount, from, zone, zone_current, QI_ZONE_UNIT_CAPACITY)`；`DuguReturnToZone` 是 audit-only，只 `push_transfer_audit`，不可 `ledger.transfer`。真实 overflow/container 账户才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`；断言用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的脏真元逸散和总量守恒；删除组件前必须完成结算。

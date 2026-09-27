@@ -50,7 +50,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 修复范围固定为 `combat::zhenmai_v2::meridian_channel_id_to_legacy`、`first_open_meridian`、`open_meridians`、`cultivation::tribulation::apply_tribulation_failure_penalty`，并审计 `cultivation::dugu` 的同类转换点（当前约 `server/src/cultivation/dugu.rs:566`）。回归测试应直接调用这些函数或它们所属系统，证明 `MeridianChannelId::to_meridian_id() == None` 走 `Option`/拒绝分支而不是 panic。
-- **Qi：** 该 bug 不产生新的真元流动，修复不得偷偷增加或删除 transfer；保留调用点已有的 `QiTransfer` 语义。若测试建立守恒快照，使用 `crate::schema::common::SPIRIT_QI_TOTAL`（现有测试锚点）、`QI_EPSILON` 与 `assert_conservation`，而不是写总量字面量；本 plan 不要求 `ledger.transfer`。
-- **Agent：无变更。** 证据是上述调用链只读 server ECS 的经脉与境界状态，不触及 Redis IPC 或 `agent/packages/schema`。
-- **Client：无变更。** 证据是该边界在 server 内部把通道映射为 `Option`，不改变 Fabric payload、HUD 或技能 wire id。
+- **Inputs：** `MeridianSystem`、`MeridianChannelId`、非人形 `Race` 经脉配置以及 legacy 映射调用点。
+- **Outputs：** `meridian_channel_id_to_legacy` 的 `None` 走可观察拒绝/跳过，server 继续运行；可映射 humanoid channel 保持原结果。
+- **共享类型/事件：** `MeridianChannelId`、`MeridianId`、`MeridianSystem`、`Race`；server 符号为 `meridian_channel_id_to_legacy`、`first_open_meridian`、`open_meridians`、`apply_tribulation_failure_penalty` 和 `cultivation::dugu` 调用点。
+- **三端契约符号：** Server 负责 Option/拒绝边界；Agent：无变更，理由是只读 server ECS 经脉/境界状态；Client：无变更，理由是 Fabric payload、HUD 和 skill wire id 不变。
+- **Qi：** 该 bug 不产生新的 qi 流动；保留既有 `QiTransfer` 语义。若回归建快照，断言用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`，不写总量字面量，也不从 player ledger 账户扣款。
+- **worldview 锚点：** `docs/worldview.md` §四的经脉可见性和非人形通道边界；不能把专属 channel 强转 humanoid。

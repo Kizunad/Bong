@@ -57,7 +57,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 施法事务是 `tuike_v2::skills::cast_transfer_taint` → `transfer_taint_to_outer_skin` → `spend_qi`；装备同步/维护是 `tuike_v2::tick::sync_false_skin_stack_from_inventory`、`false_skin_maintenance_tick` 和 `shed_outer_layer_for_maintenance`。测试要对照 chest 当前 instance、`StackedFalseSkins`、`WornFalseSkin` 与 `Cultivation` 的提交顺序。
-- **Qi：** 成功扣费必须先通过可回滚的 balance 事务，再把结果写入状态；真实账户间的转移写成 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，ECS 玩家扣费/zone 回灌沿 `release_qi_amount_to_zone` → `qi_release_to_zone` 的既有边界，overflow 也必须有 `QiTransfer`。使用 `QI_EPSILON`、`QI_ZONE_UNIT_CAPACITY`、`DEFAULT_SPIRIT_QI_TOTAL`（fixture 可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation` 锁定拒绝无副作用和成功守恒。
-- **Agent：无变更。** 证据是伪皮 stack、inventory 和 maintenance 都在 server ECS，未触及 IPC/schema。
-- **Client：无变更。** 证据是 cast/maintenance 现有事件与动画 wire 不变；修复只避免 server 侧 phantom 状态和错误扣费。
+- **Inputs：** `cast_transfer_taint`/`transfer_taint_to_outer_skin` 输入 `StackedFalseSkins`、`WornFalseSkin`、`Contamination`、`Cultivation.qi_current`；同步/维护由 `sync_false_skin_stack_from_inventory`、`false_skin_maintenance_tick` 驱动。
+- **Outputs：** 成功事务同时提交 stack/污染/qi；拒绝不留副作用，脱装后维护不再扣 phantom stack 或销毁错误 instance。
+- **共享类型/事件：** `PlayerInventory`、`StackedFalseSkins`、`WornFalseSkin`、`QiTransfer`、`QiTransferReason::ReleaseToZone`；server 符号为 `spend_qi`、`release_qi_amount_to_zone`、`shed_outer_layer_for_maintenance`。
+- **三端契约符号：** Server 负责状态事务和扣费；Agent：无变更，理由是 stack/inventory/maintenance 都在 server ECS；Client：无变更，理由是既有 cast/maintenance 事件和动画 wire 不增字段。
+- **Qi：** 玩家 ECS 扣费走 `release_qi_amount_to_zone` → `qi_release_to_zone`，不要从 ledger player 账户扣；真实 ledger 账户之间才用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`。断言调用 `qi_physics::ledger::assert_conservation`、`QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §四、§十的装备状态一致性和真元零和；拒绝事务不能留下污染。

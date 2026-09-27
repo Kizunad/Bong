@@ -37,7 +37,7 @@
 
 ### P0：注灵付款事务
 
-- 在网络 handler 或专用 alchemy service 中先验证 `InjectQi(q)` 为有限正数、玩家余额足够、炉体/session 可接受，再一次性提交 `ledger.transfer(QiTransfer { from: QiAccountId::player(player_id), to: QiAccountId::container(furnace_id), amount: q, reason: QiTransferReason::Crafting })`；成功后才更新 session canonical balance，真实消费者必须更新余额而非只发事件。
+- 在网络 handler 或专用 alchemy service 中先验证 `InjectQi(q)` 为有限正数、玩家 `Cultivation.qi_current` 足够、炉体/session 可接受，再调用 `qi_physics::ledger::transfer_external_qi_to_ledger(&mut ledger, QiAccountId::player(player_id), QiAccountId::container(furnace_id), q, QiTransferReason::Crafting)`；该 helper 成功后才扣 `Cultivation.qi_current`、更新 session canonical balance，真实消费者必须更新余额而非只发事件。
 - 炉体结算读取已付款的 canonical balance；重复请求、拒绝请求、断线/炉体销毁必须幂等退款或回灌 zone/overflow，不能靠客户端 q 值造余额。
 - 复用 `qi_physics` 的单位、overflow 与 `QiTransferReason`，不要在 session.rs 自定义第二套真元 ledger。
 
@@ -53,7 +53,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** C2S 入口是 `network::client_request_handler::handle_alchemy_intervention`，状态写入是 `alchemy::session::AlchemySession::apply_intervention`，结算门是 `summarize_with_alchemy_effective_lv`/`classify_with_alchemy_effective_lv`；修复测试必须证明 handler 的付款成功后才增加 canonical `qi_injected`。
-- **Qi：** `InjectQi(q)` 的付款事务固定使用 `QiAccountId::player` → `QiAccountId::container`（炉体账户），并调用 `ledger.transfer(QiTransfer { from, to, amount: q, reason: QiTransferReason::Crafting })`；取消/过期未消费余额按 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone` 和 `QI_ZONE_UNIT_CAPACITY` 回灌，`QI_EPSILON` 用于最小金额/幂等门。守恒回归引用 `DEFAULT_SPIRIT_QI_TOTAL`（fixture 的 `SPIRIT_QI_TOTAL` 来自 `schema::common`）与 `assert_conservation`。
-- **Agent：无变更。** 证据是 `AlchemySession`、`AlchemyFurnace` 和 handler 均在 server；Redis 只继续收到既有 snapshot。
-- **Client：无变更。** 证据是现有 `alchemy_intervention` 请求、炉体 snapshot 与 VFX payload 不改字段，客户端无需知道 server 内部付款账户。
+- **Inputs：** `handle_alchemy_intervention` 收到 `Intervention::InjectQi(q)`、炉体位置/所有权、`AlchemyFurnace.session`、玩家 `Cultivation.qi_current` 与 `WorldQiAccount`。
+- **Outputs：** 付款成功才增加 `AlchemySession.qi_injected` 和炉体账户；拒绝不改状态，取消/过期余额经 zone/overflow 回灌。
+- **共享类型/事件：** `Intervention`、`AlchemySession`、`AlchemyFurnace`、`QiAccountId`、`QiTransfer`、`QiTransferReason::Crafting`、`WorldQiAccount`；server 入口/结算符号为 `handle_alchemy_intervention`、`apply_intervention`、`summarize_with_alchemy_effective_lv`。
+- **三端契约符号：** Server 使用上述 handler/session/ledger；Agent：无变更，理由是只继续消费既有 alchemy snapshot；Client：无变更，理由是请求、炉体 snapshot 与 VFX payload 不增字段。
+- **Qi：** 在线玩家不是 ledger player 余额，必须调用 `transfer_external_qi_to_ledger(&mut ledger, from, to, amount, reason)`；helper 内部才以 `ledger.transfer(QiTransfer { from, to, amount, reason })` 临时镜像外部 source。zone 回灌用 `qi_release_to_zone`/`QiTransferReason::ReleaseToZone`/`QI_ZONE_UNIT_CAPACITY`，断言用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §十的真元零和与炼丹生产链；session 数值不能替代真实付款。

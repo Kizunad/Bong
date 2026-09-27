@@ -54,7 +54,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 可核验链是 `woliu_v2::skills::register_skills` → `cast_ambient_vortex`/`cast_vortex_echo` → `resolve_woliu_v2_skill` → `skill_spec`/`erosion_placeholder_spec` → `apply_skill_erosion`；境界表为 `erosion::realm_unlocks_skill`，持久化累积为 `erosion::add_erosion_capped` 写入 `VoidErosion`。回归测试必须命中这条生产链，而不是只测 `realm_unlocks_skill` 单函数。
-- **Qi：** 当前 generic resolve 的真实成本/zone 回灌沿 `QiTransfer`/`QiTransferReason::Channeling`、`qi_release_to_zone`、`QI_ZONE_UNIT_CAPACITY` 与 `QI_EPSILON`；若修复给 placeholder 增加成本，真实账户必须调用 `ledger.transfer(QiTransfer { from, to, amount, reason })`，不得用 `apply_skill_erosion` 或事件伪造扣款。守恒测试使用 `assert_conservation` 和 `DEFAULT_SPIRIT_QI_TOTAL`（现有 fixture 的 `SPIRIT_QI_TOTAL` 来自 `schema::common`）。
-- **Agent：无变更。** 证据是 `VoidErosion`、境界门和 cast resolver 都是 server 内部 ECS/系统；没有新增 Redis/schema 字段。
-- **Client：无变更。** 证据是现有虚蚀技能注册、视觉资源和 skill wire id 不变；拒绝发生在 server generic resolve 的 gameplay gate。
+- **Inputs：** `register_skills` 注册结果、`cast_ambient_vortex`/`cast_vortex_echo`、`Cultivation.realm`、`skill_spec`/`erosion_placeholder_spec` 和 `VoidErosion`。
+- **Outputs：** 未解锁境界在 `resolve_woliu_v2_skill` 被拒绝且没有 qi/cooldown/erosion 副作用；合法技能才进入 `apply_skill_erosion`/`add_erosion_capped`。
+- **共享类型/事件：** `WoliuSkillId`、`Realm`、`CastRejectReason`、`SkillBarBindings`、`VoidErosion`、`QiTransfer`；server 符号为 `resolve_woliu_v2_skill`、`realm_unlocks_skill`、`apply_skill_erosion`、`add_erosion_capped`。
+- **三端契约符号：** Server 负责 generic gate 与虚蚀状态；Agent：无变更，理由是境界/erosion/cast resolver 都是 server ECS；Client：无变更，理由是技能注册、视觉资源和 wire id 不变。
+- **Qi：** generic 成本的在线玩家来源沿 `Cultivation.qi_current` 外部余额边界，不能直接从 ledger player 账户扣；zone 回灌使用 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone`、`QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON`，纯 ledger 账户才 `ledger.transfer(QiTransfer { from, to, amount, reason })`。断言调用 `qi_physics::ledger::assert_conservation` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §三、§十的境界门、天道可见性与真元零和；过时注释不能覆盖真实调用链。

@@ -51,7 +51,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** producer 是 `dugu_v2::skills::resolve_dugu_v2_skill` 中的 `apply_eclipse`；消费者/对照是 `dugu_v2::tick::eclipse_zone_credit_tick`、`reverse_zone_credit_tick` 与 `apply_reverse`。测试应直接观察目标 `Cultivation.qi_current`、`TaintMark.intensity`、`EclipseNeedleEvent` 和 zone/overflow。
-- **Qi：** Immediate 的实际扣除必须由真实余额结算承载；zone 回灌使用 `qi_release_to_zone` 与 `QI_ZONE_UNIT_CAPACITY`，overflow 使用 `QiAccountId::overflow`。任何真正的 ledger 账户搬运都明确调用 `ledger.transfer(QiTransfer { from, to, amount, reason })`，其中 `QiTransferReason::Healing`/`ReleaseToZone` 按去向选择；`QiTransferReason::DuguReturnToZone` 与 `DuguReverseVictimQi` 是当前枚举标记的 audit-only reason，只能 `push_transfer_audit`，不得误调 `WorldQiAccount::transfer`。守恒断言引用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；现有 combat fixture 的 `SPIRIT_QI_TOTAL` 来自 `schema::common`）和 `assert_conservation`。
-- **Agent：无变更。** 证据是 `EclipseNeedleEvent`、`ReverseTriggeredEvent` 与 `DuguReverseVictimQiEvent` 都是 server 内部事件，agent 不消费其字段。
-- **Client：无变更。** 证据是 Eclipse/Reverse 的现有技能与视觉事件 wire 保持原 payload；本修复只校正 server 余额和账本去向。
+- **Inputs：** `resolve_dugu_v2_skill`/`apply_eclipse` 输入 caster/target `Cultivation.qi_current`、`eclipse_effect`、`dirty_qi_collision` 与 `TaintMark` tier。
+- **Outputs：** target 实际扣减量等于 residue 上限；Immediate 的扣减进入患者或 zone/overflow，Reverse 不得返还超过该量。
+- **共享类型/事件：** `Cultivation`、`TaintMark`、`EclipseNeedleEvent`、`ReverseTriggeredEvent`、`DuguReverseVictimQiEvent`、`QiTransfer`；server 符号为 `apply_eclipse`、`eclipse_zone_credit_tick`、`reverse_zone_credit_tick`、`apply_reverse`。
+- **三端契约符号：** Server 负责 ECS 余额与 zone/ledger；Agent：无变更，理由是上述事件为 server 内部事件；Client：无变更，理由是 Eclipse/Reverse 现有技能与视觉 payload 不增字段。
+- **Qi：** ECS target 来源不得直接 `ledger.transfer`；用 `qi_release_to_zone`、`QI_ZONE_UNIT_CAPACITY` 和相应审计。真实 ledger 账户搬运才调用 `ledger.transfer(QiTransfer { from, to, amount, reason })`，`Healing`/`ReleaseToZone` 按实际去向选择；`DuguReturnToZone`/`DuguReverseVictimQi` 是 audit-only，只能 `push_transfer_audit`。断言调用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的真元零和；脏真元残留不能靠事件虚增或静默消失。

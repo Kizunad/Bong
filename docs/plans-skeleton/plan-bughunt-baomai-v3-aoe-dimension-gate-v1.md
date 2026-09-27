@@ -51,7 +51,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** AOE 入口是 `baomai_v3::skills::cast_mountain_shake`，选择器是 `targets_in_radius`，输出集合同时喂给 `AttackIntent`、`ApplyStatusEffectIntent` 与 `BaomaiSkillEvent.targets_hit`；对照实现为 `woliu_v2::skills::collect_targets_in_radius` 的 `CurrentDimension` 过滤。
-- **Qi：** 维度筛选不新增物理路径；保留 `cast_mountain_shake` 现有 `spend_qi`/`emit_spent_qi_release`，其中 zone 回灌继续使用 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone`、`QI_ZONE_UNIT_CAPACITY` 与 `QI_EPSILON`。若测试建立总量快照，使用 `assert_conservation` 和 `DEFAULT_SPIRIT_QI_TOTAL`（现有测试 fixture 的 `SPIRIT_QI_TOTAL` 来自 `schema::common`），不得因加 gate 改写 qi 账本。
-- **Agent：无变更。** 证据是 `AttackIntent`、状态效果与维度组件均在 server combat resolver 内部，未修改 Redis/schema。
-- **Client：无变更。** 证据是 AOE 命中事件 payload 和 HUD/VFX wire 不变，异维目标只在 server 选择阶段被排除。
+- **Inputs：** `cast_mountain_shake` 的 caster `Position`/`CurrentDimension`、目标 `Position`/`CurrentDimension` 与 radius。
+- **Outputs：** `targets_in_radius` 只返回同维实体；该集合统一产生 `AttackIntent`、`ApplyStatusEffectIntent` 和 `BaomaiSkillEvent.targets_hit`。
+- **共享类型/事件：** `CurrentDimension`、`DimensionKind`、`AttackIntent`、`ApplyStatusEffectIntent`、`BaomaiSkillEvent`；server 符号为 `cast_mountain_shake`、`targets_in_radius`，对照 `woliu_v2::skills::collect_targets_in_radius`。
+- **三端契约符号：** Server 在 AOE 选择阶段执行 gate；Agent：无变更，理由是命中选择和事件都在 server resolver；Client：无变更，理由是命中事件 payload/HUD/VFX wire 不增字段。
+- **Qi：** 维度筛选不新增物理路径；保留 `spend_qi`/`emit_spent_qi_release`，释放使用 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone`、`QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON`。守恒断言调用 `qi_physics::ledger::assert_conservation` 并引用 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十三的跨维世界边界；坐标相同不代表同一空间。

@@ -37,7 +37,7 @@
 ### P0：治疗真元结算
 
 - 选定明确的治疗合同：成功净化的 qi 是患者可吸收的 credit，超出患者 `qi_max` 的部分通过 `qi_release_to_zone`/overflow 回灌；或在设计确认后将全部成本释放到患者所在 zone，但必须有唯一物理去向。
-- 让余额变更与 `QiTransfer` 审计原子提交：真实 payer/receiver 账户调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Healing })`，禁止把 `Events<QiTransfer>` 当作自动 consumer；拒绝/污染为零的路径不扣真元。
+- 让余额变更与 `QiTransfer` 审计原子提交：施术者是 ECS `Cultivation.qi_current`，若目的地是 ledger 账户则先用 `transfer_external_qi_to_ledger` 验证/记账，成功后才扣施术者；若患者也是 ECS，则在同一原子服务内直接 credit 患者并追加审计；只有两端都是 ledger 账户时才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Healing })`，禁止把 `Events<QiTransfer>` 当作自动 consumer；拒绝/污染为零的路径不扣真元。
 
 ### P1：回归契约
 
@@ -50,7 +50,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 施法入口是 `yidao::resolve_contam_purge_skill`，完成系统是 `complete_yidao_casts`，缺口函数是 `apply_contam_purge` → `debit_caster_qi`/`emit_qi_transfer`；患者入账可复用同文件的 `credit_patient_qi`，失败回灌对照 `release_failed_repair_qi_to_zone`。回归测试必须观察施术者、患者和 zone 的真实余额，不只读 `YidaoEventV1`。
-- **Qi：** 成功治疗的 payer/receiver 交易必须在真实账本边界提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Healing })`；超出患者容量或患者不可达的部分走 `qi_release_to_zone`/overflow，并用 `QiTransferReason::ReleaseToZone` 的 transfer。`Events<QiTransfer>` 只是审计输出，不是余额 consumer。测试引用 `QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；现有 fixture 的 `SPIRIT_QI_TOTAL` 在 `schema::common`）与 `assert_conservation`。
-- **Agent：无变更。** 证据是 `YidaoEventV1` 仍由 server 产生，agent 没有新的字段或处理分支。
-- **Client：无变更。** 证据是治疗动画/事件 payload 保持现有 `YidaoEventV1`，只修 server 余额落点。
+- **Inputs：** `resolve_contam_purge_skill`/`complete_yidao_casts` 输入 caster/patient `Cultivation`、`Contamination`、`calc.qi_cost`、位置维度和 zone。
+- **Outputs：** `apply_contam_purge` 成功时施术者真实扣减、患者或其 zone/overflow 得到同额去向；失败不改污染或 qi。
+- **共享类型/事件：** `YidaoSkillId::ContamPurge`、`YidaoEventV1`、`Cultivation`、`Contamination`、`QiTransfer`、`QiTransferReason::Healing`；server 符号为 `apply_contam_purge`、`debit_caster_qi`、`credit_patient_qi`、`emit_qi_transfer`。
+- **三端契约符号：** Server 负责外部 ECS 余额事务；Agent：无变更，理由是 `YidaoEventV1` 字段不变；Client：无变更，理由是治疗动画和事件 payload 不增字段。
+- **Qi：** 在线 caster 不是 ledger player balance；目的地是 ledger 时调用 `qi_physics::ledger::transfer_external_qi_to_ledger(&mut ledger, from, to, amount, QiTransferReason::Healing)`，目的地是患者 ECS 时由同一原子服务扣/加两个 `Cultivation` 并追加审计，成功后才提交 caster 扣减。zone/overflow 用 `qi_release_to_zone`、`ReleaseToZone`、`QI_ZONE_UNIT_CAPACITY`；断言调用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的治疗真元转移和零和约束；事件不能代替患者余额。

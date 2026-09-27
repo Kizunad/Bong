@@ -50,7 +50,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 三个 producer 是 `baomai_v3::skills::cast_disperse` → `apply_qi_max_loss`、`combat::woliu::vortex_maintain_tick` 和 `combat::dugu_v2::tick::permanent_qi_max_decay_tick`。回归测试必须在这些函数/系统的输入输出上观察 `Cultivation.qi_current`、zone 与 overflow，而不是只检查 `PermanentQiMaxDecayApplied` 事件。
-- **Qi：** 先算 `excess`，用 `qi_release_to_zone`（`QI_ZONE_UNIT_CAPACITY`）拆出 zone 接收量和 overflow；对 ledger 持有的来源/去向，提交必须落到 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`（即 `WorldQiAccount::transfer`），成功后才写回缩容余额。ECS 玩家余额仍按现有外部余额语义扣减并留下同一 `QiTransfer` 审计，不能把事件当 consumer。测试引用 `QI_EPSILON`、`DEFAULT_SPIRIT_QI_TOTAL`（生产预算；旧测试夹具可用 `schema::common::SPIRIT_QI_TOTAL`）与 `assert_conservation`。
-- **Agent：无变更。** 证据是 `Cultivation`、`ZoneRegistry`、`WorldQiAccount` 和战斗系统均在 server 内部，未改变 Redis 消息或 schema。
-- **Client：无变更。** 证据是缩容只影响 qi 数值与 zone/overflow 账本；既有战斗事件和 HUD wire 不新增字段。
+- **Inputs：** `cast_disperse`/`apply_qi_max_loss`、`vortex_maintain_tick`、`permanent_qi_max_decay_tick` 输入 `Cultivation.qi_current/qi_max`、经脉/mark/field、位置维度和 zone。
+- **Outputs：** `excess` 只进入同维 zone 或 overflow，随后提交新的 `qi_max/qi_current`；`PermanentQiMaxDecayApplied` 仅作观察事件。
+- **共享类型/事件：** `Cultivation`、`TaintMark`、`VortexField`、`ZoneRegistry`、`WorldQiAccount`、`QiTransfer`、`QiTransferReason::ReleaseToZone`；server 符号为上述三个 producer。
+- **三端契约符号：** Server 负责 `qi_release_to_zone` 与余额提交；Agent：无变更，理由是组件/zone/ledger 均为 server 内部；Client：无变更，理由是现有战斗事件/HUD wire 不增字段。
+- **Qi：** ECS 玩家来源不得直接 `ledger.transfer`；用 `qi_release_to_zone` 更新 ZoneRegistry 并留下 `ReleaseToZone` 审计，真实 ledger 来源/去向才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`。守恒断言用 `qi_physics::ledger::assert_conservation`、`QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的真元零和；缩容差额不能因 clamp 消失。

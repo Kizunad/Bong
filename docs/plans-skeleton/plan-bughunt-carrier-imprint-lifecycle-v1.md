@@ -44,7 +44,7 @@
 
 ### P0：instance 绑定与余额消费
 
-- 在技能成功提交前锁定具体 carrier instance，并按实际 payload/技能语义扣减其 `qi_amount`；涉及账户搬运时调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Channeling })`，不足时拒绝，不得只扣玩家 qi 或用事件假装转移。
+- 在技能成功提交前锁定具体 carrier instance，并按实际 payload/技能语义扣减其 `qi_amount`；充能的在线玩家来源先用 `transfer_external_qi_to_ledger`，只有 ledger 账户之间才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Channeling })`，不足时拒绝，不得只扣玩家 qi 或用事件假装转移。
 - `finish_charge` 在任何物品改写前核验当前 slot instance 与 `CarrierCharging.instance_id`；不匹配时取消充能、按既有预付/未密封规则释放真元，不改写新物品、不遗留旧 imprint。
 
 ### P1：回归契约
@@ -59,7 +59,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 技能链是 `anqi_v2::resolve_anqi_skill` → `has_loaded_carrier`/`imprint_matches_skill`/`draw_payload_after_abrasion`；充能链是 `carrier::begin_charge_carrier` → `charge_carrier_tick` → `finish_charge`，物品改写由 `transform_equipped_item` 完成。实现与测试必须以 `CarrierStore.imprints_by_instance` 和 `CarrierCharging.instance_id` 对拍，不能用 slot 位置代替身份。
-- **Qi：** 充能从玩家向 `carrier_qi_account(owner, instance_id)` 的真实余额搬运使用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::Channeling })`（ECS 玩家来源按现有 external-to-ledger 边界处理）；未密封/取消的回流使用 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone` 和 `QI_ZONE_UNIT_CAPACITY`，不以事件代替扣款/退款。`QI_EPSILON` 用于耗尽判定，守恒回归引用 `DEFAULT_SPIRIT_QI_TOTAL`、fixture `schema::common::SPIRIT_QI_TOTAL` 与 `assert_conservation`。
-- **Agent：无变更。** 证据是 imprint、inventory 和 carrier transfer 都是 server 内部状态；现有 agent 事件不增加字段。
-- **Client：无变更。** 证据是现有 charge/cast VFX 与 payload 保持原 wire id，instance 校验不改变客户端协议。
+- **Inputs：** `resolve_anqi_skill` 输入 `CarrierStore.imprints_by_instance`、`PlayerInventory.equipped`、`CarrierCharging.instance_id`、`AnqiSkillId` 与 `Cultivation.qi_current`；充能由 `begin_charge_carrier`/`charge_carrier_tick` 驱动。
+- **Outputs：** 成功施放只消耗匹配 instance 的 imprint；`finish_charge` 只改写仍匹配的 slot item，换装时取消且不遗留旧 imprint。
+- **共享类型/事件：** `CarrierImprint`、`CarrierCharging`、`CarrierStore`、`QiTransfer`、`QiTransferReason::Channeling/ReleaseToZone`；server 符号为 `has_loaded_carrier`、`imprint_matches_skill`、`draw_payload_after_abrasion`、`finish_charge`。
+- **三端契约符号：** Server 负责 instance 与余额生命周期；Agent：无变更，理由是 imprint/inventory/transfer 为 server 内部状态；Client：无变更，理由是 charge/cast VFX 和 wire id 不变。
+- **Qi：** 玩家 `Cultivation.qi_current` → carrier account 调用 `qi_physics::ledger::transfer_external_qi_to_ledger(&mut ledger, from, to, amount, QiTransferReason::Channeling)`，成功后才扣 ECS；未密封回流用 `qi_release_to_zone`/`ReleaseToZone`/`QI_ZONE_UNIT_CAPACITY`，纯 ledger 账户间才直接 `ledger.transfer`。断言用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §四、§十的物品 instance 身份和承载真元一致性。

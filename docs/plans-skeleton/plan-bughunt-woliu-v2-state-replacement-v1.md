@@ -43,7 +43,7 @@
 
 ### P0：替换前结算与 Heart 锁
 
-- 新建场前读取旧 `TurbulenceField`，将其剩余 swirl qi 经 `qi_release_to_zone` 按原 source zone/overflow 释放；真实账户提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })` 并产生唯一 audit，或明确拒绝覆盖直到旧场自然结束，不能静默丢余额。
+- 新建场前读取旧 `TurbulenceField`，将其剩余 swirl qi 经 `qi_release_to_zone` 按原 source zone/overflow 释放；只有旧余额确实位于 ledger 账户时才提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })` 并产生唯一 audit，ECS 场余额不得从不存在的 player ledger 账户扣，或明确拒绝覆盖直到旧场自然结束，不能静默丢余额。
 - Heart 劫难期间保留不可被普通技能覆盖的 Heart anchor（或把劫难 deadline 独立于 active skill）；普通技能只能更新自身场，不得重置 `started_at_tick`/backfire gate。
 - 明确 `PassiveVortex` 与 state 的成对生命周期，避免替换/过期后 orphan component。
 
@@ -59,7 +59,9 @@
 
 ## §7 跨仓契约与可核验锚点
 
-- **Server：** 施法入口是 `woliu_v2::skills::resolve_woliu_v2_skill`，状态写入点是 `VortexV2State`/`TurbulenceField` 的 `World::entity_mut(...).insert`；生命周期消费者为 `woliu_v2::tick::turbulence_decay_tick`、`release_decayed_turbulence_qi`、`heart_active_backfire_tick` 与 `vortex_v2_state_lifecycle_tick`。回归测试必须锁定替换前后的 `remaining_swirl_qi`、`started_at_tick`、`active_skill_kind` 和 `PassiveVortex`。
-- **Qi：** 旧场结算使用 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone`、`QiAccountId`、`WorldQiAccount`、`QI_ZONE_UNIT_CAPACITY` 与 `QI_EPSILON`；真实账户变更明确提交 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，不要只发 decay event。守恒测试使用 `assert_conservation` 和 `DEFAULT_SPIRIT_QI_TOTAL`（fixture 的 `SPIRIT_QI_TOTAL` 仍来自 `schema::common`）。
-- **Agent：无变更。** 证据是 Woliu 状态组件、tick 与 ledger 都在 server ECS，未改变 agent IPC 或 schema。
-- **Client：无变更。** 证据是现有 Woliu cast/VFX/音频 wire id 不变；修复只保留旧场余额和 Heart 生命周期。
+- **Inputs：** `resolve_woliu_v2_skill` 输入技能 spec、zone source、既有 `TurbulenceField`/`VortexV2State` 与 `PassiveVortex`。
+- **Outputs：** 替换前旧场余额完成一次释放/合并；Heart 的 `started_at_tick`、`active_skill_kind` 和 backfire gate 不被普通技能重置。
+- **共享类型/事件：** `TurbulenceField`、`VortexV2State`、`PassiveVortex`、`QiTransfer`、`QiTransferReason::ReleaseToZone`；server 符号为 `resolve_woliu_v2_skill`、`turbulence_decay_tick`、`release_decayed_turbulence_qi`、`heart_active_backfire_tick`、`vortex_v2_state_lifecycle_tick`。
+- **三端契约符号：** Server 负责状态替换、生命周期和账本；Agent：无变更，理由是状态组件/tick/ledger 都在 server ECS；Client：无变更，理由是 Woliu cast/VFX/音频 wire id 不增字段。
+- **Qi：** 旧场是 ECS 外部余额，先用 `qi_release_to_zone`、`QI_ZONE_UNIT_CAPACITY`、`QI_EPSILON` 更新 zone 并留下 `ReleaseToZone` 审计；真实 ledger 账户之间才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`。断言调用 `qi_physics::ledger::assert_conservation` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
+- **worldview 锚点：** `docs/worldview.md` §二、§十的灵气守恒与劫难状态持续性；组件覆盖不能成为隐式销账。
