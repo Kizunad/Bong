@@ -4,6 +4,11 @@
 
 > **Active BugFix（2026-09-27 接续本地未推送提交）**。一句话主题：client flow / screen flow / open-close sequencing 角度修复 **`InsightOfferScreen`（普通顿悟 + 心魔共用）被其他 client-only screen 顶掉后没有提交决定**，导致 `InsightOfferStore` 悬挂、server/client 两侧没有终态。已避开 sparring invite hijack、identity stale session、preview pause、client input 双绑。
 
+## Pre-P0 Decisions（2026-09-27，PR #2329 Kody 返工）
+
+- **复用 client 生命周期接入面**：代码核验了 `client/src/main/java/com/bong/client/insight/InsightOfferScreen.java:131-164` 的 vanilla `removed()` 边界、`:199-210` 的结算入口，`client/src/main/java/com/bong/client/insight/InsightOfferStore.java:125-153` 的 dispatch/清槽与失败恢复，以及 `client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java:32-64` 的 listener 重开路径；转场来源由 `client/src/main/java/com/bong/client/ui/ScreenTransitionController.java:25-65,167-173` 确认。故复用现有 store 与转场回调，不另造 client outbox 或 modal guard。对应本计划「根因链路」与「修复范围 / Server Contract」。
+- **Server Contract 决策**：`server/src/cultivation/insight_flow.rs:29-36` 的 `PendingInsightOffer` 由 `:200-240` 的 `process_insight_request` 写入，`apply_insight_chosen` 在 `:251-370` 消费；`server/src/network/client_request_handler.rs:1765-1780` 只把 `trigger_id` 与可选 `choice_idx` 转成 `InsightChosen`，当前 C2S 没有 `offer_id`。因此本次只修 client 本地传输失败后的保留/重试，不把 server deadline 或协议扩展混入；后续边界见「修复范围 / Server Contract」与「遗留 / 后续」。
+
 ## 阶段总览
 
 | 阶段 | 可核验交付物 | 状态 |
@@ -15,16 +20,21 @@
 
 ## 执行边界
 
-- 只收口 `InsightOfferScreen` 的直接生命周期与契约测试，不改造所有 screen bootstrap。
-- 继续使用现有 `InsightOfferStore.settleIfCurrent` 实例身份和 `ScreenTransitionController` 转场回调；不扩大到 server deadline，因为本次 client `removed()` 已能保证本地替换有终态。
-- 不改 `qi_physics`、agent 或协议 schema；C2S 当前没有 `offer_id`，本地替换仍按既有 tombstone 语义处理。
+- 只收口 `InsightOfferScreen` 的直接生命周期与契约测试，不改造所有 screen bootstrap；具体范围与契约见「修复范围 / Server Contract」。
+- 继续使用现有 `InsightOfferStore.settleIfCurrent`（`client/src/main/java/com/bong/client/insight/InsightOfferStore.java:125-153`）和 `ScreenTransitionController` 转场回调（`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java:25-65,167-173`）；不扩大到 server deadline。
+- 不改 `qi_physics`、agent 或协议 schema；C2S 当前没有 `offer_id`，服务端接入锚点为 `server/src/network/client_request_handler.rs:1765-1780`。
+
+## 修复范围 / Server Contract
+
+- **Client**：`InsightOfferScreen.removed()`（`client/src/main/java/com/bong/client/insight/InsightOfferScreen.java:131-164`）完成结算异常的保存、vanilla 清理与日志上报；`InsightOfferStore.settleIfCurrent`（`client/src/main/java/com/bong/client/insight/InsightOfferStore.java:125-153`）仅在 dispatcher 成功后清槽，失败保留 current 并通过 `InsightOfferScreenBootstrap`（`:32-64`）恢复可见重试。
+- **Server**：沿用 `PendingInsightOffer` → `InsightChosen` 的既有契约（`server/src/cultivation/insight_flow.rs:29-36,244-370`）；本次不增加 deadline、不改 `ClientRequestV1::InsightDecision` 字段、不触及 `qi_physics`、agent 或 schema。
 
 ## 结论
 
 - **#1 major（已证真）**：当前主线的 `InsightOfferScreen` 只有 `tick()`、`close()`、`onCurrentScreenCancelled()` 和 `onPendingOpenCancelled()` 收口，真实 `Screen.removed()` 没有覆盖。`CraftScreenBootstrap`、`InspectScreenBootstrap`、`IdentityPanelScreenBootstrap`、`LingtianActionScreenBootstrap`、`SpiritTreasureScreenBootstrap` 仍可请求新 screen；`ScreenSetMixin` 会把请求交给 `ScreenTransitionController`，转场完成后 vanilla 直接调用旧 screen 的 `removed()`。
 - 因此玩家在 `InsightOfferScreen` 上按 `C` / `E` / `O` / `L` / `T` 时，旧屏从栈上移除但不会走 `close()`；`InsightOfferStore` 保留 current offer，`InsightOfferScreenBootstrap.applyStoreChange()` 也不会因 store 未变化而重开。
 - screen 被移除后不再 tick，普通顿悟和心魔 offer 的 client TTL 也不会再触发 timeout；server `PendingInsightOffer` 仍等 `InsightChosen` 终态，未找到独立 deadline cleanup。
-- 修复在 `InsightOfferScreen.removed()` 中按过期状态提交 `InsightDecision.declined(...)` 或 `InsightDecision.timedOut(...)`，并调用 `settle(decision, false)`，避免 vanilla 正在安装新屏时递归 `setScreen(null)`。`InsightOfferStore.settleIfCurrent(offerId, decision)` 继续保证 stale/duplicate 回调只影响自己的实例。
+- 修复在 `InsightOfferScreen.removed()` 中按过期状态提交 `InsightDecision.declined(...)` 或 `InsightDecision.timedOut(...)`，并调用 `settle(decision, false)`，避免 vanilla 正在安装新屏时递归 `setScreen(null)`；dispatcher 失败时保留 current 并恢复屏幕重试。`InsightOfferStore.settleIfCurrent(offerId, decision)` 继续保证 stale/duplicate 回调只影响自己的实例。
 
 ## 复现路径
 
@@ -56,7 +66,7 @@
 
 ## 修复结果与未纳入范围
 
-- **已落地 client 收口**：`InsightOfferScreen.removed()` 按过期状态调用 `settle(decision, false)`；正常点击、ESC、tick、转场取消仍复用原有 exactly-once 路径。
+- **已落地 client 收口**：`InsightOfferScreen.removed()` 按过期状态调用 `settle(decision, false)`，结算失败不置 settled 并由 store listener 恢复重试；正常点击、ESC、tick、转场取消仍复用原有 exactly-once 路径。
 - **未改 open policy**：当前弹窗设计允许被普通本地 screen 抢焦点，移除生命周期现在会结算，不需要为所有 bootstrap 增加 modal guard。
 - **未改 server 兜底**：server `PendingInsightOffer` 与 agent/schema 契约没有本次代码变更；权威 deadline 属于后续独立 plan。
 
@@ -77,8 +87,8 @@
 ### 落地清单
 
 - P0：核对 `client/src/main/java/com/bong/client/insight/InsightOfferScreen.java`、`InsightOfferStore.java`、`ScreenTransitionController.java` 与五个本地 screen bootstrap；真实 `InsightOfferScreen.removed()` 回归测试在修复前失败。
-- P1：`InsightOfferScreen.removed()` 调用 `decisionForImplicitRemoval()` 和 `settle(decision, false)`；`client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java` 覆盖 exactly-once 与 store 清空。
-- PR #2329 返工：`removed()` 以 `try/catch/finally` 隔离本地传输拒绝并保证 `super.removed()`；新增 `removalTransportRejectionDoesNotAbortLifecycleOrRepeatSettlement` 契约测试。
+- P1：`InsightOfferScreen.removed()` 调用 `decisionForImplicitRemoval()` 和 `settle(decision, false)`；`client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java` 覆盖 exactly-once、失败恢复与 store 清空。
+- PR #2329 返工：`removed()` 保存结算主异常、继续执行 `super.removed()` 并把清理异常作为 suppressed 后经日志上报；`InsightOfferStore` 在 dispatch 成功前保留 current，新增 `removalTransportRejectionRestoresOfferForRetry` 契约测试。
 - P2：client 完整门禁通过；fetch 后 merge `origin/main` 已是最新。
 - P3：本节已填写，随后将 plan 归档到 `docs/finished_plans/`，推送同一 claim 分支并创建 PR。
 
@@ -91,7 +101,7 @@
 
 - 修复前定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest.exceptionalRemovalSettlesDeclinedExactlyOnce` 按预期失败，证明真实 `removed()` 不会结算。
 - 修复后定向测试：同一命令通过。
-- PR #2329 返工定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest` 通过，包含传输拒绝后的 `removed()` exactly-once 契约。
+- PR #2329 返工定向测试：`scripts/build-token.sh gradle test --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest` 通过，包含传输拒绝后的 `removed()` 恢复重试契约。
 - 完整 client 门禁：`scripts/build-token.sh gradle test build` 通过；JUnit 报告 5,056 tests、0 failures、0 errors，GameTest 3/3，通过 jar/remap 构建。
 - 主线同步：`git fetch origin && git merge origin/main` 输出 `Already up to date.`，没有带入需要重跑的 client 变更。
 
