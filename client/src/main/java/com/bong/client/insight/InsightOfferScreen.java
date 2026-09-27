@@ -122,6 +122,18 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
         }
     }
 
+    /**
+     * Minecraft 直接切屏时只调用 {@code removed()}；此时旧屏仍在 vanilla 的切屏调用栈中，
+     * 只能结算自己的 offer，不能再次调用 {@code setScreen(null)} 打断新屏安装。
+     */
+    @Override
+    public void removed() {
+        if (!settled) {
+            settle(decisionForImplicitRemoval(), false);
+        }
+        super.removed();
+    }
+
     /** 转场取消直接移除当前屏（ESC 中途取消 current→next 转场）。 */
     @Override
     public void onCurrentScreenCancelled() {
@@ -152,6 +164,10 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
     }
 
     private void settle(InsightDecision decision) {
+        settle(decision, true);
+    }
+
+    private void settle(InsightDecision decision, boolean closeCurrentScreen) {
         if (settled) {
             return;
         }
@@ -160,10 +176,18 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
         //    失败 = stale/duplicate，幂等 no-op。2) dispatch 发送。3) 若仍是当前屏则关闭。
         // 发送失败不影响 close 尝试（send failure 是 primary，但 close 仍尝试，tsv send_failure）。
         InsightOfferStore.settleIfCurrent(offer.offerId(), decision);
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc != null && mc.currentScreen == this) {
-            mc.setScreen(null);
+        if (closeCurrentScreen) {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc != null && mc.currentScreen == this) {
+                mc.setScreen(null);
+            }
         }
+    }
+
+    private InsightDecision decisionForImplicitRemoval() {
+        return offer.isExpired(clock.getAsLong())
+            ? InsightDecision.timedOut(offer.triggerId())
+            : InsightDecision.declined(offer.triggerId());
     }
 
     @Override

@@ -179,11 +179,11 @@ class InsightOfferScreenTest {
         InsightOfferStore.replace(offer);
         InsightOfferScreen screen = new InsightOfferScreen(offer);
 
-        screen.removedForTests();
-        screen.removedForTests();
+        screen.removed();
+        screen.removed();
 
-        assertEquals(1, sentPayloads.size(), "异常移除只能发送一条 declined");
-        assertNull(InsightOfferStore.snapshot());
+        assertEquals(1, sentPayloads.size(), "真实 removed() 异常移除只能发送一条 declined");
+        assertNull(InsightOfferStore.snapshot(), "真实 removed() 后必须清空当前 offer，不能留下无 UI 悬挂");
     }
 
     // ─── 转场仲裁：同 token 延续 vs 新实例覆盖 ─────────────────────────────
