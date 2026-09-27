@@ -45,7 +45,7 @@
 
 ### P0 掉地兜底 + 结算回执对齐 ✅ 2026-09-28
 
-- `forge_outcome_to_inventory` 调用 `inventory::add_item_to_player_inventory_or_ground`，把成品原子地写入随身容器或写入 `DroppedLootRegistry`；掉地位置取玩家 `Position` 与 `CurrentDimension`，并保留 forge quality、color、side effects、achieved tier 与 artifact state。
+- `forge_outcome_to_inventory` 调用 `inventory::add_item_to_player_inventory_or_ground`，把成品原子地写入随身容器或写入 `DroppedLootRegistry`；掉地位置优先取玩家 `Position` 与 `CurrentDimension`，缺失时取会话绑定的 `WeaponForgeStation.pos`，两者都不可用则写入 `PendingForgeOutcomes` 延迟结算，并保留 forge quality、color、side effects、achieved tier 与 artifact state。
 - 掉地兜底通过 `MineralFeedbackEvent::forge_outcome_dropped` 发出玩家可见反馈；既有 `DroppedLootRegistry` 同步链路负责客户端看到地面物，未新增 S2C/C2S schema。
 - `push_forge_outcome_on_event` 继续发送锻造结果，结果本身仍是成功结算；掉地分支另发明确的落地反馈，避免玩家把成功回执误认为已入包。
 
@@ -61,8 +61,8 @@
 
 ## §7 接入面与守恒说明
 
-- 进料：`ForgeOutcomeEvent`、`PlayerInventory`、`ItemRegistry`、玩家 `Position`/`CurrentDimension`；起炉扣料由 `handle_start_forge_requests` 内的 `preparation::consume` 完成。
-- 出料：`DroppedLootRegistry` 落地物、`MineralFeedbackEvent::forge_outcome_dropped` 可见反馈、既有 `ForgeOutcomeDataV1` 结算 payload。
+- 进料：`ForgeOutcomeEvent`、`PlayerInventory`、`ItemRegistry`、玩家 `Position`/`CurrentDimension`、会话绑定的 `WeaponForgeStation`；起炉扣料由 `handle_start_forge_requests` 内的 `preparation::consume` 完成。
+- 出料：`DroppedLootRegistry` 落地物、`PendingForgeOutcomes` 待结算记录、`MineralFeedbackEvent::forge_outcome_dropped` 可见反馈、既有 `ForgeOutcomeDataV1` 结算 payload。
 - 跨端契约：C2S/S2C payload 结构不变；server 复用现有掉落物同步与提示事件，client 无代码变更，agent/schema 无代码变更。
 - qi_physics：本问题涉及的是物品（成品武器 + 消耗材料）在库存系统内的归属转移，不涉及真元/灵气转移，不新增 qi 常数或 ledger 流。
 
@@ -77,9 +77,15 @@
 
 ### 落地清单
 
-- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时写入 `DroppedLootRegistry`，用玩家 `Position`/`CurrentDimension` 定位，并通过 `MineralFeedbackEvent::forge_outcome_dropped` 提示。
-- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；`server/src/mineral/events.rs` 锁定反馈消息 ID 与文本。
+- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时优先用玩家 `Position`/`CurrentDimension`，再用 `WeaponForgeStation.pos`，无可信落点则保留 `PendingForgeOutcomes`；通过 `MineralFeedbackEvent::forge_outcome_dropped` 提示。
+- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；另有锻炉位置兜底与无落点延迟结算测试；`server/src/mineral/events.rs` 锁定反馈消息 ID 与文本。
 - 扣料核验：`server/src/forge/mod.rs:349` 的 `preparation::consume` 在 `staged` inventory 上执行，成功后于 `:409` 提交，确认起炉时材料已扣除。
+
+### Integration preflight
+
+- 已检查 `docs/worldview.md`、`docs/finished_plans/`、`docs/plan-*.md`、`docs/plans-skeleton/` 与 `reminder.md`（仓库根目录不存在该文件）。
+- grep `forge_outcome_to_inventory` / “锻造产物入袋” 未发现重复的 forge skeleton；`plan-forge-leftovers-v1` 与 botany/alchemy 满包 plan 仅作相关设计和失败模式参考。
+- 因此本 finding 保持独立 BugFix plan，未并入其他 plan。
 
 ### 关键 commit
 
