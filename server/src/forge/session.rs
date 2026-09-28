@@ -82,6 +82,9 @@ pub struct ForgeSession {
     pub id: ForgeSessionId,
     pub blueprint: BlueprintId,
     pub station: Entity,
+    /// 起炉时快照的锻炉方块坐标；结算时即使锻炉实体被清理，成品仍有可靠落点。
+    #[serde(default)]
+    pub station_pos: Option<(i32, i32, i32)>,
     pub caster: Entity,
     /// 当前步骤在图谱 steps[] 中的 index。
     pub step_index: usize,
@@ -124,6 +127,7 @@ impl ForgeSession {
             id,
             blueprint,
             station,
+            station_pos: None,
             caster,
             step_index: 0,
             current_step: ForgeStep::Billet,

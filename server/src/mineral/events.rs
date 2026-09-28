@@ -126,6 +126,19 @@ impl MineralFeedbackEvent {
         }
     }
 
+    /// plan-bughunt-forge-outcome-full-inventory-loss-v1 review fix — 玩家位置不可用时，
+    /// 成品改落在会话绑定的锻炉旁，反馈必须指向这个可找回的位置。
+    pub fn forge_outcome_dropped_near_station(player: Entity, item_name: impl AsRef<str>) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_OUTCOME_DROPPED,
+            text: format!(
+                "背包已满，锻造成品《{}》已落在锻炉旁，请及时拾取",
+                item_name.as_ref()
+            ),
+        }
+    }
+
     pub fn pickaxe_tier_mismatch(
         player: Entity,
         pickaxe_name: impl AsRef<str>,
@@ -295,6 +308,14 @@ mod tests {
         assert_eq!(
             dropped.text,
             "背包已满，锻造成品《采药刀》已落地，请及时拾取"
+        );
+
+        let station_drop =
+            MineralFeedbackEvent::forge_outcome_dropped_near_station(player, "采药刀");
+        assert_eq!(station_drop.message_id, MSG_FORGE_OUTCOME_DROPPED);
+        assert_eq!(
+            station_drop.text,
+            "背包已满，锻造成品《采药刀》已落在锻炉旁，请及时拾取"
         );
     }
 
