@@ -4141,14 +4141,9 @@ fn apply_tribulation_failure_penalty(
                 close_meridian(m);
                 channel_id
             };
-            let id = channel_id.to_meridian_id().unwrap_or_else(|| {
-                panic!(
-                    "[bong][cultivation][tribulation] channel id {channel_id} has no legacy \
-                     MeridianId mapping — apply_tribulation_failure_penalty cannot represent \
-                     non-humanoid channels yet"
-                )
-            });
-            severed_meridians.push(id);
+            if let Some(id) = channel_id.to_meridian_id() {
+                severed_meridians.push(id);
+            }
         }
         cultivation.qi_max = 10.0 + meridians.sum_capacity();
         // 收敛 qi_max_frozen 到新 qi_max*0.5，避免 effective_max 变负锁死真元回复
