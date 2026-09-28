@@ -1,6 +1,6 @@
 # plan-bughunt-alchemy-furnace-slot-takeback-v1
 
-> 来源 Issue：#1661。炼丹炉槽取物只改 client 本地数组，没有服务端取回语义；拖回空槽会再次发送 FeedSlot，造成双扣，已锁炉材料也无法可靠取回。
+> 来源 Issue：#1661、#1558。炼丹炉槽取物只改 client 本地数组，没有服务端取回语义；拖回空槽会再次发送 FeedSlot，造成双扣，已锁炉材料也无法可靠取回。
 >
 > 阶段总览：P0 ⬜ 定义 server-owned 的槽取回或明确拒绝交互；P1 ⬜ 补 session/inventory 权威回推和重复投料回归。
 
