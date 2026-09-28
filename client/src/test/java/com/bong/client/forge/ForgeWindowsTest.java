@@ -162,6 +162,20 @@ class ForgeWindowsTest {
         assertTrue(sent.isEmpty(), "已开炉材料不因关闭窗口退回");
     }
 
+    @Test void leavingStationClosesWindowAndReturnsPreparedMaterials() {
+        prepare(3, 0);
+        var state = windows.open(pos, bounds);
+        reachable = false;
+
+        windows.tick();
+
+        assertTrue(state.closed(), "离开锻炉后窗口应自动关闭");
+        assertEquals(1, sent.size(), "自动关窗应只发出一次整批返还");
+        var refund = assertInstanceOf(ForgeIntent.Material.class, sent.get(0));
+        assertTrue(refund.returning(), "离站关窗必须返还尚未投入炉次的材料");
+        assertNull(refund.instanceId(), "自动返还不能依赖过期的单件实例选择");
+    }
+
     private void prepare(int first, int second) {
         var materials = new ArrayList<InventoryItem>();
         if (first > 0) materials.add(material(1, first));

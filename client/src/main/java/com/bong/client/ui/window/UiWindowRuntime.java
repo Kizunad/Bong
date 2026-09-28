@@ -119,7 +119,7 @@ public final class UiWindowRuntime {
             CONTAINERS.refresh();
             if (loadout != null) loadout.refresh();
             SKILL_CONFIGS.refresh();
-            FORGE.refresh();
+            FORGE.tick();
             FORGE.tickInjection(client.currentScreen instanceof InspectScreen && client.isWindowFocused()
                 && focusedKey != null && focusedKey.windowType().equals(ForgeWindows.DEFINITION.windowType()));
             if (practice != null) practice.refresh();
