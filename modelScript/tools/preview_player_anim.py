@@ -69,6 +69,7 @@ for _d in (LIB / "tools", REPO / "client" / "tools"):
 
 import anim_common as AC  # noqa: E402  关节解剖判据的唯一定义处
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
+from gif_timing import gif_schedule  # noqa: E402  两个预览工具共用的 GIF 时间表
 from bbmodel_maker.workbench.preview_armor_on_body import make_player_skin  # noqa: E402
 from bbmodel_maker.render.render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
 
@@ -538,14 +539,13 @@ def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
     w = args.size * len(views) + gap * (len(views) + 1) + 54
     h = args.size + lab + gap * 2
 
-    # 循环动画不含 end：末帧 == 首帧时循环会顿一拍。
-    # 一次性动画要带上 end（收势那一帧），并按 --end-hold-ms 停一下再重播，
-    # 否则看图器会从收势直接跳回起手，看不出动作已经结束。
-    one_shot = not emote.get("isLoop", False)
-    ticks = [end * i / n for i in range(n)] + ([end] if one_shot else [])
+    # 时间表见 gif_timing：循环动画不含 end（末帧 == 首帧会顿一拍）；一次性动画在
+    # --end-hold-ms > 0 时补一帧收势，只承担停留时长，一轮总时长 = 动画时长 + hold。
+    per = max(20, int(round(50.0 / args.subdiv / args.speed)))
+    schedule = gif_schedule(end, n, per, bool(emote.get("isLoop", False)), args.end_hold_ms)
 
     frames = []
-    for tick in ticks:
+    for tick, _ in schedule:
         tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views)
         canvas = Image.new("RGB", (w, h), (16, 17, 20))
         draw = ImageDraw.Draw(canvas)
@@ -557,11 +557,8 @@ def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
             x += args.size + gap
         frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
 
-    per = max(20, int(round(50.0 / args.subdiv / args.speed)))
-    durations = [per] * len(frames)
-    if one_shot:
-        durations[-1] += args.end_hold_ms
-    out = args.out or (LIB / "out" / f"{args.json.stem}.gif")
+    durations = [duration for _, duration in schedule]
+    out =args.out or (LIB / "out" / f"{args.json.stem}.gif")
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:],
                    duration=durations, loop=0, disposal=2, optimize=False)

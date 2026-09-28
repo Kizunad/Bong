@@ -35,6 +35,8 @@ from export_creature_assets import CLIENT  # noqa: E402
 from import_creature_geo import import_geo  # noqa: E402
 from review_creature_assets import focus, sample  # noqa: E402
 
+from gif_timing import gif_schedule  # noqa: E402  两个预览工具共用的 GIF 时间表
+
 # 游戏里 GeckoLib 生物面朝 -Z，缺省按它取景；视角名由朝向派生，标签写的就是实际照到的面。
 # 模型若是反着建的（正面在 +Z），用 --facing +z 才能从正面看动画，标题会写明。
 GAME_FACING = "-z"
@@ -97,15 +99,16 @@ def render_gif(clip: dict, rig: PoseRig, bbmodel: Path, size: int, facing: str,
                end_hold_ms: int, out: Path) -> tuple[int, int]:
     """按真实时长逐帧渲一个机位，写 GIF；返回（帧数, 一轮毫秒）。
 
-    循环动画不含末帧（末帧 == 首帧，含了会顿一拍）；一次性动画带上末帧，并在末帧停
-    end_hold_ms 再重播，看得出动作已经收住。整段共用一个取景，帧间位移是真位移。
+    时间表见 gif_timing：循环动画不含末帧（末帧 == 首帧，含了会顿一拍）；一次性动画在
+    end_hold_ms > 0 时补一帧收势，只承担停留时长，一轮总时长 = 动画时长 + hold。
+    整段共用一个取景，帧间位移是真位移。
     """
 
     length = float(clip["animation_length"])
     looped = clip.get("loop") is True
     count = max(2, round(length * GIF_FPS))
-    times = [length * i / count for i in range(count)] + ([] if looped else [length])
-    poses = [sample(clip, rig, t) for t in times]
+    schedule = gif_schedule(length, count, round(1000 / GIF_FPS), looped, end_hold_ms)
+    poses = [sample(clip, rig, t) for t, _ in schedule]
     view = framing.view_by_name(facing, GIF_VIEW)
     camera = focus(rig, poses, [view])
 
@@ -115,10 +118,7 @@ def render_gif(clip: dict, rig: PoseRig, bbmodel: Path, size: int, facing: str,
                        focus=camera, xform=rig.element_xform(pose), shading="mc")[0]
         frames.append(image.convert("RGB").convert("P", palette=Image.ADAPTIVE, colors=GIF_COLOURS))
 
-    per_frame = round(1000 / GIF_FPS)
-    durations = [per_frame] * len(frames)
-    if not looped:
-        durations[-1] += end_hold_ms
+    durations = [duration for _, duration in schedule]
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:], duration=durations,
                    loop=0, disposal=2, optimize=True)
