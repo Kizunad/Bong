@@ -1,0 +1,16 @@
+{
+  "output_dir": "alchemy-effects-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 40,
+  "exit_on_complete": true,
+  "screenshots": [
+    { "name": "alchemy-flat", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-hover-brewing", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "result-good", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "result-flawed", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "result-waste", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "result-early", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" },
+    { "name": "result-explode", "scene_id": "alchemy-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "alchemy-window" }
+  ]
+}
