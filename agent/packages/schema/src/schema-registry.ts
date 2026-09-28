@@ -53,6 +53,8 @@ import {
   AlchemyInterventionRequestV1,
   AlchemyLearnRecipeRequestV1,
   AlchemyOpenFurnaceRequestV1,
+  AlchemyFurnacePlaceRequestV1,
+  AlchemyPlaceIncenseRequestV1,
   AlchemyTakeBackRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
@@ -279,6 +281,7 @@ import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
   ServerDataAlchemyFurnaceV1,
+  ServerDataAlchemyWorldV1,
   ServerDataAlchemyOutcomeForecastV1,
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
@@ -910,12 +913,15 @@ export const SCHEMA_REGISTRY = {
   alchemyInterventionResultV1: AlchemyInterventionResultV1,
   alchemyInsightV1: AlchemyInsightV1,
   serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
+  serverDataAlchemyWorldV1: ServerDataAlchemyWorldV1,
   serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
   serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
   serverDataAlchemyOutcomeResolvedV1: ServerDataAlchemyOutcomeResolvedV1,
   serverDataAlchemyRecipeBookV1: ServerDataAlchemyRecipeBookV1,
   serverDataAlchemyContaminationV1: ServerDataAlchemyContaminationV1,
   clientRequestAlchemyOpenFurnaceV1: AlchemyOpenFurnaceRequestV1,
+  clientRequestAlchemyFurnacePlaceV1: AlchemyFurnacePlaceRequestV1,
+  clientRequestAlchemyPlaceIncenseV1: AlchemyPlaceIncenseRequestV1,
   clientRequestAlchemyFeedSlotV1: AlchemyFeedSlotRequestV1,
   clientRequestAlchemyTakeBackV1: AlchemyTakeBackRequestV1,
   clientRequestAlchemyIgniteV1: AlchemyIgniteRequestV1,
@@ -1441,6 +1447,7 @@ export const GENERATED_SCHEMA_FILES = {
   "alchemy-insight-v1.json": SCHEMA_REGISTRY.alchemyInsightV1,
   "server-data-alchemy-furnace-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
+  "server-data-alchemy-world-v1.json": SCHEMA_REGISTRY.serverDataAlchemyWorldV1,
   "server-data-alchemy-session-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemySessionV1,
   "server-data-alchemy-outcome-forecast-v1.json":
@@ -1453,6 +1460,10 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataAlchemyContaminationV1,
   "client-request-alchemy-open-furnace-v1.json":
     SCHEMA_REGISTRY.clientRequestAlchemyOpenFurnaceV1,
+  "client-request-alchemy-furnace-place-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyFurnacePlaceV1,
+  "client-request-alchemy-place-incense-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyPlaceIncenseV1,
   "client-request-alchemy-feed-slot-v1.json":
     SCHEMA_REGISTRY.clientRequestAlchemyFeedSlotV1,
   "client-request-alchemy-take-back-v1.json":

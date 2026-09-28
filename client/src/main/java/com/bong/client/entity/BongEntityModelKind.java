@@ -364,6 +364,34 @@ public enum BongEntityModelKind {
         return "animation.bong." + entityId + ".idle";
     }
 
+    /**
+     * 返回该模型在视觉状态下应持续播放的动画。
+     *
+     * <p>多数模型只有 idle 动画；炼丹炉的状态 1 表示炉内正在炼制，必须切到
+     * 开盖后的 simmer 循环。把映射放在模型种类上，避免实体控制器硬编码具体资源名。
+     */
+    public String animationNameForState(int visualState) {
+        if (this == ALCHEMY_FURNACE && normalizeVisualState(visualState) > 0) {
+            return "animation.bong.alchemy_furnace.brewing";
+        }
+        return idleAnimationName();
+    }
+
+    /** 返回状态变化时播放的一次性过渡动画；没有过渡动画的模型返回 {@code null}。 */
+    public String transitionAnimationName(int previousState, int nextState) {
+        if (this != ALCHEMY_FURNACE || normalizeVisualState(previousState) == normalizeVisualState(nextState)) {
+            return null;
+        }
+        return nextState > 0
+            ? "animation.bong.alchemy_furnace.open"
+            : "animation.bong.alchemy_furnace.close";
+    }
+
+    /** 炉盖开合过渡的时长，单位为客户端 tick。 */
+    public int transitionAnimationTicks() {
+        return this == ALCHEMY_FURNACE ? 10 : 0;
+    }
+
     public Identifier textureForState(int visualState) {
         String suffix = textureStates.get(normalizeVisualState(visualState));
         return new Identifier(MOD_ID, "textures/entity/" + entityId + "_" + suffix + ".png");

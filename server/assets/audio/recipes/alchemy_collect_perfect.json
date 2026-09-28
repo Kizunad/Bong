@@ -1,0 +1,13 @@
+{
+  "id": "alchemy_collect_perfect",
+  "layers": [
+    { "sound": "minecraft:block.iron_trapdoor.open", "volume": 0.4, "pitch": 0.92, "delay_ticks": 0 },
+    { "sound": "minecraft:block.iron_trapdoor.close", "volume": 0.35, "pitch": 0.78, "delay_ticks": 27 },
+    { "sound": "minecraft:block.enchantment_table.use", "volume": 0.65, "pitch": 1.2, "delay_ticks": 23 },
+    { "sound": "minecraft:entity.player.levelup", "volume": 0.35, "pitch": 1.4, "delay_ticks": 27 }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

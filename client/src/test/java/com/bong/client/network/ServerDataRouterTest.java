@@ -61,6 +61,7 @@ public class ServerDataRouterTest {
             "knockback_sync",
             // Alchemy handlers (plan-alchemy-v1 §4).
             "alchemy_furnace",
+            "alchemy_world",
             "alchemy_session",
             "alchemy_outcome_forecast",
             "alchemy_recipe_book",

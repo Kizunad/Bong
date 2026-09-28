@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Headless presentation seam shared by {@link AlchemyScreen} and protobuf/store contract tests.
+ * Headless presentation seam shared by {@link AlchemyWindows} and protobuf/store contract tests.
  * It renders the latest authoritative session snapshot for the furnace screen. Active guidance is
  * distinct from terminal guidance: a completed snapshot may retain targets and stages for review.
  * A furnace packet only clears that terminal presentation after its accompanying session reset arrives.
@@ -97,11 +97,11 @@ public final class AlchemySessionPresentationPlanner {
             false,
             false,
             false,
-            "§c炉内会话数据缺失 · §f" + statusOr(safeSession.statusLabel(), "等待同步"),
-            safeSession.targetTicks() > 0 ? progressText(safeSession) : "§7同步中",
+            "§c炉况异常",
+            safeSession.targetTicks() > 0 ? progressText(safeSession) : "",
             safeSession.tempTarget() > 0.0f ? temperatureText(safeSession) : "",
             safeSession.qiTarget() > 0.0 ? qiText(safeSession) : "",
-            interventionLines(safeSession),
+            List.of(),
             List.of()
         );
     }

@@ -295,6 +295,38 @@ class AlchemySessionHandlerProtoWireTest {
                         .noneMatch(command -> command.layer() == HudRenderLayer.PROCESSING_HUD));
     }
 
+    @Test
+    void ingredientQuantitiesSurviveWireAndLegacyPacketsClearThem() {
+        var session = baseSession();
+        session.getStagesBuilder(0).addIngredients(Envelope.AlchemyIngredientHint.newBuilder()
+            .setMaterial("spirit_grass").setRequired(3).setInserted(1));
+        assertTrue(dispatchJavaConstructedSessionThroughWire(session.build()).handled());
+        var ingredient = AlchemySessionStore.snapshot().stages().get(0).ingredients().get(0);
+        assertEquals("spirit_grass", ingredient.material());
+        assertEquals(3, ingredient.required());
+        assertEquals(1, ingredient.inserted());
+        assertEquals(2, ingredient.remaining(), "分次投料必须按权威余量限制拖入数量");
+        assertTrue(dispatchJavaConstructedSessionThroughWire(baseSession().build()).handled());
+        assertTrue(AlchemySessionStore.snapshot().stages().get(0).ingredients().isEmpty(),
+            "旧协议不能继承上一炉的材料余量");
+    }
+
+    @Test
+    void protobufIncenseSurvivesBridgeAndOldPacketsClearIt() {
+        var incense = Envelope.AlchemyIncense.newBuilder()
+            .setKind("incense_clear_mind").setRemainingTicks(239).setDurationTicks(240)
+            .setTempBandScale(1.25).setQiCostScale(1).setSmokeColor("#A8D7C5");
+        assertTrue(dispatchJavaConstructedSessionThroughWire(baseSession().setIncense(incense).build()).handled());
+        var snapshot = AlchemySessionStore.snapshot().incense();
+        assertEquals(com.bong.client.alchemy.AlchemyIncenseTimer.State.BURNING, snapshot.state());
+        assertEquals(11_950L, snapshot.remainingMillis());
+        assertEquals("#A8D7C5", snapshot.smokeColor());
+        assertEquals(1.25, snapshot.tempBandScale());
+        assertTrue(dispatchJavaConstructedSessionThroughWire(baseSession().build()).handled());
+        assertEquals(com.bong.client.alchemy.AlchemyIncenseTimer.State.EMPTY,
+            AlchemySessionStore.snapshot().incense().state(), "兼容旧包时不能残留上一炉的香");
+    }
+
     private static Envelope.AlchemySession.Builder baseSession() {
         return Envelope.AlchemySession.newBuilder()
                 .setRecipeId("hud_contract_recipe")

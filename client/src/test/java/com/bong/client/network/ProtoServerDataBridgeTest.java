@@ -36,7 +36,10 @@ import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -535,7 +538,7 @@ class ProtoServerDataBridgeTest {
             );
 
     @Test
-    void everyMappedPayloadCaseRoundTripsIntoNonNoOpHandlerDispatch() {
+    void everyMappedPayloadCaseRoundTripsIntoNonNoOpHandlerDispatch() throws IOException {
         Descriptors.OneofDescriptor payloadOneof = payloadOneofDescriptor();
         ServerDataRouter router = ServerDataRouter.createDefault();
 
@@ -559,8 +562,12 @@ class ProtoServerDataBridgeTest {
                             .setField(field, inner.build())
                             .build();
 
-            ProtoServerDataBridge.BridgeResult result =
-                    ProtoServerDataBridge.bridge(envelope.toByteArray());
+            // 世界丹炉要求三维坐标、合法动作和 [0,1] 火候，通用随机值不满足契约。
+            // 用 Rust 生产字节进入同一个路由守卫，不能把新 handler 的 noOp 放入豁免表。
+            byte[] bytes = payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_WORLD
+                    ? Files.readAllBytes(Path.of("..", "proto", "fixtures", "alchemy_world_0_v1.pb"))
+                    : envelope.toByteArray();
+            ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(bytes);
 
             if (!result.isSuccess()) {
                 bridgeFailures.add(payloadCase.name() + " → bridge() failed: " + result.errorMessage());

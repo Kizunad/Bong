@@ -797,6 +797,10 @@ public class ClientRequestProtocolTest {
             "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
             ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, 4242L)
         );
+        assertEquals(
+            "{\"type\":\"alchemy_place_incense\",\"v\":1,\"furnace_pos\":[-12,64,38],\"item_instance_id\":4242}",
+            ClientRequestProtocol.encodeAlchemyPlaceIncense(pos, 4242L)
+        );
     }
 
     @Test

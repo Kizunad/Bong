@@ -106,6 +106,7 @@ public class BongClient implements ClientModInitializer {
         DroppedItemPickupBootstrap.register();
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
+        com.bong.client.alchemy.AlchemyWorldEffects.register();
         ClientUiBootstrap.registerCraftScreen();
         IdentityPanelScreenBootstrap.register();
         LingtianActionScreenBootstrap.register();

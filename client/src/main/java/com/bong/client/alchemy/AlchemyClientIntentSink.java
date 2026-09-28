@@ -30,6 +30,9 @@ public final class AlchemyClientIntentSink implements UiIntentSink<AlchemyIntent
             @Override public void adjustTemp(BlockPos pos, double temperature) {
                 ClientRequestSender.sendAlchemyAdjustTemp(pos, temperature);
             }
+            @Override public void placeIncense(BlockPos pos, long itemInstanceId) {
+                ClientRequestSender.sendAlchemyPlaceIncense(pos, itemInstanceId);
+            }
         });
     }
 
@@ -39,25 +42,16 @@ public final class AlchemyClientIntentSink implements UiIntentSink<AlchemyIntent
         try {
             if (intent instanceof AlchemyIntent.TurnPage page) {
                 if (page.delta() == 0) return UiIntentResult.rejected("page delta must not be zero");
-                try {
-                    transport.turnPage(page.delta());
-                    return UiIntentResult.accepted();
-                } catch (RuntimeException failure) {
-                    // 没有 server transport 时只更新本地翻页镜像，并把失败明确交给 UI。
-                    RecipeScrollStore.turn(page.delta());
-                    return transportError(failure);
-                }
+                transport.turnPage(page.delta());
+                return UiIntentResult.accepted();
             }
             if (intent instanceof AlchemyIntent.LearnRecipe learn) {
                 String id = required(learn.recipeId(), "recipe id");
                 boolean alreadyLearned = RecipeScrollStore.snapshot().learned().stream()
                     .anyMatch(recipe -> recipe.id().equals(id));
                 if (alreadyLearned) return UiIntentResult.rejected("recipe already learned");
-                // 先确认服务端 transport 接受，再更新本地镜像；失败后保留可重试状态。
+                // 发包成功不是学习成功，丹方只由服务端 recipe_book 更新。
                 transport.learnRecipe(id);
-                RecipeScrollStore.learn(new RecipeScrollStore.RecipeEntry(
-                    id, id, "§7新悟得方子: " + id
-                ));
                 return UiIntentResult.accepted();
             }
             if (intent instanceof AlchemyIntent.FeedSlot feed) {
@@ -83,6 +77,14 @@ public final class AlchemyClientIntentSink implements UiIntentSink<AlchemyIntent
             if (intent instanceof AlchemyIntent.Ignite ignite) {
                 requirePos(ignite.furnacePos());
                 transport.ignite(ignite.furnacePos(), required(ignite.recipeId(), "recipe id"));
+                return UiIntentResult.accepted();
+            }
+            if (intent instanceof AlchemyIntent.PlaceIncense place) {
+                requirePos(place.furnacePos());
+                if (place.itemInstanceId() <= 0) {
+                    return UiIntentResult.rejected("incense item instance must be positive");
+                }
+                transport.placeIncense(place.furnacePos(), place.itemInstanceId());
                 return UiIntentResult.accepted();
             }
             AlchemyIntent.AdjustTemp adjust = (AlchemyIntent.AdjustTemp) intent;
@@ -131,5 +133,6 @@ public final class AlchemyClientIntentSink implements UiIntentSink<AlchemyIntent
         void injectQi(BlockPos pos, double amount);
         void ignite(BlockPos pos, String recipeId);
         void adjustTemp(BlockPos pos, double temperature);
+        void placeIncense(BlockPos pos, long itemInstanceId);
     }
 }

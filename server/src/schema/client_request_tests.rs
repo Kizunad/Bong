@@ -188,10 +188,12 @@ fn inventory_move_intent_without_rotated_defaults_to_false() {
             v,
             instance_id,
             rotated,
+            count,
             ..
         } => {
             assert_eq!(v, 1);
             assert_eq!(instance_id, 42);
+            assert_eq!(count, None, "旧请求缺省仍移动整堆");
             assert!(
                 !rotated,
                 "缺省 rotated 应为 false（未旋转），旧 payload 兼容被破坏"
@@ -1129,6 +1131,23 @@ fn alchemy_feed_slot_roundtrip() {
             assert_eq!(count, 3);
         }
         other => panic!("expected AlchemyFeedSlot, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_place_incense_roundtrip() {
+    let json = r#"{"type":"alchemy_place_incense","v":1,"furnace_pos":[-12,64,38],"item_instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyPlaceIncense {
+            furnace_pos,
+            item_instance_id,
+            ..
+        } => {
+            assert_eq!(furnace_pos, (-12, 64, 38));
+            assert_eq!(item_instance_id, 4242);
+        }
+        other => panic!("expected AlchemyPlaceIncense, got {other:?}"),
     }
 }
 

@@ -8,7 +8,8 @@ use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::inventory::ItemRegistry;
 use valence::prelude::{Entity, Events, IntoSystemSetConfigs, PostStartup};
 use valence::protocol::packets::play::{
-    CommandExecutionC2s, CommandSuggestionsS2c, CustomPayloadS2c, RequestCommandCompletionsC2s,
+    CommandExecutionC2s, CommandSuggestionsS2c, CustomPayloadS2c, GameMessageS2c,
+    RequestCommandCompletionsC2s,
 };
 use valence::protocol::{Bounded, FixedBitSet, VarInt};
 use valence::testing::{create_mock_client, MockClientHelper};
@@ -82,6 +83,97 @@ fn flush(app: &mut App) {
     let mut clients = world.query::<&mut Client>();
     for mut client in clients.iter_mut(world) {
         client.flush_packets().unwrap();
+    }
+}
+
+#[test]
+fn alchemy_scene_prepares_the_furnace_zone_for_ignition_and_replenishes_on_repeat() {
+    use crate::alchemy::{AlchemyFurnace, LearnedRecipes, MIN_ZONE_QI_TO_ALCHEMY};
+    use crate::inventory::{
+        instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
+        InventoryInstanceIdAllocator,
+    };
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::DVec3;
+
+    for inside_zone in [true, false] {
+        let (mut app, player, mut helper) = setup(true);
+        let registry = load_item_registry().unwrap();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut loadout = load_default_loadout(&registry).unwrap();
+        // 此处只验证区域准备，给测试角色留出多次领料空间；OP 容量授权由库存测试覆盖。
+        loadout.containers[0].rows = 12;
+        loadout.containers[0].cols = 12;
+        let inventory =
+            instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry).unwrap();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        // 独立小区域覆盖炉位但不覆盖玩家；必须按炉位解析，不能固定改 spawn。
+        let target = if inside_zone {
+            let mut local = zones.zones[0].clone();
+            local.name = "alchemy_test_site".to_string();
+            local.bounds = (DVec3::new(1.0, 65.0, -1.0), DVec3::new(4.0, 70.0, 1.0));
+            zones.zones.push(local);
+            "alchemy_test_site"
+        } else {
+            "spawn"
+        };
+        let origin = if inside_zone {
+            [0.0, 66.0, 0.0]
+        } else {
+            [512.0, 66.0, 512.0]
+        };
+        app.insert_resource(registry);
+        app.insert_resource(allocator);
+        app.insert_resource(zones);
+        app.world_mut().entity_mut(player).insert((
+            inventory,
+            LearnedRecipes::default(),
+            CurrentDimension(DimensionKind::Overworld),
+            Position::new(origin),
+        ));
+
+        for before in [0.0, 0.95, 0.0] {
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(target)
+                .unwrap()
+                .spirit_qi = before;
+            execute(&mut app, &mut helper, "scene test_alchemy_furnace_1");
+            flush(&mut app);
+            let chats: Vec<String> = helper
+                .collect_received()
+                .0
+                .into_iter()
+                .filter_map(|frame| {
+                    frame
+                        .decode::<GameMessageS2c>()
+                        .ok()
+                        .map(|packet| packet.chat.to_string())
+                })
+                .collect();
+            assert!(
+                chats.iter().any(|chat| chat.contains("炼丹炉已就绪")),
+                "场景准备失败：{chats:?}"
+            );
+            let zones = app.world().resource::<ZoneRegistry>();
+            let after = zones.find_zone_by_name(target).unwrap().spirit_qi;
+            assert!(
+                after > MIN_ZONE_QI_TO_ALCHEMY,
+                "首次与重复加载均需准备足够的起炉灵气"
+            );
+            assert!(after >= before, "富灵区域不能被测试场景降低浓度");
+            if inside_zone {
+                assert_eq!(zones.zones[0].spirit_qi, 0.0, "只能补充丹炉实际所属区域");
+            }
+            let world = app.world_mut();
+            assert_eq!(
+                world.query::<&AlchemyFurnace>().iter(world).count(),
+                1,
+                "重复场景不能复制丹炉"
+            );
+        }
     }
 }
 

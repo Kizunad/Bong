@@ -1219,6 +1219,17 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("Rust and client alchemy world fixtures satisfy the shared wire contract", () => {
+    const fixtures = JSON.parse(readFileSync(join(__dirname, "../../../../proto/fixtures/alchemy_world_v1.json"), "utf8"));
+    for (const fixture of fixtures) {
+      const result = validate(ServerDataV1, fixture);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    }
+    const { source, ...withoutSource } = fixtures[0];
+    expect(validate(ServerDataV1, withoutSource).ok).toBe(false);
+    expect(validate(ServerDataV1, { ...fixtures[0], heat: 1.1 }).ok).toBe(false);
+  });
+
   it("server-data.alchemy-outcome-forecast.sample.json", () => {
     const data = loadSample("server-data.alchemy-outcome-forecast.sample.json");
     const result = validate(ServerDataV1, data);
@@ -1904,6 +1915,21 @@ describe("sample files pass schema validation", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it.each([[3, true], [0, false], [-1, false], [1.5, false], [4294967296, false]])(
+    "move intent count %s has validity %s",
+    (count, expected) => {
+      const result = validate(ClientRequestV1, {
+        v: 1,
+        type: "inventory_move_intent",
+        instance_id: 42,
+        count,
+        from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+        to: { kind: "container", container_id: "main_pack", row: 1, col: 0 },
+      });
+      expect(result.ok).toBe(expected);
+    },
+  );
 
   // plan-tarkov-backpack-v1 P2：pack_<数字> container_id 被 ContainerIdV1 pattern 接受（正）。
   it("move intent into pack_<n> container is accepted", () => {

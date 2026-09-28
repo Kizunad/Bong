@@ -135,6 +135,7 @@ public final class ServerDataRouter {
         handlers.put("botany_plant_v2_render_profiles", botanyPlantRenderProfileHandler);
         handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);
+        handlers.put("alchemy_world", new com.bong.client.network.alchemy.AlchemyWorldHandler());
         handlers.put("alchemy_session", alchemySessionHandler);
         handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);
         handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);

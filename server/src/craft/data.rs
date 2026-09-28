@@ -1123,7 +1123,12 @@ station = "none"
         let mut registry = CraftRegistry::new();
         load_default_craft_recipes_for_parity(&mut registry)
             .expect("default P0 craft assets must parse for canonical parity");
-        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        // 草木香是迁移完成后的新增配方，另由制作契约测试验证。
+        let mut actual: Vec<_> = registry
+            .iter()
+            .filter(|recipe| recipe.id.as_str() != "workbench.cultivation.incense_plain")
+            .map(canonical)
+            .collect();
         actual.sort_by(|left, right| left.id.cmp(&right.id));
 
         assert_eq!(
@@ -1167,7 +1172,11 @@ station = "none"
         let mut registry = CraftRegistry::new();
         load_default_craft_recipes_for_parity(&mut registry)
             .expect("default P0 craft assets must parse for oracle parity");
-        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        let mut actual: Vec<_> = registry
+            .iter()
+            .filter(|recipe| recipe.id.as_str() != "workbench.cultivation.incense_plain")
+            .map(canonical)
+            .collect();
         actual.sort_by(|left, right| left.id.cmp(&right.id));
 
         assert_eq!(
@@ -1782,7 +1791,7 @@ skill_lv_min = 1
         );
         assert_eq!(
             registry.len(),
-            baseline.recipes.len() + 1,
+            baseline.recipes.len() + 2,
             "strict default load must atomically add every canonical recipe exactly once"
         );
     }

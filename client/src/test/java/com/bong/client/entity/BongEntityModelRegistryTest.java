@@ -180,6 +180,23 @@ public class BongEntityModelRegistryTest {
     }
 
     @Test
+    void alchemyFurnaceStateSelectsBrewingAndLidTransitionAnimations() {
+        BongEntityModelKind furnace = BongEntityModelKind.ALCHEMY_FURNACE;
+
+        assertEquals("animation.bong.alchemy_furnace.idle", furnace.animationNameForState(0));
+        assertEquals("animation.bong.alchemy_furnace.brewing", furnace.animationNameForState(1));
+        assertEquals(
+            "animation.bong.alchemy_furnace.open",
+            furnace.transitionAnimationName(0, 1)
+        );
+        assertEquals(
+            "animation.bong.alchemy_furnace.close",
+            furnace.transitionAnimationName(1, 0)
+        );
+        assertEquals(10, furnace.transitionAnimationTicks());
+    }
+
+    @Test
     void modelFallsBackToRendererKindWhenEntityIsNull() {
         BongModeledEntityModel model = new BongModeledEntityModel(BongEntityModelKind.RIFT_PORTAL);
         assertEquals(

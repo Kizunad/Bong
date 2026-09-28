@@ -1,6 +1,7 @@
 package com.bong.client.network.alchemy;
 
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.alchemy.state.AlchemySessionStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
@@ -29,6 +30,9 @@ public final class AlchemyFurnaceHandler implements ServerDataHandler {
                     && p.get("pos_y").isJsonPrimitive() && p.get("pos_y").getAsJsonPrimitive().isNumber()
                     && p.get("pos_z").isJsonPrimitive() && p.get("pos_z").getAsJsonPrimitive().isNumber()) {
                 pos = new BlockPos(p.get("pos_x").getAsInt(), p.get("pos_y").getAsInt(), p.get("pos_z").getAsInt());
+            }
+            if (!java.util.Objects.equals(pos, AlchemyFurnaceStore.snapshot().pos())) {
+                AlchemySessionStore.replace(AlchemySessionStore.Snapshot.empty());
             }
             AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession));
             return ServerDataDispatch.handled(envelope.type(),

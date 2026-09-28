@@ -1,5 +1,6 @@
 package com.bong.client.input;
 
+import com.bong.client.alchemy.AlchemyFurnaceInteractIntentHandler;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.craft.WorkbenchInteractIntentHandler;
 import com.bong.client.forge.ForgeStationInteractIntentHandler;
@@ -25,6 +26,7 @@ public final class DefaultInteractionHandlers {
         router.register(new DeadDropInteractIntentHandler());
         router.register(new WorkbenchInteractIntentHandler());
         router.register(new ForgeStationInteractIntentHandler());
+        router.register(new AlchemyFurnaceInteractIntentHandler());
         router.register(new CoffinEnterIntentHandler());
         router.register(new TradeOfferIntentHandler());
         router.register(new DroppedItemPickupIntentHandler());

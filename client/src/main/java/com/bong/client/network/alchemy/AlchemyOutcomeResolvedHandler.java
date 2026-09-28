@@ -20,7 +20,9 @@ public final class AlchemyOutcomeResolvedHandler implements ServerDataHandler {
             String tag = readString(p, "side_effect_tag", "");
             boolean flawed = p.has("flawed_path") && p.get("flawed_path").getAsBoolean();
             AlchemyAttemptHistoryStore.append(new AlchemyAttemptHistoryStore.Entry(
-                bucket, recipeId, pill, color, tag, flawed));
+                bucket, recipeId, pill, color, tag, flawed,
+                readNumber(p, "quality"), readNumber(p, "toxin_amount"), readNumber(p, "qi_gain"),
+                readNumber(p, "damage"), readNumber(p, "meridian_crack")));
             return ServerDataDispatch.handled(envelope.type(),
                 "Appended alchemy_outcome_resolved (bucket=" + bucket + ") to history");
         } catch (RuntimeException e) {
@@ -33,5 +35,12 @@ public final class AlchemyOutcomeResolvedHandler implements ServerDataHandler {
         if (!obj.has(key) || obj.get(key).isJsonNull()) return fallback;
         JsonElement el = obj.get(key);
         return el.isJsonPrimitive() ? el.getAsString() : fallback;
+    }
+
+    private static Double readNumber(JsonObject obj, String key) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) return null;
+        double value = obj.get(key).getAsDouble();
+        if (!Double.isFinite(value)) throw new IllegalArgumentException(key + " must be finite");
+        return value;
     }
 }
