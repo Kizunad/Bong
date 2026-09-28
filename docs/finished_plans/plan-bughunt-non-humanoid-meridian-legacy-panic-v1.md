@@ -70,5 +70,6 @@
 - **落地清单：** `server/src/combat/zhenmai_v2.rs` 的 legacy 经脉读取过滤；`server/src/cultivation/tribulation.rs` 的失败惩罚通道关闭与 legacy 事件边界；`server/src/cultivation/dugu.rs` 的 Option 映射、目标 profile 守卫与非人形攻击契约测试；对应单测位于 `zhenmai_v2_tests.rs`、`tribulation_tests.rs`。
 - **关键 commit：** `2135fee3f`（2026-09-28，promotion：骨架转 active）；`72d73c027`（2026-09-28，修复 legacy 映射 panic 并补非人形回归契约）。
 - **测试结果：** `scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 均通过；完整库测试报告 10,403 passed，全部集成测试与 doc-tests 亦通过；另有 `cargo test --lib non_humanoid -- --nocapture` 的 37 个非人形回归全绿。
+- **立项审查：** 已检索 `docs/worldview.md`、`docs/plans-skeleton/`、`docs/plan-*.md` 与 `docs/finished_plans/`，并核对 `plan-bughunt-meridian-channel-legacy-map-v1`、`plan-meridian-severed-v1` 等相邻计划；未发现同范围的 active/finished/skeleton 重复项（仓内未发现 `reminder.md`）。
 - **跨仓库核验：** server 命中 `MeridianChannelId`、`MeridianSystem`、`meridian_channel_id_to_legacy`、`apply_tribulation_failure_penalty`、`body_part_to_meridian`、`on_attack_resolved_dugu_handler`；agent 无变更且无消费这些 server ECS 内部符号；client 无变更，Fabric payload/HUD 与 skill wire id 不变。
 - **遗留 / 后续：** `zhenmai_v2`、Dugu 及渡劫的 legacy-only 旧接口仍待后续 P1 开放化时迁移到 `MeridianChannelId` 原生表达；本 plan 不改 agent/client wire，也不引入新的 `qi_physics` 流动。
