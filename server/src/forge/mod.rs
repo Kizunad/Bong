@@ -1308,13 +1308,14 @@ mod tests {
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use crate::shelflife::probe::FreshnessProbeIntent;
     use crate::skill::events::SkillScrollUsed;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::extract_system::{
         CancelExtractRequest as CancelExtractRequestEvent,
         StartExtractRequest as StartExtractRequestEvent,
     };
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::custom_payload::CustomPayloadEvent;
-    use valence::prelude::{ident, App, BlockPos, Client, DVec3, Entity, Events, Update};
+    use valence::prelude::{ident, App, BlockPos, Client, DVec3, Entity, Events, Position, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -1510,6 +1511,10 @@ mod tests {
                 learned,
             ))
             .id();
+        app.world_mut().entity_mut(caster).insert((
+            Position::new(DVec3::new(4.5, 64.0, 4.5)),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
 
         let session_id = ForgeSessionId(session_id);
         let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
@@ -1518,6 +1523,8 @@ mod tests {
 
         let mut session =
             ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
+        session.station_pos = Some((4, 64, 4));
+        session.station_dimension = DimensionKind::Overworld;
         match initial_step {
             ForgeStep::Billet => {
                 session.step_state = StepState::Billet(Default::default());
@@ -1617,6 +1624,10 @@ mod tests {
                 ),
             ))
             .id();
+        app.world_mut().entity_mut(caster).insert((
+            Position::new(DVec3::new(4.5, 64.0, 4.5)),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
 
         let session_id = ForgeSessionId(session_id);
         let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
@@ -1636,6 +1647,8 @@ mod tests {
         }
         let mut session =
             ForgeSession::new(session_id, "ling_feng_v0".to_string(), station, caster);
+        session.station_pos = Some((4, 64, 4));
+        session.station_dimension = DimensionKind::Overworld;
         session.current_step = ForgeStep::Tempering;
         session.step_index = 1;
         session.step_state = StepState::Tempering(tempering);
