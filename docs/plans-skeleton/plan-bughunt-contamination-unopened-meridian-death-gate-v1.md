@@ -52,4 +52,3 @@
 - 默认未打通但完整经脉 + qi deficit：不得发 `ContaminationOverflow`。
 - 已打通且完整度归零 + qi deficit + 残留污染：仍发死亡事件。
 - 排异成功/失败两条路径分别核对 `Cultivation.qi_current`、zone/overflow 转账和守恒。
-

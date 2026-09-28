@@ -58,4 +58,3 @@
 
 - 玩家同维/跨维、NPC 同维/跨维各保留一个行为测试；跨维条目不得出现在 inner/mid ring 缓存和最终 payload。
 - 断言 payload 仍为 `SpiritualSenseTargetsV1`，不新增 agent/client 适配。
-

@@ -52,4 +52,3 @@
 
 - 醒灵玩家、醒灵 NPC、无 zone overflow、账本失败四个行为类；断言目标 current、zone/overflow 账户、Despawned 标记和事件一致。
 - 宿主 qi_max 缩容与目标释放同时发生时，分别只产生各自 `ReleaseToZone` 转账，不双计。
-

@@ -58,4 +58,3 @@
 
 - 覆盖毒蛊 tick、解毒失败/成功、爆脉散功：有 excess 时 zone/overflow 恰增差额，无 excess 时不生成转账。
 - 覆盖 ledger/zone 缺失的拒绝原子性；用 `assert_conservation` 对拍 `SPIRIT_QI_TOTAL`，不写字面量 100.0。
-
