@@ -60,6 +60,33 @@ fn caster(app: &mut App, realm: Realm, qi: f64) -> Entity {
         .id()
 }
 
+fn non_humanoid_caster(app: &mut App, realm: Realm, qi: f64) -> Entity {
+    let mut meridians = MeridianSystem {
+        regular: vec![Meridian::new("tail_core".into())],
+        extraordinary: Vec::new(),
+    };
+    for meridian in meridians.iter_mut() {
+        meridian.opened = true;
+    }
+    app.world_mut()
+        .spawn((
+            Username("TailCore".to_string()),
+            Cultivation {
+                realm,
+                qi_current: qi,
+                qi_max: qi.max(100.0),
+                ..Default::default()
+            },
+            meridians,
+            Wounds::default(),
+            Contamination::default(),
+            PracticeLog::default(),
+            SkillBarBindings::default(),
+            MeridianSeveredPermanent::default(),
+        ))
+        .id()
+}
+
 fn configure_sever_chain(
     app: &mut App,
     entity: Entity,
@@ -227,6 +254,37 @@ fn resolve_harden_inserts_selected_meridian_component() {
     ));
     let active = app.world().get::<MeridianHardenActive>(entity).unwrap();
     assert_eq!(active.meridians.len(), 2);
+}
+
+#[test]
+fn legacy_only_zhenmai_skills_reject_without_spending_qi() {
+    let mut app = app_with_events();
+    let entity = non_humanoid_caster(&mut app, Realm::Void, 100.0);
+
+    assert_eq!(
+        resolve_harden(app.world_mut(), entity, 0, None),
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(entity).unwrap().qi_current,
+        100.0,
+        "legacy-only harden must reject before spending qi"
+    );
+    assert!(app.world().get::<MeridianHardenActive>(entity).is_none());
+
+    assert_eq!(
+        resolve_neutralize(app.world_mut(), entity, 0, None),
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        }
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(entity).unwrap().qi_current,
+        100.0,
+        "legacy-only neutralize must reject before spending qi"
+    );
 }
 
 #[test]

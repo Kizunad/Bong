@@ -295,7 +295,7 @@ pub fn on_attack_resolved_dugu_handler(
             continue;
         };
 
-        let Some(meridian_id) = body_part_to_meridian(event.body_part) else {
+        let Some(meridian_id) = try_body_part_to_meridian(event.body_part) else {
             commands
                 .entity(event.attacker)
                 .remove::<PendingDuguInfusion>();
@@ -567,9 +567,27 @@ pub fn can_infuse_dugu(
 /// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json
 /// meridian_profile.dugu_injection`（见 `body_plan::types::DuguInjectionEntry` 文档，
 /// 与 `combat::baomai_v4::dead_armor::meridian_to_body_part` 方向相反、语义不同，不是
-/// 其逆映射），本函数改为查询 `body_plan::dugu_injection_channel`。无法找到映射时返回
-/// `None`，由攻击处理器安全跳过该次 legacy-only 注入；humanoid 的现有映射保持不变。
-pub fn body_part_to_meridian(body_part: BodyPart) -> Option<MeridianId> {
+/// 其逆映射）。保留原有 `BodyPart -> MeridianId` 契约；静态 humanoid 数据损坏时仍按
+/// 原契约显式 panic。运行时边界使用 [`try_body_part_to_meridian`]，缺少 legacy 映射时
+/// 返回 `None`，由攻击处理器安全跳过该次注入。
+pub fn body_part_to_meridian(body_part: BodyPart) -> MeridianId {
+    let plan = crate::body_plan::humanoid_plan_static();
+    let part_id = crate::body_plan::legacy_body_part_to_id(body_part);
+    let channel = crate::body_plan::dugu_injection_channel(plan, &part_id).unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json meridian_profile.dugu_injection missing \
+             entry for body_part {part_id} — data integrity bug"
+        )
+    });
+    channel.to_meridian_id().unwrap_or_else(|| {
+        panic!(
+            "[bong][cultivation][dugu] humanoid.json dugu_injection channel {channel} has no \
+             legacy MeridianId mapping — data integrity bug"
+        )
+    })
+}
+
+pub fn try_body_part_to_meridian(body_part: BodyPart) -> Option<MeridianId> {
     let plan = crate::body_plan::humanoid_plan_static();
     let part_id = crate::body_plan::legacy_body_part_to_id(body_part);
     let Some(channel) = crate::body_plan::dugu_injection_channel(plan, &part_id) else {
@@ -901,31 +919,19 @@ mod tests {
 
     #[test]
     fn body_part_mapping_uses_q58_table() {
-        assert_eq!(body_part_to_meridian(BodyPart::Head), Some(MeridianId::Du));
-        assert_eq!(
-            body_part_to_meridian(BodyPart::Chest),
-            Some(MeridianId::Heart)
-        );
-        assert_eq!(
-            body_part_to_meridian(BodyPart::Abdomen),
-            Some(MeridianId::Spleen)
-        );
+        assert_eq!(body_part_to_meridian(BodyPart::Head), MeridianId::Du);
+        assert_eq!(body_part_to_meridian(BodyPart::Chest), MeridianId::Heart);
+        assert_eq!(body_part_to_meridian(BodyPart::Abdomen), MeridianId::Spleen);
         assert_eq!(
             body_part_to_meridian(BodyPart::ArmL),
-            Some(MeridianId::LargeIntestine)
+            MeridianId::LargeIntestine
         );
         assert_eq!(
             body_part_to_meridian(BodyPart::ArmR),
-            Some(MeridianId::LargeIntestine)
+            MeridianId::LargeIntestine
         );
-        assert_eq!(
-            body_part_to_meridian(BodyPart::LegL),
-            Some(MeridianId::Bladder)
-        );
-        assert_eq!(
-            body_part_to_meridian(BodyPart::LegR),
-            Some(MeridianId::Bladder)
-        );
+        assert_eq!(body_part_to_meridian(BodyPart::LegL), MeridianId::Bladder);
+        assert_eq!(body_part_to_meridian(BodyPart::LegR), MeridianId::Bladder);
     }
 
     #[test]

@@ -644,9 +644,14 @@ fn resolve_neutralize(
         return rejected(CastRejectReason::RealmTooLow);
     };
     let profile = neutralize_profile(realm, skill_lv_0_to_100(world, caster));
-    let meridian_id = configured_meridian(world, caster, NEUTRALIZE_SKILL_ID)
-        .or_else(|| first_open_meridian(world, caster))
-        .unwrap_or(MeridianId::Lung);
+    let meridian_id = match configured_meridian(world, caster, NEUTRALIZE_SKILL_ID) {
+        Some(id) if is_open_legacy_meridian(world, caster, id) => id,
+        Some(_) => return rejected(CastRejectReason::InvalidTarget),
+        None => match first_open_meridian(world, caster) {
+            Some(id) => id,
+            None => return rejected(CastRejectReason::InvalidTarget),
+        },
+    };
     if is_meridian_severed(world, caster, meridian_id) {
         return rejected(CastRejectReason::MeridianSevered(Some(meridian_id)));
     }
@@ -762,6 +767,11 @@ fn resolve_harden(
     };
     let profile = harden_profile(realm, skill_lv_0_to_100(world, caster));
     let configured = configured_meridian(world, caster, HARDEN_SKILL_ID);
+    if let Some(id) = configured {
+        if !is_open_legacy_meridian(world, caster, id) {
+            return rejected(CastRejectReason::InvalidTarget);
+        }
+    }
     let mut meridians = configured.into_iter().collect::<Vec<_>>();
     if meridians.is_empty() {
         meridians.extend(
@@ -771,7 +781,7 @@ fn resolve_harden(
         );
     }
     if meridians.is_empty() {
-        meridians.push(MeridianId::Lung);
+        return rejected(CastRejectReason::InvalidTarget);
     }
     meridians.truncate(profile.max_meridians as usize);
     if let Some(blocking) = meridians
@@ -1417,6 +1427,22 @@ fn first_open_meridian(world: &bevy_ecs::world::World, caster: Entity) -> Option
             .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
             .find_map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
     })
+}
+
+fn is_open_legacy_meridian(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    expected: MeridianId,
+) -> bool {
+    world
+        .get::<MeridianSystem>(caster)
+        .is_some_and(|meridians| {
+            meridians.iter().any(|meridian| {
+                meridian.opened
+                    && meridian.integrity > f64::EPSILON
+                    && meridian_channel_id_to_legacy(&meridian.id) == Some(expected)
+            })
+        })
 }
 
 fn open_meridians(world: &bevy_ecs::world::World, caster: Entity) -> Vec<MeridianId> {
