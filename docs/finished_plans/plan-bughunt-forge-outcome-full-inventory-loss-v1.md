@@ -75,17 +75,17 @@
 
 ## Finish Evidence
 
-### 落地清单
-
-- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时写入 `DroppedLootRegistry`，用玩家 `Position`/`CurrentDimension` 定位，并通过 `MineralFeedbackEvent::forge_outcome_dropped` 提示。
-- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；另有 caster 无 `PlayerInventory` 时仍按锻炉位置掉落且无 pending 状态的契约测试；`server/src/mineral/events.rs` 锁定“锻炉旁”反馈消息 ID 与文本。
-- 扣料核验：`server/src/forge/mod.rs:349` 的 `preparation::consume` 在 `staged` inventory 上执行，成功后于 `:409` 提交，确认起炉时材料已扣除。
-
 ### 返工证据（2026-09-28）
 
 - 锻炉实体缺失时，生产会话仍在起炉阶段由 `server/src/forge/mod.rs:417-419` 快照 `ForgeSession.station_pos`；`server/src/forge/inventory_bridge.rs:244-257` 用该快照把成品落在锻炉旁，不再依赖旧 caster entity 或内存 pending 队列。
 - `server/src/forge/inventory_bridge.rs:661-788` 的满包、缺玩家上下文、缺 `PlayerInventory` 契约测试分别锁定掉地位置、维度、锻造元数据、可见反馈和无 pending 状态；`server/src/forge/mod.rs:1233-1245` 的 Done 会话清理保留窗口也已复验。
 - 掉地条目先进入运行时 `DroppedLootRegistry`，再由 `server/src/player/state.rs:999-1014` 的共用 SQLite upsert 入口持久化；持久化失败沿现有调用方约定记录错误，不在本 plan 新增专用重试队列。
+
+### 落地清单
+
+- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时写入 `DroppedLootRegistry`，用玩家 `Position`/`CurrentDimension` 定位，并通过 `MineralFeedbackEvent::forge_outcome_dropped` 提示。
+- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；另有 caster 无 `PlayerInventory` 时仍按锻炉位置掉落且无 pending 状态的契约测试；`server/src/mineral/events.rs` 锁定“锻炉旁”反馈消息 ID 与文本。
+- 扣料核验：`server/src/forge/mod.rs:349` 的 `preparation::consume` 在 `staged` inventory 上执行，成功后于 `:409` 提交，确认起炉时材料已扣除。
 
 ### Integration preflight
 
