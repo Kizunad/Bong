@@ -20,6 +20,7 @@
 ## §3 今天 `origin/main` 证据
 
 - `server/src/persistence/identity.rs:7-16`：SQLite 表持久化字段名就是 `last_switch_tick`，而非跨重启的 wall-clock/epoch。
+- `server/src/persistence/identity.rs:53-95`：`save_player_identities` 每次写行都会把 `last_updated_wall` 设为当前 Unix 秒；普通保存也会刷新它，因此它只能作为行版本/写入时间字段，不能代表最近一次身份切换。
 - `server/src/persistence/identity.rs:98-147`：`load_player_identities` 直接读取并恢复 `last_switch_tick`，没有与当前 `GameTick` 建立重启基线。
 - `server/src/identity/mod.rs:40-44,60-66`：冷却常量为运行 tick，`PlayerIdentities` 只保存该 tick。
 - `server/src/network/identity_panel_emit.rs:16-30,43-62`：发包系统读取 `GameTick`，用持久化 tick 加冷却常量计算刷新 deadline；`now_tick=0` 仍满足 20 tick 刷新节奏。
@@ -53,22 +54,23 @@
 
 | 阶段 | 状态 | 交付物 |
 | --- | --- | --- |
-| P0 | ⬜ | 选定并实现跨重启的冷却时间基线（wall-clock 或持久化 epoch），统一命令/UI 读取 |
+| P0 | ⬜ | 选定并实现跨重启的冷却时间基线（真实切换时间或持久化截止时间），统一命令/UI 读取 |
 | P1 | ⬜ | 迁移旧存档、边界保护和 server→client payload 回归测试 |
 
 ## P0：统一时钟域
 
-- 以现有 `last_updated_wall`/wall-clock 或显式 boot epoch 建立可比较的冷却截止点；不得继续把旧进程 tick 当新进程 tick。
+- 新增并持久化只在真正切换身份时更新的 `last_switch_wall`，或直接持久化冷却截止时间；不得把每次 `save_player_identities` 都会刷新的 `last_updated_wall` 当作切换基线，也不得继续把旧进程 tick 当新进程 tick。`last_updated_wall` 仅保留为行版本/写入时间字段。
 - `PlayerIdentities::cooldown_passed`、`cooldown_remaining`、`should_emit_identity_panel_state` 必须共享同一权威计算，避免命令与面板分叉。
 
 ## P1：兼容与回归
 
-- 旧表只有 `last_switch_tick` 时采用明确的保守迁移策略，不能因解析失败无限放行或无限拒绝。
+- 旧表只有 `last_switch_tick` 时采用明确的保守迁移策略，迁移到 `last_switch_wall` 或冷却截止时间，不能因解析失败无限放行或无限拒绝。
 - 保持 `IdentityPanelStateV1` 字段类型/名称不变，补服务端序列化与客户端 handler 的现有样本回归。
 
 ## 验收测试计划
 
 - 保存后同一进程的冷却行为保持不变。
+- 冷却期间发生不涉及身份切换的普通保存时，`last_updated_wall` 的刷新不会延长或重置冷却；真正切换身份时才更新 `last_switch_wall`/截止时间。
 - 重启后在冷却内、刚过冷却、从未切换三种状态的命令判定和 `cooldown_remaining_ticks` 一致。
 - 重启后不再仅因 `now_tick` 是 20 的倍数而重复发送错误的满冷却面板；合法刷新仍按既有节流间隔工作。
 

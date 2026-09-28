@@ -21,7 +21,9 @@
 
 - `server/src/cmd/gameplay/war.rs:201-245`：`handle_named_faction_join` 只解析具名势力、检查 `Decayed` 和 reputation。
 - `server/src/cmd/gameplay/war.rs:248-256`：直接插入 membership，并显式写 `betrayal_count: 0`、`invite_block_until_tick: None`、`permanently_refused: false`。
+- `server/src/social/events.rs:131-137`：`FactionMembershipDecisionEvent` 只有 legacy `FactionId`，没有 `NamedFactionId`。
 - `server/src/social/mod.rs:1718-1766`：正式 `AcceptInvite` 路径从 live/persistence 读取 membership，并拒绝 `permanently_refused` 或未到期的 invite block。
+- `server/src/social/mod.rs:1759-1772`：`AcceptInvite` 消费事件时只写 `next_membership.faction`，不会从该事件恢复 `named_faction`。
 - `server/src/social/mod.rs:1782-1793`：betray/expel 会增加 `betrayal_count`、写入 block，并在阈值后设置永久拒绝；这些字段本应被 join 读取而非覆盖。
 - `server/src/social/components.rs:247-260`：`FactionMembership` 将三项拒绝状态定义为持久化组件字段。
 
@@ -43,7 +45,7 @@
 
 - **Inputs**：命令 target、`NamedFactionRegistry`、玩家 `FactionReputation`、当前 tick、持久化/live `FactionMembership`。
 - **Outputs**：接受时更新 `FactionMembership` 并发送既有聊天反馈；拒绝时保持 membership/持久化字段不变。
-- **共享类型或事件**：复用 `FactionMembership`、`FactionMembershipDecisionEvent`、`FactionMembershipDecisionKind::AcceptInvite`、`FactionReputation`；不新造 join request schema。
+- **共享类型或事件**：复用 `FactionMembership`、`FactionMembershipDecisionKind::AcceptInvite`、`FactionReputation`；现有 `FactionMembershipDecisionEvent` 只有 legacy `FactionId`，因此必须扩展事件传递 `NamedFactionId`，或在接受入口显式设置 `next_membership.named_faction = Some(target)`，不能直接复用事件而丢失具名绑定；不新造无必要的 join request schema。
 - **server 符号**：`cmd::gameplay::war::handle_named_faction_join`、`social::apply_faction_membership_decisions`、`load_social_faction_membership_from_persistence`。
 - **agent**：无变更；该 join 是 server command/social persistence 链路，agent 不发起或判定势力邀请。
 - **client**：无变更；Minecraft command/chat 入口保持原样，拒绝/接受文本由 server 权威返回。
@@ -58,7 +60,7 @@
 
 ## P0：统一业务门禁
 
-- 解析 target 后构造/发送同一 `FactionMembershipDecisionEvent`，或抽出共享纯校验；不得在命令内重新构造默认拒绝字段。
+- 解析 target 后构造/发送带 `NamedFactionId` 的 `FactionMembershipDecisionEvent`，或抽出共享纯校验并在接受入口显式设置 `next_membership.named_faction = Some(target)`；不能直接复用只有 legacy `FactionId` 的现有事件而丢失具名绑定。不得在命令内重新构造默认拒绝字段。
 - 接受时只更新允许变更的 faction/rank/loyalty，保留 `betrayal_count`、block、permanent 状态；拒绝路径零 mutation。
 
 ## P1：持久化与反馈
@@ -70,6 +72,7 @@
 
 - `permanently_refused=true` 或 `invite_block_until_tick > now` 时 join 不插入/覆盖 membership。
 - 正常 AcceptInvite 保留历史 `betrayal_count` 等字段，成功后才更新允许字段。
+- 成功加入目标具名势力后，`FactionMembership.named_faction == Some(target)`，且该绑定会随持久化记录保留。
 - `/faction join` 与直接 `FactionMembershipDecisionEvent::AcceptInvite` 对同一 fixture 得到相同结果。
 
 ## 来源 issue
