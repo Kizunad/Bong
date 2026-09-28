@@ -353,16 +353,16 @@ mod tests {
             .unwrap();
         connection
             .execute(
-                "INSERT INTO bootstrap_events (event_id, kind, schema_version, game_tick, wall_clock, server_run_id, last_updated_wall, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO life_events (event_id, char_id, event_type, payload_json, payload_version, game_tick, wall_clock, schema_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     "legacy-runtime-tick",
+                    "char:legacy",
                     "test",
+                    "{}",
                     1_i64,
                     10_000_i64,
                     1_000_i64,
-                    "legacy",
-                    1_000_i64,
-                    "{}"
+                    1_i64
                 ],
             )
             .unwrap();
