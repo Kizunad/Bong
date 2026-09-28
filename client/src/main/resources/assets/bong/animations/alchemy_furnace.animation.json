@@ -3,25 +3,246 @@
   "animations": {
     "animation.bong.alchemy_furnace.idle": {
       "loop": true,
-      "animation_length": 2.0,
+      "bones": {}
+    },
+    "animation.bong.alchemy_furnace.brewing": {
+      "loop": true,
+      "animation_length": 2,
       "bones": {
-        "Lid": {
+        "group_lower_bowl": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.045",
+            0,
+            "math.cos(query.anim_time * 1080) * 0.03"
+          ]
+        },
+        "group_hearth_core": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.045",
+            0,
+            "math.cos(query.anim_time * 1080) * 0.03"
+          ],
+          "scale": "1 + math.sin(query.anim_time * 360) * 0.025"
+        },
+        "group_outer_shell": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.045",
+            0,
+            "math.cos(query.anim_time * 1080) * 0.03"
+          ]
+        },
+        "group_brass_collar": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.045",
+            0,
+            "math.cos(query.anim_time * 1080) * 0.03"
+          ]
+        },
+        "group_side_handles": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.045",
+            0,
+            "math.cos(query.anim_time * 1080) * 0.03"
+          ]
+        },
+        "group_top_cap": {
+          "position": [
+            "math.sin(query.anim_time * 1440) * 0.07",
+            "0.18 + math.sin(query.anim_time * 1080) * 0.1",
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            "math.sin(query.anim_time * 1440) * 0.45"
+          ]
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.open": {
+      "animation_length": 0.5,
+      "bones": {
+        "group_top_cap": {
           "position": {
-            "0.0": [
-              0,
-              0,
-              0
-            ],
-            "1.0": [
-              0,
-              0.22,
-              0
-            ],
-            "2.0": [
-              0,
-              0,
-              0
-            ]
+            "0": [0,0,0],
+            "0.25": [0,3,0],
+            "0.5": [0,0.4,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.close": {
+      "animation_length": 0.5,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0.4,0],
+            "0.25": [0,3,0],
+            "0.5": [0,0,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.feed": {
+      "animation_length": 0.8,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0.4,0],
+            "0.2": [0,5,0],
+            "0.5": [0,5,0],
+            "0.8": [0,0.4,0]
+          },
+          "rotation": {
+            "0": [0,0,0],
+            "0.2": [-12,0,0],
+            "0.5": [-12,0,0],
+            "0.8": [0,0,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.complete": {
+      "animation_length": 1.2,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0,0],
+            "0.3": [0,2.5,0],
+            "0.8": [0,2.5,0],
+            "1.2": [0,0,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.early_take": {
+      "animation_length": 1.2,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0.4,0],
+            "0.15": [0,4,0],
+            "0.6": [0,4,0],
+            "1.2": [0,0,0]
+          },
+          "rotation": {
+            "0": [0,0,0],
+            "0.15": [0,0,8],
+            "0.6": [0,0,8],
+            "1.2": [0,0,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.flawed": {
+      "animation_length": 1.3,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0,0],
+            "0.2": [0,1.8,0],
+            "0.4": [0,0.3,0],
+            "0.65": [0,1.2,0],
+            "1.3": [0,0,0]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.waste": {
+      "animation_length": 1.4,
+      "bones": {
+        "group_top_cap": {
+          "position": {
+            "0": [0,0.4,0],
+            "0.2": [0,1.4,0],
+            "0.9": [0,1.4,0],
+            "1.4": [0,0,0]
+          }
+        },
+        "group_hearth_core": {
+          "scale": {
+            "0": [1,1,1],
+            "0.25": [1.04,1.02,1.04],
+            "0.6": [0.97,0.97,0.97],
+            "1.4": [1,1,1]
+          }
+        }
+      }
+    },
+    "animation.bong.alchemy_furnace.explode": {
+      "animation_length": 1.8,
+      "bones": {
+        "group_lower_bowl": {
+          "position": {
+            "0": [0,0,0],
+            "0.08": [-0.5,0.15,0],
+            "0.16": [0.6,0.3,0],
+            "0.24": [-0.4,0.15,0],
+            "0.36": [0.25,0,0],
+            "0.55": [-0.1,0,0],
+            "0.8": [0,0,0]
+          }
+        },
+        "group_hearth_core": {
+          "position": {
+            "0": [0,0,0],
+            "0.08": [-0.5,0.15,0],
+            "0.16": [0.6,0.3,0],
+            "0.24": [-0.4,0.15,0],
+            "0.36": [0.25,0,0],
+            "0.55": [-0.1,0,0],
+            "0.8": [0,0,0]
+          }
+        },
+        "group_outer_shell": {
+          "position": {
+            "0": [0,0,0],
+            "0.08": [-0.5,0.15,0],
+            "0.16": [0.6,0.3,0],
+            "0.24": [-0.4,0.15,0],
+            "0.36": [0.25,0,0],
+            "0.55": [-0.1,0,0],
+            "0.8": [0,0,0]
+          }
+        },
+        "group_brass_collar": {
+          "position": {
+            "0": [0,0,0],
+            "0.08": [-0.5,0.15,0],
+            "0.16": [0.6,0.3,0],
+            "0.24": [-0.4,0.15,0],
+            "0.36": [0.25,0,0],
+            "0.55": [-0.1,0,0],
+            "0.8": [0,0,0]
+          }
+        },
+        "group_side_handles": {
+          "position": {
+            "0": [0,0,0],
+            "0.08": [-0.5,0.15,0],
+            "0.16": [0.6,0.3,0],
+            "0.24": [-0.4,0.15,0],
+            "0.36": [0.25,0,0],
+            "0.55": [-0.1,0,0],
+            "0.8": [0,0,0]
+          }
+        },
+        "group_top_cap": {
+          "position": {
+            "0": [0,0,0],
+            "0.12": [0,4,0],
+            "0.4": [1.5,9,0],
+            "0.75": [0.5,7,0],
+            "1.25": [0,0.5,0],
+            "1.5": [0,1,0],
+            "1.8": [0,0,0]
+          },
+          "rotation": {
+            "0": [0,0,0],
+            "0.4": [0,0,28],
+            "0.75": [0,0,-15],
+            "1.25": [0,0,4],
+            "1.8": [0,0,0]
           }
         }
       }

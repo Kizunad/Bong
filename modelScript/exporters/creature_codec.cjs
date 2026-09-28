@@ -124,4 +124,4 @@ if (require.main === module) {
     fs.writeFileSync(path.join(directory, `${name}.animation.json`), formatJson(result.animation));
 }
 
-module.exports = { convert };
+module.exports = { convert, formatJson };
