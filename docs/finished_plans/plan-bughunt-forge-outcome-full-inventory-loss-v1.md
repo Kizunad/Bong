@@ -77,8 +77,8 @@
 
 ### 落地清单
 
-- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时优先用玩家 `Position`/`CurrentDimension`，再用 `WeaponForgeStation.pos`，无可信落点则保留 `PendingForgeOutcomes`；通过 `MineralFeedbackEvent::forge_outcome_dropped` 提示。
-- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；另有锻炉位置兜底与无落点延迟结算测试；`server/src/mineral/events.rs` 锁定反馈消息 ID 与文本。
+- P0：`server/src/forge/inventory_bridge.rs` 的 `forge_outcome_to_inventory` 复用 `add_item_to_player_inventory_or_ground`；满包时优先用玩家 `Position`/`CurrentDimension`，再用会话快照的 `WeaponForgeStation.pos`，即使 caster ECS entity 已不存在也直接写入锻炉旁的 `DroppedLootRegistry`，不再保留依赖旧 entity 的内存 pending；掉落通过既有持久化表写入 SQLite，并以 `MineralFeedbackEvent` 指向锻炉旁。
+- P1：同文件的满包回归测试验证 inventory revision 不变、掉落物位置/维度/forge 元数据正确；另有 caster 无 `PlayerInventory` 时仍按锻炉位置掉落且无 pending 状态的契约测试；`server/src/mineral/events.rs` 锁定“锻炉旁”反馈消息 ID 与文本。
 - 扣料核验：`server/src/forge/mod.rs:349` 的 `preparation::consume` 在 `staged` inventory 上执行，成功后于 `:409` 提交，确认起炉时材料已扣除。
 
 ### Integration preflight
