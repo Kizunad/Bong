@@ -1,33 +1,31 @@
 # plan-bughunt-bot-combat-server-data-type-false-positive-v1
 
-> BugHunt skeleton。分区：e2e-protocol。主题：战斗 bot e2e 的 `bong:server_data` 类型断言在 protobuf 生产态下退化为“任意 server_data 即通过”，导致 `combat_event` / `cast_sync` 断链可被 CI 漏掉。
+> BugHunt 验证记录。分区：e2e-protocol。主题：核验战斗 bot e2e 的 `bong:server_data` 类型断言是否会把任意 protobuf 消息误判为 `combat_event` / `cast_sync`。
 
 ## 一句话 bug
 
-`scripts/bot/scenarios/_combat_helpers.py::wait_for_server_data_after` 对 protobuf `bong:server_data` 不解析 oneof，`_server_data_type_matches` 在 JSON type 解析失败时直接返回 `True`，使战斗场景声称等待 `combat_event` / `cast_sync`，实际可被 heartbeat 等任意 protobuf server_data 满足。
+该候选描述对应的旧版实现已由主线提交 `7751a90653`（#2212）修复。本次在当前主线重新核验 `scripts/bot/scenarios/_combat_helpers.py::wait_for_server_data_after`、`scripts/bot/server_data.py::decode_server_data_payload` 和 `scripts/bot/proto_min.py::server_data_payload_name`：protobuf oneof 会先被识别为具体运行时类型，heartbeat 不会满足战斗类型等待。
 
 ## 实际游玩体验影响
 
-- 近战命中 `combat_event` 飘字断链时，玩家会看到攻击命中但没有伤害/格挡/毒伤等战斗浮字反馈，bot e2e 仍可能绿。
-- 技能施放的 `cast_sync` 断链时，玩家的施法条、完成/中断状态与 server 权威状态不同步；`combat_skill_cast.py` 仍有 `bong:vfx_event` 专属断言，但无法证明 `cast_sync` 或 `combat_event` 已到达。
-- 这会削弱 #980 已落地战斗 bot e2e 对玩家可感知战斗反馈协议的保护，不是单纯“未来深断言”优化。
+- 上述影响是候选 bug 在旧实现中的风险；当前主线的 `combat_attack_hit.py` 和 `combat_skill_cast.py` 已按具体 `payload_type` 等待，不会因 heartbeat 等无关 server_data 通过。
+- `combat_skill_cast.py` 仍独立断言 `bong:vfx_event`，同时对 `cast_sync` 使用 typed server_data 断言，两个反馈面互不替代。
 
 ## 复现路径
 
 1. 构造合法 protobuf heartbeat：`b"\x12\x04\x0a\x02ok"`，即 `ServerDataEnvelope.heartbeat { message: "ok" }`。
-2. `proto_min.server_data_payload_name(heartbeat)` 返回 `heartbeat`，证明该 bytes 是可识别的 server_data oneof。
-3. 调用 `_server_data_type_matches(heartbeat, {"combat_event"})`，当前返回 `True`。
-4. 最小模拟：anchor 后只放一个 `Event(kind="payload", channel="bong:server_data", data=heartbeat)`，调用 `wait_for_server_data_after(... expected_json_types={"combat_event"})` 会返回该 heartbeat 事件；全程没有 `combat_event`。
+2. 当前 `proto_min.server_data_payload_name(heartbeat)` 和 `decode_server_data_payload(heartbeat)["type"]` 都返回 `heartbeat`。
+3. 构造 field 34 的 `cast_sync`（`b"\x92\x02\x00"`）与 field 51 的 `combat_event_floater`（`b"\x9a\x03\x00"`）；当前分别识别为 `cast_sync` 与兼容运行时名 `combat_event`。
+4. 因而 `wait_for_server_data_after(... expected_types={"combat_event"})` 会拒绝 heartbeat，只接受 field 51 的战斗浮字；候选中的“任意 protobuf 均通过”在当前 HEAD 不可复现。
 
 ## 根因证据
 
-- `scripts/bot/scenarios/_combat_helpers.py:65`：`wait_for_server_data_after` 只检查 raw `payload` 事件和 `channel == "bong:server_data"`。
-- `scripts/bot/scenarios/_combat_helpers.py:111`：`_server_data_type_matches` 只尝试 JSON `type`。
-- `scripts/bot/scenarios/_combat_helpers.py:113`：注释承认生产态 server_data 是 protobuf。
-- `scripts/bot/scenarios/_combat_helpers.py:115`：`payload_type is None or payload_type in expected_types` 让所有非 JSON protobuf 落入通过分支。
-- `scripts/bot/scenarios/combat_attack_hit.py:29`：近战场景期待 `{"combat_event"}`。
-- `scripts/bot/scenarios/combat_skill_cast.py:69`：凝针场景期待 `{"cast_sync", "combat_event"}`。
-- `scripts/bot/proto_min.py:349`：`SERVER_DATA_PAYLOAD_NAMES` 只登记到 `lingtian_session = 31`，缺战斗 oneof。
+- `scripts/bot/scenarios/_combat_helpers.py:142-158`：等待 helper 只接受已解码且 `payload_type` 命中期望集合的 server_data。
+- `scripts/bot/server_data.py:13-27` 与 `scripts/bot/bot.py:316-334`：生产 protobuf 先解码，再以具体 `payload_type` 发出 `server_data` 事件。
+- `scripts/bot/proto_min.py:75-126`、`:218-236`：登记 field 34/51，并把 field 51 的 proto 名 `combat_event_floater` 映射为既有场景兼容名 `combat_event`。
+- `scripts/bot/proto_min.py:2294-2311`：`server_data_payload_name` 对 oneof field 使用同一运行时名称桥，不把未知或 heartbeat 伪装成战斗类型。
+- `scripts/bot/scenarios/combat_attack_hit.py:29`：近战场景期待 `combat_event`。
+- `scripts/bot/scenarios/combat_skill_cast.py:69`：凝针场景期待 `cast_sync` / `combat_event`。
 - `proto/bong/envelope.proto:51`：`cast_sync = 34`。
 - `proto/bong/envelope.proto:69`：`combat_event_floater = 51`，client bridge 映射为 legacy JSON type `combat_event`。
 - `client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java:103`：`COMBAT_EVENT_FLOATER -> "combat_event"`。
@@ -36,25 +34,49 @@
 ## 去重说明
 
 - 不重复 #974 / #988 / #994 / #999 / #1010 / #1021：那些是具体玩法 C2S/S2C 协议漂移，本题是 bot e2e 断言层的战斗 server_data 类型假阳性。
-- 不重复 `docs/plans-skeleton/plan-bot-e2e-coverage-v1.md` P6：P6 是未来“全量 protobuf 深断言 / Python binding”决策；本题是已上线 `combat_attack_hit.py` / `combat_skill_cast.py` 的具体 false-positive，可用零依赖 oneof 名称浅解析修复。
+- 不重复 `docs/finished_plans/plan-bot-e2e-coverage-v1.md` P6：`7751a90653` 已落地本题所需的 oneof 身份登记、运行时兼容名和 bot 解码链路；本次只核验其在当前主线仍能阻断 heartbeat 假阳性。
 
-## 修复计划骨架
+## 验证结论
 
-- P0：在 `scripts/bot/proto_min.py::SERVER_DATA_PAYLOAD_NAMES` 补 `34: "cast_sync"`、`51: "combat_event_floater"`。
-- P0：把 `_combat_helpers.wait_for_server_data_after` 改为优先使用 `proto_min.server_data_payload_name(data)`；允许 `combat_event` 期望匹配 `combat_event_floater`，或把场景期望名改成 proto oneof 名。
-- P1：给 `_combat_helpers` 补单测：合法 heartbeat protobuf 不得匹配 `combat_event`；合法 `cast_sync` / `combat_event_floater` oneof 才能匹配对应期望。
-- P1：让 `combat_attack_hit.py` 与 `combat_skill_cast.py` 的描述区分 `bong:vfx_event` 覆盖和 `bong:server_data` 覆盖，避免再次把“任意 server_data”写成“战斗反馈 payload”。
+- P0：✅ 2026-09-28。主线 `7751a90653`（PR #2212）已补齐 field 34/51 的 oneof 登记、runtime name bridge 和 protobuf 解码路径；本 plan 没有新的生产代码改动。
+- P1：✅ 2026-09-28。现有 `CombatServerDataGateTest`、oneof identity matrix 和 cast/combat decoder tests 已覆盖 heartbeat 拒绝、cast_sync 命中、combat_event 兼容名；本次以当前 HEAD 和实际 bot-e2e 重新验证。
+- 结论：候选 bug 在当前主线不成立，证据是合法 heartbeat 解码为 `heartbeat`，两个战斗场景的 typed 等待不会接受它；保留本 plan 作为对旧候选的核验记录。
 
 ## 验证计划
 
-- `cd scripts/bot && python3 -m unittest test_protocol.py` 或仓库既有 bot 协议测试命令。
-- 新增最小单测：`heartbeat` oneof 对 `{"combat_event"}` 返回 false。
-- 新增最小单测：`cast_sync` oneof 对 `{"cast_sync"}` 返回 true。
-- 新增最小单测：`combat_event_floater` oneof 对 `{"combat_event"}` 或 `{"combat_event_floater"}` 返回 true，取决于修复时决定的权威期望名。
-- 跑战斗 bot 场景：`scripts/bot/scenarios/combat_attack_hit.py`、`scripts/bot/scenarios/combat_skill_cast.py`，确认它们不再被 unrelated heartbeat/server_data 满足。
+- `python3 scripts/bot/test_protocol.py`：569 tests，全部通过。
+- `BOT_E2E_PROFILE=debug BOT_E2E_SCENARIOS='combat_attack_hit,combat_skill_cast' bash scripts/bot-e2e.sh`：两个场景均 PASS（2/2），且同一 harness 的 runner/tee 失败优先级测试确认真实失败仍返回非零。
 
 ## 对抗结论
 
 反方第一轮质疑：原候选缺真实时序证明、随意 bytes 不够贴近生产 protobuf、`combat_skill_cast.py` 仍有 VFX 断言、命名需区分 `combat_event_floater` 与 legacy `combat_event`、需说明与 P6 深断言去重。
 
-修正后结论：通过。使用合法 heartbeat protobuf 证明当前 helper 在无 `combat_event/cast_sync` 时仍会满足战斗场景断言；范围收窄为 #980 已落地战斗 e2e 的具体假阳性，不依赖全量 protobuf 深断言。
+修正后结论：不成立。当前 HEAD 已包含 #2212 的 oneof 身份解码和严格 typed 等待；合法 heartbeat 不会满足战斗断言，真实 combat/cast 场景通过，runner failure propagation 测试仍保持失败可见。
+
+## Finish Evidence
+
+### 落地清单
+
+- 本 PR 仅更新本 plan 的验真与归档证据；生产修复已存在于 `scripts/bot/proto_min.py`、`scripts/bot/server_data.py`、`scripts/bot/bot.py` 和 `scripts/bot/scenarios/_combat_helpers.py`。
+- `SERVER_DATA_PAYLOAD_NAMES` 登记 field 34 `cast_sync` 与 field 51 `combat_event_floater`，`SERVER_DATA_PAYLOAD_RUNTIME_NAMES` 保留场景兼容名 `combat_event`；等待 helper 只接受解码后的具体 `payload_type`。
+
+### 关键 commit
+
+- `f0a2e7e01`（2026-09-28）：提升 skeleton 为 active plan。
+- `7751a90653`（2026-09-13，PR #2212）：补齐 Bot server_data oneof identity、解码和战斗场景 typed 断言链路。
+
+### 测试结果
+
+- `python3 scripts/bot/test_protocol.py`：569 passed，0 failed。
+- `BOT_E2E_PROFILE=debug BOT_E2E_SCENARIOS='combat_attack_hit,combat_skill_cast' bash scripts/bot-e2e.sh`：`combat_attack_hit` PASS、`combat_skill_cast` PASS，2/2。
+- `CombatServerDataGateTest.test_wait_ignores_raw_heartbeat_unknown_and_malformed_payloads`、`test_server_data_identity_dispatch_covers_every_oneof_tag`、`test_bot_e2e_pipeline_propagates_runner_then_tee_status` 均包含在上述协议测试中，分别锁定误报阻断、oneof 身份和真失败传播。
+
+### 跨仓库核验
+
+- bot：`proto_min.server_data_payload_name`、`server_data.decode_server_data_payload`、`_combat_helpers.wait_for_server_data_after`。
+- server：`proto/bong/envelope.proto` 的 `cast_sync = 34`、`combat_event_floater = 51`，以及真实 heartbeat 广播路径 `server/src/network/mod.rs::process_bridge_messages`。
+- client：`ProtoServerDataBridge` 将 `COMBAT_EVENT_FLOATER` 映射为既有 `combat_event` runtime name；agent 不参与该 bot 协议断言。
+
+### 遗留 / 后续
+
+- 本 plan 不新增 protobuf Python binding，也不扩大到非战斗 server_data 深解码；后续 oneof 字段新增仍应由既有 identity matrix 发现并补齐。
