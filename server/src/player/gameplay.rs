@@ -3,10 +3,11 @@ use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
-    App, Client, Entity, EventWriter, IntoSystemConfigs, ParamSet, Position, Query, ResMut,
+    App, Client, Entity, EventWriter, IntoSystemConfigs, ParamSet, Position, Query, Res, ResMut,
     Resource, Update, Username, With,
 };
 
+use super::authorization::AuthorizationProvider;
 use super::state::{canonical_player_id, PlayerState};
 use crate::botany::components::BotanyHarvestMode;
 use crate::botany::components::HarvestSessionStore;
@@ -174,6 +175,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn apply_queued_gameplay_actions(
     mut queue: ResMut<GameplayActionQueue>,
     mut gameplay_tick: ResMut<GameplayTick>,
+    authorization: Option<Res<AuthorizationProvider>>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
@@ -196,6 +198,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                         || {
                             (
                                 entity,
+                                username.0.clone(),
                                 canonical_player_id(username.0.as_str()),
                                 position.get(),
                                 zone_name_for_position(zone_registry.as_deref(), position.get()),
@@ -205,7 +208,8 @@ pub(crate) fn apply_queued_gameplay_actions(
                 })
         };
 
-        let Some((player_entity, canonical_player, player_position, zone_name)) = player_context
+        let Some((player_entity, raw_username, canonical_player, player_position, zone_name)) =
+            player_context
         else {
             tracing::warn!(
                 "[bong][gameplay] dropped queued action for unknown player `{}`: {:?}",
@@ -219,7 +223,22 @@ pub(crate) fn apply_queued_gameplay_actions(
 
         match request.action {
             GameplayAction::Combat(action) => {
-                bridge_debug_combat_action(player_entity, event_tick, action, &mut attack_intents)
+                if authorization.as_ref().is_some_and(|authorization| {
+                    authorization.allows_operator(raw_username.as_str())
+                }) {
+                    bridge_debug_combat_action(
+                        player_entity,
+                        event_tick,
+                        action,
+                        &mut attack_intents,
+                    );
+                } else {
+                    pending_narrations.push_player(
+                        canonical_player.as_str(),
+                        "战斗调试命令需要管理员权限。",
+                        NarrationStyle::SystemWarning,
+                    );
+                }
             }
             GameplayAction::Gather(action) => {
                 let mut mutable_players = player_sets.p1();
@@ -539,6 +558,7 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(PendingGameplayNarrations::default());
         app.insert_resource(GameplayTick::default());
+        app.insert_resource(AuthorizationProvider::allow_user("Azure"));
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CapturedAttackIntents::default());
         app.add_event::<AttackIntent>();
@@ -607,6 +627,65 @@ mod tests {
             .get::<PlayerState>()
             .expect("player state should remain attached after bridge");
         assert_eq!(player_state, &initial_state);
+    }
+
+    #[test]
+    fn unauthorized_combat_action_warns_without_attack_intent_for_invalid_payload() {
+        let mut app = App::new();
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(GameplayTick::default());
+        app.insert_resource(AuthorizationProvider::allow_user("Operator"));
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_systems(
+            Update,
+            (
+                apply_queued_gameplay_actions,
+                capture_attack_intents.after(apply_queued_gameplay_actions),
+            ),
+        );
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        app.world_mut().spawn((
+            client_bundle,
+            Cultivation::default(),
+            PlayerState::default(),
+        ));
+
+        app.world_mut()
+            .resource_mut::<GameplayActionQueue>()
+            .enqueue(
+                "offline:Azure",
+                GameplayAction::Combat(CombatAction {
+                    target: "not-a-player".to_string(),
+                    qi_invest: f64::NAN,
+                }),
+            );
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CapturedAttackIntents>()
+                .0
+                .is_empty(),
+            "an unauthorised combat debug command, including malformed input, must emit no AttackIntent"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert_eq!(narrations[0].target.as_deref(), Some("offline:Azure"));
+        assert!(matches!(narrations[0].style, NarrationStyle::SystemWarning));
+        assert!(
+            narrations[0].text.contains("管理员权限"),
+            "unauthorised combat must explain the operator requirement"
+        );
     }
 
     #[test]

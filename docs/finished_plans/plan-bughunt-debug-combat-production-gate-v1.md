@@ -52,8 +52,16 @@
 
 | 阶段 | 状态 | 交付物 |
 | --- | --- | --- |
-| P0 | ⬜ | 在 `bridge_debug_combat_action` 调用前调用现有 `DevCommandPermissions::is_operator`；未授权不发任何 `AttackIntent`，并保持 gather/breakthrough 公开语义 |
-| P1 | ⬜ | 普通玩家零 intent、operator 保留 debug intent、离线未授权 fail-closed、重复命令和审计回归测试 |
+| P0 | ✅ 2026-09-29 | 在 `bridge_debug_combat_action` 调用前调用现有 `DevCommandPermissions::is_operator`；未授权不发任何 `AttackIntent`，并保持 gather/breakthrough 公开语义 |
+| P1 | ✅ 2026-09-29 | 普通玩家零 intent、operator 保留 debug intent、离线未授权 fail-closed、重复命令和审计回归测试 |
+
+## Finish Evidence
+
+- **落地清单**：`server/src/player/authorization.rs:6-31` 提供中立的 `OperatorAuthorization`/`AuthorizationProvider` 接口，`server/src/cmd/dev/mod.rs:122-128,205-209` 由 dev 权限实现并注入；`server/src/player/gameplay.rs:171-239` 只依赖该接口，在 debug combat bridge 前拒绝缺少权限资源或未授权请求，并通过 `PendingGameplayNarrations` 返回明确警告；`server/src/network/mod_tests.rs:3027-3048` 为授权 resolver 夹具注入中立 provider。gather/breakthrough 分支未改变。
+- **关键验证**：复现确认公开 `/bong combat` 原先从 `server/src/cmd/gameplay/mod.rs:24-83` 入队后直达 `server/src/player/gameplay.rs:216-219`，再由 `server/src/combat/resolve.rs:472-489,595-622,2502-2519` 进入 debug resolver；现已在 bridge 前拦截。
+- **测试结果**：`player::gameplay::tests::unauthorized_combat_action_warns_without_attack_intent_for_invalid_payload` 证明普通 Azure（含 `NaN` 坏包）零 `AttackIntent` 且收到 `SystemWarning`；`player::gameplay::tests::combat_actions_bridge_to_attack_intent_without_mutating_player_state` 与 `network::tests::gameplay_tests::combat_routes_debug_attack_through_resolver` 证明授权 Azure 调试路径仍可用。
+- **跨仓核验**：本 plan 仅修改 server；复用 `player::authorization::OperatorAuthorization`、`AttackIntent` 与既有 narration 通道，`cmd::dev` 提供 operator 实现，agent/client 无变更。
+- **遗留 / 后续**：公开 `/bong gather` 与 `/bong breakthrough` 继续保持原有 gameplay 语义；未新增客户端 debug payload 或独立权限体系。
 
 ## 来源 issue
 

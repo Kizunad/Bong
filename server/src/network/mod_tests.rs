@@ -3041,6 +3041,9 @@ mod gameplay_tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(PendingGameplayNarrations::default());
         app.insert_resource(GameplayTick::default());
+        app.insert_resource(
+            crate::player::authorization::AuthorizationProvider::allow_user("Azure"),
+        );
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(CultivationClock::default());
