@@ -12,6 +12,43 @@ use super::*;
 const RUNTIME_CLOCK_ROW_ID: i64 = 1;
 const TICKS_PER_SECOND: u64 = 20;
 
+// 这里只列出能够证明是“过去某时刻”的运行时绝对 tick。未来截止时间（例如
+// `ready_at_tick`、`invite_block_until_tick`）和时长累计值不能用来重建时钟。
+const PERSISTED_RUNTIME_TICK_COLUMNS: &[(&str, &str)] = &[
+    ("bootstrap_events", "game_tick"),
+    ("life_events", "game_tick"),
+    ("death_registry", "last_death_tick"),
+    ("lifespan_events", "game_tick"),
+    ("deceased_snapshots", "died_at_tick"),
+    ("npc_state", "last_death_tick"),
+    ("npc_state", "last_revive_tick"),
+    ("membership", "joined_at_tick"),
+    ("relationships", "since_tick"),
+    ("archetype_registry", "since_tick"),
+    ("npc_deceased_index", "died_at_tick"),
+    ("tribulations_active", "started_tick"),
+    ("agent_eras", "since_tick"),
+    ("agent_eras", "observed_at_tick"),
+    ("agent_decisions", "observed_at_tick"),
+    ("player_lifespan", "born_at_tick"),
+    ("player_identities", "last_switch_tick"),
+    ("social_relationships", "since_tick"),
+    ("social_exposures", "at_tick"),
+    ("social_spirit_niches", "placed_at_tick"),
+    ("high_renown_milestones", "emitted_at_tick"),
+    ("spirit_treasure_world", "spawned_at_tick"),
+    ("spirit_treasure_dialogue_log", "tick"),
+    ("pending_dormant_relics", "created_tick"),
+    ("zone_influence", "last_activity_tick"),
+    ("zone_influence", "established_tick"),
+    ("epitaphs", "death_tick"),
+    ("heartbeat_pseudo_veins", "spawned_at_tick"),
+    ("heartbeat_pseudo_veins", "last_tick"),
+    ("player_lifecycle", "combat_clock_tick_at_save"),
+    ("dormant_terminal_commits", "at_tick"),
+    ("runtime_clock", "tick"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RuntimeClockRecord {
     pub tick: u64,
@@ -100,6 +137,9 @@ pub(super) fn persist_runtime_clock_system(
 }
 
 fn elapsed_wall_ticks(snapshot_wall: i64, now_wall: i64) -> u64 {
+    if snapshot_wall <= 0 {
+        return 0;
+    }
     let elapsed_seconds: u64 = now_wall
         .saturating_sub(snapshot_wall)
         .try_into()
@@ -122,7 +162,6 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
         })
         .map_err(io::Error::other)?;
 
-    let mut latest_snapshot_wall: Option<i64> = None;
     for row in rows {
         let (inventory_json, snapshot_wall) = row.map_err(io::Error::other)?;
         let value = match serde_json::from_str::<Value>(&inventory_json) {
@@ -134,66 +173,32 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
                 continue;
             }
         };
-        let Some(max_inventory_tick) = max_runtime_tick_in_json(&value) else {
+        let Some(max_inventory_tick) = max_created_at_tick_in_json(&value) else {
             continue;
         };
-        rebased_tick = Some(rebased_tick.map_or(max_inventory_tick, |current| {
-            current.max(max_inventory_tick)
-        }));
-        if snapshot_wall > 0 {
-            latest_snapshot_wall = Some(
-                latest_snapshot_wall.map_or(snapshot_wall, |current| current.max(snapshot_wall)),
-            );
-        }
+        let candidate =
+            max_inventory_tick.saturating_add(elapsed_wall_ticks(snapshot_wall, now_wall));
+        rebased_tick = Some(rebased_tick.map_or(candidate, |current| current.max(candidate)));
     }
 
-    let offline_ticks = latest_snapshot_wall
-        .map(|snapshot_wall| elapsed_wall_ticks(snapshot_wall, now_wall))
-        .unwrap_or(0);
-    Ok(rebased_tick
-        .map(|tick| tick.saturating_add(offline_ticks))
-        .unwrap_or(0))
+    Ok(rebased_tick.unwrap_or(0))
 }
 
 fn max_persisted_runtime_tick(connection: &Connection) -> io::Result<Option<u64>> {
-    let mut table_statement = connection
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-        .map_err(io::Error::other)?;
-    let table_names = table_statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(io::Error::other)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(io::Error::other)?;
-
     let mut maximum = None;
-    for table in table_names {
+    for &(table, column) in PERSISTED_RUNTIME_TICK_COLUMNS {
         let quoted_table = quote_sql_identifier(&table);
-        let mut column_statement = connection
-            .prepare(&format!("PRAGMA table_info({quoted_table})"))
+        let quoted_column = quote_sql_identifier(column);
+        let query =
+            format!("SELECT MAX({quoted_column}) FROM {quoted_table} WHERE {quoted_column} >= 0");
+        let value: Option<i64> = connection
+            .query_row(&query, [], |row| row.get(0))
             .map_err(io::Error::other)?;
-        let column_names = column_statement
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(io::Error::other)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(io::Error::other)?;
-
-        for column in column_names {
-            if !is_runtime_tick_name(&column) {
-                continue;
-            }
-            let quoted_column = quote_sql_identifier(&column);
-            let query = format!(
-                "SELECT MAX({quoted_column}) FROM {quoted_table} WHERE {quoted_column} >= 0"
-            );
-            let value: Option<i64> = connection
-                .query_row(&query, [], |row| row.get(0))
-                .map_err(io::Error::other)?;
-            let Some(value) = value else {
-                continue;
-            };
-            let tick = sql_to_tick(value)?;
-            maximum = Some(maximum.map_or(tick, |current: u64| current.max(tick)));
-        }
+        let Some(value) = value else {
+            continue;
+        };
+        let tick = sql_to_tick(value)?;
+        maximum = Some(maximum.map_or(tick, |current: u64| current.max(tick)));
     }
 
     Ok(maximum)
@@ -203,22 +208,16 @@ fn quote_sql_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('\"', "\"\""))
 }
 
-fn is_runtime_tick_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    !lower.ends_with("_ticks")
-        && (lower == "tick" || lower.ends_with("_tick") || lower.contains("_tick_"))
-}
-
-fn max_runtime_tick_in_json(value: &Value) -> Option<u64> {
+fn max_created_at_tick_in_json(value: &Value) -> Option<u64> {
     match value {
         Value::Object(fields) => fields.iter().fold(None, |current, (key, child)| {
-            let own = is_runtime_tick_name(key).then(|| child.as_u64()).flatten();
-            [current, own, max_runtime_tick_in_json(child)]
+            let own = (key == "created_at_tick").then(|| child.as_u64()).flatten();
+            [current, own, max_created_at_tick_in_json(child)]
                 .into_iter()
                 .flatten()
                 .max()
         }),
-        Value::Array(values) => values.iter().filter_map(max_runtime_tick_in_json).max(),
+        Value::Array(values) => values.iter().filter_map(max_created_at_tick_in_json).max(),
         _ => None,
     }
 }
@@ -293,6 +292,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 142);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_rebase_ignores_future_inventory_deadline_tick() {
+        let (settings, root) = settings("legacy-future-deadline");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let connection = Connection::open(settings.db_path()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall) VALUES (?1, ?2, 1, ?3)",
+                params![
+                    "Legacy",
+                    r#"{"freshness":{"created_at_tick":100,"expires_at_tick":1000000}}"#,
+                    1_000_i64
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            load_runtime_clock_at(&settings, 1_005).unwrap(),
+            200,
+            "future inventory deadlines must not move the migrated runtime clock"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_rebase_uses_per_row_tick_and_wall_max() {
+        let (settings, root) = settings("legacy-per-row-rebase");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let connection = Connection::open(settings.db_path()).unwrap();
+        for (username, created_at_tick, snapshot_wall) in [
+            ("OlderSnapshot", 100_i64, 1_000_i64),
+            ("NewerSnapshot", 150_i64, 995_i64),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall) VALUES (?1, ?2, 1, ?3)",
+                    params![
+                        username,
+                        format!(r#"{{"freshness":{{"created_at_tick":{created_at_tick}}}}}"#),
+                        snapshot_wall
+                    ],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            load_runtime_clock_at(&settings, 1_005).unwrap(),
+            350,
+            "each inventory row must add its own known downtime before taking the maximum"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
