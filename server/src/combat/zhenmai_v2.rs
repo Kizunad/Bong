@@ -1406,21 +1406,16 @@ fn is_meridian_severed(
 /// plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，本函数返回值
 /// 仍是 legacy `MeridianId`（zhenmai_v2 内部依赖表尚未迁移）——humanoid 20 条经脉均可
 /// 逆映射回 `MeridianId`。
-fn meridian_channel_id_to_legacy(channel_id: &MeridianChannelId) -> MeridianId {
-    channel_id.to_meridian_id().unwrap_or_else(|| {
-        panic!(
-            "[bong][combat][zhenmai_v2] channel id {channel_id} has no legacy MeridianId \
-             mapping — zhenmai_v2 cannot represent non-humanoid channels yet"
-        )
-    })
+fn meridian_channel_id_to_legacy(channel_id: &MeridianChannelId) -> Option<MeridianId> {
+    channel_id.to_meridian_id()
 }
 
 fn first_open_meridian(world: &bevy_ecs::world::World, caster: Entity) -> Option<MeridianId> {
     world.get::<MeridianSystem>(caster).and_then(|meridians| {
         meridians
             .iter()
-            .find(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-            .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
+            .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
+            .find_map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
     })
 }
 
@@ -1431,7 +1426,7 @@ fn open_meridians(world: &bevy_ecs::world::World, caster: Entity) -> Vec<Meridia
             meridians
                 .iter()
                 .filter(|meridian| meridian.opened && meridian.integrity > f64::EPSILON)
-                .map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
+                .filter_map(|meridian| meridian_channel_id_to_legacy(&meridian.id))
                 .collect()
         })
         .unwrap_or_default()

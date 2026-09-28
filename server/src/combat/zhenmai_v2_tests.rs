@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::combat::components::{WoundKind, Wounds};
-use crate::cultivation::components::{ContamSource, MeridianSystem};
+use crate::cultivation::components::{ContamSource, Meridian, MeridianSystem};
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::skill::config::SkillConfig;
 use valence::prelude::{App, Events, GameMode};
@@ -1075,4 +1075,20 @@ fn p5_rejected_cast_emits_no_particle() {
         CastResult::Rejected { .. }
     ));
     assert!(emitted_particles(&app).is_empty(), "被拒绝的施放不得发粒子");
+}
+
+#[test]
+fn legacy_only_zhenmai_readers_skip_non_humanoid_channels() {
+    let mut app = App::new();
+    let mut meridians = MeridianSystem {
+        regular: vec![Meridian::new("tail_core".into())],
+        extraordinary: Vec::new(),
+    };
+    let tail = meridians.get_mut("tail_core");
+    tail.opened = true;
+    tail.integrity = 1.0;
+    let caster = app.world_mut().spawn(meridians).id();
+
+    assert_eq!(first_open_meridian(app.world(), caster), None);
+    assert!(open_meridians(app.world(), caster).is_empty());
 }

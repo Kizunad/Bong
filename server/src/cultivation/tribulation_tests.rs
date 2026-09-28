@@ -2,7 +2,7 @@ use super::*;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
-use crate::cultivation::components::MeridianId;
+use crate::cultivation::components::{Meridian, MeridianId, MeridianSystem};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
@@ -222,6 +222,40 @@ fn all_meridians_open() -> MeridianSystem {
         meridian.opened_at = idx as u64;
     }
     meridians
+}
+
+#[test]
+fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
+    let mut app = App::new();
+    let mut meridians = MeridianSystem {
+        regular: (0..17)
+            .map(|index| Meridian::new(format!("tail_core_{index}").into()))
+            .collect(),
+        extraordinary: Vec::new(),
+    };
+    for meridian in meridians.iter_mut() {
+        meridian.opened = true;
+    }
+    let entity = app.world_mut().spawn(meridians).id();
+    let mut cultivation = Cultivation {
+        realm: Realm::Spirit,
+        qi_current: 12.0,
+        qi_max: 30.0,
+        ..Cultivation::default()
+    };
+
+    let meridians = app.world_mut().get_mut::<MeridianSystem>(entity);
+    let (released_qi, severed_ids) =
+        apply_tribulation_failure_penalty(&mut cultivation, meridians, None);
+
+    assert_eq!(released_qi, 12.0);
+    assert!(
+        severed_ids.is_empty(),
+        "non-humanoid channels have no legacy severed event representation"
+    );
+    let meridians = app.world().get::<MeridianSystem>(entity).unwrap();
+    assert_eq!(meridians.opened_count(), 16);
+    assert!(!meridians.get("tail_core_16").opened);
 }
 fn test_item(instance_id: u64) -> ItemInstance {
     ItemInstance {

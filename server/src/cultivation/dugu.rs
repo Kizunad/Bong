@@ -295,7 +295,24 @@ pub fn on_attack_resolved_dugu_handler(
             continue;
         };
 
-        let meridian_id = body_part_to_meridian(event.body_part);
+        let Some(meridian_id) = body_part_to_meridian(event.body_part) else {
+            commands
+                .entity(event.attacker)
+                .remove::<PendingDuguInfusion>();
+            continue;
+        };
+        if !meridians.contains(meridian_id) {
+            tracing::debug!(
+                target = ?event.target,
+                body_part = ?event.body_part,
+                meridian = ?meridian_id,
+                "[bong][cultivation][dugu] legacy body-part mapping is not present in target meridian profile; skipping non-humanoid injection"
+            );
+            commands
+                .entity(event.attacker)
+                .remove::<PendingDuguInfusion>();
+            continue;
+        }
         let meridian = meridians.get(meridian_id);
         if !meridian.opened || meridian.flow_capacity <= f64::EPSILON {
             commands
@@ -550,25 +567,24 @@ pub fn can_infuse_dugu(
 /// plan-race-system-v1 P1b —— 私表退役：数据唯一真源是 `humanoid.json
 /// meridian_profile.dugu_injection`（见 `body_plan::types::DuguInjectionEntry` 文档，
 /// 与 `combat::baomai_v4::dead_armor::meridian_to_body_part` 方向相反、语义不同，不是
-/// 其逆映射），本函数改为查询 `body_plan::dugu_injection_channel`。签名保持
-/// `BodyPart -> MeridianId` 不变（既有调用点/测试无需改写），humanoid 全 8 部位数值
-/// bit-for-bit 与退役前私表一致——panic 仅在 humanoid.json 数据被破坏（缺条目 / 该
-/// channel 无法逆映射回 legacy 枚举）时触发，属数据完整性 bug 而非正常运行时分支。
-pub fn body_part_to_meridian(body_part: BodyPart) -> MeridianId {
+/// 其逆映射），本函数改为查询 `body_plan::dugu_injection_channel`。无法找到映射时返回
+/// `None`，由攻击处理器安全跳过该次 legacy-only 注入；humanoid 的现有映射保持不变。
+pub fn body_part_to_meridian(body_part: BodyPart) -> Option<MeridianId> {
     let plan = crate::body_plan::humanoid_plan_static();
     let part_id = crate::body_plan::legacy_body_part_to_id(body_part);
-    let channel = crate::body_plan::dugu_injection_channel(plan, &part_id).unwrap_or_else(|| {
-        panic!(
-            "[bong][cultivation][dugu] humanoid.json meridian_profile.dugu_injection missing \
-             entry for body_part {part_id} — data integrity bug"
-        )
-    });
-    channel.to_meridian_id().unwrap_or_else(|| {
-        panic!(
-            "[bong][cultivation][dugu] humanoid.json dugu_injection channel {channel} has no \
-             legacy MeridianId mapping — data integrity bug"
-        )
-    })
+    let Some(channel) = crate::body_plan::dugu_injection_channel(plan, &part_id) else {
+        tracing::warn!(
+            "[bong][cultivation][dugu] humanoid.json dugu_injection missing entry for body_part {part_id}; skipping legacy-only injection"
+        );
+        return None;
+    };
+    let Some(meridian_id) = channel.to_meridian_id() else {
+        tracing::warn!(
+            "[bong][cultivation][dugu] dugu_injection channel {channel} has no legacy MeridianId mapping; skipping legacy-only injection"
+        );
+        return None;
+    };
+    Some(meridian_id)
 }
 
 pub fn recompute_qi_max(meridians: &MeridianSystem) -> f64 {
@@ -808,6 +824,7 @@ fn rejected(reason: CastRejectReason) -> CastResult {
 mod tests {
     use super::*;
 
+    use crate::cultivation::components::Meridian;
     use std::collections::HashMap;
 
     use valence::prelude::{App, Events, Position, Update};
@@ -884,19 +901,31 @@ mod tests {
 
     #[test]
     fn body_part_mapping_uses_q58_table() {
-        assert_eq!(body_part_to_meridian(BodyPart::Head), MeridianId::Du);
-        assert_eq!(body_part_to_meridian(BodyPart::Chest), MeridianId::Heart);
-        assert_eq!(body_part_to_meridian(BodyPart::Abdomen), MeridianId::Spleen);
+        assert_eq!(body_part_to_meridian(BodyPart::Head), Some(MeridianId::Du));
+        assert_eq!(
+            body_part_to_meridian(BodyPart::Chest),
+            Some(MeridianId::Heart)
+        );
+        assert_eq!(
+            body_part_to_meridian(BodyPart::Abdomen),
+            Some(MeridianId::Spleen)
+        );
         assert_eq!(
             body_part_to_meridian(BodyPart::ArmL),
-            MeridianId::LargeIntestine
+            Some(MeridianId::LargeIntestine)
         );
         assert_eq!(
             body_part_to_meridian(BodyPart::ArmR),
-            MeridianId::LargeIntestine
+            Some(MeridianId::LargeIntestine)
         );
-        assert_eq!(body_part_to_meridian(BodyPart::LegL), MeridianId::Bladder);
-        assert_eq!(body_part_to_meridian(BodyPart::LegR), MeridianId::Bladder);
+        assert_eq!(
+            body_part_to_meridian(BodyPart::LegL),
+            Some(MeridianId::Bladder)
+        );
+        assert_eq!(
+            body_part_to_meridian(BodyPart::LegR),
+            Some(MeridianId::Bladder)
+        );
     }
 
     #[test]
@@ -1422,6 +1451,65 @@ mod tests {
 
         assert!(app.world().get::<DuguPoisonState>(target).is_none());
         assert!(app.world().get::<PendingDuguInfusion>(attacker).is_some());
+    }
+
+    #[test]
+    fn pending_needle_poison_skips_non_humanoid_target_without_panicking() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, on_attack_resolved_dugu_handler);
+        let attacker = app
+            .world_mut()
+            .spawn((
+                PendingDuguInfusion {
+                    target_carrier: InfuseTarget::NextNeedle,
+                    infused_at_tick: 10,
+                    expires_at_tick: 1_210,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+        let target = app
+            .world_mut()
+            .spawn((
+                MeridianSystem {
+                    regular: vec![Meridian::new("tail_core".into())],
+                    extraordinary: Vec::new(),
+                },
+                Cultivation::default(),
+            ))
+            .id();
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 35,
+            body_part: BodyPart::Chest,
+            wound_kind: crate::combat::components::WoundKind::Pierce,
+            source: AttackSource::QiNeedle,
+            debug_command: false,
+            physical_damage: 0.0,
+            damage: 1.0,
+            contam_delta: 0.0,
+            description: "qi needle hit non-humanoid target".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().get::<DuguPoisonState>(target).is_none(),
+            "legacy Dugu injection must skip a target profile without the mapped humanoid channel"
+        );
+        assert!(
+            app.world().get::<PendingDuguInfusion>(attacker).is_none(),
+            "the one-shot infusion is consumed when the legacy-only target branch is rejected"
+        );
     }
 
     #[test]
