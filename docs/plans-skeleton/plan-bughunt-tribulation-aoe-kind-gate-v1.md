@@ -31,6 +31,13 @@
 - 现有 `TribulationOriginDimension`/维度过滤解决空间边界，不解决 kind 选择；不应把两个条件混成一个 plan。
 - 未发现今天的 `origin/main` 已经为 `tribulation_aoe_system` 添加 JueBi 排除。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“渡虚劫、绝壁、劫种、波次”，核对 §三 L127-L130 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `tribulation_aoe_system`、`du_xu_wave_profile`、`JueBi`；命中渡劫基础/生命周期文档，但没有该 kind gate。
+- active plan：检索 `tribulation_aoe_system`、`TribulationKind`、`juebi_phase_effect_system`；`plan-container-filter-and-completion-v1.md` 只登记 writer 迁移，不覆盖重复结算门禁。
+- `docs/plans-skeleton/`：检索 `tribulation_aoe_system`、`du_xu_wave_profile`、`JueBi`；已有 quota marker lifecycle skeleton 但未覆盖 AOE kind gate，未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`TribulationState.kind/phase`、`HeartDemonResolution`、参与者 `Cultivation/Wounds`、`ZoneRegistry`、失败/死亡事件。

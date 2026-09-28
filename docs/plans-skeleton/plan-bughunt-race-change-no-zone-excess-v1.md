@@ -32,6 +32,13 @@
 - `plan-bughunt-dugu-baomai-qi-max-shrink-ledger-v1.md` 关注 Dugu/Baomai；本 issue 的根因是 RaceChange 自己的 TransferPlan 分流逻辑。
 - #1498 只修 `qi_max_frozen` 元数据，不会使 excess 获得落点，两个 issue 仍需分开。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“守恒、真元上限、种族、经脉迁移”，核对 §二 L18-L22 与 §三 L65-L77。
+- `docs/finished_plans/`：检索 `race_change`、`apply_qi_excess_release`、`qi_flow_overflow`；命中已修的通用缩容 plan，但没有 RaceChange 无 zone 分支的落账证据。
+- active plan：检索 `RaceChange`、`TransferPlan`、`overflow`；`docs/plan-container-filter-and-completion-v1.md` 与 `docs/plan-refactor-qi-ledger-v1.md` 只描述迁移/网关，不覆盖此分支。
+- `docs/plans-skeleton/`：检索 `apply_qi_excess_release`、`zone_name=None`、`no-zone`；除本文件和独立的 `qi_max_frozen` 骨架外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`RaceChangeCommitPlan`、`QiExcessReleasePlan`、玩家 `Cultivation.qi_current`、可选 `ZoneRegistry`、`WorldQiAccount`、`Events<QiTransfer>`。

@@ -32,6 +32,13 @@
 - `docs/plans-skeleton/plan-bughunt-possession-target-qi-release-v1.md` 处理夺舍目标软删除前的全额释放；本 issue 是障命中后的部分释放，入口和触发条件不同。
 - 这不是 client 显示或 agent narration 问题；服务端当前值已经发生不可审计的减少。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“化虚障、道伥、真元、负压”，核对 §二 L18-L22 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `apply_barrier_dispel_system`、`barrier_dispel_qi`、`VoidAction`；命中化虚动作总 plan，但没有道伥折半的 qi release。
+- active plan：检索 `BarrierField`、`TsyHostileMarker`、`VoidBarrierReturn`；`plan-container-filter-and-completion-v1.md` 的 barrier return 网关清单不覆盖本折半入口。
+- `docs/plans-skeleton/`：检索 `barrier_dispel`、`TsyHostileMarker`、`道伥`; 除本文件外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`BarrierField`、道伥 `TsyHostileMarker`、`Cultivation.qi_current/qi_max`、`Position`、`CurrentDimension`、`ZoneRegistry`、`WorldQiAccount`、`Events<QiTransfer>`。

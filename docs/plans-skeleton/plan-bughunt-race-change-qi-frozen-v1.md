@@ -31,6 +31,13 @@
 - `docs/finished_plans/plan-bughunt-race-change-v1.md` 覆盖种族/经脉迁移和 excess 释放，但没有证明 frozen 元数据在 commit 后收敛。
 - 不需要 agent/client schema 变更；现有 cultivation snapshot 已有 frozen 字段。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“种族、境界、真元上限、经脉迁移”，核对 §三 L65-L77 与 §四 L357-L360。
+- `docs/finished_plans/`：检索 `commit_race_change`、`qi_max_frozen`、`effective_max`；命中 race system 与 qimax 缩容文档，但没有 RaceChange frozen 收敛证据。
+- active plan：检索 `RaceChange`、`qi_max_frozen`、`BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`；`plan-refactor-qi-ledger-v1.md` 只定义字段不变量，未覆盖 commit 漏写。
+- `docs/plans-skeleton/`：检索 `qi_max_frozen`、`commit_race_change`、`race_change`；除本文件和无 zone excess 骨架外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`RaceChangeCommitPlan`、`Cultivation { race, qi_max, qi_current, qi_max_frozen }`、新 `MeridianSystem`、`RaceRegistry`。

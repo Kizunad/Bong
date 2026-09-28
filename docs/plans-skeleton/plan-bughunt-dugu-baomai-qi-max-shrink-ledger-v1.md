@@ -35,6 +35,13 @@
 - `race_change.rs` 的 excess 释放是实现先例，不代表本 issue 已修：其 `apply_qi_excess_release` 对无 zone 的 `accepted` 仍有另一个独立缺口（见 #1625）。
 - `dugu_v2::release_cast_cost_to_zone` 的正常 flat cost 释放不覆盖 `qi_max` 缩容；不能以“该模块有 ledger helper”作为已修证据。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“毒蛊、爆脉、经脉代价、真元上限”，核对 §四 L357-L360 与 §五 L423-L426。
+- `docs/finished_plans/`：检索 `qi_max shrink`、`dugu`、`baomai`、`resize_qi_max_and_release_excess`；命中延寿/断续散缩容修复，但未覆盖这两条入口。
+- active plan：检索 `dugu_poison_tick`、`body_transcendence`、`apply_qi_max_loss`；`plan-container-filter-and-completion-v1.md` 只列 transfer writer 迁移，不提供本根因的修复 plan。
+- `docs/plans-skeleton/`：检索 `qi_max`、`dugu`、`baomai`、`clamp`；已有 combat 通用骨架覆盖其他入口，未发现本 Dugu/Baomai 聚类的同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：在线实体的 `Cultivation { qi_current, qi_max, qi_max_frozen }`（权威）、`MeridianSystem`、毒蛊/爆脉技能事件、`Position`、`CurrentDimension`、`ZoneRegistry`、`WorldQiAccount`、`Events<QiTransfer>`。

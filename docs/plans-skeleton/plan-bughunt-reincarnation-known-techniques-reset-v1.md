@@ -32,6 +32,13 @@
 - 这不是 client UI 的功法列表过滤问题；服务端实体和持久化表都已带入旧数据。
 - 也不是 agent 叙事状态；新生规则在 server persistence/ECS 内完成。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“转世、新生、功法、前世”，核对 §十二 L1058-L1060 与 §三 L65-L77。
+- `docs/finished_plans/`：检索 `KnownTechniques`、`reset_for_new_character`、`reincarnation`；命中 cultivation/lifecycle 文档，但没有转世门的功法清理证据。
+- active plan：检索 `KnownTechniques`、`save_player_slices`、`PlayerCharacterRotationGateway`；持久化/轮换计划未覆盖该转世分支的旧功法行。
+- `docs/plans-skeleton/`：检索 `KnownTechniques`、`reincarnation`、`SkillSet::default`；已有功法增长/接线 skeleton 不涉及新生清单，未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`reincarnation` spec、`LifeRecord`、持久化 player slices、`KnownTechniques`、`SkillSet`、默认 loadout。

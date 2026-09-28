@@ -32,6 +32,13 @@
 - `plan-bughunt-explode-zone-return-ledger-v1.md` 处理 ExplodeZone 借还生命周期；本 issue 的缺口发生在一次性动作提交。
 - `docs/finished_plans/plan-bughunt-void-actions-v1.md` 记录动作门禁和成本，但未覆盖 zone 字段与账户镜像的一致性。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“化虚、坍缩渊、镇压、灵气”，核对 §二 L18-L22 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `cast_suppress_tsy`、`debit_caster_qi_to_account`、`zone.spirit_qi`；命中 void actions 总 plan，但没有 SuppressTsy 的字段 credit。
+- active plan：检索 `SuppressTsy`、`apply_dormant_regen_with_multiplier`、`ZoneQiTransfer`；`plan-container-filter-and-completion-v1.md` 只有迁移清单，不覆盖该一次性动作根因。
+- `docs/plans-skeleton/`：检索 `cast_suppress_tsy`、`SuppressTsy`、`zone credit`；已有 target-zone lock skeleton 但未覆盖 qi credit，未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`VoidActionIntent::SuppressTsy`、施法者 `Cultivation.qi_current`/`ActorQiIdentity`、目标 `Zone`、`TsyZoneStateRegistry`、`WorldQiAccount`、`Events<QiTransfer>`。

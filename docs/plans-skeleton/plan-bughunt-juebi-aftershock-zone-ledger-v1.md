@@ -32,6 +32,13 @@
 - `tribulation_aoe_system` 的 #1410 是重复伤害/抽灵门禁，不能替代本 issue 的 zone 物理结算。
 - 没有发现已归档 plan 为余震的 50% 恢复建立过 ledger sink；当前仍是生产路径可达的字段覆盖。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“绝壁、渡虚劫、时代衰减、负灵域”，核对 §二 L18-L22、§三 L127-L130 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `juebi_zone_aftershock_system`、`JueBiZoneAftershock`、`original_qi`；命中 cultivation/tribulation 背景，但没有余震 zone sink。
+- active plan：检索 `juebi_zone_aftershock_system`、`TribulationZoneTransfer`、`EraDecay`；`plan-container-filter-and-completion-v1.md` 仅列迁移符号，不覆盖 50% 覆盖写入。
+- `docs/plans-skeleton/`：检索 `juebi_zone_aftershock`、`original_qi`、`jue_bi_scar`；已有 quota marker lifecycle skeleton 但不处理 zone ledger，未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`JueBiTriggeredEvent`、`JueBiZoneAftershocks`、`ZoneRegistry`、`CombatClock`、期间的 zone 流动和 `WorldQiAccount`。

@@ -31,6 +31,13 @@
 - `plan-bughunt-explode-zone-return-ledger-v1.md` 处理借还时的 zone 覆盖；本 issue 是每次 spend 的 signed room 计算。
 - `npc_skill.rs`、`woliu.rs` 的负灵域锁测试是证据和回归先例，不是对 `burst_meridian` 的修复。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“负灵域、反吸、灵压、真元”，核对 §二 L46-L54 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `negative zone`、`.max(0.0)`、`qi_release_to_zone`；命中暗器/负压相关修复，但没有 burst_meridian spend 入口。
+- active plan：检索 `emit_spent_qi_release`、`burst_meridian`、`signed zone`；`plan-container-filter-and-completion-v1.md` 只列 transfer gateway，不覆盖此 signed baseline 错误。
+- `docs/plans-skeleton/`：检索 `burst_meridian`、`zone.spirit_qi.max`、`negative zone`；已有暗器负灵域 skeleton 不涉及该入口，未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：施法者 `Cultivation.qi_current`、`ZoneRegistry`、`Position`/`CurrentDimension`、`qi_release_to_zone`、overflow ledger、`Events<QiTransfer>`。

@@ -30,23 +30,30 @@
 - `docs/finished_plans/plan-bughunt-qimax-shrink-clamp-leak-v1.md` 处理宿主/丹药缩容差额；这里是被夺舍目标实体即将消失时的完整余额释放。
 - 垂死大能自身的夺舍释放已有独立 plan；本目标是通用 `cultivation::possession` 的 player/NPC target despawn。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“夺舍、转世、死亡、真元归零”，核对 §十二 L1058-L1060 与 §十二 L330-L332。
+- `docs/finished_plans/`：检索 `process_duo_she_requests`、`PossessedVictim`、`Despawned`；命中夺舍范围和死亡生命周期文档，但没有目标 qi 释放闭环。
+- active plan：检索 `DuoShe`、`Despawned`、`release_to_zone`；`docs/plan-container-filter-and-completion-v1.md` 与持久化计划未覆盖该终结事务。
+- `docs/plans-skeleton/`：检索 `DuoShe`、`PossessedVictim`、`target qi`；除本文件外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`DuoSheRequestEvent`、目标 `Cultivation.qi_current`/`LifeRecord`、目标 `Position`/`CurrentDimension`、`ZoneRegistry`、`WorldQiAccount`、`Events<QiTransfer>`。
-- **Outputs**：目标终结记录、`Despawned` 标记，以及目标余额全部进入 zone/稳定 overflow 的 `QiFlowOutcome`/审计转账。
+- **Outputs**：目标终结记录，以及目标余额进入 zone 或稳定 overflow 的 `QiFlowOutcome`/审计转账；缺少 canonical 身份或 ledger 时 fail closed，目标不得标记 `Despawned`。只有 zone 缺失时才允许由 `qi_flow_overflow` 接收。
 - **共享类型 / 事件**：复用 `ActorQiIdentity::from_life_record`、`Cultivation::release_to_zone`、`QiTransferReason::ReleaseToZone`、`DuoSheEventEmitted`；不改 `DuoSheEventV1`。
 - **server 契约符号**：`process_duo_she_requests`、`DuoSheTargetReadItem`、`resolve_target_snapshot`、`Cultivation::release_to_zone`、`qi_physics::ledger::assert_conservation`。
 - **agent**：无变更；agent 继续消费已有 `DuoSheEventV1`，真元落点是 server 内部审计。
 - **client**：无变更；现有夺舍结果 payload 不增加字段。
 - **worldview 锚点**：`docs/worldview.md §十二 L1058-L1060`（夺舍是有代价的续命路径）；`§十二 L330-L332`（死亡/重生真元归零是结算的一部分）。
-- **qi_physics**：目标真元权威是 `Cultivation.qi_current`，不是长期 player ledger balance。不能直接对不存在的 player 余额 `ledger.transfer`；须以 `ActorQiIdentity` 调 `Cultivation::release_to_zone(zone, &mut WorldQiAccount, actor, amount, ReleaseToZone)`，底层使用 `transfer_external_qi_to_ledger`，zone 字段需要真实更新，满 zone 走持久化 overflow。测试守恒用 `SPIRIT_QI_TOTAL` 与 `assert_conservation`。
+- **qi_physics**：目标真元权威是 `Cultivation.qi_current`，不是长期 player ledger balance。`death_hooks::release_qi_amount_to_zone`（`origin/main` `death_hooks.rs:440-505`）要求有效 `LifeRecord`，缺身份返回 `InvalidActorIdentity`；它把 zone 查找失败作为 `zone=None`，再由 `Cultivation::release_to_zone` 写入 `qi_flow_overflow`。ledger/context 缺失时必须 fail closed，不能伪造来源或强行标记 `Despawned`。测试守恒用 `SPIRIT_QI_TOTAL` 与 `assert_conservation`。
 
 ## §5 修复骨架
 
 ### P0 目标终结释放
 
-- 在插入 `Despawned` 前，对带 `Cultivation` 的目标执行一次失败原子的全额 `release_to_zone`；缺身份/账本/zone 时走稳定 overflow，无法证明入账则拒绝标记 `Despawned`。
-- NPC 与玩家目标共用同一 release helper，避免依赖某个单独的 NPC notice。
+- 在插入 `Despawned` 前，对带 `Cultivation` 的目标执行一次失败原子的全额 `release_to_zone`；缺 canonical 身份或 ledger 时 fail closed，并保持目标未 `Despawned`。只有确认 zone 不存在时才把全额请求交给 `qi_flow_overflow`；无法证明入账则拒绝标记 `Despawned`。
+- NPC 与玩家目标共用同一失败原子 release 事务；身份构造必须显式区分 `ActorQiKind::Player/Npc`，避免依赖某个单独的 NPC notice 或伪造 player 来源。
 
 ### P1 回归
 

@@ -35,6 +35,13 @@
 - 这是服务端目标集合错误，不是 client HUD、Redis schema 或 agent narration 问题；不并入 `realm_vision` 的断线清理类 plan。
 - #1339 和 #1803 的触发对象不同（NPC/玩家），但共享“目标快照没有维度、距离计算跨维”的单一根因，合并为一个修复 PR。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“神识、同维、坍缩渊、感知”，核对 §六 L517-L519 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `spiritual_sense`、`CurrentDimension`、`private_marker_entries`；命中灵眼/感知既有契约，但没有神识目标集合的跨维修复。
+- active plan：检索 `spiritual_sense`、`DimensionKind`、`SpiritualSenseTargetsV1`；未发现覆盖本入口的 active plan。
+- `docs/plans-skeleton/`：检索 `build_player_sense_targets`、`跨维`、`CurrentDimension`；除本文件外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`CultivationClock`、观察者 `CurrentDimension`、目标 `CurrentDimension`、`Position`、`Cultivation`、`SpiritualSensePushState`。

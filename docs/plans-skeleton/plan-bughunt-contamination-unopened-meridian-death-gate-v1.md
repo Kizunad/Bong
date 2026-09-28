@@ -20,7 +20,7 @@
 
 ## §3 根因证据
 
-- `server/src/cultivation/contamination.rs:155-197` 通过 `release_qi_amount_to_zone` 计算排异不足；`:200-213` 随后以 `integrity <= 0.0 || !opened` 计算 `all_broken` 并发死亡事件。
+- `server/src/cultivation/contamination.rs:155-197` 通过 `release_qi_amount_to_zone` 计算排异不足；`:200-213` 随后以 `integrity <= 0.0 || !opened` 计算 `all_broken` 并发死亡事件。该 facade 的真实定义在 `server/src/cultivation/death_hooks.rs:440-505`，污染调用点是 `contamination.rs:160-170`。
 - `MeridianSystem::new/default` 的未打通经脉仍有正完整度；`opened` 表示拓扑门槛，不是伤害状态。把 `!opened` 与 `integrity <= 0.0` 并列违反该数据模型。
 - 既有 `resolve_crack_target` 只给可用经脉添加裂痕，不能证明未打通经脉“已毁”。
 
@@ -28,6 +28,13 @@
 
 - 现有文档中 `contam_purge_multiplier` / `ContaminationBoost` 的 issue 处理的是排异速率 modifier 消费，不是致死判据。
 - `qi_zero_decay` 的降境关闭经脉和 `MeridianSeveredPermanent` 是不同状态转换，不应在本 plan 顺手重构。
+
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“污染、经脉、排毒、崩溃”，核对 §四 L294-L302 与 §三 L318-L326。
+- `docs/finished_plans/`：检索 `contamination_tick`、`ContaminationOverflow`、`opened`；命中通用 cultivation/poison 文档，但没有本死亡判据的修复证据。
+- active plan：检索 `contamination_tick`、`MeridianSystem`、`all_broken`；`docs/plan-container-filter-and-completion-v1.md` 只列 writer 迁移，不覆盖该根因。
+- `docs/plans-skeleton/`：检索 `ContaminationOverflow`、`未打通`、`all_broken`；除本文件外未发现同主题 skeleton。
 
 ## 接入面与跨仓契约
 
@@ -38,7 +45,7 @@
 - **agent**：无变更；agent 只消费死亡/叙事事件，判据修正在 server 内完成。
 - **client**：无变更；死亡协议与 HUD 形状不变。
 - **worldview 锚点**：`docs/worldview.md §四 L294-L302`（污染独立于经脉损伤、排毒可恢复）；`§三 L318-L326`（经脉崩溃才是致死原因之一）。
-- **qi_physics**：在线真元权威是 `Cultivation.qi_current`；现有排异必须继续走 `release_qi_amount_to_zone`，其内部落 ledger/overflow。回归断言使用 `assert_conservation` 和 `SPIRIT_QI_TOTAL`，不要新增直接 `qi_current -=` + event-only 路径。
+- **qi_physics**：在线真元权威是 `Cultivation.qi_current`；污染正式入口是 `cultivation::death_hooks::release_qi_amount_to_zone`（`death_hooks.rs:440-505`），其内部调用 `Cultivation::release_to_zone`；底层数值 helper `qi_physics::release::qi_release_to_zone` 位于 `qi_physics/release.rs:12-47`。回归断言使用 `assert_conservation` 和 `SPIRIT_QI_TOTAL`，不要新增直接 `qi_current -=` + event-only 路径。
 
 ## §5 修复骨架
 

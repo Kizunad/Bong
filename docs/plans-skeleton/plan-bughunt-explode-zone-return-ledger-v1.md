@@ -32,6 +32,13 @@
 - `docs/finished_plans/plan-bughunt-zone-qi-economy-v1.md` 的普通 zone heartbeat 结算不覆盖 `VoidQiReturnSchedule` 的借款快照。
 - 这里的核心不是“六个月”配置值，而是借款期间外部流动被固定归零覆盖；归还不能只补一个 budget 数字。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“化虚、坍缩渊、负灵域、灵气回流”，核对 §二 L18-L22 与 §十六 L1566-L1569。
+- `docs/finished_plans/`：检索 `borrow_explode_zone_qi`、`apply_due_qi_return`、`WorldQiBudget`；命中化虚动作和 zone economy 背景文档，但没有借还期间流量保护。
+- active plan：检索 `VoidQiReturnSchedule`、`ExplodeZone`、`VoidBarrierReturn`；`plan-container-filter-and-completion-v1.md` 只列 gateway manifest，不覆盖当前归还算法。
+- `docs/plans-skeleton/`：检索 `borrow_explode_zone_qi`、`zone.spirit_qi = 0.0`、`ExplodeZone`；除本文件外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`WorldQiBudget`、`Zone`/`ZoneRegistry`、`WorldQiAccount`、`VoidQiReturnSchedule`、`CultivationClock`、期间的 zone 流动事件。

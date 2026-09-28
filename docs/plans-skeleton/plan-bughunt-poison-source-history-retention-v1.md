@@ -32,6 +32,13 @@
 - `plan-bughunt-dugu-baomai-qi-max-shrink-ledger-v1.md` 的毒蛊经脉缩容与本组件无共享 source history。
 - 未发现 active/finished plan 已为 `PoisonToxicity.source_history` 定义上限或迁移策略。
 
+### 立项检查记录（2026-09-28）
+
+- `docs/worldview.md`：检索“毒蛊、毒性、经脉代价、服毒”，核对 §四 L423-L426。
+- `docs/finished_plans/`：检索 `PoisonToxicity`、`source_history`、`PoisonDoseRecord`；命中 `plan-poison-trait-v1.md` 的组件契约，但没有 history 上限。
+- active plan：检索 `source_history`、`cultivation_json`、`persist_player_cultivation_bundle`；未发现 active plan 为该 Vec 定义保留策略。
+- `docs/plans-skeleton/`：检索 `source_history`、`PoisonToxicity`、`retain`；除本文件外未发现同主题 skeleton。
+
 ## 接入面与跨仓契约
 
 - **Inputs**：`PoisonPillKind`、`PoisonToxicity`、`DigestionLoad`、当前 tick、持久化 cultivation bundle。
