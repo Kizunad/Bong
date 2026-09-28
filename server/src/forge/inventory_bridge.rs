@@ -241,18 +241,20 @@ fn forge_drop_target(
         }
     }
 
-    // WeaponForgeStation 目前只能放置在 OverworldLayer；用会话绑定的锻炉位置
-    // 作为缺失玩家位置/维度组件时的可靠落点，避免伪造固定世界坐标。
+    // 用会话绑定的锻炉位置/维度作为缺失玩家位置/维度组件时的可靠落点，
+    // 避免伪造固定世界坐标；站点实体仍在时优先读取其最新维度。
     let session = sessions.and_then(|sessions| sessions.get(event.session))?;
-    let station_pos = stations
-        .get(session.station)
-        .ok()
+    let station = stations.get(session.station).ok();
+    let station_pos = station
         .and_then(|station| station.pos)
         .or(session.station_pos)?;
+    let station_dimension = station
+        .map(|station| station.dimension)
+        .unwrap_or(session.station_dimension);
     let (x, y, z) = station_pos;
     Some(ForgeDropTarget {
         position: [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5],
-        dimension: DimensionKind::Overworld,
+        dimension: station_dimension,
         source: ForgeDropSource::ForgeStation,
     })
 }
