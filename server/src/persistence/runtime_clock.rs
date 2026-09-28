@@ -187,7 +187,7 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
 fn max_persisted_runtime_tick(connection: &Connection) -> io::Result<Option<u64>> {
     let mut maximum = None;
     for &(table, column) in PERSISTED_RUNTIME_TICK_COLUMNS {
-        let quoted_table = quote_sql_identifier(&table);
+        let quoted_table = quote_sql_identifier(table);
         let quoted_column = quote_sql_identifier(column);
         let query =
             format!("SELECT MAX({quoted_column}) FROM {quoted_table} WHERE {quoted_column} >= 0");
