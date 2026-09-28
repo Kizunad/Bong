@@ -215,6 +215,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     140: "body_plan_layout",
     141: "race_gate_meta",
     142: "morph_state",
+    143: "alchemy_world",
 }
 
 # These are deliberate compatibility labels, not a second wire registry.  The
