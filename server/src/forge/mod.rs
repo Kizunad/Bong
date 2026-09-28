@@ -415,6 +415,7 @@ fn handle_start_forge_requests(
 
         let id = sessions.allocate_id();
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
+        session.station_pos = station.pos;
         session.committed_materials = inputs;
         session.step_state = StepState::Billet(billet_res.state.clone());
         session.billet_flawed = billet_res.flawed;

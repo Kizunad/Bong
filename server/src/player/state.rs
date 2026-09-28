@@ -996,6 +996,23 @@ pub fn save_player_inventory_and_delete_dropped_loot(
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// Persist world drops without requiring a live player inventory.
+///
+/// Forge outcomes can be finalized after the caster entity has been despawned. The
+/// dropped-loot row still needs to survive a restart, so this narrow checkpoint writes
+/// only the durable ground entries and leaves player slices untouched.
+pub fn persist_dropped_loot_entries(
+    persistence: &PlayerStatePersistence,
+    entries: &[DroppedLootEntry],
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    crate::persistence::upsert_dropped_loot_entries(&transaction, entries, last_updated_wall)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub fn rotate_current_character_id(
     persistence: &PlayerStatePersistence,
     username: &str,
