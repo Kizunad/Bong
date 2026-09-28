@@ -107,11 +107,12 @@ fn elapsed_wall_ticks(snapshot_wall: i64, now_wall: i64) -> u64 {
     elapsed_seconds.saturating_mul(TICKS_PER_SECOND)
 }
 
-/// v44 及更早数据库没有共享 tick 行，也没有旧 tick 与墙钟的对应关系。库存 JSON
-/// 仍保留每件物品的创建 tick；首次迁移必须采用保守 epoch，避免把旧进程中已经
-/// 过去的在线年龄截断成只剩停机时长。墙钟换算提供一个偏旧的上界，最大创建 tick
-/// 与逐行停机间隔则覆盖开发命令或异常墙钟数据造成的 tick 偏移。
+/// v44 及更早数据库没有共享 tick 行，也没有旧 tick 与 Unix 墙钟的对应关系。首次
+/// 迁移只能使用数据库里仍可证明的运行时 tick：所有持久化 tick 的最大值作为旧进程
+/// 的运行时下界，再加上从库存快照墙钟得到的停机间隔。墙钟只参与计算间隔，绝不能
+/// 直接换算成运行时 epoch，否则 Unix 秒数会把相对 tick 放大到数十亿。
 fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u64> {
+    let mut rebased_tick = max_persisted_runtime_tick(connection)?;
     let mut statement = connection
         .prepare("SELECT inventory_json, last_updated_wall FROM inventories")
         .map_err(io::Error::other)?;
@@ -121,8 +122,7 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
         })
         .map_err(io::Error::other)?;
 
-    let conservative_wall_tick = wall_clock_ticks(now_wall);
-    let mut rebased_tick: Option<u64> = None;
+    let mut latest_snapshot_wall: Option<i64> = None;
     for row in rows {
         let (inventory_json, snapshot_wall) = row.map_err(io::Error::other)?;
         let value = match serde_json::from_str::<Value>(&inventory_json) {
@@ -134,40 +134,91 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
                 continue;
             }
         };
-        let Some(max_created_at_tick) = max_created_at_tick_in_json(&value) else {
+        let Some(max_inventory_tick) = max_runtime_tick_in_json(&value) else {
             continue;
         };
-        let offline_ticks = if snapshot_wall > 0 {
-            elapsed_wall_ticks(snapshot_wall, now_wall)
-        } else {
-            0
-        };
-        let candidate =
-            conservative_wall_tick.max(max_created_at_tick.saturating_add(offline_ticks));
-        rebased_tick = Some(rebased_tick.map_or(candidate, |current| current.max(candidate)));
+        rebased_tick = Some(rebased_tick.map_or(max_inventory_tick, |current| {
+            current.max(max_inventory_tick)
+        }));
+        if snapshot_wall > 0 {
+            latest_snapshot_wall = Some(
+                latest_snapshot_wall.map_or(snapshot_wall, |current| current.max(snapshot_wall)),
+            );
+        }
     }
 
-    Ok(rebased_tick.map_or(0, |tick| tick.saturating_add(1)))
+    let offline_ticks = latest_snapshot_wall
+        .map(|snapshot_wall| elapsed_wall_ticks(snapshot_wall, now_wall))
+        .unwrap_or(0);
+    Ok(rebased_tick
+        .map(|tick| tick.saturating_add(offline_ticks))
+        .unwrap_or(0))
 }
 
-fn wall_clock_ticks(now_wall: i64) -> u64 {
-    now_wall
-        .max(0)
-        .try_into()
-        .unwrap_or(0_u64)
-        .saturating_mul(TICKS_PER_SECOND)
+fn max_persisted_runtime_tick(connection: &Connection) -> io::Result<Option<u64>> {
+    let mut table_statement = connection
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .map_err(io::Error::other)?;
+    let table_names = table_statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(io::Error::other)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)?;
+
+    let mut maximum = None;
+    for table in table_names {
+        let quoted_table = quote_sql_identifier(&table);
+        let mut column_statement = connection
+            .prepare(&format!("PRAGMA table_info({quoted_table})"))
+            .map_err(io::Error::other)?;
+        let column_names = column_statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(io::Error::other)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io::Error::other)?;
+
+        for column in column_names {
+            if !is_runtime_tick_name(&column) {
+                continue;
+            }
+            let quoted_column = quote_sql_identifier(&column);
+            let query = format!(
+                "SELECT MAX({quoted_column}) FROM {quoted_table} WHERE {quoted_column} >= 0"
+            );
+            let value: Option<i64> = connection
+                .query_row(&query, [], |row| row.get(0))
+                .map_err(io::Error::other)?;
+            let Some(value) = value else {
+                continue;
+            };
+            let tick = sql_to_tick(value)?;
+            maximum = Some(maximum.map_or(tick, |current: u64| current.max(tick)));
+        }
+    }
+
+    Ok(maximum)
 }
 
-fn max_created_at_tick_in_json(value: &Value) -> Option<u64> {
+fn quote_sql_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('\"', "\"\""))
+}
+
+fn is_runtime_tick_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !lower.ends_with("_ticks")
+        && (lower == "tick" || lower.ends_with("_tick") || lower.contains("_tick_"))
+}
+
+fn max_runtime_tick_in_json(value: &Value) -> Option<u64> {
     match value {
         Value::Object(fields) => fields.iter().fold(None, |current, (key, child)| {
-            let own = (key == "created_at_tick").then(|| child.as_u64()).flatten();
-            [current, own, max_created_at_tick_in_json(child)]
+            let own = is_runtime_tick_name(key).then(|| child.as_u64()).flatten();
+            [current, own, max_runtime_tick_in_json(child)]
                 .into_iter()
                 .flatten()
                 .max()
         }),
-        Value::Array(values) => values.iter().filter_map(max_created_at_tick_in_json).max(),
+        Value::Array(values) => values.iter().filter_map(max_runtime_tick_in_json).max(),
         _ => None,
     }
 }
@@ -175,6 +226,10 @@ fn max_created_at_tick_in_json(value: &Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shelflife::{
+        compute::compute_track_state, DecayFormula, DecayProfile, DecayProfileId, Freshness,
+        TrackState,
+    };
     use std::path::PathBuf;
 
     fn settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
@@ -211,7 +266,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 142);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -237,7 +292,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 142);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -257,7 +312,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 42);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -277,13 +332,54 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 100);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn legacy_rebase_never_makes_known_online_age_younger() {
+    fn legacy_rebase_uses_maximum_persisted_runtime_tick_for_known_age() {
         let (settings, root) = settings("legacy-age-monotonic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let connection = Connection::open(settings.db_path()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall) VALUES (?1, ?2, 1, ?3)",
+                params![
+                    "Legacy",
+                    r#"{"freshness":{"created_at_tick":100}}"#,
+                    1_000_i64
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO bootstrap_events (event_id, kind, schema_version, game_tick, wall_clock, server_run_id, last_updated_wall, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    "legacy-runtime-tick",
+                    "test",
+                    1_i64,
+                    10_000_i64,
+                    1_000_i64,
+                    "legacy",
+                    1_000_i64,
+                    "{}"
+                ],
+            )
+            .unwrap();
+
+        let migrated_now = load_runtime_clock_at(&settings, 1_005).unwrap();
+        let migrated_age = migrated_now.saturating_sub(100);
+        let known_pre_migration_age = 10_000_u64.saturating_sub(100);
+        assert!(
+            migrated_age >= known_pre_migration_age,
+            "legacy rebase must not make known age younger: migrated={migrated_age}, known={known_pre_migration_age}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_rebase_does_not_make_recent_item_immediately_expired() {
+        let (settings, root) = settings("legacy-no-unix-epoch");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
         let connection = Connection::open(settings.db_path()).unwrap();
         connection
@@ -298,11 +394,20 @@ mod tests {
             .unwrap();
 
         let migrated_now = load_runtime_clock_at(&settings, 1_005).unwrap();
-        let migrated_age = migrated_now.saturating_sub(100);
-        let known_pre_migration_age = 10_000_u64.saturating_sub(100);
-        assert!(
-            migrated_age >= known_pre_migration_age,
-            "legacy rebase must not make known age younger: migrated={migrated_age}, known={known_pre_migration_age}"
+        assert_eq!(migrated_now, 200);
+
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("legacy-test"),
+            formula: DecayFormula::Exponential {
+                half_life_ticks: 10_000,
+            },
+            spoil_threshold: 10.0,
+        };
+        let freshness = Freshness::new(100, 100.0, &profile);
+        assert_eq!(
+            compute_track_state(&freshness, &profile, migrated_now, 1.0),
+            TrackState::Fresh,
+            "legacy migration must not turn a recently created item into an immediately expired item"
         );
         let _ = std::fs::remove_dir_all(root);
     }
