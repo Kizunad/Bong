@@ -107,9 +107,10 @@ fn elapsed_wall_ticks(snapshot_wall: i64, now_wall: i64) -> u64 {
     elapsed_seconds.saturating_mul(TICKS_PER_SECOND)
 }
 
-/// v44 及更早数据库没有共享 tick 行。库存 JSON 仍保留每件物品的创建 tick，
-/// 因而至少把新 epoch 锚在所有已读档物品的最大创建 tick之后，再补上库存快照
-/// 到本次启动的墙钟间隔；这不会把 `now_tick` 放在任何已持久化创建 tick 之前。
+/// v44 及更早数据库没有共享 tick 行，也没有旧 tick 与墙钟的对应关系。库存 JSON
+/// 仍保留每件物品的创建 tick；首次迁移必须采用保守 epoch，避免把旧进程中已经
+/// 过去的在线年龄截断成只剩停机时长。墙钟换算提供一个偏旧的上界，最大创建 tick
+/// 与逐行停机间隔则覆盖开发命令或异常墙钟数据造成的 tick 偏移。
 fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u64> {
     let mut statement = connection
         .prepare("SELECT inventory_json, last_updated_wall FROM inventories")
@@ -120,6 +121,7 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
         })
         .map_err(io::Error::other)?;
 
+    let conservative_wall_tick = wall_clock_ticks(now_wall);
     let mut rebased_tick: Option<u64> = None;
     for row in rows {
         let (inventory_json, snapshot_wall) = row.map_err(io::Error::other)?;
@@ -140,11 +142,20 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
         } else {
             0
         };
-        let candidate = max_created_at_tick.saturating_add(offline_ticks);
+        let candidate =
+            conservative_wall_tick.max(max_created_at_tick.saturating_add(offline_ticks));
         rebased_tick = Some(rebased_tick.map_or(candidate, |current| current.max(candidate)));
     }
 
     Ok(rebased_tick.map_or(0, |tick| tick.saturating_add(1)))
+}
+
+fn wall_clock_ticks(now_wall: i64) -> u64 {
+    now_wall
+        .max(0)
+        .try_into()
+        .unwrap_or(0_u64)
+        .saturating_mul(TICKS_PER_SECOND)
 }
 
 fn max_created_at_tick_in_json(value: &Value) -> Option<u64> {
@@ -200,7 +211,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 143);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -226,7 +237,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 143);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -246,7 +257,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 43);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -266,7 +277,33 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 101);
+        assert_eq!(load_runtime_clock_at(&settings, 1_005).unwrap(), 20_101);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_rebase_never_makes_known_online_age_younger() {
+        let (settings, root) = settings("legacy-age-monotonic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let connection = Connection::open(settings.db_path()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall) VALUES (?1, ?2, 1, ?3)",
+                params![
+                    "Legacy",
+                    r#"{"freshness":{"created_at_tick":100}}"#,
+                    1_000_i64
+                ],
+            )
+            .unwrap();
+
+        let migrated_now = load_runtime_clock_at(&settings, 1_005).unwrap();
+        let migrated_age = migrated_now.saturating_sub(100);
+        let known_pre_migration_age = 10_000_u64.saturating_sub(100);
+        assert!(
+            migrated_age >= known_pre_migration_age,
+            "legacy rebase must not make known age younger: migrated={migrated_age}, known={known_pre_migration_age}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

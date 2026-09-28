@@ -79,7 +79,8 @@ pub(super) fn bootstrap_persistence_system(
     if let Some(shelflife_tick) = shelflife_tick.as_deref_mut() {
         shelflife_tick.0 = runtime_tick;
     }
-    if let Err(error) = persist_runtime_clock(&settings, runtime_tick, wall_clock) {
+    let checkpoint_wall_clock = current_unix_seconds();
+    if let Err(error) = persist_runtime_clock(&settings, runtime_tick, checkpoint_wall_clock) {
         panic!(
             "[bong][persistence] cannot safely checkpoint hydrated runtime clock at {}: {error}",
             settings.db_path().display()
