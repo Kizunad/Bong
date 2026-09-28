@@ -23,8 +23,9 @@ use valence::prelude::{
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
 use crate::alchemy::{
-    learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
-    PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
+    learned::LearnResult, AlchemyFurnace, AlchemyQiReservationBook, AlchemySession,
+    AlchemyTakeBackRequest, InjectQiRequest, Intervention, LearnedRecipes, PlaceFurnaceRequest,
+    RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
 use crate::botany::components::HarvestSessionStore;
 use crate::botany::harvest::request_harvest_mode;
@@ -563,6 +564,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub learn_fragment_tx: Option<ResMut<'w, Events<crate::alchemy::LearnRecipeFragmentIntent>>>,
     pub place_furnace_tx: Option<ResMut<'w, Events<PlaceFurnaceRequest>>>,
     pub outcome_tx: Option<ResMut<'w, Events<crate::alchemy::AlchemyOutcomeEvent>>>,
+    pub inject_qi_tx: Option<ResMut<'w, Events<InjectQiRequest>>>,
+    pub take_back_tx: Option<ResMut<'w, Events<AlchemyTakeBackRequest>>>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
     pub redis: Option<Res<'w, RedisBridgeResource>>,
@@ -5313,89 +5316,471 @@ pub(crate) fn handle_alchemy_intervention(
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    inject_qi_events: Option<&mut Events<InjectQiRequest>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
     };
     let player_id = canonical_player_id(username.0.as_str());
-    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
-        if matches!(intervention, Intervention::InjectQi(_))
-            && furnace_zone_is_collapsed(furnace, zones)
-        {
-            tracing::debug!(
+    let result = with_owned_furnace_mut_with_entity(
+        entity,
+        &player_id,
+        furnace_pos,
+        furnaces,
+        |furnace_entity, furnace| {
+            if matches!(intervention, Intervention::InjectQi(_))
+                && furnace_zone_is_collapsed(furnace, zones)
+            {
+                tracing::debug!(
                 "[bong][network][alchemy] `{player_id}` inject_qi ignored: furnace is in collapsed zone"
             );
-            return;
-        }
-        let session = match furnace.session.as_mut() {
-            Some(s) => s,
-            None => {
-                send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
                 return;
             }
-        };
-        session.apply_intervention(intervention.clone());
-        if let Some(events) = vfx_events {
-            let (event_id, color, strength, count) = match intervention {
-                Intervention::AdjustTemp(temp) if temp >= 0.85 => {
-                    (gameplay_vfx::ALCHEMY_OVERHEAT, "#FF4433", 0.85, 10)
+            let session = match furnace.session.as_mut() {
+                Some(s) => s,
+                None => {
+                    send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
+                    return;
                 }
-                Intervention::InjectQi(_) => (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#AA66FF", 0.65, 8),
-                _ => (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#88CCFF", 0.45, 6),
             };
-            gameplay_vfx::send_spawn(
-                events,
-                gameplay_vfx::spawn_request(
-                    event_id,
-                    alchemy_furnace_origin(furnace_pos),
-                    Some([0.0, 0.6, 0.0]),
-                    color,
-                    strength,
-                    count,
-                    30,
-                ),
-            );
-            // plan-skill-av-relink-v1 P1 — 干预生效 → alchemy_stir 搅拌动画（与上方
-            // 熬煮粒子同点内联：干预直接在 request handler 处理、无 bevy 事件可订阅）。
-            // 未起炉/非炉主等拒绝分支在前面已 return，不会走到这里。
-            // AutoProfile 是保留 no-op（session.rs apply_intervention 不改任何状态），
-            // 无真实搅拌动作，不发动画——只有生效干预（AdjustTemp/InjectQi）才发。
-            if !matches!(intervention, Intervention::AutoProfile(_)) {
-                if let Ok(unique_id) = unique_ids.get(entity) {
-                    events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+            if let Intervention::InjectQi(amount) = intervention {
+                let Some(events) = inject_qi_events else {
+                    send_alchemy_error(
+                        &mut client,
+                        &player_id,
+                        "炼丹账本未就绪，注灵未受理".to_string(),
+                    );
+                    return;
+                };
+                if !amount.is_finite() || amount <= 0.0 {
+                    send_alchemy_error(
+                        &mut client,
+                        &player_id,
+                        "注灵数量必须是有限的正数".to_string(),
+                    );
+                    return;
+                }
+                events.send(InjectQiRequest {
+                    player: entity,
+                    furnace: furnace_entity,
+                    amount,
+                });
+                return;
+            }
+            session.apply_intervention(intervention.clone());
+            if let Some(events) = vfx_events {
+                let (event_id, color, strength, count) = match intervention {
+                    Intervention::AdjustTemp(temp) if temp >= 0.85 => {
+                        (gameplay_vfx::ALCHEMY_OVERHEAT, "#FF4433", 0.85, 10)
+                    }
+                    Intervention::InjectQi(_) => {
+                        (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#AA66FF", 0.65, 8)
+                    }
+                    _ => (gameplay_vfx::ALCHEMY_BREW_VAPOR, "#88CCFF", 0.45, 6),
+                };
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        event_id,
                         alchemy_furnace_origin(furnace_pos),
-                        crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
-                            target_player: unique_id.0.to_string(),
-                            anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
-                                .to_string(),
-                            priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
-                            fade_in_ticks: Some(2),
-                        },
-                    ));
+                        Some([0.0, 0.6, 0.0]),
+                        color,
+                        strength,
+                        count,
+                        30,
+                    ),
+                );
+                // plan-skill-av-relink-v1 P1 — 干预生效 → alchemy_stir 搅拌动画（与上方
+                // 熬煮粒子同点内联：干预直接在 request handler 处理、无 bevy 事件可订阅）。
+                // 未起炉/非炉主等拒绝分支在前面已 return，不会走到这里。
+                // AutoProfile 是保留 no-op（session.rs apply_intervention 不改任何状态），
+                // 无真实搅拌动作，不发动画——只有生效干预（AdjustTemp/InjectQi）才发。
+                if !matches!(intervention, Intervention::AutoProfile(_)) {
+                    if let Ok(unique_id) = unique_ids.get(entity) {
+                        events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                            alchemy_furnace_origin(furnace_pos),
+                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                                target_player: unique_id.0.to_string(),
+                                anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
+                                    .to_string(),
+                                priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                                fade_in_ticks: Some(2),
+                            },
+                        ));
+                    }
                 }
             }
-        }
-        tracing::info!(
+            tracing::info!(
             "[bong][network][alchemy] `{player_id}` intervention {intervention:?} pos={furnace_pos:?} → temp={:.2} qi={:.2}",
             session.temp_current, session.qi_injected
         );
-        publish_alchemy_intervention_result(
-            redis,
-            furnace_pos,
-            session.recipe.as_str(),
-            player_id.as_str(),
-            &intervention,
+            publish_alchemy_intervention_result(
+                redis,
+                furnace_pos,
+                session.recipe.as_str(),
+                player_id.as_str(),
+                &intervention,
+                session.temp_current,
+                session.qi_injected,
+            );
+            alchemy_snapshot_emit::send_session_from_furnace(
+                &mut client,
+                &player_id,
+                furnace,
+                registry,
+            );
+        },
+    );
+    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "intervention");
+}
+
+/// 结算已经通过炉主/会话门禁的注灵事件。
+///
+/// 请求 handler 只负责路由和入队，避免它同时持有只读 `Cultivation` 查询与炼丹炉写
+/// 查询。这里是唯一把玩家 `qi_current`、炉体 ledger 账户和 session 一起提交的边界：
+/// ledger 转账失败时三者都保持原值，成功后才发送注灵反馈。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn settle_alchemy_inject_qi_requests(
+    mut requests: EventReader<InjectQiRequest>,
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
+    mut cultivations: Query<&mut Cultivation>,
+    mut clients: Query<(&Username, &mut Client)>,
+    registry: Res<RecipeRegistry>,
+    zones: Option<Res<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut reservations: ResMut<AlchemyQiReservationBook>,
+    redis: Option<Res<RedisBridgeResource>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    unique_ids: Query<&UniqueId>,
+) {
+    for request in requests.read() {
+        let Ok((username, mut client)) = clients.get_mut(request.player) else {
+            tracing::warn!(
+                "[bong][network][alchemy] inject_qi rejected: player {:?} is no longer online",
+                request.player
+            );
+            continue;
+        };
+        let player_id = canonical_player_id(username.0.as_str());
+        let Ok((furnace_entity, mut furnace)) = furnaces.get_mut(request.furnace) else {
+            send_alchemy_error(&mut client, &player_id, "炼丹炉已不存在".to_string());
+            continue;
+        };
+        let owner_ok = match furnace.owner.as_deref() {
+            None | Some("") => true,
+            Some(owner) => {
+                owner == player_id
+                    || owner == player_id.strip_prefix("offline:").unwrap_or(&player_id)
+            }
+        };
+        if !owner_ok {
+            send_alchemy_error(&mut client, &player_id, "这座炉不是你的".to_string());
+            continue;
+        }
+        if furnace_zone_is_collapsed(&furnace, zones.as_deref()) {
+            send_alchemy_error(&mut client, &player_id, "坍缩区域无法注灵".to_string());
+            continue;
+        }
+        let Some(session) = furnace.session.as_mut() else {
+            send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
+            continue;
+        };
+        let Some(ledger) = ledger.as_deref_mut() else {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                "炼丹账本未就绪，注灵失败".to_string(),
+            );
+            continue;
+        };
+        let Ok(mut cultivation) = cultivations.get_mut(request.player) else {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                "修为状态未就绪，注灵失败".to_string(),
+            );
+            continue;
+        };
+        let result = crate::alchemy::qi::debit_player_qi_to_furnace(
+            &player_id,
+            &mut cultivation,
+            session,
+            furnace_entity,
+            ledger,
+            request.amount,
+        );
+        if let Err(error) = result {
+            tracing::debug!("[bong][network][alchemy] `{player_id}` inject_qi rejected: {error}");
+            send_alchemy_error(&mut client, &player_id, format!("注灵失败：{error}"));
+            continue;
+        }
+        reservations.remember(furnace_entity, player_id.clone());
+
+        let (recipe_id, temp_current, qi_injected) = (
+            session.recipe.clone(),
             session.temp_current,
             session.qi_injected,
+        );
+        let intervention = Intervention::InjectQi(request.amount);
+        if let Some(events) = vfx_events.as_deref_mut() {
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::ALCHEMY_BREW_VAPOR,
+                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    Some([0.0, 0.6, 0.0]),
+                    "#AA66FF",
+                    0.65,
+                    8,
+                    30,
+                ),
+            );
+            if let Ok(unique_id) = unique_ids.get(request.player) {
+                events.send(VfxEventRequest::new(
+                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
+                            .to_string(),
+                        priority: crate::network::vfx_animation_trigger::COMBAT_PRIORITY,
+                        fade_in_ticks: Some(2),
+                    },
+                ));
+            }
+        }
+        publish_alchemy_intervention_result(
+            redis.as_deref(),
+            furnace.pos.unwrap_or_default(),
+            recipe_id.as_str(),
+            player_id.as_str(),
+            &intervention,
+            temp_current,
+            qi_injected,
         );
         alchemy_snapshot_emit::send_session_from_furnace(
             &mut client,
             &player_id,
-            furnace,
-            registry,
+            &furnace,
+            &registry,
         );
-    });
-    log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "intervention");
+        tracing::info!(
+            "[bong][network][alchemy] `{player_id}` paid inject_qi {:.3} furnace={furnace_entity:?} qi={qi_injected:.3}",
+            request.amount
+        );
+    }
+}
+
+/// 消费取丹队列。它必须排在注灵提交之后，保证同一批 C2S payload 的业务顺序仍然是
+/// "付款成功 → session 结算"，而不是 handler 内 deferred event 的先后不确定。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_alchemy_take_back_requests(
+    mut requests: EventReader<AlchemyTakeBackRequest>,
+    mut clients: Query<(&Username, &mut Client)>,
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
+    registry: Res<RecipeRegistry>,
+    mut outcome_tx: Option<ResMut<Events<crate::alchemy::AlchemyOutcomeEvent>>>,
+    mut inventories: Query<&mut PlayerInventory>,
+    player_states: Query<&PlayerState>,
+    cultivations: Query<&Cultivation>,
+    item_registry: Res<ItemRegistry>,
+    mut instance_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+) {
+    for request in requests.read() {
+        handle_alchemy_take_back(
+            request.player,
+            request.furnace_pos,
+            request.slot_idx,
+            request.tick,
+            &mut clients,
+            &mut furnaces,
+            &registry,
+            &mut outcome_tx,
+            &mut inventories,
+            &player_states,
+            &cultivations,
+            &item_registry,
+            instance_allocator.as_deref_mut(),
+            vfx_events.as_deref_mut(),
+        );
+    }
+}
+
+/// 炉体会话结束后，未被产物消费的已付款余额仍在炉体账户中。把它落到稳定
+/// `qi_flow_overflow` 账户，避免成功结算路径因删掉炉体而吞掉真元。
+pub(crate) fn settle_finished_alchemy_furnace_qi(
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut reservations: ResMut<AlchemyQiReservationBook>,
+) {
+    let Some(ledger) = ledger.as_deref_mut() else {
+        return;
+    };
+    for (furnace_entity, mut furnace) in furnaces.iter_mut() {
+        let account = crate::alchemy::qi::furnace_qi_account(furnace_entity);
+        if ledger.balance(&account) <= 0.0 {
+            continue;
+        }
+        let session_finished = furnace
+            .session
+            .as_ref()
+            .is_none_or(|session| session.finished);
+        if !session_finished {
+            continue;
+        }
+        let result = crate::alchemy::qi::release_furnace_qi_to_overflow(
+            furnace_entity,
+            furnace.session.as_mut(),
+            ledger,
+        );
+        match result {
+            Ok(_) if ledger.balance(&account) <= 0.0 => {
+                reservations.forget(furnace_entity);
+            }
+            Ok(_) => tracing::warn!(
+                "[bong][network][alchemy] furnace={furnace_entity:?} still has qi after completion settlement"
+            ),
+            Err(error) => tracing::error!(
+                "[bong][network][alchemy] furnace={furnace_entity:?} completion qi settlement failed: {error}"
+            ),
+        }
+    }
+}
+
+/// 炉体实体被移除后组件已经不可读，只能依赖 reservation book 找付款人；能找到在线
+/// 修士就按容量退回，容量不足或付款人已不在 ECS 时进入同一稳定 overflow 账户。
+pub(crate) fn refund_removed_alchemy_furnace_qi(
+    mut removed: RemovedComponents<AlchemyFurnace>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut reservations: ResMut<AlchemyQiReservationBook>,
+    mut players: Query<(&Username, &mut Cultivation)>,
+) {
+    let Some(ledger) = ledger.as_deref_mut() else {
+        return;
+    };
+    for furnace_entity in removed.read() {
+        let account = crate::alchemy::qi::furnace_qi_account(furnace_entity);
+        if ledger.balance(&account) <= 0.0 {
+            reservations.forget(furnace_entity);
+            continue;
+        }
+        let owner = reservations.owner(furnace_entity).map(str::to_owned);
+        if let Some(owner) = owner.as_deref() {
+            if let Some((_, mut cultivation)) = players.iter_mut().find(|(username, _)| {
+                alchemy_identity_matches(owner, canonical_player_id(username.0.as_str()).as_str())
+            }) {
+                if let Err(error) = crate::alchemy::qi::refund_furnace_qi_to_player(
+                    owner,
+                    &mut cultivation,
+                    None,
+                    furnace_entity,
+                    ledger,
+                ) {
+                    tracing::warn!(
+                        "[bong][network][alchemy] removed furnace={furnace_entity:?} refund failed: {error}"
+                    );
+                }
+            }
+        }
+        if ledger.balance(&account) > 0.0 {
+            if let Err(error) =
+                crate::alchemy::qi::release_furnace_qi_to_overflow(furnace_entity, None, ledger)
+            {
+                tracing::error!(
+                    "[bong][network][alchemy] removed furnace={furnace_entity:?} overflow settlement failed: {error}"
+                );
+            }
+        }
+        if ledger.balance(&account) <= 0.0 {
+            reservations.forget(furnace_entity);
+        }
+    }
+}
+
+/// 玩家断线发生在 `despawn_disconnected_clients` 前。先按 session 的 caster 身份找出炉体，
+/// 退回真实炉体账户，再允许玩家实体被销毁；这样断线不会把付款余额留成孤儿。
+pub(crate) fn refund_alchemy_qi_on_disconnect(
+    mut disconnected: RemovedComponents<Client>,
+    usernames: Query<&Username>,
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
+    mut cultivations: Query<&mut Cultivation>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut reservations: ResMut<AlchemyQiReservationBook>,
+) {
+    let Some(ledger) = ledger.as_deref_mut() else {
+        return;
+    };
+    for player in disconnected.read() {
+        let Ok(username) = usernames.get(player) else {
+            continue;
+        };
+        let player_id = canonical_player_id(username.0.as_str());
+        for (furnace_entity, mut furnace) in furnaces.iter_mut() {
+            let session_owner = furnace
+                .session
+                .as_ref()
+                .map(|session| session.caster_id.as_str());
+            let owner = furnace.owner.as_deref();
+            if !owner.is_some_and(|owner| alchemy_identity_matches(owner, player_id.as_str()))
+                && !session_owner
+                    .is_some_and(|owner| alchemy_identity_matches(owner, player_id.as_str()))
+                && !reservations
+                    .owner(furnace_entity)
+                    .is_some_and(|owner| alchemy_identity_matches(owner, player_id.as_str()))
+            {
+                continue;
+            }
+            let account = crate::alchemy::qi::furnace_qi_account(furnace_entity);
+            if ledger.balance(&account) <= 0.0 {
+                reservations.forget(furnace_entity);
+                continue;
+            }
+            let Ok(mut cultivation) = cultivations.get_mut(player) else {
+                if let Err(error) = crate::alchemy::qi::release_furnace_qi_to_overflow(
+                    furnace_entity,
+                    furnace.session.as_mut(),
+                    ledger,
+                ) {
+                    tracing::error!(
+                        "[bong][network][alchemy] disconnected player={player:?} furnace={furnace_entity:?} overflow settlement failed: {error}"
+                    );
+                }
+                reservations.forget(furnace_entity);
+                continue;
+            };
+            if let Err(error) = crate::alchemy::qi::refund_furnace_qi_to_player(
+                player_id.as_str(),
+                &mut cultivation,
+                furnace.session.as_mut(),
+                furnace_entity,
+                ledger,
+            ) {
+                tracing::warn!(
+                    "[bong][network][alchemy] disconnected player={player:?} furnace={furnace_entity:?} refund failed: {error}"
+                );
+            }
+            if ledger.balance(&account) > 0.0 {
+                if let Err(error) = crate::alchemy::qi::release_furnace_qi_to_overflow(
+                    furnace_entity,
+                    furnace.session.as_mut(),
+                    ledger,
+                ) {
+                    tracing::error!(
+                        "[bong][network][alchemy] disconnected player={player:?} furnace={furnace_entity:?} overflow settlement failed: {error}"
+                    );
+                }
+            }
+            if ledger.balance(&account) <= 0.0 {
+                reservations.forget(furnace_entity);
+            }
+        }
+    }
+}
+
+fn alchemy_identity_matches(left: &str, right: &str) -> bool {
+    left == right
+        || left.strip_prefix("offline:").unwrap_or(left)
+            == right.strip_prefix("offline:").unwrap_or(right)
 }
 
 #[allow(clippy::too_many_arguments)]

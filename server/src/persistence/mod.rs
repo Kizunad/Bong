@@ -212,7 +212,14 @@ pub fn register(app: &mut App) {
                 persist_zone_influence_system,
             ),
         )
-        .add_systems(Last, dispatch_persistence_shutdown_flushes);
+        .add_systems(
+            Last,
+            (
+                crate::alchemy::qi::flush_furnace_qi_on_shutdown,
+                dispatch_persistence_shutdown_flushes,
+            )
+                .chain(),
+        );
 }
 
 #[cfg(test)]

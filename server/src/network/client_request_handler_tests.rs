@@ -447,6 +447,7 @@ fn register_explosion_test_resources(app: &mut App) {
     app.add_event::<crate::zhenfa::ScatterBeadUseRequest>();
     app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+    app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
     app.add_event::<crate::combat::events::CombatEvent>();
     app.add_event::<crate::combat::events::DeathEvent>();
     app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -475,7 +476,13 @@ fn register_explosion_test_systems(app: &mut App) {
     );
     app.add_systems(
         Update,
-        crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(dispatch_alchemy_take_back_requests)
+            .after(handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        dispatch_alchemy_take_back_requests.after(handle_client_request_payloads),
     );
 }
 
@@ -5127,6 +5134,8 @@ mod external_ingress_tests {
             app.insert_resource(SkillMeridianDependencies::default());
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(AlchemyMockState::default());
+            app.insert_resource(WorldQiAccount::default());
+            app.init_resource::<crate::alchemy::AlchemyQiReservationBook>();
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
@@ -5180,6 +5189,8 @@ mod external_ingress_tests {
             app.add_event::<ScatterBeadUseRequest>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+            app.add_event::<crate::alchemy::InjectQiRequest>();
+            app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
             app.add_event::<crate::combat::events::CombatEvent>();
             app.add_event::<crate::combat::events::DeathEvent>();
             app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -5225,6 +5236,18 @@ mod external_ingress_tests {
                     // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
                     // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
                     .after(crate::lingtian::LingtianRequestIngressSet),
+            );
+            app.add_systems(
+                Update,
+                settle_alchemy_inject_qi_requests.after(handle_client_request_payloads),
+            );
+            app.add_systems(
+                Update,
+                dispatch_alchemy_take_back_requests.after(settle_alchemy_inject_qi_requests),
+            );
+            app.add_systems(
+                Update,
+                settle_finished_alchemy_furnace_qi.after(dispatch_alchemy_take_back_requests),
             );
         }
 
@@ -6876,7 +6899,11 @@ mod external_ingress_tests {
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert((
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
                 PlayerState::default(),
                 inventory_with_stack("ci_she_hao", 3),
             ));
@@ -7207,6 +7234,11 @@ mod external_ingress_tests {
             register_request_app(&mut app);
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert(Cultivation {
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            });
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
 
             send_alchemy_intervention_payload(
@@ -7377,7 +7409,11 @@ mod external_ingress_tests {
                 let (client_bundle, _helper) = create_mock_client("Alchemist");
                 let entity = app.world_mut().spawn(client_bundle).id();
                 app.world_mut().entity_mut(entity).insert((
-                    crate::cultivation::components::Cultivation::default(),
+                    crate::cultivation::components::Cultivation {
+                        qi_current: SPIRIT_QI_TOTAL,
+                        qi_max: SPIRIT_QI_TOTAL,
+                        ..Default::default()
+                    },
                     PlayerState::default(),
                     // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                     PlayerInventory {
