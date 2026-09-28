@@ -78,7 +78,7 @@ Status: 已完成；跨重启时钟修复与旧库存存档兼容回退路径已
 ## Finish Evidence
 
 - **落地清单**：`server/src/persistence/runtime_clock.rs`（跨重启快照、旧库存回退与测试）；`server/src/persistence/migrations.rs`（v45 `runtime_clock` 表及 schema 校验）；`server/src/persistence/bootstrap.rs`（启动 hydrate、周期快照、关服 flush）；`server/src/player/gameplay.rs`（GameplayTick hydrate setter）；`server/src/persistence/mod.rs`（资源与系统注册）。
-- **关键 commit**：`83e4012e4`（2026-09-28，promotion：骨架转 active）；`881cbeb32`（2026-09-28，新增跨重启运行时 tick 持久化与兼容回退）；`dc7d68186`（2026-09-28，收紧旧库存回退并修复 clippy 门禁）；`46d434804`（2026-09-28，保守迁移旧库存年龄并修正启动快照墙钟）。
-- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过（10405 个库测试，0 失败；doc-tests 3 通过、5 忽略）。新增 runtime clock 回归 7 项全部通过。
+- **关键 commit**：`83e4012e4`（2026-09-28，promotion：骨架转 active）；`881cbeb32`（2026-09-28，新增跨重启运行时 tick 持久化与兼容回退）；`dc7d68186`（2026-09-28，收紧旧库存回退并修复 clippy 门禁）；`46d434804`（2026-09-28，保守迁移旧库存年龄并修正启动快照墙钟）；`1c1e98418`（2026-09-28，修正旧库存迁移的运行时 tick 重基准并锁定跨表年龄与不过期契约）。
+- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过（10406 个库测试，0 失败；doc-tests 3 通过、5 忽略）。runtime clock 回归 8 项全部通过，覆盖持久化最大 tick 年龄单调性与近期物品不过期。
 - **跨仓库核验**：server 命中 `Freshness.created_at_tick`、`effective_dt_ticks`、`GameplayTick`、`CombatClock`、`ShelflifeSweepTick` 与 SQLite `runtime_clock`；本修复不改 agent/client 契约。
-- **遗留 / 后续**：无。本 PR 不改变既有 Freshness 衰减公式，只修正跨重启的绝对 tick 基准；旧存档首次启动会通过库存 JSON 回退并写入 v45 快照。
+- **遗留 / 后续**：无。本 PR 不改变既有 Freshness 衰减公式，只修正跨重启的相对 tick 基准；旧存档首次启动会汇总持久化运行时 tick，墙钟仅用于可证明停机间隔，随后通过库存 JSON 回退并写入 v45 快照。
