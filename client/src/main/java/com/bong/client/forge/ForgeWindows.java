@@ -106,6 +106,14 @@ public final class ForgeWindows {
 
     public void endInjection() { injecting = false; }
 
+    /** 每 tick 复核玩家仍在锻炉旁；离站时关窗并走正常暂存材料返还路径。 */
+    public void tick() {
+        refresh();
+        if (window != null && !window.closed() && station != null && !reachable.test(station)) {
+            close(window);
+        }
+    }
+
     /** 只有玩家关闭窗口才返还准备材料；断线清理不向下一条连接发送请求。 */
     public void close(UiWindowManager.WindowState expected) {
         if (window != expected || window == null || window.closed()) return;

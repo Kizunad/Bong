@@ -8,13 +8,16 @@
 use std::collections::HashMap;
 
 use valence::message::SendMessage;
-use valence::prelude::{BlockPos, Client, Commands, Entity, Events, Query, ResMut, Username};
+use valence::prelude::{
+    BlockPos, Client, Commands, Entity, Events, Position, Query, ResMut, Username,
+};
 
 use crate::cultivation::components::Cultivation;
 use crate::forge::blueprint::BlueprintRegistry;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
 };
+use crate::forge::is_within_forge_scope;
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, StationTier, WeaponForgeStation};
@@ -26,6 +29,7 @@ use crate::network::client_request_handler::{
 use crate::network::forge_snapshot_emit;
 use crate::player::state::PlayerState;
 use crate::schema::client_request::ClientRequestV1;
+use crate::world::dimension::CurrentDimension;
 
 /// 已通过 schema/version/live gate 的 Forge 请求。
 #[derive(Debug, PartialEq)]
@@ -199,6 +203,8 @@ pub fn dispatch_forge_request(
                 &mut skill_scroll.inscription_scroll_tx,
                 skill_scroll.forge_sessions.as_deref(),
                 pending_step,
+                &skill_scroll.positions,
+                &skill_scroll.dimensions,
             );
         }
         ForgeRequest::TemperingHit {
@@ -218,6 +224,9 @@ pub fn dispatch_forge_request(
                 &mut dispatch.tempering_hit_tx,
                 skill_scroll.forge_sessions.as_deref(),
                 pending_step,
+                &skill_scroll.positions,
+                &skill_scroll.dimensions,
+                clients,
             );
         }
         ForgeRequest::ConsecrationInject {
@@ -235,6 +244,9 @@ pub fn dispatch_forge_request(
                 &mut dispatch.consecration_inject_tx,
                 skill_scroll.forge_sessions.as_deref(),
                 pending_step,
+                &skill_scroll.positions,
+                &skill_scroll.dimensions,
+                clients,
             );
         }
         ForgeRequest::StepAdvance { session_id } => {
@@ -244,6 +256,9 @@ pub fn dispatch_forge_request(
                 &mut dispatch.step_advance_tx,
                 skill_scroll.forge_sessions.as_deref(),
                 skill_scroll.blueprint_registry.as_deref(),
+                &skill_scroll.positions,
+                &skill_scroll.dimensions,
+                clients,
             ) {
                 pending_forge_steps.insert((player.to_bits(), session), next_step);
             }
@@ -274,6 +289,8 @@ pub fn dispatch_forge_request(
                 clients,
                 &skill_scroll.forge_stations,
                 &mut dispatch.start_forge_tx,
+                &skill_scroll.positions,
+                &skill_scroll.dimensions,
             );
         }
         ForgeRequest::BlueprintTurnPage { delta } => {
@@ -399,6 +416,8 @@ fn handle_forge_start_session(
     clients: &mut Query<(&Username, &mut Client)>,
     stations: &Query<(Entity, &WeaponForgeStation)>,
     start_forge_tx: &mut Option<ResMut<Events<StartForgeRequest>>>,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -406,6 +425,27 @@ fn handle_forge_start_session(
     let player_id = crate::player::state::canonical_player_id(username.0.as_str());
     match find_owned_forge_station(entity, station_pos, stations) {
         Ok(station_entity) => {
+            let in_scope = positions
+                .get(entity)
+                .ok()
+                .zip(dimensions.get(entity).ok())
+                .is_some_and(|(position, dimension)| {
+                    stations.get(station_entity).is_ok_and(|(_, station)| {
+                        is_within_forge_scope(
+                            position.get(),
+                            dimension.0,
+                            station.pos,
+                            station.dimension,
+                        )
+                    })
+                });
+            if !in_scope {
+                client.send_chat_message("§c[炼器] 请靠近锻炉并保持在同一维度后再操作。");
+                tracing::warn!(
+                    "[bong][network][forge] `{player_id}` start_session rejected: out of forge scope pos={station_pos:?}"
+                );
+                return;
+            }
             let Some(start_forge_tx) = start_forge_tx.as_deref_mut() else {
                 tracing::warn!(
                     "[bong][network][forge] start_session dropped: StartForgeRequest events resource missing"
@@ -571,6 +611,9 @@ fn require_owned_active_step(
     expected: ForgeStep,
     pending_step: Option<ForgeStep>,
     request_label: &str,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
+    clients: &mut Query<(&Username, &mut Client)>,
 ) -> bool {
     let Some(forge_sessions) = forge_sessions else {
         tracing::warn!(
@@ -601,6 +644,28 @@ fn require_owned_active_step(
         );
         return false;
     }
+    let in_scope = positions
+        .get(entity)
+        .ok()
+        .zip(dimensions.get(entity).ok())
+        .is_some_and(|(position, dimension)| {
+            is_within_forge_scope(
+                position.get(),
+                dimension.0,
+                session_state.station_pos,
+                session_state.station_dimension,
+            )
+        });
+    if !in_scope {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} caster is outside station scope",
+            session.0
+        );
+        if let Ok((_, mut client)) = clients.get_mut(entity) {
+            client.send_chat_message("§c[炼器] 请回到锻炉旁并保持在同一维度后再操作。");
+        }
+        return false;
+    }
     true
 }
 
@@ -617,6 +682,8 @@ fn handle_forge_inscription_scroll(
     inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
     forge_sessions: Option<&ForgeSessions>,
     pending_step: Option<ForgeStep>,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
 ) {
     let inscription_id = inscription_id.trim();
     if inscription_id.is_empty() {
@@ -630,6 +697,9 @@ fn handle_forge_inscription_scroll(
         ForgeStep::Inscription,
         pending_step,
         "inscription_scroll",
+        positions,
+        dimensions,
+        clients,
     ) {
         return;
     }
@@ -675,6 +745,9 @@ fn handle_forge_tempering_hit(
     tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
     forge_sessions: Option<&ForgeSessions>,
     pending_step: Option<ForgeStep>,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
+    clients: &mut Query<(&Username, &mut Client)>,
 ) {
     let Some(beat) = parse_temper_beat(beat) else {
         tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
@@ -688,6 +761,9 @@ fn handle_forge_tempering_hit(
         ForgeStep::Tempering,
         pending_step,
         "tempering_hit",
+        positions,
+        dimensions,
+        clients,
     ) {
         return;
     }
@@ -711,6 +787,9 @@ fn handle_forge_consecration_inject(
     consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
     forge_sessions: Option<&ForgeSessions>,
     pending_step: Option<ForgeStep>,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
+    clients: &mut Query<(&Username, &mut Client)>,
 ) {
     if !qi_amount.is_finite() || qi_amount < 0.0 {
         tracing::warn!(
@@ -726,6 +805,9 @@ fn handle_forge_consecration_inject(
         ForgeStep::Consecration,
         pending_step,
         "consecration_inject",
+        positions,
+        dimensions,
+        clients,
     ) {
         return;
     }
@@ -744,6 +826,9 @@ fn handle_forge_step_advance(
     step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
     forge_sessions: Option<&ForgeSessions>,
     blueprint_registry: Option<&BlueprintRegistry>,
+    positions: &Query<&Position>,
+    dimensions: &Query<&CurrentDimension>,
+    clients: &mut Query<(&Username, &mut Client)>,
 ) -> Option<(ForgeSessionId, ForgeStep)> {
     let session = ForgeSessionId(session_id);
     let Some(forge_sessions) = forge_sessions else {
@@ -761,6 +846,27 @@ fn handle_forge_step_advance(
             "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
             session_state.caster
         );
+        return None;
+    }
+    let in_scope = positions
+        .get(entity)
+        .ok()
+        .zip(dimensions.get(entity).ok())
+        .is_some_and(|(position, dimension)| {
+            is_within_forge_scope(
+                position.get(),
+                dimension.0,
+                session_state.station_pos,
+                session_state.station_dimension,
+            )
+        });
+    if !in_scope {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: session_id={session_id} caster is outside station scope"
+        );
+        if let Ok((_, mut client)) = clients.get_mut(entity) {
+            client.send_chat_message("§c[炼器] 请回到锻炉旁并保持在同一维度后再操作。");
+        }
         return None;
     }
     if matches!(session_state.current_step, ForgeStep::Done) {

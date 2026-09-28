@@ -4144,8 +4144,14 @@ mod external_ingress_tests {
                 ForgeStep::Billet => StepState::Billet(Default::default()),
                 ForgeStep::Done => StepState::None,
             };
+            session.station_pos = Some((8, 66, 8));
+            session.station_dimension = DimensionKind::Overworld;
             sessions.insert(session);
             app.insert_resource(sessions);
+            app.world_mut().entity_mut(caster).insert((
+                Position::new(DVec3::new(8.5, 66.0, 8.5)),
+                CurrentDimension(DimensionKind::Overworld),
+            ));
         }
 
         /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
@@ -11282,7 +11288,13 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, mut helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             let station = app
                 .world_mut()
                 .spawn(WeaponForgeStation::placed(
@@ -11331,13 +11343,20 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, _helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             app.world_mut().spawn(WeaponForgeStation {
                 tier: 1,
                 owner: None,
                 session: None,
                 integrity: 1.0,
                 pos: Some((8, 66, 8)),
+                dimension: DimensionKind::Overworld,
             });
 
             send_forge_start_session(
@@ -11353,6 +11372,78 @@ mod external_ingress_tests {
                 .world()
                 .resource::<valence::prelude::Events<StartForgeRequest>>();
             assert_eq!(events.iter_current_update_events().count(), 1);
+        }
+
+        #[test]
+        fn forge_start_session_rejects_out_of_range_without_consuming_prepared_materials() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.add_event::<StartForgeRequest>();
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let mut inventory = empty_inventory();
+            inventory.material_preparation.recipe_id = Some("iron_sword_v0".to_string());
+            inventory.material_preparation.station_pos = Some((8, 66, 8));
+            inventory.material_preparation.materials.push(
+                crate::craft::preparation::PreparedMaterial {
+                    item: skill_scroll_item(77, "fan_tie"),
+                    origin: InventoryLocationV1::Container {
+                        container_id: "main_pack".to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                },
+            );
+            let prepared_before = inventory.material_preparation.clone();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(80.5, 66.0, 8.5)));
+            app.world_mut().spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                entity,
+            ));
+
+            send_forge_start_session(
+                &mut app,
+                entity,
+                (8, 66, 8),
+                "iron_sword_v0",
+                &[("fan_tie", 1)],
+            );
+            app.update();
+
+            let events = app
+                .world()
+                .resource::<valence::prelude::Events<StartForgeRequest>>();
+            assert_eq!(
+                events.iter_current_update_events().count(),
+                0,
+                "离开锻炉后不得发出会扣除已暂存材料的起炉事件"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<PlayerInventory>(entity)
+                    .expect("test player inventory")
+                    .material_preparation,
+                prepared_before,
+                "越界拒绝必须保留暂存材料，供玩家回到锻炉旁继续或返还"
+            );
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_game_messages(&mut helper)
+                    .iter()
+                    .any(|message| message.contains("靠近锻炉")),
+                "越界起炉应回执范围错误"
+            );
         }
 
         #[test]
