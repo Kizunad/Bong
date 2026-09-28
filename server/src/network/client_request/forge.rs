@@ -604,6 +604,7 @@ fn handle_forge_learn_blueprint(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn require_owned_active_step(
     forge_sessions: Option<&ForgeSessions>,
     session: ForgeSessionId,
@@ -737,6 +738,7 @@ fn handle_forge_inscription_scroll(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_forge_tempering_hit(
     entity: Entity,
     session_id: u64,
@@ -780,6 +782,7 @@ fn handle_forge_tempering_hit(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_forge_consecration_inject(
     entity: Entity,
     session_id: u64,
@@ -820,6 +823,7 @@ fn handle_forge_consecration_inject(
     consecration_inject_tx.send(ConsecrationInject { session, qi_amount });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_forge_step_advance(
     entity: Entity,
     session_id: u64,
