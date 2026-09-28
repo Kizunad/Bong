@@ -24,6 +24,7 @@ pub(super) fn bootstrap_persistence_system(
     mut combat_clock: Option<ResMut<crate::combat::CombatClock>>,
     mut gameplay_tick: Option<ResMut<crate::player::gameplay::GameplayTick>>,
     mut shelflife_tick: Option<ResMut<crate::shelflife::sweep::ShelflifeSweepTick>>,
+    mut runtime_clock_state: Option<ResMut<RuntimeClockSnapshotState>>,
     mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
@@ -85,6 +86,9 @@ pub(super) fn bootstrap_persistence_system(
             "[bong][persistence] cannot safely checkpoint hydrated runtime clock at {}: {error}",
             settings.db_path().display()
         );
+    }
+    if let Some(runtime_clock_state) = runtime_clock_state.as_deref_mut() {
+        runtime_clock_state.last_snapshot_tick = Some(runtime_tick);
     }
 
     hydrate_runtime_qi_accounts(&settings, &mut qi_ledger).unwrap_or_else(|error| {

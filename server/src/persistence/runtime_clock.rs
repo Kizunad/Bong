@@ -11,6 +11,8 @@ use super::*;
 
 const RUNTIME_CLOCK_ROW_ID: i64 = 1;
 const TICKS_PER_SECOND: u64 = 20;
+/// 运行时钟快照沿用世界运行时快照的五分钟间隔；关服时仍会强制 flush。
+const RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS: u64 = 5 * 60 * TICKS_PER_SECOND;
 
 // 这里只列出能够证明是“过去某时刻”的运行时绝对 tick。未来截止时间（例如
 // `ready_at_tick`、`invite_block_until_tick`）和时长累计值不能用来重建时钟。
@@ -57,7 +59,7 @@ pub(crate) struct RuntimeClockRecord {
 
 #[derive(Debug, Default)]
 pub(super) struct RuntimeClockSnapshotState {
-    pub(super) last_snapshot_wall: i64,
+    pub(super) last_snapshot_tick: Option<u64>,
 }
 
 impl Resource for RuntimeClockSnapshotState {}
@@ -122,13 +124,15 @@ pub(super) fn persist_runtime_clock_system(
     clock: Res<crate::cultivation::tick::CultivationClock>,
     mut state: ResMut<RuntimeClockSnapshotState>,
 ) {
-    let now_wall = current_unix_seconds();
-    if state.last_snapshot_wall > 0 && now_wall.saturating_sub(state.last_snapshot_wall) < 5 {
+    if state.last_snapshot_tick.is_some_and(|last_snapshot_tick| {
+        clock.tick.saturating_sub(last_snapshot_tick) < RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS
+    }) {
         return;
     }
 
+    let now_wall = current_unix_seconds();
     match persist_runtime_clock(&settings, clock.tick, now_wall) {
-        Ok(()) => state.last_snapshot_wall = now_wall,
+        Ok(()) => state.last_snapshot_tick = Some(clock.tick),
         Err(error) => tracing::warn!(
             "[bong][persistence] failed to persist runtime clock at {}: {error}",
             settings.db_path().display()
@@ -536,6 +540,7 @@ mod tests {
         app.insert_resource(crate::combat::CombatClock::default());
         app.insert_resource(crate::player::gameplay::GameplayTick::default());
         app.insert_resource(crate::shelflife::sweep::ShelflifeSweepTick::default());
+        app.insert_resource(RuntimeClockSnapshotState::default());
         app.insert_resource(WorldQiAccount::default());
         app.add_systems(Startup, bootstrap_persistence_system);
         app.update();
@@ -561,6 +566,62 @@ mod tests {
                 .resource::<crate::shelflife::sweep::ShelflifeSweepTick>()
                 .0,
             cultivation_tick
+        );
+        assert_eq!(
+            app.world()
+                .resource::<RuntimeClockSnapshotState>()
+                .last_snapshot_tick,
+            Some(cultivation_tick),
+            "startup checkpoint must seed the periodic snapshot throttle"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn periodic_runtime_clock_snapshot_is_throttled_by_runtime_ticks() {
+        let (settings, root) = settings("periodic-snapshot-interval");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        persist_runtime_clock(&settings, 100, 1_000).unwrap();
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock { tick: 101 });
+        app.insert_resource(RuntimeClockSnapshotState {
+            last_snapshot_tick: Some(100),
+        });
+        app.add_systems(Update, persist_runtime_clock_system);
+        app.update();
+
+        let connection = Connection::open(settings.db_path()).unwrap();
+        let stored_tick: i64 = connection
+            .query_row(
+                "SELECT tick FROM runtime_clock WHERE clock_id = ?1",
+                params![RUNTIME_CLOCK_ROW_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored_tick, 100,
+            "a sub-interval update must not open SQLite and rewrite the runtime clock"
+        );
+        drop(connection);
+
+        app.world_mut().resource_mut::<CultivationClock>().tick =
+            100 + RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS;
+        app.update();
+
+        let connection = Connection::open(settings.db_path()).unwrap();
+        let stored_tick: i64 = connection
+            .query_row(
+                "SELECT tick FROM runtime_clock WHERE clock_id = ?1",
+                params![RUNTIME_CLOCK_ROW_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored_tick,
+            i64::try_from(100 + RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS).unwrap(),
+            "the runtime clock must checkpoint once the tick interval elapses"
         );
         let _ = std::fs::remove_dir_all(root);
     }
