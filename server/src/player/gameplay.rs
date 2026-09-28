@@ -7,13 +7,13 @@ use valence::prelude::{
     Resource, Update, Username, With,
 };
 
+use super::authorization::AuthorizationProvider;
 use super::state::{canonical_player_id, PlayerState};
 use crate::botany::components::BotanyHarvestMode;
 use crate::botany::components::HarvestSessionStore;
 use crate::botany::components::Plant;
 use crate::botany::harvest::start_or_resume_harvest;
 use crate::botany::registry::canonicalize_herb_id;
-use crate::cmd::dev::DevCommandPermissions;
 use crate::combat::{
     components::WoundKind,
     debug::enqueue_debug_attack_intent,
@@ -171,7 +171,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn apply_queued_gameplay_actions(
     mut queue: ResMut<GameplayActionQueue>,
     mut gameplay_tick: ResMut<GameplayTick>,
-    permissions: Option<Res<DevCommandPermissions>>,
+    authorization: Option<Res<AuthorizationProvider>>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
@@ -219,10 +219,9 @@ pub(crate) fn apply_queued_gameplay_actions(
 
         match request.action {
             GameplayAction::Combat(action) => {
-                if permissions
-                    .as_ref()
-                    .is_some_and(|permissions| permissions.is_operator(raw_username.as_str()))
-                {
+                if authorization.as_ref().is_some_and(|authorization| {
+                    authorization.allows_operator(raw_username.as_str())
+                }) {
                     bridge_debug_combat_action(
                         player_entity,
                         event_tick,
@@ -555,7 +554,7 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(PendingGameplayNarrations::default());
         app.insert_resource(GameplayTick::default());
-        app.insert_resource(DevCommandPermissions::allow_user("Azure"));
+        app.insert_resource(AuthorizationProvider::allow_user("Azure"));
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CapturedAttackIntents::default());
         app.add_event::<AttackIntent>();
@@ -632,7 +631,7 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(PendingGameplayNarrations::default());
         app.insert_resource(GameplayTick::default());
-        app.insert_resource(DevCommandPermissions::allow_user("Operator"));
+        app.insert_resource(AuthorizationProvider::allow_user("Operator"));
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CapturedAttackIntents::default());
         app.add_event::<AttackIntent>();
