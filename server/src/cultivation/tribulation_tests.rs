@@ -293,11 +293,12 @@ fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
     *app.world_mut().get_mut::<Cultivation>(entity).unwrap() = cultivation;
 
     let after = summarize_world_qi(app.world_mut());
+    let era_decay = 0.0;
     assert_eq!(
         after.budget_initial_total, SPIRIT_QI_TOTAL,
         "守恒快照必须锚定 schema 的 SPIRIT_QI_TOTAL"
     );
-    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+    assert_conservation(&before, &after, era_decay).unwrap_or_else(|error| {
         panic!(
             "non-humanoid tribulation failure must conserve released qi: before={before:?}, after={after:?}, error={error:?}"
         )
