@@ -26,7 +26,7 @@
 
 - **Inputs**：C2S `TemperingHit`/`ForgeSession`、`TemperingProfile.qi_per_hit`、玩家权威 `Cultivation.qi_current`、`WorldQiAccount`、`CombatClock.tick`、`ForgeOutcomeEvent` 和 `ArtifactState`。
 - **Outputs**：每次接受的淬炼命中真实扣费并转入对应 zone/overflow；锻造法器的 `created_at_tick` 等于结算时的 `CombatClock.tick`；进化失败时玩家真元与 ledger 都保持原值，成功时留下可审计转移。
-- **共享类型/事件**：复用 `TemperingHit`、`TemperingState`、`ForgeOutcomeEvent`、`ArtifactState`、`CombatClock`、`QiTransfer`、`QiTransferReason::{MeridianForge,ArtifactEvolution}`。玩家真元权威是 `Cultivation.qi_current`，跨到 ledger 时使用 `qi_physics::ledger::transfer_external_qi_to_ledger(account, from, to, amount, reason)`，不要用 `set_balance` 加审计事件冒充原子转账。
+- **共享类型/事件**：复用 `TemperingHit`、`TemperingState`、`ForgeOutcomeEvent`、`ArtifactState`、`CombatClock`、`QiTransfer`、`QiTransferReason::{MeridianForge,ArtifactEvolution}`。玩家真元权威是 `Cultivation.qi_current`；跨到 ledger 时先用真实签名 `qi_physics::ledger::transfer_external_qi_to_ledger(account, from, to, amount, reason)`，其内部走 `ledger.transfer(QiTransfer { from, to, amount, reason })`，成功后才提交外部字段，不能用 `set_balance` 加审计事件冒充原子转账。
 - **三端契约符号**：server `forge::{handle_tempering_hits,forge_outcome_to_inventory}`、`forge::artifact_meridian::artifact_meridian_deepen_on_use`；client **无变更**，依据是已有 `TemperingHit`/forge snapshot payload 只承载命中和结果，修复应在 server 权威扣费与 item state 写回；agent **无变更**，forge 不经过 Redis IPC。
 - **worldview/qi**：守恒回归使用 `qi_physics::ledger::assert_conservation`，`era_decay` 保持 `0.0`，预算快照引用 `schema::common::SPIRIT_QI_TOTAL`；不得写 `DEFAULT_SPIRIT_QI_TOTAL` 或字面量代替测试总量。
 

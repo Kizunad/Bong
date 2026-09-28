@@ -25,9 +25,9 @@
 
 - **Inputs**：`DuguReverseVictimQiEvent`、每个 victim 的 `Position`/`CurrentDimension`/`Cultivation.qi_current`、`ZoneRegistry`、`WorldQiAccount`。
 - **Outputs**：每个 victim 的 raw qi 只归还其真实 zone，缺 zone 稳定进入 overflow；`ReverseTriggeredEvent` 的 taint residue 与 victim qi 仍是两条独立路径。
-- **共享类型/事件**：复用 `DuguReverseVictimQiEvent`、`QiFlowOutcome`、`QiTransfer`、`QiTransferReason::{DuguReverseVictimQi,ReleaseToZone}`、`qi_release_to_zone`/`transfer_external_qi_to_ledger`、`assert_conservation`；若修改 event，必须同步 server schema mirror 与测试，不另造第二个 Reverse event。
+- **共享类型/事件**：复用 `DuguReverseVictimQiEvent`、`QiFlowOutcome`、`QiTransfer`、`QiTransferReason::{DuguReverseVictimQi,ReleaseToZone}`、`qi_release_to_zone` 和 `assert_conservation`；`DuguReverseVictimQi` 在今天的 ledger 中是 audit-only，zone 余额由 `qi_release_to_zone` 更新，随后用 `WorldQiAccount::push_transfer_audit(QiTransfer { from, to, amount, reason: DuguReverseVictimQi })` 留痕，不能把该 reason 送进会拒绝它的 `ledger.transfer`/`transfer_external_qi_to_ledger`。若修改 event，必须同步 server schema mirror 与测试，不另造第二个 Reverse event。
 - **三端契约符号**：server `dugu_v2::skills::apply_reverse`、`events::DuguReverseVictimQiEvent`、`tick::reverse_victim_qi_zone_credit_tick`；agent **无变更**，事件不出 Redis；client **无变更**，VFX/audio 仍消费 `ReverseTriggeredEvent`，zone 归属是 server 内部。
-- **worldview/qi**：`Cultivation.qi_current` 是 victim 的外部真元权威；先按真实 API 扣除，再以 `QiTransfer { from, to, amount, reason }` 记账。ledger 账户之间调用 `ledger.transfer`，外部玩家来源调用 `transfer_external_qi_to_ledger`，释放到 zone 使用 `qi_release_to_zone`/`ReleaseToZone`。守恒断言引用 `SPIRIT_QI_TOTAL`。
+- **worldview/qi**：`Cultivation.qi_current` 是 victim 的外部真元权威；先按真实 API 读取并清零，再按每个 victim 的 zone 调 `qi_release_to_zone`，并以 `push_transfer_audit(QiTransfer { from, to, amount, reason: DuguReverseVictimQi })` 留痕。该 reason 是 audit-only，不能伪造 player ledger 余额或调用 `ledger.transfer`；只有另一路真正的 ledger 账户搬运才用 `ledger.transfer(QiTransfer { from, to, amount, reason })`。守恒断言引用 `SPIRIT_QI_TOTAL`。
 
 ## §3 游玩影响与复现
 
@@ -46,7 +46,7 @@ Eclipse/taint decay 骨架处理脏气残留和 qi_max 缩容；`plan-bughunt-co
 
 ## §6 修复计划骨架
 
-- **P0**：扩展内部事件携带每个受害者的稳定 entity/character identity、位置和 dimension，或在清零前立即按 victim 调用统一 release helper；禁止用中心 zone 代替来源 zone。缺身份/zone 时 fail closed 或进入稳定 overflow，不得丢弃。
+- **P0**：扩展内部事件携带每个受害者的稳定 entity/character identity、位置和 dimension，或在清零前立即按 victim 调用统一 release helper；禁止用中心 zone 代替来源 zone。缺身份/zone 时 fail closed 或进入稳定 overflow，并继续用 audit-only `push_transfer_audit` 留痕，不得丢弃或调用会拒绝该 reason 的 ledger transfer。
 - **P1**：多 zone、跨维、同 zone、多 victim qi=0、zone 满载 overflow、无 zone 六组测试；用 `qi_physics::ledger::assert_conservation` 对比前后 `SPIRIT_QI_TOTAL`，`era_decay=0.0`。
 
 ## §7 验证计划
