@@ -138,12 +138,6 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
-    /// 将背包中的香料实例投入已打开的丹炉香座。
-    AlchemyPlaceIncense {
-        v: u8,
-        furnace_pos: (i32, i32, i32),
-        item_instance_id: u64,
-    },
     /// plan-spawn-tutorial-v1 P0 — 玩家右键出生石棺，服务端授予龛石一次。
     CoffinOpen {
         v: u8,
@@ -758,6 +752,12 @@ pub enum ClientRequestV1 {
         action: AgentUiActionType,
         #[serde(default)]
         params: std::collections::HashMap<String, String>,
+    },
+    /// 将背包中的香料实例投入丹炉香座；追加以保留既有门禁矩阵编号。
+    AlchemyPlaceIncense {
+        v: u8,
+        furnace_pos: (i32, i32, i32),
+        item_instance_id: u64,
     },
 }
 
