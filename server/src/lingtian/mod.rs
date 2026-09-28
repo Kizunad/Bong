@@ -192,6 +192,7 @@ pub fn register(app: &mut App) {
         (
             systems::validate_and_dispatch_lingtian_requests
                 .in_set(LingtianPostTransferValidationSet),
+            systems::release_disconnected_lingtian_sessions,
             (
                 systems::handle_start_till,
                 systems::handle_start_renew,
