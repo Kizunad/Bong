@@ -1,8 +1,28 @@
-# BugHunt: 三条天道 narration runtime 违反 target 路由契约，断脉/变异/真元变色叙事对玩家静默丢失
+# BugHunt: 天道 narration runtime 违反 target 路由契约，玩家与区域叙事静默丢失
 
 ## Bug 摘要
 
 本 plan 合并同一系统性 bug 的三个独立触发点（`_group: g3-wire-contract`）。
+
+本批继续吸收同一个 server selector 契约下的三个触发点：#1590 的半步重渡 character id 带有额外的 `offline:<name>:` 层级、#1666 的医道 target 以 `yidao:` 事件前缀占据首段、#1688 的破境 zone scope 把事件描述串当成 zone 名。它们与下文的 prefix/raw-id 触发点共用一个修复 owner，但不把无真实 zone 名的 payload 缺口伪装成字符串替换即可解决。
+
+## 本批新增来源与证据
+
+- **#1590**：`agent/packages/tiandao/src/halfstep-rechallenge-narration.ts:167-169` 直接使用 `payload.char_id`；server `server/src/player/state.rs:411-415` 的 `player_character_id` 会生成 `offline:<username>:<character-id>`，而 `server/src/network/agent_bridge.rs:285-335` 只剥 `offline:` 后按完整字符串与 `username`/`char:<entity_bits>` 比较，因此已建档玩家的 target 仍为零命中。修复应使用真实 canonical player key，不要把 character id 整串冒充 username。
+- **#1666**：`agent/packages/tiandao/src/yidao-runtime.ts:43` 将 `yidao:<kind>|...` 放进 player target 首段；server `server/src/combat/yidao.rs:934-938,1395-1397` 的 `medic_id` 当前形如 `entity_bits:<bits>`，而 `normalize_player_target`/`collect_routed_targets` 的在线玩家 key 是 username 或 `char:<bits>`，两者仍不相等。修复必须先把 producer 身份映射到可验证的 player key（例如核实后将 entity bits 映射为 `char:<bits>`，或补 canonical player id），再把事件细节放在后续 pipe 段。
+- **#1688**：`agent/packages/tiandao/src/breakthrough-cinematic-narration.ts:79-87` 在非全局分支使用 `scope:"zone"`，但 `narrationTarget` 返回 `breakthrough:<actor_id>|...`；server `server/src/network/mod.rs:3354-3372` 将 target 逐字交给 zone selector。`BreakthroughCinematicEventV1` 当前只有 `actor_id/world_pos`（`agent/packages/schema/src/breakthrough-cinematic.ts:25-45`），没有权威 zone 名，修复需由 server bridge 或明确的 world-state 映射补齐真实 zone，再发送裸 zone 名。
+
+上述三条是本文件的来源 issue；#1528/#1587 的既有 prefix/raw-id 证据仍由本骨架下方原修复清单覆盖。`#1590` 不再标记为 documented-compatible，也不归入 `plan-agent-narration-pipeline-v1` 的已兼容清单。
+
+## 本批跨仓契约补充
+
+- **Inputs**：`bong:tribulation/halfstep_rechallenge` 的 `HalfStepRechallengeTriggerPayloadV1`、`bong:yidao_event` 的 `YidaoEventV1`、`bong:breakthrough_cinematic` 的 `BreakthroughCinematicEventV1`，以及 agent 当前 `WorldStateV1.zones`。
+- **Outputs**：`AGENT_NARRATE` 上的 `NarrationV1`；player scope 的 target 首段必须是 server 可识别的 `offline:<username>` 或 `char:<entity_bits>`，zone scope 必须是裸 zone 名。
+- **共享类型或事件**：复用 `NarrationV1`、`NarrationScope`、三个现有 TypeBox/Rust payload；若为 #1688 补 `zone_name`，必须同步 TypeBox generated JSON、Rust serde mirror、server producer 与 positive/negative route tests。
+- **server 符号**：`normalize_player_target`、`route_recipient_indices`、`narration_selector`、`collect_routed_targets` 是最终路由权威；`entity_wire_id`/`medic_id`（当前 `entity_bits:<bits>`）、`player_character_id`、`zone_name_for_position` 是修复前核对的身份/区域来源，不能把 `entity_bits:` 直接当成已兼容的 player target。
+- **agent 符号**：`renderPlayerNarration`、`renderYidaoNarration`、`narrationTarget`、`renderMutationNarration` 与现有 target helper；事件细节只能放在身份首段之后的 pipe 段。
+- **client**：无变更；这些是 server→agent→server narration 路由契约，客户端继续消费已有 narration/chat payload。
+- **worldview / qi_physics**：对应天道叙事的玩家/区域可见性；不改变真元流动，所有 qi 相关事件仍只传递现有字段，不新增 ledger 路径。
 
 **分支一：断脉叙事（meridian-severed）—— 严重度 high（severity_adjust: unchanged，未调整）**
 
@@ -111,6 +131,12 @@
 
 - [ ] `renderQiColorNarration`（L45）改为 `target: resolvePlayerNarrationTarget(player.uuid, { tick })`——`player.uuid` 已经是 `canonical_player_id` 产出的 `"offline:<username>"`，不需要再包一层前缀，去掉字面量 `"qi_color:"` 即可。
 - [ ] 更新 `qi-color-narration.test.ts:74`：把断言里的期望值从 `"qi_color:offline:Azure|tick:2"` 改成 `"offline:Azure|tick:2"`（**这一行必须随修复一起改，否则回归测试会主动拒绝正确修复**）。
+
+**本批新增分支**
+
+- [ ] #1590：从 `offline:<username>:<character-id>` 中只取 server selector 能识别的 canonical username/char key；不得把完整 character id 直接写成 target。
+- [ ] #1666：核实 `medic_id` 的 `entity_bits:<bits>` 是否对应在线玩家；若是，显式映射为 selector 接受的 `char:<bits>`，否则由 server producer 补 canonical player id。`kind/medic/tick` 等描述只能放在首段之后。
+- [ ] #1688：非全局破境事件先得到真实 zone 名（优先 server producer/bridge 的 `zone_name`，否则由 `world_pos` 对拍 `ZoneRegistry` 并补 schema），再以裸 zone 作为 `scope:"zone"` target；缺 zone 时 fail-closed，禁止继续用 `breakthrough:` 复合串。
 
 **跨仓库契约测试（新增，三处都要有）**
 
