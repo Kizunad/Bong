@@ -19,8 +19,17 @@ public final class AlchemyAttemptHistoryStore {
         String pill,
         String toxinColor,
         String sideEffectTag,
-        boolean flawedPath
+        boolean flawedPath,
+        Double quality,
+        Double toxinAmount,
+        Double qiGain,
+        Double damage,
+        Double meridianCrack
     ) {
+        public Entry(String bucket, String recipeId, String pill, String toxinColor, String sideEffectTag, boolean flawedPath) {
+            this(bucket, recipeId, pill, toxinColor, sideEffectTag, flawedPath, null, null, null, null, null);
+        }
+
         public Entry {
             if (bucket == null) bucket = "";
             if (recipeId == null) recipeId = "";

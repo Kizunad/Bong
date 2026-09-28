@@ -18,6 +18,38 @@ use valence::prelude::{
 };
 use valence::testing::create_mock_client;
 
+fn place_alchemy_test_player(app: &mut App, player: Entity, pos: [i32; 3]) {
+    app.world_mut().entity_mut(player).insert((
+        valence::prelude::Position::new(DVec3::new(
+            f64::from(pos[0]),
+            f64::from(pos[1]),
+            f64::from(pos[2]),
+        )),
+        crate::world::dimension::CurrentDimension::default(),
+    ));
+}
+
+fn fund_alchemy_test_player(app: &mut App, player: Entity, qi: f64) {
+    app.world_mut().entity_mut(player).insert((
+        Cultivation {
+            qi_current: qi,
+            qi_max: qi,
+            ..Default::default()
+        },
+        crate::cultivation::life_record::LifeRecord::new("alchemy-request-test"),
+    ));
+}
+
+#[test]
+fn early_take_burn_damage_grows_with_furnace_heat() {
+    let cool = early_take_burn_damage(0.2, 0.65, 0.07);
+    let hot = early_take_burn_damage(0.9, 0.65, 0.07);
+
+    assert_eq!(cool, 0.0, "炉温低于可灼伤区间时不应扣血");
+    assert!(hot > cool);
+    assert!(hot <= 8.0);
+}
+
 #[test]
 fn combat_pill_buff_status_payload_preserves_hud_fields() {
     let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 2)
@@ -300,6 +332,7 @@ fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
 
     let (client_bundle, _helper) = create_mock_client("Azure");
     let entity = app.world_mut().spawn(client_bundle).id();
+    place_alchemy_test_player(&mut app, entity, [2, 64, 3]);
     let mut meridians = crate::cultivation::components::MeridianSystem::default();
     meridians
         .get_mut(crate::cultivation::components::MeridianId::Lung)
@@ -318,12 +351,11 @@ fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
 
     let mut furnace = crate::alchemy::AlchemyFurnace::placed(BlockPos::new(2, 64, 3), 1);
     furnace.owner = Some("offline:Azure".into());
-    app.world_mut().spawn(furnace);
+    let furnace_entity = app.world_mut().spawn(furnace).id();
     for data in [
         br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
         br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[2,64,3],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
         br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","temp":1.0}}"#.as_slice(),
-        br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[2,64,3],"slot_idx":0}"#.as_slice(),
     ] {
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -334,6 +366,24 @@ fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
             });
     }
 
+    app.update();
+    {
+        let world = app.world_mut();
+        let mut furnace = world.get_mut::<AlchemyFurnace>(furnace_entity).unwrap();
+        let session = furnace.session.as_mut().unwrap();
+        for _ in 0..200 {
+            session.tick();
+        }
+    }
+    app.world_mut()
+        .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+        .send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[2,64,3],"slot_idx":0}"#
+                .to_vec()
+                .into_boxed_slice(),
+        });
     app.update();
 
     let wounds = app.world().get::<Wounds>(entity).unwrap();
@@ -1531,8 +1581,7 @@ mod external_ingress_tests {
     };
     use crate::network::qi_color_observed_emit::QiColorInspectRequest;
     use crate::network::{
-        gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest,
-        RedisBridgeResource,
+        redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
     };
     #[cfg(test)]
     use crate::npc::faction::FactionMembership;
@@ -2101,6 +2150,16 @@ mod external_ingress_tests {
                 return None;
             };
             Some(crate::schema::alchemy::AlchemySessionDataV1 {
+                incense: data
+                    .incense
+                    .map(|incense| crate::schema::alchemy::AlchemyIncenseDataV1 {
+                        kind: incense.kind,
+                        remaining_ticks: incense.remaining_ticks,
+                        duration_ticks: incense.duration_ticks,
+                        temp_band_scale: incense.temp_band_scale,
+                        qi_cost_scale: incense.qi_cost_scale,
+                        smoke_color: incense.smoke_color,
+                    }),
                 recipe_id: data.recipe_id,
                 active: data.active,
                 elapsed_ticks: data.elapsed_ticks,
@@ -2115,6 +2174,15 @@ mod external_ingress_tests {
                     .stages
                     .into_iter()
                     .map(|stage| crate::schema::alchemy::AlchemyStageHintV1 {
+                        ingredients: stage
+                            .ingredients
+                            .into_iter()
+                            .map(|item| crate::schema::alchemy::AlchemyIngredientHintV1 {
+                                material: item.material,
+                                required: item.required,
+                                inserted: item.inserted,
+                            })
+                            .collect(),
                         at_tick: stage.at_tick,
                         window: stage.window,
                         summary: stage.summary,
@@ -3185,6 +3253,76 @@ mod external_ingress_tests {
             }
         }
 
+        #[test]
+        fn inventory_split_request_updates_both_stacks_and_sends_snapshot() {
+            for count in [3, 10, 11] {
+                let mut app = App::new();
+                register_request_app(&mut app);
+                let mut template = ItemTemplate::minimal_for_test("split_herb");
+                template.max_stack_count = 64;
+                app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+                    template.id.clone(),
+                    template,
+                )])));
+                app.insert_resource(InventoryInstanceIdAllocator::new(100));
+                let item = inventory_test_item(42, "split_herb", 10);
+                let (client_bundle, mut helper) = create_mock_client("SplitTest");
+                let client = app
+                    .world_mut()
+                    .spawn((
+                        client_bundle,
+                        inventory_with_item(item),
+                        Cultivation::default(),
+                        PlayerState::default(),
+                    ))
+                    .id();
+                app.world_mut().resource_mut::<Events<CustomPayloadEvent>>().send(CustomPayloadEvent {
+                    client,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&serde_json::json!({
+                        "type": "inventory_move_intent", "v": 1, "instance_id": 42,
+                        "from": { "kind": "container", "container_id": "main_pack", "row": 0, "col": 0 },
+                        "to": { "kind": "container", "container_id": "main_pack", "row": 1, "col": 2 },
+                        "count": count,
+                    })).unwrap().into_boxed_slice(),
+                });
+                app.update();
+                let inventory = app.world().get::<PlayerInventory>(client).unwrap();
+                let entries = &inventory.containers[0].items;
+                if count == 3 {
+                    assert_eq!(entries.len(), 2);
+                    let source = entries
+                        .iter()
+                        .find(|entry| entry.instance.instance_id == 42)
+                        .unwrap();
+                    let split = entries
+                        .iter()
+                        .find(|entry| entry.instance.instance_id != 42)
+                        .unwrap();
+                    assert_eq!(
+                        (source.row, source.col, source.instance.stack_count),
+                        (0, 0, 7)
+                    );
+                    assert_eq!(
+                        (split.row, split.col, split.instance.stack_count),
+                        (1, 2, 3)
+                    );
+                } else {
+                    assert_eq!(entries.len(), 1, "选全部应整堆移动，超量应保持原样");
+                    let expected_position = if count == 10 { (1, 2) } else { (0, 0) };
+                    assert_eq!((entries[0].row, entries[0].col), expected_position);
+                    assert_eq!(entries[0].instance.stack_count, 10);
+                }
+                flush_all_client_packets(&mut app);
+                if count != 10 {
+                    assert!(
+                        has_inventory_snapshot_payload(&mut helper),
+                        "拆堆成功和拒绝都必须返回权威快照"
+                    );
+                }
+            }
+        }
+
         fn flush_all_client_packets(app: &mut App) {
             let world = app.world_mut();
             let mut query = world.query::<&mut Client>();
@@ -3305,6 +3443,10 @@ mod external_ingress_tests {
         }
 
         fn send_alchemy_snapshot_request(app: &mut App, client: Entity, body: serde_json::Value) {
+            app.world_mut().entity_mut(client).insert((
+                Position::new(DVec3::new(2.0, 64.0, 3.0)),
+                CurrentDimension::default(),
+            ));
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
@@ -3356,6 +3498,10 @@ mod external_ingress_tests {
             vec![
                 crate::schema::alchemy::AlchemyStageHintV1 {
                     at_tick: 0,
+                    ingredients: vec![crate::schema::alchemy::AlchemyIngredientHintV1 {
+                        material: ALCHEMY_SNAPSHOT_MATERIAL.into(), required: 2,
+                        inserted: if stage_states[0].0 { 2 } else { 0 },
+                    }],
                     window: 0,
                     summary: format!("{ALCHEMY_SNAPSHOT_MATERIAL}×2"),
                     completed: stage_states[0].0,
@@ -3363,6 +3509,7 @@ mod external_ingress_tests {
                 },
                 crate::schema::alchemy::AlchemyStageHintV1 {
                     at_tick: 12,
+                    ingredients: vec![],
                     window: 3,
                     summary: String::new(),
                     completed: stage_states[1].0,
@@ -3520,9 +3667,9 @@ mod external_ingress_tests {
             register_request_app(&mut app);
             app.insert_resource(alchemy_snapshot_recipe_registry());
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
+                crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID.into(),
                 ItemTemplate::minimal_for_test(
-                    crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
+                    crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID,
                 ),
             )])));
             app.insert_resource(InventoryInstanceIdAllocator::default());
@@ -3571,7 +3718,7 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn alchemy_take_back_missing_allocator_still_pushes_finished_session() {
+        fn alchemy_take_back_missing_allocator_preserves_collectable_session() {
             let mut app = App::new();
             register_request_resources_without_lingtian(&mut app);
             register_request_systems(&mut app);
@@ -3582,9 +3729,9 @@ mod external_ingress_tests {
                 .remove_resource::<InventoryInstanceIdAllocator>();
             app.insert_resource(alchemy_snapshot_recipe_registry());
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
-                crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID.into(),
+                crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID.into(),
                 ItemTemplate::minimal_for_test(
-                    crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID,
+                    crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID,
                 ),
             )])));
             // 故意不插入 InventoryInstanceIdAllocator：覆盖 non-explode 缺编号器分支。
@@ -3665,17 +3812,20 @@ mod external_ingress_tests {
             assert_eq!(
                 furnace_payloads.len(),
                 1,
-                "allocator missing must still push empty-furnace authority once"
+                "allocator missing must still push furnace authority once"
             );
             assert!(
-                !furnace_payloads[0].has_session,
-                "empty furnace payload must report has_session=false"
+                furnace_payloads[0].has_session,
+                "编号器缺失时必须保留炉内结果"
             );
             assert!(
                 app.world()
                     .get::<AlchemyFurnace>(furnace)
-                    .is_some_and(|furnace| furnace.session.is_none()),
-                "session must remain ended even when reward grant is skipped"
+                    .is_some_and(|furnace| furnace
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.finished)),
+                "入袋未成功，炉次必须停止并保留以便重试"
             );
             assert!(
                 app.world()
@@ -3694,14 +3844,113 @@ mod external_ingress_tests {
                 reader.read(outcome_events).next().is_none(),
                 "failed grant path must not emit AlchemyOutcomeEvent"
             );
+
+            app.insert_resource(InventoryInstanceIdAllocator::default());
+            // 恢复入袋条件后可以重试；随后重复请求也只能得到一次产物。
+            for _ in 0..2 {
+                send_alchemy_snapshot_request(
+                    &mut app,
+                    client,
+                    serde_json::json!({
+                        "type": "alchemy_take_back",
+                        "v": 1,
+                        "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                        "slot_idx": 0,
+                    }),
+                );
+                app.update();
+            }
+            assert!(app
+                .world()
+                .get::<AlchemyFurnace>(furnace)
+                .unwrap()
+                .session
+                .is_none());
+            let inventory = app.world().get::<PlayerInventory>(client).unwrap();
+            let count: u32 = inventory
+                .containers
+                .iter()
+                .flat_map(|container| &container.items)
+                .filter(|item| {
+                    item.instance.template_id
+                        == crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID
+                })
+                .map(|item| item.instance.stack_count)
+                .sum();
+            assert_eq!(count, 1, "重试收取必须恰好入袋一份产物");
         }
 
         #[test]
-        fn alchemy_take_back_grant_failure_still_pushes_finished_session() {
+        fn alchemy_early_take_back_grants_processing_dregs_and_burns_player() {
             let mut app = App::new();
             register_request_app(&mut app);
             app.insert_resource(alchemy_snapshot_recipe_registry());
-            // 编号器就绪，但 registry 故意缺少 failed-pill 模板，强制 grant 失败。
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            app.insert_resource(InventoryInstanceIdAllocator::default());
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let client = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(client).insert((
+                Wounds::default(),
+                Cultivation::default(),
+                PlayerState::default(),
+                empty_inventory(),
+            ));
+
+            let session = alchemy_snapshot_active_session("offline:Azure");
+            let mut furnace = AlchemyFurnace::placed(
+                valence::prelude::BlockPos::new(
+                    ALCHEMY_SNAPSHOT_FURNACE_POS.0,
+                    ALCHEMY_SNAPSHOT_FURNACE_POS.1,
+                    ALCHEMY_SNAPSHOT_FURNACE_POS.2,
+                ),
+                1,
+            );
+            furnace.owner = Some("offline:Azure".into());
+            furnace.session = Some(session);
+            app.world_mut().spawn(furnace);
+
+            send_alchemy_snapshot_request(
+                &mut app,
+                client,
+                serde_json::json!({
+                    "type": "alchemy_take_back",
+                    "v": 1,
+                    "furnace_pos": ALCHEMY_SNAPSHOT_FURNACE_POS,
+                    "slot_idx": 0,
+                }),
+            );
+            app.update();
+
+            let wounds = app.world().get::<Wounds>(client).unwrap();
+            assert!(wounds.health_current < wounds.health_max);
+            assert!(wounds
+                .entries
+                .iter()
+                .any(|wound| wound.kind == WoundKind::Burn));
+            let inventory = app.world().get::<PlayerInventory>(client).unwrap();
+            assert!(inventory.containers.iter().any(|container| {
+                container.items.iter().any(|placed| {
+                    placed.instance.template_id
+                        == crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID
+                        && matches!(
+                            placed.instance.alchemy,
+                            Some(AlchemyItemData::PillResidue {
+                                residue_kind:
+                                    crate::alchemy::residue::PillResidueKind::ProcessingDregs,
+                                ..
+                            })
+                        )
+                })
+            }));
+        }
+
+        #[test]
+        fn alchemy_take_back_grant_failure_preserves_collectable_session() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(alchemy_snapshot_recipe_registry());
+            // 编号器就绪，但 registry 故意缺少提前收取的炮制药渣模板，强制 grant 失败。
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(InventoryInstanceIdAllocator::default());
             let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -3767,8 +4016,7 @@ mod external_ingress_tests {
             assert!(
                 messages.iter().any(|message| {
                     message.contains("炼丹产物入袋失败")
-                        && message
-                            .contains(crate::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
+                        && message.contains(crate::alchemy::residue::PROCESSING_DREGS_TEMPLATE_ID)
                 }),
                 "grant failure must surface alchemy error chat, messages={messages:?}"
             );
@@ -3783,17 +4031,20 @@ mod external_ingress_tests {
             assert_eq!(
                 furnace_payloads.len(),
                 1,
-                "grant failure must still push empty-furnace authority once"
+                "grant failure must still push furnace authority once"
             );
             assert!(
-                !furnace_payloads[0].has_session,
-                "empty furnace payload must report has_session=false"
+                furnace_payloads[0].has_session,
+                "入袋失败不能把炉内结果丢弃"
             );
             assert!(
                 app.world()
                     .get::<AlchemyFurnace>(furnace)
-                    .is_some_and(|furnace| furnace.session.is_none()),
-                "grant failure must not resurrect the ended furnace session"
+                    .is_some_and(|furnace| furnace
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.finished)),
+                "入袋失败应保留停止的炉次供再次收取"
             );
             assert!(
                 app.world()
@@ -4979,6 +5230,13 @@ mod external_ingress_tests {
         /// 会直接破坏这里的排序边（见 `production_ingress_wiring_orders_*`）。
         fn register_request_systems(app: &mut App) {
             app.init_resource::<ClientRequestBudget>();
+            app.init_resource::<crate::qi_physics::WorldQiAccount>();
+            app.add_event::<crate::alchemy::manual_qi::ManualQiInject>();
+            app.add_systems(
+                Update,
+                crate::alchemy::manual_qi::handle_manual_qi_injections
+                    .after(handle_client_request_payloads),
+            );
             app.init_resource::<LingtianPlotIndex>();
             app.add_systems(
                 Update,
@@ -5005,6 +5263,7 @@ mod external_ingress_tests {
 
         fn register_request_app(app: &mut App) {
             register_request_resources(app);
+            app.add_event::<crate::alchemy::world_effects::AlchemyWorldEffect>();
             register_request_systems(app);
         }
 
@@ -5202,6 +5461,7 @@ mod external_ingress_tests {
                             state: EquipStateV1::Worn,
                         },
                         rotated: false,
+                        count: None,
                     })
                     .expect("InventoryMoveIntent must serialize")
                     .into_boxed_slice(),
@@ -6617,6 +6877,8 @@ mod external_ingress_tests {
 
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            place_alchemy_test_player(&mut app, entity, [8, 66, 8]);
+            fund_alchemy_test_player(&mut app, entity, 5.0);
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
             furnace.owner = Some("offline:Azure".into());
             furnace.session = Some(AlchemySession::new(
@@ -6655,16 +6917,17 @@ mod external_ingress_tests {
                 PlayerState::default(),
                 inventory_with_stack("ci_she_hao", 3),
             ));
+            place_alchemy_test_player(&mut app, entity, [3, 64, 4]);
+            fund_alchemy_test_player(&mut app, entity, 15.0);
 
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(3, 64, 4), 1);
             furnace.owner = Some("offline:Azure".into());
-            app.world_mut().spawn(furnace);
+            let furnace_entity = app.world_mut().spawn(furnace).id();
             for data in [
             br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[3,64,4],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
             br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[3,64,4],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
             br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[3,64,4],"intervention":{"kind":"inject_qi","qi":15.0}}"#.as_slice(),
             br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[3,64,4],"intervention":{"kind":"adjust_temp","temp":0.60}}"#.as_slice(),
-            br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[3,64,4],"slot_idx":0}"#.as_slice(),
         ] {
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -6675,6 +6938,25 @@ mod external_ingress_tests {
                 });
         }
 
+            app.update();
+            {
+                let world = app.world_mut();
+                let mut furnace = world.get_mut::<AlchemyFurnace>(furnace_entity).unwrap();
+                let session = furnace.session.as_mut().unwrap();
+                for _ in 0..200 {
+                    session.tick();
+                }
+            }
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[3,64,4],"slot_idx":0}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
             app.update();
 
             let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
@@ -6709,6 +6991,127 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn alchemy_partial_feed_only_consumes_the_outstanding_recipe_quantity() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let player = app.world_mut().spawn(client_bundle).id();
+            place_alchemy_test_player(&mut app, player, [6, 64, 7]);
+            app.world_mut().entity_mut(player).insert((
+                Cultivation::default(),
+                PlayerState::default(),
+                inventory_with_stack("spirit_grass", 8),
+            ));
+            let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(6, 64, 7), 1);
+            furnace.owner = Some("offline:Azure".into());
+            furnace.session = Some(AlchemySession::new(
+                "ling_xi_wan_v1".into(),
+                "offline:Azure".into(),
+            ));
+            let furnace_entity = app.world_mut().spawn(furnace).id();
+            for (count, consumed) in [(1, 1), (0, 1), (3, 1), (2, 3), (1, 3)] {
+                let request = serde_json::json!({
+                    "type": "alchemy_feed_slot", "v": 1,
+                    "furnace_pos": [6, 64, 7], "slot_idx": 0,
+                    "material": "spirit_grass", "count": count,
+                });
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: player,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&request).unwrap().into_boxed_slice(),
+                    });
+                app.update();
+                let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+                assert_eq!(
+                    inventory_item_by_instance_borrow(inventory, 9001)
+                        .unwrap()
+                        .stack_count,
+                    8 - consumed,
+                    "零份、超出尚缺量和已投满的请求都不能扣库存"
+                );
+                let session = app
+                    .world()
+                    .get::<AlchemyFurnace>(furnace_entity)
+                    .unwrap()
+                    .session
+                    .as_ref()
+                    .unwrap();
+                let registry = app.world().resource::<crate::alchemy::RecipeRegistry>();
+                assert_eq!(
+                    session.staged.completed_stages.contains(&0),
+                    consumed == 3,
+                    "首料尚未投齐时不能标成阶段完成"
+                );
+                assert_eq!(
+                    session.stage_material_count(
+                        registry.get("ling_xi_wan_v1").unwrap(),
+                        0,
+                        "spirit_grass"
+                    ),
+                    consumed
+                );
+            }
+        }
+
+        #[test]
+        fn alchemy_place_incense_consumes_one_instance_and_records_authoritative_effect() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let entity = app.world_mut().spawn(client_bundle).id();
+            place_alchemy_test_player(&mut app, entity, [6, 64, 7]);
+            app.world_mut().entity_mut(entity).insert((
+                crate::cultivation::components::Cultivation::default(),
+                PlayerState::default(),
+                inventory_with_stack("incense_plain", 2),
+            ));
+
+            let furnace_pos = valence::prelude::BlockPos::new(6, 64, 7);
+            let mut furnace = AlchemyFurnace::placed(furnace_pos, 1);
+            furnace.owner = Some("offline:Azure".into());
+            furnace.session = Some(AlchemySession::new(
+                "kai_mai_pill_v0".into(),
+                "offline:Azure".into(),
+            ));
+            let furnace_entity = app.world_mut().spawn(furnace).id();
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: br#"{"type":"alchemy_place_incense","v":1,"furnace_pos":[6,64,7],"item_instance_id":9001}"#
+                        .to_vec()
+                        .into_boxed_slice(),
+                });
+
+            app.update();
+
+            let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+            let incense = inventory_item_by_instance_borrow(inventory, 9001)
+                .expect("the stack should remain after consuming one instance");
+            assert_eq!(incense.stack_count, 1);
+            let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+            let active = furnace
+                .session
+                .as_ref()
+                .and_then(|session| session.incense_active())
+                .expect("the server must attach the incense effect to the active session");
+            assert_eq!(active.kind, "incense_plain");
+            assert_eq!(active.remaining_ticks, 1200);
+            assert_eq!(active.effect.temp_band_scale, 1.0);
+            assert_eq!(active.effect.qi_cost_scale, 1.0);
+            assert_eq!(active.effect.qi_gain_scale, 1.0);
+        }
+
+        #[test]
         fn alchemy_feed_slot_rejects_wrong_mineral_instance_on_live_request_path() {
             let mut app = App::new();
             register_request_app(&mut app);
@@ -6716,6 +7119,7 @@ mod external_ingress_tests {
 
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            place_alchemy_test_player(&mut app, entity, [5, 64, 6]);
             let mut wrong_mineral = inventory_test_item(9002, "dan_sha_aux", 1);
             wrong_mineral.display_name = "假丹砂辅料".to_string();
             wrong_mineral.mineral_id = Some("zhu_sha".to_string());
@@ -6851,13 +7255,14 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn brew_emits_vapor() {
+        fn alchemy_ignite_emits_world_state() {
             let mut app = App::new();
             register_request_app(&mut app);
             app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
 
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            place_alchemy_test_player(&mut app, entity, [2, 64, 3]);
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
             furnace.owner = Some("offline:Azure".into());
             let furnace_entity = app.world_mut().spawn(furnace).id();
@@ -6881,17 +7286,23 @@ mod external_ingress_tests {
                 .is_some());
             let events = app
                 .world()
-                .resource::<valence::prelude::Events<VfxEventRequest>>();
+                .resource::<valence::prelude::Events<AlchemyWorldEffect>>();
             let emitted = events
                 .iter_current_update_events()
                 .next()
-                .expect("alchemy ignite should emit vapor vfx");
-            match &emitted.payload {
-                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
-                    assert_eq!(event_id, gameplay_vfx::ALCHEMY_BREW_VAPOR);
-                }
-                other => panic!("expected SpawnParticle, got {other:?}"),
-            }
+                .expect("起炉成功必须发布世界状态，让未打开 UI 的旁观者也能看到炉火和烟气");
+            assert_eq!(emitted.furnace_pos, (2, 64, 3));
+            assert!(matches!(emitted.action, AlchemyWorldAction::Ignite));
+            assert_eq!(
+                emitted.heat,
+                app.world()
+                    .get::<AlchemyFurnace>(furnace_entity)
+                    .unwrap()
+                    .session
+                    .as_ref()
+                    .unwrap()
+                    .temp_current
+            );
         }
 
         // ── plan-skill-av-relink-v1 P3 —— alchemy_stir 内联 emit pin ─────────────────
@@ -6927,6 +7338,7 @@ mod external_ingress_tests {
             client: valence::prelude::Entity,
             intervention_json: &str,
         ) {
+            place_alchemy_test_player(app, client, [8, 66, 8]);
             let data = format!(
                 r#"{{"type":"alchemy_intervention","v":1,"furnace_pos":[8,66,8],"intervention":{intervention_json}}}"#
             );
@@ -6982,6 +7394,7 @@ mod external_ingress_tests {
             register_request_app(&mut app);
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            fund_alchemy_test_player(&mut app, entity, 2.0);
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
 
             send_alchemy_intervention_payload(
@@ -6996,6 +7409,56 @@ mod external_ingress_tests {
                 drain_alchemy_stir_anims(&mut app).len(),
                 2,
                 "每次干预生效各配一次 alchemy_stir（1:1）"
+            );
+            use crate::alchemy::world_effects::{AlchemyWorldAction, AlchemyWorldEffect};
+            let effects: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<AlchemyWorldEffect>>()
+                .drain()
+                .collect();
+            assert_eq!(effects.len(), 2, "调温和真实注元必须各产生一次世界反馈");
+            assert!(effects
+                .iter()
+                .any(|effect| matches!(effect.action, AlchemyWorldAction::FireRaise)));
+            assert!(effects
+                .iter()
+                .any(|effect| matches!(effect.action, AlchemyWorldAction::InjectQi { .. })));
+        }
+
+        #[test]
+        fn alchemy_noop_and_rejected_requests_do_not_emit_world_success() {
+            use crate::alchemy::world_effects::AlchemyWorldEffect;
+            let mut app = App::new();
+            register_request_app(&mut app);
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let player = app.world_mut().spawn(client_bundle).id();
+            let furnace = spawn_azure_furnace_with_session(&mut app, "offline:Azure");
+            for request in [
+                r#"{"kind":"adjust_temp","temp":0.0}"#,
+                r#"{"kind":"auto_profile","profile_id":"gentle"}"#,
+            ] {
+                send_alchemy_intervention_payload(&mut app, player, request);
+                app.update();
+                assert!(app
+                    .world()
+                    .resource::<Events<AlchemyWorldEffect>>()
+                    .is_empty());
+            }
+            app.world_mut()
+                .get_mut::<AlchemyFurnace>(furnace)
+                .unwrap()
+                .owner = Some("offline:Other".into());
+            send_alchemy_intervention_payload(
+                &mut app,
+                player,
+                r#"{"kind":"adjust_temp","temp":0.8}"#,
+            );
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<Events<AlchemyWorldEffect>>()
+                    .is_empty(),
+                "越权不能触发成功声音或火焰"
             );
         }
 
@@ -7082,6 +7545,7 @@ mod external_ingress_tests {
             app.insert_resource(zones);
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            fund_alchemy_test_player(&mut app, entity, 5.0);
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
 
             send_alchemy_intervention_payload(&mut app, entity, r#"{"kind":"inject_qi","qi":5.0}"#);
@@ -7238,13 +7702,15 @@ mod external_ingress_tests {
                 furnace_pos: [i32; 3],
                 furnace_tier: u8,
             ) -> OutcomeBucket {
+                place_alchemy_test_player(app, entity, furnace_pos);
+                fund_alchemy_test_player(app, entity, 25.0);
                 // 注册炉体
                 let mut furnace = AlchemyFurnace::placed(
                     valence::prelude::BlockPos::new(furnace_pos[0], furnace_pos[1], furnace_pos[2]),
                     furnace_tier,
                 );
                 furnace.owner = Some("offline:Alchemist".into());
-                app.world_mut().spawn(furnace);
+                let furnace_entity = app.world_mut().spawn(furnace).id();
 
                 let pos_json =
                     format!("[{},{},{}]", furnace_pos[0], furnace_pos[1], furnace_pos[2]);
@@ -7268,9 +7734,6 @@ mod external_ingress_tests {
                     format!(
                         r#"{{"type":"alchemy_intervention","v":1,"furnace_pos":{pos_json},"intervention":{{"kind":"inject_qi","qi":25.0}}}}"#
                     ),
-                    format!(
-                        r#"{{"type":"alchemy_take_back","v":1,"furnace_pos":{pos_json},"slot_idx":0}}"#
-                    ),
                 ];
                 for req in &requests {
                     app.world_mut()
@@ -7281,6 +7744,32 @@ mod external_ingress_tests {
                             data: req.as_bytes().to_vec().into_boxed_slice(),
                         });
                 }
+                app.update();
+
+                let target_ticks = app
+                    .world()
+                    .resource::<RecipeRegistry>()
+                    .get("tui_gu_dan_v1")
+                    .unwrap()
+                    .fire_profile
+                    .target_duration_ticks;
+                {
+                    let mut furnace = app
+                        .world_mut()
+                        .get_mut::<AlchemyFurnace>(furnace_entity)
+                        .unwrap();
+                    let session = furnace.session.as_mut().expect("起炉与投料应成功");
+                    for _ in 0..target_ticks {
+                        session.tick();
+                    }
+                }
+                app.world_mut().send_event(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: format!(
+                        r#"{{"type":"alchemy_take_back","v":1,"furnace_pos":{pos_json},"slot_idx":0}}"#
+                    ).into_bytes().into_boxed_slice(),
+                });
                 app.update();
 
                 // 读取 AlchemyOutcomeEvent 中的 bucket

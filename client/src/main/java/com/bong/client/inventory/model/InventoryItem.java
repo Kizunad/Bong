@@ -444,6 +444,37 @@ public final class InventoryItem {
         return stackCount;
     }
 
+    /**
+     * 返回保留同一库存实例与全部视觉/玩法元数据的堆叠数量副本。
+     *
+     * <p>仅用于客户端的分堆拖拽投影；真正的库存数量仍由服务端快照确认。</p>
+     */
+    public InventoryItem withStackCount(int count) {
+        return new InventoryItem(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            Math.max(1, count),
+            spiritQuality,
+            durability,
+            charges,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier,
+            alchemyLines,
+            mineralId
+        );
+    }
+
     public double spiritQuality() {
         return spiritQuality;
     }

@@ -42,6 +42,14 @@ import com.bong.client.forge.ForgeViewModel;
 import com.bong.client.forge.ForgeWindowContent;
 import com.bong.client.forge.ForgeClientIntentSink;
 import com.bong.client.forge.ForgeScreenBootstrap;
+import com.bong.client.alchemy.AlchemyWindows;
+import com.bong.client.alchemy.AlchemyWindowContent;
+import com.bong.client.alchemy.AlchemyNotesContent;
+import com.bong.client.alchemy.AlchemyWorkspaceLayout;
+import com.bong.client.alchemy.AlchemyMaterialColors;
+import com.bong.client.alchemy.AlchemyUiStateSource;
+import com.bong.client.alchemy.AlchemyClientIntentSink;
+import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
@@ -75,6 +83,8 @@ public final class UiWindowRuntime {
     private static final ForgeWindows FORGE = new ForgeWindows(MANAGER,
         StoreUiStateSource.pullOnOpen(ForgeViewModel::snapshot), new ForgeClientIntentSink(),
         ForgeScreenBootstrap::available, System::currentTimeMillis);
+    private static final AlchemyWindows ALCHEMY = new AlchemyWindows(MANAGER, AlchemyUiStateSource.production(),
+        AlchemyClientIntentSink.production(), task -> MinecraftClient.getInstance().execute(task), AlchemyScreenBootstrap::available);
     private static boolean initialized;
     private static Object connection;
     private static Object world;
@@ -107,6 +117,7 @@ public final class UiWindowRuntime {
             @Override public Identifier getFabricId() { return new Identifier("bong", "workspace-backgrounds"); }
             @Override public void reload(ResourceManager resources) {
                 backgrounds.reload();
+                AlchemyMaterialColors.invalidate();
                 VIEWS.values().forEach(view -> { if (view.modelPreview != null) view.modelPreview.invalidate(); });
                 VIEWS.values().forEach(view -> { if (view.bodyModel != null) view.bodyModel.invalidate(); });
             }
@@ -120,12 +131,15 @@ public final class UiWindowRuntime {
             if (loadout != null) loadout.refresh();
             SKILL_CONFIGS.refresh();
             FORGE.refresh();
+            ALCHEMY.refresh();
             FORGE.tickInjection(client.currentScreen instanceof InspectScreen && client.isWindowFocused()
                 && focusedKey != null && focusedKey.windowType().equals(ForgeWindows.DEFINITION.windowType()));
             if (practice != null) practice.refresh();
             for (var view : List.copyOf(VIEWS.values())) {
                 if (view.craft != null) view.craft.tick();
                 if (view.forge != null) view.forge.tick();
+                if (view.alchemy != null) view.alchemy.tick();
+                if (view.alchemyNotes != null) view.alchemyNotes.tick();
                 if (view.practiceDetail != null) view.practiceDetail.refresh();
                 if (view.practiceBinding != null) view.practiceBinding.refresh();
                 if (view.practiceCompare != null) view.practiceCompare.refresh();
@@ -230,6 +244,7 @@ public final class UiWindowRuntime {
             cancelInput();
             MANAGER.reset();
             CONTAINERS.reset();
+            ALCHEMY.resetIncense();
             loadout = null;
             practice = null;
             if (hud != null) hud.resetSession();
@@ -270,10 +285,18 @@ public final class UiWindowRuntime {
         var preference = preferences.window(key.windowType());
         int offset = (int) MANAGER.snapshot().stream()
             .filter(state -> state.definition().equals(InventoryContainerWindows.DEFINITION)).count() * 20;
-        int width = Math.max(180, Math.min(360, def.cols() * 28 + 28));
-        int height = Math.max(140, Math.min(340, def.rows() * 28 + 88));
+        int width = Math.max(180, Math.min(client.getWindow().getScaledWidth() - 24, def.cols() * 28 + 28));
+        int height = Math.max(140, Math.min(client.getWindow().getScaledHeight() - 60, def.rows() * 28 + 88));
+        // 同类窗口共用尺寸偏好，旧口袋的小尺寸不能把服务器扩容后的测试背包挤成窄缝。
+        if (preference != null && def.cols() >= 10 && def.rows() >= 10) {
+            width = Math.max(width, preference.bounds().width());
+            height = Math.max(height, preference.bounds().height());
+        }
         var bounds = preference == null ? new UiWindowManager.Rect(
-            client.getWindow().getScaledWidth() - width - 12 - offset, 30 + offset, width, height) : preference.bounds();
+            client.getWindow().getScaledWidth() - width - 12 - offset, 30 + offset, width, height)
+            : new UiWindowManager.Rect(preference.bounds().x(), preference.bounds().y(),
+                def.cols() >= 10 ? width : preference.bounds().width(),
+                def.rows() >= 10 ? height : preference.bounds().height());
         var state = CONTAINERS.open(id, bounds);
         if (!existing && preference != null) MANAGER.pin(state.key(), preference.pinned());
         focusedKey = state.key();
@@ -340,6 +363,48 @@ public final class UiWindowRuntime {
         if (!existing && preference != null) MANAGER.pin(key, preference.pinned());
         focusedKey = state.key();
         view(state);
+    }
+
+    public static void openAlchemy(net.minecraft.util.math.BlockPos position) {
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        cancelInput();
+        var preference = preferences.window(AlchemyWindows.DEFINITION.windowType());
+        var screen = MinecraftClient.getInstance().getWindow();
+        var state = ALCHEMY.open(position, preference == null
+            ? AlchemyWorkspaceLayout.furnace(screen.getScaledWidth(), screen.getScaledHeight(), false) : preference.bounds());
+        ALCHEMY.awaitOpenResponse();
+        focusedKey = state.key();
+        view(state);
+    }
+
+    public static void openAlchemyNotes(InventoryItem item) {
+        openAlchemyNotes(item, false);
+    }
+
+    public static boolean acceptAlchemyMessage(String message) {
+        return ALCHEMY.acceptMessage(message);
+    }
+
+    private static void openAlchemyNotes(InventoryItem item, boolean history) {
+        synchronizeContext(MinecraftClient.getInstance());
+        loadPreferences();
+        cancelInput();
+        var definition = AlchemyNotesContent.DEFINITION;
+        var preference = preferences.window(definition.windowType());
+        var screen = MinecraftClient.getInstance().getWindow();
+        if (preference == null && AlchemyWorkspaceLayout.canReadBesideFurnace(screen.getScaledWidth())) {
+            MANAGER.snapshot().stream().filter(window -> window.definition().equals(AlchemyWindows.DEFINITION))
+                .forEach(window -> MANAGER.settleAt(window.key(),
+                    AlchemyWorkspaceLayout.furnace(screen.getScaledWidth(), screen.getScaledHeight(), true)));
+        }
+        var state = MANAGER.openOrFocus(definition,
+            MANAGER.key(definition.windowType(), item == null ? history ? "journal" : "book" : Long.toString(item.instanceId())),
+            preference == null ? AlchemyWorkspaceLayout.notes(screen.getScaledWidth(), screen.getScaledHeight()) : preference.bounds());
+        focusedKey = state.key();
+        var notes = view(state).alchemyNotes;
+        notes.read(item);
+        if (history) notes.showHistory();
     }
 
     public static void openForge(net.minecraft.util.math.BlockPos position) {
@@ -457,13 +522,17 @@ public final class UiWindowRuntime {
         }
     }
 
-    public static void renderWorkspace(DrawContext context, int mouseX, int mouseY, float delta) {
+    public static void renderWorkspace(DrawContext context, int mouseX, int mouseY, float delta,
+                                       boolean draggingMaterial) {
         loadPreferences();
         enforceModelPreviewAccess();
         captureHudCommands(com.bong.client.BongHud.workspaceCommands());
         var window = MinecraftClient.getInstance().getWindow();
         controls.layout(window.getScaledWidth(), window.getScaledHeight(),
             UiWindowRuntime::windowTitle);
+        VIEWS.values().forEach(view -> {
+            if (view.alchemy != null) view.alchemy.draggingMaterial(draggingMaterial);
+        });
         render(context, mouseX, mouseY, delta, null);
         context.getMatrices().push();
         try {
@@ -521,6 +590,7 @@ public final class UiWindowRuntime {
             if (view.practice != null) view.practice.layout(view.adapter.content().width(), view.adapter.content().height());
             if (view.craft != null) view.craft.layout(view.adapter.content().width(), view.adapter.content().height());
             if (view.forge != null) view.forge.layout(view.adapter.content().width(), view.adapter.content().height());
+            if (view.alchemyNotes != null) view.alchemyNotes.layout(view.adapter.content().width(), view.adapter.content().height());
             boolean hovered = state == top;
             context.getMatrices().push();
             try {
@@ -543,6 +613,10 @@ public final class UiWindowRuntime {
     }
 
     private static String windowTitle(UiWindowManager.WindowKey key) {
+        if (key.windowType().equals(AlchemyWindows.DEFINITION.windowType())) return "炼丹";
+        if (key.windowType().equals(AlchemyNotesContent.DEFINITION.windowType())) {
+            return key.identity().equals("journal") ? "炉记" : "丹方";
+        }
         if (key.windowType().equals(ForgeWindows.DEFINITION.windowType())) return "锻造";
         if (key.windowType().equals(CraftWindows.DEFINITION.windowType())) return CRAFT.context().title();
         var widget = HudWidgetWindows.widget(key);
@@ -624,6 +698,14 @@ public final class UiWindowRuntime {
                     ForgeScreenBootstrap::openCarrier);
                 adapter.closeAction(() -> FORGE.close(state));
                 adapter.title("锻造");
+            } else if (state.definition().equals(AlchemyWindows.DEFINITION)) {
+                view.alchemy = new AlchemyWindowContent(adapter.content(), ALCHEMY, state,
+                    () -> openAlchemyNotes(null), () -> openAlchemyNotes(null, true));
+                adapter.title("炼丹");
+            } else if (state.definition().equals(AlchemyNotesContent.DEFINITION)) {
+                view.alchemyNotes = new AlchemyNotesContent(adapter.content(), ALCHEMY);
+                adapter.paperFrame();
+                adapter.title(windowTitle(state.key()));
             } else if (state.definition().equals(CraftWindows.DEFINITION)) {
                 view.craft = new CraftWindowContent(adapter.content().childById(
                     io.wispforest.owo.ui.container.FlowLayout.class, "craft-body"), CRAFT);
@@ -682,6 +764,7 @@ public final class UiWindowRuntime {
                         .removeChild(ownedView.bodyModel.component());
                 }
                 if (ownedView.forge != null) ownedView.forge.close();
+                if (ownedView.alchemy != null) ownedView.alchemy.close();
                 adapter.close();
                 if (state.key().equals(focusedKey)) focusedKey = null;
             });
@@ -722,7 +805,10 @@ public final class UiWindowRuntime {
         view.motion.target(state.bounds(), System.nanoTime(), false);
         var previous = VIEWS.get(focusedKey);
         if (previous != view) FORGE.endInjection();
-        if (previous != null && previous != view) previous.adapter.cancelInput();
+        if (previous != null && previous != view) {
+            previous.adapter.cancelInput();
+            if (previous.alchemy != null) previous.alchemy.cancelInput();
+        }
         focusedKey = state.key();
         capturedButton = button;
         if (button == 0 && view.adapter.headerAt(x, y)) MANAGER.beginDrag(state.key(), x, y);
@@ -780,12 +866,19 @@ public final class UiWindowRuntime {
         if (key == GLFW.GLFW_KEY_ESCAPE && controls != null && controls.escape()) return true;
         var view = VIEWS.get(focusedKey);
         if (view != null && view.forge != null && !view.adapter.textFocused() && view.forge.keyPressed(key)) return true;
+        if (view != null && view.alchemy != null && !view.adapter.textFocused() && view.alchemy.keyPressed(key, mods)) return true;
         return view != null && view.adapter.keyPressed(key, scan, mods);
     }
 
     public static boolean hasKeyboardFocus() {
         var view = VIEWS.get(focusedKey);
         return view != null && view.adapter.textFocused();
+    }
+
+    public static void keyReleased(int key) {
+        for (var view : VIEWS.values()) {
+            if (view.alchemy != null) view.alchemy.keyReleased(key);
+        }
     }
 
     public static boolean charTyped(char chr, int mods) {
@@ -809,6 +902,7 @@ public final class UiWindowRuntime {
             else if (definition.equals(InventoryLoadoutWindows.SHORTCUTS)) bounds = new UiWindowManager.Rect(212, 30, 180, 194);
             else if (definition.equals(PracticeWindows.CATALOG)) bounds = new UiWindowManager.Rect(20, 24, 410, 350);
             else if (definition.equals(CraftWindows.DEFINITION)) bounds = new UiWindowManager.Rect(30, 24, 650, 390);
+            else if (definition.equals(AlchemyWindows.DEFINITION)) bounds = new UiWindowManager.Rect(34, 28, 610, 390);
             else if (definition.equals(PracticeWindows.DETAIL)) bounds = new UiWindowManager.Rect(100, 24, 290, 370);
             else if (definition.equals(PracticeWindows.BINDING)) bounds = new UiWindowManager.Rect(120, 36, 300, 320);
             else if (definition.equals(PracticeWindows.COMPARE)) bounds = new UiWindowManager.Rect(60, 24, 430, 350);
@@ -842,6 +936,9 @@ public final class UiWindowRuntime {
         controlsCaptured = false;
         focusedKey = null;
         if (view != null) view.adapter.cancelInput();
+        VIEWS.values().forEach(current -> {
+            if (current.alchemy != null) current.alchemy.cancelInput();
+        });
     }
 
     public static boolean hit(double x, double y) {
@@ -863,6 +960,7 @@ public final class UiWindowRuntime {
         if (state == null || item == null || item.isEmpty()) return false;
         var view = VIEWS.get(state.key());
         if (view == null) return false;
+        if (view.alchemy != null && view.alchemy.drop(x, y, item)) return true;
         if (view.craft != null && view.craft.acceptsDrop(x, y, item.itemId())) {
             view.craft.drop(item.instanceId());
             return true;
@@ -872,6 +970,15 @@ public final class UiWindowRuntime {
             return true;
         }
         return false;
+    }
+
+    /** 分堆拖拽命中丹炉时按所选数量投料；未命中则由 InspectScreen 继续处理容器落点。 */
+    public static boolean dropAlchemyMaterial(double x, double y, InventoryItem item) {
+        if (controls != null && controls.hit(x, y)) return false;
+        var state = windowAt(x, y);
+        if (state == null || item == null || item.isEmpty()) return false;
+        var view = VIEWS.get(state.key());
+        return view != null && view.alchemy != null && view.alchemy.drop(x, y, item);
     }
     public static void focusContainerAt(double x, double y) {
         var state = windowAt(x, y);
@@ -950,6 +1057,8 @@ public final class UiWindowRuntime {
         private PracticeCatalogContent practice;
         private CraftWindowContent craft;
         private ForgeWindowContent forge;
+        private AlchemyWindowContent alchemy;
+        private AlchemyNotesContent alchemyNotes;
         private PracticeDetailContent practiceDetail;
         private PracticeBindingContent practiceBinding;
         private PracticeCompareContent practiceCompare;

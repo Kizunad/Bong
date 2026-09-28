@@ -64,6 +64,7 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE, "combat_hud_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.KNOCKBACK_SYNC, "knockback_sync");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_FURNACE, "alchemy_furnace");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_WORLD, "alchemy_world");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_SESSION, "alchemy_session");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_FORECAST, "alchemy_outcome_forecast");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED, "alchemy_outcome_resolved");
@@ -479,6 +480,7 @@ public final class ProtoServerDataBridge {
             case COMBAT_HUD_STATE: return envelope.getCombatHudState();
             case KNOCKBACK_SYNC: return envelope.getKnockbackSync();
             case ALCHEMY_FURNACE: return envelope.getAlchemyFurnace();
+            case ALCHEMY_WORLD: return envelope.getAlchemyWorld();
             case ALCHEMY_SESSION: return envelope.getAlchemySession();
             case ALCHEMY_OUTCOME_FORECAST: return envelope.getAlchemyOutcomeForecast();
             case ALCHEMY_OUTCOME_RESOLVED: return envelope.getAlchemyOutcomeResolved();

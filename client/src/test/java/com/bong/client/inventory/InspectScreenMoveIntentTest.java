@@ -42,6 +42,47 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void splitDropSendsSelectedCountToContainerAndWaitsForAuthoritativeInstances() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        InventoryItem full = InventoryItem.createFull(
+            42L, "spirit_herb", "灵草", 1, 1, 0.2, "common", "", 10, 1.0, 1.0);
+        grid.place(full, 0, 0);
+        screen.configureEquipInteractionForTests(grid, new EquipmentPanel());
+        screen.openStackSplit(grid, full, 0, 0);
+        screen.confirmStackSplit(0, 0, true);
+
+        assertTrue(screen.commitSplitDrop(grid, 1, 2), "分堆必须支持普通背包落点");
+        var payload = com.google.gson.JsonParser.parseString(sent.get(0).body()).getAsJsonObject();
+        assertEquals("inventory_move_intent", payload.get("type").getAsString());
+        assertEquals(42L, payload.get("instance_id").getAsLong());
+        assertEquals(5, payload.get("count").getAsInt(), "发送所选数量而非整堆数量");
+        assertEquals(1, payload.getAsJsonObject("to").get("row").getAsInt());
+        assertEquals(2, payload.getAsJsonObject("to").get("col").getAsInt());
+        screen.returnCurrentDragToSourceForTests();
+        assertEquals(full, grid.itemAt(0, 0), "服务端快照确认前保留原物品");
+        assertEquals(null, grid.itemAt(1, 2), "不得复制同一个 instance_id 到新格子");
+    }
+
+    @Test
+    void rejectedSplitTransportPreservesOriginalStack() {
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        InventoryItem full = InventoryItem.createFull(
+            42L, "spirit_herb", "灵草", 1, 1, 0.2, "common", "", 10, 1.0, 1.0);
+        grid.place(full, 0, 0);
+        screen.configureEquipInteractionForTests(grid, new EquipmentPanel());
+        screen.openStackSplit(grid, full, 0, 0);
+        screen.confirmStackSplit(0, 0, true);
+        assertFalse(screen.commitSplitDrop(grid, 1, 2));
+        screen.returnCurrentDragToSourceForTests();
+        assertEquals(10, grid.itemAt(0, 0).stackCount());
+        assertEquals(null, grid.itemAt(1, 2));
+    }
+
+    @Test
     void dispatchMoveIntentSendsForInventoryBackedLocations() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());

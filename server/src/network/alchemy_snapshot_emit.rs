@@ -121,6 +121,7 @@ pub fn send_furnace_from_furnace(
 
 fn mock_session() -> AlchemySessionDataV1 {
     AlchemySessionDataV1 {
+        incense: None,
         recipe_id: Some("kai_mai_pill_v0".into()),
         active: true,
         elapsed_ticks: 64,
@@ -132,6 +133,7 @@ fn mock_session() -> AlchemySessionDataV1 {
         qi_target: 15.0,
         status_label: "server-driven".into(),
         stages: vec![AlchemyStageHintV1 {
+            ingredients: vec![],
             at_tick: 0,
             window: 0,
             summary: "ci_she_hao×3 + ling_shui×1".into(),
@@ -194,17 +196,67 @@ pub fn send_recipe_book_from_learned(
     client: &mut Client,
     player_id: &str,
     learned: &crate::alchemy::LearnedRecipes,
+    recipes: &RecipeRegistry,
+    items: &crate::inventory::ItemRegistry,
 ) {
     let entries: Vec<AlchemyRecipeEntryV1> = learned
         .ids
         .iter()
-        .map(|id| AlchemyRecipeEntryV1 {
-            id: id.clone(),
-            display_name: id.clone(),
-            body_text: format!("§7{id} (server-driven)"),
-            author: "本人".into(),
-            era: "末法".into(),
-            max_known: 8,
+        .map(|id| {
+            let recipe = recipes.get(id);
+            let body_text = recipe
+                .map(|recipe| {
+                    let mut lines = vec![
+                        format!(
+                            "炉阶 {} · 炼制 {} 刻 · 真元 {:.1}",
+                            recipe.furnace_tier_min,
+                            recipe.fire_profile.target_duration_ticks,
+                            recipe.fire_profile.qi_cost
+                        ),
+                        format!(
+                            "火候 {:.2} ± {:.2}",
+                            recipe.fire_profile.target_temp,
+                            recipe.fire_profile.tolerance.temp_band
+                        ),
+                    ];
+                    for (index, stage) in recipe.stages.iter().enumerate() {
+                        let materials = stage
+                            .required
+                            .iter()
+                            .map(|ingredient| {
+                                let name = items
+                                    .get(&ingredient.material)
+                                    .map(|item| item.display_name.as_str())
+                                    .unwrap_or(&ingredient.material);
+                                format!("{name} ×{}", ingredient.count)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("、");
+                        lines.push(format!(
+                            "阶段 {} · 第 {}–{} 刻：{}",
+                            index + 1,
+                            stage.at_tick,
+                            stage.at_tick.saturating_add(stage.window),
+                            if materials.is_empty() {
+                                "无需投料"
+                            } else {
+                                &materials
+                            }
+                        ));
+                    }
+                    lines.join("\n\n")
+                })
+                .unwrap_or_else(|| "此丹方的炼制记录暂不可用。".into());
+            AlchemyRecipeEntryV1 {
+                id: id.clone(),
+                display_name: recipe
+                    .map(|recipe| recipe.name.clone())
+                    .unwrap_or_else(|| id.clone()),
+                body_text,
+                author: String::new(),
+                era: String::new(),
+                max_known: 8,
+            }
         })
         .collect();
     let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemyRecipeBook(Box::new(
@@ -253,7 +305,7 @@ fn build_session_data(
 ) -> AlchemySessionDataV1 {
     match session {
         Some(session) => {
-            let interventions_recent = session
+            let interventions_recent: Vec<String> = session
                 .interventions
                 .iter()
                 .rev()
@@ -261,6 +313,16 @@ fn build_session_data(
                 .rev()
                 .map(|intervention| format!("§7{intervention:?}"))
                 .collect();
+            let incense = session.incense.as_ref().map(|incense| {
+                crate::schema::alchemy::AlchemyIncenseDataV1 {
+                    kind: incense.kind.clone(),
+                    remaining_ticks: incense.remaining_ticks,
+                    duration_ticks: incense.effect.duration_ticks,
+                    temp_band_scale: incense.effect.temp_band_scale,
+                    qi_cost_scale: incense.effect.qi_cost_scale,
+                    smoke_color: incense.effect.smoke_color.clone(),
+                }
+            });
             let Some(recipe) = registry.get(&session.recipe) else {
                 tracing::warn!(
                     "[bong][network][alchemy] session references unknown recipe `{}`; sending inactive snapshot",
@@ -279,6 +341,7 @@ fn build_session_data(
                     status_label: "丹方数据缺失".into(),
                     stages: vec![],
                     interventions_recent,
+                    incense,
                 };
             };
 
@@ -289,11 +352,14 @@ fn build_session_data(
                 target_ticks: recipe.fire_profile.target_duration_ticks,
                 temp_current: session.temp_current,
                 temp_target: recipe.fire_profile.target_temp,
-                temp_band: recipe.fire_profile.tolerance.temp_band,
+                temp_band: recipe.fire_profile.tolerance.temp_band
+                    * session.incense_temp_band_scale(),
                 qi_injected: session.qi_injected,
-                qi_target: recipe.fire_profile.qi_cost,
+                qi_target: recipe.fire_profile.qi_cost * session.incense_qi_cost_scale(),
                 status_label: if session.finished {
                     "已结束".into()
+                } else if !session.ready_to_heat(recipe) {
+                    "待投首料".into()
                 } else {
                     "炼制中".into()
                 },
@@ -302,6 +368,19 @@ fn build_session_data(
                     .iter()
                     .enumerate()
                     .map(|(stage_index, stage)| AlchemyStageHintV1 {
+                        ingredients: stage
+                            .required
+                            .iter()
+                            .map(|item| crate::schema::alchemy::AlchemyIngredientHintV1 {
+                                material: item.material.clone(),
+                                required: item.count,
+                                inserted: session.stage_material_count(
+                                    recipe,
+                                    stage_index,
+                                    &item.material,
+                                ),
+                            })
+                            .collect(),
                         at_tick: stage.at_tick,
                         window: stage.window,
                         summary: stage
@@ -317,9 +396,11 @@ fn build_session_data(
                     })
                     .collect(),
                 interventions_recent,
+                incense,
             }
         }
         None => AlchemySessionDataV1 {
+            incense: None,
             recipe_id: None,
             active: false,
             elapsed_ticks: 0,
@@ -587,6 +668,7 @@ mod tests {
 
     fn expected_active_data(active: bool, status_label: &str) -> AlchemySessionDataV1 {
         AlchemySessionDataV1 {
+            incense: None,
             recipe_id: Some(RECIPE_ID.into()),
             active,
             elapsed_ticks: 44,
@@ -600,6 +682,18 @@ mod tests {
             stages: vec![
                 AlchemyStageHintV1 {
                     at_tick: 0,
+                    ingredients: vec![
+                        crate::schema::alchemy::AlchemyIngredientHintV1 {
+                            material: "ci_she_hao".into(),
+                            required: 2,
+                            inserted: 0,
+                        },
+                        crate::schema::alchemy::AlchemyIngredientHintV1 {
+                            material: "ling_shui".into(),
+                            required: 1,
+                            inserted: 0,
+                        },
+                    ],
                     window: 0,
                     summary: "ci_she_hao×2 + ling_shui×1".into(),
                     completed: true,
@@ -607,6 +701,11 @@ mod tests {
                 },
                 AlchemyStageHintV1 {
                     at_tick: 40,
+                    ingredients: vec![crate::schema::alchemy::AlchemyIngredientHintV1 {
+                        material: "dan_sha".into(),
+                        required: 3,
+                        inserted: 0,
+                    }],
                     window: 6,
                     summary: "dan_sha×3".into(),
                     completed: false,
@@ -614,6 +713,7 @@ mod tests {
                 },
                 AlchemyStageHintV1 {
                     at_tick: 120,
+                    ingredients: vec![],
                     window: 4,
                     summary: String::new(),
                     completed: false,
@@ -907,6 +1007,7 @@ mod tests {
                 status_label: "未起炉".into(),
                 stages: vec![],
                 interventions_recent: vec![],
+                incense: None,
             },
             "empty furnace must clear the complete alchemy HUD contract rather than leave stale guidance"
         );

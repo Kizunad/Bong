@@ -6,6 +6,7 @@ import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.component.TextBoxComponent;
 import io.wispforest.owo.ui.container.FlowLayout;
+import io.wispforest.owo.ui.core.Insets;
 import io.wispforest.owo.ui.core.OwoUIAdapter;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
@@ -39,8 +40,10 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
     private final Runnable preferencesChanged;
     private final TextBoxComponent widthInput;
     private final TextBoxComponent heightInput;
+    private final ButtonComponent resizeButton;
     private boolean workspace = true;
     private boolean sizeExpanded;
+    private boolean paperFrame;
     private UiWindowManager.Rect bounds;
     private String title = "";
 
@@ -55,6 +58,8 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
         adapter = templates.require("window-frame").createAdapterWithoutScreen(
             bounds.x(), bounds.y(), bounds.width(), bounds.height(), FlowLayout.class);
         try {
+            // 由 owo 在绘制子树时按当前矩阵裁剪，兼容窗口缩放及内部模型预览。
+            adapter.rootComponent.allowOverflow(false);
             adapter.rootComponent.surface((context, component) -> {
                 int x = component.x(), y = component.y(), w = component.width(), h = component.height();
                 context.fillGradient(x, y, x + w, y + h, 0xFF292C2D, 0xFF17191B);
@@ -77,6 +82,7 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
             actions = adapter.rootComponent.childById(FlowLayout.class, "window-actions");
             widthInput = adapter.rootComponent.childById(TextBoxComponent.class, "window-width");
             heightInput = adapter.rootComponent.childById(TextBoxComponent.class, "window-height");
+            resizeButton = adapter.rootComponent.childById(ButtonComponent.class, "window-resize");
             resetSizeDraft();
             contentSlot.child(content);
             adapter.rootComponent.childById(ButtonComponent.class, "window-close")
@@ -105,8 +111,7 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
             adapter.rootComponent.childById(ButtonComponent.class, "window-size-toggle")
                 .renderer((context, button, delta) -> renderControlIcon(context, button, RESIZE_ICON, 0xFF454D46))
                 .onPress(button -> setSizeExpanded(!sizeExpanded));
-            adapter.rootComponent.childById(ButtonComponent.class, "window-resize")
-                .onPress(button -> submitSize());
+            resizeButton.onPress(button -> submitSize());
             sizeSlot.removeChild(sizeRow);
             applyBounds();
         } catch (RuntimeException | Error failure) {
@@ -136,6 +141,36 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
 
     public FlowLayout content() { return content; }
 
+    public void paperFrame() {
+        if (paperFrame) return;
+        cancelInput();
+        setSizeExpanded(false);
+        paperFrame = true;
+        adapter.rootComponent.surface(io.wispforest.owo.ui.core.Surface.BLANK);
+        // 纸页只替换内容区，不移除标题栏；背景、拖动区和合卷入口各有明确边界。
+        var header = adapter.rootComponent.childById(FlowLayout.class, "window-header");
+        header.padding(Insets.of(0, 0, 12, 56));
+        header.surface((context, component) -> {
+            int x = component.x(), y = component.y(), w = component.width(), h = component.height();
+            context.fill(x, y, x + w, y + h, 0xFFD4C19A);
+            context.fill(x, y + h - 1, x + w, y + h, 0xFF8D7554);
+        });
+        adapter.rootComponent.childById(LabelComponent.class, "window-title")
+            .color(io.wispforest.owo.ui.core.Color.ofRgb(0x60392B));
+        var close = actions.childById(ButtonComponent.class, "window-close");
+        actions.clearChildren().child(close);
+        actions.margins(Insets.of(1, 0, 0, 6));
+        close.tooltip(Text.literal("合卷"));
+        close.setMessage(Text.literal("合卷").styled(style -> style.withColor(0x60392B)));
+        close.horizontalSizing(Sizing.fixed(42));
+        close.textShadow(false);
+        close.renderer((context, button, delta) -> {
+            if (button.isHovered()) context.fill(button.getX() + 2, button.getY() + 2,
+                button.getX() + button.getWidth() - 2, button.getY() + button.getHeight() - 2, 0x20784330);
+        });
+        applyBounds();
+    }
+
     public void closeAction(Runnable action) {
         adapter.rootComponent.childById(ButtonComponent.class, "window-close").onPress(button -> action.run());
     }
@@ -147,15 +182,18 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
     }
 
     private void updateTitle() {
+        var header = adapter.rootComponent.childById(FlowLayout.class, "window-header");
+        int reservedWidth = header.padding().get().horizontal();
         String visible = MinecraftClient.getInstance().textRenderer
-            .trimToWidth(title, Math.max(0, bounds.width() - (workspace ? 102 : 18)));
+            .trimToWidth(title, Math.max(0, bounds.width() - reservedWidth));
         adapter.rootComponent.childById(LabelComponent.class, "window-title")
             .text(Text.literal(visible.isEmpty() ? " " : visible));
     }
 
     public boolean headerAt(double x, double y) {
-        return bounds.contains(x, y) && y < bounds.y() + HEADER_HEIGHT
-            && x < bounds.x() + bounds.width() - 88;
+        if (!bounds.contains(x, y) || y >= bounds.y() + HEADER_HEIGHT) return false;
+        // 标题栏保留窗口拖动语义，合卷处仍交给按钮接收点击。
+        return !workspace || x < actions.x();
     }
 
     public void layout(UiWindowManager.Rect next) {
@@ -165,6 +203,21 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
     }
 
     private void applyBounds() {
+        // 极小窗口保留拖动和所有管理入口，缩窄控件，不让标题与按钮互相覆盖。
+        if (!paperFrame) {
+            boolean compact = bounds.width() < 180;
+            for (var control : actions.children()) {
+                control.horizontalSizing(Sizing.fixed(compact ? 18 : control.id().equals("window-close") ? 20 : 22));
+            }
+            int controlWidth = actions.children().size() * 18;
+            adapter.rootComponent.childById(FlowLayout.class, "window-header")
+                .padding(Insets.of(0, 0, compact ? 6 : 9, !workspace ? 9 : compact ? controlWidth + 4 : 92));
+            widthInput.horizontalSizing(Sizing.fixed(compact ? 26 : 46));
+            heightInput.horizontalSizing(Sizing.fixed(compact ? 26 : 46));
+            sizeRow.padding(Insets.of(0, 0, compact ? 4 : 8, compact ? 4 : 8));
+            sizeRow.gap(compact ? 3 : 5);
+            resizeButton.horizontalSizing(Sizing.fixed(compact ? 16 : 20));
+        }
         updateTitle();
         contentSlot.verticalSizing(Sizing.fixed(Math.max(1, bounds.height() - HEADER_HEIGHT - (sizeExpanded ? 24 : 0))));
         adapter.moveAndResize(bounds.x(), bounds.y(), bounds.width(), bounds.height());
@@ -222,11 +275,16 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
     }
 
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        for (int spread = 7; spread >= 1; spread--) {
-            context.fill(bounds.x() - spread, bounds.y() - spread + 3,
-                bounds.x() + bounds.width() + spread, bounds.y() + bounds.height() + spread + 3,
-                0x08000000);
+        if (!paperFrame) {
+            for (int spread = 7; spread >= 1; spread--) {
+                context.fill(bounds.x() - spread, bounds.y() - spread + 3,
+                    bounds.x() + bounds.width() + spread, bounds.y() + bounds.height() + spread + 3,
+                    0x08000000);
+            }
         }
+        // OwoUIAdapter 会重置 GL scissor；外套原版 DrawContext 裁剪会被覆盖，
+        // 且与子树的 ScissorStack 分属两套状态。窗口边界由根容器统一负责。
+        context.draw();
         adapter.render(context, mouseX, mouseY, delta);
     }
 

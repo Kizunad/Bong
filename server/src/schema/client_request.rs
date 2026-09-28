@@ -130,12 +130,18 @@ pub enum ClientRequestV1 {
     },
     /// plan-alchemy-v1 §1.2 — 玩家手持炉类物品，客户端拦截右键地面并发此请求。
     /// server 校验 `item_instance_id` 为合法炉类物品 → 消耗一个 → 在 `pos`
-    /// spawn `AlchemyFurnace` ECS entity，并把对应方块刷成 `FURNACE`。
+    /// spawn `AlchemyFurnace` ECS entity，并由视觉桥生成对应的自定义丹炉模型实体。
     AlchemyFurnacePlace {
         v: u8,
         x: i32,
         y: i32,
         z: i32,
+        item_instance_id: u64,
+    },
+    /// 将背包中的香料实例投入已打开的丹炉香座。
+    AlchemyPlaceIncense {
+        v: u8,
+        furnace_pos: (i32, i32, i32),
         item_instance_id: u64,
     },
     /// plan-spawn-tutorial-v1 P0 — 玩家右键出生石棺，服务端授予龛石一次。
@@ -343,6 +349,9 @@ pub enum ClientRequestV1 {
         to: InventoryLocationV1,
         #[serde(default)]
         rotated: bool,
+        /// 缺省移动整堆；小于原堆叠时拆出新实例，数量由服务端校验。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
     },
     /// plan-tuike-v1 — 装备伪皮的专用 C2S 包；服务端落到 false_skin 装备槽。
     EquipFalseSkin {
@@ -783,6 +792,7 @@ impl ClientRequestV1 {
             }
             Self::AlchemyTakePill { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::AlchemyFurnacePlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyPlaceIncense { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CoffinOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CoffinPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::BlockPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),

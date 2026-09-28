@@ -1,0 +1,11 @@
+{
+  "id": "alchemy_fire_lower",
+  "layers": [
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.45, "pitch": 1.0, "delay_ticks": 0 },
+    { "sound": "minecraft:block.campfire.crackle", "volume": 0.2, "pitch": 0.75, "delay_ticks": 2 }
+  ],
+  "priority": 48,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "alchemy_fire_raise",
+  "layers": [
+    { "sound": "minecraft:block.fire.ignite", "volume": 0.55, "pitch": 1.15, "delay_ticks": 0 },
+    { "sound": "minecraft:block.campfire.crackle", "volume": 0.45, "pitch": 1.2, "delay_ticks": 2 }
+  ],
+  "priority": 48,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

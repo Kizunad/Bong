@@ -62,6 +62,8 @@ final class UiPreviewScenes {
         Map.entry("item-windows-hud", new UiWindowPreviewScene("pickaxe_iron", "hud")),
         Map.entry("craft", new CraftScene()),
         Map.entry("forge-window", new UiForgeWindowPreviewScene()),
+        Map.entry("alchemy-window", new UiAlchemyWindowPreviewScene()),
+        Map.entry("alchemy-runtime", new UiAlchemyRuntimePreviewScene()),
         Map.entry("terminate", new TerminateScene(0)),
         Map.entry("terminate-kind", new TerminateScene(1)),
         Map.entry("terminate-hungry", new TerminateScene(2)),

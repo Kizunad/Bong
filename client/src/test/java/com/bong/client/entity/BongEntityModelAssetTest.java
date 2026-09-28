@@ -1,5 +1,7 @@
 package com.bong.client.entity;
 
+import com.bong.client.alchemy.AlchemyResultEffect;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -68,16 +70,8 @@ public class BongEntityModelAssetTest {
             String compact = body.replaceAll("\\s+", "");
             assertTrue(compact.contains("\"loop\":true"), "Animation must loop for " + kind.entityId());
             assertTrue(
-                body.contains("\"Accent\"")
-                    || body.contains("\"Glow\"")
-                    || body.contains("\"Lid\"")
-                    || body.contains("\"Hammer\"")
-                    || body.contains("\"HangHammer\"")
-                    || body.contains("\"Veil\"")
-                    || body.contains("\"Runes\"")
-                    || body.contains("\"Body\"")
-                    || body.contains("\"Bones\""),
-                "Animation must target a meaningful non-root bone for " + kind.entityId()
+                !animatedBoneNames(body).isEmpty(),
+                "Animation must target model bones for " + kind.entityId()
             );
             assertTrue(
                 geoBoneNames(kind).containsAll(animatedBoneNames(body)),
@@ -99,6 +93,19 @@ public class BongEntityModelAssetTest {
                 ));
                 assertTrue(Files.exists(texture), "Missing state texture: " + texture.toAbsolutePath());
             }
+        }
+    }
+
+    @Test
+    void alchemyResultAnimationsExistAndFinishBeforeTheirControllerReleasesThem() throws IOException {
+        Path asset = RESOURCES.resolve("assets/bong/animations/alchemy_furnace.animation.json");
+        var animations = JsonParser.parseString(Files.readString(asset)).getAsJsonObject().getAsJsonObject("animations");
+        for (var effect : AlchemyResultEffect.values()) {
+            assertTrue(animations.has(effect.animation()), "缺少结算动画资源：" + effect.animation());
+            var clip = animations.getAsJsonObject(effect.animation());
+            assertTrue(clip.getAsJsonObject("bones").size() > 0, "结算动画必须实际驱动骨骼：" + effect);
+            assertTrue(clip.get("animation_length").getAsDouble() * 20 <= effect.ticks() + .001,
+                "动画不能在尚未播完时被控制器切回待机：" + effect);
         }
     }
 

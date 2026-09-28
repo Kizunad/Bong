@@ -24,6 +24,7 @@ pub enum InventoryRequest {
         from: InventoryLocationV1,
         to: InventoryLocationV1,
         rotated: bool,
+        count: Option<u32>,
     },
     InventoryDiscardItem {
         instance_id: u64,
@@ -57,12 +58,14 @@ pub fn try_into_inventory_request(
             from,
             to,
             rotated,
+            count,
             ..
         } => Ok(InventoryRequest::InventoryMoveIntent {
             instance_id,
             from,
             to,
             rotated,
+            count,
         }),
         ClientRequestV1::InventoryDiscardItem {
             instance_id, from, ..
@@ -127,12 +130,15 @@ pub fn dispatch_inventory_request<
             from,
             to,
             rotated,
+            count,
         } => crate::network::client_request_handler::handle_inventory_move(
             player,
             instance_id,
             from,
             to,
             rotated,
+            count,
+            alchemy.instance_allocator.as_deref_mut(),
             &combat.item_registry,
             inventories,
             clients,

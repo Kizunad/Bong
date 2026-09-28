@@ -1056,6 +1056,22 @@ impl From<&ServerDataPayloadV1> for Payload {
             ServerDataPayloadV1::AlchemyFurnace(d) => {
                 Payload::AlchemyFurnace(alchemy_furnace_to_proto(d))
             }
+            ServerDataPayloadV1::AlchemyWorld(d) => Payload::AlchemyWorld(bong::AlchemyWorld {
+                furnace_pos: vec![d.furnace_pos.0, d.furnace_pos.1, d.furnace_pos.2],
+                heat: d.heat,
+                incense: d.incense,
+                materials: d
+                    .materials
+                    .iter()
+                    .map(|(key, value)| (key.clone(), *value))
+                    .collect(),
+                action: d.action.clone(),
+                item: d.item.clone(),
+                count: d.count,
+                result: d.result.clone(),
+                name: d.name.clone(),
+                source: d.source.map_or_else(Vec::new, |source| source.to_vec()),
+            }),
             ServerDataPayloadV1::AlchemySession(d) => {
                 Payload::AlchemySession(alchemy_session_to_proto(d))
             }
@@ -2024,6 +2040,15 @@ fn alchemy_session_to_proto(d: &super::alchemy::AlchemySessionDataV1) -> bong::A
             .stages
             .iter()
             .map(|s| bong::AlchemyStageHint {
+                ingredients: s
+                    .ingredients
+                    .iter()
+                    .map(|item| bong::AlchemyIngredientHint {
+                        material: item.material.clone(),
+                        required: item.required,
+                        inserted: item.inserted,
+                    })
+                    .collect(),
                 at_tick: s.at_tick,
                 window: s.window,
                 summary: s.summary.clone(),
@@ -2032,6 +2057,14 @@ fn alchemy_session_to_proto(d: &super::alchemy::AlchemySessionDataV1) -> bong::A
             })
             .collect(),
         interventions_recent: d.interventions_recent.clone(),
+        incense: d.incense.as_ref().map(|incense| bong::AlchemyIncense {
+            kind: incense.kind.clone(),
+            remaining_ticks: incense.remaining_ticks,
+            duration_ticks: incense.duration_ticks,
+            temp_band_scale: incense.temp_band_scale,
+            qi_cost_scale: incense.qi_cost_scale,
+            smoke_color: incense.smoke_color.clone(),
+        }),
     }
 }
 
@@ -3691,6 +3724,16 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 z: *z,
                 item_instance_id: *item_instance_id,
             }),
+            ClientRequestV1::AlchemyPlaceIncense {
+                furnace_pos,
+                item_instance_id,
+                ..
+            } => Payload::AlchemyPlaceIncense(bong::AlchemyPlaceIncense {
+                furnace_pos_x: furnace_pos.0,
+                furnace_pos_y: furnace_pos.1,
+                furnace_pos_z: furnace_pos.2,
+                item_instance_id: *item_instance_id,
+            }),
             // ─── 棺材 C2S ────────────────────────────────────────
             ClientRequestV1::CoffinOpen { x, y, z, .. } => Payload::CoffinOpen(bong::CoffinOpen {
                 x: *x,
@@ -3914,6 +3957,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 from,
                 to,
                 rotated,
+                count,
                 ..
             } => Payload::InventoryMoveIntent(bong::InventoryMoveIntent {
                 instance_id: *instance_id,
@@ -3921,6 +3965,7 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 to: Some(inventory_location_to_proto(to)),
                 // plan-rotate-v1 — 旋转落位标志随 wire 透传。
                 rotated: *rotated,
+                count: *count,
             }),
             ClientRequestV1::EquipFalseSkin {
                 slot,

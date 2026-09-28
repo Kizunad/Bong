@@ -133,6 +133,16 @@ public final class ClientRequestSender {
         return tryDispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
     }
 
+    public static boolean sendInventoryMove(
+        long instanceId,
+        ClientRequestProtocol.InvLocation from,
+        ClientRequestProtocol.InvLocation to,
+        boolean rotated,
+        int count
+    ) {
+        return tryDispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated, count));
+    }
+
     public static void sendEquipFalseSkin(long itemInstanceId) {
         dispatch(ClientRequestProtocol.encodeEquipFalseSkin(itemInstanceId));
     }
@@ -468,6 +478,10 @@ public final class ClientRequestSender {
 
     public static void sendAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
         dispatch(ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, itemInstanceId));
+    }
+
+    public static void sendAlchemyPlaceIncense(BlockPos pos, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyPlaceIncense(pos, itemInstanceId));
     }
 
     public static void sendCoffinOpen(BlockPos pos) {

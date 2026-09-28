@@ -179,6 +179,8 @@ message ServerDataEnvelope {
     RaceGateMeta race_gate_meta = 141;
     // plan-race-system-v1 P4：易形状态快照（join+周期全量 / 解除瞬间半径 delta）。
     MorphState morph_state = 142;
+    // 丹炉附近可见的状态与一次性动作，不修改炉主的工位快照。
+    AlchemyWorld alchemy_world = 143;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -359,6 +361,7 @@ message ClientRequestEnvelope {
     TechniqueBind               technique_bind                = 103;
     MaterialMove               material_move                = 104;
     ForgeStationOpenReq         forge_station_open            = 105;
+    AlchemyPlaceIncense         alchemy_place_incense         = 106;
   }
 }
 
@@ -810,6 +813,20 @@ message BreakthroughRequest {
 // P2 B1 — 炼丹 S2C
 // ═══════════════════════════════════════════════════════════════
 
+// 世界工位表现；附近玩家无需打开 UI 即可收到状态与动作。
+message AlchemyWorld {
+  repeated sint32 furnace_pos = 1;
+  double heat = 2;
+  bool incense = 3;
+  map<string, uint32> materials = 4;
+  string action = 5;
+  optional string item = 6;
+  optional uint32 count = 7;
+  optional string result = 8;
+  optional string name = 9;
+  repeated double source = 10;
+}
+
 // 与 Rust AlchemyFurnaceDataV1 精确对应。
 message AlchemyFurnace {
   optional int32 pos_x   = 1; // Rust Option<(i32,i32,i32)> 拆三字段
@@ -829,6 +846,13 @@ message AlchemyStageHint {
   string summary   = 3;
   bool   completed = 4;
   bool   missed    = 5;
+  repeated AlchemyIngredientHint ingredients = 6;
+}
+
+message AlchemyIngredientHint {
+  string material = 1;
+  uint32 required = 2;
+  uint32 inserted = 3;
 }
 
 // 与 Rust AlchemySessionDataV1 精确对应。
@@ -845,6 +869,16 @@ message AlchemySession {
   string                     status_label         = 10;
   repeated AlchemyStageHint  stages               = 11;
   repeated string            interventions_recent = 12;
+  optional AlchemyIncense     incense              = 13;
+}
+
+message AlchemyIncense {
+  string kind = 1;
+  uint32 remaining_ticks = 2;
+  uint32 duration_ticks = 3;
+  double temp_band_scale = 4;
+  double qi_cost_scale = 5;
+  string smoke_color = 6;
 }
 
 // 与 Rust AlchemyOutcomeForecastDataV1 精确对应。
@@ -3730,6 +3764,14 @@ message AlchemyFurnacePlace {
   uint64 item_instance_id = 4;
 }
 
+// 与 Rust ClientRequestV1::AlchemyPlaceIncense 精确对应。
+message AlchemyPlaceIncense {
+  int32  furnace_pos_x    = 1;
+  int32  furnace_pos_y    = 2;
+  int32  furnace_pos_z    = 3;
+  uint64 item_instance_id = 4;
+}
+
 // 与 Rust ClientRequestV1::CoffinOpen 精确对应。
 message CoffinOpen {
   int32 x = 1;
@@ -3877,6 +3919,8 @@ message InventoryMoveIntent {
   // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
   // proto3 缺省 false = 未旋转，与 Rust `#[serde(default)]` 语义一致。
   bool              rotated     = 4;
+  // 缺省移动整堆；指定时仅移动该数量。
+  optional uint32   count       = 5;
 }
 
 // 与 Rust ClientRequestV1::EquipFalseSkin 精确对应。

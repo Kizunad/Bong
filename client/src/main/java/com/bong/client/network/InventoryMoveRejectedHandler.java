@@ -131,6 +131,9 @@ public final class InventoryMoveRejectedHandler implements ServerDataHandler {
             case "unknown_item_template" -> "未知物品，无法操作";
             case "unknown_container_id" -> "未知容器，请重试";
             case "instance_not_found" -> "该物品已不在背包中，请重试";
+            case "invalid_stack_count" -> "物品数量已变化，请重新选择分离数量";
+            case "split_requires_container" -> "请将分出的物品放入背包空格";
+            case "instance_allocation_failed" -> "暂时无法分离物品，请重试";
             case "from_location_mismatch" -> "起始位置已变化，请重试";
             default -> "此操作被天道拒绝";
         };

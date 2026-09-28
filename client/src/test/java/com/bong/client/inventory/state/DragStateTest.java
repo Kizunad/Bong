@@ -152,4 +152,21 @@ public class DragStateTest {
         assertSame(original, result.item());
         assertEquals(4, result.sourceHotbarIndex());
     }
+
+    @Test
+    void splitPickupKeepsFullStackForCancelAndSelectedCountForDrag() {
+        DragState state = new DragState();
+        InventoryItem full = InventoryItem.createFull(
+            99L, "spirit_grass", "灵草", 1, 1, .2, "common", "", 7, 1, 1);
+        InventoryItem split = full.withStackCount(3);
+
+        state.pickupSplit(full, split, "body_pocket", 1, 2);
+
+        assertTrue(state.isSplitStack());
+        assertSame(split, state.draggedItem());
+        assertEquals(3, state.draggedItem().stackCount());
+        DragState.CancelResult cancelled = state.cancel();
+        assertSame(full, cancelled.item(), "取消分堆拖拽必须还原完整堆叠");
+        assertEquals(7, cancelled.item().stackCount());
+    }
 }

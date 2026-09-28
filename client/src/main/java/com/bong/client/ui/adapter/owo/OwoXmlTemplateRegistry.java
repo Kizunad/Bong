@@ -30,6 +30,8 @@ public final class OwoXmlTemplateRegistry {
     private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.ofEntries(
         Map.entry("craft-window", new Identifier("bong", "craft-window")),
         Map.entry("forge-window", new Identifier("bong", "forge-window")),
+        Map.entry("alchemy-window", new Identifier("bong", "alchemy-window")),
+        Map.entry("alchemy-notes", new Identifier("bong", "alchemy-notes")),
         Map.entry("terminate", TERMINATE),
         Map.entry("coffin-menu", COFFIN_MENU),
         Map.entry("repair", REPAIR),
