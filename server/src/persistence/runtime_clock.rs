@@ -187,6 +187,9 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
 fn max_persisted_runtime_tick(connection: &Connection) -> io::Result<Option<u64>> {
     let mut maximum = None;
     for &(table, column) in PERSISTED_RUNTIME_TICK_COLUMNS {
+        if !persisted_column_exists(connection, table, column)? {
+            continue;
+        }
         let quoted_table = quote_sql_identifier(table);
         let quoted_column = quote_sql_identifier(column);
         let query =
@@ -202,6 +205,20 @@ fn max_persisted_runtime_tick(connection: &Connection) -> io::Result<Option<u64>
     }
 
     Ok(maximum)
+}
+
+fn persisted_column_exists(connection: &Connection, table: &str, column: &str) -> io::Result<bool> {
+    let quoted_table = quote_sql_identifier(table);
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({quoted_table})"))
+        .map_err(io::Error::other)?;
+    let mut rows = statement.query([]).map_err(io::Error::other)?;
+    while let Some(row) = rows.next().map_err(io::Error::other)? {
+        if row.get::<_, String>(1).map_err(io::Error::other)? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn quote_sql_identifier(identifier: &str) -> String {
@@ -460,6 +477,47 @@ mod tests {
             compute_track_state(&freshness, &profile, migrated_now, 1.0),
             TrackState::Fresh,
             "legacy migration must not turn a recently created item into an immediately expired item"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_clock_startup_skips_missing_identity_tick_column() {
+        let (settings, root) = settings("legacy-missing-identity-tick");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let connection = Connection::open(settings.db_path()).unwrap();
+        connection
+            .execute_batch(
+                "
+                DROP TABLE player_identities;
+                CREATE TABLE player_identities (
+                    char_id TEXT PRIMARY KEY,
+                    identities_json TEXT NOT NULL,
+                    active_identity_id INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DailyBackupState::default());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(crate::combat::CombatClock::default());
+        app.insert_resource(crate::player::gameplay::GameplayTick::default());
+        app.insert_resource(crate::shelflife::sweep::ShelflifeSweepTick::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Startup, bootstrap_persistence_system);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<CultivationClock>().tick,
+            0,
+            "an old identity table without last_switch_tick must not abort runtime-clock hydration"
         );
         let _ = std::fs::remove_dir_all(root);
     }
