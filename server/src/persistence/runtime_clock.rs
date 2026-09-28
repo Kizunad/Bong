@@ -130,10 +130,10 @@ pub(super) fn persist_runtime_clock_system(
     clock: Res<crate::cultivation::tick::CultivationClock>,
     mut state: ResMut<RuntimeClockSnapshotState>,
 ) {
-    let tick_interval_elapsed = state.last_snapshot_tick.map_or(true, |last_snapshot_tick| {
+    let tick_interval_elapsed = state.last_snapshot_tick.is_none_or(|last_snapshot_tick| {
         clock.tick.saturating_sub(last_snapshot_tick) >= RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS
     });
-    let wall_check_due = state.last_wall_check_tick.map_or(true, |last_check_tick| {
+    let wall_check_due = state.last_wall_check_tick.is_none_or(|last_check_tick| {
         clock.tick.saturating_sub(last_check_tick) >= RUNTIME_CLOCK_WALL_CHECK_INTERVAL_TICKS
     });
     if !tick_interval_elapsed && !wall_check_due {
@@ -142,7 +142,7 @@ pub(super) fn persist_runtime_clock_system(
 
     let now_wall = current_unix_seconds();
     state.last_wall_check_tick = Some(clock.tick);
-    let wall_interval_elapsed = state.last_snapshot_wall.map_or(true, |last_snapshot_wall| {
+    let wall_interval_elapsed = state.last_snapshot_wall.is_none_or(|last_snapshot_wall| {
         elapsed_wall_seconds(last_snapshot_wall, now_wall)
             >= RUNTIME_CLOCK_SNAPSHOT_INTERVAL_SECONDS
     });
