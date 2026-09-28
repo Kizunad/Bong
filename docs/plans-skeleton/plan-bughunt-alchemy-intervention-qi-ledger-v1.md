@@ -2,7 +2,7 @@
 
 ## §0 摘要
 
-**来源 Issue：#1725。** C2S 炼丹注灵请求在 `handle_alchemy_intervention` 中直接调用 `AlchemySession::apply_intervention(InjectQi(q))`；该方法只把数值累加到 `session.qi_injected`，不读取玩家 `Cultivation`、不检查余额、也不产生 `QiTransfer`。炼丹配方只在结算时用 `qi_injected` 与 `recipe.fire_profile.qi_cost` 比较，因此客户端可免费注入任意数量真元并满足火候门槛。本 skeleton 不改生产代码。
+**来源 Issue：#1725、#1463。** C2S 炼丹注灵请求在 `handle_alchemy_intervention` 中直接调用 `AlchemySession::apply_intervention(InjectQi(q))`；该方法只把数值累加到 `session.qi_injected`，不读取玩家 `Cultivation`、不检查余额、也不产生 `QiTransfer`。炼丹配方只在结算时用 `qi_injected` 与 `recipe.fire_profile.qi_cost` 比较，因此客户端可免费注入任意数量真元并满足火候门槛。本 skeleton 不改生产代码。
 
 接入面：进料是玩家 C2S `alchemy_intervention`、所属 `AlchemyFurnace`/`AlchemySession`、玩家 `Cultivation` 和当前 zone；出料是玩家扣减、炉体/炼丹 session 的注入余额、zone/overflow 与结算结果。复用 `QiTransfer`、`qi_release_to_zone`/炉体 qi reserve 的既有边界，不能在 `AlchemySession` 内另造物理公式。server 内部修复不需要 agent/client schema 字段变化；worldview §十的真元零和与炼丹生产链是锚点。
 

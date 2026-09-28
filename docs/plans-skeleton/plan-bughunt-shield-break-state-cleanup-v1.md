@@ -1,6 +1,6 @@
 # plan-bughunt-shield-break-state-cleanup-v1（骨架）
 
-> **骨架（草案）**。一句话主题：盾牌耐久归零或举盾所依赖的副手实例消失时，在 server resolver 内同步终止 `ShieldBlock` / `ShieldBlocking` / `ShieldDrainOverride` / `StaminaState::ShieldBlocking` 的同一份举盾生命周期，阻止空副手回退成木盾继续减伤、持续扣体力并错误触发 `ParryRecovery`。
+> **骨架（草案）**。来源 issue：#1522。盾牌耐久归零或举盾所依赖的副手实例消失时，在 server resolver 内同步终止 `ShieldBlock` / `ShieldBlocking` / `ShieldDrainOverride` / `StaminaState::ShieldBlocking` 的同一份举盾生命周期，阻止空副手回退成木盾继续减伤、持续扣体力并错误触发 `ParryRecovery`。
 
 ## 阶段总览
 
