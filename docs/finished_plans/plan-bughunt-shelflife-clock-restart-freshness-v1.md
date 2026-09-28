@@ -1,5 +1,9 @@
 # plan-bughunt-shelflife-clock-restart-freshness-v1
 
+## Status Overview
+
+Status: 已完成；跨重启时钟修复与旧库存存档兼容回退路径已实现。
+
 ## §0 摘要
 
 `Freshness.created_at_tick` 是持久化的绝对 tick，但驱动 `now_tick` 的所有资源（`GameplayTick`/`CombatClock`/`ShelflifeSweepTick`）都是纯内存 `Default` Resource，重启归零。玩家已持有的所有可衰减物品（灵木杆 `ling_mu_gun`、熟肉/灵果/陈酒等食物、矿物、异兽肉血）在服务器重启后会被 `effective_dt_ticks` 的 `saturating_sub` 钳到 0，冻结成永久全鲜状态，绕过 `Spoiled`/`CriticalBlock` 拒食门禁、Age 陈化峰值窗口、骨市材料衰减等全部 shelflife 机制，且这部分衰减永不补偿。
@@ -45,7 +49,7 @@
 
 - `server/src/persistence/runtime_clock.rs` 新增 `runtime_clock` SQLite 快照：保存共享 tick 与墙钟快照，启动时按停机秒数补回 20 TPS，并把结果 hydrate 到 `CultivationClock`、`CombatClock`、`GameplayTick` 和 `ShelflifeSweepTick`。
 - `server/src/persistence/migrations.rs` v45 创建并校验 `runtime_clock` 表；更新周期和关服 flush 都会写入快照。
-- v44 及更早存档没有时钟行时，按每个 `inventories.last_updated_wall` 行扫描嵌套 `Freshness.created_at_tick`，以最大已知创建 tick 加墙钟间隔建立新 epoch；损坏 JSON 只告警跳过，不会阻塞读档，也不会把已过期物品重新判为全鲜。
+- v44 及更早存档没有时钟行时，按每个 `inventories.last_updated_wall` 行扫描嵌套 `Freshness.created_at_tick`，用保守墙钟上界与逐行创建 tick/停机间隔中较老者建立新 epoch；损坏 JSON 只告警跳过，不会阻塞读档，也不会把已过期物品重新判为全鲜。
 
 ### P1 回归测试 ✅ 2026-09-28
 
@@ -74,7 +78,7 @@
 ## Finish Evidence
 
 - **落地清单**：`server/src/persistence/runtime_clock.rs`（跨重启快照、旧库存回退与测试）；`server/src/persistence/migrations.rs`（v45 `runtime_clock` 表及 schema 校验）；`server/src/persistence/bootstrap.rs`（启动 hydrate、周期快照、关服 flush）；`server/src/player/gameplay.rs`（GameplayTick hydrate setter）；`server/src/persistence/mod.rs`（资源与系统注册）。
-- **关键 commit**：`83e4012e4`（2026-09-28，promotion：骨架转 active）；`881cbeb32`（2026-09-28，新增跨重启运行时 tick 持久化与兼容回退）；`dc7d68186`（2026-09-28，收紧旧库存回退并修复 clippy 门禁）。
-- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过（10402 个库测试，0 失败；doc-tests 3 通过、5 忽略）。新增 runtime clock 回归 6 项全部通过。
+- **关键 commit**：`83e4012e4`（2026-09-28，promotion：骨架转 active）；`881cbeb32`（2026-09-28，新增跨重启运行时 tick 持久化与兼容回退）；`dc7d68186`（2026-09-28，收紧旧库存回退并修复 clippy 门禁）；`46d434804`（2026-09-28，保守迁移旧库存年龄并修正启动快照墙钟）。
+- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过（10402 个库测试，0 失败；doc-tests 3 通过、5 忽略）。新增 runtime clock 回归 7 项全部通过。
 - **跨仓库核验**：server 命中 `Freshness.created_at_tick`、`effective_dt_ticks`、`GameplayTick`、`CombatClock`、`ShelflifeSweepTick` 与 SQLite `runtime_clock`；本修复不改 agent/client 契约。
 - **遗留 / 后续**：无。本 PR 不改变既有 Freshness 衰减公式，只修正跨重启的绝对 tick 基准；旧存档首次启动会通过库存 JSON 回退并写入 v45 快照。
