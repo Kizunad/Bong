@@ -70,6 +70,7 @@
 - `python3 scripts/bot/test_protocol.py`：569 passed，0 failed。
 - `BOT_E2E_PROFILE=debug BOT_E2E_SCENARIOS='combat_attack_hit,combat_skill_cast' bash scripts/bot-e2e.sh`：`combat_attack_hit` PASS、`combat_skill_cast` PASS，2/2。
 - `CombatServerDataGateTest.test_wait_ignores_raw_heartbeat_unknown_and_malformed_payloads`、`test_server_data_identity_dispatch_covers_every_oneof_tag`、`test_bot_e2e_pipeline_propagates_runner_then_tee_status` 均包含在上述协议测试中，分别锁定误报阻断、oneof 身份和真失败传播。
+- `git fetch origin && git merge origin/main` 生成 `ee4f7641d`；主线仅新增 9 份 bughunt skeleton 文档，没有 bot 脚本变更，因此无需重复 bot 门禁。
 
 ### 跨仓库核验
 
