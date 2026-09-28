@@ -20,7 +20,10 @@ pub(super) fn bootstrap_persistence_system(
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut heartbeat: Option<ResMut<WorldHeartbeat>>,
-    clock: Res<CultivationClock>,
+    mut clock: ResMut<CultivationClock>,
+    mut combat_clock: Option<ResMut<crate::combat::CombatClock>>,
+    mut gameplay_tick: Option<ResMut<crate::player::gameplay::GameplayTick>>,
+    mut shelflife_tick: Option<ResMut<crate::shelflife::sweep::ShelflifeSweepTick>>,
     mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
@@ -55,6 +58,30 @@ pub(super) fn bootstrap_persistence_system(
     if let Err(error) = bootstrap_sqlite(settings.db_path(), settings.server_run_id()) {
         panic!(
             "[bong][persistence] failed to bootstrap sqlite at {}: {error}",
+            settings.db_path().display()
+        );
+    }
+
+    let persisted_runtime_tick = load_runtime_clock(&settings).unwrap_or_else(|error| {
+        panic!(
+            "[bong][persistence] cannot safely hydrate runtime clock at {}: {error}",
+            settings.db_path().display()
+        )
+    });
+    let runtime_tick = clock.tick.max(persisted_runtime_tick);
+    clock.tick = runtime_tick;
+    if let Some(combat_clock) = combat_clock.as_deref_mut() {
+        combat_clock.tick = runtime_tick;
+    }
+    if let Some(gameplay_tick) = gameplay_tick.as_deref_mut() {
+        gameplay_tick.set_current_tick(runtime_tick);
+    }
+    if let Some(shelflife_tick) = shelflife_tick.as_deref_mut() {
+        shelflife_tick.0 = runtime_tick;
+    }
+    if let Err(error) = persist_runtime_clock(&settings, runtime_tick, wall_clock) {
+        panic!(
+            "[bong][persistence] cannot safely checkpoint hydrated runtime clock at {}: {error}",
             settings.db_path().display()
         );
     }
@@ -187,6 +214,15 @@ pub(super) fn dispatch_persistence_shutdown_flushes(world: &mut World) {
     let runtime_tick = world
         .get_resource::<CultivationClock>()
         .map_or(0, |clock| clock.tick);
+    if let Some(settings) = world.get_resource::<PersistenceSettings>() {
+        let wall_clock = current_unix_seconds();
+        if let Err(error) = persist_runtime_clock(settings, runtime_tick, wall_clock) {
+            tracing::warn!(
+                "[bong][persistence] failed to persist runtime clock during shutdown at {}: {error}",
+                settings.db_path().display()
+            );
+        }
+    }
     let wall_unix_millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64);
