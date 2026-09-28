@@ -4,6 +4,9 @@ use super::*;
 use crate::combat::components::{WoundKind, Wounds};
 use crate::cultivation::components::{ContamSource, Meridian, MeridianSystem};
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiAccount};
+use crate::qi_physics::WorldQiBudget;
+use crate::schema::common::SPIRIT_QI_TOTAL;
 use crate::skill::config::SkillConfig;
 use valence::prelude::{App, Events, GameMode};
 
@@ -47,7 +50,7 @@ fn caster(app: &mut App, realm: Realm, qi: f64) -> Entity {
             Cultivation {
                 realm,
                 qi_current: qi,
-                qi_max: qi.max(100.0),
+                qi_max: qi.max(SPIRIT_QI_TOTAL),
                 ..Default::default()
             },
             meridians,
@@ -74,7 +77,7 @@ fn non_humanoid_caster(app: &mut App, realm: Realm, qi: f64) -> Entity {
             Cultivation {
                 realm,
                 qi_current: qi,
-                qi_max: qi.max(100.0),
+                qi_max: qi.max(SPIRIT_QI_TOTAL),
                 ..Default::default()
             },
             meridians,
@@ -259,7 +262,14 @@ fn resolve_harden_inserts_selected_meridian_component() {
 #[test]
 fn legacy_only_zhenmai_skills_reject_without_spending_qi() {
     let mut app = app_with_events();
-    let entity = non_humanoid_caster(&mut app, Realm::Void, 100.0);
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    let entity = non_humanoid_caster(&mut app, Realm::Void, SPIRIT_QI_TOTAL);
+    let before = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        "守恒快照必须锚定 schema 的 SPIRIT_QI_TOTAL"
+    );
 
     assert_eq!(
         resolve_harden(app.world_mut(), entity, 0, None),
@@ -269,7 +279,7 @@ fn legacy_only_zhenmai_skills_reject_without_spending_qi() {
     );
     assert_eq!(
         app.world().get::<Cultivation>(entity).unwrap().qi_current,
-        100.0,
+        SPIRIT_QI_TOTAL,
         "legacy-only harden must reject before spending qi"
     );
     assert!(app.world().get::<MeridianHardenActive>(entity).is_none());
@@ -282,9 +292,20 @@ fn legacy_only_zhenmai_skills_reject_without_spending_qi() {
     );
     assert_eq!(
         app.world().get::<Cultivation>(entity).unwrap().qi_current,
-        100.0,
+        SPIRIT_QI_TOTAL,
         "legacy-only neutralize must reject before spending qi"
     );
+
+    let after = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        "守恒快照必须锚定 schema 的 SPIRIT_QI_TOTAL"
+    );
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!(
+            "legacy-only rejection must conserve qi: before={before:?}, after={after:?}, error={error:?}"
+        )
+    });
 }
 
 #[test]
