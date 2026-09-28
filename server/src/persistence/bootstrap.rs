@@ -89,6 +89,8 @@ pub(super) fn bootstrap_persistence_system(
     }
     if let Some(runtime_clock_state) = runtime_clock_state.as_deref_mut() {
         runtime_clock_state.last_snapshot_tick = Some(runtime_tick);
+        runtime_clock_state.last_snapshot_wall = Some(checkpoint_wall_clock);
+        runtime_clock_state.last_wall_check_tick = Some(runtime_tick);
     }
 
     hydrate_runtime_qi_accounts(&settings, &mut qi_ledger).unwrap_or_else(|error| {

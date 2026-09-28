@@ -13,6 +13,10 @@ const RUNTIME_CLOCK_ROW_ID: i64 = 1;
 const TICKS_PER_SECOND: u64 = 20;
 /// 运行时钟快照沿用世界运行时快照的五分钟间隔；关服时仍会强制 flush。
 const RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS: u64 = 5 * 60 * TICKS_PER_SECOND;
+/// 低 TPS 时不能等到累计运行时 tick 达到快照间隔才刷新墙钟；每分钟运行时 tick
+/// 检查一次墙钟，避免把读取墙钟和 SQLite 写入放回每 tick 热路径。
+const RUNTIME_CLOCK_WALL_CHECK_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
+const RUNTIME_CLOCK_SNAPSHOT_INTERVAL_SECONDS: u64 = 5 * 60;
 
 // 这里只列出能够证明是“过去某时刻”的运行时绝对 tick。未来截止时间（例如
 // `ready_at_tick`、`invite_block_until_tick`）和时长累计值不能用来重建时钟。
@@ -60,6 +64,8 @@ pub(crate) struct RuntimeClockRecord {
 #[derive(Debug, Default)]
 pub(super) struct RuntimeClockSnapshotState {
     pub(super) last_snapshot_tick: Option<u64>,
+    pub(super) last_snapshot_wall: Option<i64>,
+    pub(super) last_wall_check_tick: Option<u64>,
 }
 
 impl Resource for RuntimeClockSnapshotState {}
@@ -124,15 +130,31 @@ pub(super) fn persist_runtime_clock_system(
     clock: Res<crate::cultivation::tick::CultivationClock>,
     mut state: ResMut<RuntimeClockSnapshotState>,
 ) {
-    if state.last_snapshot_tick.is_some_and(|last_snapshot_tick| {
-        clock.tick.saturating_sub(last_snapshot_tick) < RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS
-    }) {
+    let tick_interval_elapsed = state.last_snapshot_tick.map_or(true, |last_snapshot_tick| {
+        clock.tick.saturating_sub(last_snapshot_tick) >= RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS
+    });
+    let wall_check_due = state.last_wall_check_tick.map_or(true, |last_check_tick| {
+        clock.tick.saturating_sub(last_check_tick) >= RUNTIME_CLOCK_WALL_CHECK_INTERVAL_TICKS
+    });
+    if !tick_interval_elapsed && !wall_check_due {
         return;
     }
 
     let now_wall = current_unix_seconds();
+    state.last_wall_check_tick = Some(clock.tick);
+    let wall_interval_elapsed = state.last_snapshot_wall.map_or(true, |last_snapshot_wall| {
+        elapsed_wall_seconds(last_snapshot_wall, now_wall)
+            >= RUNTIME_CLOCK_SNAPSHOT_INTERVAL_SECONDS
+    });
+    if !tick_interval_elapsed && !wall_interval_elapsed {
+        return;
+    }
+
     match persist_runtime_clock(&settings, clock.tick, now_wall) {
-        Ok(()) => state.last_snapshot_tick = Some(clock.tick),
+        Ok(()) => {
+            state.last_snapshot_tick = Some(clock.tick);
+            state.last_snapshot_wall = Some(now_wall);
+        }
         Err(error) => tracing::warn!(
             "[bong][persistence] failed to persist runtime clock at {}: {error}",
             settings.db_path().display()
@@ -141,14 +163,17 @@ pub(super) fn persist_runtime_clock_system(
 }
 
 fn elapsed_wall_ticks(snapshot_wall: i64, now_wall: i64) -> u64 {
+    elapsed_wall_seconds(snapshot_wall, now_wall).saturating_mul(TICKS_PER_SECOND)
+}
+
+fn elapsed_wall_seconds(snapshot_wall: i64, now_wall: i64) -> u64 {
     if snapshot_wall <= 0 {
         return 0;
     }
-    let elapsed_seconds: u64 = now_wall
+    now_wall
         .saturating_sub(snapshot_wall)
         .try_into()
-        .unwrap_or(0);
-    elapsed_seconds.saturating_mul(TICKS_PER_SECOND)
+        .unwrap_or(0)
 }
 
 /// v44 及更早数据库没有共享 tick 行，也没有旧 tick 与 Unix 墙钟的对应关系。首次
@@ -574,6 +599,20 @@ mod tests {
             Some(cultivation_tick),
             "startup checkpoint must seed the periodic snapshot throttle"
         );
+        assert_eq!(
+            app.world()
+                .resource::<RuntimeClockSnapshotState>()
+                .last_wall_check_tick,
+            Some(cultivation_tick),
+            "startup checkpoint must seed the wall-clock check throttle"
+        );
+        assert!(
+            app.world()
+                .resource::<RuntimeClockSnapshotState>()
+                .last_snapshot_wall
+                .is_some(),
+            "startup checkpoint must seed the wall-clock baseline"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -588,6 +627,8 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 101 });
         app.insert_resource(RuntimeClockSnapshotState {
             last_snapshot_tick: Some(100),
+            last_snapshot_wall: Some(current_unix_seconds()),
+            last_wall_check_tick: Some(100),
         });
         app.add_systems(Update, persist_runtime_clock_system);
         app.update();
@@ -622,6 +663,59 @@ mod tests {
             stored_tick,
             i64::try_from(100 + RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS).unwrap(),
             "the runtime clock must checkpoint once the tick interval elapses"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn periodic_runtime_clock_snapshot_checks_wall_clock_at_low_tick_rate() {
+        let (settings, root) = settings("wall-clock-snapshot-interval");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id()).unwrap();
+        let snapshot_wall = current_unix_seconds()
+            .saturating_sub(i64::try_from(RUNTIME_CLOCK_SNAPSHOT_INTERVAL_SECONDS + 1).unwrap());
+        persist_runtime_clock(&settings, 100, snapshot_wall).unwrap();
+
+        let tick_after_wall_interval = 100 + RUNTIME_CLOCK_WALL_CHECK_INTERVAL_TICKS;
+        assert!(
+            tick_after_wall_interval < 100 + RUNTIME_CLOCK_SNAPSHOT_INTERVAL_TICKS,
+            "the wall-clock trigger must cover a low-TPS server before the tick trigger"
+        );
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock {
+            tick: tick_after_wall_interval,
+        });
+        app.insert_resource(RuntimeClockSnapshotState {
+            last_snapshot_tick: Some(100),
+            last_snapshot_wall: Some(snapshot_wall),
+            last_wall_check_tick: Some(100),
+        });
+        app.add_systems(Update, persist_runtime_clock_system);
+        app.update();
+
+        let connection = Connection::open(settings.db_path()).unwrap();
+        let stored_tick: i64 = connection
+            .query_row(
+                "SELECT tick FROM runtime_clock WHERE clock_id = ?1",
+                params![RUNTIME_CLOCK_ROW_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored_tick,
+            i64::try_from(tick_after_wall_interval).unwrap(),
+            "a stale wall-clock baseline must trigger a snapshot before 6000 runtime ticks"
+        );
+        let stored_wall: i64 = connection
+            .query_row(
+                "SELECT snapshot_wall FROM runtime_clock WHERE clock_id = ?1",
+                params![RUNTIME_CLOCK_ROW_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            stored_wall > snapshot_wall,
+            "the low-TPS trigger must refresh the wall-clock baseline"
         );
         let _ = std::fs::remove_dir_all(root);
     }
