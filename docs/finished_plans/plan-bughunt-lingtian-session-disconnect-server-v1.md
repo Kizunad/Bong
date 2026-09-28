@@ -41,12 +41,12 @@
 
 ## §5 修复计划骨架
 
-### P0 断线清理系统
+### P0 断线清理系统 ✅ 2026-09-28
 
 - 仿照 `botany::harvest.rs` 的 `release_disconnected_harvest_sessions`，为 lingtian 新增消费 `RemovedComponents<Client>` 的断线清理系统：断线当帧按 actor Entity 从 `ActiveLingtianSessions` 中 clear 掉对应 session（取消而非放任完成），不触发 `apply_*_completion`。
 - 若要保留"NPC 散修"复用同一函数的设计，需要在完成结算处区分"caster 从未有 `PlayerInventory` 组件（真 NPC）"与"caster 实体已被断线清理彻底移除（曾是玩家）"两种语义，而不是用同一个 `Query::get_mut` 失败分支笼统吞掉。
 
-### P1 测试
+### P1 测试 ✅ 2026-09-28
 
 - 补单测：玩家在 planting 窗口内断线（模拟 despawn），session 被清理不完成，种子未被消耗、plot 未被种下。
 - 补单测：玩家在 harvest 窗口内断线，session 被清理不完成，plot 保留成熟状态、`harvest_count` 不递增。
@@ -70,3 +70,19 @@
 - 候选证据（finder 自证，未经对抗）：`ActiveLingtianSessions.tick_all()` 确认不查询 ECS 实体存活性；`apply_planting_completion`/`apply_harvest_completion` 的 `None` 分支确认存在且行为如描述；`botany::harvest.rs::release_disconnected_harvest_sessions` 确认是同类场景的已有正确修法，lingtian 模块确认没有对应清理系统；起手校验（`player_has_seed_for`）与完成扣减（`consume_one_seed`）之间确认存在约 1 秒（种植）/7~8 秒（采集）的时间窗口。
 - 去重比对（finder 自述，未经对抗）：`plan-bughunt-lingtian-session-disconnect-ui-v1` 明确限定 client store，不覆盖 server 端；`plan-bughunt-lingtian-plot-qi-ledger-gap-v1` 是记账缺口，不同层面；`plan-bughunt-botany-disconnect-session`（已归档修复）是不同模块的姊妹案例。
 - **实施前建议**：优先对本条 finding 做一次独立第一性原理复核（对照本骨架 §3 的 file:line，实地验证断线窗口内的完成结算行为），确认后再进入正式修复流程；置信度低于本轮其余 6 条已过 skeptic 对峙的 finding。
+
+## 验证结论（2026-09-28）
+
+**真 bug，确认成立并已修复。** 在今天的 `origin/main`（`8bcc6b02b`）上重新核对后，`ActiveLingtianSessions::tick_all`（`server/src/lingtian/systems.rs:997-999`）只推进 session，不检查 actor 的 ECS 存活性；而完成结算仍会在 `server/src/lingtian/systems.rs:1399-1429` 的种植路径和 `:1456-1524` 的收获路径把缺少 `PlayerInventory` 的 actor 当作 NPC。断线玩家因此可能未扣种子却种下作物，或清空成熟作物却没有收获物入账。
+
+修复在 `server/src/lingtian/systems.rs:1001-1019` 新增 `release_disconnected_lingtian_sessions`，消费 `RemovedComponents<Client>` 并调用 `ActiveLingtianSessions::clear`；`server/src/lingtian/mod.rs:190-210` 将它排在 `tick_lingtian_sessions` 与 `apply_completed_sessions` 之前。取消只移除 session，不修改库存或 plot，因而断线不会凭空增加或吞掉物品；没有被移除 `Client` 的 NPC 不受影响。
+
+## Finish Evidence
+
+- **落地清单**：
+  - P0：`server/src/lingtian/systems.rs:1001-1019` 断线清理系统；`server/src/lingtian/mod.rs:190-210` 接入验证、起手、tick、结算链。
+  - P1：`server/src/lingtian/systems_tests.rs:1115-1160` 种植断线契约、`:1475-1518` 收获断线契约、`:4464-4497` NPC 不受其他客户端断线影响契约；既有 `npc_finished_sessions_settle_all_direct_farming_variants` 继续覆盖 NPC 完成结算。
+- **关键 commit**：`82ab6654c`（2026-09-28，骨架提升为 active）、`78d77ad71`（2026-09-28，断线取消与物品保全修复及契约测试）。
+- **测试结果**：灵田三条断线/NPC 契约测试均通过；合并前与合并 `origin/main`（`29460a6cc`）后的 `scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 均通过；合并后 lib 全量为 10396 项通过，集成测试与 doc-tests 也全部通过（doc-tests 3 passed、5 ignored）。
+- **跨仓库核验**：本修复是 server 内部 `ActiveLingtianSessions` 生命周期与库存/plot 结算问题，不改变 client、agent 或 schema 契约；`RemovedComponents<Client>` 是 server 内部断线信号。
+- **遗留 / 后续**：取消中的 session 不退还任何已完成结算物品，因为取消发生在完成结算之前；NPC 仍按原有自带资源语义完成。跨端 session 恢复与持久化不在本 plan 范围。
