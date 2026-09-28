@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `juebi_zone_aftershock_system`、`JueBiZoneAftershock`、`original_qi`；命中 cultivation/tribulation 背景，但没有余震 zone sink。
 - active plan：检索 `juebi_zone_aftershock_system`、`TribulationZoneTransfer`、`EraDecay`；`plan-container-filter-and-completion-v1.md` 仅列迁移符号，不覆盖 50% 覆盖写入。
 - `docs/plans-skeleton/`：检索 `juebi_zone_aftershock`、`original_qi`、`jue_bi_scar`；已有 quota marker lifecycle skeleton 但不处理 zone ledger，未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `juebi_zone_aftershock`、`original_qi`、`EraDecay`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

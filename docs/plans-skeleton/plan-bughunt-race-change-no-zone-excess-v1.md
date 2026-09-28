@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `race_change`、`apply_qi_excess_release`、`qi_flow_overflow`；命中已修的通用缩容 plan，但没有 RaceChange 无 zone 分支的落账证据。
 - active plan：检索 `RaceChange`、`TransferPlan`、`overflow`；`docs/plan-container-filter-and-completion-v1.md` 与 `docs/plan-refactor-qi-ledger-v1.md` 只描述迁移/网关，不覆盖此分支。
 - `docs/plans-skeleton/`：检索 `apply_qi_excess_release`、`zone_name=None`、`no-zone`；除本文件和独立的 `qi_max_frozen` 骨架外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `apply_qi_excess_release`、`zone_name=None`、`qi_flow_overflow`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

@@ -37,6 +37,7 @@
 - `docs/finished_plans/`：检索 `commit_race_change`、`qi_max_frozen`、`effective_max`；命中 race system 与 qimax 缩容文档，但没有 RaceChange frozen 收敛证据。
 - active plan：检索 `RaceChange`、`qi_max_frozen`、`BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`；`plan-refactor-qi-ledger-v1.md` 只定义字段不变量，未覆盖 commit 漏写。
 - `docs/plans-skeleton/`：检索 `qi_max_frozen`、`commit_race_change`、`race_change`；除本文件和无 zone excess 骨架外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `RaceChange`、`qi_max_frozen`、`commit_race_change`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

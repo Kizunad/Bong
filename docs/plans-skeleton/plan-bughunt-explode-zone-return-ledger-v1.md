@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `borrow_explode_zone_qi`、`apply_due_qi_return`、`WorldQiBudget`；命中化虚动作和 zone economy 背景文档，但没有借还期间流量保护。
 - active plan：检索 `VoidQiReturnSchedule`、`ExplodeZone`、`VoidBarrierReturn`；`plan-container-filter-and-completion-v1.md` 只列 gateway manifest，不覆盖当前归还算法。
 - `docs/plans-skeleton/`：检索 `borrow_explode_zone_qi`、`zone.spirit_qi = 0.0`、`ExplodeZone`；除本文件外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `borrow_explode_zone_qi`、`apply_due_qi_return`、`ExplodeZone`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

@@ -41,6 +41,7 @@
 - `docs/finished_plans/`：检索 `spiritual_sense`、`CurrentDimension`、`private_marker_entries`；命中灵眼/感知既有契约，但没有神识目标集合的跨维修复。
 - active plan：检索 `spiritual_sense`、`DimensionKind`、`SpiritualSenseTargetsV1`；未发现覆盖本入口的 active plan。
 - `docs/plans-skeleton/`：检索 `build_player_sense_targets`、`跨维`、`CurrentDimension`；除本文件外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `spiritual_sense`、`CurrentDimension`、`跨维`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

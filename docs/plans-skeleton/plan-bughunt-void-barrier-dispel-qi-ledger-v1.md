@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `apply_barrier_dispel_system`、`barrier_dispel_qi`、`VoidAction`；命中化虚动作总 plan，但没有道伥折半的 qi release。
 - active plan：检索 `BarrierField`、`TsyHostileMarker`、`VoidBarrierReturn`；`plan-container-filter-and-completion-v1.md` 的 barrier return 网关清单不覆盖本折半入口。
 - `docs/plans-skeleton/`：检索 `barrier_dispel`、`TsyHostileMarker`、`道伥`; 除本文件外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `barrier_dispel`、`TsyHostileMarker`、`VoidBarrierReturn`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

@@ -35,6 +35,7 @@
 - `docs/finished_plans/`：检索 `contamination_tick`、`ContaminationOverflow`、`opened`；命中通用 cultivation/poison 文档，但没有本死亡判据的修复证据。
 - active plan：检索 `contamination_tick`、`MeridianSystem`、`all_broken`；`docs/plan-container-filter-and-completion-v1.md` 只列 writer 迁移，不覆盖该根因。
 - `docs/plans-skeleton/`：检索 `ContaminationOverflow`、`未打通`、`all_broken`；除本文件外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `contamination_tick`、`ContaminationOverflow`、`all_broken`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

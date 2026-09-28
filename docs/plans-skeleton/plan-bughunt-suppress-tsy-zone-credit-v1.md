@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `cast_suppress_tsy`、`debit_caster_qi_to_account`、`zone.spirit_qi`；命中 void actions 总 plan，但没有 SuppressTsy 的字段 credit。
 - active plan：检索 `SuppressTsy`、`apply_dormant_regen_with_multiplier`、`ZoneQiTransfer`；`plan-container-filter-and-completion-v1.md` 只有迁移清单，不覆盖该一次性动作根因。
 - `docs/plans-skeleton/`：检索 `cast_suppress_tsy`、`SuppressTsy`、`zone credit`；已有 target-zone lock skeleton 但未覆盖 qi credit，未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `cast_suppress_tsy`、`SuppressTsy`、`zone credit`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

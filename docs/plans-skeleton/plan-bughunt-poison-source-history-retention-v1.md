@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `PoisonToxicity`、`source_history`、`PoisonDoseRecord`；命中 `plan-poison-trait-v1.md` 的组件契约，但没有 history 上限。
 - active plan：检索 `source_history`、`cultivation_json`、`persist_player_cultivation_bundle`；未发现 active plan 为该 Vec 定义保留策略。
 - `docs/plans-skeleton/`：检索 `source_history`、`PoisonToxicity`、`retain`；除本文件外未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `source_history`、`PoisonToxicity`、`retain`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

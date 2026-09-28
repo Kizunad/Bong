@@ -41,6 +41,7 @@
 - `docs/finished_plans/`：检索 `qi_max shrink`、`dugu`、`baomai`、`resize_qi_max_and_release_excess`；命中延寿/断续散缩容修复，但未覆盖这两条入口。
 - active plan：检索 `dugu_poison_tick`、`body_transcendence`、`apply_qi_max_loss`；`plan-container-filter-and-completion-v1.md` 只列 transfer writer 迁移，不提供本根因的修复 plan。
 - `docs/plans-skeleton/`：检索 `qi_max`、`dugu`、`baomai`、`clamp`；已有 combat 通用骨架覆盖其他入口，未发现本 Dugu/Baomai 聚类的同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `dugu_poison_tick`、`body_transcendence`、`qi_max_frozen`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

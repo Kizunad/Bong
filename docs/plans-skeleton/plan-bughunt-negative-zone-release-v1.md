@@ -37,6 +37,7 @@
 - `docs/finished_plans/`：检索 `negative zone`、`.max(0.0)`、`qi_release_to_zone`；命中暗器/负压相关修复，但没有 burst_meridian spend 入口。
 - active plan：检索 `emit_spent_qi_release`、`burst_meridian`、`signed zone`；`plan-container-filter-and-completion-v1.md` 只列 transfer gateway，不覆盖此 signed baseline 错误。
 - `docs/plans-skeleton/`：检索 `burst_meridian`、`zone.spirit_qi.max`、`negative zone`；已有暗器负灵域 skeleton 不涉及该入口，未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `emit_spent_qi_release`、`burst_meridian`、`negative zone`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

@@ -38,6 +38,7 @@
 - `docs/finished_plans/`：检索 `KnownTechniques`、`reset_for_new_character`、`reincarnation`；命中 cultivation/lifecycle 文档，但没有转世门的功法清理证据。
 - active plan：检索 `KnownTechniques`、`save_player_slices`、`PlayerCharacterRotationGateway`；持久化/轮换计划未覆盖该转世分支的旧功法行。
 - `docs/plans-skeleton/`：检索 `KnownTechniques`、`reincarnation`、`SkillSet::default`；已有功法增长/接线 skeleton 不涉及新生清单，未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `KnownTechniques`、`reincarnation`、`SkillSet::default`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 

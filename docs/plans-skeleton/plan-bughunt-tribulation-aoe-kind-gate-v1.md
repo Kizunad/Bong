@@ -37,6 +37,7 @@
 - `docs/finished_plans/`：检索 `tribulation_aoe_system`、`du_xu_wave_profile`、`JueBi`；命中渡劫基础/生命周期文档，但没有该 kind gate。
 - active plan：检索 `tribulation_aoe_system`、`TribulationKind`、`juebi_phase_effect_system`；`plan-container-filter-and-completion-v1.md` 只登记 writer 迁移，不覆盖重复结算门禁。
 - `docs/plans-skeleton/`：检索 `tribulation_aoe_system`、`du_xu_wave_profile`、`JueBi`；已有 quota marker lifecycle skeleton 但未覆盖 AOE kind gate，未发现同主题 skeleton。
+- `docs/plans-skeleton/reminder.md`：已查阅并检索 `tribulation_aoe_system`、`du_xu_wave_profile`、`JueBi`，未发现同主题延后事项。
 
 ## 接入面与跨仓契约
 
