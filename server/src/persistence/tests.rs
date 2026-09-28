@@ -4642,6 +4642,39 @@ fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn last_persistence_without_shutdown_request_does_not_write_runtime_clock() {
+    let (settings, root) = persistence_settings("runtime-clock-no-shutdown");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture database should bootstrap");
+    persist_runtime_clock(&settings, 7, 1_234).expect("fixture runtime clock should persist");
+
+    let mut world = World::new();
+    world.insert_resource(PersistenceShutdownReader::default());
+    world.insert_resource(Events::<AppExit>::default());
+    world.insert_resource(settings.clone());
+    world.insert_resource(CultivationClock { tick: 99 });
+    world.insert_resource(PersistenceSliceRegistry::empty());
+
+    dispatch_persistence_shutdown_flushes(&mut world);
+
+    let connection = Connection::open(settings.db_path()).expect("fixture database should open");
+    let stored = connection
+        .query_row(
+            "SELECT tick, snapshot_wall FROM runtime_clock WHERE clock_id = ?1",
+            params![1_i64],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("runtime clock row should remain available");
+    assert_eq!(
+        stored,
+        (7, 1_234),
+        "Last frames without AppExit must not rewrite the runtime clock snapshot"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
     let mut registry = PersistenceSliceRegistry::empty();
     registry

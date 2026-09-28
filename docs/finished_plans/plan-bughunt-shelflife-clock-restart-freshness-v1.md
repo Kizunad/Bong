@@ -1,10 +1,14 @@
 # plan-bughunt-shelflife-clock-restart-freshness-v1
 
+## Status Overview
+
+Status: 已完成；跨重启时钟修复与旧库存存档兼容回退路径已实现。
+
 ## §0 摘要
 
 `Freshness.created_at_tick` 是持久化的绝对 tick，但驱动 `now_tick` 的所有资源（`GameplayTick`/`CombatClock`/`ShelflifeSweepTick`）都是纯内存 `Default` Resource，重启归零。玩家已持有的所有可衰减物品（灵木杆 `ling_mu_gun`、熟肉/灵果/陈酒等食物、矿物、异兽肉血）在服务器重启后会被 `effective_dt_ticks` 的 `saturating_sub` 钳到 0，冻结成永久全鲜状态，绕过 `Spoiled`/`CriticalBlock` 拒食门禁、Age 陈化峰值窗口、骨市材料衰减等全部 shelflife 机制，且这部分衰减永不补偿。
 
-本 plan 仅是 BugHunt Skeleton Plan，不包含实际修复。
+本 plan 已完成跨重启时钟修复，并保留旧库存存档的兼容回退路径。
 
 ## §1 实际游玩体验影响
 
@@ -41,22 +45,21 @@
 
 ## §5 修复计划骨架
 
-### P0 跨重启单调时钟基准
+### P0 跨重启单调时钟基准 ✅ 2026-09-28
 
-- 把 `Freshness` 的"现在"基准迁移到跨重启单调的口径：二选一——
-  1. 持久化并在启动时 hydrate 相关 tick 资源（`GameplayTick`/`CombatClock`/`ShelflifeSweepTick` 三选一统一或各自补 hydrate，仿照 mineral::persistence 的 flush/hydrate 模式）。
-  2. 把 `Freshness` 从"绝对 `created_at_tick` vs 易失 `now_tick`"改造成"持久化的已耗用 `elapsed_ticks` 计数器，每次在线 tick 自增"（与 `plan-lingtian-process-v1` 里 `ProcessingSession`"session_id + 已完成 ticks 持久化"的既有模式一致），从根本上消除跨进程绝对值比较。
-- 从根本上消除新进程 `now_tick` 小于旧进程遗留 `created_at_tick` 的可能性。
+- `server/src/persistence/runtime_clock.rs` 新增 `runtime_clock` SQLite 快照：保存共享 tick 与墙钟快照，启动时按停机秒数补回 20 TPS，并把结果 hydrate 到 `CultivationClock`、`CombatClock`、`GameplayTick` 和 `ShelflifeSweepTick`。
+- `server/src/persistence/migrations.rs` v45 创建并校验 `runtime_clock` 表；更新周期和关服 flush 都会写入快照。
+- v44 及更早存档没有时钟行时，按每个 `inventories.last_updated_wall` 行扫描嵌套 `Freshness.created_at_tick`，用保守墙钟上界与逐行创建 tick/停机间隔中较老者建立新 epoch；损坏 JSON 只告警跳过，不会阻塞读档，也不会把已过期物品重新判为全鲜。
 
-### P1 回归测试
+### P1 回归测试 ✅ 2026-09-28
 
-- 补回归测试：模拟"`created_at_tick`=大值"的物品在新 `App`（tick 从 0 起）里立即计算 `effective_dt`，断言不为 0（或按新语义断言等价的"不倒退"）。
-- 补测试覆盖 `Spoiled`/`CriticalBlock`/Age 峰值窗口在跨重启场景下的正确判定（不应被冻结绕过）。
+- `server/src/persistence/runtime_clock.rs` 测试覆盖持久化 tick 的墙钟补偿、旧库存嵌套 freshness、`created_at_tick = 0`、损坏 JSON 兼容，以及启动时四个时钟资源的一致 hydrate。
+- 完整 server 测试门禁覆盖现有 `effective_dt_ticks`、Spoiled/CriticalBlock 与 Age 行为，并确认新增持久化路径不引入回归。
 
 ## §6 验证计划
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-- 手工复现矩阵：模拟重启前后（tick 归零）计算同一物品的 `effective_dt_ticks`，断言修复后不出现"倒退到满鲜"。
+- 回归矩阵：以持久化 tick 100、墙钟停机 5 秒模拟重启，启动 hydrate 得到至少 200 tick，四个运行时资源保持同一 epoch；旧库存创建 tick 不会因进程重启归零。
 
 ## §7 接入面与守恒说明
 
@@ -71,3 +74,11 @@
 - 反方质疑：是否只是"冻结容器角度"的重复 finding？是否与矿脉/void action/realm taint 三个已接受的"tick 重启归零"案例重复？
 - 修正/反驳：`docs/plan-bughunt-r6-findings-v1.md` #4 虽引用同一行 `compute.rs:247`，但角度是"冻结加速衰减的 `frozen_since_tick` 接线缺失导致冻结从不生效"，与本 finding"`now_tick` 本身在重启后倒退导致衰减整体倒退到 0"是不同触发条件、不同影响范围的独立缺陷；已确认的三个"tick 重启归零"接受案例（矿脉再生 / void action 冷却 / realm taint）各自作用于不同子系统且明确不覆盖 shelflife。
 - 反方最终裁决：通过（`is_real: true`, `reachable: true`, `severity_adjust: unchanged`，保持 high）。可达性完全正常游玩可达（采集/进食/战利品 + 任意常规重启），是本仓已验证三次的"tick 时钟重启归零"架构模式应用在 shelflife 子系统的新实例，非重复，未修复，适合开 Skeleton Plan PR。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/persistence/runtime_clock.rs`（跨重启快照、旧库存回退、绝对 tick 白名单、逐行停机重基准、五分钟运行时 tick 节流与测试）；`server/src/persistence/migrations.rs`（v45 `runtime_clock` 表及 schema 校验）；`server/src/persistence/bootstrap.rs`（启动 hydrate、节流状态初始化、关服 flush）；`server/src/player/gameplay.rs`（GameplayTick hydrate setter）；`server/src/persistence/mod.rs`（资源与系统注册）。
+- **关键 commit**：`83e4012e4`（2026-09-28，promotion：骨架转 active）；`881cbeb32`（2026-09-28，新增跨重启运行时 tick 持久化与兼容回退）；`dc7d68186`（2026-09-28，收紧旧库存回退并修复 clippy 门禁）；`46d434804`（2026-09-28，保守迁移旧库存年龄并修正启动快照墙钟）；`1c1e98418`（2026-09-28，修正旧库存迁移的运行时 tick 重基准并锁定跨表年龄与不过期契约）；`9a504657e`（2026-09-28，限制旧库存 tick 来源并按库存行计算停机补偿）；`26b725192`（2026-09-28，修正 tick 白名单循环的 clippy 借用问题）；`9ab312b44`（2026-09-28，旧表缺少 `player_identities.last_switch_tick` 时跳过查询并补启动回归）；`f6d967a09`（2026-09-29，按运行时 tick 节流周期快照，移除每 tick 墙钟读取与高频 SQLite 写入）。
+- **测试结果**：合并最新 `origin/main` 后 `scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 与 `scripts/build-token.sh cargo test` 均通过（主库 10411 个测试通过、0 失败；主程序及各 unit/integration 测试通过；doc-tests 3 通过、5 忽略）。新增 `periodic_runtime_clock_snapshot_is_throttled_by_runtime_ticks` 与启动节流状态断言通过；runtime clock 回归覆盖未来截止 tick 忽略、逐行墙钟补偿、持久化最大 tick 年龄单调性、近期物品不过期，以及旧 `player_identities` 表缺列时完整启动不 panic。性能复验中，slot-2 的 100 NPC debug 探针为 tick 200=15.5、400=19.7、600=19.7、800=19.9、1000=19.8；主线 smoke run `36409156928` 为 20.0，原 PR 失败 run `36422928848` 为 10.5。
+- **跨仓库核验**：server 命中 `Freshness.created_at_tick`、`effective_dt_ticks`、`GameplayTick`、`CombatClock`、`ShelflifeSweepTick` 与 SQLite `runtime_clock`；本修复不改 agent/client 契约。
+- **遗留 / 后续**：无。本 PR 不改变既有 Freshness 衰减公式，只修正跨重启的相对 tick 基准；旧存档首次启动只从明确白名单的持久化绝对 tick 与库存 JSON 的 `Freshness.created_at_tick` 建立下界，按每条库存快照的墙钟计算可证明停机间隔，随后写入 v45 快照。

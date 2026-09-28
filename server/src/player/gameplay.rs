@@ -146,6 +146,10 @@ impl GameplayTick {
     pub fn current_tick(&self) -> u64 {
         self.tick
     }
+
+    pub(crate) fn set_current_tick(&mut self, tick: u64) {
+        self.tick = tick;
+    }
 }
 
 type GameplayPlayerSetReadItem<'a> = (Entity, &'a Username, &'a Position);
