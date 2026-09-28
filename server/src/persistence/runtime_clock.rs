@@ -41,7 +41,7 @@ fn load_runtime_clock_at(settings: &PersistenceSettings, now_wall: i64) -> io::R
         .map_err(io::Error::other)?;
 
     let Some((tick, snapshot_wall)) = persisted else {
-        return Ok(legacy_inventory_tick(&connection, now_wall)?);
+        return legacy_inventory_tick(&connection, now_wall);
     };
     let record = RuntimeClockRecord {
         tick: sql_to_tick(tick)?,
@@ -135,9 +135,11 @@ fn legacy_inventory_tick(connection: &Connection, now_wall: i64) -> io::Result<u
         let Some(max_created_at_tick) = max_created_at_tick_in_json(&value) else {
             continue;
         };
-        let offline_ticks = (snapshot_wall > 0)
-            .then(|| elapsed_wall_ticks(snapshot_wall, now_wall))
-            .unwrap_or(0);
+        let offline_ticks = if snapshot_wall > 0 {
+            elapsed_wall_ticks(snapshot_wall, now_wall)
+        } else {
+            0
+        };
         let candidate = max_created_at_tick.saturating_add(offline_ticks);
         rebased_tick = Some(rebased_tick.map_or(candidate, |current| current.max(candidate)));
     }
