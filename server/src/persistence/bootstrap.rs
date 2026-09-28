@@ -221,13 +221,15 @@ pub(super) fn dispatch_persistence_shutdown_flushes(world: &mut World) {
     let runtime_tick = world
         .get_resource::<CultivationClock>()
         .map_or(0, |clock| clock.tick);
-    if let Some(settings) = world.get_resource::<PersistenceSettings>() {
-        let wall_clock = current_unix_seconds();
-        if let Err(error) = persist_runtime_clock(settings, runtime_tick, wall_clock) {
-            tracing::warn!(
-                "[bong][persistence] failed to persist runtime clock during shutdown at {}: {error}",
-                settings.db_path().display()
-            );
+    if requested {
+        if let Some(settings) = world.get_resource::<PersistenceSettings>() {
+            let wall_clock = current_unix_seconds();
+            if let Err(error) = persist_runtime_clock(settings, runtime_tick, wall_clock) {
+                tracing::warn!(
+                    "[bong][persistence] failed to persist runtime clock during shutdown at {}: {error}",
+                    settings.db_path().display()
+                );
+            }
         }
     }
     let wall_unix_millis = SystemTime::now()
