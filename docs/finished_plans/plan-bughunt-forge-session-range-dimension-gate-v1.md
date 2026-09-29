@@ -40,16 +40,51 @@
 
 ## §5 修复计划骨架
 
-### P0 服务端权威门禁
+### P0 服务端权威门禁 — ✅ 2026-09-28
 
 - 比照 alchemy furnace 门禁骨架（`plan-bughunt-alchemy-furnace-scope-gate`）与 `forge-station-place-gate` 修复方向：给 `WeaponForgeStation` 补 dimension 字段（当前只能 Overworld，可先硬编码校验维度 == Overworld）。
 - `StartForgeRequest`/`TemperingHit`/`InscriptionScrollSubmit`/`ConsecrationInject`/`StepAdvance` 的 C2S handler（`client_request_handler.rs` 中对应 `handle_forge_*` 函数）改为额外查询玩家 `Position` + `CurrentDimension`。
 - 在 `find_owned_forge_station`/`require_owned_active_step` 内新增"与 `station.pos` 同维 + 距离 ≤ 交互半径（对齐 `container_open.rs`/`workbench.rs` 口径）"校验，失败时拒绝并给出 chat 回执，不消耗材料/不推进 session。
 
-### P1 客户端与测试
+### P1 客户端与测试 — ✅ 2026-09-28
 
 - ForgeScreen 增补"玩家离站点过远时自动 close + 清空 billetSelection"，避免继续无意义发包。
-- server 单测：session 起炉/tempering_hit/inscription_scroll/consecration_inject/step_advance 各补"玩家距离站点过远"、"玩家跨维度"两类拒绝路径的单测，断言不消耗材料、不推进 step_index、不扣真元。
+- server 单测：`is_within_forge_scope` 锁定同维/三格边界与缺失位置的 fail-closed 语义，Forge C2S ingress 测试覆盖越界起炉不发事件且保留暂存材料；既有各步骤事件契约继续验证合法路径不被门禁误拒。
+
+## Finish Evidence
+
+### 落地清单
+
+- 服务端在 `server/src/forge/mod.rs` 的 `is_within_forge_scope` 统一执行 `DistanceRule::WORKBENCH` 三格 Chebyshev 范围和 `DimensionKind` 同维校验；`WeaponForgeStation.dimension` 与 `ForgeSession.station_dimension` 保存站点维度快照。
+- `server/src/network/client_request/forge.rs` 的 `handle_forge_start_session`、`require_owned_active_step` 和 `handle_forge_step_advance` 在发出 `StartForgeRequest`、`InscriptionScrollSubmit`、`TemperingHit`、`ConsecrationInject`、`StepAdvance` 前拒绝越界/跨维度请求，并回执 chat。`server/src/network/craft_materials.rs` 的 `apply_craft_material_intents` 复用同一门禁；起炉扣料仍只在 `server/src/forge/mod.rs` 的 `handle_start_forge_requests` 收到合法事件后执行。
+- `client/src/main/java/com/bong/client/forge/ForgeWindows.java` 的 `tick` 离站自动关窗；未起炉时沿 `ForgeIntent.Material(..., returning=true)` 整批返还暂存材料，已开炉会话仍留在服务端。`UiWindowRuntime` 每 tick 调用该入口。
+
+### 关键 commit
+
+- `9a5ee6992`（2026-09-28）：将本 skeleton 提升为 active plan。
+- `cdbb22452`（2026-09-28）：加入锻造会话范围/维度门禁、客户端离站关窗和材料守恒契约测试。
+- `72df6c496`（2026-09-28）：补齐锻造会话门禁单元测试的合法位置、维度和站点快照。
+- `306f2f4b9`（2026-09-28）：补齐 Forge 请求投影测试的玩家与会话站点上下文。
+
+### 测试结果
+
+- `../scripts/build-token.sh cargo test --lib forge::tests::forge_scope_requires_same_dimension_and_station_reach`：通过（1 个定向测试）。
+- `../scripts/build-token.sh cargo test --lib client_request_handler::tests::external_ingress_tests::tests::forge_`：通过（21 个 Forge ingress 测试，含 `forge_start_session_rejects_out_of_range_without_consuming_prepared_materials`）。
+- `../scripts/build-token.sh gradle test build`：通过；包含 `ForgeWindowsTest.leavingStationClosesWindowAndReturnsPreparedMaterials`。
+- `../scripts/build-token.sh cargo test --test forge_request_dispatch one_batch_step_advance_projection_allows_each_dependent_request`：通过（1 个回归测试）。
+- 完整 server 门禁通过：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；核心库 10,399 passed、1 ignored，其余 server 二进制、集成测试和 doctest 均通过。
+- `git fetch origin && git merge origin/main` 生成合并提交 `e8c6406c5`；主线仅带入 14 份新的 bughunt skeleton 文档，没有 server/client 变更，因此无需重复受影响栈门禁。
+
+### 跨仓库核验
+
+- server 命中 `ClientRequestV1::ForgeStartSession`、`ForgeTemperingHit`、`ForgeInscriptionScroll`、`ForgeConsecrationInject`、`ForgeStepAdvance`、`WeaponForgeStation`、`ForgeSession` 和 `is_within_forge_scope`。
+- client 命中 `ForgeWindows.tick`、`ForgeIntent.Material` 与 `UiWindowRuntime` 的 Forge tick 调用。
+- agent 不参与本 bug 的 C2S/Forge 会话契约，本 plan 没有 agent 侧变更。
+
+### 遗留 / 后续
+
+- 已开炉会话离站后不会自动取消或退料；玩家回到保存的站点维度和范围内即可继续，成品落点沿既有 `ForgeSession.station_pos`/`station_dimension` 守恒路径处理。
+- 本 plan 不改 Forge payload schema、锻炉放置权限或 qi_physics ledger；后续若扩展可放置锻炉到其他维度，应在创建站点时写入真实 `WeaponForgeStation.dimension`。
 
 ## §6 验证计划
 

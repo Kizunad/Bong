@@ -2,7 +2,7 @@
 
 ## §0 摘要
 
-**来源 Issue：#1434、#1359。** 暗器 v2 施放只检查 `CarrierImprint.qi_amount > EPSILON`，随后从玩家 `qi_current` 计算技能成本和 payload，却不减少被选中的 imprint；同一枚封骨因此可无限施放。与此同时，充能事务保存了 `CarrierCharging.instance_id`，但 `finish_charge` 只按 slot 读取当前物品，换装后会把新物品改成充能骨并把 imprint 写给旧 instance。两者都是 carrier/imprint 生命周期与物品身份脱节的根因，本骨架不改代码。
+**来源 Issue：#1434、#1359、#1628、#1537、#1441。** 暗器 v2 施放只检查 `CarrierImprint.qi_amount > EPSILON`，随后从玩家 `qi_current` 计算技能成本和 payload，却不减少被选中的 imprint；同一枚封骨因此可无限施放。与此同时，充能事务保存了 `CarrierCharging.instance_id`，但 `finish_charge` 只按 slot 读取当前物品，换装后会把新物品改成充能骨并把 imprint 写给旧 instance。#1628 的重复充能覆盖旧 imprint、#1537 的整堆折叠丢料、#1441 的囊/箭袋只信 imprint 都是同一条 carrier instance 生命周期断链，本骨架不改代码。
 
 接入面：进料是 `CarrierStore.imprints_by_instance`、`PlayerInventory.equipped`、`CarrierCharging` 与 `AnqiSkillId`；出料是消耗后的 imprint、正确 instance 的充能物品、QiTransfer/拒绝结果。复用 `carrier_qi_account`、`CarrierImprint`、`CarrierCharging` 和现有 `QiTransfer`，agent/client 事件格式不必改变。worldview §四/§十的物品承载真元规则要求一个 instance 只有一个真实余额。
 

@@ -479,6 +479,7 @@ fn register_explosion_test_resources(app: &mut App) {
     app.add_event::<crate::zhenfa::ScatterBeadUseRequest>();
     app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+    app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
     app.add_event::<crate::combat::events::CombatEvent>();
     app.add_event::<crate::combat::events::DeathEvent>();
     app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -507,7 +508,13 @@ fn register_explosion_test_systems(app: &mut App) {
     );
     app.add_systems(
         Update,
-        crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(dispatch_alchemy_take_back_requests)
+            .after(handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        dispatch_alchemy_take_back_requests.after(handle_client_request_payloads),
     );
 }
 
@@ -4395,8 +4402,14 @@ mod external_ingress_tests {
                 ForgeStep::Billet => StepState::Billet(Default::default()),
                 ForgeStep::Done => StepState::None,
             };
+            session.station_pos = Some((8, 66, 8));
+            session.station_dimension = DimensionKind::Overworld;
             sessions.insert(session);
             app.insert_resource(sessions);
+            app.world_mut().entity_mut(caster).insert((
+                Position::new(DVec3::new(8.5, 66.0, 8.5)),
+                CurrentDimension(DimensionKind::Overworld),
+            ));
         }
 
         /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
@@ -5372,6 +5385,8 @@ mod external_ingress_tests {
             app.insert_resource(SkillMeridianDependencies::default());
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(AlchemyMockState::default());
+            app.insert_resource(WorldQiAccount::default());
+            app.init_resource::<crate::alchemy::AlchemyQiReservationBook>();
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
@@ -5425,6 +5440,8 @@ mod external_ingress_tests {
             app.add_event::<ScatterBeadUseRequest>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+            app.add_event::<crate::alchemy::InjectQiRequest>();
+            app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
             app.add_event::<crate::combat::events::CombatEvent>();
             app.add_event::<crate::combat::events::DeathEvent>();
             app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -5477,6 +5494,18 @@ mod external_ingress_tests {
                     // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
                     // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
                     .after(crate::lingtian::LingtianRequestIngressSet),
+            );
+            app.add_systems(
+                Update,
+                settle_alchemy_inject_qi_requests.after(handle_client_request_payloads),
+            );
+            app.add_systems(
+                Update,
+                dispatch_alchemy_take_back_requests.after(settle_alchemy_inject_qi_requests),
+            );
+            app.add_systems(
+                Update,
+                settle_finished_alchemy_furnace_qi.after(dispatch_alchemy_take_back_requests),
             );
         }
 
@@ -7132,7 +7161,11 @@ mod external_ingress_tests {
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert((
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
                 PlayerState::default(),
                 inventory_with_stack("ci_she_hao", 3),
             ));
@@ -7613,7 +7646,11 @@ mod external_ingress_tests {
             register_request_app(&mut app);
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
-            fund_alchemy_test_player(&mut app, entity, 2.0);
+            app.world_mut().entity_mut(entity).insert(Cultivation {
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            });
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
 
             send_alchemy_intervention_payload(
@@ -7835,7 +7872,11 @@ mod external_ingress_tests {
                 let (client_bundle, _helper) = create_mock_client("Alchemist");
                 let entity = app.world_mut().spawn(client_bundle).id();
                 app.world_mut().entity_mut(entity).insert((
-                    crate::cultivation::components::Cultivation::default(),
+                    crate::cultivation::components::Cultivation {
+                        qi_current: SPIRIT_QI_TOTAL,
+                        qi_max: SPIRIT_QI_TOTAL,
+                        ..Default::default()
+                    },
                     PlayerState::default(),
                     // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                     PlayerInventory {
@@ -11771,7 +11812,13 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, mut helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             let station = app
                 .world_mut()
                 .spawn(WeaponForgeStation::placed(
@@ -11820,13 +11867,20 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, _helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             app.world_mut().spawn(WeaponForgeStation {
                 tier: 1,
                 owner: None,
                 session: None,
                 integrity: 1.0,
                 pos: Some((8, 66, 8)),
+                dimension: DimensionKind::Overworld,
             });
 
             send_forge_start_session(
@@ -11842,6 +11896,78 @@ mod external_ingress_tests {
                 .world()
                 .resource::<valence::prelude::Events<StartForgeRequest>>();
             assert_eq!(events.iter_current_update_events().count(), 1);
+        }
+
+        #[test]
+        fn forge_start_session_rejects_out_of_range_without_consuming_prepared_materials() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.add_event::<StartForgeRequest>();
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let mut inventory = empty_inventory();
+            inventory.material_preparation.recipe_id = Some("iron_sword_v0".to_string());
+            inventory.material_preparation.station_pos = Some((8, 66, 8));
+            inventory.material_preparation.materials.push(
+                crate::craft::preparation::PreparedMaterial {
+                    item: skill_scroll_item(77, "fan_tie"),
+                    origin: InventoryLocationV1::Container {
+                        container_id: "main_pack".to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                },
+            );
+            let prepared_before = inventory.material_preparation.clone();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(80.5, 66.0, 8.5)));
+            app.world_mut().spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                entity,
+            ));
+
+            send_forge_start_session(
+                &mut app,
+                entity,
+                (8, 66, 8),
+                "iron_sword_v0",
+                &[("fan_tie", 1)],
+            );
+            app.update();
+
+            let events = app
+                .world()
+                .resource::<valence::prelude::Events<StartForgeRequest>>();
+            assert_eq!(
+                events.iter_current_update_events().count(),
+                0,
+                "离开锻炉后不得发出会扣除已暂存材料的起炉事件"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<PlayerInventory>(entity)
+                    .expect("test player inventory")
+                    .material_preparation,
+                prepared_before,
+                "越界拒绝必须保留暂存材料，供玩家回到锻炉旁继续或返还"
+            );
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_game_messages(&mut helper)
+                    .iter()
+                    .any(|message| message.contains("靠近锻炉")),
+                "越界起炉应回执范围错误"
+            );
         }
 
         #[test]

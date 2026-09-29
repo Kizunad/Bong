@@ -32,6 +32,7 @@ pub mod manual_qi;
 pub mod outcome;
 pub mod pill;
 pub mod processed_input;
+pub mod qi;
 pub mod quality;
 pub mod recipe;
 pub mod recipe_fragment;
@@ -88,6 +89,7 @@ pub use pill::{
     overdose_penalty, CultivationPillConsumeResult, CultivationPillEffectEntry,
     CultivationPillKind, CultivationPillSpec, PillConsumeOutcome, PillEffect, SPOIL_TOXIN_MULT,
 };
+pub use qi::{AlchemyQiReservationBook, InjectQiRequest};
 #[allow(unused_imports)]
 pub use recipe::{Recipe, RecipeId, RecipeRegistry};
 #[allow(unused_imports)]
@@ -112,6 +114,16 @@ pub struct InterventionRequest {
     pub furnace: valence::prelude::Entity,
     pub caster_id: String,
     pub intervention: Intervention,
+}
+
+/// 结算顺序敏感的取丹请求。C2S handler 只入队，待同帧注灵账本提交后再消费，
+/// 防止一个 update 内先收到注灵、随后收到取丹时，取丹抢在付款前结束 session。
+#[derive(Debug, Clone, Event)]
+pub struct AlchemyTakeBackRequest {
+    pub player: valence::prelude::Entity,
+    pub furnace_pos: (i32, i32, i32),
+    pub slot_idx: u8,
+    pub tick: u64,
 }
 
 /// plan §4 数据契约：`AlchemyOutcome` — session 结算后广播。
@@ -159,6 +171,9 @@ pub fn register(app: &mut App) {
     app.add_event::<AlchemyOutcomeEvent>();
     app.add_event::<PlaceFurnaceRequest>();
     app.add_event::<LearnRecipeFragmentIntent>();
+    app.add_event::<InjectQiRequest>();
+    app.add_event::<AlchemyTakeBackRequest>();
+    app.init_resource::<AlchemyQiReservationBook>();
     app.add_event::<auto_profile::InjectQiIntent>();
     app.add_event::<manual_qi::ManualQiInject>();
     app.add_event::<world_effects::AlchemyWorldEffect>();

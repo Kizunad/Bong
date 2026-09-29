@@ -293,25 +293,14 @@ pub(crate) fn dispatch_production_request<
             furnace_pos,
             slot_idx,
         } => {
-            crate::network::client_request_handler::handle_alchemy_take_back(
-                player,
-                furnace_pos,
-                slot_idx,
-                combat_clock.tick,
-                clients,
-                &mut alchemy.furnaces,
-                &alchemy.recipe_registry,
-                &mut alchemy.outcome_tx,
-                inventories,
-                player_states,
-                &skill_scroll.cultivations,
-                &mut combat.wounds,
-                &combat.game_modes,
-                combat.death_tx.as_deref_mut(),
-                &alchemy.item_registry,
-                alchemy.instance_allocator.as_deref_mut(),
-                alchemy.world_effects.as_deref_mut(),
-            );
+            if let Some(events) = alchemy.take_back_tx.as_deref_mut() {
+                events.send(crate::alchemy::AlchemyTakeBackRequest {
+                    player,
+                    furnace_pos,
+                    slot_idx,
+                    tick: combat_clock.tick,
+                });
+            }
         }
         ProductionRequest::Ignite {
             furnace_pos,
