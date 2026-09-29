@@ -27,6 +27,7 @@ fi
 
 if command -v gh >/dev/null 2>&1; then
   visibility=$(gh api repos/Kizunad/Bong-wiki --jq .visibility)
+  visibility=${visibility^^}
   [[ "$visibility" == "PRIVATE" ]] || {
     echo "Bong-wiki 必须保持 private，当前为 $visibility" >&2
     exit 1
