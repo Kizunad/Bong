@@ -782,8 +782,9 @@ public final class UiWindowRuntime {
                     adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "body-inspect-content")
                         .removeChild(ownedView.bodyModel.component());
                 }
-                if (ownedView.forge != null) ownedView.forge.close();
-                if (ownedView.alchemy != null) ownedView.alchemy.close();
+                Runnable forgeClose = ownedView.forge == null ? null : ownedView.forge::close;
+                Runnable alchemyClose = ownedView.alchemy == null ? null : ownedView.alchemy::close;
+                closeOwnedResources(forgeClose, alchemyClose);
                 adapter.close();
                 if (state.key().equals(focusedKey)) focusedKey = null;
             });
@@ -803,6 +804,25 @@ public final class UiWindowRuntime {
             view.item = item;
         }
         return view;
+    }
+
+    static void closeOwnedResources(Runnable forgeClose, Runnable alchemyClose) {
+        Throwable primary = null;
+        try {
+            if (forgeClose != null) forgeClose.run();
+        } catch (Throwable failure) {
+            primary = failure;
+        }
+        try {
+            if (alchemyClose != null) alchemyClose.run();
+        } catch (Throwable failure) {
+            if (primary == null) primary = failure;
+            else if (primary != failure) primary.addSuppressed(failure);
+        }
+        if (primary == null) return;
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+        throw new RuntimeException(primary);
     }
 
     public static boolean mouseDown(double x, double y, int button) {
