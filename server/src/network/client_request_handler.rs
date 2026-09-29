@@ -5742,11 +5742,11 @@ pub(crate) fn settle_finished_alchemy_furnace_qi(
         if ledger.balance(&account) <= 0.0 {
             continue;
         }
-        let session_finished = furnace
-            .session
-            .as_ref()
-            .is_none_or(|session| session.finished);
-        if !session_finished {
+        // 完成的 session 仍需保留到玩家收取结果；在这里提前退款会把
+        // `qi_injected` 清成零，随后 take_back 会错误地判定 qi_deficit。
+        // session 被 take_back 移除后，或炉体本来就没有 session，才进入
+        // 结算路径；断线/移除炉体则由各自的清理系统处理。
+        if furnace.session.is_some() {
             continue;
         }
         let owner = reservations.owner(furnace_entity).map(str::to_owned);
