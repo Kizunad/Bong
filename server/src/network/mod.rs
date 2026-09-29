@@ -1477,8 +1477,9 @@ fn publish_world_state_to_redis(
 ///
 /// 节奏：与 `publish_world_state_to_redis` 同为 `WORLD_STATE_PUBLISH_INTERVAL_TICKS`，
 /// 但用独立 `QiLedgerTimer` 计数（见其 doc-comment）。外部脚本可 `HGETALL bong:qi/ledger`
-/// 做守恒断言：守恒总量恒定的真锚点是 `budget_initial_total`（== `DEFAULT_SPIRIT_QI_TOTAL`），
-/// 而 `total_observed` 是**已落位**真元（≤ 预算，minimal 世界起服后远小于预算）。
+/// 做守恒断言：守恒总量恒定的真锚点是启动时注入的 `budget_initial_total`
+/// （`WorldQiBudget.initial_total`），而 `total_observed` 是**已落位**真元（≤ 预算，
+/// minimal 世界起服后远小于预算）。
 ///
 /// **只读发布，零真元流动**——不调 `WorldQiAccount::transfer`，不改任何 balance。
 fn publish_qi_ledger_to_redis(world: &mut bevy_ecs::world::World) {

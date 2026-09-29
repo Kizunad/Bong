@@ -63,16 +63,13 @@ pub const QI_RHYTHM_NEUTRAL: f64 = 1.0;
 pub const QI_RHYTHM_ACTIVE: f64 = 1.2;
 /// worldview §十七：汐转波动范围。
 pub const QI_RHYTHM_TURBULENT_RANGE: (f64, f64) = (0.7, 1.5);
-/// worldview §十：全服灵气预算默认值；生产值由 server config 初始化。
+/// 服务器未提供启动参数或环境变量时的全服真元预算。
 ///
-/// plan-zone-qi-economy-v1 §8.1 #2（用户 2026-07-03 拍板）：100.0 → 20000.0。
-/// 实测全 zones 满仓仅 ≈453 绝对点、目标编制（3 化虚 + 4 固元）峰值持有 ≈4500，
-/// 旧值 100 比经济规模小两个数量级——是"zone 灵气永不恢复"经济死局的根因之一。
-/// 20000 ≈ 目标峰值 4.4×，留 NPC 私池 + 波动冗余。`DEFAULT_VOID_QUOTA_K`
-/// （`cultivation::tribulation::DEFAULT_VOID_QUOTA_K`）按此值等比例导出，
-/// 化虚名额闸门（满预算 2 名额）不受影响，勿手改该常量。
-/// `docs/worldview.md:874` 的字面值 100 走独立 docs PR 同步（§10.0），不在本改动范围。
-pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 20000.0;
+/// 真正生效的预算由 `qi_physics::WorldQiTotalConfig` 在起服时解析，
+/// 优先使用 `--spirit-qi-total`，其次使用 `BONG_SPIRIT_QI_TOTAL`，最后回退到这里。
+/// 这个常量只承载默认值；运行时守恒快照必须读取 `WorldQiBudget`，不能在业务函数中
+/// 偷读它。按全服总量计算的玩法（例如化虚名额门槛）应使用启动后注入的预算。
+pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 2_000_000.0;
 /// worldview §十：天道时代衰减下限。
 pub const QI_TIANDAO_DECAY_PER_ERA_MIN: f64 = 0.01;
 /// worldview §十：天道时代衰减上限。

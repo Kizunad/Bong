@@ -265,7 +265,16 @@ pub fn register(app: &mut App) {
     app.insert_resource(JueBiTerrainOverlay::default());
     app.insert_resource(JueBiZoneAftershocks::default());
     app.init_resource::<TribulationScorchRecords>();
-    app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
+    let world_qi_total = app
+        .world()
+        .get_resource::<crate::qi_physics::WorldQiBudget>()
+        .map_or(
+            crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+            |budget| budget.initial_total,
+        );
+    app.insert_resource(
+        self::tribulation::VoidQuotaConfig::from_env_with_world_total(world_qi_total),
+    );
     // plan-halfstep-buff-v1 P0/P3：渡虚劫遥测 + quota 满时长追踪 + 重渡 FIFO 队列
     app.init_resource::<TribulationMetrics>();
     app.init_resource::<QuotaFullTracker>();

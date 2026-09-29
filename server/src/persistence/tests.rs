@@ -15,7 +15,7 @@ use crate::player::state::{
 };
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{assert_conservation, qi_flow_overflow_account, WorldQiSnapshot};
-use crate::schema::common::{NpcStateKind, SPIRIT_QI_TOTAL};
+use crate::schema::common::{NpcStateKind, TEST_QI_FIXTURE_TOTAL};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -4438,7 +4438,10 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let zone_absolute = record.qi_current * QI_ZONE_UNIT_CAPACITY;
     let mut seed_ledger = WorldQiAccount::default();
     seed_ledger
-        .set_balance(pending_inflow_account(), SPIRIT_QI_TOTAL - zone_absolute)
+        .set_balance(
+            pending_inflow_account(),
+            TEST_QI_FIXTURE_TOTAL - zone_absolute,
+        )
         .expect("seed pending inflow balance should be finite");
     let total_before_restart = zone_absolute + seed_ledger.total();
     persist_zone_runtime_snapshot_with_heartbeat(
@@ -4506,7 +4509,7 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let restored_ledger = app.world().resource::<WorldQiAccount>();
     assert_eq!(
         restored_ledger.balance(&pending_inflow_account()),
-        SPIRIT_QI_TOTAL - zone_absolute,
+        TEST_QI_FIXTURE_TOTAL - zone_absolute,
         "expected restart to restore the pending pool that backs the active pseudo-vein loan"
     );
     assert!(

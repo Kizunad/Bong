@@ -749,7 +749,7 @@ mod tests {
     use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
     use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
-    use crate::schema::common::SPIRIT_QI_TOTAL;
+    use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
     use crate::social::events::SocialRenownDeltaEvent;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
@@ -760,7 +760,7 @@ mod tests {
         // ZoneRegistry は charge_tick_system の ResMut<ZoneRegistry> に必要。
         // fallback zone（spirit_qi=0.9）を差し込む；守恒テストでは適宜 spirit_qi=0.0 に上書き。
         app.insert_resource(ZoneRegistry::fallback());
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.init_resource::<WorldQiAccount>();
         app.add_event::<AttackIntent>();
         app.add_event::<CombatEvent>();
@@ -1102,8 +1102,8 @@ mod tests {
 
         let before = summarize_world_qi(app.world_mut());
         assert_eq!(
-            before.budget_initial_total, SPIRIT_QI_TOTAL,
-            "interrupt refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
+            before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+            "interrupt refund snapshot must use the authoritative TEST_QI_FIXTURE_TOTAL budget"
         );
         charge_then_interrupt(&mut app, caster, attacker);
         let after = summarize_world_qi(app.world_mut());
@@ -1444,8 +1444,8 @@ mod tests {
         assert_conservation(&before, &after, 0.0)
             .expect("共享 overflow 两会话先后打断必须保持世界真元守恒");
         assert_eq!(
-            after.budget_initial_total, SPIRIT_QI_TOTAL,
-            "shared overflow refund snapshot must use the authoritative SPIRIT_QI_TOTAL budget"
+            after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+            "shared overflow refund snapshot must use the authoritative TEST_QI_FIXTURE_TOTAL budget"
         );
     }
 

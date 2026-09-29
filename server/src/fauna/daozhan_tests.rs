@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiSnapshot};
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 
 // ── 枚举 pin 测试 ────────────────────────────────────────────────────────
 
@@ -1192,7 +1192,7 @@ fn ambush_action_test_app() -> App {
     let mut app = App::new();
     app.insert_resource(WorldQiAccount::default());
     app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
-        SPIRIT_QI_TOTAL,
+        TEST_QI_FIXTURE_TOTAL,
     ));
     app.add_event::<VfxEventRequest>();
     app.add_event::<PlaySoundRecipeRequest>();
@@ -1664,7 +1664,7 @@ fn tiandao_condense_test_app(zone_spirit_qi: f64) -> App {
     app.insert_resource(zones);
     app.insert_resource(WorldQiAccount::default());
     app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
-        SPIRIT_QI_TOTAL,
+        TEST_QI_FIXTURE_TOTAL,
     ));
     app.init_resource::<DaoZhangCondenseState>();
     app.insert_resource(GameTick(TIANDAO_CONDENSE_INTERVAL_TICKS));
@@ -1716,7 +1716,7 @@ fn death_release_test_app(zone_spirit_qi: f64) -> App {
     app.insert_resource(zones);
     app.insert_resource(WorldQiAccount::default());
     app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
-        SPIRIT_QI_TOTAL,
+        TEST_QI_FIXTURE_TOTAL,
     ));
     app.add_event::<DeathEvent>();
     app.add_event::<QiTransfer>();
