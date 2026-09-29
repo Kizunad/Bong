@@ -71,8 +71,27 @@ public final class AlchemyWorldEffects {
 
     /** 重置已登记模型后再丢弃索引，避免最后一帧的热度或过渡动画残留。 */
     static <T> void resetFurnaceModels(Map<BlockPos, T> models, Consumer<? super T> resetter) {
-        models.values().forEach(resetter);
-        models.clear();
+        Throwable primary = null;
+        for (T model : models.values()) {
+            try {
+                resetter.accept(model);
+            } catch (RuntimeException | Error failure) {
+                primary = accumulate(primary, failure);
+            }
+        }
+        try {
+            models.clear();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+    }
+
+    private static Throwable accumulate(Throwable primary, Throwable failure) {
+        if (primary == null) return failure;
+        if (primary != failure) primary.addSuppressed(failure);
+        return primary;
     }
 
     /** 统一 ServerDataRouter 已在客户端线程完成连接代际校验。 */
