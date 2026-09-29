@@ -16,8 +16,13 @@ if [[ ! -d "$WIKI_REPO/.git" ]]; then
   mkdir -p "$(dirname "$WIKI_REPO")"
   git clone "$REMOTE" "$WIKI_REPO"
 else
-  git -C "$WIKI_REPO" fetch origin
-  git -C "$WIKI_REPO" pull --ff-only origin main
+  if git -C "$WIKI_REPO" rev-parse --verify HEAD >/dev/null 2>&1; then
+    git -C "$WIKI_REPO" fetch origin
+    git -C "$WIKI_REPO" pull --ff-only origin main
+  elif git -C "$WIKI_REPO" ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+    git -C "$WIKI_REPO" fetch origin main
+    git -C "$WIKI_REPO" checkout -B main origin/main
+  fi
 fi
 
 if [[ -n "$(git -C "$WIKI_REPO" status --porcelain=v1)" ]]; then
