@@ -621,8 +621,11 @@ mod tests {
         let (mut app, player) = app_with_player(80.0);
         let furnace = app.world_mut().spawn_empty().id();
         let mut session = AlchemySession::new("hui_yuan_pill_v0".into(), "offline:alice".into());
-        session.qi_injected = 5.0;
-        let before_reserved = session.qi_reserved;
+        session.record_paid_qi(5.0);
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(QiAccountId::player("offline:alice"), 1.0e20)
+            .unwrap();
         app.world_mut()
             .resource_mut::<WorldQiAccount>()
             .set_balance(furnace_qi_account(furnace), 5.0)
@@ -645,14 +648,14 @@ mod tests {
         assert!(matches!(
             error,
             QiPhysicsError::InvalidAmount {
-                field: "alchemy.session.qi_reserved",
+                field: "destination_balance",
                 ..
             }
         ));
         let after = summarize_world_qi(app.world_mut());
         assert_conservation(&before, &after, 0.0)
             .expect("failed refund must leave the qi total unchanged");
-        assert_eq!(session.qi_reserved, before_reserved);
+        assert_eq!(session.qi_reserved, 5.0);
         assert_eq!(session.qi_injected, 5.0);
         assert_eq!(
             app.world()
@@ -663,6 +666,12 @@ mod tests {
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
             80.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&QiAccountId::player("offline:alice")),
+            1.0e20
         );
     }
 
