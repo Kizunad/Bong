@@ -2,6 +2,8 @@
 
 ## §0 摘要
 
+来源 issue：#1512。
+
 野生灵材生长扣 `zone.spirit_qi`（`growth_cost`）与采集获得的 `item.spirit_quality` 完全脱钩——生长侧从 zone 真实扣款（该字段直接是 `qi_physics::ledger::summarize_world_qi` 里 `zone_qi` 分量的组成部分），采集侧物品品质完全来自静态 item template + 技能加成、与该植株实际消耗的 `growth_cost` 无任何数量级关联；自然凋亡也只归还 `growth_cost*restore_ratio`（典型 80%），玩家实际采集（核心常规玩法）时归还逻辑整段跳过，`growth_cost` 100% 从 zone 永久消失。findings 报的 severity 是 high，但 skeptic 对峙结论建议基于「吞真元 = 阻塞合并」硬约束上调至 critical——本 skeleton 沿用 finder 原始 high 标注，把 skeptic 的上调建议记录在 §8，留给实施阶段拍板。
 
 本 plan 仅是 BugHunt Skeleton Plan，不包含实际修复。
