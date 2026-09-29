@@ -48,4 +48,23 @@ class AlchemyWorldEffectsTest {
         assertEquals(List.of(later), List.of(thrown.getSuppressed()));
         assertTrue(models.isEmpty(), "所有重置尝试完成后必须清空模型索引");
     }
+
+    @Test
+    void resetFurnaceModelsResetsRemainingModelsAfterFirstFailure() {
+        var models = new LinkedHashMap<BlockPos, String>();
+        models.put(new BlockPos(4, 70, 4), "first");
+        models.put(new BlockPos(5, 70, 5), "second");
+        models.put(new BlockPos(6, 70, 6), "third");
+        var reset = new java.util.ArrayList<String>();
+
+        assertThrows(IllegalStateException.class, () ->
+            AlchemyWorldEffects.resetFurnaceModels(models, model -> {
+                if (model.equals("first")) throw new IllegalStateException("first reset failed");
+                reset.add(model);
+            }));
+
+        assertEquals(List.of("second", "third"), reset,
+            "首个模型失败后，剩余模型仍必须完成重置");
+        assertTrue(models.isEmpty(), "所有重置尝试完成后必须清空模型索引");
+    }
 }
