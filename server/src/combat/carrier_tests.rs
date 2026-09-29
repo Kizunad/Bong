@@ -6,7 +6,7 @@ use crate::cultivation::components::QiColor;
 use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiBudget};
 use crate::schema::common::SPIRIT_QI_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
 
@@ -415,14 +415,17 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
         Position(spawn_pos + DVec3::new(f64::from(ANQI_PROJECTILE_MAX_DISTANCE) + 1.0, 0.0, 0.0));
     app.update();
 
-    let (despawn_reason, residual_qi) = {
+    let (despawn_reason, released_qi) = {
         let despawn = app
             .world()
             .resource::<Events<ProjectileDespawnedEvent>>()
             .iter_current_update_events()
             .find(|event| event.projectile == projectile_entity)
             .expect("超出最大飞行距离应产生 OutOfRange despawn");
-        (despawn.reason, despawn.residual_qi)
+        (
+            despawn.reason,
+            f64::from(despawn.qi_evaporated + despawn.residual_qi),
+        )
     };
     assert_eq!(despawn_reason, ProjectileDespawnReason::OutOfRange);
 
@@ -431,7 +434,7 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
         after.budget_initial_total, SPIRIT_QI_TOTAL,
         "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
     );
-    let expected_loss = f64::from(qi_target) - f64::from(residual_qi);
+    let expected_loss = f64::from(qi_target) - released_qi;
     assert_conservation(&before, &after, expected_loss).unwrap_or_else(|error| {
         panic!(
             "充能→投掷→OutOfRange→miss 回流后，扣除自然蒸发量仍必须守恒：before={before:?} after={after:?} error={error:?}"
@@ -681,6 +684,7 @@ fn projectile_hit_despawns_without_damage_or_impact_on_creative_target() {
         QiProjectile {
             owner: None,
             qi_payload: 20.0,
+            carrier_instance_id: None,
         },
         AnqiProjectileFlight {
             carrier_kind: CarrierKind::BoneChip,
@@ -747,6 +751,7 @@ fn projectile_hit_body_part_at_height(flight_y: f64) -> crate::body_plan::BodyPa
         QiProjectile {
             owner: None,
             qi_payload: 20.0,
+            carrier_instance_id: None,
         },
         AnqiProjectileFlight {
             carrier_kind: CarrierKind::BoneChip,
@@ -978,6 +983,7 @@ mod partboxes_carrier_production_integration_tests {
             QiProjectile {
                 owner: None,
                 qi_payload: 20.0,
+                carrier_instance_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
@@ -1133,6 +1139,7 @@ mod partboxes_carrier_production_integration_tests {
             QiProjectile {
                 owner: None,
                 qi_payload: 20.0,
+                carrier_instance_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
@@ -1276,6 +1283,7 @@ fn make_despawn_event(
     ProjectileDespawnedEvent {
         owner,
         projectile,
+        carrier_instance_id: owner.map(|_| 7),
         reason,
         distance: 5.0,
         qi_evaporated: 0.7 * residual_qi / 0.3,
@@ -1335,12 +1343,14 @@ fn hit_target_despawn_does_not_release_to_zone() {
         .unwrap()
         .spirit_qi;
 
-    app.world_mut().send_event(make_despawn_event(
+    let mut hit_event = make_despawn_event(
         projectile,
         None,
         0.0, // HitTarget 已置 residual_qi=0.0
         ProjectileDespawnReason::HitTarget,
-    ));
+    );
+    hit_event.qi_evaporated = 7.0;
+    app.world_mut().send_event(hit_event);
     app.update();
 
     let zone_after = app
@@ -1413,6 +1423,7 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
     app.world_mut().send_event(ProjectileDespawnedEvent {
         owner: None,
         projectile,
+        carrier_instance_id: None,
         reason: ProjectileDespawnReason::OutOfRange,
         distance: 80.0,
         qi_evaporated: 7.0,
@@ -1423,28 +1434,67 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
     app.update();
 
     let transfers = app.world().resource::<Events<QiTransfer>>();
+    let total: f64 = transfers
+        .iter_current_update_events()
+        .map(|transfer| transfer.amount)
+        .sum();
     assert!(
-        !transfers.is_empty(),
-        "落点无 zone 时仍须 emit overflow QiTransfer（真元不蒸发），实际无 transfer"
+        (total - 10.0).abs() < 1e-9,
+        "落点无 zone 时完整脱靶 payload 必须进入 overflow，期望 10.0，实际 {total}"
     );
 }
 
 #[test]
-fn conservation_invariant_residual_equals_transfer_total() {
-    // 期望：residual_qi = Σ transfer.amount（守恒等式）。
-    // zone 有足够容量吸收全部 residual。
+fn full_zone_routes_complete_miss_payload_to_overflow() {
+    use crate::qi_physics::ledger::{QiAccountKind, QiTransfer};
+
+    let mut app = miss_release_app();
+    let projectile = spawn_entity(&mut app);
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 1.0;
+
+    app.world_mut().send_event(ProjectileDespawnedEvent {
+        owner: None,
+        projectile,
+        carrier_instance_id: None,
+        reason: ProjectileDespawnReason::HitBlock,
+        distance: 5.0,
+        qi_evaporated: 7.0,
+        residual_qi: 3.0,
+        pos: [0.0, 66.0, 0.0],
+        tick: 10,
+    });
+    app.update();
+
+    let transfers = app.world().resource::<Events<QiTransfer>>();
+    let transfers: Vec<_> = transfers.iter_current_update_events().collect();
+    let total: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
+    assert_eq!(transfers.len(), 1, "满 zone 时完整余额应只进入 overflow");
+    assert_eq!(transfers[0].to.kind, QiAccountKind::Overflow);
+    assert!((total - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn conservation_invariant_releases_full_miss_payload() {
+    // 期望：脱靶事件的 qi_evaporated + residual_qi 都必须进入 zone/overflow，
+    // 而不是只释放 residual_qi。
     use crate::qi_physics::ledger::QiTransfer;
 
     let mut app = miss_release_app();
     let projectile = spawn_entity(&mut app);
     let residual: f32 = 5.0;
-
-    app.world_mut().send_event(make_despawn_event(
+    let event = make_despawn_event(
         projectile,
         None,
         residual,
         ProjectileDespawnReason::HitBlock,
-    ));
+    );
+    let expected_total = f64::from(event.qi_evaporated + event.residual_qi);
+
+    app.world_mut().send_event(event);
     app.update();
 
     let events = app.world().resource::<Events<QiTransfer>>();
@@ -1452,9 +1502,95 @@ fn conservation_invariant_residual_equals_transfer_total() {
     let total: f64 = reader.read(events).map(|t| t.amount).sum();
 
     assert!(
-        (total - f64::from(residual)).abs() < 1e-9,
-        "守恒不变式：transfer 总量应等于 residual_qi（期望 {residual}），实际 {total}"
+        (total - expected_total).abs() < 1e-9,
+        "守恒不变式：transfer 总量应等于脱靶完整 payload（期望 {expected_total}），实际 {total}"
     );
+}
+
+#[test]
+fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
+    use crate::qi_physics::ledger::{QiTransfer, QiTransferReason};
+
+    let mut app = miss_release_app();
+    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 0.0;
+
+    let owner = app
+        .world_mut()
+        .spawn(Cultivation {
+            qi_current: SPIRIT_QI_TOTAL,
+            qi_max: SPIRIT_QI_TOTAL * 2.0,
+            ..Default::default()
+        })
+        .id();
+    let projectile = spawn_entity(&mut app);
+    let payload = 10.0;
+    let carrier = carrier_qi_account(owner, 7);
+    let mut transfer_reader = app.world().resource::<Events<QiTransfer>>().get_reader();
+    let before = summarize_world_qi(app.world_mut());
+
+    app.world_mut().send_event(
+        QiTransfer::new(
+            QiAccountId::player(format!("entity:{owner:?}")),
+            carrier.clone(),
+            payload,
+            QiTransferReason::Channeling,
+        )
+        .unwrap(),
+    );
+    app.world_mut()
+        .get_mut::<Cultivation>(owner)
+        .unwrap()
+        .qi_current -= payload;
+    app.world_mut().send_event(ProjectileDespawnedEvent {
+        owner: Some(owner),
+        projectile,
+        carrier_instance_id: Some(7),
+        reason: ProjectileDespawnReason::OutOfRange,
+        distance: 5.0,
+        qi_evaporated: 7.0,
+        residual_qi: 3.0,
+        pos: [0.0, 66.0, 0.0],
+        tick: 10,
+    });
+    app.update();
+
+    let after = summarize_world_qi(app.world_mut());
+    assert_conservation(&before, &after, 0.0)
+        .expect("脱靶从玩家扣入 carrier 后再回流 zone 必须保持全服守恒");
+
+    let transfers: Vec<_> = transfer_reader
+        .read(app.world().resource::<Events<QiTransfer>>())
+        .cloned()
+        .collect();
+    let carrier_inflow: f64 = transfers
+        .iter()
+        .filter(|transfer| transfer.to == carrier)
+        .map(|transfer| transfer.amount)
+        .sum();
+    let carrier_outflow: f64 = transfers
+        .iter()
+        .filter(|transfer| transfer.from == carrier)
+        .map(|transfer| transfer.amount)
+        .sum();
+    assert!((carrier_inflow - payload).abs() < f64::EPSILON);
+    assert!((carrier_outflow - payload).abs() < f64::EPSILON);
+    assert!(
+        (carrier_inflow - carrier_outflow).abs() < f64::EPSILON,
+        "脱靶结算后 carrier 账户必须归零：inflow={carrier_inflow} outflow={carrier_outflow}"
+    );
+    let release = transfers
+        .iter()
+        .find(|transfer| {
+            transfer.from == carrier && transfer.reason == QiTransferReason::ReleaseToZone
+        })
+        .expect("脱靶回流必须从真实 carrier account 发往 zone");
+    assert_eq!(release.to, QiAccountId::zone("spawn"));
+    assert!((release.amount - payload).abs() < f64::EPSILON);
 }
 
 // ── 经脉门测试：charge_carrier meridian gate ─────────────────────────────────────
@@ -1668,6 +1804,7 @@ fn spawn_defensive_projectile(app: &mut App, spawn_pos: DVec3, velocity: DVec3) 
             QiProjectile {
                 owner: None,
                 qi_payload: 20.0,
+                carrier_instance_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
