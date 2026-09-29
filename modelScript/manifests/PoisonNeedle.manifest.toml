@@ -1,0 +1,11 @@
+# 特征清单：毒蛊飞针（poison_needle / PoisonNeedle）
+# 依据 AI 参考图（概念图、图标、三视图与爆炸分解图）审定特征
+
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+needle_shaft     = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 60 }
+venom_tip        = { elements = ["venom_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 25 }
+red_thread_tail  = { elements = ["thread_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 15 }
