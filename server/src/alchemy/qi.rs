@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, AppExit, Entity, Event, Events, Query, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, AppExit, Entity, Event, EventReader, Query, ResMut, Resource};
 
 use crate::cultivation::components::Cultivation;
 use crate::qi_physics::ledger::{
@@ -208,15 +208,12 @@ pub fn release_furnace_qi_to_overflow(
 /// 余额转入固定 overflow，随后 persistence 的 Last flush 才会落盘该账户。没有退出
 /// 请求时函数严格 no-op，避免每帧改账本。
 pub(crate) fn flush_furnace_qi_on_shutdown(
-    app_exit: Option<Res<Events<AppExit>>>,
+    mut app_exit: EventReader<AppExit>,
     mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
     mut reservations: Option<ResMut<AlchemyQiReservationBook>>,
 ) {
-    let Some(app_exit) = app_exit else {
-        return;
-    };
-    if app_exit.iter_current_update_events().next().is_none() {
+    if app_exit.read().next().is_none() {
         return;
     }
     let Some(ledger) = ledger.as_deref_mut() else {
