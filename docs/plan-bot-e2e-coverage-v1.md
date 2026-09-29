@@ -87,6 +87,7 @@
 - 完整 `chat → bong:player_chat → Tiandao → narration` Agent 联跑回流。
 
 - **玩家可感知验收**：交易已由 PR #1994 锁定双方交换结果；剩余组队渡劫和聊天回流仍需分别证明“发起方/队友/旁观者”的可见范围。Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
+- **完成门决议（2026-09-29）**：按用户决议，组队渡劫（P5b）与 Agent 回流（P5c）都是 V 计划的完成门；两者完成前 P5 保持 active。
 
 ## P6 — server_data protobuf 深断言 ✅ 2026-09-10（PR #2212）
 
@@ -162,18 +163,18 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 
 ## §9 开放问题（P5/P6 决策门）
 
-1. P5 的真实交易以哪条现有交易协议作为首个 Bot 验收入口？
+1. P5a 真实交易入口已由 PR #1994 完成，不再是待决策项。
 2. 组队渡劫怎样证明同一事件的参与者与旁观者 scope，而不靠脆弱聊天文案？
 3. Tiandao 联跑在 CI 中使用真实 Agent 模型还是确定性 mock？怎样证明 Redis 往返而非 server echo？
 4. P6 的 HUD oneof 完整清单以哪个生成物为唯一真相，如何防 proto 增字段后静默漏测？
 
 ## §9.1 决议（pre-P5/P6 收口，2026-07-29）
 
-### #1 交易入口
+### #1 交易入口（P5a 已完成，PR #1994）
 
 **决议**：首个场景复用已落地的 `TradeOfferRequest` / `TradeOfferResponse`、typed `trade_offer` 与权威 `inventory_snapshot` revision；双方各交换一个现有 item instance，并以交换前后 instance 集合不变证明无复制/丢失。当前玩家交易不是骨币支付路径，不虚构余额断言，也不新建 Bot 专用旁路。
 
-**落点**：`server/src/social/mod.rs:1020-1243`、`proto/bong/envelope.proto:2333-2344` + P5 §「真实双玩家交易」。
+**落点**：`server/src/social/mod.rs:1020-1243`、`proto/bong/envelope.proto:2333-2344` + P5 §「真实双玩家交易」。协议级证据为 `scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`（PR #1994）。
 
 ### #2 组队渡劫 scope
 
@@ -201,11 +202,11 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 
 本 plan 已跨 P0-P6，后续仍保持一个 active plan，按依赖序列逐 PR 落地：
 
-1. **PR-P5a**：真实双玩家交易，含双方 revision/守恒与拒绝分支。
-2. **PR-P5b**：组队渡劫参与者/旁观者 scope。
-3. **PR-P5c**：Redis Tiandao narration 完整回流。
-4. **PR-P6**：由 proto 真相源驱动的 HUD oneof 覆盖矩阵，补齐 `combat_hud_state` 等缺口。
-5. **归档 PR**：仅当 P5/P6 全部 ✅、Finish Evidence 齐全后，原子迁入 `docs/finished_plans/`。
+1. **PR-P5a（✅ 已完成，PR #1994）**：真实双玩家交易，含双方 revision/守恒与拒绝分支。
+2. **后续 PR-P5b**：组队渡劫参与者/旁观者 scope。
+3. **后续 PR-P5c**：Redis Tiandao narration 完整回流。
+4. **后续 PR-P6**：由 proto 真相源驱动的 HUD oneof 覆盖矩阵，补齐 `combat_hud_state` 等缺口。
+5. **归档 PR**：仅当 P5b、P5c、P6 全部 ✅、Finish Evidence 齐全后，原子迁入 `docs/finished_plans/`。
 
 前一 PR merge 并通过 e2e、`/review` 与 CodeRabbit 后才开下一 PR；不得并行修改同一 Bot decoder/场景注册表。
 
@@ -230,4 +231,4 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 2. 独立实施 subagent 从最新 `origin/main` 落地场景、decoder、饱和测试与 CI 注册；随后运行对应栈门禁，并对最终精确 HEAD 启动 fresh-context read-only validator。validator、门禁或 GitHub e2e 任一失败都回到实施步骤，HEAD 变化后旧结论作废。
 3. subagent push 并创建该阶段 PR；orchestrator 发送独立 `/review`，持续处理 `/review`、CodeRabbit 与 e2e 结论。返工 push 后重新验证并重发 `/review`，直到没有仍成立的阻塞意见。
 4. 仅 orchestrator 在既有授权边界内 merge 已收敛 PR；实施 subagent 不自行 merge。若当前会话无 merge 授权，则停在可合并状态交给获授权主体，不把“已开 PR”记成阶段完成。
-5. 前一 PR merge 后再消费下一个条目。只有 PR-P5a/P5b/P5c/P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
+5. 前一 PR merge 后再消费下一个条目。PR-P5a 已由 #1994 合入；后续只有 P5b、P5c、P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
