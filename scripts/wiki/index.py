@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import os
 import re
@@ -182,6 +181,11 @@ def _rust_symbol(title: str) -> tuple[str, str] | None:
     """从 rustdoc 的标题中还原符号名和完整路径。"""
 
     value = _normalise_title(title, "")
+    value = re.sub(
+        r"^(?:Struct|Enum|Trait|Function|Macro|Constant|Static|Type Alias|Module)\s+",
+        "",
+        value,
+    )
     match = re.fullmatch(r"(.+?)\s+in\s+(.+)", value)
     if not match:
         return None
@@ -304,7 +308,9 @@ def build_manifest(output: Path) -> dict[str, Any]:
 def render_index(manifest: dict[str, Any]) -> str:
     """渲染不依赖服务器、可由 ``file://`` 打开的统一搜索页。"""
 
-    payload = html.escape(json.dumps(manifest, ensure_ascii=False), quote=False)
+    payload = json.dumps(manifest, ensure_ascii=False)
+    for character, escaped in (("<", r"\u003c"), (">", r"\u003e"), ("&", r"\u0026")):
+        payload = payload.replace(character, escaped)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>

@@ -27,7 +27,7 @@ run_stage rustdoc bash -c '
 cp -a "$WORK_DIR/server-target/doc/." "$WIKI_DIR/server/"
 
 run_stage javadoc bash -c '
-  cd "$1"
+  cd "$1/client"
   "$1/scripts/build-token.sh" gradle javadoc
 ' _ "$ROOT"
 cp -a "$ROOT/client/build/docs/javadoc/." "$WIKI_DIR/client/"
