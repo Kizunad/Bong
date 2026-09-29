@@ -91,6 +91,14 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+// RF-40：代码 wiki 使用 JDK 自带 Javadoc；第三方注解和 Minecraft 类型的
+// doclint 噪声不应阻断生成，编码固定为 UTF-8 以保留中文说明。
+tasks.withType(org.gradle.api.tasks.javadoc.Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.encoding = 'UTF-8'
+    options.charSet = 'UTF-8'
+}
+
 // ─── Protobuf codegen（plan-protobuf-ipc-v1）──────────────────────
 // proto 源在仓库根 proto/，server 和 client 共用。
 protobuf {
