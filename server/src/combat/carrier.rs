@@ -1379,10 +1379,12 @@ fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
 }
 
 /// qc-P0：anqi 投射物 miss / OutOfRange / HitBlock / NaturalDecay despawn 时，
-/// 把 residual_qi 经 qi_release_to_zone 归还落点 zone。
+/// 把脱靶事件中的完整余额（`qi_evaporated + residual_qi`）经
+/// qi_release_to_zone 归还落点 zone。
 ///
-/// HitTarget 分支在 `emit_projectile_despawn` 内已将 `residual_qi` 置为 0.0，
-/// 因此此处只需判断 `residual_qi > ε` 即可安全门控，不会重复释放。
+/// HitTarget 分支在 `emit_projectile_despawn` 内已将两部分分别设为
+/// `qi_at_despawn` 与 0.0，但命中路径不应释放；因此只有非命中 reason 才会进入
+/// 这套完整余额回流路径。
 ///
 /// 维度：anqi 投射物目前只存在于主世界（Overworld），无跨维度飞行路径。
 pub fn projectile_miss_qi_release_system(
@@ -1391,7 +1393,15 @@ pub fn projectile_miss_qi_release_system(
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for event in events.read() {
-        let residual = f64::from(event.residual_qi);
+        if event.reason == ProjectileDespawnReason::HitTarget {
+            // 命中时 `qi_evaporated` 表示已进入命中效果的 qi_at_despawn，
+            // 不是待回流余额；命中路径不能再次释放。
+            continue;
+        }
+        // `residual_qi_after_miss` 把脱靶时仍在投射物中的完整余额拆成
+        // `qi_evaporated`（视觉/效果衰减部分）与 `residual_qi`。两者都还在
+        // carrier 容器账上，必须一起归还环境；只释放 residual 会吞掉 70%。
+        let residual = f64::from(event.qi_evaporated) + f64::from(event.residual_qi);
         if residual <= f64::EPSILON {
             continue;
         }

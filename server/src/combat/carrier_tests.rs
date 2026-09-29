@@ -415,14 +415,17 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
         Position(spawn_pos + DVec3::new(f64::from(ANQI_PROJECTILE_MAX_DISTANCE) + 1.0, 0.0, 0.0));
     app.update();
 
-    let (despawn_reason, residual_qi) = {
+    let (despawn_reason, released_qi) = {
         let despawn = app
             .world()
             .resource::<Events<ProjectileDespawnedEvent>>()
             .iter_current_update_events()
             .find(|event| event.projectile == projectile_entity)
             .expect("超出最大飞行距离应产生 OutOfRange despawn");
-        (despawn.reason, despawn.residual_qi)
+        (
+            despawn.reason,
+            f64::from(despawn.qi_evaporated + despawn.residual_qi),
+        )
     };
     assert_eq!(despawn_reason, ProjectileDespawnReason::OutOfRange);
 
@@ -431,7 +434,7 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
         after.budget_initial_total, SPIRIT_QI_TOTAL,
         "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
     );
-    let expected_loss = f64::from(qi_target) - f64::from(residual_qi);
+    let expected_loss = f64::from(qi_target) - released_qi;
     assert_conservation(&before, &after, expected_loss).unwrap_or_else(|error| {
         panic!(
             "充能→投掷→OutOfRange→miss 回流后，扣除自然蒸发量仍必须守恒：before={before:?} after={after:?} error={error:?}"
@@ -1335,12 +1338,14 @@ fn hit_target_despawn_does_not_release_to_zone() {
         .unwrap()
         .spirit_qi;
 
-    app.world_mut().send_event(make_despawn_event(
+    let mut hit_event = make_despawn_event(
         projectile,
         None,
         0.0, // HitTarget 已置 residual_qi=0.0
         ProjectileDespawnReason::HitTarget,
-    ));
+    );
+    hit_event.qi_evaporated = 7.0;
+    app.world_mut().send_event(hit_event);
     app.update();
 
     let zone_after = app
@@ -1423,28 +1428,66 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
     app.update();
 
     let transfers = app.world().resource::<Events<QiTransfer>>();
+    let total: f64 = transfers
+        .iter_current_update_events()
+        .map(|transfer| transfer.amount)
+        .sum();
     assert!(
-        !transfers.is_empty(),
-        "落点无 zone 时仍须 emit overflow QiTransfer（真元不蒸发），实际无 transfer"
+        (total - 10.0).abs() < 1e-9,
+        "落点无 zone 时完整脱靶 payload 必须进入 overflow，期望 10.0，实际 {total}"
     );
 }
 
 #[test]
-fn conservation_invariant_residual_equals_transfer_total() {
-    // 期望：residual_qi = Σ transfer.amount（守恒等式）。
-    // zone 有足够容量吸收全部 residual。
+fn full_zone_routes_complete_miss_payload_to_overflow() {
+    use crate::qi_physics::ledger::{QiAccountKind, QiTransfer};
+
+    let mut app = miss_release_app();
+    let projectile = spawn_entity(&mut app);
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 1.0;
+
+    app.world_mut().send_event(ProjectileDespawnedEvent {
+        owner: None,
+        projectile,
+        reason: ProjectileDespawnReason::HitBlock,
+        distance: 5.0,
+        qi_evaporated: 7.0,
+        residual_qi: 3.0,
+        pos: [0.0, 66.0, 0.0],
+        tick: 10,
+    });
+    app.update();
+
+    let transfers = app.world().resource::<Events<QiTransfer>>();
+    let transfers: Vec<_> = transfers.iter_current_update_events().collect();
+    let total: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
+    assert_eq!(transfers.len(), 1, "满 zone 时完整余额应只进入 overflow");
+    assert_eq!(transfers[0].to.kind, QiAccountKind::Overflow);
+    assert!((total - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn conservation_invariant_releases_full_miss_payload() {
+    // 期望：脱靶事件的 qi_evaporated + residual_qi 都必须进入 zone/overflow，
+    // 而不是只释放 residual_qi。
     use crate::qi_physics::ledger::QiTransfer;
 
     let mut app = miss_release_app();
     let projectile = spawn_entity(&mut app);
     let residual: f32 = 5.0;
-
-    app.world_mut().send_event(make_despawn_event(
+    let event = make_despawn_event(
         projectile,
         None,
         residual,
         ProjectileDespawnReason::HitBlock,
-    ));
+    );
+    let expected_total = f64::from(event.qi_evaporated + event.residual_qi);
+
+    app.world_mut().send_event(event);
     app.update();
 
     let events = app.world().resource::<Events<QiTransfer>>();
@@ -1452,8 +1495,8 @@ fn conservation_invariant_residual_equals_transfer_total() {
     let total: f64 = reader.read(events).map(|t| t.amount).sum();
 
     assert!(
-        (total - f64::from(residual)).abs() < 1e-9,
-        "守恒不变式：transfer 总量应等于 residual_qi（期望 {residual}），实际 {total}"
+        (total - expected_total).abs() < 1e-9,
+        "守恒不变式：transfer 总量应等于脱靶完整 payload（期望 {expected_total}），实际 {total}"
     );
 }
 
