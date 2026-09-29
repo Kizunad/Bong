@@ -16,13 +16,13 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 框架 + 首批 4 场景 + CI Bot e2e stage | ✅ 2026-07-06（本骨架随 P0 PR 进库） |
-| P1 | 修炼模块：realm/qi/meridian dev 命令 + breakthrough intent 链路 | ✅ 2026-07-29 |
-| P2 | 战斗模块：attack NPC → typed combat/death；skill cast intent → cast/VFX/SFX | ✅ 2026-07-29 |
-| P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ✅ 2026-07-29 |
-| P4 | 生产系统：炼丹 / 锻造 / 制作 / 灵田 / 采集 | ✅ 2026-07-29 |
-| P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离已落地；组队渡劫/贸易/Agent 回流待补 | ⏳ |
-| P6 | `bong:server_data` 零依赖 protobuf 深解码与 oneof identity 覆盖 | ✅ 2026-09-10 |
+| P0 | 框架 + 首批 4 场景 + CI Bot e2e stage | ✅ 2026-07-06（PR #967） |
+| P1 | 修炼模块：realm/qi/meridian dev 命令 + breakthrough intent 链路 | ✅ 2026-07-29（PR #978、#1314） |
+| P2 | 战斗模块：attack NPC → typed combat/death；skill cast intent → cast/VFX/SFX | ✅ 2026-07-29（PR #980、#1314） |
+| P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ✅ 2026-07-29（PR #983、#1314） |
+| P4 | 生产系统：炼丹 / 锻造 / 制作 / 灵田 / 采集 | ✅ 2026-07-29（PR #982、#1314） |
+| P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离与双人交易已落地；组队渡劫/Agent 回流待补 | ⏳ |
+| P6 | `bong:server_data` 零依赖 protobuf 深解码与 oneof identity 覆盖 | ✅ 2026-09-10（PR #2212） |
 
 ## P0 — 框架 + 首批场景（本 PR）
 
@@ -31,6 +31,7 @@
 - 场景 ×4：`terrain_join_chunk_delivery`（pin PR#846 ChunkCenter）/ `network_session_tolerance` / `network_client_request_tolerance` / `cmd_dev_give_feedback`
 - `scripts/bot-e2e.sh` + e2e.yml「Bot e2e stage」（`BOT_E2E_KILL_STALE=1`）
 - `scripts/e2e-redis.sh` cleanup 改 `kill_tree`（孤儿 server 修复，见问题记录 #2）
+- **合入证据（PR #967）**：`scripts/bot/mc_protocol.py`、`scripts/bot/bot.py`、`scripts/bot-e2e.sh`、`.github/workflows/e2e.yml`、`scripts/e2e-redis.sh`；协议帧、Bot 动作/断言、首批场景与 CI stage 一起落地。
 
 ## P1 — 修炼模块 ✅ 2026-07-29
 
@@ -38,6 +39,8 @@
 - `scripts/bot/scenarios/cultivation_breakthrough.py`：`breakthrough_request` → typed `breakthrough_cinematic`，并锁定 production realm wire `Awaken → Induce`。
 - `scripts/bot/scenarios/cultivation_pill_consume.py`：双入口吃丹、`qi_current` 权威回升、库存扣除与空丹宽容。
 - 抓手：`server/src/cmd/dev/realm.rs`、`server/src/network/client_request_handler.rs`、`scripts/bot/proto_min.py`。
+- **合入证据（PR #978、#1314）**：`scripts/bot/scenarios/cultivation_realm_qi.py`、`cultivation_breakthrough.py`、`cultivation_pill_consume.py`、`server/src/cmd/dev/realm.rs`、`server/src/network/client_request_handler.rs`；修炼命令与突破链路已在主线上可验。
+- **冻结边界（经脉）**：`/meridian open` 仅保留为既有 dev 命令的历史验收证据；经脉玩法语义 **冻结，待整体重构**，本 plan 不再扩展。
 
 ## P2 — 战斗模块 ✅ 2026-07-29
 
@@ -46,6 +49,8 @@
 - `scripts/bot/scenarios/combat_weapon_equip_damage.py`：空手基线与满耐久铁剑的 outgoing damage 契约。
 - `scripts/bot/scenarios/combat_respawn_stops_low_hp_heartbeat.py`、`combat_technique_sword_av.py`：重生收掉低血心跳，剑招三反馈与断脉拒因。
 - **玩家可感知验收**：Bot 必须按时序观察 `cast_sync(casting → complete)`，并分别匹配每招既有的 `vfx_id`、SFX/战斗事件与 HUD 反馈；不得以 raw bytes 或无类型聊天替代。动画/粒子/音效/icon 的具体视觉资产由各招式所属 plan 定义，本 plan 只锁已发布协议身份及先后顺序，不新增资产。
+- **合入证据（PR #980、#1314）**：`scripts/bot/scenarios/combat_attack_hit.py`、`combat_skill_cast.py`、`combat_technique_sword_av.py`、`scripts/bot/proto_min.py`、`server/src/combat/`、`server/src/network/`；攻击、施法和死亡链路已由协议级场景覆盖。
+- **冻结边界（功法/各流派招式）**：`combat_technique_sword_av.py` 只作为既有协议验收证据；功法、各流派招式与 AV 语义 **冻结，待整体重构**。
 
 ## P3 — 库存/物品 ✅ 2026-07-29
 
@@ -53,6 +58,7 @@
 - `scripts/bot/scenarios/inventory_container_open_minimal.py`：真实 `trade_crate` 放置、typed open/snapshot、双向 move、拒绝回滚、无丢失复制与 close。
 - `scripts/bot/scenarios/inventory_equip_wearer_race_reject.py`、`inventory_supply_coffin_cross_dimension.py`：装备门拒因与跨维容器 session 门。
 - 抓手：`scripts/bot/scenarios/_inventory_helpers.py`、`server/src/inventory/mod.rs`、`server/src/network/client_request_handler.rs`。
+- **合入证据（PR #983、#1314）**：`scripts/bot/scenarios/_inventory_helpers.py`、`inventory_pack_move_intents.py`、`inventory_container_open_minimal.py`、`server/src/inventory/mod.rs`、`server/src/network/client_request_handler.rs`；背包、容器、装备与 `/clearinv` 分支已覆盖。
 
 ## P4 — 生产系统 ✅ 2026-07-29
 
@@ -62,6 +68,8 @@
 - `production_lingtian_gathering_intents.py`、`production_spiritwood_full_inventory_drop.py`：权威地形开垦、深解码采集进度、240-tick 灵木采伐、freshness wire 保真与同实例拾回。
 - `scripts/bot/make_novice_raster_fixture.py` 从 `server/zones.json` 生产 `spawn_distribution` 派生草地 tiles，避免用户名 hash 落入 Stone fallback。
 - **玩家可感知验收**：生产场景必须观察既有 typed 进度、成功/拒绝 outcome、库存数量与落地物；粒子、音效、HUD 和动画按炼丹/锻造/灵田/采集所属 finished plan 的既有 ID 对拍，本 plan 不以聊天提示代替这些可见结果，也不另立视觉规格。
+- **合入证据（PR #982、#1314）**：`scripts/bot/scenarios/production_alchemy_brew_pill.py`、`production_alchemy_forge_intents.py`、`production_craft_disconnect_resume.py`、`production_lingtian_gathering_intents.py`、`server/src/inventory/mod.rs`、`server/src/network/alchemy_snapshot_emit.rs`；炼丹、锻造、制作、灵田和采集场景均已合入。
+- **冻结边界（灵田）**：`production_lingtian_gathering_intents.py` 只作为既有场景验收证据；灵田玩法与数据语义 **冻结，待整体重构**，不在本 plan 中扩展。
 
 ## P5 — 多 bot 并发 ⏳
 
@@ -70,16 +78,18 @@
 - `scripts/bot/scenarios/multibot_chat_visibility.py`：两 Bot 互见 `PlayerSpawn`，并对共同观察到的同一 passive NPC 各自产生 typed outgoing hit。
 - `scripts/bot/scenarios/network_chat_echo.py`：同 zone 广播（含发送者 echo）与跨 zone 隔离。
 - `scripts/bot/scenarios/agent_ui_realm_gate_private_narration.py`：真实 `AgentUiRuntime` 境界门拒绝只向目标 Bot 发送 `system_warning`。
+- `scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`：双人交易与邀请/响应链路已由 PR #1994 合入。
+- **合入证据（PR #1994）**：`scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`、`scripts/bot/scenarios/multibot_chat_visibility.py`、`scripts/bot/scenarios/network_chat_echo.py`；交易、可见性和聊天隔离已有协议级证据。
 
 剩余验收（本 plan 保持 active）：
 
-- 真实双玩家交易。
 - 组队渡劫。
 - 完整 `chat → bong:player_chat → Tiandao → narration` Agent 联跑回流。
 
-- **玩家可感知验收**：双 Bot 的交易、组队渡劫和聊天回流必须分别证明“发起方/接收方/旁观者”的可见范围；Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
+- **玩家可感知验收**：交易已由 PR #1994 锁定双方交换结果；剩余组队渡劫和聊天回流仍需分别证明“发起方/队友/旁观者”的可见范围。Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
+- **完成门决议（2026-09-29）**：按用户决议，组队渡劫（P5b）与 Agent 回流（P5c）都是 V 计划的完成门；两者完成前 P5 保持 active。
 
-## P6 — server_data protobuf 深断言 ✅ 2026-09-10
+## P6 — server_data protobuf 深断言 ✅ 2026-09-10（PR #2212）
 
 已落地：
 
@@ -107,6 +117,7 @@
   随后撤回临时 proto 行，工作 diff 不含 `envelope.proto`。
 - 若未来改用生成式 Python bindings，需单独决定依赖与构建产物策略；本阶段保持零依赖
   decoder，不虚报“已生成 bindings”。
+- **合入证据（PR #2212）**：`scripts/bot/proto_min.py`、`scripts/bot/test_protocol.py`、`scripts/bot/scenarios/_rejection_helpers.py`、`scripts/bot/scenarios/fauna_give_dan_to_elder_reject.py`、`scripts/bot/scenarios/freshness_probe_paths.py`；oneof identity、decoder 分派和拒收窗口均已合入并有 fail-closed 测试。
 
 ### P6 拒收窗口返工证据（2026-09-10）
 
@@ -152,18 +163,18 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 
 ## §9 开放问题（P5/P6 决策门）
 
-1. P5 的真实交易以哪条现有交易协议作为首个 Bot 验收入口？
+1. P5a 真实交易入口已由 PR #1994 完成，不再是待决策项。
 2. 组队渡劫怎样证明同一事件的参与者与旁观者 scope，而不靠脆弱聊天文案？
 3. Tiandao 联跑在 CI 中使用真实 Agent 模型还是确定性 mock？怎样证明 Redis 往返而非 server echo？
 4. P6 的 HUD oneof 完整清单以哪个生成物为唯一真相，如何防 proto 增字段后静默漏测？
 
 ## §9.1 决议（pre-P5/P6 收口，2026-07-29）
 
-### #1 交易入口
+### #1 交易入口（P5a 已完成，PR #1994）
 
 **决议**：首个场景复用已落地的 `TradeOfferRequest` / `TradeOfferResponse`、typed `trade_offer` 与权威 `inventory_snapshot` revision；双方各交换一个现有 item instance，并以交换前后 instance 集合不变证明无复制/丢失。当前玩家交易不是骨币支付路径，不虚构余额断言，也不新建 Bot 专用旁路。
 
-**落点**：`server/src/social/mod.rs:1020-1243`、`proto/bong/envelope.proto:2333-2344` + P5 §「真实双玩家交易」。
+**落点**：`server/src/social/mod.rs:1020-1243`、`proto/bong/envelope.proto:2333-2344` + P5 §「真实双玩家交易」。协议级证据为 `scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`（PR #1994）。
 
 ### #2 组队渡劫 scope
 
@@ -191,11 +202,11 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 
 本 plan 已跨 P0-P6，后续仍保持一个 active plan，按依赖序列逐 PR 落地：
 
-1. **PR-P5a**：真实双玩家交易，含双方 revision/守恒与拒绝分支。
-2. **PR-P5b**：组队渡劫参与者/旁观者 scope。
-3. **PR-P5c**：Redis Tiandao narration 完整回流。
-4. **PR-P6**：由 proto 真相源驱动的 HUD oneof 覆盖矩阵，补齐 `combat_hud_state` 等缺口。
-5. **归档 PR**：仅当 P5/P6 全部 ✅、Finish Evidence 齐全后，原子迁入 `docs/finished_plans/`。
+1. **PR-P5a（✅ 已完成，PR #1994）**：真实双玩家交易，含双方 revision/守恒与拒绝分支。
+2. **后续 PR-P5b**：组队渡劫参与者/旁观者 scope。
+3. **后续 PR-P5c**：Redis Tiandao narration 完整回流。
+4. **后续 PR-P6**：由 proto 真相源驱动的 HUD oneof 覆盖矩阵，补齐 `combat_hud_state` 等缺口。
+5. **归档 PR**：仅当 P5b、P5c、P6 全部 ✅、Finish Evidence 齐全后，原子迁入 `docs/finished_plans/`。
 
 前一 PR merge 并通过 e2e、`/review` 与 CodeRabbit 后才开下一 PR；不得并行修改同一 Bot decoder/场景注册表。
 
@@ -220,4 +231,4 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 2. 独立实施 subagent 从最新 `origin/main` 落地场景、decoder、饱和测试与 CI 注册；随后运行对应栈门禁，并对最终精确 HEAD 启动 fresh-context read-only validator。validator、门禁或 GitHub e2e 任一失败都回到实施步骤，HEAD 变化后旧结论作废。
 3. subagent push 并创建该阶段 PR；orchestrator 发送独立 `/review`，持续处理 `/review`、CodeRabbit 与 e2e 结论。返工 push 后重新验证并重发 `/review`，直到没有仍成立的阻塞意见。
 4. 仅 orchestrator 在既有授权边界内 merge 已收敛 PR；实施 subagent 不自行 merge。若当前会话无 merge 授权，则停在可合并状态交给获授权主体，不把“已开 PR”记成阶段完成。
-5. 前一 PR merge 后再消费下一个条目。只有 PR-P5a/P5b/P5c/P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
+5. 前一 PR merge 后再消费下一个条目。PR-P5a 已由 #1994 合入；后续只有 P5b、P5c、P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
