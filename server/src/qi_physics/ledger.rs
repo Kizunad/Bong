@@ -53,6 +53,12 @@ impl WorldQiBudget {
     /// 不接受比例，避免调用方用当前预算重新计算而与 owner 实际扣款产生漂移。
     pub fn apply_era_decay_amount(&mut self, amount: f64) -> Result<f64, QiPhysicsError> {
         let amount = finite_non_negative(amount, "era_decay_amount")?;
+        if !self.current_total.is_finite() || self.current_total < 0.0 {
+            return Err(QiPhysicsError::InvalidAmount {
+                field: "world_qi_budget.current_total",
+                value: self.current_total,
+            });
+        }
         if amount > self.current_total {
             return Err(QiPhysicsError::InsufficientQi {
                 account: "world_qi_budget".to_string(),
@@ -60,7 +66,14 @@ impl WorldQiBudget {
                 requested: amount,
             });
         }
-        self.current_total -= amount;
+        let after = self.current_total - amount;
+        if !after.is_finite() || after < 0.0 {
+            return Err(QiPhysicsError::InvalidAmount {
+                field: "world_qi_budget.current_total",
+                value: after,
+            });
+        }
+        self.current_total = after;
         self.era_decay_accum += amount;
         Ok(amount)
     }
@@ -844,14 +857,14 @@ impl WorldQiAccount {
         self.transfers.push(transfer);
     }
 
-    /// 从 ledger owner 提交不可回收的物理衰减，并留下 `EraDecay` 回执。
+    /// 从 ledger owner 原子提交不可回收的物理衰减，并留下 `EraDecay` 回执。
     ///
-    /// `to=tiandao:tiandao` 是预算沉降槽的审计身份，不会作为长期余额写入 ledger；
-    /// 调用方必须同时把同额计入 [`WorldQiBudget::apply_era_decay_amount`]。这仍由
-    /// ledger 先扣真实 source，再由调用方发布成功回执，避免把投射物的距离衰减
-    /// 留在 carrier 账户中形成僵尸余额。
-    pub fn decay_account(
+    /// `to=tiandao:tiandao` 是预算沉降槽的审计身份，不会作为长期余额写入 ledger。
+    /// owner 余额、预算当前值、预算沉降累计值和审计轨迹要么全部提交，要么全部保持
+    /// 原状；预算校验使用 [`WorldQiBudget::apply_era_decay_amount`] 的同一严格口径。
+    pub fn settle_era_decay(
         &mut self,
+        budget: &mut WorldQiBudget,
         from: QiAccountId,
         amount: f64,
     ) -> Result<Option<QiTransfer>, QiPhysicsError> {
@@ -874,6 +887,9 @@ impl WorldQiAccount {
             QiTransferReason::EraDecay,
         )?;
         let source_after = checked_source_debit(available, amount)?;
+        // 所有可能失败的检查都在 ledger 写入前完成；该调用成功后仅剩无失败的
+        // BTreeMap/Vec 提交，因此不会留下「扣了 owner 但预算没记」的半笔衰减。
+        budget.apply_era_decay_amount(amount)?;
         self.balances.insert(from, source_after);
         self.transfers.push(transfer.clone());
         Ok(Some(transfer))

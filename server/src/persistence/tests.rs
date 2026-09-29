@@ -14,7 +14,9 @@ use crate::player::state::{
     save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{assert_conservation, qi_flow_overflow_account, WorldQiSnapshot};
+use crate::qi_physics::ledger::{
+    assert_conservation, persistent_runtime_qi_accounts, qi_flow_overflow_account, WorldQiSnapshot,
+};
 use crate::schema::common::{NpcStateKind, TEST_QI_FIXTURE_TOTAL};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use rusqlite::{params, OptionalExtension};
@@ -9973,6 +9975,37 @@ fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
         hydrated.transfers().is_empty(),
         "restart must not restore audit history"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn carrier_overflow_account_survives_runtime_qi_restart() {
+    let (settings, root) = persistence_settings("carrier-overflow-runtime-restart");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+
+    let carrier_overflow = qi_flow_overflow_account();
+    assert!(
+        persistent_runtime_qi_accounts().contains(&carrier_overflow),
+        "carrier miss overflow must use a durable runtime account"
+    );
+
+    let mut source = WorldQiAccount::default();
+    source
+        .set_balance(carrier_overflow.clone(), 9.75)
+        .expect("carrier overflow fixture balance should be valid");
+    persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &crate::world::zone::ZoneRegistry::fallback(),
+        None,
+        &source,
+    )
+    .expect("runtime snapshot should persist the carrier overflow balance");
+
+    let mut hydrated = WorldQiAccount::default();
+    hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+        .expect("fresh ledger should hydrate the carrier overflow balance");
+    assert_eq!(hydrated.balance(&carrier_overflow), 9.75);
     let _ = fs::remove_dir_all(root);
 }
 

@@ -37,8 +37,8 @@ use crate::inventory::{
     EQUIP_SLOT_OFF_HAND,
 };
 use crate::qi_physics::ledger::{
-    transfer_external_qi_to_ledger, transfer_ledger_qi_to_zone, QiAccountId, QiTransfer,
-    QiTransferReason, WorldQiAccount,
+    qi_flow_overflow_account, transfer_external_qi_to_ledger, transfer_ledger_qi_to_zone,
+    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
 };
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
@@ -801,6 +801,9 @@ fn carry_decay_tick(
     registry: Res<ItemRegistry>,
     mut stores: Query<(Entity, &mut CarrierStore)>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
+    mut qi_budget: ResMut<WorldQiBudget>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;
@@ -826,7 +829,16 @@ fn carry_decay_tick(
             continue;
         }
         for instance_id in &expired {
-            store.imprints_by_instance.remove(instance_id);
+            // Imprint decay is only a projection; the stable carrier account owns the actual
+            // qi. Settle that balance into the era-decay sink before removing the projection.
+            if settle_carrier_era_decay(
+                &mut qi_ledger,
+                &mut qi_budget,
+                &mut qi_transfers,
+                carrier_qi_account(entity, *instance_id),
+            ) {
+                store.imprints_by_instance.remove(instance_id);
+            }
         }
         if let Ok(mut inventory) = inventories.get_mut(entity) {
             for instance_id in expired {
@@ -1452,7 +1464,7 @@ pub fn projectile_miss_qi_release_system(
             "anqi_projectile_miss",
             event.projectile.to_bits(),
         );
-        settle_carrier_distance_decay(&mut qi_ledger, &mut qi_budget, &mut qi_transfers, from);
+        settle_carrier_era_decay(&mut qi_ledger, &mut qi_budget, &mut qi_transfers, from);
     }
 }
 
@@ -1535,7 +1547,8 @@ fn release_account_to_zone(
             qi_transfers,
             from,
             residual,
-            format!("{context}_no_zone_registry:{entity_bits}"),
+            context,
+            entity_bits,
         );
         return;
     };
@@ -1564,7 +1577,8 @@ fn release_account_to_zone(
                             qi_transfers,
                             from,
                             overflow,
-                            format!("{context}_overflow:entity:{entity_bits}"),
+                            context,
+                            entity_bits,
                         );
                     }
                 }
@@ -1574,7 +1588,8 @@ fn release_account_to_zone(
                         qi_transfers,
                         from,
                         residual,
-                        format!("{context}_overflow:entity:{entity_bits}"),
+                        context,
+                        entity_bits,
                     );
                 }
                 Err(err) => {
@@ -1590,7 +1605,8 @@ fn release_account_to_zone(
                         qi_transfers,
                         from,
                         residual,
-                        format!("{context}_err_overflow:entity:{entity_bits}"),
+                        context,
+                        entity_bits,
                     );
                 }
             }
@@ -1601,7 +1617,8 @@ fn release_account_to_zone(
                 qi_transfers,
                 from,
                 residual,
-                format!("{context}_no_mut_zone:entity:{entity_bits}"),
+                context,
+                entity_bits,
             );
         }
     } else {
@@ -1611,7 +1628,8 @@ fn release_account_to_zone(
             qi_transfers,
             from,
             residual,
-            format!("{context}_no_zone:entity:{entity_bits}"),
+            context,
+            entity_bits,
         );
     }
 }
@@ -1621,15 +1639,18 @@ fn release_to_overflow(
     qi_transfers: &mut EventWriter<QiTransfer>,
     from: QiAccountId,
     amount: f64,
-    overflow_id: String,
+    context: &str,
+    entity_bits: u64,
 ) {
     if amount <= f64::EPSILON {
         return;
     }
-    let to = QiAccountId::overflow(overflow_id);
+    let to = qi_flow_overflow_account();
     let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone) else {
         tracing::error!(
             amount,
+            context,
+            entity_bits,
             "anqi carrier overflow transfer was not representable"
         );
         return;
@@ -1639,43 +1660,33 @@ fn release_to_overflow(
             qi_transfers.send(transfer);
         }
         Err(error) => {
-            tracing::error!(?error, amount, "anqi carrier overflow transfer failed");
+            tracing::error!(
+                ?error,
+                amount,
+                context,
+                entity_bits,
+                "anqi carrier overflow transfer failed"
+            );
         }
     }
 }
 
-fn settle_carrier_distance_decay(
+fn settle_carrier_era_decay(
     qi_ledger: &mut WorldQiAccount,
     qi_budget: &mut crate::qi_physics::ledger::WorldQiBudget,
     qi_transfers: &mut EventWriter<QiTransfer>,
     from: QiAccountId,
-) {
+) -> bool {
     let decay = qi_ledger.balance(&from);
     if decay <= f64::EPSILON {
-        return;
+        return true;
     }
-    if decay > qi_budget.current_total + f64::EPSILON {
-        tracing::error!(
-            ?from,
-            decay,
-            budget = qi_budget.current_total,
-            "anqi carrier distance decay exceeds world qi budget; leaving source untouched"
-        );
-        return;
-    }
-    let Ok(Some(transfer)) = qi_ledger.decay_account(from, decay) else {
-        tracing::error!(?decay, "anqi carrier distance decay ledger debit failed");
-        return;
+    let Ok(Some(transfer)) = qi_ledger.settle_era_decay(qi_budget, from, decay) else {
+        tracing::error!(?decay, "anqi carrier era decay ledger debit failed");
+        return false;
     };
-    if let Err(error) = qi_budget.apply_era_decay_amount(decay) {
-        tracing::error!(
-            ?error,
-            ?transfer,
-            "anqi carrier distance decay budget update failed"
-        );
-        return;
-    }
     qi_transfers.send(transfer);
+    true
 }
 
 #[cfg(test)]

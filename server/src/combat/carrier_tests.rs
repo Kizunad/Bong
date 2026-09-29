@@ -7,8 +7,9 @@ use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{
-    assert_conservation, summarize_world_qi, transfer_external_qi_to_ledger, QiAccountId,
-    QiTransferReason, WorldQiAccount, WorldQiBudget,
+    assert_conservation, persistent_runtime_qi_accounts, qi_flow_overflow_account,
+    summarize_world_qi, transfer_external_qi_to_ledger, QiAccountId, QiTransferReason,
+    WorldQiAccount, WorldQiBudget,
 };
 use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
@@ -135,6 +136,20 @@ fn charge_app() -> App {
     app.add_event::<CarrierChargeEndedEvent>();
     app.add_event::<QiTransfer>();
     app.add_systems(Update, (begin_charge_carrier, charge_carrier_tick));
+    app
+}
+
+fn carry_decay_app() -> App {
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 120 });
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(registry());
+    app.insert_resource(ZoneRegistry::default());
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, carry_decay_tick);
     app
 }
 
@@ -1467,6 +1482,14 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
         .iter_current_update_events()
         .map(|transfer| transfer.amount)
         .sum();
+    assert_eq!(
+        transfers
+            .iter_current_update_events()
+            .next()
+            .map(|transfer| transfer.to.clone()),
+        Some(qi_flow_overflow_account()),
+        "无 zone 的脱靶 overflow 必须进入固定可持久化账户"
+    );
     assert!(
         (total - 10.0).abs() < 1e-9,
         "落点无 zone 时完整脱靶 payload 必须进入 overflow，期望 10.0，实际 {total}"
@@ -1475,7 +1498,7 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
 
 #[test]
 fn full_zone_routes_complete_miss_payload_to_overflow() {
-    use crate::qi_physics::ledger::{QiAccountKind, QiTransfer};
+    use crate::qi_physics::ledger::QiTransfer;
 
     let mut app = miss_release_app();
     let projectile = spawn_entity(&mut app);
@@ -1503,8 +1526,68 @@ fn full_zone_routes_complete_miss_payload_to_overflow() {
     let transfers: Vec<_> = transfers.iter_current_update_events().collect();
     let total: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
     assert_eq!(transfers.len(), 1, "满 zone 时完整余额应只进入 overflow");
-    assert_eq!(transfers[0].to.kind, QiAccountKind::Overflow);
+    assert_eq!(transfers[0].to, qi_flow_overflow_account());
+    assert!(persistent_runtime_qi_accounts().contains(&transfers[0].to));
     assert!((total - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn natural_decay_expiry_settles_carrier_account_and_preserves_conservation() {
+    let mut app = carry_decay_app();
+    let owner = app
+        .world_mut()
+        .spawn((
+            inventory_with_main_hand(ANQI_CHARGED_TEMPLATE_ID),
+            CarrierStore {
+                imprints_by_instance: HashMap::from([(
+                    7,
+                    CarrierImprint {
+                        carrier_kind: CarrierKind::YibianShougu,
+                        qi_amount: 4.0,
+                        qi_amount_initial: 4.0,
+                        qi_color: ColorKind::Sharp,
+                        source_realm: Realm::Condense,
+                        half_life_min: 0.001,
+                        decay_started_at_tick: 0,
+                        bond_kind: BondKind::HandheldCarrier,
+                        injection_kind: None,
+                    },
+                )]),
+            },
+        ))
+        .id();
+    let carrier = carrier_qi_account(owner, 7);
+    app.world_mut()
+        .resource_mut::<WorldQiAccount>()
+        .set_balance(carrier.clone(), 4.0)
+        .unwrap();
+    let before = summarize_world_qi(app.world_mut());
+
+    app.update();
+
+    let after = summarize_world_qi(app.world_mut());
+    assert!(
+        !app.world()
+            .get::<CarrierStore>(owner)
+            .unwrap()
+            .imprints_by_instance
+            .contains_key(&7),
+        "自然衰减过期后必须移除 carrier imprint"
+    );
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().balance(&carrier),
+        0.0,
+        "自然衰减过期后 carrier ledger 账户必须归零"
+    );
+    assert_eq!(after.era_decay_accum, 4.0);
+    assert_conservation(&before, &after, 4.0).expect("自然衰减过期进入沉降槽后仍必须保持全服守恒");
+    let transfers = app.world().resource::<Events<QiTransfer>>();
+    assert!(transfers.iter_current_update_events().any(|transfer| {
+        transfer.from == carrier
+            && transfer.to == QiAccountId::tiandao()
+            && transfer.reason == QiTransferReason::EraDecay
+            && (transfer.amount - 4.0).abs() < f64::EPSILON
+    }));
 }
 
 #[test]
