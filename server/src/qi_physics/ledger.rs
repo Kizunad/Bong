@@ -45,6 +45,25 @@ impl WorldQiBudget {
         self.era_decay_accum += decay;
         Ok(decay)
     }
+
+    /// 提交一个已经由具体 owner 结算出的衰减量。
+    ///
+    /// 投射物距离衰减等路径先由 `WorldQiAccount` 扣除真实 owner 余额，再调用此方法
+    /// 把同额计入全服预算的时代衰减槽；两边都成功前不得把衰减当作已完成。这个入口
+    /// 不接受比例，避免调用方用当前预算重新计算而与 owner 实际扣款产生漂移。
+    pub fn apply_era_decay_amount(&mut self, amount: f64) -> Result<f64, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "era_decay_amount")?;
+        if amount > self.current_total {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: "world_qi_budget".to_string(),
+                available: self.current_total,
+                requested: amount,
+            });
+        }
+        self.current_total -= amount;
+        self.era_decay_accum += amount;
+        Ok(amount)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -823,6 +842,41 @@ impl WorldQiAccount {
     /// 的跨账本转账场景（如 BossDrain）——余额已在外部正确更新，此处仅留轨迹。
     pub fn push_transfer_audit(&mut self, transfer: QiTransfer) {
         self.transfers.push(transfer);
+    }
+
+    /// 从 ledger owner 提交不可回收的物理衰减，并留下 `EraDecay` 回执。
+    ///
+    /// `to=tiandao:tiandao` 是预算沉降槽的审计身份，不会作为长期余额写入 ledger；
+    /// 调用方必须同时把同额计入 [`WorldQiBudget::apply_era_decay_amount`]。这仍由
+    /// ledger 先扣真实 source，再由调用方发布成功回执，避免把投射物的距离衰减
+    /// 留在 carrier 账户中形成僵尸余额。
+    pub fn decay_account(
+        &mut self,
+        from: QiAccountId,
+        amount: f64,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "decay.amount")?;
+        if amount == 0.0 {
+            return Ok(None);
+        }
+        let available = self.balance(&from);
+        if amount > available {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: from.to_string(),
+                available,
+                requested: amount,
+            });
+        }
+        let transfer = QiTransfer::new(
+            from.clone(),
+            QiAccountId::tiandao(),
+            amount,
+            QiTransferReason::EraDecay,
+        )?;
+        let source_after = checked_source_debit(available, amount)?;
+        self.balances.insert(from, source_after);
+        self.transfers.push(transfer.clone());
+        Ok(Some(transfer))
     }
 
     /// plan-offscreen-war-v1 P0：守恒 telemetry 用——按 `QiAccountId` 升序（BTreeMap

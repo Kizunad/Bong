@@ -6,7 +6,10 @@ use crate::cultivation::components::QiColor;
 use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::qi_physics::ledger::{
+    assert_conservation, summarize_world_qi, transfer_external_qi_to_ledger, QiAccountId,
+    QiTransferReason, WorldQiAccount, WorldQiBudget,
+};
 use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
 
@@ -122,6 +125,7 @@ fn charge_app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 0 });
     app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
+    app.insert_resource(WorldQiAccount::default());
     app.insert_resource(registry());
     app.insert_resource(ZoneRegistry::default());
     app.init_resource::<GuardLogDedup>();
@@ -239,6 +243,13 @@ fn begin_charge_channels_prepaid_qi_into_carrier_account() {
         QiAccountId::player(format!("entity:{actor:?}"))
     );
     assert!((transfer.amount - 30.0).abs() < f64::EPSILON);
+    assert_eq!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .balance(&carrier_qi_account(actor, 7)),
+        30.0,
+        "充能后 carrier 账本账户必须持有实际投入量"
+    );
 }
 
 #[test]
@@ -1264,6 +1275,8 @@ fn miss_release_app() -> App {
     let mut app = App::new();
     app.add_event::<ProjectileDespawnedEvent>();
     app.add_event::<QiTransfer>();
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app.insert_resource(ZoneRegistry::default()); // 含默认 spawn zone
     app.add_systems(Update, projectile_miss_qi_release_system);
     app
@@ -1271,6 +1284,13 @@ fn miss_release_app() -> App {
 
 fn spawn_entity(app: &mut App) -> Entity {
     app.world_mut().spawn_empty().id()
+}
+
+fn seed_carrier_account(app: &mut App, owner: Entity, instance_id: u64, amount: f64) {
+    app.world_mut()
+        .resource_mut::<WorldQiAccount>()
+        .set_balance(carrier_qi_account(owner, instance_id), amount)
+        .expect("测试 carrier 余额必须可写入账本");
 }
 
 fn make_despawn_event(
@@ -1300,6 +1320,18 @@ fn miss_despawn_residual_goes_to_zone_qi_increases() {
     // 因为真元从投射物归还到 zone（player cast 时已扣，此处归还 zone）。
     let mut app = miss_release_app();
     let projectile = spawn_entity(&mut app);
+    let event = make_despawn_event(
+        projectile,
+        Some(projectile),
+        3.0,
+        ProjectileDespawnReason::OutOfRange,
+    );
+    seed_carrier_account(
+        &mut app,
+        projectile,
+        7,
+        f64::from(event.qi_evaporated + event.residual_qi),
+    );
 
     let zone_before = app
         .world()
@@ -1308,12 +1340,7 @@ fn miss_despawn_residual_goes_to_zone_qi_increases() {
         .unwrap()
         .spirit_qi;
 
-    app.world_mut().send_event(make_despawn_event(
-        projectile,
-        None,
-        3.0, // residual_qi
-        ProjectileDespawnReason::OutOfRange,
-    ));
+    app.world_mut().send_event(event);
     app.update();
 
     let zone_after = app
@@ -1422,9 +1449,9 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
 
     // 落点 [9999, 66, 9999] 不在任何注册 zone 内
     app.world_mut().send_event(ProjectileDespawnedEvent {
-        owner: None,
+        owner: Some(projectile),
         projectile,
-        carrier_instance_id: None,
+        carrier_instance_id: Some(7),
         reason: ProjectileDespawnReason::OutOfRange,
         distance: 80.0,
         qi_evaporated: 7.0,
@@ -1432,6 +1459,7 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
         pos: [9999.0, 66.0, 9999.0],
         tick: 10,
     });
+    seed_carrier_account(&mut app, projectile, 7, 10.0);
     app.update();
 
     let transfers = app.world().resource::<Events<QiTransfer>>();
@@ -1458,9 +1486,9 @@ fn full_zone_routes_complete_miss_payload_to_overflow() {
         .spirit_qi = 1.0;
 
     app.world_mut().send_event(ProjectileDespawnedEvent {
-        owner: None,
+        owner: Some(projectile),
         projectile,
-        carrier_instance_id: None,
+        carrier_instance_id: Some(7),
         reason: ProjectileDespawnReason::HitBlock,
         distance: 5.0,
         qi_evaporated: 7.0,
@@ -1468,6 +1496,7 @@ fn full_zone_routes_complete_miss_payload_to_overflow() {
         pos: [0.0, 66.0, 0.0],
         tick: 10,
     });
+    seed_carrier_account(&mut app, projectile, 7, 10.0);
     app.update();
 
     let transfers = app.world().resource::<Events<QiTransfer>>();
@@ -1489,11 +1518,12 @@ fn conservation_invariant_releases_full_miss_payload() {
     let residual: f32 = 5.0;
     let event = make_despawn_event(
         projectile,
-        None,
+        Some(projectile),
         residual,
         ProjectileDespawnReason::HitBlock,
     );
     let expected_total = f64::from(event.qi_evaporated + event.residual_qi);
+    seed_carrier_account(&mut app, projectile, 7, expected_total);
 
     app.world_mut().send_event(event);
     app.update();
@@ -1534,15 +1564,16 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
     let mut transfer_reader = app.world().resource::<Events<QiTransfer>>().get_reader();
     let before = summarize_world_qi(app.world_mut());
 
-    app.world_mut().send_event(
-        QiTransfer::new(
-            QiAccountId::player(format!("entity:{owner:?}")),
-            carrier.clone(),
-            payload,
-            QiTransferReason::Channeling,
-        )
-        .unwrap(),
-    );
+    let transfer = transfer_external_qi_to_ledger(
+        &mut app.world_mut().resource_mut::<WorldQiAccount>(),
+        QiAccountId::player(format!("entity:{owner:?}")),
+        carrier.clone(),
+        payload,
+        QiTransferReason::Channeling,
+    )
+    .expect("测试 carrier 充能应通过外部 owner helper")
+    .expect("正数充能应产生回执");
+    app.world_mut().send_event(transfer);
     app.world_mut()
         .get_mut::<Cultivation>(owner)
         .unwrap()
@@ -1592,6 +1623,11 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
         .expect("脱靶回流必须从真实 carrier account 发往 zone");
     assert_eq!(release.to, QiAccountId::zone("spawn"));
     assert!((release.amount - payload).abs() < f64::EPSILON);
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().balance(&carrier),
+        0.0,
+        "脱靶结算后 carrier 账本账户必须归零"
+    );
 }
 
 // ── 经脉门测试：charge_carrier meridian gate ─────────────────────────────────────

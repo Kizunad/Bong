@@ -171,6 +171,33 @@ fn ledger_to_zone_failures_leave_both_owners_and_audit_untouched() {
 }
 
 #[test]
+fn decay_account_debits_source_without_creating_tiandao_balance() {
+    let mut ledger = WorldQiAccount::default();
+    let source = QiAccountId::container("carrier:decay");
+    ledger.set_balance(source.clone(), 12.0).unwrap();
+
+    let transfer = ledger
+        .decay_account(source.clone(), 5.0)
+        .expect("finite decay should commit")
+        .expect("positive decay should emit a receipt");
+
+    assert_eq!(ledger.balance(&source), 7.0);
+    assert_eq!(ledger.balance(&QiAccountId::tiandao()), 0.0);
+    assert_eq!(transfer.from, source);
+    assert_eq!(transfer.to, QiAccountId::tiandao());
+    assert_eq!(transfer.reason, QiTransferReason::EraDecay);
+    assert_eq!(ledger.transfers(), &[transfer]);
+}
+
+#[test]
+fn budget_accepts_owner_aligned_decay_amount() {
+    let mut budget = WorldQiBudget::from_total(20.0);
+    assert_eq!(budget.apply_era_decay_amount(3.5).unwrap(), 3.5);
+    assert_eq!(budget.current_total, 16.5);
+    assert_eq!(budget.era_decay_accum, 3.5);
+}
+
+#[test]
 fn probe_transaction_discards_overlay_balances_audits_and_external_zone_state() {
     let source = QiAccountId::player("probe-source");
     let target = QiAccountId::zone("spawn");
