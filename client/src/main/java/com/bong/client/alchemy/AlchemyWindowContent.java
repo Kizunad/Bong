@@ -68,12 +68,14 @@ public final class AlchemyWindowContent implements AutoCloseable {
     public boolean drop(double x, double y, InventoryItem item) {
         if (owner.closed() || owner.minimized()) return false;
         if (furnace.incenseAt(x, y)) {
-            windows.placeIncense(item);
-            return true;
+            return acceptedDrop(windows.placeIncense(item));
         }
         if (!furnace.mouthAt(x, y)) return false;
-        windows.feed(item);
-        return true;
+        return acceptedDrop(windows.feed(item));
+    }
+
+    static boolean acceptedDrop(UiIntentResult result) {
+        return result != null && result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 
     /** Runtime 统一检查窗口焦点，按键不再依赖鼠标悬停部位。 */

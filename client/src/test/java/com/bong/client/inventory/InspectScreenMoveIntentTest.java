@@ -83,6 +83,23 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void rejectedAlchemyDropReturnsSplitItemToOriginalSlot() {
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        InventoryItem full = InventoryItem.createFull(
+            42L, "spirit_herb", "灵草", 1, 1, 0.2, "common", "", 10, 1.0, 1.0);
+        grid.place(full, 0, 0);
+        screen.configureEquipInteractionForTests(grid, new EquipmentPanel());
+        screen.openStackSplit(grid, full, 0, 0);
+        screen.confirmStackSplit(0, 0, true);
+
+        assertTrue(screen.isDraggingForTests(), "投料请求发出前应保持拖拽状态");
+        assertFalse(screen.completeAlchemyMaterialDrop(false), "被拒投料不能结束为成功");
+        assertFalse(screen.isDraggingForTests(), "被拒投料应结束拖拽");
+        assertEquals(full, grid.itemAt(0, 0), "被拒投料必须回到原格，不能在客户端丢失");
+    }
+
+    @Test
     void dispatchMoveIntentSendsForInventoryBackedLocations() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
