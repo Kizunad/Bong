@@ -19,6 +19,7 @@ import org.lwjgl.opengl.GL11;
 
 import java.util.Objects;
 import java.util.Map;
+import java.util.List;
 
 /** 同一个无 Screen 的 owo adapter 可挂到工作台或 HUD；业务 scope 始终归 manager。 */
 public final class OwoXmlWindowContentAdapter implements AutoCloseable {
@@ -145,7 +146,6 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
         if (paperFrame) return;
         cancelInput();
         setSizeExpanded(false);
-        paperFrame = true;
         adapter.rootComponent.surface(io.wispforest.owo.ui.core.Surface.BLANK);
         // 纸页只替换内容区，不移除标题栏；背景、拖动区和合卷入口各有明确边界。
         var header = adapter.rootComponent.childById(FlowLayout.class, "window-header");
@@ -158,17 +158,32 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
         adapter.rootComponent.childById(LabelComponent.class, "window-title")
             .color(io.wispforest.owo.ui.core.Color.ofRgb(0x60392B));
         var close = actions.childById(ButtonComponent.class, "window-close");
-        actions.clearChildren().child(close);
-        actions.margins(Insets.of(1, 0, 0, 6));
-        close.tooltip(Text.literal("合卷"));
-        close.setMessage(Text.literal("合卷").styled(style -> style.withColor(0x60392B)));
-        close.horizontalSizing(Sizing.fixed(42));
-        close.textShadow(false);
-        close.renderer((context, button, delta) -> {
-            if (button.isHovered()) context.fill(button.getX() + 2, button.getY() + 2,
-                button.getX() + button.getWidth() - 2, button.getY() + button.getHeight() - 2, 0x20784330);
-        });
-        applyBounds();
+        if (close == null) throw new IllegalStateException("window-close control is required for paper frame");
+        var originalActions = List.copyOf(actions.children());
+        var originalMargins = actions.margins().get();
+        try {
+            actions.clearChildren().child(close);
+            actions.margins(Insets.of(1, 0, 0, 6));
+            close.tooltip(Text.literal("合卷"));
+            close.setMessage(Text.literal("合卷").styled(style -> style.withColor(0x60392B)));
+            close.horizontalSizing(Sizing.fixed(42));
+            close.textShadow(false);
+            close.renderer((context, button, delta) -> {
+                if (button.isHovered()) context.fill(button.getX() + 2, button.getY() + 2,
+                    button.getX() + button.getWidth() - 2, button.getY() + button.getHeight() - 2, 0x20784330);
+            });
+            applyBounds();
+            paperFrame = true;
+        } catch (Throwable failure) {
+            try {
+                actions.clearChildren();
+                for (var child : originalActions) actions.child(child);
+                actions.margins(originalMargins);
+            } catch (Throwable rollbackFailure) {
+                if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            }
+            OwoXmlWindowContentAdapter.<RuntimeException>throwUnchecked(failure);
+        }
     }
 
     public void closeAction(Runnable action) {
@@ -314,4 +329,9 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
 
     @Override
     public void close() { adapter.dispose(); }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+        throw (T) failure;
+    }
 }

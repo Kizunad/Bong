@@ -22,6 +22,8 @@ import java.util.Map;
 /** 世界丹炉的有限寿命表现。由服务端广播驱动，与 Inspect 和工位窗口的生命周期无关。 */
 public final class AlchemyWorldEffects {
     private static final Map<BlockPos, FurnaceState> FURNACES = new HashMap<>();
+    /** 当前世界中可按方块坐标直达的丹炉模型，供瞬时 VFX 使用。 */
+    private static final Map<BlockPos, BongModeledEntity> FURNACE_MODELS = new HashMap<>();
     private static final List<ActionEffect> ACTIONS = new ArrayList<>();
     private static ClientWorld world;
     private static long tick;
@@ -56,6 +58,7 @@ public final class AlchemyWorldEffects {
     private static void ensureWorld(ClientWorld next) {
         if (world == next) return;
         FURNACES.clear();
+        FURNACE_MODELS.clear();
         ACTIONS.clear();
         world = next;
         tick = 0;
@@ -70,6 +73,16 @@ public final class AlchemyWorldEffects {
             if (ACTIONS.size() >= 128) ACTIONS.remove(0);
             ACTIONS.add(new ActionEffect(payload));
         }
+    }
+
+    /** 炸炉等瞬时表现按炉位查找模型，避免每个事件重新扫描世界实体。 */
+    public static BongModeledEntity furnaceAt(BlockPos position) {
+        var furnace = FURNACE_MODELS.get(position);
+        if (furnace == null || furnace.isRemoved()) {
+            if (furnace != null) FURNACE_MODELS.remove(position);
+            return null;
+        }
+        return furnace;
     }
 
     private static int materialColor(Map<String, Integer> materials) {
@@ -98,6 +111,8 @@ public final class AlchemyWorldEffects {
                 models.put(entity.getBlockPos(), modeled);
             }
         }
+        FURNACE_MODELS.clear();
+        FURNACE_MODELS.putAll(models);
         for (var entry : FURNACES.entrySet()) {
             var model = models.get(entry.getKey());
             if (model == null) continue;

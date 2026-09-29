@@ -1,6 +1,6 @@
 package com.bong.client.alchemy;
 
-import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.render.ItemTextureResolver;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.util.Identifier;
@@ -17,7 +17,7 @@ public final class AlchemyMaterialColors {
     private AlchemyMaterialColors() {}
 
     public static int color(String material) {
-        var texture = GridSlotComponent.textureIdForItemId(material);
+        var texture = ItemTextureResolver.forItemId(material);
         return texture == null ? FALLBACK : CACHE.computeIfAbsent(texture, AlchemyMaterialColors::read);
     }
 

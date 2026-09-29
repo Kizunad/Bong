@@ -1,8 +1,7 @@
 package com.bong.client.visual.particle;
 
 import com.bong.client.alchemy.AlchemyResultEffect;
-import com.bong.client.entity.BongEntityModelKind;
-import com.bong.client.entity.BongModeledEntity;
+import com.bong.client.alchemy.AlchemyWorldEffects;
 import com.bong.client.network.VfxEventPayload;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
@@ -40,13 +39,8 @@ public final class AlchemyBrewVaporPlayer implements VfxPlayer {
         if (kind == Kind.EXPLODE) {
             // 服务端炸炉粒子源在炉位上方一格，旁观者也播放对应真炉的骨骼动画。
             var pos = BlockPos.ofFloored(ox, oy - 1, oz);
-            for (var entity : world.getEntities()) {
-                if (entity instanceof BongModeledEntity furnace
-                    && furnace.modelKind() == BongEntityModelKind.ALCHEMY_FURNACE
-                    && !furnace.isRemoved() && furnace.getBlockPos().equals(pos)) {
-                    furnace.playAlchemyResult(AlchemyResultEffect.EXPLODE);
-                }
-            }
+            var furnace = AlchemyWorldEffects.furnaceAt(pos);
+            if (furnace != null) furnace.playAlchemyResult(AlchemyResultEffect.EXPLODE);
         }
         float[] rgb = GameplayVfxUtil.rgb(payload, fallbackRgb());
         int count = GameplayVfxUtil.count(payload, defaultCount(), 1, 48);

@@ -84,7 +84,7 @@ public final class UiWindowRuntime {
         StoreUiStateSource.pullOnOpen(ForgeViewModel::snapshot), new ForgeClientIntentSink(),
         ForgeScreenBootstrap::available, System::currentTimeMillis);
     private static final AlchemyWindows ALCHEMY = new AlchemyWindows(MANAGER, AlchemyUiStateSource.production(),
-        AlchemyClientIntentSink.production(), task -> MinecraftClient.getInstance().execute(task), AlchemyScreenBootstrap::available);
+        AlchemyClientIntentSink.production(), UiWindowRuntime::dispatchAlchemy, AlchemyScreenBootstrap::available);
     private static boolean initialized;
     private static Object connection;
     private static Object world;
@@ -384,6 +384,24 @@ public final class UiWindowRuntime {
 
     public static boolean acceptAlchemyMessage(String message) {
         return ALCHEMY.acceptMessage(message);
+    }
+
+    /**
+     * 把炼丹状态回调投递到客户端线程，并在执行前再次验证工位窗口的 scope。
+     * 窗口关闭后，已经排队的旧回调会被丢弃，不会写入已销毁的内容。
+     */
+    private static void dispatchAlchemy(Runnable task) {
+        MinecraftClient.getInstance().execute(() -> runIfAlchemyOpen(task));
+    }
+
+    /** 网络快照需要在修改与炼丹窗口关联的状态前经过同一生命周期边界。 */
+    public static boolean runIfAlchemyOpen(Runnable task) {
+        for (var state : MANAGER.snapshot()) {
+            if (state.definition().equals(AlchemyWindows.DEFINITION) && !state.closed()) {
+                return state.scope().runIfOpen(task);
+            }
+        }
+        return false;
     }
 
     private static void openAlchemyNotes(InventoryItem item, boolean history) {
