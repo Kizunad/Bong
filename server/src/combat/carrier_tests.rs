@@ -1,7 +1,13 @@
 #![allow(dead_code, unused_imports)]
 use super::*;
 use crate::body_plan::BodyPartId;
+use crate::combat::guard_log::GuardLogDedup;
+use crate::cultivation::components::QiColor;
+use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::schema::common::SPIRIT_QI_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
 
 fn template(id: &str, name: &str, max_stack_count: u32) -> ItemTemplate {
@@ -93,13 +99,32 @@ fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
     }
 }
 
+fn inventory_with_full_resonance_main_hand(template_id: &str) -> PlayerInventory {
+    let mut inventory = inventory_with_main_hand(template_id);
+    let held = inventory
+        .equipped
+        .get_mut(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|slot| slot.held.as_mut())
+        .expect("测试暗器必须位于主手");
+    let mut state =
+        artifact_state_for_outcome(template_id, 1, 1.0, Some(ColorKind::Mellow), 100.0, 0);
+    for groove in &mut state.meridian.grooves {
+        groove.depth = groove.depth_cap;
+    }
+    state.meridian.total_depth = state.meridian.depth_cap;
+    write_artifact_state_to_item(held, &state);
+    inventory
+}
+
 fn charge_app() -> App {
     use crate::world::zone::ZoneRegistry;
 
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 0 });
+    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
     app.insert_resource(registry());
     app.insert_resource(ZoneRegistry::default());
+    app.init_resource::<GuardLogDedup>();
     app.add_event::<ChargeCarrierIntent>();
     app.add_event::<CarrierChargedEvent>();
     app.add_event::<CarrierChargeBeganEvent>();
@@ -127,12 +152,35 @@ fn spawn_charge_actor(app: &mut App) -> Entity {
     app.world_mut()
         .spawn((
             Cultivation {
-                qi_current: 100.0,
-                qi_max: 200.0,
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL * 2.0,
                 ..Default::default()
             },
             Position::new([0.0, 66.0, 0.0]),
             inventory_with_main_hand(ANQI_MATERIAL_TEMPLATE_ID),
+            CarrierStore::default(),
+        ))
+        .id()
+}
+
+fn spawn_full_resonance_charge_actor(app: &mut App) -> Entity {
+    let mut inventory = inventory_with_full_resonance_main_hand(ANQI_MATERIAL_TEMPLATE_ID);
+    inventory
+        .equipped
+        .get_mut(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|slot| slot.held.as_mut())
+        .expect("测试暗器必须位于主手")
+        .spirit_quality = 0.0;
+    app.world_mut()
+        .spawn((
+            Cultivation {
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL * 2.0,
+                ..Default::default()
+            },
+            QiColor::default(),
+            Position::new([0.0, 66.0, 0.0]),
+            inventory,
             CarrierStore::default(),
         ))
         .id()
@@ -191,6 +239,204 @@ fn begin_charge_channels_prepaid_qi_into_carrier_account() {
         QiAccountId::player(format!("entity:{actor:?}"))
     );
     assert!((transfer.amount - 30.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn full_charge_resonance_loss_returns_unsealed_qi_to_zone() {
+    let mut app = charge_app();
+    let actor = spawn_charge_actor(&mut app);
+    let mut state = artifact_state_for_outcome(
+        ANQI_MATERIAL_TEMPLATE_ID,
+        1,
+        1.0,
+        Some(ColorKind::Sharp),
+        100.0,
+        0,
+    );
+    for groove in &mut state.meridian.grooves {
+        groove.depth = groove.depth_cap;
+    }
+    state.meridian.total_depth = state.meridian.depth_cap;
+    {
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(actor).unwrap();
+        let held = inventory
+            .equipped
+            .get_mut(EQUIP_SLOT_MAIN_HAND)
+            .and_then(|slot| slot.held.as_mut())
+            .expect("测试暗器必须位于主手");
+        write_artifact_state_to_item(held, &state);
+    }
+    app.world_mut().entity_mut(actor).insert(QiColor::default());
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 0.0;
+
+    let qi_target = (SPIRIT_QI_TOTAL * 0.6) as f32;
+    app.world_mut().send_event(ChargeCarrierIntent {
+        carrier: actor,
+        slot: Some(CarrierSlot::MainHand),
+        qi_target: Some(qi_target),
+        issued_at_tick: 0,
+    });
+    app.update();
+
+    app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS;
+    app.update();
+
+    let cultivation = app.world().get::<Cultivation>(actor).unwrap();
+    assert!(
+        (cultivation.qi_current - (SPIRIT_QI_TOTAL - f64::from(qi_target))).abs() < f64::EPSILON,
+        "满蓄力应从玩家扣除投入真元，实际剩余 {}",
+        cultivation.qi_current
+    );
+    let sealed_qi = app
+        .world()
+        .get::<CarrierStore>(actor)
+        .unwrap()
+        .imprints_by_instance
+        .get(&7)
+        .expect("满蓄力应写入 carrier imprint")
+        .qi_amount;
+    assert!(
+        (sealed_qi - qi_target * 0.84).abs() < 0.001,
+        "错色满深度 resonance=0.2 时，封印效率应为 84%，实际 {sealed_qi}"
+    );
+
+    let release = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .find(|transfer| {
+            transfer.reason == QiTransferReason::ReleaseToZone
+                && transfer.from == carrier_qi_account(actor, 7)
+        })
+        .expect("效率折损的未封印真元必须从 carrier account 释放回 zone");
+    let expected_release = f64::from(qi_target - sealed_qi);
+    assert!(
+        (release.amount - expected_release).abs() < 0.001,
+        "未封印归还量应为投入减实际封印量，期望 {expected_release}，实际 {}",
+        release.amount
+    );
+    assert_eq!(release.to, QiAccountId::zone("spawn"));
+
+    let zone_absolute_qi = app
+        .world()
+        .resource::<crate::world::zone::ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi
+        * QI_ZONE_UNIT_CAPACITY;
+    assert!(
+        (zone_absolute_qi - release.amount).abs() < 0.001,
+        "未封印真元必须按绝对量写回 zone：zone={zone_absolute_qi} release={}",
+        release.amount
+    );
+}
+
+#[test]
+fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
+    let mut app = charge_app();
+    app.add_event::<ThrowCarrierIntent>();
+    app.add_event::<CarrierImpactEvent>();
+    app.add_event::<ProjectileDespawnedEvent>();
+    app.add_event::<CombatEvent>();
+    app.add_systems(
+        Update,
+        (
+            throw_carrier_intents,
+            projectile_tick_system,
+            projectile_miss_qi_release_system,
+        )
+            .chain(),
+    );
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 0.0;
+    let actor = spawn_full_resonance_charge_actor(&mut app);
+    let before = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
+    );
+
+    let qi_target = (SPIRIT_QI_TOTAL * 0.6) as f32;
+    app.world_mut().send_event(ChargeCarrierIntent {
+        carrier: actor,
+        slot: Some(CarrierSlot::MainHand),
+        qi_target: Some(qi_target),
+        issued_at_tick: 0,
+    });
+    app.update();
+    app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS;
+    app.update();
+
+    let sealed_qi = app
+        .world()
+        .get::<CarrierStore>(actor)
+        .unwrap()
+        .imprints_by_instance
+        .get(&7)
+        .expect("满共鸣蓄力应产生 imprint")
+        .qi_amount;
+    assert!(
+        (sealed_qi - qi_target).abs() < 0.001,
+        "满共鸣应无损封印投入真元，期望 {qi_target}，实际 {sealed_qi}"
+    );
+    assert!(
+        sealed_qi <= qi_target,
+        "封印量不得超过玩家投入量：投入={qi_target} 封印={sealed_qi}"
+    );
+
+    app.world_mut().send_event(ThrowCarrierIntent {
+        thrower: actor,
+        slot: CarrierSlot::MainHand,
+        dir_unit: [1.0, 0.0, 0.0],
+        power: 1.0,
+        issued_at_tick: CHARGE_DURATION_TICKS,
+    });
+    app.update();
+    let projectile_entity = {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<AnqiProjectileFlight>>();
+        query.iter(world).next().expect("投掷应生成暗器投射物")
+    };
+    let spawn_pos = app
+        .world()
+        .get::<AnqiProjectileFlight>(projectile_entity)
+        .unwrap()
+        .spawn_pos;
+    *app.world_mut()
+        .get_mut::<Position>(projectile_entity)
+        .unwrap() =
+        Position(spawn_pos + DVec3::new(f64::from(ANQI_PROJECTILE_MAX_DISTANCE) + 1.0, 0.0, 0.0));
+    app.update();
+
+    let (despawn_reason, residual_qi) = {
+        let despawn = app
+            .world()
+            .resource::<Events<ProjectileDespawnedEvent>>()
+            .iter_current_update_events()
+            .find(|event| event.projectile == projectile_entity)
+            .expect("超出最大飞行距离应产生 OutOfRange despawn");
+        (despawn.reason, despawn.residual_qi)
+    };
+    assert_eq!(despawn_reason, ProjectileDespawnReason::OutOfRange);
+
+    let after = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
+    );
+    let expected_loss = f64::from(qi_target) - f64::from(residual_qi);
+    assert_conservation(&before, &after, expected_loss).unwrap_or_else(|error| {
+        panic!(
+            "充能→投掷→OutOfRange→miss 回流后，扣除自然蒸发量仍必须守恒：before={before:?} after={after:?} error={error:?}"
+        )
+    });
 }
 
 #[test]
@@ -985,10 +1231,19 @@ mod partboxes_carrier_production_integration_tests {
 }
 
 #[test]
-fn carrier_charge_qi_uses_artifact_resonance_efficiency() {
+fn carrier_charge_qi_uses_artifact_resonance_efficiency_without_minting_qi() {
     assert_eq!(carrier_sealed_qi_amount(50.0, None), 50.0);
     assert!((carrier_sealed_qi_amount(50.0, Some(0.0)) - 40.0).abs() <= 0.001);
-    assert!((carrier_sealed_qi_amount(50.0, Some(1.0)) - 60.0).abs() <= 0.001);
+    assert!((carrier_sealed_qi_amount(50.0, Some(0.5)) - 45.0).abs() <= 0.001);
+    assert!((carrier_sealed_qi_amount(50.0, Some(1.0)) - 50.0).abs() <= 0.001);
+    assert_eq!(carrier_sealed_qi_amount(0.0, Some(1.0)), 0.0);
+    for resonance in [-0.1, 0.0, 0.5, 1.0, 1.5] {
+        let sealed = carrier_sealed_qi_amount(50.0, Some(resonance));
+        assert!(
+            sealed <= 50.0,
+            "封印量不得超过玩家投入量：resonance={resonance} sealed={sealed}"
+        );
+    }
 }
 
 // ── qc-P0 守恒测试：projectile_miss_qi_release_system ──────────────────────────

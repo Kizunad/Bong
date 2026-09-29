@@ -1364,6 +1364,25 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 45 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS runtime_clock (
+                clock_id INTEGER PRIMARY KEY CHECK (clock_id = 1),
+                tick INTEGER NOT NULL CHECK (tick >= 0),
+                snapshot_wall INTEGER NOT NULL CHECK (snapshot_wall >= 0),
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
+            );
+            PRAGMA user_version = 45;
+            ",
+        )?;
+        assert_runtime_clock_schema_ready(&transaction)?;
+        transaction.commit()?;
+    }
+
     let deceased_schema_transaction = connection.transaction()?;
     if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
         assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
@@ -1374,6 +1393,10 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     assert_dormant_terminal_commits_schema_ready(&terminal_schema_transaction)?;
     terminal_schema_transaction.commit()?;
 
+    let runtime_clock_schema_transaction = connection.transaction()?;
+    assert_runtime_clock_schema_ready(&runtime_clock_schema_transaction)?;
+    runtime_clock_schema_transaction.commit()?;
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1382,6 +1405,62 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
                 CURRENT_USER_VERSION, final_version
             )),
         )));
+    }
+
+    Ok(())
+}
+
+pub(super) fn assert_runtime_clock_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "runtime_clock")?;
+    let required = ["clock_id", "tick", "snapshot_wall", "schema_version"];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v45 migration completed but runtime_clock column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(runtime_clock)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    if primary_key.as_slice() != [("clock_id".to_owned(), 1)] {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v45 migration completed but runtime_clock primary key mismatch: expected clock_id got {primary_key:?}"
+            )),
+        )));
+    }
+
+    let create_sql: String = transaction.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runtime_clock'",
+        [],
+        |row| row.get(0),
+    )?;
+    for required_check in [
+        "clock_id = 1",
+        "tick >= 0",
+        "snapshot_wall >= 0",
+        "schema_version >= 1",
+    ] {
+        if !create_sql.contains(required_check) {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v45 migration completed but runtime_clock CHECK `{required_check}` missing"
+                )),
+            )));
+        }
     }
 
     Ok(())

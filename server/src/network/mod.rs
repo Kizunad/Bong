@@ -957,6 +957,39 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     // 只入队，不读权威位置；post-transfer validator 排在其后（见 lingtian::register
     // 的 chain：ingress → AuthoritativePositionCommitSet → validator）。
     register_lingtian_ingress_wiring(app);
+    // 炼丹注灵的账本提交必须排在 C2S handler 之后，且在断线玩家被 despawn 前完成退款。
+    app.add_systems(
+        Update,
+        client_request_handler::settle_alchemy_inject_qi_requests
+            .after(client_request_handler::handle_client_request_payloads)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::dispatch_alchemy_take_back_requests
+            .after(client_request_handler::settle_alchemy_inject_qi_requests)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::settle_finished_alchemy_furnace_qi
+            .after(client_request_handler::dispatch_alchemy_take_back_requests)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::refund_removed_alchemy_furnace_qi
+            .after(client_request_handler::settle_finished_alchemy_furnace_qi)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::refund_alchemy_qi_on_disconnect
+            .after(client_request_handler::settle_finished_alchemy_furnace_qi)
+            .after(client_request_handler::settle_alchemy_inject_qi_requests)
+            .after(client_request_handler::refund_removed_alchemy_furnace_qi)
+            .before(crate::player::despawn_disconnected_clients),
+    );
     // plan-scroll-reading-v1 P2 §8.1 #4 — 读卷循环动画死亡/断线兜底清理（模板：
     // combat::shield_block::cleanup_shield_on_{death,disconnect}）。死亡分支需在
     // death_arbiter_tick 之后（DeathEvent 已 emit）；断线分支需在

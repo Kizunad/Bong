@@ -133,6 +133,7 @@ fn build_app() -> App {
             Update,
             (
                 validate_and_dispatch_lingtian_requests,
+                release_disconnected_lingtian_sessions,
                 handle_start_till,
                 handle_start_renew,
                 handle_start_harvest,
@@ -1057,6 +1058,7 @@ fn build_planting_app() -> App {
             Update,
             (
                 validate_and_dispatch_lingtian_requests,
+                release_disconnected_lingtian_sessions,
                 handle_start_till,
                 handle_start_renew,
                 handle_start_planting,
@@ -1108,6 +1110,53 @@ fn planting_e2e_spawns_crop_and_consumes_seed() {
     let inv = app.world().get::<PlayerInventory>(player).unwrap();
     let stack = inv.containers[0].items[0].instance.stack_count;
     assert_eq!(stack, 4);
+}
+
+#[test]
+fn planting_disconnect_cancels_without_consuming_seed_or_mutating_plot() {
+    let mut app = build_planting_app();
+    let pos = BlockPos::new(3, 64, 3);
+    let player = valid_test_player(
+        &mut app,
+        make_inventory_with_seed("ci_she_hao_seed", 5),
+        pos,
+    );
+    let plot = app
+        .world_mut()
+        .spawn(LingtianPlot::new(pos, Some(player)))
+        .id();
+    app.world_mut().send_event(StartPlantingRequest {
+        player,
+        pos,
+        plant_id: "ci_she_hao".into(),
+    });
+    app.update();
+    assert!(
+        app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(player),
+        "planting must still be in progress before the disconnect"
+    );
+
+    app.world_mut().entity_mut(player).remove::<Client>();
+    app.update();
+
+    assert!(
+        !app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(player),
+        "disconnect must cancel the in-progress planting session"
+    );
+    let plot_state = app.world().get::<LingtianPlot>(plot).unwrap();
+    assert!(
+        plot_state.crop.is_none(),
+        "cancelled planting must not create a crop"
+    );
+    let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+    assert_eq!(
+        inventory.containers[0].items[0].instance.stack_count, 5,
+        "cancelled planting must leave the player's seed untouched"
+    );
 }
 
 #[test]
@@ -1328,6 +1377,7 @@ fn build_harvest_app_with_item_registry(item_registry: ItemRegistry) -> App {
             Update,
             (
                 validate_and_dispatch_lingtian_requests,
+                release_disconnected_lingtian_sessions,
                 handle_start_till,
                 handle_start_renew,
                 handle_start_planting,
@@ -1420,6 +1470,51 @@ fn harvest_e2e_drops_plant_and_clears_plot() {
     assert_eq!(p.harvest_count, 1, "harvest_count 应 +1");
     let inv = app.world().get::<PlayerInventory>(player).unwrap();
     assert_eq!(count_in_main_pack(inv, "ci_she_hao"), 1, "应得 1 株作物");
+}
+
+#[test]
+fn harvest_disconnect_cancels_without_consuming_ripe_crop_or_award() {
+    let mut app = build_harvest_app();
+    let pos = BlockPos::new(6, 64, 6);
+    let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
+    let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+    app.world_mut().send_event(StartHarvestRequest {
+        player,
+        pos,
+        mode: SessionMode::Manual,
+    });
+    app.update();
+    assert!(
+        app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(player),
+        "harvest must still be in progress before the disconnect"
+    );
+
+    app.world_mut().entity_mut(player).remove::<Client>();
+    app.update();
+
+    assert!(
+        !app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(player),
+        "disconnect must cancel the in-progress harvest session"
+    );
+    let plot_state = app.world().get::<LingtianPlot>(plot).unwrap();
+    assert!(
+        plot_state.crop.as_ref().is_some_and(CropInstance::is_ripe),
+        "cancelled harvest must leave the ripe crop available"
+    );
+    assert_eq!(
+        plot_state.harvest_count, 0,
+        "cancelled harvest must not advance harvest_count"
+    );
+    let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+    assert_eq!(
+        count_in_all_containers(inventory, "ci_she_hao"),
+        0,
+        "cancelled harvest must not award an item after disconnect"
+    );
 }
 
 #[test]
@@ -4364,6 +4459,41 @@ fn npc_finished_sessions_settle_all_direct_farming_variants() {
     // 手塞可达、生产永远不可达"的假链路；NPC 抽灵由未来独立 NPC plan
     // 定义 scorer/action/producer/qi ownership 合同。这里不再有
     // DrainQi 的 NPC completion fixture。
+}
+
+#[test]
+fn disconnect_only_cancels_matching_player_session_and_leaves_npc_session_active() {
+    let mut app = build_app();
+    let player = spawn_test_player(&mut app, ());
+    let npc = app.world_mut().spawn(NpcMarker).id();
+    let pos = BlockPos::new(10, 64, 10);
+    let npc_session = TillSession::new(
+        pos,
+        HoeKind::Iron,
+        1,
+        SessionMode::Manual,
+        PlotEnvironment::base(),
+    );
+    assert!(app
+        .world_mut()
+        .resource_mut::<ActiveLingtianSessions>()
+        .try_insert_till(npc, npc_session, false));
+
+    app.world_mut().entity_mut(player).remove::<Client>();
+    app.update();
+
+    assert!(
+        !app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(player),
+        "the disconnected player's session should be absent"
+    );
+    assert!(
+        app.world()
+            .resource::<ActiveLingtianSessions>()
+            .has_session(npc),
+        "a real NPC session must not be cancelled by another client's disconnect"
+    );
 }
 
 #[test]

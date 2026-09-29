@@ -26,8 +26,9 @@ use bong_server::network::client_request_handler::{
 };
 use bong_server::player::state::PlayerState;
 use bong_server::schema::client_request::ClientRequestV1;
+use bong_server::world::dimension::{CurrentDimension, DimensionKind};
 use valence::prelude::{
-    App, Client, Commands, Entity, Events, Query, ResMut, Resource, Update, Username,
+    App, Client, Commands, Entity, Events, Position, Query, ResMut, Resource, Update, Username,
 };
 
 struct PendingForgeBatch(Vec<(Entity, ForgeRequest)>);
@@ -147,6 +148,8 @@ fn session(id: u64, caster: Entity, step: ForgeStep, step_index: usize) -> Forge
         Entity::from_raw(10_000 + id as u32),
         caster,
     );
+    session.station_pos = Some((0, 64, 0));
+    session.station_dimension = DimensionKind::Overworld;
     session.current_step = step;
     session.step_index = step_index;
     session
@@ -368,7 +371,14 @@ fn non_forge_request_is_returned_unchanged() {
 #[test]
 fn one_batch_step_advance_projection_allows_each_dependent_request() {
     let mut app = forge_dispatch_app();
-    let player = app.world_mut().spawn(inscription_inventory()).id();
+    let player = app
+        .world_mut()
+        .spawn((
+            inscription_inventory(),
+            Position::new(valence::math::DVec3::new(0.0, 64.0, 0.0)),
+            CurrentDimension(DimensionKind::Overworld),
+        ))
+        .id();
 
     let mut scroll_template = ItemTemplate::minimal_for_test("inscription_scroll_sharp");
     scroll_template.inscription_scroll_spec = Some(InscriptionScrollSpec {

@@ -16,7 +16,7 @@ use crate::schema::alchemy::AlchemyInterventionV1;
 
 use crate::network::client_request_handler::{
     AlchemyRequestParams, ClientRequestDispatchParams, CombatRequestParams,
-    NpcEngagementRequestParams, SkillScrollRequestParams,
+    NpcEngagementRequestParams, QiMaxShrinkReleaseResources, SkillScrollRequestParams,
 };
 
 /// 已通过 schema/version 校验的 Production/Alchemy 请求。
@@ -251,22 +251,14 @@ pub(crate) fn dispatch_production_request<
             furnace_pos,
             slot_idx,
         } => {
-            crate::network::client_request_handler::handle_alchemy_take_back(
-                player,
-                furnace_pos,
-                slot_idx,
-                combat_clock.tick,
-                clients,
-                &mut alchemy.furnaces,
-                &alchemy.recipe_registry,
-                &mut alchemy.outcome_tx,
-                inventories,
-                player_states,
-                &skill_scroll.cultivations,
-                &alchemy.item_registry,
-                alchemy.instance_allocator.as_deref_mut(),
-                alchemy.vfx_events.as_deref_mut(),
-            );
+            if let Some(events) = alchemy.take_back_tx.as_deref_mut() {
+                events.send(crate::alchemy::AlchemyTakeBackRequest {
+                    player,
+                    furnace_pos,
+                    slot_idx,
+                    tick: combat_clock.tick,
+                });
+            }
         }
         ProductionRequest::Ignite {
             furnace_pos,
@@ -299,6 +291,7 @@ pub(crate) fn dispatch_production_request<
                 alchemy.zones.as_deref(),
                 alchemy.redis.as_deref(),
                 alchemy.vfx_events.as_deref_mut(),
+                alchemy.inject_qi_tx.as_deref_mut(),
             );
         }
         ProductionRequest::TurnPage { delta } => {
@@ -339,6 +332,11 @@ pub(crate) fn dispatch_production_request<
                 &skill_scroll.cultivations,
                 combat,
                 &mut dispatch.lifespan_extension_tx,
+                QiMaxShrinkReleaseResources {
+                    zones: alchemy.zones.as_deref_mut(),
+                    ledger: alchemy.qi_ledger.as_deref_mut(),
+                    transfers: alchemy.attrition_qi_transfers.as_deref_mut(),
+                },
                 alchemy.vfx_events.as_deref_mut(),
                 &mut npc.audio_events,
                 alchemy.hallucination_events.as_deref_mut(),

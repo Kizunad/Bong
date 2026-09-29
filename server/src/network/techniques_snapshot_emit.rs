@@ -1,3 +1,6 @@
+use std::collections::{HashSet, VecDeque};
+use std::sync::{Mutex, OnceLock};
+
 use valence::prelude::{Added, Changed, Client, Entity, Query, Res, Username, With};
 
 use crate::combat::sword_basics::sword_proficiency_label;
@@ -15,6 +18,36 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 type TechniquesSnapshotFilter = (With<Client>, Changed<KnownTechniques>);
 type JoinTechniquesSnapshotFilter = (With<Client>, Added<KnownTechniques>);
 type TechniquesSnapshotQueryItem<'a> = (Entity, &'a mut Client, &'a Username, &'a KnownTechniques);
+
+/// 只保留最近一批未知功法告警的去重 key，避免长时间运行进程的诊断缓存无限增长。
+const UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY: usize = 1024;
+
+#[derive(Default)]
+struct WarningDedupCache {
+    keys: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl WarningDedupCache {
+    fn insert(&mut self, key: String) -> bool {
+        if self.keys.contains(&key) {
+            return false;
+        }
+        if self.order.len() >= UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.keys.remove(&evicted);
+            }
+        }
+        self.keys.insert(key.clone());
+        self.order.push_back(key);
+        true
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+}
 
 pub fn emit_techniques_snapshot_payloads(
     registry: Res<TechniqueRegistry>,
@@ -95,6 +128,48 @@ fn build_techniques_snapshot(
     }
 }
 
+/// 找出持久化功法集合中无法由当前运行时注册表解析的条目。
+///
+/// 同一旧条目可能在 `KnownTechniques` 中重复出现；告警只保留一份，快照仍按原有
+/// filter_map 语义丢弃这些条目。
+fn unknown_technique_ids<'a>(
+    registry: &TechniqueRegistry,
+    known: &'a KnownTechniques,
+) -> Vec<&'a str> {
+    let mut seen = HashSet::new();
+    known
+        .entries
+        .iter()
+        .filter(|entry| registry.get(&entry.id).is_none() && seen.insert(entry.id.as_str()))
+        .map(|entry| entry.id.as_str())
+        .collect()
+}
+
+/// 快照丢弃未知持久化功法时保留可诊断信号；按 `(username, technique_id)` 在有界的
+/// FIFO 缓存中去重，避免 `Changed<KnownTechniques>` 在战斗中重复刷屏，同时不让进程级
+/// 诊断状态随玩家和残留 ID 永久增长。
+fn warn_unknown_technique_ids(
+    registry: &TechniqueRegistry,
+    username: &str,
+    known: &KnownTechniques,
+) {
+    static WARNED: OnceLock<Mutex<WarningDedupCache>> = OnceLock::new();
+    let mut warned = WARNED
+        .get_or_init(|| Mutex::new(WarningDedupCache::default()))
+        .lock()
+        .expect("unknown-technique warning dedup mutex poisoned");
+    for technique_id in unknown_technique_ids(registry, known) {
+        let key = format!("{username}\u{0}{technique_id}");
+        if warned.insert(key) {
+            tracing::warn!(
+                player = %username,
+                technique_id,
+                "known technique is absent from registry; omitting stale snapshot entry"
+            );
+        }
+    }
+}
+
 /// 启动期按“玩家学会完整 catalog”构造最坏情况快照，并强制走生产 protobuf 编码。
 /// registry 启动后不可变，因此通过即保证任意 `KnownTechniques` 子集不会因整包超限被丢弃。
 pub fn validate_techniques_snapshot_budget(
@@ -124,6 +199,7 @@ pub fn send_techniques_snapshot_to_client(
     username: &str,
     known: &KnownTechniques,
 ) {
+    warn_unknown_technique_ids(registry, username, known);
     let snapshot = build_techniques_snapshot(registry, known, Some(username));
     let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
     let payload_type = payload_type_label(payload.payload_type());
@@ -200,6 +276,61 @@ mod tests {
             snapshot.entries[0].qi_cost, 0.4_f32,
             "TechniqueEntry tag 10 remains the legacy float/fixed32 contract"
         );
+    }
+
+    #[test]
+    fn unknown_ids_reports_each_stale_id_once_in_entry_order() {
+        let registry = TechniqueRegistry::load_for_tests();
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "unknown.removed".to_string(),
+                    proficiency: 0.4,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "movement.dash".to_string(),
+                    proficiency: 0.4,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "unknown.removed".to_string(),
+                    proficiency: 0.8,
+                    active: false,
+                },
+                KnownTechnique {
+                    id: "unknown.other".to_string(),
+                    proficiency: 0.1,
+                    active: true,
+                },
+            ],
+        };
+
+        assert_eq!(
+            unknown_technique_ids(&registry, &known),
+            vec!["unknown.removed", "unknown.other"],
+            "stale snapshot diagnostics should deduplicate ids without changing first-seen order"
+        );
+    }
+
+    #[test]
+    fn warning_dedup_cache_evicts_oldest_key_at_capacity() {
+        let mut cache = WarningDedupCache::default();
+        for index in 0..UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY {
+            assert!(cache.insert(format!("stale-{index}")));
+        }
+        assert_eq!(cache.len(), UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY);
+        assert!(!cache.insert(format!(
+            "stale-{}",
+            UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY - 1
+        )));
+        assert!(cache.insert("stale-new".to_string()));
+        assert_eq!(cache.len(), UNKNOWN_TECHNIQUE_WARNING_CACHE_CAPACITY);
+        assert!(
+            cache.insert("stale-0".to_string()),
+            "the oldest key must be evicted so a repeated old warning can be observed again"
+        );
+        assert!(!cache.insert("stale-new".to_string()));
     }
 
     #[test]

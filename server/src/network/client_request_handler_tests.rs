@@ -8,15 +8,36 @@ use super::*;
 use crate::combat::components::{WoundKind, Wounds};
 use crate::combat::events::RevivalActionIntent;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
+use crate::cultivation::death_hooks::QiMaxShrinkReleaseContext;
 use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::ItemInstance;
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{
+    assert_conservation, summarize_world_qi, QiAccountId, WorldQiAccount, WorldQiSnapshot,
+};
+use crate::qi_physics::QiTransferReason;
+use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
-    ident, App, BlockPos, DVec3, Entity, EntityLayerId, IntoSystemConfigs, Update,
+    ident, App, BlockPos, DVec3, Entity, EntityLayerId, Events, IntoSystemConfigs, Position, Update,
 };
 use valence::testing::create_mock_client;
+
+fn summarize_qi_state_for_test(
+    cultivation: &Cultivation,
+    zones: &ZoneRegistry,
+    ledger: &WorldQiAccount,
+) -> WorldQiSnapshot {
+    let mut world = bevy_ecs::world::World::new();
+    world.spawn(cultivation.clone());
+    world.insert_resource(zones.clone());
+    world.insert_resource(ledger.clone());
+    summarize_world_qi(&mut world)
+}
 
 #[test]
 fn combat_pill_buff_status_payload_preserves_hud_fields() {
@@ -28,6 +49,175 @@ fn combat_pill_buff_status_payload_preserves_hud_fields() {
     assert_eq!(value["buff_id"], "tie_bi_san");
     assert_eq!(value["remaining_ticks"], 3600);
     assert_eq!(value["effect_multiplier"], 1.25);
+}
+
+#[test]
+fn duan_xu_san_shrinks_qi_max_without_release_when_current_fits() {
+    let mut cultivation = Cultivation {
+        qi_current: 90.0,
+        qi_max: 100.0,
+        ..Default::default()
+    };
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(500),
+        position: None,
+        current_dimension: None,
+        life_record: None,
+        zones: None,
+        ledger: None,
+        qi_transfers: None,
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, 97.0);
+    assert_eq!(cultivation.qi_current, 90.0);
+}
+
+#[test]
+fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let before = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(501),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL * 0.97);
+    assert_eq!(cultivation.qi_current, cultivation.qi_max);
+    let zone = zones
+        .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+        .expect("player zone should receive qi released by the cap shrink");
+    let released = SPIRIT_QI_TOTAL * 0.03;
+    assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
+
+    let mut reader = transfers.get_reader();
+    let emitted: Vec<_> = reader.read(&transfers).cloned().collect();
+    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted[0].from, QiAccountId::player("offline:duan-xu-san"));
+    assert_eq!(emitted[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+    assert!((emitted[0].amount - released).abs() < 1e-9);
+    assert_eq!(emitted[0].reason, QiTransferReason::ReleaseToZone);
+
+    let after = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
+    assert_conservation(&before, &after, 0.0).expect("断续散缩减真元上限后应将差额完整释放到 zone");
+}
+
+#[test]
+fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut wounds = Wounds {
+        entries: vec![crate::combat::components::Wound {
+            location: crate::body_plan::BodyPartId::new("leg_l"),
+            kind: WoundKind::Blunt,
+            severity: 0.95,
+            bleeding_per_sec: 2.0,
+            created_at_tick: 1,
+            inflicted_by: None,
+        }],
+        ..Default::default()
+    };
+    let wounds_before = serde_json::to_value(&wounds).unwrap();
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut ledger = WorldQiAccount::default();
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let mut release = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(502),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: None,
+        zones: Some(&mut zones),
+        ledger: Some(&mut ledger),
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!try_apply_duan_xu_san_mend(
+        &mut wounds,
+        &mut cultivation,
+        1.0,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(
+        serde_json::to_value(&wounds).unwrap(),
+        wounds_before,
+        "断续散缩容释放失败时不得接骨"
+    );
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(ledger.total(), 0.0);
+    assert_eq!(transfers.len(), 0);
+}
+
+#[test]
+fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
+    let mut cultivation = Cultivation {
+        qi_current: SPIRIT_QI_TOTAL,
+        qi_max: SPIRIT_QI_TOTAL,
+        ..Default::default()
+    };
+    let mut zones = ZoneRegistry::fallback();
+    zones.zones[0].spirit_qi = 0.0;
+    let mut transfers = Events::default();
+    let position = Position::new([8.0, 66.0, 8.0]);
+    let dimension = CurrentDimension(DimensionKind::Overworld);
+    let life_record = LifeRecord::new("offline:duan-xu-san");
+    let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
+        entity: Entity::from_raw(503),
+        position: Some(&position),
+        current_dimension: Some(&dimension),
+        life_record: Some(&life_record),
+        zones: Some(&mut zones),
+        ledger: None,
+        qi_transfers: Some(&mut transfers),
+        source: "combat_pill:duan_xu_san",
+    };
+
+    assert!(!shrink_qi_max_for_duan_xu_san(
+        &mut cultivation,
+        &mut release
+    ));
+
+    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(zones.zones[0].spirit_qi, 0.0);
+    assert_eq!(transfers.len(), 0);
 }
 
 #[test]
@@ -257,6 +447,7 @@ fn register_explosion_test_resources(app: &mut App) {
     app.add_event::<crate::zhenfa::ScatterBeadUseRequest>();
     app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+    app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
     app.add_event::<crate::combat::events::CombatEvent>();
     app.add_event::<crate::combat::events::DeathEvent>();
     app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -285,7 +476,13 @@ fn register_explosion_test_systems(app: &mut App) {
     );
     app.add_systems(
         Update,
-        crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(dispatch_alchemy_take_back_requests)
+            .after(handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        dispatch_alchemy_take_back_requests.after(handle_client_request_payloads),
     );
 }
 
@@ -1603,8 +1800,10 @@ mod external_ingress_tests {
             BotanyHarvestMode, BotanyPhase, HarvestSession, HarvestSessionStore,
         };
         use crate::botany::registry::BotanyPlantId;
-        use crate::combat::components::{Lifecycle, UnlockedStyles, WoundKind, Wounds};
-        use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+        use crate::combat::components::{Lifecycle, UnlockedStyles, Wound, WoundKind, Wounds};
+        use crate::cultivation::components::{
+            Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+        };
         use crate::cultivation::known_techniques::KnownTechniques;
         use crate::cultivation::tribulation::TribulationState;
         use crate::forge::session::{ForgeSession, StepState};
@@ -1619,6 +1818,8 @@ mod external_ingress_tests {
         use crate::npc::faction::{
             FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
         };
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use crate::schema::common::SPIRIT_QI_TOTAL;
         use crate::skill::components::{ScrollId, SkillId, SkillSet};
         use crate::zhenfa::trap_content::TrapTargetFace;
         use crate::zhenfa::{
@@ -1631,6 +1832,31 @@ mod external_ingress_tests {
         };
         use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
         use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
+
+        fn combat_pill_item(instance_id: u64) -> ItemInstance {
+            ItemInstance {
+                instance_id,
+                template_id: "duan_xu_san".to_string(),
+                display_name: "duan_xu_san".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.1,
+                rarity: ItemRarity::Rare,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            }
+        }
 
         fn mark_test_layer_as_overworld(app: &mut App) {
             let world = app.world_mut();
@@ -3925,8 +4151,14 @@ mod external_ingress_tests {
                 ForgeStep::Billet => StepState::Billet(Default::default()),
                 ForgeStep::Done => StepState::None,
             };
+            session.station_pos = Some((8, 66, 8));
+            session.station_dimension = DimensionKind::Overworld;
             sessions.insert(session);
             app.insert_resource(sessions);
+            app.world_mut().entity_mut(caster).insert((
+                Position::new(DVec3::new(8.5, 66.0, 8.5)),
+                CurrentDimension(DimensionKind::Overworld),
+            ));
         }
 
         /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
@@ -4902,6 +5134,8 @@ mod external_ingress_tests {
             app.insert_resource(SkillMeridianDependencies::default());
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(AlchemyMockState::default());
+            app.insert_resource(WorldQiAccount::default());
+            app.init_resource::<crate::alchemy::AlchemyQiReservationBook>();
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
@@ -4955,6 +5189,8 @@ mod external_ingress_tests {
             app.add_event::<ScatterBeadUseRequest>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+            app.add_event::<crate::alchemy::InjectQiRequest>();
+            app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
             app.add_event::<crate::combat::events::CombatEvent>();
             app.add_event::<crate::combat::events::DeathEvent>();
             app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -5000,6 +5236,18 @@ mod external_ingress_tests {
                     // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
                     // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
                     .after(crate::lingtian::LingtianRequestIngressSet),
+            );
+            app.add_systems(
+                Update,
+                settle_alchemy_inject_qi_requests.after(handle_client_request_payloads),
+            );
+            app.add_systems(
+                Update,
+                dispatch_alchemy_take_back_requests.after(settle_alchemy_inject_qi_requests),
+            );
+            app.add_systems(
+                Update,
+                settle_finished_alchemy_furnace_qi.after(dispatch_alchemy_take_back_requests),
             );
         }
 
@@ -6651,7 +6899,11 @@ mod external_ingress_tests {
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert((
-                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::Cultivation {
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
                 PlayerState::default(),
                 inventory_with_stack("ci_she_hao", 3),
             ));
@@ -6982,6 +7234,11 @@ mod external_ingress_tests {
             register_request_app(&mut app);
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert(Cultivation {
+                qi_current: SPIRIT_QI_TOTAL,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            });
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
 
             send_alchemy_intervention_payload(
@@ -7152,7 +7409,11 @@ mod external_ingress_tests {
                 let (client_bundle, _helper) = create_mock_client("Alchemist");
                 let entity = app.world_mut().spawn(client_bundle).id();
                 app.world_mut().entity_mut(entity).insert((
-                    crate::cultivation::components::Cultivation::default(),
+                    crate::cultivation::components::Cultivation {
+                        qi_current: SPIRIT_QI_TOTAL,
+                        qi_max: SPIRIT_QI_TOTAL,
+                        ..Default::default()
+                    },
                     PlayerState::default(),
                     // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                     PlayerInventory {
@@ -9347,6 +9608,219 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn duan_xu_san_release_preflight_rejects_before_consumption() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+
+            let mut duan_xu_san = ItemTemplate::minimal_for_test("duan_xu_san");
+            duan_xu_san.category = ItemCategory::Pill;
+            duan_xu_san.effect = Some(ItemEffect::CombatPill {
+                pill_item_id: "duan_xu_san".to_string(),
+            });
+            app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+                "duan_xu_san".to_string(),
+                duan_xu_san,
+            )])));
+            app.insert_resource(WorldQiAccount::default());
+            let spoil_profile = crate::shelflife::DecayProfile::Spoil {
+                id: crate::shelflife::DecayProfileId::new("duan_xu_san_preflight_spoil"),
+                formula: crate::shelflife::DecayFormula::Exponential {
+                    half_life_ticks: 100,
+                },
+                spoil_threshold: 60.0,
+            };
+            let mut decay_profiles = DecayProfileRegistry::new();
+            decay_profiles.insert(spoil_profile.clone()).unwrap();
+            app.insert_resource(decay_profiles);
+            app.add_event::<SpoilConsumeWarning>();
+            app.add_event::<AgeBonusRoll>();
+            app.world_mut().resource_mut::<CombatClock>().tick = 100;
+
+            let mut pill = combat_pill_item(77);
+            pill.freshness = Some(crate::shelflife::Freshness::new(0, 100.0, &spoil_profile));
+            let inventory = inventory_with_item(pill);
+            let wounds = Wounds {
+                entries: vec![Wound {
+                    location: crate::body_plan::BodyPartId::new("leg_l"),
+                    kind: WoundKind::Cut,
+                    severity: 0.95,
+                    bleeding_per_sec: 2.0,
+                    created_at_tick: 1,
+                    inflicted_by: None,
+                }],
+                ..Default::default()
+            };
+            let wounds_before = serde_json::to_value(&wounds).unwrap();
+            let qi_before = Cultivation {
+                qi_current: QI_EPSILON,
+                qi_max: QI_EPSILON,
+                ..Default::default()
+            };
+
+            let tiny_excess = crate::cultivation::death_hooks::qi_max_shrink_release_amount(
+                qi_before.qi_current,
+                qi_before.qi_max * 0.97,
+            )
+            .expect("tiny positive excess must still require a release");
+            assert!(tiny_excess > 0.0 && tiny_excess <= QI_EPSILON);
+            let mut runtime_cultivation = qi_before.clone();
+            let mut runtime_release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> =
+                QiMaxShrinkReleaseContext {
+                    entity: Entity::from_raw(504),
+                    position: None,
+                    current_dimension: None,
+                    life_record: None,
+                    zones: None,
+                    ledger: None,
+                    qi_transfers: None,
+                    source: "combat_pill:duan_xu_san",
+                };
+            assert!(
+                !shrink_qi_max_for_duan_xu_san(&mut runtime_cultivation, &mut runtime_release,),
+                "实际缩容对 tiny excess 缺少 LifeRecord 时必须拒绝"
+            );
+            assert_eq!(runtime_cultivation.qi_max, qi_before.qi_max);
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    qi_before.clone(),
+                    PlayerState::default(),
+                    wounds,
+                    Contamination::default(),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let zone_qi_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .expect("fallback zone should exist")
+                .spirit_qi;
+            let ledger_qi_before = app.world().resource::<WorldQiAccount>().total();
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+            assert_eq!(inventory.revision.0, 0, "拒绝服丹不得推进背包 revision");
+            assert_eq!(
+                inventory.containers[0].items[0].instance.stack_count, 1,
+                "缩容释放预检失败时丹药不得被扣除"
+            );
+            assert!(
+                has_inventory_snapshot_payload(&mut helper),
+                "拒绝服丹应沿现有路径重同步背包快照"
+            );
+
+            let contamination = app.world().get::<Contamination>(entity).unwrap();
+            assert!(
+                contamination.entries.is_empty(),
+                "缩容释放预检失败时不得写入断续散丹毒"
+            );
+            assert_eq!(
+                serde_json::to_value(app.world().get::<Wounds>(entity).unwrap()).unwrap(),
+                wounds_before,
+                "缩容释放预检失败时不得接骨"
+            );
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(cultivation.qi_max, qi_before.qi_max);
+            assert_eq!(cultivation.qi_current, qi_before.qi_current);
+            assert_eq!(
+                app.world()
+                    .resource::<ZoneRegistry>()
+                    .zones
+                    .first()
+                    .expect("fallback zone should exist")
+                    .spirit_qi,
+                zone_qi_before,
+                "缩容释放预检失败时不得向 zone 释放真元"
+            );
+            assert_eq!(
+                app.world().resource::<WorldQiAccount>().total(),
+                ledger_qi_before,
+                "缩容释放预检失败时不得改动真元账本"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<crate::qi_physics::ledger::QiTransfer>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 QiTransfer"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<ApplyStatusEffectIntent>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出正向效果"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<SpoilConsumeWarning>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 腐败消费事件"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<AgeBonusRoll>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "缩容释放预检失败时不得发出 shelf-life 峰值消费事件"
+            );
+
+            app.world_mut().entity_mut(entity).insert(
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+            );
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data:
+                        br#"{"type":"apply_pill","v":1,"instance_id":77,"target":{"kind":"self"}}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let warnings: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<SpoilConsumeWarning>>()
+                .drain()
+                .collect();
+            assert_eq!(warnings.len(), 1, "预检通过的同条件服丹应发出腐坏消费事件");
+            assert_eq!(warnings[0].severity, SpoilSeverity::Sharp);
+        }
+
+        #[test]
         fn mineral_probe_request_emits_probe_intent() {
             let mut app = App::new();
             app.init_resource::<ClientRequestBudget>();
@@ -10850,7 +11324,13 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, mut helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             let station = app
                 .world_mut()
                 .spawn(WeaponForgeStation::placed(
@@ -10899,13 +11379,20 @@ mod external_ingress_tests {
             app.add_event::<StartForgeRequest>();
 
             let (client_bundle, _helper) = create_mock_client("Azure");
-            let entity = app.world_mut().spawn(client_bundle).id();
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(8.5, 66.0, 8.5)));
             app.world_mut().spawn(WeaponForgeStation {
                 tier: 1,
                 owner: None,
                 session: None,
                 integrity: 1.0,
                 pos: Some((8, 66, 8)),
+                dimension: DimensionKind::Overworld,
             });
 
             send_forge_start_session(
@@ -10921,6 +11408,78 @@ mod external_ingress_tests {
                 .world()
                 .resource::<valence::prelude::Events<StartForgeRequest>>();
             assert_eq!(events.iter_current_update_events().count(), 1);
+        }
+
+        #[test]
+        fn forge_start_session_rejects_out_of_range_without_consuming_prepared_materials() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.add_event::<StartForgeRequest>();
+
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let mut inventory = empty_inventory();
+            inventory.material_preparation.recipe_id = Some("iron_sword_v0".to_string());
+            inventory.material_preparation.station_pos = Some((8, 66, 8));
+            inventory.material_preparation.materials.push(
+                crate::craft::preparation::PreparedMaterial {
+                    item: skill_scroll_item(77, "fan_tie"),
+                    origin: InventoryLocationV1::Container {
+                        container_id: "main_pack".to_string(),
+                        row: 0,
+                        col: 0,
+                    },
+                },
+            );
+            let prepared_before = inventory.material_preparation.clone();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory,
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Position::new(DVec3::new(80.5, 66.0, 8.5)));
+            app.world_mut().spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                entity,
+            ));
+
+            send_forge_start_session(
+                &mut app,
+                entity,
+                (8, 66, 8),
+                "iron_sword_v0",
+                &[("fan_tie", 1)],
+            );
+            app.update();
+
+            let events = app
+                .world()
+                .resource::<valence::prelude::Events<StartForgeRequest>>();
+            assert_eq!(
+                events.iter_current_update_events().count(),
+                0,
+                "离开锻炉后不得发出会扣除已暂存材料的起炉事件"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<PlayerInventory>(entity)
+                    .expect("test player inventory")
+                    .material_preparation,
+                prepared_before,
+                "越界拒绝必须保留暂存材料，供玩家回到锻炉旁继续或返还"
+            );
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_game_messages(&mut helper)
+                    .iter()
+                    .any(|message| message.contains("靠近锻炉")),
+                "越界起炉应回执范围错误"
+            );
         }
 
         #[test]
@@ -12030,6 +12589,92 @@ mod external_ingress_tests {
             assert_eq!(casting.complete_cooldown_ticks, 83);
         }
 
+        #[test]
+        fn dedicated_input_techniques_cannot_bind_or_cast_from_skill_bar() {
+            for skill_id in ["movement.dash", "shield_block"] {
+                let mut app = App::new();
+                register_request_app(&mut app);
+                let (client_bundle, mut helper) = create_mock_client("Azure");
+                let entity = app
+                    .world_mut()
+                    .spawn((
+                        client_bundle,
+                        SkillBarBindings::default(),
+                        QuickSlotBindings::default(),
+                        empty_inventory(),
+                        known(&[skill_id]),
+                    ))
+                    .id();
+
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&ClientRequestV1::SkillBarBind {
+                            v: 1,
+                            slot: 0,
+                            binding: Some(SkillBarBindingV1::Skill {
+                                skill_id: skill_id.to_string(),
+                            }),
+                        })
+                        .unwrap()
+                        .into_boxed_slice(),
+                    });
+                app.update();
+                assert_eq!(
+                    app.world().get::<SkillBarBindings>(entity).unwrap().get(0),
+                    Some(&SkillSlot::Empty),
+                    "{skill_id} 有独立输入消费者，bind 必须被拒"
+                );
+
+                // 模拟 bind 门上线前已经落盘的历史绑定，验证两类专属入口都不走
+                // generic cast：dash 进入真实身法消费者，shield_block 由 cast 侧拒绝。
+                let mut stale = SkillBarBindings::default();
+                assert!(stale.set(
+                    0,
+                    SkillSlot::Skill {
+                        skill_id: skill_id.to_string(),
+                    }
+                ));
+                app.world_mut().entity_mut(entity).insert(stale);
+                if skill_id == "movement.dash" {
+                    // 当前主线在 ingress 层把 dash 技能栏请求转入真实身法消费者；它
+                    // 必须继续经过 movement 的拥有/体力/冷却门，而不是 generic cast。
+                    app.add_event::<crate::movement::MovementActionIntent>();
+                    send_skill_bar_cast(&mut app, entity);
+                    assert!(
+                        app.world().get::<Casting>(entity).is_none(),
+                        "movement.dash 不得进入 generic Casting"
+                    );
+                    assert_eq!(
+                        app.world()
+                            .resource::<valence::prelude::Events<crate::movement::MovementActionIntent>>()
+                            .len(),
+                        1,
+                        "movement.dash 技能栏请求必须交给真实身法消费者"
+                    );
+                } else {
+                    // shield_block 没有 ingress shortcut；存量绑定必须在 cast 入口被拒，
+                    // 并用专属 outcome 告知客户端正确的持盾触发方式。
+                    send_skill_bar_cast(&mut app, entity);
+                    assert!(
+                        app.world().get::<Casting>(entity).is_none(),
+                        "shield_block 从技能栏 cast 不得进入 generic Casting"
+                    );
+                    flush_all_client_packets(&mut app);
+                    let syncs = collect_cast_syncs(&mut helper);
+                    assert!(
+                        syncs.iter().any(|sync| {
+                            sync.phase == CastPhaseV1::Idle
+                                && sync.outcome == CastOutcomeV1::RejectDedicatedExecution
+                        }),
+                        "shield_block 拒绝必须通过专属 CastOutcome 反馈，实际 syncs={syncs:?}"
+                    );
+                }
+            }
+        }
+
         /// 通过公开文件 loader 加载一个仅存在于本测试 catalog 的 direct-generic 技法。
         /// 这样仍保留原来 17/83 的 fixture 语义，但不依赖 integration test 无法访问的
         /// `#[cfg(test)] TechniqueRegistry::load_for_tests_with_definition`。
@@ -12254,11 +12899,14 @@ dispatch = "direct_generic"
 
         #[test]
         fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
-            // body.guangbo_ticao 是仍未实装 resolver 的 skeleton 招（不在 SkillRegistry 内，
-            // 无 required_meridians、无 SkillMeridianDependencies）→ 走通用施法路径，
-            // 通用路径无条件插入 Casting 并把 SkillConfigStore 里的配置带入 Casting.skill_config。
+            // body.guangbo_ticao 没有 SkillRegistry resolver，走通用施法路径；起手必须
+            // 先按 TechniqueRegistry metadata 结算 qi/stamina，再插入 Casting。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -12284,8 +12932,24 @@ dispatch = "direct_generic"
                 skill_bar,
                 QuickSlotBindings::default(),
                 empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
+            // `register_request_app` also wires the lingtian facade, whose first idle update
+            // mirrors its legacy `default=5.0` account into `WorldQiAccount`.  Establish the
+            // snapshot after that one-time synchronization so the cast test measures only its
+            // own qi transfer.
+            app.update();
+            let before = summarize_world_qi(app.world_mut());
+            assert_eq!(before.budget_initial_total, SPIRIT_QI_TOTAL);
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
@@ -12315,6 +12979,199 @@ dispatch = "direct_generic"
                     .as_ref()
                     .and_then(|config| config.fields.get("stance")),
                 Some(&serde_json::json!("short"))
+            );
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL - 1.0);
+            let stamina = app
+                .world()
+                .get::<crate::combat::components::Stamina>(entity)
+                .unwrap();
+            assert_eq!(stamina.current, 95.0);
+            let after = summarize_world_qi(app.world_mut());
+            assert_eq!(after.budget_initial_total, SPIRIT_QI_TOTAL);
+            assert_conservation(&before, &after, 0.0)
+                .expect("generic cast 起手扣费必须通过 qi ledger 守恒");
+        }
+
+        #[test]
+        fn same_update_skill_bar_requests_charge_generic_cast_once() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let mut skill_bar = SkillBarBindings::default();
+            assert!(skill_bar.set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: "body.guangbo_ticao".to_string(),
+                },
+            ));
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert((
+                Position::new([0.0, 0.0, 0.0]),
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
+                known(&["body.guangbo_ticao"]),
+            ));
+
+            // Let the normal qi account bootstrap settle before measuring this cast.
+            app.update();
+            let before = summarize_world_qi(app.world_mut());
+            for _ in 0..2 {
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                            v: 1,
+                            slot: 0,
+                            target: None,
+                        })
+                        .unwrap()
+                        .into_boxed_slice(),
+                    });
+            }
+
+            app.update();
+
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current,
+                SPIRIT_QI_TOTAL - 1.0,
+                "同一 update 的重复技能栏请求只能扣一次 generic cast 真元"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<crate::combat::components::Stamina>(entity)
+                    .unwrap()
+                    .current,
+                95.0,
+                "同一 update 的重复技能栏请求只能扣一次体力"
+            );
+            assert!(
+                app.world().get::<Casting>(entity).is_some(),
+                "首个请求应创建 Casting"
+            );
+            assert!(
+                app.world().get::<QiSettledCast>(entity).is_some(),
+                "generic cast 只有在 qi ledger 结算后才能携带完成凭据"
+            );
+            let after = summarize_world_qi(app.world_mut());
+            assert_conservation(&before, &after, 0.0)
+                .expect("重复请求的单次 generic 扣费必须保持 qi 守恒");
+        }
+
+        #[test]
+        fn failed_generic_resource_preflight_preserves_active_cast() {
+            const EXPENSIVE_ID: &str = "test.runtime_only_direct";
+
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(load_runtime_only_direct_generic_registry(EXPENSIVE_ID));
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let mut skill_bar = SkillBarBindings::default();
+            assert!(skill_bar.set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: "body.guangbo_ticao".to_string(),
+                },
+            ));
+            assert!(skill_bar.set(
+                1,
+                SkillSlot::Skill {
+                    skill_id: EXPENSIVE_ID.to_string(),
+                },
+            ));
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert((
+                Position::new([0.0, 0.0, 0.0]),
+                skill_bar,
+                QuickSlotBindings::default(),
+                empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina {
+                    current: 5.0,
+                    max: 100.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
+                known(&["body.guangbo_ticao", EXPENSIVE_ID]),
+                Casting {
+                    source: CastSource::SkillBar,
+                    slot: 0,
+                    started_at_tick: 0,
+                    duration_ticks: 60,
+                    started_at_ms: 0,
+                    duration_ms: 3000,
+                    bound_instance_id: None,
+                    start_position: DVec3::ZERO,
+                    complete_cooldown_ticks: 200,
+                    skill_id: Some("body.guangbo_ticao".to_string()),
+                    skill_config: None,
+                },
+                QiSettledCast,
+            ));
+
+            app.update();
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                        v: 1,
+                        slot: 1,
+                        target: None,
+                    })
+                    .unwrap()
+                    .into_boxed_slice(),
+                });
+
+            app.update();
+
+            let casting = app
+                .world()
+                .get::<Casting>(entity)
+                .expect("资源预检失败时原有 Casting 必须保留");
+            assert_eq!(casting.slot, 0);
+            assert_eq!(casting.skill_id.as_deref(), Some("body.guangbo_ticao"));
+            assert!(
+                app.world().get::<QiSettledCast>(entity).is_some(),
+                "资源预检失败不得移除原 cast 的 qi 结算凭据"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<crate::combat::components::Stamina>(entity)
+                    .unwrap()
+                    .current,
+                5.0,
+                "被拒绝的异槽技能不得扣体力"
             );
         }
 
@@ -13179,10 +14036,15 @@ dispatch = "direct_generic"
         #[test]
         fn skill_bar_cast_meridian_gate_passes_when_no_meridian_system_component() {
             // entity 无 MeridianSystem component（pre-init 玩家）→ 经脉门应 skip 放行。
-            // 用 body.guangbo_ticao（仍是 skeleton：无 resolver、无 required_meridians、无 deps）
-            // 作载体：经脉门放行后走通用路径，无条件插入 Casting，纯粹锁住「无 MeridianSystem 放行」语义。
+            // 用 body.guangbo_ticao（generic 路径、无经脉依赖）作载体；成本门所需的
+            // Cultivation/LifeRecord/ledger 仍按真实玩家夹具提供，避免把 pre-init 的
+            // 经脉兼容语义与 generic cast 的守恒前置条件混在一起。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
             let mut skill_bar = SkillBarBindings::default();
@@ -13199,6 +14061,15 @@ dispatch = "direct_generic"
                 QuickSlotBindings::default(),
                 empty_inventory(),
                 // 故意不插入 MeridianSystem
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
@@ -13216,12 +14087,16 @@ dispatch = "direct_generic"
 
         #[test]
         fn skill_bar_cast_meridian_gate_regression_no_deps_generic_path_still_works() {
-            // body.guangbo_ticao 是无 resolver / 无 required_meridians / 无 deps 的 skeleton 招，
+            // body.guangbo_ticao 是无 resolver / 无 required_meridians / 无 deps 的 generic 招，
             // entity 有 MeridianSystem → 经脉门无依赖可查直接放行 → 走通用路径成功施放。
             // 这是对 "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证：
             // 引入经脉门后，无依赖招的通用路径行为不变。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                SPIRIT_QI_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -13256,13 +14131,22 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 ms,
                 crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: SPIRIT_QI_TOTAL,
+                    qi_max: SPIRIT_QI_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
             send_skill_bar_cast(&mut app, entity);
 
             let casting = app.world().get::<Casting>(entity).expect(
-            "回归：body.guangbo_ticao（无依赖 skeleton 招）有 MeridianSystem 时应成功施放（与引入 gate 前行为一致）",
+            "回归：body.guangbo_ticao（无依赖 generic 招）有 MeridianSystem 时应成功施放（与引入 gate 前行为一致）",
         );
             assert_eq!(casting.source, CastSource::SkillBar);
             assert_eq!(

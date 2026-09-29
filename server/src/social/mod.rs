@@ -40,7 +40,7 @@ use crate::cultivation::components::{Cultivation, Karma, QiFlowError, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::identity::{reaction::npc_should_decline_trade, IdentityId, PlayerIdentities};
+use crate::identity::{IdentityId, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -67,7 +67,7 @@ use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
@@ -259,9 +259,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             handle_sparring_invite_responses.after(dispatch_sparring_invites),
-            dispatch_trade_offers,
+            dispatch_trade_offers.after(crate::world::dimension_transfer::DimensionTransferSet),
             handle_trade_offer_responses
                 .after(dispatch_trade_offers)
+                .after(crate::world::dimension_transfer::DimensionTransferSet)
                 .in_set(SocialSystemSet::TradeOfferResponse),
             expire_sparring_sessions.after(handle_sparring_invite_responses),
             expire_trade_offers.after(handle_trade_offer_responses),
@@ -1060,8 +1061,8 @@ fn dispatch_trade_offers(
             Entity,
             &Lifecycle,
             &Position,
+            Option<&CurrentDimension>,
             &PlayerInventory,
-            Option<&PlayerIdentities>,
         ),
         With<Client>,
     >,
@@ -1071,20 +1072,28 @@ fn dispatch_trade_offers(
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, initiator_identities)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_dimension, initiator_inventory)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory, _)) =
+        let Ok((_, target_lifecycle, target_pos, target_dimension, target_inventory)) =
             players.get(request.target)
         else {
             continue;
         };
         if initiator_lifecycle.state == LifecycleState::Terminated
             || target_lifecycle.state == LifecycleState::Terminated
-            || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
         {
+            continue;
+        }
+        if dimension_or_overworld(initiator_dimension) != dimension_or_overworld(target_dimension) {
+            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
+                initiator_client.send_chat_message("对方不在此界，无法交易");
+            }
+            continue;
+        }
+        if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
             continue;
         }
         let Some(offered_item) =
@@ -1094,15 +1103,6 @@ fn dispatch_trade_offers(
         };
         let requested_items = trade_item_summaries(target_inventory);
         if requested_items.is_empty() {
-            continue;
-        }
-        if initiator_identities
-            .and_then(PlayerIdentities::active)
-            .is_some_and(npc_should_decline_trade)
-        {
-            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
-                initiator_client.send_chat_message("对方听过这张面孔的事，不愿交易");
-            }
             continue;
         }
         registry.pending.retain(|_, pending| {
@@ -1146,6 +1146,7 @@ fn handle_trade_offer_responses(
             Entity,
             &Lifecycle,
             &Position,
+            Option<&CurrentDimension>,
             &mut PlayerInventory,
             Option<&mut LifeRecord>,
         ),
@@ -1179,15 +1180,39 @@ fn handle_trade_offer_responses(
 
         let mut exchanged = false;
         if let Ok(
-            [(_, initiator_lifecycle, initiator_pos, mut initiator_inventory, initiator_life_record), (_, target_lifecycle, target_pos, mut target_inventory, target_life_record)],
+            [(
+                _,
+                initiator_lifecycle,
+                initiator_pos,
+                initiator_dimension,
+                mut initiator_inventory,
+                initiator_life_record,
+            ), (
+                _,
+                target_lifecycle,
+                target_pos,
+                target_dimension,
+                mut target_inventory,
+                target_life_record,
+            )],
         ) = players.get_many_mut([pending.initiator, pending.target])
         {
             if initiator_lifecycle.state == LifecycleState::Terminated
                 || target_lifecycle.state == LifecycleState::Terminated
                 || initiator_lifecycle.character_id != pending.initiator_char_id
                 || target_lifecycle.character_id != pending.target_char_id
-                || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
             {
+                continue;
+            }
+            if dimension_or_overworld(initiator_dimension)
+                != dimension_or_overworld(target_dimension)
+            {
+                if let Ok((_, mut client)) = clients.get_mut(response.player) {
+                    client.send_chat_message("交易双方不在同一界，无法交易");
+                }
+                continue;
+            }
+            if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
                 continue;
             }
             let Some(offered_item) =
@@ -1253,6 +1278,12 @@ fn handle_trade_offer_responses(
             zone: None,
         });
     }
+}
+
+fn dimension_or_overworld(current_dimension: Option<&CurrentDimension>) -> DimensionKind {
+    current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or_default()
 }
 
 fn trade_item_summary(item: &ItemInstance) -> TradeItemSummaryV1 {

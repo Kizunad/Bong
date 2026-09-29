@@ -18,8 +18,8 @@ use std::collections::{HashMap, HashSet};
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, Added, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, Despawned, Entity,
-    EventReader, EventWriter, Events, ParamSet, Position, Query, Res, ResMut, Resource, Username,
-    With, Without,
+    EventReader, EventWriter, Events, ParamSet, Position, Query, RemovedComponents, Res, ResMut,
+    Resource, Username, With, Without,
 };
 
 use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
@@ -996,6 +996,26 @@ fn consume_one_seed(inventory: &mut PlayerInventory, template_id: &str) -> bool 
 
 pub fn tick_lingtian_sessions(mut sessions: ResMut<ActiveLingtianSessions>) {
     sessions.tick_all();
+}
+
+/// 断线当帧取消玩家的灵田 session，避免把已不存在的玩家当作 NPC 结算。
+///
+/// valence 移除 `Client` 组件时会产生 `RemovedComponents<Client>` 信号。这个系统
+/// 必须排在 `tick_lingtian_sessions` 之前：否则断线玩家的种植会走 NPC 自带种子
+/// 分支，收获会清空成熟作物却无法把产物交给任何库存。这里只清理进行中的 session，
+/// 不触碰库存或 plot，因此种子和成熟作物都保持原状；真正的 NPC 没有被移除的
+/// `Client` 组件，不会被误取消。
+pub fn release_disconnected_lingtian_sessions(
+    mut disconnected_clients: RemovedComponents<Client>,
+    mut sessions: ResMut<ActiveLingtianSessions>,
+) {
+    for actor in disconnected_clients.read() {
+        if sessions.clear(actor).is_some() {
+            tracing::info!(
+                "[bong][lingtian] cancelling farming session for disconnected client={actor:?}"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
