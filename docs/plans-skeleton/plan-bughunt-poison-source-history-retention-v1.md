@@ -1,6 +1,6 @@
 # plan-bughunt-poison-source-history-retention-v1
 
-> 来源 Issue：#1841。`PoisonToxicity.source_history` 每次服毒都追加且整体持久化，没有容量或时间裁剪。
+> 来源 Issue：#1841、#1499。`PoisonToxicity.source_history` 每次服毒都追加且整体持久化，没有容量或时间裁剪。
 
 ## §0 摘要
 

@@ -1,6 +1,6 @@
 # plan-bughunt-realm-vision-minor-cleanups-v1（骨架）
 
-> **来源 issue**：#1671、#1690。境界视界的客户端距离边界和屏幕方向计算没有接入生产链路。
+> **来源 issue**：#1671、#1690、#1539、#1534。境界视界的 server 环境参数接线、ramp/天气恢复竞态，以及客户端距离边界和屏幕方向计算没有形成一条生产链路。
 
 ## 阶段总览
 
@@ -11,7 +11,7 @@
 
 ## §0 摘要
 
-`RealmVisionPlanner.clampToRenderDistance` 只有测试调用，`RealmVisionFogController.apply` 直接使用未裁剪的 `plan` 结果；低视距客户端可能看不到应该出现的雾。`PerceptionEdgeProjector` 把 yaw 方向的左向量当作右轴，屏外神识目标的边缘标记左右镜像。
+`realm_vision::push` 生产入口只调用 `compute_base_params`，`compute_vision_params` 的环境/状态修正未接入；server 的 `view_distance_ramp_system` 又可能在天气恢复后留下高于境界目标的视距。客户端 `RealmVisionPlanner.clampToRenderDistance` 只有测试调用，`RealmVisionFogController.apply` 直接使用未裁剪的 `plan` 结果；低视距客户端可能看不到应该出现的雾。`PerceptionEdgeProjector` 把 yaw 方向的左向量当作右轴，屏外神识目标的边缘标记左右镜像。
 
 ## §1 游玩影响
 
@@ -26,6 +26,8 @@
 
 - `client/src/main/java/com/bong/client/visual/realm_vision/RealmVisionPlanner.java:8-18,21-39` 的 `plan` 返回插值结果，但 `clampToRenderDistance` 未被生产调用；`RealmVisionFogController.java:10-14` 直接将 plan 交给 sink。
 - `client/src/main/java/com/bong/client/visual/realm_vision/PerceptionEdgeProjector.java:27-48` 令 `rx=cos(yaw), rz=sin(yaw)`，随后用 `vr=dx*rx+dz*rz` 作为右轴；在 MC yaw=0 约定下该向量是左向量。
+- `server/src/cultivation/realm_vision/push.rs:16-33` 生产推送只调用 `compute_base_params`；`server/src/cultivation/realm_vision/planner.rs:40-70` 的 `compute_vision_params`/环境修正无生产 caller（#1534）。
+- `server/src/cultivation/realm_vision/view_distance_ramp.rs:51-55` 收敛时移除 ramp；`server/src/world/weather_physics/vision.rs:32-49` 恢复进入雾前快照，竞态可把值抬回境界目标以上（#1539）。
 - server `server/src/cultivation/realm_vision/push.rs:99-114` 下发 `RealmVisionParamsV1`，`server/src/schema/realm_vision.rs`/client `SpiritualSenseTargetsHandler` 下发目标坐标，均没有 client 端方向修正。
 
 ## §4 非重复比对
