@@ -159,6 +159,32 @@ public final class AlchemyNotesContent {
     }
 
     private void refresh() {
+        List<io.wispforest.owo.ui.core.Component> originalRootChildren = List.copyOf(root.children());
+        FlowLayout originalBody = scroll.child();
+        AlchemyScreenViewModel originalRendered = rendered;
+        boolean originalReady = ready;
+        Object originalRenderedBody = renderedBody;
+        String originalSelectLabel = selectLabel;
+        try {
+            refreshUnchecked();
+        } catch (RuntimeException | Error failure) {
+            Throwable rollbackFailure = null;
+            rollbackFailure = restoreStep(rollbackFailure, root::clearChildren);
+            rollbackFailure = restoreStep(rollbackFailure, () -> root.children(originalRootChildren));
+            rollbackFailure = restoreStep(rollbackFailure, () -> scroll.child(originalBody));
+            rollbackFailure = restoreStep(rollbackFailure, () -> {
+                rendered = originalRendered;
+                ready = originalReady;
+                renderedBody = originalRenderedBody;
+                selectLabel = originalSelectLabel;
+                restoreControls();
+            });
+            if (rollbackFailure != null && rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            throw failure;
+        }
+    }
+
+    private void refreshUnchecked() {
         rendered = windows.model();
         ready = windows.ready();
         var recipe = selected();
@@ -196,6 +222,30 @@ public final class AlchemyNotesContent {
             renderedBody = bodyKey;
         }
         layout(root.width(), root.height());
+    }
+
+    private void restoreControls() {
+        if (rendered == null) return;
+        previous.active(!history && rendered.recipes().learned().size() > 1);
+        next.active(previous.active());
+        int count = rendered.recipes().learned().size();
+        pageNumber.text(Text.literal(count == 0 ? "" : (Math.floorMod(page, count) + 1) + "/" + count));
+        updateSelectLabel();
+        boolean canSelect = ready && !rendered.session().isActive() && !rendered.furnace().hasSession();
+        var recipe = selected();
+        boolean current = recipe != null && recipe.equals(rendered.recipes().current());
+        select.active(!history && canSelect && !current
+            && (recipe != null || item != null && item.itemId().startsWith("recipe_scroll_")));
+    }
+
+    private static Throwable restoreStep(Throwable primary, Runnable step) {
+        try {
+            step.run();
+        } catch (RuntimeException | Error failure) {
+            if (primary == null) return failure;
+            if (primary != failure) primary.addSuppressed(failure);
+        }
+        return primary;
     }
 
     private void updateSelectLabel() {

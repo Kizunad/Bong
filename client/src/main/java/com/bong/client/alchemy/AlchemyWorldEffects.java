@@ -104,6 +104,10 @@ public final class AlchemyWorldEffects {
         tick++;
         FURNACES.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= tick
             || client.player.squaredDistanceTo(Vec3d.ofCenter(entry.getKey())) > 48 * 48);
+        if (FURNACES.isEmpty() && ACTIONS.isEmpty()) {
+            FURNACE_MODELS.clear();
+            return;
+        }
         Map<BlockPos, BongModeledEntity> models = new HashMap<>();
         for (var entity : world.getEntities()) {
             if (entity instanceof BongModeledEntity modeled && !entity.isRemoved()

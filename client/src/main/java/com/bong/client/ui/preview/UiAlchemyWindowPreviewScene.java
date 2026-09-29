@@ -575,7 +575,9 @@ final class UiAlchemyWindowPreviewScene implements UiPreviewScene {
 
     @Override public String selectedTemplateId(Screen screen) { return "alchemy-window"; }
     @Override public boolean isReady(Screen screen) { return adapter != null; }
-    @Override public boolean initializationFailed(Screen screen) { return false; }
+    @Override public boolean initializationFailed(Screen screen) {
+        return screen == null || state == null || state.closed() || adapter == null || content == null;
+    }
     @Override public void cleanup() {
         animationFrames = null;
         Throwable primary = null;

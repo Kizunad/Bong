@@ -52,7 +52,10 @@ public final class AlchemyWindowContent implements AutoCloseable {
 
     public void tick() {
         var session = windows.model().session();
-        if (owner.closed() || owner.minimized()) cancelInput();
+        if (owner.closed() || owner.minimized()) {
+            cancelInput();
+            return;
+        }
         if (!windows.active()
             || !recipeId.equals(session.recipeId()) || session.elapsedTicks() < elapsed) {
             collectUntil = 0;

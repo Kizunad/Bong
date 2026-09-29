@@ -302,11 +302,17 @@ final class AlchemyWorkbenchEffects {
                 matrices.push();
                 matrices.scale(scale, resultModel.yUp() ? -scale : scale, scale * .1f);
                 matrices.translate(-centerPoint.x, -centerPoint.y, -centerPoint.z);
-                RenderSystem.enableDepthTest();
-                resultModel.render(matrices, buffers);
-                buffers.draw();
-                RenderSystem.disableDepthTest();
-                matrices.pop();
+                try {
+                    RenderSystem.enableDepthTest();
+                    resultModel.render(matrices, buffers);
+                    buffers.draw();
+                } finally {
+                    try {
+                        RenderSystem.disableDepthTest();
+                    } finally {
+                        matrices.pop();
+                    }
+                }
             }
         } finally {
             context.draw();

@@ -1704,12 +1704,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // 分堆既可投料，也可落入普通容器；新实例和两边数量由服务端快照一起确认。
         if (dragState.isSplitStack()) {
-            if (!UiWindowRuntime.dropAlchemyMaterial(mouseX, mouseY, dragged)) {
+            boolean sent = UiWindowRuntime.dropAlchemyMaterial(mouseX, mouseY, dragged);
+            if (!sent) {
                 var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
                 var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
-                if (pos != null) commitSplitDrop(grid, pos.row(), pos.col());
+                sent = pos != null && commitSplitDrop(grid, pos.row(), pos.col());
             }
-            returnDragToSource();
+            // 请求成功后来源槽保持空缺，等待服务端 authoritative snapshot 一次性重建两边；
+            // 只有未发出请求时才回填，避免同一 instance_id 在本地短暂复制。
+            if (sent) dragState.drop();
+            else returnDragToSource();
             clearAllHighlights();
             return;
         }
