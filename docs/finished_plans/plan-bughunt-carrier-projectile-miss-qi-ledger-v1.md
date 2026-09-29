@@ -63,6 +63,6 @@
 - **验真结论：** 真 bug。复现测试先证明旧实现只为 `residual_qi=5.0` 发出转移，遗漏同一事件中的 `qi_evaporated=11.666...`；修复后 `projectile_miss_qi_release_system` 对 `HitBlock`、`OutOfRange`、`NaturalDecay` 将两部分合计，经 `qi_release_to_zone` 回流，zone 无空间时进入 overflow；`HitTarget` 仍不重复释放。
 - **落地清单：** P0 落在 `server/src/combat/carrier.rs:1388-1411` 的 `projectile_miss_qi_release_system`；P1 落在 `server/src/combat/carrier_tests.rs` 的完整 payload、满 zone overflow、命中不回流与端到端守恒契约测试。
 - **关键 commit：** `b5e8ed9f9`（2026-09-29，提升本 plan 为 Active）；`51d5d1fc2`（2026-09-29，脱靶完整真元回流及回归测试）。
-- **测试结果：** 修改前复现 `cargo test -p bong-server combat::carrier::tests::conservation_invariant_releases_full_miss_payload --lib -- --exact --nocapture` 失败（实际 5、期望 16.666...）；修复后 carrier 回归组 35 passed，`cargo fmt --check` 通过；端到端测试用 `SPIRIT_QI_TOTAL` 建预算并以 `qi_physics::assert_conservation` 断言。
+- **测试结果：** 修改前复现 `cargo test -p bong-server combat::carrier::tests::conservation_invariant_releases_full_miss_payload --lib -- --exact --nocapture` 失败（实际 5、期望 16.666...）；修复后 carrier 回归组 35 passed，`cargo fmt --check` 通过；端到端测试用 `SPIRIT_QI_TOTAL` 建预算并以 `qi_physics::ledger::assert_conservation` 断言。
 - **跨仓核验：** server 命中 `ProjectileDespawnedEvent`、`projectile_miss_qi_release_system`、`qi_release_to_zone`、`QiTransfer`、`SPIRIT_QI_TOTAL` 与 `assert_conservation`；agent 继续消费既有 despawn/narration 事件，client 继续消费既有投射物消失表现，wire schema 无变更。
 - **遗留 / 后续：** 本 plan 未改 agent、client、灵田、经脉、功法或身体部位；投射物到达脱靶点前的既有距离衰减语义不在本次范围。

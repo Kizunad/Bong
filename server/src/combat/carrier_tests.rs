@@ -6,7 +6,7 @@ use crate::cultivation::components::QiColor;
 use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact_state_to_item};
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiBudget};
 use crate::schema::common::SPIRIT_QI_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
 
