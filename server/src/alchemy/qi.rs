@@ -154,6 +154,8 @@ pub fn refund_furnace_qi_to_player(
         return Ok(0.0);
     }
 
+    ensure_session_can_remove_paid_qi(session.as_deref(), requested)?;
+
     let after = current + requested;
     if !after.is_finite() || after == current {
         return Err(QiPhysicsError::UnrepresentableChange {
@@ -172,7 +174,7 @@ pub fn refund_furnace_qi_to_player(
     )?;
     cultivation.qi_current = after;
     if let Some(session) = session {
-        session.remove_paid_qi(requested);
+        session.remove_paid_qi_after_transfer(requested);
     }
     Ok(requested)
 }
@@ -191,6 +193,7 @@ pub fn release_furnace_qi_to_overflow(
     if amount <= 0.0 {
         return Ok(0.0);
     }
+    ensure_session_can_remove_paid_qi(session.as_deref(), amount)?;
     let transfer = QiTransfer::new(
         from.clone(),
         qi_flow_overflow_account(),
@@ -199,9 +202,29 @@ pub fn release_furnace_qi_to_overflow(
     )?;
     ledger.transfer(transfer)?;
     if let Some(session) = session {
-        session.remove_paid_qi(amount);
+        session.remove_paid_qi_after_transfer(amount);
     }
     Ok(amount)
+}
+
+/// 确保 ledger 转账成功后，session 能够同步扣除同一笔玩家预留。
+///
+/// `qi_reserved` 是炉体账户中玩家付款的 ECS 镜像。转账前先验证它足够，才能保证
+/// ledger 成功后 `remove_paid_qi_after_transfer` 不会静默截断，退款失败时两边仍保持原值。
+fn ensure_session_can_remove_paid_qi(
+    session: Option<&AlchemySession>,
+    amount: f64,
+) -> Result<(), QiPhysicsError> {
+    let Some(session) = session else {
+        return Ok(());
+    };
+    if !session.qi_reserved.is_finite() || session.qi_reserved < amount {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "alchemy.session.qi_reserved",
+            value: session.qi_reserved,
+        });
+    }
+    Ok(())
 }
 
 /// 进程收到 `AppExit` 时，炉体实体不会进入持久化白名单；先把所有仍托管在炉体账户的
@@ -436,6 +459,210 @@ mod tests {
                 .resource::<WorldQiAccount>()
                 .balance(&furnace_qi_account(furnace_entity)),
             7.5
+        );
+    }
+
+    #[test]
+    fn second_payer_is_rejected_while_first_furnace_reservation_is_pending() {
+        let mut app = App::new();
+        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+        app.init_resource::<AlchemyQiReservationBook>();
+        app.add_event::<InjectQiRequest>();
+        app.add_systems(
+            Update,
+            crate::network::client_request_handler::settle_alchemy_inject_qi_requests,
+        );
+
+        let (alice_bundle, _alice_helper) = create_mock_client("Alice");
+        let alice = app
+            .world_mut()
+            .spawn(alice_bundle)
+            .insert(Cultivation {
+                qi_current: SPIRIT_QI_TOTAL / 2.0,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            })
+            .id();
+        let (bob_bundle, _bob_helper) = create_mock_client("Bob");
+        let bob = app
+            .world_mut()
+            .spawn(bob_bundle)
+            .insert(Cultivation {
+                qi_current: SPIRIT_QI_TOTAL / 2.0,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            })
+            .id();
+        let mut furnace = AlchemyFurnace::new(1);
+        furnace.session = Some(AlchemySession::new(
+            "hui_yuan_pill_v0".to_string(),
+            "offline:Alice".to_string(),
+        ));
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<Events<InjectQiRequest>>()
+            .send(InjectQiRequest {
+                player: alice,
+                furnace: furnace_entity,
+                amount: 7.5,
+            });
+        app.world_mut()
+            .resource_mut::<Events<InjectQiRequest>>()
+            .send(InjectQiRequest {
+                player: bob,
+                furnace: furnace_entity,
+                amount: 5.0,
+            });
+
+        let before = summarize_world_qi(app.world_mut());
+        app.update();
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("rejecting a second payer must preserve the qi total");
+        assert_eq!(
+            app.world().get::<Cultivation>(alice).unwrap().qi_current,
+            SPIRIT_QI_TOTAL / 2.0 - 7.5
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(bob).unwrap().qi_current,
+            SPIRIT_QI_TOTAL / 2.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&furnace_qi_account(furnace_entity)),
+            7.5
+        );
+        assert_eq!(
+            app.world()
+                .resource::<AlchemyQiReservationBook>()
+                .owner(furnace_entity),
+            Some("offline:Alice")
+        );
+    }
+
+    #[test]
+    fn finished_furnace_refunds_online_payer_before_overflow() {
+        let mut app = App::new();
+        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiAccount::default());
+        app.init_resource::<AlchemyQiReservationBook>();
+        app.add_systems(
+            Update,
+            crate::network::client_request_handler::settle_finished_alchemy_furnace_qi,
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Alice");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(Cultivation {
+                qi_current: 80.0,
+                qi_max: SPIRIT_QI_TOTAL,
+                ..Cultivation::default()
+            })
+            .id();
+        let mut furnace = AlchemyFurnace::new(1);
+        let mut session =
+            AlchemySession::new("hui_yuan_pill_v0".to_string(), "offline:Alice".to_string());
+        session.record_paid_qi(20.0);
+        session.finished = true;
+        furnace.session = Some(session);
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(furnace_qi_account(furnace_entity), 20.0)
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<AlchemyQiReservationBook>()
+            .remember(furnace_entity, "offline:Alice");
+
+        let before = summarize_world_qi(app.world_mut());
+        app.update();
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("finished furnace refund must conserve qi");
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            SPIRIT_QI_TOTAL
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&furnace_qi_account(furnace_entity)),
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&qi_flow_overflow_account()),
+            0.0
+        );
+        assert!(!app
+            .world()
+            .resource::<AlchemyQiReservationBook>()
+            .is_tracked(furnace_entity));
+        assert_eq!(
+            app.world()
+                .get::<AlchemyFurnace>(furnace_entity)
+                .unwrap()
+                .session
+                .as_ref()
+                .unwrap()
+                .qi_reserved,
+            0.0
+        );
+    }
+
+    #[test]
+    fn failed_refund_keeps_ledger_player_and_session_unchanged() {
+        let (mut app, player) = app_with_player(80.0);
+        let furnace = app.world_mut().spawn_empty().id();
+        let mut session = AlchemySession::new("hui_yuan_pill_v0".into(), "offline:alice".into());
+        session.qi_injected = 5.0;
+        let before_reserved = session.qi_reserved;
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(furnace_qi_account(furnace), 5.0)
+            .unwrap();
+        let before = summarize_world_qi(app.world_mut());
+
+        let error = app
+            .world_mut()
+            .resource_scope(|world, mut ledger: Mut<'_, WorldQiAccount>| {
+                let mut cultivation = world.get_mut::<Cultivation>(player).unwrap();
+                refund_furnace_qi_to_player(
+                    "offline:alice",
+                    &mut cultivation,
+                    Some(&mut session),
+                    furnace,
+                    &mut ledger,
+                )
+                .expect_err("a session without a matching paid reservation must reject refund")
+            });
+        assert!(matches!(
+            error,
+            QiPhysicsError::InvalidAmount {
+                field: "alchemy.session.qi_reserved",
+                ..
+            }
+        ));
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("failed refund must leave the qi total unchanged");
+        assert_eq!(session.qi_reserved, before_reserved);
+        assert_eq!(session.qi_injected, 5.0);
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&furnace_qi_account(furnace)),
+            5.0
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            80.0
         );
     }
 

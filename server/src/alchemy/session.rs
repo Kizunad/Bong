@@ -126,8 +126,12 @@ impl AlchemySession {
         self.interventions.push(Intervention::InjectQi(amount));
     }
 
-    /// 退还一笔仍在炉体账户中的玩家注灵，并同步移除 session 的已付款统计。
-    pub fn remove_paid_qi(&mut self, amount: f64) {
+    /// 在对应 ledger 转账成功后，移除 session 的已付款统计。
+    ///
+    /// 调用方必须先成功完成 `transfer_ledger_qi_to_external` 或等价的炉体转出，
+    /// 再调用此方法；这样 `qi_reserved` 始终与炉体账户余额同步，不会先扣字段再
+    /// 因 ledger 失败而丢失可退款记录。
+    pub fn remove_paid_qi_after_transfer(&mut self, amount: f64) {
         if !amount.is_finite() || amount <= 0.0 {
             return;
         }

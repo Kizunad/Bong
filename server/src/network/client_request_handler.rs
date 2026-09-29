@@ -5493,6 +5493,16 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             );
             continue;
         };
+        if let Some(owner) = reservations.owner(furnace_entity) {
+            if !alchemy_identity_matches(owner, player_id.as_str()) {
+                send_alchemy_error(
+                    &mut client,
+                    &player_id,
+                    "这座炉已有其他修士的注灵待结算".to_string(),
+                );
+                continue;
+            }
+        }
         let Ok(mut cultivation) = cultivations.get_mut(request.player) else {
             send_alchemy_error(
                 &mut client,
@@ -5606,12 +5616,13 @@ pub(crate) fn dispatch_alchemy_take_back_requests(
     }
 }
 
-/// 炉体会话结束后，未被产物消费的已付款余额仍在炉体账户中。把它落到稳定
+/// 炉体会话结束后，先把仍在线的付款人可容纳的余额退回，再把余量落到稳定
 /// `qi_flow_overflow` 账户，避免成功结算路径因删掉炉体而吞掉真元。
 pub(crate) fn settle_finished_alchemy_furnace_qi(
     mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
     mut reservations: ResMut<AlchemyQiReservationBook>,
+    mut players: Query<(&Username, &mut Cultivation)>,
 ) {
     let Some(ledger) = ledger.as_deref_mut() else {
         return;
@@ -5627,6 +5638,24 @@ pub(crate) fn settle_finished_alchemy_furnace_qi(
             .is_none_or(|session| session.finished);
         if !session_finished {
             continue;
+        }
+        let owner = reservations.owner(furnace_entity).map(str::to_owned);
+        if let Some(owner) = owner.as_deref() {
+            if let Some((_, mut cultivation)) = players.iter_mut().find(|(username, _)| {
+                alchemy_identity_matches(owner, canonical_player_id(username.0.as_str()).as_str())
+            }) {
+                if let Err(error) = crate::alchemy::qi::refund_furnace_qi_to_player(
+                    owner,
+                    &mut cultivation,
+                    furnace.session.as_mut(),
+                    furnace_entity,
+                    ledger,
+                ) {
+                    tracing::warn!(
+                        "[bong][network][alchemy] finished furnace={furnace_entity:?} player refund failed: {error}"
+                    );
+                }
+            }
         }
         let result = crate::alchemy::qi::release_furnace_qi_to_overflow(
             furnace_entity,
