@@ -470,6 +470,20 @@ mod tests {
     }
 
     #[test]
+    fn world_qi_total_argument_parser_leaves_unrelated_arguments_for_existing_cli() {
+        let config = WorldQiTotalConfig::from_args([
+            "--lifecycle-mode",
+            "managed",
+            "--spirit-qi-total",
+            "44.0",
+            "--startup-marker=ci",
+        ])
+        .expect("unrelated lifecycle arguments must not block startup configuration");
+        assert_eq!(config.total, 44.0);
+        assert_eq!(config.source, WorldQiTotalSource::CommandLine);
+    }
+
+    #[test]
     fn subtraction_progress_uses_f64_result_without_a_gameplay_epsilon() {
         assert!(!subtraction_makes_progress(1.0, 1e-17).unwrap());
         assert!(subtraction_makes_progress(1.0, f64::EPSILON).unwrap());
