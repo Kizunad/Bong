@@ -222,6 +222,7 @@ SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
     "combat_attack_hit",
 )
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[143] = ("protocol_identity",)
 
 
 class VarIntTest(unittest.TestCase):
@@ -11112,6 +11113,22 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             _pb_len_field(14, _pb_varint_field(1, 1))
         )
         self.assertIsNone(missing_color["toxin_color"])
+
+    def test_alchemy_furnace_preserves_signed_and_optional_coordinates(self):
+        for coordinates in ([-216, 72, -87], [0, None, 0]):
+            with self.subTest(coordinates=coordinates):
+                furnace = b"".join(
+                    _pb_int32_field(axis, value)
+                    for axis, value in enumerate(coordinates, start=1)
+                    if value is not None
+                )
+                decoded = proto_min.decode_server_data_envelope(
+                    _pb_len_field(11, furnace)
+                )
+                self.assertEqual(
+                    decoded["pos"], coordinates,
+                    "丹炉坐标必须保留负值，并区分显式零与缺省坐标，才能匹配交互目标",
+                )
 
     def test_alchemy_furnace_tag11_and_session_tag12(self):
         furnace = (

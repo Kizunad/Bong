@@ -79,6 +79,11 @@ export const AlchemyStageHintV1 = Type.Object(
     summary: Type.String(),
     completed: Type.Boolean(),
     missed: Type.Boolean(),
+    ingredients: Type.Optional(Type.Array(Type.Object({
+      material: Type.String(),
+      required: Type.Integer({ minimum: 0 }),
+      inserted: Type.Integer({ minimum: 0 }),
+    }, { additionalProperties: false }))),
   },
   { additionalProperties: false },
 );

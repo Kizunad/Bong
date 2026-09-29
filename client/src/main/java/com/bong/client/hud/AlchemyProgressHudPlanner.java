@@ -80,7 +80,8 @@ public final class AlchemyProgressHudPlanner {
         appendBar(out, x + 8, y + 28, PANEL_WIDTH - 16, tempRatio, tempColor(session));
         String steam = "~ ~";
         out.add(HudRenderCommand.text(HudRenderLayer.PROCESSING_HUD, steam, x + PANEL_WIDTH - 30, y - 4, STEAM));
-        if (forecast != null) {
+        if (forecast != null && forecast.perfectPct() + forecast.goodPct() + forecast.flawedPct()
+            + forecast.wastePct() + forecast.explodePct() > 0) {
             out.add(HudRenderCommand.text(
                 HudRenderLayer.PROCESSING_HUD,
                 String.format(Locale.ROOT, "良 %.0f%% 废 %.0f%%", forecast.goodPct(), forecast.wastePct()),

@@ -12,11 +12,7 @@ public final class ContaminationWarningStore {
         String metabolismNote
     ) {
         public static Snapshot empty() {
-            return new Snapshot(
-                0.18f, 0.60f, true,
-                0.93f, 1.00f, false,
-                "代谢速率 = 经脉 sum_rate × integrity（contamination_tick 10:15）"
-            );
+            return neutral();
         }
 
         public static Snapshot neutral() {

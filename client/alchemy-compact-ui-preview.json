@@ -1,0 +1,21 @@
+{
+  "output_dir": "alchemy-compact-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    { "name": "alchemy-100", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-hover-fire", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-feed", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-notes", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-journal", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-hover-controls", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-hover-incense", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-100-error", "scene_id": "alchemy-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-low-resolution", "scene_id": "alchemy-window", "framebuffer_width": 120, "framebuffer_height": 100, "gui_scale": 1, "expected_logical_width": 120, "expected_logical_height": 100, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-wide-short", "scene_id": "alchemy-window", "framebuffer_width": 320, "framebuffer_height": 100, "gui_scale": 1, "expected_logical_width": 320, "expected_logical_height": 100, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-tall-notes", "scene_id": "alchemy-window", "framebuffer_width": 120, "framebuffer_height": 320, "gui_scale": 1, "expected_logical_width": 120, "expected_logical_height": 320, "expected_template_id": "alchemy-window" },
+    { "name": "alchemy-production-100", "scene_id": "alchemy-runtime", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "alchemy-window" }
+  ]
+}

@@ -5,6 +5,7 @@ use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
 use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
+    AlchemyWorldDataV1,
 };
 use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_carrier::CarrierStateV1;
@@ -184,6 +185,7 @@ pub enum ServerDataType {
     GatheringSession,
     BotanySkill,
     AlchemyFurnace,
+    AlchemyWorld,
     AlchemySession,
     AlchemyOutcomeForecast,
     AlchemyOutcomeResolved,
@@ -483,6 +485,7 @@ pub enum ServerDataPayloadV1 {
         auto_unlock_level: u64,
     },
     AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
+    AlchemyWorld(Box<AlchemyWorldDataV1>),
     AlchemySession(Box<AlchemySessionDataV1>),
     AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
     AlchemyOutcomeResolved(Box<AlchemyOutcomeResolvedDataV1>),
@@ -1743,6 +1746,10 @@ enum ServerDataPayloadWireV1 {
     AlchemyFurnace {
         #[serde(flatten)]
         data: Box<AlchemyFurnaceDataV1>,
+    },
+    AlchemyWorld {
+        #[serde(flatten)]
+        data: Box<AlchemyWorldDataV1>,
     },
     AlchemySession {
         #[serde(flatten)]
@@ -3018,6 +3025,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 auto_unlock_level,
             }),
             ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
+            ServerDataPayloadWireV1::AlchemyWorld { data } => Ok(Self::AlchemyWorld(data)),
             ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
             ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
                 Ok(Self::AlchemyOutcomeForecast(data))
@@ -3643,6 +3651,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::AlchemyFurnace(data) => {
                 Self::AlchemyFurnace { data: data.clone() }
             }
+            ServerDataPayloadV1::AlchemyWorld(data) => Self::AlchemyWorld { data: data.clone() },
             ServerDataPayloadV1::AlchemySession(data) => {
                 Self::AlchemySession { data: data.clone() }
             }
@@ -4251,6 +4260,7 @@ impl ServerDataPayloadV1 {
             Self::GatheringSession { .. } => ServerDataType::GatheringSession,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
+            Self::AlchemyWorld(..) => ServerDataType::AlchemyWorld,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
             Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
             Self::AlchemyOutcomeResolved(..) => ServerDataType::AlchemyOutcomeResolved,
@@ -4417,6 +4427,7 @@ impl ServerDataPayloadV1 {
             Self::GatheringSession { .. } => false,
             Self::BotanySkill { .. } => false,
             Self::AlchemyFurnace(..) => false,
+            Self::AlchemyWorld(..) => false,
             Self::AlchemySession(..) => false,
             Self::AlchemyOutcomeForecast(..) => false,
             Self::AlchemyOutcomeResolved(..) => false,

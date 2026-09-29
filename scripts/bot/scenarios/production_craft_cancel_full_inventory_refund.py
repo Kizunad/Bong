@@ -4,6 +4,7 @@ import time
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
+    fill_empty_carried_containers,
     find_item,
     wait_inventory_contains,
     wait_inventory_revision_after,
@@ -122,12 +123,8 @@ def run(env) -> None:
         assert _inventory_count(consumed, "stone_chunk") == 0
         assert _inventory_count(consumed, "wood_handle") == 0
 
-        # Misc 每栈 16；默认背包 3x3、贴身口袋 2x3。分两次填满两个容器。
-        bot.cmd("give grass_fiber 144")
-        bot.expect_chat("[dev] gave grass_fiber x144", timeout=10.0)
-        bot.cmd("give grass_fiber 96")
-        bot.expect_chat("[dev] gave grass_fiber x96", timeout=10.0)
-        wait_inventory_contains(bot, "grass_fiber")
+        # OP 口袋会扩容；必须按权威网格填满，才能验证退款落地分支。
+        fill_empty_carried_containers(bot, consumed)
 
         cancel_anchor = last_event_time(bot)
         bot.intent({"type": "craft_cancel", "v": 1})

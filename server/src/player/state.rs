@@ -971,6 +971,22 @@ pub fn save_player_craft_checkpoint(
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// 容器缩容时，库存移除与溢出物落地必须一起提交，不能覆盖正在进行的制作会话。
+pub fn save_player_inventory_with_drops(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    inventory: &PlayerInventory,
+    drops: &[DroppedLootEntry],
+) -> io::Result<()> {
+    let mut connection = open_player_connection(persistence)?;
+    let inventory_json = serialize_inventory_json(Some(inventory))?;
+    let wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_player_inventory_json_in_transaction(&transaction, username, &inventory_json, wall)?;
+    crate::persistence::upsert_dropped_loot_entries(&transaction, drops, wall)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
 pub fn save_player_inventory_and_delete_dropped_loot(
     persistence: &PlayerStatePersistence,
     username: &str,

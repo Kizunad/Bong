@@ -508,10 +508,18 @@ pub fn emit_alchemy_audio_triggers(
     mut starts: EventReader<StartAlchemyRequest>,
     mut outcomes: EventReader<AlchemyOutcomeEvent>,
     positions: Query<&Position>,
+    furnaces: Query<&crate::alchemy::AlchemyFurnace>,
     mut audio: AudioEmitWriter,
 ) {
     let mut audio = audio.context();
     for event in starts.read() {
+        // 已放置丹炉由 world_effects 在成功事务后统一发声，避免重复或请求被拒仍播声。
+        if furnaces
+            .get(event.furnace)
+            .is_ok_and(|furnace| furnace.pos.is_some())
+        {
+            continue;
+        }
         let origin = positions
             .get(event.furnace)
             .map(|position| position.get())
@@ -528,6 +536,12 @@ pub fn emit_alchemy_audio_triggers(
     }
 
     for event in outcomes.read() {
+        if furnaces
+            .get(event.furnace)
+            .is_ok_and(|furnace| furnace.pos.is_some())
+        {
+            continue;
+        }
         let origin = positions
             .get(event.furnace)
             .map(|position| position.get())

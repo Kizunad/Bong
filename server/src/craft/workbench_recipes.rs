@@ -44,7 +44,8 @@ mod tests {
     fn register_workbench_recipes_succeeds() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
-        let expected_count = p0_workbench_asset_recipe_count();
+        // 草木香是 P0 迁移后新增的一条制作台配方。
+        let expected_count = p0_workbench_asset_recipe_count() + 1;
         assert_eq!(
             registry.len(),
             expected_count,
@@ -212,7 +213,7 @@ mod tests {
             }
         }
         let expected_count =
-            p0_baseline_count_matching(|recipe| recipe.id.as_str().starts_with("workbench."));
+            p0_baseline_count_matching(|recipe| recipe.id.as_str().starts_with("workbench.")) + 1;
         assert_eq!(
             workbench_count, expected_count,
             "workbench.* recipe count must derive from the oracle"
@@ -628,8 +629,31 @@ mod tests {
             recipe.station == Some(CraftStationKind::Workbench)
         });
         assert_eq!(
-            workbench_count as usize, expected_station_count,
+            workbench_count as usize,
+            expected_station_count + 1,
             "制作台配方数量必须由 oracle 推导"
+        );
+    }
+
+    #[test]
+    fn plain_incense_is_craftable_from_common_materials_without_qi() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let recipe = registry
+            .get(&RecipeId::new("workbench.cultivation.incense_plain"))
+            .unwrap();
+        assert_eq!(
+            recipe.materials,
+            vec![("dried_grass".into(), 2), ("wood_plank".into(), 1)]
+        );
+        assert_eq!(recipe.output, ("incense_plain".into(), 4));
+        assert_eq!(recipe.qi_cost, 0.0);
+        assert!(recipe.unlock_sources.is_empty());
+        let items = crate::inventory::load_item_registry().unwrap();
+        assert_eq!(
+            items.get("incense_plain").unwrap().spirit_quality_initial,
+            0.0,
+            "普通计时香不得从无灵气材料生成灵气"
         );
     }
 

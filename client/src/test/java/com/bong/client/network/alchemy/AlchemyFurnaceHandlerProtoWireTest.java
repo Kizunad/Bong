@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,11 +44,13 @@ class AlchemyFurnaceHandlerProtoWireTest {
     @BeforeEach
     void setUp() {
         AlchemyFurnaceStore.resetForTests();
+        com.bong.client.alchemy.state.AlchemySessionStore.resetForTests();
     }
 
     @AfterEach
     void tearDown() {
         AlchemyFurnaceStore.resetForTests();
+        com.bong.client.alchemy.state.AlchemySessionStore.resetForTests();
     }
 
     /** 除 pos 外的必填字段骨架（tier/integrity/owner/has_session 各自可覆盖）。 */
@@ -165,5 +168,22 @@ class AlchemyFurnaceHandlerProtoWireTest {
                 "pos 缺失不应连累快照其余字段——tier 仍须正常应用，实际 " + snap.tier());
         assertFalse(snap.hasSession(),
                 "pos 缺失不应连累快照其余字段——has_session 仍须正常应用，实际 " + snap.hasSession());
+    }
+
+    @Test
+    void furnacePositionChangeInvalidatesPreviousSessionProjection() {
+        dispatchThroughWire(baseFurnace().setPosX(10).setPosY(64).setPosZ(-3).build());
+        com.bong.client.alchemy.state.AlchemySessionStore.replace(
+            new com.bong.client.alchemy.state.AlchemySessionStore.Snapshot(
+                "recipe.test", true, 4, 20, 0.5f, 0.5f, 0.1f, 1.0, 2.0,
+                "active", List.of(), List.of()));
+
+        dispatchThroughWire(baseFurnace().setPosX(11).setPosY(64).setPosZ(-3).build());
+
+        assertEquals(
+            com.bong.client.alchemy.state.AlchemySessionStore.Snapshot.empty(),
+            com.bong.client.alchemy.state.AlchemySessionStore.snapshot(),
+            "炉位变化必须在状态层失效旧会话，网络处理层不应依赖 UI 生命周期模块"
+        );
     }
 }

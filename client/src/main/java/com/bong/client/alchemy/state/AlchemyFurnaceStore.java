@@ -20,7 +20,13 @@ public final class AlchemyFurnaceStore {
     }
 
     public static void replace(Snapshot next) {
-        snapshot = next == null ? Snapshot.empty() : next;
+        Snapshot replacement = next == null ? Snapshot.empty() : next;
+        Snapshot previous = snapshot;
+        snapshot = replacement;
+        if (!java.util.Objects.equals(previous.pos(), replacement.pos())) {
+            // 炉位变化会使上一炉的会话投影失效。状态层维护这个不变量，网络层无需反向依赖 UI。
+            AlchemySessionStore.clearForFurnaceChange();
+        }
     }
 
     public static void clearOnDisconnect() {

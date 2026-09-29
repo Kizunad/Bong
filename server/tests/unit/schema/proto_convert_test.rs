@@ -1759,7 +1759,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
     use bong_server::schema::alchemy::{
         AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeBucketV1,
         AlchemyOutcomeForecastDataV1, AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1,
-        AlchemySessionDataV1,
+        AlchemySessionDataV1, AlchemyWorldDataV1,
     };
     use bong_server::schema::combat_carrier::CarrierStateV1;
     use bong_server::schema::combat_hud::*;
@@ -2092,8 +2092,23 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
                 has_session: false,
             }
         ))),
+        fix!(ServerDataPayloadV1::AlchemyWorld(Box::new(
+            AlchemyWorldDataV1 {
+                furnace_pos: (2, 64, 3),
+                heat: 0.6,
+                incense: false,
+                materials: Default::default(),
+                action: "state".into(),
+                item: None,
+                count: None,
+                result: None,
+                name: None,
+                source: None,
+            }
+        ))),
         fix!(ServerDataPayloadV1::AlchemySession(Box::new(
             AlchemySessionDataV1 {
+                incense: None,
                 recipe_id: None,
                 active: false,
                 elapsed_ticks: 0,
@@ -3065,6 +3080,7 @@ fn s2c_fixture_count_matches_variant_count() {
         ServerDataType::GatheringSession,
         ServerDataType::BotanySkill,
         ServerDataType::AlchemyFurnace,
+        ServerDataType::AlchemyWorld,
         ServerDataType::AlchemySession,
         ServerDataType::AlchemyOutcomeForecast,
         ServerDataType::AlchemyOutcomeResolved,
@@ -3283,8 +3299,8 @@ fn s2c_all_proto_variants_encode_without_panic() {
     }
 
     assert_eq!(
-        proto_count, 130,
-        "Expected 130 proto-encodable S2C variants, got {proto_count}. \
+        proto_count, 131,
+        "Expected 131 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
     );
     assert_eq!(
@@ -3570,6 +3586,7 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
                 col: 0,
             },
             rotated: true,
+            count: Some(3),
         }),
         build(ClientRequestV1::EquipFalseSkin {
             v: 1,

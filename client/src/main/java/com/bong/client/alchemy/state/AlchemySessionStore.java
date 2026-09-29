@@ -1,12 +1,23 @@
 package com.bong.client.alchemy.state;
 
+import com.bong.client.alchemy.AlchemyIncenseTimer;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 // plan-alchemy-v1 P6 — 炼丹会话快照本地 Store。
 public final class AlchemySessionStore {
-    public record StageHint(int atTick, int window, String summary, boolean completed, boolean missed) {}
+    public record IngredientHint(String material, int required, int inserted) {
+        public int remaining() { return Math.max(0, required - inserted); }
+    }
+
+    public record StageHint(int atTick, int window, String summary, boolean completed, boolean missed,
+                            List<IngredientHint> ingredients) {
+        public StageHint(int atTick, int window, String summary, boolean completed, boolean missed) {
+            this(atTick, window, summary, completed, missed, List.of());
+        }
+        public StageHint { ingredients = List.copyOf(ingredients); }
+    }
 
     public record Snapshot(
         String recipeId,
@@ -20,8 +31,17 @@ public final class AlchemySessionStore {
         double qiTarget,
         String statusLabel,
         List<StageHint> stages,
-        List<String> interventionLog
+        List<String> interventionLog,
+        AlchemyIncenseTimer.Snapshot incense
     ) {
+        public Snapshot(String recipeId, boolean active, int elapsedTicks, int targetTicks,
+                        float tempCurrent, float tempTarget, float tempBand, double qiInjected,
+                        double qiTarget, String statusLabel, List<StageHint> stages,
+                        List<String> interventionLog) {
+            this(recipeId, active, elapsedTicks, targetTicks, tempCurrent, tempTarget, tempBand,
+                qiInjected, qiTarget, statusLabel, stages, interventionLog, AlchemyIncenseTimer.Snapshot.empty());
+        }
+
         public static Snapshot empty() {
             return new Snapshot(
                 "", false, 0, 0, 0.0f, 0.0f, 0.0f, 0.0, 0.0,
@@ -64,6 +84,11 @@ public final class AlchemySessionStore {
     }
 
     public static void clearOnDisconnect() {
+        replace(null);
+    }
+
+    /** 炉位变化后丢弃旧炉会话，避免下一次打开时短暂展示不属于当前炉的进度。 */
+    static void clearForFurnaceChange() {
         replace(null);
     }
 
