@@ -155,7 +155,7 @@ pub fn emit_world_states(
     mut events: EventWriter<AlchemyWorldEffect>,
 ) {
     *ticks += 1;
-    if *ticks % 20 != 0 {
+    if !(*ticks).is_multiple_of(20) {
         return;
     }
     for furnace in &furnaces {

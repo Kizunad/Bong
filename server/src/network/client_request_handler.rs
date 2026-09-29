@@ -5446,7 +5446,18 @@ pub(crate) fn handle_alchemy_intervention(
                 });
                 return;
             }
+            let previous_temp = session.temp_current;
             session.apply_intervention(intervention.clone());
+            if let Intervention::AdjustTemp(_) = intervention {
+                if (session.temp_current - previous_temp).abs() > f64::EPSILON {
+                    let action = if session.temp_current >= 0.5 {
+                        AlchemyWorldAction::FireRaise
+                    } else {
+                        AlchemyWorldAction::FireLower
+                    };
+                    AlchemyWorldEffect::emit(world_effects, furnace_pos, Some(session), action);
+                }
+            }
             if let Some(events) = vfx_events {
                 let (event_id, color, strength, count) = match intervention {
                     Intervention::AdjustTemp(temp) if temp >= 0.85 => {
@@ -5530,6 +5541,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
     mut reservations: ResMut<AlchemyQiReservationBook>,
     redis: Option<Res<RedisBridgeResource>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut world_effects: Option<ResMut<Events<AlchemyWorldEffect>>>,
     unique_ids: Query<&UniqueId>,
 ) {
     for request in requests.read() {
@@ -5560,6 +5572,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             send_alchemy_error(&mut client, &player_id, "坍缩区域无法注灵".to_string());
             continue;
         }
+        let furnace_pos = furnace.pos.unwrap_or_default();
         let Some(session) = furnace.session.as_mut() else {
             send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
             continue;
@@ -5611,12 +5624,24 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             session.qi_injected,
         );
         let intervention = Intervention::InjectQi(request.amount);
+        AlchemyWorldEffect::emit(
+            world_effects.as_deref_mut(),
+            furnace_pos,
+            Some(session),
+            AlchemyWorldAction::InjectQi {
+                source: [
+                    f64::from(furnace_pos.0) + 0.5,
+                    f64::from(furnace_pos.1) + 1.0,
+                    f64::from(furnace_pos.2) + 0.5,
+                ],
+            },
+        );
         if let Some(events) = vfx_events.as_deref_mut() {
             gameplay_vfx::send_spawn(
                 events,
                 gameplay_vfx::spawn_request(
                     gameplay_vfx::ALCHEMY_BREW_VAPOR,
-                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    alchemy_furnace_origin(furnace_pos),
                     Some([0.0, 0.6, 0.0]),
                     "#AA66FF",
                     0.65,
@@ -5626,7 +5651,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             );
             if let Ok(unique_id) = unique_ids.get(request.player) {
                 events.send(VfxEventRequest::new(
-                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    alchemy_furnace_origin(furnace_pos),
                     crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
                         target_player: unique_id.0.to_string(),
                         anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
@@ -5639,7 +5664,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
         }
         publish_alchemy_intervention_result(
             redis.as_deref(),
-            furnace.pos.unwrap_or_default(),
+            furnace_pos,
             recipe_id.as_str(),
             player_id.as_str(),
             &intervention,
