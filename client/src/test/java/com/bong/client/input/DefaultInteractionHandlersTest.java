@@ -1,5 +1,6 @@
 package com.bong.client.input;
 
+import com.bong.client.alchemy.AlchemyFurnaceInteractIntentHandler;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.forge.ForgeStationInteractIntentHandler;
 import com.bong.client.inventory.DeadDropInteractIntentHandler;
@@ -32,6 +33,10 @@ class DefaultInteractionHandlersTest {
         assertTrue(
             InteractKeyRouter.global().hasHandlerForTests(ForgeStationInteractIntentHandler.class),
             "锻造移除右键入口后，默认交互路由必须保留真实工位的开窗入口"
+        );
+        assertTrue(
+            InteractKeyRouter.global().hasHandlerForTests(AlchemyFurnaceInteractIntentHandler.class),
+            "炼丹移除右键入口后，默认交互路由必须保留真实丹炉的开窗入口"
         );
     }
 

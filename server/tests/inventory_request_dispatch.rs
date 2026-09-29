@@ -29,12 +29,14 @@ fn inventory_extractor_accepts_all_six_variants_and_preserves_fields() {
                 from: source(),
                 to: destination(),
                 rotated: true,
+                count: Some(3),
             },
             InventoryRequest::InventoryMoveIntent {
                 instance_id: u64::MAX,
                 from: source(),
                 to: destination(),
                 rotated: true,
+                count: Some(3),
             },
         ),
         (

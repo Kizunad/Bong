@@ -217,6 +217,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("processing_session"),
   Type.Literal("freshness_update"),
   Type.Literal("alchemy_furnace"),
+  Type.Literal("alchemy_world"),
   Type.Literal("alchemy_session"),
   Type.Literal("alchemy_outcome_forecast"),
   Type.Literal("alchemy_outcome_resolved"),
@@ -848,6 +849,41 @@ export const ServerDataAlchemyFurnaceV1 = Type.Object(
 );
 export type ServerDataAlchemyFurnaceV1 = Static<typeof ServerDataAlchemyFurnaceV1>;
 
+// 工位之外的炉火和动作表现。音效仍通过既有 audio/play 协议发送。
+const alchemyWorldState = {
+  v: Type.Literal(1),
+  type: Type.Literal("alchemy_world"),
+  furnace_pos: BlockPosV1,
+  heat: Type.Number({ minimum: 0, maximum: 1 }),
+  incense: Type.Boolean(),
+  materials: Type.Record(Type.String(), Type.Integer({ minimum: 1 })),
+};
+export const ServerDataAlchemyWorldV1 = Type.Union([
+  Type.Object({
+    ...alchemyWorldState,
+    action: Type.Union((["state", "ignite", "fire_raise", "fire_lower", "incense"] as const).map(value => Type.Literal(value))),
+  }, { additionalProperties: false }),
+  Type.Object({
+    ...alchemyWorldState,
+    action: Type.Literal("inject_qi"),
+    source: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
+  }, { additionalProperties: false }),
+  Type.Object({
+    ...alchemyWorldState,
+    action: Type.Literal("feed"),
+    item: Type.String({ minLength: 1 }),
+    count: Type.Integer({ minimum: 1 }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    ...alchemyWorldState,
+    action: Type.Literal("collect"),
+    result: Type.Union((["perfect", "good", "flawed", "waste", "early_take", "explode"] as const).map(value => Type.Literal(value))),
+    item: Type.String(),
+    name: Type.String(),
+  }, { additionalProperties: false }),
+]);
+export type ServerDataAlchemyWorldV1 = Static<typeof ServerDataAlchemyWorldV1>;
+
 export const ServerDataAlchemySessionV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -866,6 +902,14 @@ export const ServerDataAlchemySessionV1 = Type.Object(
     stages: Type.Array(AlchemyStageHintV1),
     /** 服务端预格式化后给 client 直接显示（含色码）。 */
     interventions_recent: Type.Array(Type.String(), { maxItems: 8 }),
+    incense: Type.Optional(Type.Object({
+      kind: Type.String({ minLength: 1 }),
+      remaining_ticks: Type.Integer({ minimum: 0 }),
+      duration_ticks: Type.Integer({ minimum: 1 }),
+      temp_band_scale: Type.Number({ exclusiveMinimum: 0 }),
+      qi_cost_scale: Type.Number({ exclusiveMinimum: 0 }),
+      smoke_color: Type.String({ pattern: "^#[0-9A-Fa-f]{6}$" }),
+    }, { additionalProperties: false })),
   },
   { additionalProperties: false },
 );
@@ -2070,6 +2114,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataProcessingSessionV1,
   ServerDataFreshnessUpdateV1,
   ServerDataAlchemyFurnaceV1,
+  ServerDataAlchemyWorldV1,
   ServerDataAlchemySessionV1,
   ServerDataAlchemyOutcomeForecastV1,
   ServerDataAlchemyOutcomeResolvedV1,

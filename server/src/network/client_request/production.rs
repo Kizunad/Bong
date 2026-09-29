@@ -4,6 +4,7 @@
 //! 已经通过这些门禁的十个炼丹请求转换为编译期闭合的领域路由，并复用既有
 //! `client_request_handler` helper，保持业务校验和副作用顺序不变。
 
+use valence::message::SendMessage;
 use valence::prelude::{Client, Commands, Entity, Events, Query, Username};
 
 use crate::alchemy::Intervention;
@@ -57,6 +58,10 @@ pub(crate) enum ProductionRequest {
     },
     FurnacePlace {
         pos: (i32, i32, i32),
+        item_instance_id: u64,
+    },
+    PlaceIncense {
+        furnace_pos: (i32, i32, i32),
         item_instance_id: u64,
     },
 }
@@ -123,6 +128,14 @@ pub(crate) fn try_into_production_request(
             ..
         } => Ok(ProductionRequest::FurnacePlace {
             pos: (x, y, z),
+            item_instance_id,
+        }),
+        ClientRequestV1::AlchemyPlaceIncense {
+            furnace_pos,
+            item_instance_id,
+            ..
+        } => Ok(ProductionRequest::PlaceIncense {
+            furnace_pos,
             item_instance_id,
         }),
         request => Err(request),
@@ -211,6 +224,32 @@ pub(crate) fn dispatch_production_request<
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&crate::player::state::PlayerState>,
 ) -> ProductionDispatchOutcome {
+    let target = match &request {
+        ProductionRequest::OpenFurnace { furnace_pos }
+        | ProductionRequest::FeedSlot { furnace_pos, .. }
+        | ProductionRequest::TakeBack { furnace_pos, .. }
+        | ProductionRequest::Ignite { furnace_pos, .. }
+        | ProductionRequest::Intervention { furnace_pos, .. }
+        | ProductionRequest::PlaceIncense { furnace_pos, .. } => Some(*furnace_pos),
+        ProductionRequest::FurnacePlace { pos, .. } => Some(*pos),
+        _ => None,
+    };
+    if let Some(pos) = target {
+        let reachable = skill_scroll
+            .positions
+            .get(player)
+            .ok()
+            .zip(skill_scroll.dimensions.get(player).ok())
+            .is_some_and(|(position, dimension)| {
+                crate::alchemy::furnace::within_reach(position.0, dimension.0, pos)
+            });
+        if !reachable {
+            if let Ok((_, mut client)) = clients.get_mut(player) {
+                client.send_chat_message("§c[炼丹] 请在主世界靠近丹炉后再操作");
+            }
+            return ProductionDispatchOutcome::Dispatched;
+        }
+    }
     match request {
         ProductionRequest::OpenFurnace { furnace_pos } => {
             crate::network::client_request_handler::handle_alchemy_open_furnace(
@@ -220,6 +259,7 @@ pub(crate) fn dispatch_production_request<
                 &mut alchemy.furnaces,
                 &mut alchemy.learned,
                 &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::FeedSlot {
@@ -245,6 +285,8 @@ pub(crate) fn dispatch_production_request<
                 alchemy.qi_ledger.as_deref_mut(),
                 alchemy.attrition_applied_events.as_deref_mut(),
                 alchemy.tsy_lifecycle.as_deref(),
+                alchemy.world_effects.as_deref_mut(),
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::TakeBack {
@@ -273,7 +315,7 @@ pub(crate) fn dispatch_production_request<
                 &alchemy.recipe_registry,
                 alchemy.zones.as_deref(),
                 alchemy.redis.as_deref(),
-                alchemy.vfx_events.as_deref_mut(),
+                alchemy.world_effects.as_deref_mut(),
             );
         }
         ProductionRequest::Intervention {
@@ -291,6 +333,7 @@ pub(crate) fn dispatch_production_request<
                 alchemy.zones.as_deref(),
                 alchemy.redis.as_deref(),
                 alchemy.vfx_events.as_deref_mut(),
+                alchemy.world_effects.as_deref_mut(),
                 alchemy.inject_qi_tx.as_deref_mut(),
             );
         }
@@ -301,6 +344,8 @@ pub(crate) fn dispatch_production_request<
                 clients,
                 &mut alchemy.learned,
                 &mut alchemy.state,
+                &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::LearnRecipe { recipe_id } => {
@@ -310,6 +355,7 @@ pub(crate) fn dispatch_production_request<
                 clients,
                 &mut alchemy.learned,
                 &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::LearnRecipeFragment { item_instance_id } => {
@@ -353,6 +399,23 @@ pub(crate) fn dispatch_production_request<
                 pos,
                 item_instance_id,
                 alchemy.place_furnace_tx.as_deref_mut(),
+            );
+        }
+        ProductionRequest::PlaceIncense {
+            furnace_pos,
+            item_instance_id,
+        } => {
+            crate::network::client_request_handler::handle_alchemy_place_incense(
+                player,
+                furnace_pos,
+                item_instance_id,
+                clients,
+                &mut alchemy.furnaces,
+                &alchemy.recipe_registry,
+                inventories,
+                player_states,
+                &skill_scroll.cultivations,
+                alchemy.world_effects.as_deref_mut(),
             );
         }
     }

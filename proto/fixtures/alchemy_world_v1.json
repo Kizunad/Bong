@@ -1,0 +1,24 @@
+[
+  {
+    "v": 1,
+    "type": "alchemy_world",
+    "furnace_pos": [2, 64, 3],
+    "heat": 0.6,
+    "incense": false,
+    "materials": {"ci_she_hao": 2},
+    "action": "inject_qi",
+    "source": [1.0, 65.1, 2.0]
+  },
+  {
+    "v": 1,
+    "type": "alchemy_world",
+    "furnace_pos": [2, 64, 3],
+    "heat": 0.0,
+    "incense": false,
+    "materials": {},
+    "action": "collect",
+    "result": "early_take",
+    "item": "alchemy_residue_processing_dregs",
+    "name": "炮制药渣"
+  }
+]

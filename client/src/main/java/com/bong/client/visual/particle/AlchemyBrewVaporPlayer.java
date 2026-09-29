@@ -1,9 +1,12 @@
 package com.bong.client.visual.particle;
 
+import com.bong.client.alchemy.AlchemyResultEffect;
+import com.bong.client.alchemy.AlchemyWorldEffects;
 import com.bong.client.network.VfxEventPayload;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 
 public final class AlchemyBrewVaporPlayer implements VfxPlayer {
     public static final Identifier BREW = new Identifier("bong", "alchemy_brew_vapor");
@@ -33,6 +36,12 @@ public final class AlchemyBrewVaporPlayer implements VfxPlayer {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1];
         double oz = payload.origin()[2];
+        if (kind == Kind.EXPLODE) {
+            // 服务端炸炉粒子源在炉位上方一格，旁观者也播放对应真炉的骨骼动画。
+            var pos = BlockPos.ofFloored(ox, oy - 1, oz);
+            var furnace = AlchemyWorldEffects.furnaceAt(pos);
+            if (furnace != null) furnace.playAlchemyResult(AlchemyResultEffect.EXPLODE);
+        }
         float[] rgb = GameplayVfxUtil.rgb(payload, fallbackRgb());
         int count = GameplayVfxUtil.count(payload, defaultCount(), 1, 48);
         int maxAge = GameplayVfxUtil.duration(payload, kind == Kind.COMPLETE ? 40 : 30);

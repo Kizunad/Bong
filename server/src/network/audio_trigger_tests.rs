@@ -711,12 +711,12 @@ fn alchemy_events_emit_dedicated_recipes() {
     app.add_systems(Update, emit_alchemy_audio_triggers);
     let furnace = app.world_mut().spawn(Position::new([3.0, 64.0, -2.0])).id();
 
-    app.world_mut().send_event(StartAlchemyRequest {
+    let start = StartAlchemyRequest {
         furnace,
         recipe_id: "hui_yuan_pill_v0".to_string(),
         caster_id: "offline:Azure".to_string(),
-    });
-    app.world_mut().send_event(AlchemyOutcomeEvent {
+    };
+    let outcome = AlchemyOutcomeEvent {
         furnace,
         caster_id: "offline:Azure".to_string(),
         recipe_id: Some("hui_yuan_pill_v0".to_string()),
@@ -735,7 +735,10 @@ fn alchemy_events_emit_dedicated_recipes() {
             flawed_path: false,
         },
         elapsed_ticks: 120,
-    });
+    };
+
+    app.world_mut().send_event(start.clone());
+    app.world_mut().send_event(outcome.clone());
 
     app.update();
 
@@ -746,6 +749,22 @@ fn alchemy_events_emit_dedicated_recipes() {
         .map(|request| request.recipe_id)
         .collect();
     assert_eq!(recipes, vec!["alchemy_bubble", "alchemy_complete"]);
+
+    app.world_mut()
+        .entity_mut(furnace)
+        .insert(crate::alchemy::AlchemyFurnace::placed(
+            valence::prelude::BlockPos::new(3, 64, -2),
+            1,
+        ));
+    app.world_mut().send_event(start);
+    app.world_mut().send_event(outcome);
+    app.update();
+    assert!(
+        app.world()
+            .resource::<Events<PlaySoundRecipeRequest>>()
+            .is_empty(),
+        "实体丹炉的成功事务已由 world_effects 发声，旧事件不能再播第二次"
+    );
 }
 
 #[test]

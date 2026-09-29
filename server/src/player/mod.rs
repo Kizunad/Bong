@@ -95,6 +95,7 @@ pub(crate) struct PlayerAttachResources<'w> {
     skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
     technique_registry: Option<Res<'w, TechniqueRegistry>>,
+    operator_inventory: crate::inventory::operator::OperatorInventoryAccess<'w>,
 }
 
 #[derive(Component, Default)]
@@ -275,8 +276,28 @@ pub(crate) fn attach_player_state_to_joined_clients(
         commands
             .entity(entity)
             .remove::<ReconnectPersistencePending>();
-        let persisted =
+        let mut persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
+        // 持久化的背包尺寸不是权限；在库存对网络请求可见之前按当前 OP 名单校准。
+        if let Some(inventory) = persisted.inventory.as_ref() {
+            match resources.operator_inventory.reconcile(
+                &username.0,
+                inventory,
+                persisted.position,
+                persisted.last_dimension,
+            ) {
+                Ok(Some(updated)) => persisted.inventory = Some(updated),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::error!(
+                        "[bong][inventory] cannot restore backpack for {}: {error}",
+                        username.0
+                    );
+                    commands.entity(entity).remove::<Client>();
+                    continue;
+                }
+            }
+        }
         let restored_inventory = persisted.inventory.is_some();
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()

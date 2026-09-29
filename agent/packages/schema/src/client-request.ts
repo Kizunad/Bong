@@ -180,6 +180,8 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
     // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
     // 可选字段：旧客户端不带时 server 侧 `#[serde(default)]` 视为 false（未旋转）。
     rotated: Type.Optional(Type.Boolean()),
+    // 缺省移动整堆；指定时由服务端原子分堆。
+    count: Type.Optional(Type.Integer({ minimum: 1, maximum: 4294967295 })),
   },
   { additionalProperties: false },
 );
@@ -580,6 +582,18 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
+
+export const AlchemyPlaceIncenseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_place_incense"),
+    furnace_pos: BlockPosV1,
+    /** 香料物品的 inventory instance_id；服务端成功后消耗一枚。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyPlaceIncenseRequestV1 = Static<typeof AlchemyPlaceIncenseRequestV1>;
 
 export const LingtianReplenishSourceV1 = Type.Union([
   Type.Literal("zone"),
@@ -1214,6 +1228,7 @@ export const ClientRequestV1 = Type.Union([
   AlchemyLearnRecipeRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
+  AlchemyPlaceIncenseRequestV1,
   LingtianStartReplenishRequestV1,
   CoffinOpenRequestV1,
   CoffinPlaceRequestV1,

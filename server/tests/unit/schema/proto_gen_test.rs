@@ -1856,6 +1856,14 @@ mod tests {
 
     fn alchemy_session_roundtrip() {
         let msg = AlchemySession {
+            incense: Some(AlchemyIncense {
+                kind: "incense_clear_mind".into(),
+                remaining_ticks: 239,
+                duration_ticks: 240,
+                temp_band_scale: 1.25,
+                qi_cost_scale: 1.0,
+                smoke_color: "#A8D7C5".into(),
+            }),
             recipe_id: Some("kai_mai_pill_v0".to_string()),
             active: true,
             elapsed_ticks: 80,
@@ -1867,6 +1875,7 @@ mod tests {
             qi_target: 10.0,
             status_label: "heating".to_string(),
             stages: vec![AlchemyStageHint {
+                ingredients: vec![],
                 at_tick: 80,
                 window: 20,
                 summary: "hui_yuan_zhi x1".to_string(),
@@ -1877,6 +1886,10 @@ mod tests {
         };
         let bytes = msg.encode_to_vec();
         let decoded = AlchemySession::decode(bytes.as_slice()).expect("AlchemySession decode 失败");
+        assert_eq!(
+            decoded.incense, msg.incense,
+            "香状态必须随 session 跨协议保留"
+        );
         assert_eq!(decoded.recipe_id.as_deref(), Some("kai_mai_pill_v0"));
         assert!(decoded.active);
         assert_eq!(decoded.elapsed_ticks, 80);
@@ -1887,6 +1900,7 @@ mod tests {
 
     fn alchemy_session_empty_stages_roundtrip() {
         let msg = AlchemySession {
+            incense: None,
             recipe_id: None,
             active: false,
             elapsed_ticks: 0,
@@ -3510,6 +3524,7 @@ mod tests {
             (
                 "AlchemySession",
                 server_data_envelope::Payload::AlchemySession(AlchemySession {
+                    incense: None,
                     recipe_id: None,
                     active: false,
                     elapsed_ticks: 0,
@@ -9806,6 +9821,7 @@ mod tests {
                     }),
                     // plan-rotate-v1 — 旋转标志随 wire roundtrip。
                     rotated: true,
+                    count: Some(3),
                 },
             )),
         };
@@ -9815,6 +9831,7 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::InventoryMoveIntent(m)) => {
                 assert_eq!(m.instance_id, 42);
+                assert_eq!(m.count, Some(3), "分离数量必须随协议保留");
                 assert!(
                     m.rotated,
                     "InventoryMoveIntent.rotated 应随 proto roundtrip 保留 true（plan-rotate-v1 字段 4）"
@@ -10589,6 +10606,7 @@ mod tests {
                     from: None,
                     to: None,
                     rotated: false,
+                    count: None,
                 }),
                 "InventoryMoveIntent",
             ),

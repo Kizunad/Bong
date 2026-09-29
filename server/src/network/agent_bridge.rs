@@ -128,6 +128,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::GatheringSession => "gathering_session",
         ServerDataType::BotanySkill => "botany_skill",
         ServerDataType::AlchemyFurnace => "alchemy_furnace",
+        ServerDataType::AlchemyWorld => "alchemy_world",
         ServerDataType::AlchemySession => "alchemy_session",
         ServerDataType::AlchemyOutcomeForecast => "alchemy_outcome_forecast",
         ServerDataType::AlchemyOutcomeResolved => "alchemy_outcome_resolved",

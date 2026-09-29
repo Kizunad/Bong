@@ -1,0 +1,13 @@
+{
+  "id": "alchemy_material_herb",
+  "layers": [
+    { "sound": "minecraft:block.iron_trapdoor.open", "volume": 0.4, "pitch": 0.92, "delay_ticks": 0 },
+    { "sound": "minecraft:block.iron_trapdoor.close", "volume": 0.35, "pitch": 0.78, "delay_ticks": 16 },
+    { "sound": "minecraft:block.water.ambient", "volume": 0.5, "pitch": 1.35, "delay_ticks": 6 },
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.28, "pitch": 1.25, "delay_ticks": 7 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

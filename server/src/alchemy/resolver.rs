@@ -134,7 +134,10 @@ pub fn resolve_with_meta_and_furnace(
         alchemy_effective_lv,
         furnace_tier,
     );
-    let outcome = apply_quality_factor(outcome, session.staged.quality_factor);
+    let outcome = apply_quality_factor(
+        outcome,
+        session.staged.quality_factor * session.incense_qi_gain_scale() as f32,
+    );
     ResolvedAlchemyResult {
         bucket,
         xp: xp_for_bucket(bucket),
@@ -318,12 +321,12 @@ fn apply_quality_factor(outcome: ResolvedOutcome, factor: f32) -> ResolvedOutcom
         } => ResolvedOutcome::Pill {
             recipe_id,
             pill,
-            quality,
             toxin_amount,
             toxin_color,
+            quality: (quality * factor as f64).clamp(0.0, 1.0),
             qi_gain: qi_gain.map(|q| q * factor as f64),
             quality_tier,
-            effect_multiplier,
+            effect_multiplier: effect_multiplier * factor as f64,
             consecrated,
             side_effect,
             flawed_path,

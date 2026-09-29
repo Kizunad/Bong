@@ -14,7 +14,7 @@ class R7P3StateIntentBoundaryContractTest {
     @Test
     void targetScreensDoNotReachIntoStoresOrNetworkTransport() {
         Map<String, String[]> forbidden = Map.of(
-            "alchemy/AlchemyScreen.java", new String[]{
+            "alchemy/AlchemyWindowContent.java", new String[]{
                 "AlchemyAttemptHistoryStore", "AlchemyFurnaceStore", "AlchemyOutcomeForecastStore",
                 "AlchemySessionStore", "ContaminationWarningStore", "InventoryMetaStore", "RecipeScrollStore",
                 "InventoryStateStore", "SkillSetStore", "ClientRequestSender", "ClientRequestProtocol"
@@ -60,7 +60,6 @@ class R7P3StateIntentBoundaryContractTest {
     @Test
     void screensCloseTheirScopeWhenMinecraftRemovesThem() {
         for (String relative : new String[]{
-            "alchemy/AlchemyScreen.java",
             "social/TradeOfferScreen.java",
             "inventory/LootContainerScreen.java"
         }) {

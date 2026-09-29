@@ -8,6 +8,7 @@ import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.util.ScreenshotRecorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -101,7 +102,14 @@ final class UiPreviewSession {
         if (client.getWindow().isFullscreen()) {
             client.getWindow().toggleFullscreen();
         }
+        // Windows 最大化或最小化状态下，保存窗口尺寸不会恢复实际 framebuffer。
+        long handle = client.getWindow().getHandle();
+        if (GLFW.glfwGetWindowAttrib(handle, GLFW.GLFW_MAXIMIZED) == GLFW.GLFW_TRUE
+            || GLFW.glfwGetWindowAttrib(handle, GLFW.GLFW_ICONIFIED) == GLFW.GLFW_TRUE) {
+            GLFW.glfwRestoreWindow(handle);
+        }
         client.getWindow().setWindowedSize(shot.framebufferWidth(), shot.framebufferHeight());
+        GLFW.glfwSetWindowSize(handle, shot.framebufferWidth(), shot.framebufferHeight());
         client.onResolutionChanged();
         LOGGER.info(
             "[ui-preview] configuring '{}' framebuffer={}x{} scale={} expected logical={}x{}",
@@ -204,7 +212,8 @@ final class UiPreviewSession {
         openedScene = null;
         openedScreen = null;
         shotIndex++;
-        advance(Phase.CONFIGURE_VIEWPORT);
+        // 每个场景都有自己的准备条件；联网场景还需等 /scene 回包，不能沿用上一张的就绪状态。
+        advance(shotIndex >= config.screenshots().size() ? Phase.FINISHED : Phase.WAIT_CLIENT);
     }
 
     private void finish(MinecraftClient client) throws IOException {

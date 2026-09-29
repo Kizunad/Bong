@@ -1,4 +1,27 @@
 [[recipes]]
+id = "workbench.cultivation.incense_plain"
+category = "misc"
+display_name = "草木香"
+qi_cost = 0.0
+time_sec = 10
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 2
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 1
+
+[recipes.output]
+template_id = "incense_plain"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
 id = "workbench.cultivation.anti_gu"
 category = "dugu_potion"
 display_name = "解蛊散"

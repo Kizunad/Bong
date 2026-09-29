@@ -544,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn finished_furnace_refunds_online_payer_before_overflow() {
+    fn finished_session_waits_for_take_back_before_refund() {
         let mut app = App::new();
         app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
@@ -583,7 +583,44 @@ mod tests {
         app.update();
         let after = summarize_world_qi(app.world_mut());
         assert_conservation(&before, &after, 0.0)
-            .expect("finished furnace refund must conserve qi");
+            .expect("finished session waiting for take_back must conserve qi");
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            80.0,
+            "完成但尚未收取的 session 不得提前退回付款真元"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&furnace_qi_account(furnace_entity)),
+            20.0
+        );
+        assert_eq!(
+            app.world()
+                .get::<AlchemyFurnace>(furnace_entity)
+                .and_then(|furnace| furnace.session.as_ref())
+                .map(|session| session.qi_injected),
+            Some(20.0),
+            "等待收取的 session 必须保留已付款注灵供结算使用"
+        );
+        assert!(app
+            .world()
+            .resource::<AlchemyQiReservationBook>()
+            .is_tracked(furnace_entity));
+
+        let ended = app
+            .world_mut()
+            .get_mut::<AlchemyFurnace>(furnace_entity)
+            .unwrap()
+            .end_session()
+            .expect("取回流程必须通过 end_session 保留待结算炉次");
+        assert_eq!(ended.qi_injected, 20.0);
+        assert_eq!(ended.qi_reserved, 20.0);
+        let before_collect = summarize_world_qi(app.world_mut());
+        app.update();
+        let after_collect = summarize_world_qi(app.world_mut());
+        assert_conservation(&before_collect, &after_collect, 0.0)
+            .expect("take_back 后的炉体结算必须守恒");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
             TEST_QI_FIXTURE_TOTAL
@@ -604,16 +641,12 @@ mod tests {
             .world()
             .resource::<AlchemyQiReservationBook>()
             .is_tracked(furnace_entity));
-        assert_eq!(
-            app.world()
-                .get::<AlchemyFurnace>(furnace_entity)
-                .unwrap()
-                .session
-                .as_ref()
-                .unwrap()
-                .qi_reserved,
-            0.0
-        );
+        assert!(app
+            .world()
+            .get::<AlchemyFurnace>(furnace_entity)
+            .unwrap()
+            .session
+            .is_none());
     }
 
     #[test]

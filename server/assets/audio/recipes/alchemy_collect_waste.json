@@ -1,0 +1,13 @@
+{
+  "id": "alchemy_collect_waste",
+  "layers": [
+    { "sound": "minecraft:block.iron_trapdoor.open", "volume": 0.4, "pitch": 0.92, "delay_ticks": 0 },
+    { "sound": "minecraft:block.iron_trapdoor.close", "volume": 0.35, "pitch": 0.78, "delay_ticks": 27 },
+    { "sound": "minecraft:block.sand.place", "volume": 0.5, "pitch": 0.65, "delay_ticks": 0 },
+    { "sound": "minecraft:item.bucket.empty", "volume": 0.35, "pitch": 0.8, "delay_ticks": 18 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

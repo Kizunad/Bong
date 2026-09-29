@@ -1,6 +1,5 @@
 package com.bong.client.ui;
 
-import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.combat.screen.DeathScreen;
 import com.bong.client.combat.screen.ForgeCarrierScreen;
 import com.bong.client.combat.screen.RepairScreen;
@@ -52,16 +51,6 @@ public final class ScreenTransitionRegistry {
         ));
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
-        ));
-        register(AlchemyScreen.class, new TransitionConfig(
-            AlchemyScreen.class,
-            ScreenTransition.Type.SCALE_UP,
-            400,
-            ScreenTransition.Type.FADE,
-            400,
-            ScreenTransition.Easing.EASE_OUT_QUAD,
-            TransitionConfig.OverlayStyle.FOG,
-            false
         ));
         register(GameMenuScreen.class, TransitionConfig.of(
             GameMenuScreen.class, ScreenTransition.Type.FADE, 150, ScreenTransition.Type.FADE, 150

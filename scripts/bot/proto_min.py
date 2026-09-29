@@ -215,6 +215,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     140: "body_plan_layout",
     141: "race_gate_meta",
     142: "morph_state",
+    143: "alchemy_world",
 }
 
 # These are deliberate compatibility labels, not a second wire registry.  The
@@ -1341,9 +1342,8 @@ def _alchemy_furnace(data: bytes) -> dict[str, Any]:
         "v": 1,
         "type": "alchemy_furnace",
         "pos": [
-            _optional_varint(fields, 1),
-            _optional_varint(fields, 2),
-            _optional_varint(fields, 3),
+            _int32(fields, axis) if _has(fields, axis) else None
+            for axis in (1, 2, 3)
         ],
         "tier": _varint(fields, 4),
         "integrity": _double(fields, 5),
@@ -1361,6 +1361,14 @@ def _alchemy_stage_hint(data: bytes) -> dict[str, Any]:
         "summary": _string(fields, 3),
         "completed": bool(_varint(fields, 4)),
         "missed": bool(_varint(fields, 5)),
+        "ingredients": [
+            {
+                "material": _string(_fields(raw), 1),
+                "required": _varint(_fields(raw), 2),
+                "inserted": _varint(_fields(raw), 3),
+            }
+            for raw in _messages(fields, 6)
+        ],
     }
 
 

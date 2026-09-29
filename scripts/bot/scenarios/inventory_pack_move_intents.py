@@ -30,7 +30,8 @@ def run(env) -> None:
         pack_container_id = f"pack_{pack_id}"
         require_pack_container(snapshot, pack_id)
         _assert_pack_location(snapshot, pack_id, "equip")
-        _assert_max_weight(snapshot, 23.0, "起手穿戴破草包")
+        # 本场景需 OP 执行 clearinv：基重来自 OP 背包，破草包仍提供 8 的装备加成。
+        _assert_max_weight(snapshot, 1008.0, "OP 起手穿戴破草包")
         _assert_instance_count(snapshot, pack_id, 1, "起手快照")
 
         # pack 只清背包网格，不清 body_pocket/hotbar/equipment。起手动态 pack 非空，
@@ -51,7 +52,7 @@ def run(env) -> None:
         if _hotbar_instance_ids(snapshot) != hotbar_ids_before:
             raise BotAssertionError("clearinv pack 不得改动 hotbar 精确实例集合")
         _assert_pack_location(snapshot, pack_id, "equip")
-        _assert_max_weight(snapshot, 23.0, "clearinv pack 后仍穿戴破草包")
+        _assert_max_weight(snapshot, 1008.0, "clearinv pack 后仍穿戴破草包")
         _assert_instance_count(snapshot, pack_id, 1, "clearinv pack 后")
 
         # 起手 body_pocket 可能已被教程物品占满。先通过真实 all 分支清空
@@ -66,7 +67,7 @@ def run(env) -> None:
         )
         require_pack_container(snapshot, pack_id)
         _assert_pack_location(snapshot, pack_id, "equip")
-        _assert_max_weight(snapshot, 23.0, "穿脱准备 clearinv all 后")
+        _assert_max_weight(snapshot, 1008.0, "穿脱准备 clearinv all 后")
         _assert_instance_count(snapshot, pack_id, 1, "穿脱准备 clearinv all 后")
 
         # chest worn 是 LIFO 栈；起手假灵兽皮位于破草包上层，必须先按权威
@@ -96,7 +97,7 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"脱下后动态 pack id 必须保持 {pack_container_id}，实际 {pack_container}"
             )
-        _assert_max_weight(snapshot, 15.0, "破草包脱到暗袋")
+        _assert_max_weight(snapshot, 1000.0, "破草包脱到暗袋")
         _assert_instance_count(snapshot, pack_id, 1, "破草包脱下后")
 
         # 同实例 body_pocket -> chest worn，容量恢复；不得创建新背包实例或新 owner。
@@ -110,7 +111,7 @@ def run(env) -> None:
             timeout=10.0,
         )
         require_pack_container(snapshot, pack_id)
-        _assert_max_weight(snapshot, 23.0, "破草包重新穿回")
+        _assert_max_weight(snapshot, 1008.0, "破草包重新穿回")
         _assert_instance_count(snapshot, pack_id, 1, "破草包穿回后")
 
         # all 清 carried containers + hotbar，但保留装备、动态 pack 拓扑和容量。
@@ -124,10 +125,10 @@ def run(env) -> None:
         )
         require_pack_container(snapshot, pack_id)
         _assert_pack_location(snapshot, pack_id, "equip")
-        _assert_max_weight(snapshot, 23.0, "clearinv all 后仍穿戴破草包")
+        _assert_max_weight(snapshot, 1008.0, "clearinv all 后仍穿戴破草包")
         _assert_instance_count(snapshot, pack_id, 1, "clearinv all 后")
 
-        # naked 清装备并 rebuild：动态 pack 消失、暗袋保留、容量回到裸体 BASE。
+        # naked 清装备并 rebuild：动态 pack 消失，OP 口袋及权限提供的基重保留。
         snapshot = _clearinv(
             bot,
             snapshot,
@@ -143,7 +144,7 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"clearinv naked 后不得残留 orphan {pack_container_id}"
             )
-        _assert_max_weight(snapshot, 15.0, "clearinv naked")
+        _assert_max_weight(snapshot, 1000.0, "clearinv naked")
         _assert_instance_count(snapshot, pack_id, 0, "clearinv naked 后")
         bot.assert_alive("动态背包拓扑与 clearinv 三分支完成后")
 

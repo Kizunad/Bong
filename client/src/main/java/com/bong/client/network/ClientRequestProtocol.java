@@ -453,6 +453,13 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeAlchemyPlaceIncense(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("alchemy_place_incense");
+        addBlockPos(obj, pos);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeCoffinOpen(BlockPos pos) {
         JsonObject obj = envelope("coffin_open");
         obj.addProperty("x", pos.getX());
@@ -626,12 +633,25 @@ public final class ClientRequestProtocol {
         InvLocation to,
         boolean rotated
     ) {
+        return encodeInventoryMove(instanceId, from, to, rotated, null);
+    }
+
+    /** count 缺省移动整堆；指定时只移动所选数量，由服务端分配新实例。 */
+    public static String encodeInventoryMove(
+        long instanceId, InvLocation from, InvLocation to, boolean rotated, Integer count
+    ) {
+        if (count != null && count <= 0) {
+            throw new IllegalArgumentException("inventory move count must be positive");
+        }
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
         if (rotated) {
             obj.addProperty("rotated", true);
+        }
+        if (count != null) {
+            obj.addProperty("count", count);
         }
         return obj.toString();
     }
