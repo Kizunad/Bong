@@ -118,8 +118,8 @@ const JUEBI_UPHEAVAL_DENSITY_PER_MILLE: u32 = 350;
 ///
 /// 真实名额公式不是 plan 草稿里的 player_count/hard_cap，而是
 /// `floor(WorldQiBudget.current_total / quota_k)`。当前运营校准目标是：
-/// `DEFAULT_SPIRIT_QI_TOTAL` 满额时 quota_limit=2；若 1 人占用，满载率为 50%，
-/// 落在 P1 目标区间 30%-70%。
+/// 默认总量满额时 quota_limit=2；若 1 人占用，满载率为 50%，落在 P1 目标区间 30%-70%。
+/// 自定义启动总量由 `quota_k_for_world_total` 等比例导出门槛，保持这条运营不变式。
 pub const DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI: u32 = 2;
 pub const DEFAULT_VOID_QUOTA_K: f64 =
     DEFAULT_SPIRIT_QI_TOTAL / DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI as f64;
@@ -147,12 +147,29 @@ impl Default for VoidQuotaConfig {
 
 impl VoidQuotaConfig {
     pub fn from_env() -> Self {
+        Self::from_env_with_world_total(DEFAULT_SPIRIT_QI_TOTAL)
+    }
+
+    /// 以本次服务器启动注入的总量导出默认门槛；显式环境覆盖仍优先保留。
+    pub fn from_env_with_world_total(world_qi_total: f64) -> Self {
+        let default_quota_k = quota_k_for_world_total(world_qi_total);
         std::env::var(VOID_QUOTA_K_ENV)
             .ok()
             .and_then(|raw| raw.parse::<f64>().ok())
             .filter(|quota_k| quota_k.is_finite() && *quota_k > 0.0)
             .map(|quota_k| Self { quota_k })
-            .unwrap_or_default()
+            .unwrap_or(Self {
+                quota_k: default_quota_k,
+            })
+    }
+}
+
+/// 按全服真元总量计算化虚名额门槛，保持满预算时的名额数不随启动参数改变。
+pub fn quota_k_for_world_total(world_qi_total: f64) -> f64 {
+    if world_qi_total.is_finite() && world_qi_total > 0.0 {
+        world_qi_total / DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI as f64
+    } else {
+        DEFAULT_VOID_QUOTA_K
     }
 }
 
