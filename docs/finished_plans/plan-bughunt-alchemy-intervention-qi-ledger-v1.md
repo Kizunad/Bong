@@ -66,6 +66,7 @@
 
 - P0：`server/src/alchemy/qi.rs` 提供 `debit_player_qi_to_furnace`、`refund_furnace_qi_to_player`、`release_furnace_qi_to_overflow` 和 `AlchemyQiReservationBook`；`server/src/network/client_request_handler.rs` 的 `settle_alchemy_inject_qi_requests` 在 ledger 成功后才提交 `Cultivation.qi_current` 与 session，取丹、炉体移除、断线和关服均有明确调度收口。
 - P1：`server/src/alchemy/qi.rs` 的守恒测试引用 `SPIRIT_QI_TOTAL`、`summarize_world_qi` 和 `assert_conservation`，覆盖足额付款、余额不足、容量不足退款/overflow、同帧注灵提交、断线退款、炉体移除退款和关服转入持久化 overflow；网络契约测试覆盖坍缩区、非炉主、无 session、注灵后取丹顺序。
+- 契约符号：`transfer_external_qi_to_ledger`、`transfer_ledger_qi_to_external`、`QiTransferReason::Crafting`、`assert_conservation`（`server/src/qi_physics/ledger.rs`）。
 
 ### 关键 commit
 
