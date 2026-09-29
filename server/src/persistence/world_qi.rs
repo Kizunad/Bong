@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::qi_physics::ledger::{is_anqi_carrier_account, ANQI_CARRIER_ACCOUNT_PREFIX};
+
 fn upsert_runtime_qi_account_balance(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
@@ -51,6 +53,20 @@ pub(crate) fn upsert_runtime_qi_account_balances(
     for account in persistent_runtime_qi_accounts() {
         upsert_runtime_qi_account_balance(transaction, qi_ledger, &account, wall_clock)?;
     }
+    // Carrier accounts are dynamic, but their prefix is stable and the ledger is the source of
+    // truth. Replace the dynamic rows on every snapshot so a carrier removed from the ledger
+    // cannot leave an orphan balance that would be resurrected after restart.
+    transaction
+        .execute(
+            "DELETE FROM qi_runtime_accounts WHERE account_id LIKE ?1",
+            params![format!("{ANQI_CARRIER_ACCOUNT_PREFIX}%")],
+        )
+        .map_err(io::Error::other)?;
+    for (account, _) in qi_ledger.iter_balances() {
+        if is_anqi_carrier_account(account) {
+            upsert_runtime_qi_account_balance(transaction, qi_ledger, account, wall_clock)?;
+        }
+    }
     Ok(())
 }
 
@@ -93,6 +109,33 @@ pub(crate) fn load_runtime_qi_account_balances(
                 ));
             }
         }
+    }
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT account_id, balance
+            FROM qi_runtime_accounts
+            WHERE account_id LIKE ?1
+            ORDER BY account_id
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let dynamic_accounts = statement
+        .query_map(params![format!("{ANQI_CARRIER_ACCOUNT_PREFIX}%")], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })
+        .map_err(io::Error::other)?;
+    for row in dynamic_accounts {
+        let (account_id, value) = row.map_err(io::Error::other)?;
+        if !value.is_finite() || value < 0.0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid persisted runtime qi balance account={account_id} balance={value}"
+                ),
+            ));
+        }
+        balances.push((QiAccountId::container(account_id), value));
     }
     Ok(balances)
 }

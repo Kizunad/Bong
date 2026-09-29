@@ -39,6 +39,7 @@ use crate::inventory::{
 use crate::qi_physics::ledger::{
     qi_flow_overflow_account, transfer_external_qi_to_ledger, transfer_ledger_qi_to_zone,
     QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
+    ANQI_CARRIER_ACCOUNT_PREFIX,
 };
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
@@ -700,7 +701,9 @@ fn finish_charge(
 }
 
 fn carrier_qi_account(owner: Entity, instance_id: u64) -> QiAccountId {
-    QiAccountId::container(format!("anqi_carrier:{owner:?}:{instance_id}"))
+    QiAccountId::container(format!(
+        "{ANQI_CARRIER_ACCOUNT_PREFIX}{owner:?}:{instance_id}"
+    ))
 }
 
 fn transfer_player_qi_to_carrier(
@@ -828,6 +831,7 @@ fn carry_decay_tick(
         if expired.is_empty() {
             continue;
         }
+        let mut settled = Vec::new();
         for instance_id in &expired {
             // Imprint decay is only a projection; the stable carrier account owns the actual
             // qi. Settle that balance into the era-decay sink before removing the projection.
@@ -838,10 +842,11 @@ fn carry_decay_tick(
                 carrier_qi_account(entity, *instance_id),
             ) {
                 store.imprints_by_instance.remove(instance_id);
+                settled.push(*instance_id);
             }
         }
         if let Ok(mut inventory) = inventories.get_mut(entity) {
-            for instance_id in expired {
+            for instance_id in settled {
                 degrade_equipped_instance(&mut inventory, &registry, instance_id);
             }
         }

@@ -1591,6 +1591,79 @@ fn natural_decay_expiry_settles_carrier_account_and_preserves_conservation() {
 }
 
 #[test]
+fn natural_decay_budget_failure_keeps_carrier_projection_and_equipment() {
+    let mut app = carry_decay_app();
+    app.insert_resource(WorldQiBudget::from_total(1.0));
+    let owner = app
+        .world_mut()
+        .spawn((
+            inventory_with_main_hand(ANQI_CHARGED_TEMPLATE_ID),
+            CarrierStore {
+                imprints_by_instance: HashMap::from([(
+                    7,
+                    CarrierImprint {
+                        carrier_kind: CarrierKind::YibianShougu,
+                        qi_amount: 4.0,
+                        qi_amount_initial: 4.0,
+                        qi_color: ColorKind::Sharp,
+                        source_realm: Realm::Condense,
+                        half_life_min: 0.001,
+                        decay_started_at_tick: 0,
+                        bond_kind: BondKind::HandheldCarrier,
+                        injection_kind: None,
+                    },
+                )]),
+            },
+        ))
+        .id();
+    let carrier = carrier_qi_account(owner, 7);
+    app.world_mut()
+        .resource_mut::<WorldQiAccount>()
+        .set_balance(carrier.clone(), 4.0)
+        .expect("carrier fixture balance should be valid");
+
+    app.update();
+
+    assert!(
+        app.world()
+            .get::<CarrierStore>(owner)
+            .expect("carrier store should remain attached")
+            .imprints_by_instance
+            .contains_key(&7),
+        "failed era-decay settlement must retain the carrier imprint for retry"
+    );
+    let inventory = app
+        .world()
+        .get::<PlayerInventory>(owner)
+        .expect("carrier inventory should remain attached");
+    let equipped_template = inventory
+        .equipped
+        .get(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|slot| slot.held.as_ref())
+        .map(|item| item.template_id.as_str());
+    assert_eq!(
+        equipped_template,
+        Some(ANQI_CHARGED_TEMPLATE_ID),
+        "failed era-decay settlement must not degrade the equipped carrier"
+    );
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().balance(&carrier),
+        4.0,
+        "failed era-decay settlement must leave the carrier ledger balance intact"
+    );
+    let budget = app.world().resource::<WorldQiBudget>();
+    assert_eq!(budget.current_total, 1.0);
+    assert_eq!(budget.era_decay_accum, 0.0);
+    assert!(
+        app.world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .all(|transfer| transfer.reason != QiTransferReason::EraDecay),
+        "failed era-decay settlement must not emit a partial transfer"
+    );
+}
+
+#[test]
 fn conservation_invariant_releases_full_miss_payload() {
     // 期望：脱靶事件的 qi_evaporated + residual_qi 都必须进入 zone/overflow，
     // 而不是只释放 residual_qi。

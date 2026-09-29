@@ -1132,6 +1132,15 @@ pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
 /// 坍缩渊与负压 drain 的稳定真元池。该余额无 ECS 字段承载，必须跨重启恢复。
 pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
+/// 暗器载体账本账户的稳定前缀。
+///
+/// 载体账户按 owner/instance 动态创建，但仍须进入运行期账户持久化枚举；前缀是
+/// SQLite 行与 `QiAccountId::Container` 之间的稳定契约。
+pub const ANQI_CARRIER_ACCOUNT_PREFIX: &str = "anqi_carrier:";
+
+pub fn is_anqi_carrier_account(account: &QiAccountId) -> bool {
+    account.kind == QiAccountKind::Container && account.id.starts_with(ANQI_CARRIER_ACCOUNT_PREFIX)
+}
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
 pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 5] = [
