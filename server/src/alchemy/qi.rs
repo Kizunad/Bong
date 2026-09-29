@@ -608,10 +608,14 @@ mod tests {
             .resource::<AlchemyQiReservationBook>()
             .is_tracked(furnace_entity));
 
-        app.world_mut()
+        let ended = app
+            .world_mut()
             .get_mut::<AlchemyFurnace>(furnace_entity)
             .unwrap()
-            .session = None;
+            .end_session()
+            .expect("取回流程必须通过 end_session 保留待结算炉次");
+        assert_eq!(ended.qi_injected, 20.0);
+        assert_eq!(ended.qi_reserved, 20.0);
         let before_collect = summarize_world_qi(app.world_mut());
         app.update();
         let after_collect = summarize_world_qi(app.world_mut());
