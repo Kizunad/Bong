@@ -29,7 +29,7 @@ pub use self::common::{
 };
 
 #[allow(unused_imports)]
-pub use self::rogue::{RoguePopulationSeedConfig, ScatteredCultivatorBundle};
+pub use self::rogue::RoguePopulationSeedConfig;
 
 // ---------------------------------------------------------------------------
 // Re-exports — pub(crate) functions

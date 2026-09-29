@@ -1,5 +1,7 @@
 # Bong · plan-lingtian-npc-v1
 
+> 2026-09-29：旧耕作行为、田块压力和对应叙事协议已删除，本页仅为历史记录。散修的通用战斗、修炼与交易行为继续保留；新耕作接入见 `//TODO:lingtian_refactor`。
+
 **NPC 散修种田 = 末法残土的生态压力指示器**。重要认知：散修种田**不是 ambient NPC 刷资源**，而是 worldview §七 / §八 闭环的**触发器**——散修按 §七 "寻路 AI 实时追踪周围灵气浓度"主动迁徙到玩家附近的高灵气区 → 推高 §八 灵物密度阈值 → 触发天道注视 / 道伥刷新 / 灵气归零。这是 worldview 已有循环的**玩法实例化**，给世界添加非玩家驱动的灵气竞争 + 三方博弈（玩家 vs 散修 vs 天道）。本 plan 在 plan-lingtian-v1（merged 93%）+ plan-npc-ai-v1（finished，big-brain Rogue archetype 已落地）基础上，实装散修自主开荒-种植-收获-迁徙循环。
 
 **世界观锚点**：

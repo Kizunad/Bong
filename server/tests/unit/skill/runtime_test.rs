@@ -167,7 +167,7 @@ fn consume_skill_xp_gain_applies_over_cap_penalty_in_system() {
         skill: SkillId::Herbalism,
         amount: 10,
         source: XpGainSource::Action {
-            plan_id: "lingtian",
+            plan_id: "botany",
             action: "harvest_auto",
         },
     });
@@ -231,7 +231,7 @@ fn consume_skill_xp_gain_does_not_level_when_penalty_drops_below_threshold() {
         skill: SkillId::Herbalism,
         amount: 10,
         source: XpGainSource::Action {
-            plan_id: "lingtian",
+            plan_id: "botany",
             action: "harvest_auto",
         },
     });

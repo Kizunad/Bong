@@ -2324,16 +2324,16 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
         surface: SkyIsleSurface::Bottom,
     };
     assert!(
-        check_env_lock(yun_ding_lan, 0, 0, provider, &zone, &manifest),
+        check_env_lock(&yun_ding_lan, 0, 0, provider, &zone, &manifest),
         "yun_ding_lan (sky-isle Top) must pass on the isle column via the span path"
     );
     assert!(
-        check_env_lock(xuan_gen_wei, 1, 0, provider, &zone, &manifest),
+        check_env_lock(&xuan_gen_wei, 1, 0, provider, &zone, &manifest),
         "xuan_gen_wei (sky-isle Bottom) must pass on the isle column"
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 1 },
+            &EnvLock::UndergroundTier { tier: 1 },
             2,
             0,
             provider,
@@ -2344,7 +2344,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 2 },
+            &EnvLock::UndergroundTier { tier: 2 },
             3,
             0,
             provider,
@@ -2355,7 +2355,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 3 },
+            &EnvLock::UndergroundTier { tier: 3 },
             4,
             0,
             provider,
@@ -2368,12 +2368,12 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     // And each lock must FAIL where its semantic layer is absent — proving the
     // span refactor did not silently make every column pass (position drift).
     assert!(
-        !check_env_lock(yun_ding_lan, 2, 0, provider, &zone, &manifest),
+        !check_env_lock(&yun_ding_lan, 2, 0, provider, &zone, &manifest),
         "sky-isle Top must NOT pass on a non-isle underground column"
     );
     assert!(
         !check_env_lock(
-            EnvLock::UndergroundTier { tier: 3 },
+            &EnvLock::UndergroundTier { tier: 3 },
             2,
             0,
             provider,
@@ -2385,7 +2385,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     // qi_vein_flow lock (part of yuan_ni_hong_yu) reads its own layer, set 1.0.
     assert!(
         check_env_lock(
-            EnvLock::QiVeinFlow { min: 0.5 },
+            &EnvLock::QiVeinFlow { min: 0.5 },
             4,
             0,
             provider,
@@ -2394,7 +2394,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
         ),
         "yuan_ni_hong_yu qi_vein_flow lock must pass with the constant 1.0 layer"
     );
-    let _ = DecorationLock::One("yuan_ni_ebony"); // keep the import meaningful
+    let _ = DecorationLock::One("yuan_ni_ebony".to_string()); // keep the import meaningful
 }
 
 #[test]

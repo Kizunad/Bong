@@ -66,18 +66,26 @@ public final class BotanyPlantStageWorldRenderer {
                 .orElse(BotanyPlantRenderProfile.fallback(entry.plantId()));
             BotanyPlantVisualState visual = BotanyPlantVisualState.forStage(
                 entry.stage(),
-                entry.tintRgb(),
+                PlantModelRegistry.tint(entry.plantId()).present()
+                    ? PlantModelRegistry.tint(entry.plantId()).value()
+                    : entry.tintRgb(),
                 (int) worldTime,
                 tickDelta
             );
+            PlantModelRegistry.PlantStageModel model = PlantModelRegistry.stage(entry.plantId(), entry.stage()).orElse(null);
             Identifier texture = textureFor(client, entry, profile);
             BlockPos lightPos = BlockPos.ofFloored(entry.x(), entry.y() + 0.5, entry.z());
             int light = WorldRenderer.getLightmapCoordinates(world, lightPos);
 
             matrices.push();
-            matrices.translate(dx, dy + 0.02, dz);
+            matrices.translate(
+                dx + (model == null ? 0.0 : model.offsetX()),
+                dy + 0.02 + (model == null ? 0.0 : model.offsetY()),
+                dz + (model == null ? 0.0 : model.offsetZ())
+            );
             matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - cameraYaw));
-            matrices.scale(visual.scale(), visual.scale(), visual.scale());
+            float modelScale = model == null ? 1.0f : model.scale();
+            matrices.scale(visual.scale() * modelScale, visual.scale() * modelScale, visual.scale() * modelScale);
             if (visual.swayRadians() != 0.0f) {
                 matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
             }
@@ -92,10 +100,15 @@ public final class BotanyPlantStageWorldRenderer {
         BotanyPlantRenderProfile profile
     ) {
         if (entry.stage() == PlantGrowthStage.SEEDLING || entry.stage() == PlantGrowthStage.GROWING) {
-            Identifier stageTexture = new Identifier(
-                "bong-client",
-                "textures/gui/botany/stages/" + entry.plantId() + "_" + entry.stage().wireName() + ".png"
-            );
+            Identifier stageTexture = PlantModelRegistry.stage(entry.plantId(), entry.stage())
+                .map(PlantModelRegistry.PlantStageModel::texture)
+                .orElse(null);
+            if (stageTexture == null) {
+                stageTexture = new Identifier(
+                    "bong-client",
+                    "textures/gui/botany/stages/" + entry.plantId() + "_" + entry.stage().wireName() + ".png"
+                );
+            }
             if (client.getResourceManager().getResource(stageTexture).isPresent()) {
                 return stageTexture;
             }

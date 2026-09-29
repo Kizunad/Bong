@@ -306,10 +306,12 @@ fn apply_gather_action(
                 .get(entity)
                 .ok()
                 .filter(|(_, plant)| {
-                    is_harvestable_target(plant, plant_id, zone_name, player_position)
+                    is_harvestable_target(plant, &plant_id, zone_name, player_position)
                 })
                 .map(|_| entity),
-            None => resolve_nearest_harvestable_plant(plants, plant_id, zone_name, player_position),
+            None => {
+                resolve_nearest_harvestable_plant(plants, &plant_id, zone_name, player_position)
+            }
         };
         let Some(target_entity) = target_entity else {
             pending_narrations.push_player(
@@ -444,11 +446,15 @@ fn gather_qi_from_zone(
 
 fn is_harvestable_target(
     plant: &Plant,
-    plant_id: crate::botany::registry::BotanyPlantId,
+    plant_id: impl AsRef<str>,
     zone_name: &str,
     player_position: valence::prelude::DVec3,
 ) -> bool {
-    if plant.id != plant_id || plant.zone_name != zone_name || plant.harvested || plant.trampled {
+    if plant.id.as_str() != plant_id.as_ref()
+        || plant.zone_name != zone_name
+        || plant.harvested
+        || plant.trampled
+    {
         return false;
     }
     let dx = player_position.x - plant.position[0];
@@ -459,7 +465,7 @@ fn is_harvestable_target(
 
 fn resolve_nearest_harvestable_plant(
     plants: &Query<(Entity, &Plant)>,
-    plant_id: crate::botany::registry::BotanyPlantId,
+    plant_id: &crate::botany::registry::BotanyPlantId,
     zone_name: &str,
     player_position: valence::prelude::DVec3,
 ) -> Option<Entity> {
@@ -468,12 +474,14 @@ fn resolve_nearest_harvestable_plant(
 
 fn nearest_harvestable_plant<'a>(
     plants: impl Iterator<Item = (Entity, &'a Plant)>,
-    plant_id: crate::botany::registry::BotanyPlantId,
+    plant_id: impl AsRef<str>,
     zone_name: &str,
     player_position: valence::prelude::DVec3,
 ) -> Option<Entity> {
     plants
-        .filter(|(_, plant)| is_harvestable_target(plant, plant_id, zone_name, player_position))
+        .filter(|(_, plant)| {
+            is_harvestable_target(plant, plant_id.as_ref(), zone_name, player_position)
+        })
         .filter_map(|(entity, plant)| {
             let dx = player_position.x - plant.position[0];
             let dy = player_position.y - plant.position[1];

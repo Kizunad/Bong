@@ -1158,9 +1158,6 @@ impl From<&ServerDataPayloadV1> for Payload {
             ServerDataPayloadV1::FalseSkinState(s) => {
                 Payload::FalseSkinState(false_skin_state_to_proto(s))
             }
-            ServerDataPayloadV1::LingtianSession(s) => {
-                Payload::LingtianSession(lingtian_session_to_proto(s))
-            }
             ServerDataPayloadV1::DeathScreen {
                 visible,
                 cause,
@@ -2588,36 +2585,6 @@ fn false_skin_state_to_proto(s: &super::tuike::FalseSkinStateV1) -> bong::FalseS
                 permanent_taint_load: l.permanent_taint_load,
             })
             .collect(),
-    }
-}
-
-fn lingtian_session_kind_to_proto(k: &super::lingtian::LingtianSessionKindV1) -> i32 {
-    use super::lingtian::LingtianSessionKindV1;
-    match k {
-        LingtianSessionKindV1::Till => bong::LingtianSessionKind::Till as i32,
-        LingtianSessionKindV1::Renew => bong::LingtianSessionKind::Renew as i32,
-        LingtianSessionKindV1::Planting => bong::LingtianSessionKind::Planting as i32,
-        LingtianSessionKindV1::Harvest => bong::LingtianSessionKind::Harvest as i32,
-        LingtianSessionKindV1::Replenish => bong::LingtianSessionKind::Replenish as i32,
-        LingtianSessionKindV1::DrainQi => bong::LingtianSessionKind::DrainQi as i32,
-    }
-}
-
-fn lingtian_session_to_proto(
-    s: &super::lingtian::LingtianSessionDataV1,
-) -> bong::LingtianSessionData {
-    bong::LingtianSessionData {
-        active: s.active,
-        kind: lingtian_session_kind_to_proto(&s.kind),
-        pos_x: s.pos[0],
-        pos_y: s.pos[1],
-        pos_z: s.pos[2],
-        elapsed_ticks: s.elapsed_ticks,
-        target_ticks: s.target_ticks,
-        plant_id: s.plant_id.clone(),
-        source: s.source.clone(),
-        dye_contamination: s.dye_contamination,
-        dye_contamination_warning: s.dye_contamination_warning,
     }
 }
 
@@ -4168,64 +4135,6 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 container_entity_id: *container_entity_id,
             }),
             ClientRequestV1::CancelSearch { .. } => Payload::CancelSearch(bong::CancelSearch {}),
-            // ─── 灵田 C2S ────────────────────────────────────────
-            ClientRequestV1::LingtianStartTill {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                mode,
-                ..
-            } => Payload::LingtianStartTill(bong::LingtianStartTill {
-                x: *x,
-                y: *y,
-                z: *z,
-                hoe_instance_id: *hoe_instance_id,
-                mode: mode.clone(),
-            }),
-            ClientRequestV1::LingtianStartRenew {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                ..
-            } => Payload::LingtianStartRenew(bong::LingtianStartRenew {
-                x: *x,
-                y: *y,
-                z: *z,
-                hoe_instance_id: *hoe_instance_id,
-            }),
-            ClientRequestV1::LingtianStartPlanting {
-                x, y, z, plant_id, ..
-            } => Payload::LingtianStartPlanting(bong::LingtianStartPlanting {
-                x: *x,
-                y: *y,
-                z: *z,
-                plant_id: plant_id.clone(),
-            }),
-            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
-                Payload::LingtianStartHarvest(bong::LingtianStartHarvest {
-                    x: *x,
-                    y: *y,
-                    z: *z,
-                    mode: mode.clone(),
-                })
-            }
-            ClientRequestV1::LingtianStartReplenish {
-                x, y, z, source, ..
-            } => Payload::LingtianStartReplenish(bong::LingtianStartReplenish {
-                x: *x,
-                y: *y,
-                z: *z,
-                source: source.clone(),
-            }),
-            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
-                Payload::LingtianStartDrainQi(bong::LingtianStartDrainQi {
-                    x: *x,
-                    y: *y,
-                    z: *z,
-                })
-            }
             // ─── 锻造 C2S ────────────────────────────────────────
             ClientRequestV1::ForgeStartSession {
                 station_pos,

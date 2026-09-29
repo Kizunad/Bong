@@ -44,7 +44,9 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
             .orElse(BotanyPlantRenderProfile.fallback(entity.plantId()));
         BotanyPlantVisualState visual = BotanyPlantVisualState.forStage(
             entity.growthStage(),
-            profile.tintAt(entity.getWorld().getTime()),
+            PlantModelRegistry.tint(entity.plantId()).present()
+                ? PlantModelRegistry.tint(entity.plantId()).value()
+                : profile.tintAt(entity.getWorld().getTime()),
             entity.age,
             tickDelta
         );
@@ -58,12 +60,14 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
         matrices.push();
         try {
             matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - dispatcher.camera.getYaw()));
-            matrices.translate(0.0, 0.02, 0.0);
-            matrices.scale(visual.scale(), visual.scale(), visual.scale());
+            PlantModelRegistry.PlantStageModel model = PlantModelRegistry.stage(entity.plantId(), entity.growthStage()).orElse(null);
+            matrices.translate(model == null ? 0.0 : model.offsetX(), 0.02 + (model == null ? 0.0 : model.offsetY()), model == null ? 0.0 : model.offsetZ());
+            float modelScale = model == null ? 1.0f : model.scale();
+            matrices.scale(visual.scale() * modelScale, visual.scale() * modelScale, visual.scale() * modelScale);
             if (visual.swayRadians() != 0.0f) {
                 matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
             }
-            Identifier texture = textureFor(profile.baseMeshRef());
+            Identifier texture = textureFor(entity.plantId(), entity.growthStage(), profile.baseMeshRef());
             drawPlantQuad(
                 consumers,
                 matrices,
@@ -146,6 +150,12 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
                 .getId();
         }
         return new Identifier("minecraft", "textures/block/grass.png");
+    }
+
+    static Identifier textureFor(String plantId, PlantGrowthStage stage, String baseMeshRef) {
+        return PlantModelRegistry.stage(plantId, stage)
+            .map(PlantModelRegistry.PlantStageModel::texture)
+            .orElseGet(() -> textureFor(baseMeshRef));
     }
 
     private static Block blockFor(String baseMeshRef) {

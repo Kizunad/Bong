@@ -170,13 +170,12 @@ from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     DISCONNECT_SETTLE_SECONDS,
     _reconnectable_session,
 )
-from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
+from bot.scenarios.production_botany_gathering import (  # noqa: E402
     BOTANY_FIXTURE_PREFIX,
     HERB_ID,
     _is_matching_gathering_terminal,
     _is_matching_harvest,
     _parse_botany_fixture,
-    _surface_candidates,
     _valid_target_pos,
     _wait_gather_progress,
 )
@@ -216,7 +215,7 @@ from bot.run_scenarios import (  # noqa: E402
 # decoder dispatch are reviewed.  The rows are field tags because three
 # historical scenario labels intentionally differ from proto spelling.
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX = {
-    field: ("protocol_identity",) for field in range(1, 143)
+    field: ("protocol_identity",) for field in (*range(1, 31), *range(32, 144))
 }
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
@@ -1733,44 +1732,7 @@ class ServerDataDecodeTest(unittest.TestCase):
             },
         )
 
-        lingtian = (
-            _pb_varint(1, 1)
-            + _pb_varint(2, 4)
-            + _pb_varint(3, (1 << 64) - 2)
-            + _pb_varint(4, 72)
-            + _pb_varint(5, 31)
-            + _pb_varint(6, 18)
-            + _pb_varint(7, 20)
-            + _pb_string(8, "qingcao")
-            + _pb_fixed32(10, 0.35)
-            + _pb_varint(11, 1)
-        )
-        decoded = decode_server_data_payload(_pb_message(31, lingtian))
-        self.assertEqual(
-            {key: decoded[key] for key in decoded if key != "dye_contamination"},
-            {
-                "v": 1,
-                "type": "lingtian_session",
-                "active": True,
-                "kind": "harvest",
-                "pos": [-2, 72, 31],
-                "elapsed_ticks": 18,
-                "target_ticks": 20,
-                "plant_id": "qingcao",
-                "source": None,
-                "dye_contamination_warning": True,
-            },
-        )
-        self.assertAlmostEqual(decoded["dye_contamination"], 0.35, places=6)
-
     def test_optional_numeric_fields_ignore_wrong_wire_type_and_use_last_typed_value(self):
-        malformed_lingtian = _pb_varint(10, 1)
-        decoded = decode_server_data_payload(_pb_message(31, malformed_lingtian))
-        self.assertIsNone(
-            decoded["dye_contamination"],
-            "同字段号但错误 wire type 不能伪装成 optional float32=0.0",
-        )
-
         malformed_alchemy = (
             _pb_varint(4, 1)
             + _pb_string(5, "not-a-double")
@@ -1785,15 +1747,6 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertIsNone(
             decoded["toxin_color"],
             "同字段号但错误 wire type 不能伪装成 optional enum unspecified",
-        )
-
-        mixed_lingtian = _pb_varint(10, 1) + _pb_fixed32(10, 0.25) + _pb_fixed32(10, 0.75)
-        decoded = decode_server_data_payload(_pb_message(31, mixed_lingtian))
-        self.assertAlmostEqual(
-            decoded["dye_contamination"],
-            0.75,
-            places=6,
-            msg="错误 wire 应按 unknown field 忽略，正确 float32 取最后一个 typed value",
         )
 
         mixed_alchemy = _pb_string(4, "ignored") + _pb_fixed64(4, 0.2) + _pb_fixed64(4, 0.8)
@@ -1868,7 +1821,6 @@ class ServerDataDecodeTest(unittest.TestCase):
         expected_envelope = {
             "botany_harvest_progress": ("BotanyHarvestProgress", 25, "single"),
             "gathering_session": ("GatheringSession", 30, "single"),
-            "lingtian_session": ("LingtianSessionData", 31, "single"),
             "alchemy_outcome_resolved": ("AlchemyOutcomeResolved", 14, "single"),
         }
         for field_name, expected in expected_envelope.items():
@@ -1893,14 +1845,6 @@ class ServerDataDecodeTest(unittest.TestCase):
                 "quality_hint": ("GatheringQualityHint", 6, "single"),
                 "tool_used": ("string", 7, "optional"), "interrupted": ("bool", 8, "single"),
                 "completed": ("bool", 9, "single"),
-            },
-            "LingtianSessionData": {
-                "active": ("bool", 1, "single"), "kind": ("LingtianSessionKind", 2, "single"),
-                "pos_x": ("int32", 3, "single"), "pos_y": ("int32", 4, "single"),
-                "pos_z": ("int32", 5, "single"), "elapsed_ticks": ("uint32", 6, "single"),
-                "target_ticks": ("uint32", 7, "single"), "plant_id": ("string", 8, "optional"),
-                "source": ("string", 9, "optional"), "dye_contamination": ("float", 10, "optional"),
-                "dye_contamination_warning": ("bool", 11, "single"),
             },
             "AlchemyOutcomeResolved": {
                 "bucket": ("AlchemyOutcomeBucket", 1, "single"), "recipe_id": ("string", 2, "optional"),
@@ -2879,19 +2823,6 @@ class ProductionScenarioContractTest(unittest.TestCase):
             },
             "hotbar": [],
         }
-
-    def test_lingtian_surface_candidates_probe_three_support_depths(self):
-        bot = types.SimpleNamespace(position=(-0.2, 74.9, 3.8))
-
-        candidates = _surface_candidates(bot)
-
-        self.assertEqual(candidates[:3], [(-1, 73, 3), (-1, 72, 3), (-1, 71, 3)])
-        self.assertEqual(len(candidates), 39)
-        self.assertEqual(
-            len(set(candidates)),
-            39,
-            "13 个水平点各自向下三层时不应重复，否则会浪费真实 intent 等待窗口",
-        )
 
     def test_spiritwood_terminal_timeout_covers_240_ticks_at_two_tps(self):
         minimum_runtime = 240 / 2
@@ -7682,7 +7613,7 @@ class CultivationRealmQiScenarioTest(unittest.TestCase):
         self.assertEqual(result.t, 2.0)
 
 
-class LingtianScenarioFilteringTest(unittest.TestCase):
+class BotanyGatheringScenarioFilteringTest(unittest.TestCase):
     PLAYER_POS = (10.0, 64.0, -4.0)
     FIXTURE_ID = "plant-42"
     FIXTURE_POS = [11.0, 64.0, -4.0]
@@ -8862,7 +8793,7 @@ class ProtoMinTest(unittest.TestCase):
 
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
-        self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "field_31")
         self.assertEqual(
             proto_min.server_data_payload_name(_pb_len_field(34, b"")),
             "cast_sync",
@@ -11098,11 +11029,6 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["target_type"], "unknown_99")
         self.assertEqual(decoded["quality_hint"], "unknown_98")
 
-        decoded = proto_min.decode_server_data_envelope(
-            _pb_len_field(31, _pb_varint_field(2, 97))
-        )
-        self.assertEqual(decoded["kind"], "unknown_97")
-
         outcome = _pb_varint_field(1, 96) + _pb_varint_field(6, 95)
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(14, outcome))
         self.assertEqual(decoded["bucket"], "unknown_96")
@@ -12699,7 +12625,7 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 
     S1 在 decode_server_data_envelope 注册了 botany_harvest_progress(25) /
-    gathering_session(30) / lingtian_session(31) / skill_bar_config(36) /
+    gathering_session(30) / skill_bar_config(36) /
     breakthrough_cinematic(71)，并改写了 player_state(5)（新增 realm）与
     alchemy_outcome_resolved(14)（bucket 转枚举名、可空字段、toxin_color）。
     这些解码器此前只在 test_protocol.py 初始化了 fixture，没有任何 field→值
@@ -12786,46 +12712,6 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
         decoded = proto_min.decode_server_data_envelope(_pb_message(30, msg))
         self.assertIsNone(decoded["tool_used"], "缺 field 7 时 tool_used 应为 None")
         self.assertEqual(decoded["target_type"], "herb")
-
-    def test_lingtian_session_tag31_decodes_kind_pos_and_optional(self):
-        msg = (
-            _pb_varint(1, 1)
-            + _pb_varint(2, 3)  # LINGTIAN_SESSION_KIND_PLANTING
-            + _pb_int32_field(3, 100)
-            + _pb_int32_field(4, 72)
-            + _pb_int32_field(5, -50)
-            + _pb_varint(6, 12)
-            + _pb_varint(7, 60)
-            + _pb_string(8, "spirit_rice")
-            + _pb_string(9, "player:Alice")
-            + _pb_float32_field(10, 0.15)
-            + _pb_varint(11, 1)
-        )
-        decoded = proto_min.decode_server_data_envelope(_pb_message(31, msg))
-        self.assertEqual(decoded["type"], "lingtian_session")
-        self.assertTrue(decoded["active"])
-        self.assertEqual(decoded["kind"], "planting")
-        self.assertEqual(
-            decoded["pos"],
-            [100, 72, -50],
-            "pos_x/y/z 是 field 3/4/5（int32，含负坐标补码），平铺成 pos",
-        )
-        self.assertEqual(decoded["elapsed_ticks"], 12)
-        self.assertEqual(decoded["target_ticks"], 60)
-        self.assertEqual(decoded["plant_id"], "spirit_rice")
-        self.assertEqual(decoded["source"], "player:Alice")
-        self.assertAlmostEqual(decoded["dye_contamination"], 0.15, places=4)
-        self.assertTrue(decoded["dye_contamination_warning"])
-
-    def test_lingtian_session_empty_message_defaults(self):
-        decoded = proto_min.decode_server_data_envelope(_pb_message(31, b""))
-        self.assertFalse(decoded["active"])
-        self.assertEqual(decoded["kind"], "unspecified")
-        self.assertEqual(decoded["pos"], [0, 0, 0])
-        self.assertIsNone(decoded["plant_id"])
-        self.assertIsNone(decoded["source"])
-        self.assertIsNone(decoded["dye_contamination"])
-        self.assertFalse(decoded["dye_contamination_warning"])
 
     def test_skill_bar_config_tag36_decodes_item_skill_and_empty_slots(self):
         item = (
@@ -13011,7 +12897,6 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
             (14, "alchemy_outcome_resolved"),
             (25, "botany_harvest_progress"),
             (30, "gathering_session"),
-            (31, "lingtian_session"),
             (36, "skillbar_config"),
             (71, "breakthrough_cinematic"),
         ):

@@ -22,7 +22,6 @@ import {
   validateTsyExitEventV1Contract,
   validateTsyZoneActivatedV1Contract,
   validateWeatherEventUpdateV1Contract,
-  validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 import type {
   AgentWorldModelEnvelopeV1,
@@ -49,7 +48,6 @@ import type {
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
-  ZonePressureCrossedV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
@@ -71,7 +69,6 @@ const {
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   RAT_PHASE_EVENT,
   WEATHER_EVENT_UPDATE,
@@ -162,7 +159,6 @@ export interface CrossSystemRuntimeEventV1 {
 const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   AGING,
   LIFESPAN_EVENT,
@@ -266,7 +262,6 @@ export class RedisIpc {
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
-  private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
   private pendingTsyRuntimeOverflowDropped = 0;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
@@ -281,7 +276,6 @@ export class RedisIpc {
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private faunaEcologyCallbacks: Array<(event: FaunaEcologySnapshotV1) => void> = [];
-  private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -316,11 +310,6 @@ export class RedisIpc {
 
     if (channel === FAUNA_ECOLOGY) {
       this.handleFaunaEcologyMessage(message);
-      return;
-    }
-
-    if (channel === ZONE_PRESSURE_CROSSED) {
-      this.handleZonePressureCrossedMessage(message);
       return;
     }
 
@@ -617,32 +606,6 @@ export class RedisIpc {
         this.latestBotanyEcologyEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
     }
     for (const cb of this.botanyEcologyCallbacks) {
-      cb(event);
-    }
-  }
-
-  private handleZonePressureCrossedMessage(message: string): void {
-    try {
-      const data = JSON.parse(message) as unknown;
-      const result = validateZonePressureCrossedV1Contract(data);
-      if (!result.ok) {
-        console.warn("[redis-ipc] invalid zone pressure crossed event:", result.errors.join("; "));
-        return;
-      }
-      this.recordZonePressureCrossedEvent(data as ZonePressureCrossedV1);
-      this.recordCrossSystemEvent({ channel: ZONE_PRESSURE_CROSSED, payload: data });
-    } catch (e) {
-      console.warn("[redis-ipc] failed to parse zone pressure crossed event:", e);
-    }
-  }
-
-  private recordZonePressureCrossedEvent(event: ZonePressureCrossedV1): void {
-    this.latestZonePressureCrossedEvents.push(event);
-    if (this.latestZonePressureCrossedEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
-      this.latestZonePressureCrossedEvents =
-        this.latestZonePressureCrossedEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
-    }
-    for (const cb of this.zonePressureCrossedCallbacks) {
       cb(event);
     }
   }
@@ -962,16 +925,6 @@ export class RedisIpc {
 
   onFaunaEcology(cb: (event: FaunaEcologySnapshotV1) => void): void {
     this.faunaEcologyCallbacks.push(cb);
-  }
-
-  drainZonePressureCrossedEvents(): ZonePressureCrossedV1[] {
-    const events = [...this.latestZonePressureCrossedEvents];
-    this.latestZonePressureCrossedEvents = [];
-    return events;
-  }
-
-  onZonePressureCrossed(cb: (event: ZonePressureCrossedV1) => void): void {
-    this.zonePressureCrossedCallbacks.push(cb);
   }
 
   async publishCommands(request: CommandPublishRequest): Promise<void> {

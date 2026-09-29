@@ -70,7 +70,6 @@ class ProtoServerDataBridgeTest {
         com.bong.client.gathering.GatheringSessionStore.resetForTests();
         com.bong.client.insight.InsightOfferStore.resetForTests();
         com.bong.client.scroll.ScrollReadStore.resetForTests();
-        com.bong.client.lingtian.state.LingtianSessionStore.clearOnDisconnect();
     }
 
     @Test
@@ -2976,22 +2975,6 @@ class ProtoServerDataBridgeTest {
                 + "否则极品品质提示标签永不显示");
     }
 
-    @Test
-    void bridgeLingtianSessionStripsKindEnumPrefix() {
-        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-                .setLingtianSession(Envelope.LingtianSessionData.newBuilder()
-                        .setActive(true)
-                        .setKind(Envelope.LingtianSessionKind.LINGTIAN_SESSION_KIND_PLANTING)
-                        .setPosX(1)
-                        .setPosY(2)
-                        .setPosZ(3))
-                .build();
-
-        JsonObject json = bridgeAndParse(envelope);
-        assertEquals("planting", json.get("kind").getAsString(),
-                "kind 必须剥成 'planting'（LingtianSessionStore.Kind.fromWire switch），"
-                + "否则灵田 HUD 恒标 '开垦' 无论实际种植/收获/翻新/补灵/吸灵");
-    }
 
     @Test
     void bridgeCarrierStateStripsPhaseEnumPrefix() {

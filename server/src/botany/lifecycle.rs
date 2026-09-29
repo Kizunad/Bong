@@ -102,7 +102,7 @@ fn splitmix(seed: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-fn spawn_seed(now_tick: u64, kind: BotanyPlantId, spawn_idx: u32) -> u64 {
+fn spawn_seed(now_tick: u64, kind: &BotanyPlantId, spawn_idx: u32) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -156,7 +156,7 @@ fn spawn_v2_plants_for_zone(
             continue;
         };
         let Some((position, growth_score)) =
-            v2_candidate_position(kind.id, spec.survival_mode, zone, terrain, now_tick)
+            v2_candidate_position(&kind.id, spec.survival_mode, zone, terrain, now_tick)
         else {
             continue;
         };
@@ -177,12 +177,12 @@ fn spawn_v2_plants_for_zone(
         if target_count == 0 {
             continue;
         }
-        let count_key = (zone.name.clone(), kind.id);
+        let count_key = (zone.name.clone(), kind.id.clone());
         let current_count = active_counts.get(&count_key).copied().unwrap_or(0);
         for spawn_idx in current_count..target_count {
-            let seed = spawn_seed(now_tick, kind.id, spawn_idx);
+            let seed = spawn_seed(now_tick, &kind.id, spawn_idx);
             commands.spawn(Plant {
-                id: kind.id,
+                id: kind.id.clone(),
                 zone_name: zone.name.clone(),
                 position,
                 planted_at_tick: now_tick,
@@ -203,7 +203,7 @@ fn spawn_v2_plants_for_zone(
 }
 
 fn v2_candidate_position(
-    kind: BotanyPlantId,
+    kind: &BotanyPlantId,
     survival_mode: SurvivalMode,
     zone: &Zone,
     terrain: &crate::world::terrain::TerrainProvider,
@@ -314,7 +314,7 @@ pub fn initialize_static_points_from_zones(
     let mut next_id = 1_u64;
     for zone in &zone_registry.zones {
         for mut point in spawn_static_points_for_zone(zone) {
-            let Some(kind) = registry.get(point.preferred_plant) else {
+            let Some(kind) = registry.get(&point.preferred_plant) else {
                 continue;
             };
             if kind.spawn_mode != BotanySpawnMode::StaticPoint || !zone_supports(kind, zone) {
@@ -384,7 +384,7 @@ pub fn run_botany_lifecycle_tick(
             wither_targets.push(entity);
             continue;
         }
-        let Some(kind) = registry.get(plant.id) else {
+        let Some(kind) = registry.get(&plant.id) else {
             continue;
         };
 
@@ -447,7 +447,7 @@ pub fn run_botany_lifecycle_tick(
         }
 
         *active_counts
-            .entry((plant.zone_name.clone(), plant.id))
+            .entry((plant.zone_name.clone(), plant.id.clone()))
             .or_default() += 1;
     }
 
@@ -500,14 +500,14 @@ pub fn run_botany_lifecycle_tick(
                 continue;
             }
 
-            let count_key = (zone.name.clone(), kind.id);
+            let count_key = (zone.name.clone(), kind.id.clone());
             let current_count = active_counts.get(&count_key).copied().unwrap_or(0);
             for spawn_idx in current_count..target_count {
                 if zone.spirit_qi < spawn_threshold {
                     break;
                 }
 
-                let seed = spawn_seed(now_tick, kind.id, spawn_idx);
+                let seed = spawn_seed(now_tick, &kind.id, spawn_idx);
                 let position = zone_sampled_position(seed, zone);
                 let variant = roll_variant_for_zone(
                     zone,
@@ -515,7 +515,7 @@ pub fn run_botany_lifecycle_tick(
                     variant_roll.as_ref(),
                 );
                 commands.spawn(Plant {
-                    id: kind.id,
+                    id: kind.id.clone(),
                     zone_name: zone.name.clone(),
                     position,
                     planted_at_tick: now_tick,
@@ -541,7 +541,7 @@ pub fn run_botany_lifecycle_tick(
         if is_ephemeral_pseudo_vein_zone(zone) {
             continue;
         }
-        let Some(kind) = registry.get(point.preferred_plant) else {
+        let Some(kind) = registry.get(&point.preferred_plant) else {
             continue;
         };
         if kind.spawn_mode != BotanySpawnMode::StaticPoint || !zone_supports(kind, zone) {
@@ -566,7 +566,7 @@ pub fn run_botany_lifecycle_tick(
         );
         let entity = commands
             .spawn(Plant {
-                id: point.preferred_plant,
+                id: point.preferred_plant.clone(),
                 zone_name: point.zone_name.clone(),
                 position: point.position,
                 planted_at_tick: now_tick,
@@ -608,16 +608,16 @@ fn plant_spirit_quality(
     item_registry: Option<&ItemRegistry>,
 ) -> f32 {
     let base = item_registry
-        .and_then(|registry| registry.get(kind.item_id))
+        .and_then(|registry| registry.get(&kind.item_id))
         .map(|template| template.spirit_quality_initial)
         .unwrap_or_else(|| f64::from(kind.survive_threshold.max(0.5)));
     (base + variant.quality_modifier()).clamp(0.0, 1.0) as f32
 }
 
-fn botany_stage_event_id(plant_id: BotanyPlantId, stage: PlantGrowthStage) -> String {
+fn botany_stage_event_id(plant_id: impl AsRef<str>, stage: PlantGrowthStage) -> String {
     format!(
         "{BOTANY_PLANT_STAGE_EVENT_PREFIX}__{}__{}",
-        plant_id.as_str(),
+        plant_id.as_ref(),
         stage.as_wire_name()
     )
 }
@@ -632,7 +632,7 @@ fn emit_botany_plant_stage_vfx(
     vfx_events.send(VfxEventRequest::new(
         valence::prelude::DVec3::new(origin[0], origin[1], origin[2]),
         VfxEventPayloadV1::SpawnParticle {
-            event_id: botany_stage_event_id(plant.id, stage),
+            event_id: botany_stage_event_id(&plant.id, stage),
             origin,
             direction: None,
             color: Some(botany_quality_color(spirit_quality).to_string()),

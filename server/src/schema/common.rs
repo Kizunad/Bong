@@ -66,7 +66,6 @@ pub enum NarrationKind {
     DeathInsight,
     NicheIntrusion,
     NicheIntrusionByNpc,
-    NpcFarmPressure,
     ScatteredCultivator,
     PoliticalJianghu,
     // bug-hunt-1: agent 端 TypeBox（agent/packages/schema/src/common.ts:81-87）有这 6 个

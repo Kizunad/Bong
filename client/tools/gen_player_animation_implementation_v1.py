@@ -153,7 +153,6 @@ def generate_npc_and_interaction() -> None:
     loop("npc_flee_run", "NPC 逃跑奔跑：身体前倾，高频摆臂。", dict(torso=dict(pitch=20), rightArm=dict(pitch=-35), leftArm=dict(pitch=35), rightLeg=dict(pitch=35), leftLeg=dict(pitch=-35)), end_tick=12)
     loop("forge_hammer", "锻造锤击：右臂举起并下砸循环。", dict(torso=dict(pitch=10), rightArm=dict(pitch=-110, bend=25)), end_tick=8)
     loop("alchemy_stir", "炼丹搅拌：右臂沿丹炉方向环动读数。", dict(torso=dict(pitch=12, yaw=8), rightArm=dict(pitch=-70, yaw=-20, roll=30, bend=45)), end_tick=16)
-    once("lingtian_till", "灵田翻土：右臂挥锄，身体下压。", dict(body=dict(y=0.12), torso=dict(pitch=24), rightArm=dict(pitch=-105, bend=25)), end_tick=6, stop_tick=8)
     once("inventory_reach", "背包翻找：右手探向腰侧。", dict(torso=dict(yaw=-14), rightArm=dict(pitch=-45, yaw=-35, bend=70)), end_tick=4, stop_tick=6)
 
 

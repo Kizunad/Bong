@@ -6,6 +6,7 @@ public final class BotanyPlantRenderBootstrap {
     private BotanyPlantRenderBootstrap() {}
 
     public static void register() {
+        PlantModelRegistry.register();
         BotanyPlantV2Entities.register();
         EntityRendererRegistry.register(
             BotanyPlantV2Entities.botanyPlantV2(),

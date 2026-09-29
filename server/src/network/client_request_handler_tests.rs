@@ -232,7 +232,6 @@ fn load_test_technique_registry() -> TechniqueRegistry {
 fn register_explosion_test_resources(app: &mut App) {
     app.insert_resource(CombatClock::default());
     app.init_resource::<ClientRequestBudget>();
-    app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
     app.insert_resource(crate::cultivation::skill_registry::init_registry());
     app.insert_resource(load_test_technique_registry());
     app.insert_resource(SkillMeridianDependencies::default());
@@ -269,12 +268,6 @@ fn register_explosion_test_resources(app: &mut App) {
     app.add_event::<crate::fauna::dying_elder::GiveDanToElderIntent>();
     app.add_event::<crate::craft::WorkbenchOpenRequest>();
     app.add_event::<crate::world::container_open::ContainerOpenRequest>();
-    app.add_event::<crate::lingtian::events::StartTillRequest>();
-    app.add_event::<crate::lingtian::events::StartRenewRequest>();
-    app.add_event::<crate::lingtian::events::StartPlantingRequest>();
-    app.add_event::<crate::lingtian::events::StartHarvestRequest>();
-    app.add_event::<crate::lingtian::events::StartReplenishRequest>();
-    app.add_event::<crate::lingtian::events::StartDrainQiRequest>();
     app.add_event::<StartExtractRequestEvent>();
     app.add_event::<CancelExtractRequestEvent>();
     app.add_event::<QiColorInspectRequest>();
@@ -304,16 +297,11 @@ fn register_explosion_test_resources(app: &mut App) {
 }
 
 fn register_explosion_test_systems(app: &mut App) {
-    crate::network::register_lingtian_ingress_wiring(app);
+    crate::network::register_client_request_ingress(app);
     app.add_systems(
         Update,
         crate::network::inventory_event_emit::emit_durability_changed_inventory_events
-            .after(crate::lingtian::LingtianRequestIngressSet),
-    );
-    app.add_systems(
-        Update,
-        crate::lingtian::systems::validate_and_dispatch_lingtian_requests
-            .after(crate::lingtian::LingtianRequestIngressSet),
+            .after(handle_client_request_payloads),
     );
     app.add_systems(
         Update,
@@ -1426,42 +1414,6 @@ mod skill_bar_ownership_gate_tests {
             kt.entries
         );
     }
-
-    #[test]
-    fn lingtian_plot_index_tracks_authoritative_positions() {
-        let mut app = App::new();
-        app.init_resource::<LingtianPlotIndex>();
-        app.add_systems(Update, refresh_lingtian_plot_index);
-
-        let first = BlockPos::new(-3, 64, 7);
-        let second = BlockPos::new(9, 65, -11);
-        let first_entity = app.world_mut().spawn(LingtianPlot::new(first, None)).id();
-        app.world_mut().spawn(LingtianPlot::new(second, None));
-
-        app.update();
-        let index = app.world().resource::<LingtianPlotIndex>();
-        assert!(
-            index.contains(&first),
-            "the refreshed index must admit the first authoritative plot position"
-        );
-        assert!(
-            index.contains(&second),
-            "the refreshed index must admit the second authoritative plot position"
-        );
-
-        app.world_mut().despawn(first_entity);
-        app.update();
-        assert!(
-            !app.world().resource::<LingtianPlotIndex>().contains(&first),
-            "despawned plots must disappear from the next ingress index snapshot"
-        );
-        assert!(
-            app.world()
-                .resource::<LingtianPlotIndex>()
-                .contains(&second),
-            "remaining plots must stay addressable after index refresh"
-        );
-    }
 }
 
 // 公开 ingress 契约测试回归登记在父模块内，避免为测试新增生产可见性 seam。
@@ -1556,8 +1508,6 @@ mod external_ingress_tests {
         DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
         DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
     };
-    use crate::lingtian::session::{ReplenishSource, SessionMode};
-    use crate::lingtian::LingtianPlot;
     use crate::mineral::probe::is_probe_target_in_range;
     use crate::mineral::MineralProbeIntent;
     use crate::movement::{MovementAction, MovementActionIntent};
@@ -1660,10 +1610,6 @@ mod external_ingress_tests {
         use crate::inventory::{
             BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
             ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
-        };
-        use crate::lingtian::events::{
-            StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-            StartReplenishRequest, StartTillRequest,
         };
         use crate::npc::faction::{
             FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
@@ -3720,7 +3666,7 @@ mod external_ingress_tests {
         #[test]
         fn alchemy_take_back_missing_allocator_preserves_collectable_session() {
             let mut app = App::new();
-            register_request_resources_without_lingtian(&mut app);
+            register_request_resources(&mut app);
             register_request_systems(&mut app);
             // The shared fixture initializes the allocator for ordinary alchemy
             // paths; this contract specifically exercises the missing-resource
@@ -4180,537 +4126,6 @@ mod external_ingress_tests {
             app.insert_resource(sessions);
         }
 
-        /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
-        /// actor 与 action 专属字段（hoe_instance_id / mode / plant_id / source），
-        /// 让 validator→queue→handler 契约的任何字段丢失都撞红（fix-spec §9.4）。
-        #[derive(Debug, PartialEq)]
-        struct LingtianDispatchCapture {
-            kind: &'static str,
-            pos: BlockPos,
-            player: Entity,
-            hoe_instance_id: Option<u64>,
-            mode: Option<SessionMode>,
-            plant_id: Option<String>,
-            source: Option<ReplenishSource>,
-        }
-
-        fn drain_lingtian_request_captures(app: &mut App) -> Vec<LingtianDispatchCapture> {
-            let world = app.world_mut();
-            let mut captured = Vec::new();
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartTillRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "till",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: Some(event.hoe_instance_id),
-                        mode: Some(event.mode),
-                        plant_id: None,
-                        source: None,
-                    }),
-            );
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartRenewRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "renew",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: Some(event.hoe_instance_id),
-                        mode: None,
-                        plant_id: None,
-                        source: None,
-                    }),
-            );
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartPlantingRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "planting",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: None,
-                        mode: None,
-                        plant_id: Some(event.plant_id),
-                        source: None,
-                    }),
-            );
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartHarvestRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "harvest",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: None,
-                        mode: Some(event.mode),
-                        plant_id: None,
-                        source: None,
-                    }),
-            );
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartReplenishRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "replenish",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: None,
-                        mode: None,
-                        plant_id: None,
-                        source: Some(event.source),
-                    }),
-            );
-            captured.extend(
-                world
-                    .resource_mut::<Events<StartDrainQiRequest>>()
-                    .drain()
-                    .map(|event| LingtianDispatchCapture {
-                        kind: "drain_qi",
-                        pos: event.pos,
-                        player: event.player,
-                        hoe_instance_id: None,
-                        mode: None,
-                        plant_id: None,
-                        source: None,
-                    }),
-            );
-            captured
-        }
-
-        fn run_lingtian_dispatch_case(
-            payload: serde_json::Value,
-            position: Option<DVec3>,
-            dimension: Option<DimensionKind>,
-        ) -> (Entity, Vec<LingtianDispatchCapture>) {
-            let mut app = App::new();
-            register_request_app(&mut app);
-            let (client_bundle, _helper) = create_mock_client("LingtianDispatch");
-            let client = app
-                .world_mut()
-                .spawn((client_bundle, Lifecycle::default()))
-                .id();
-            if let Some(position) = position {
-                app.world_mut()
-                    .entity_mut(client)
-                    .insert(Position::new(position));
-            }
-            if let Some(dimension) = dimension {
-                app.world_mut()
-                    .entity_mut(client)
-                    .insert(CurrentDimension(dimension));
-            }
-            // `LingtianStartTill` resolves its target from the authoritative plot
-            // store before entering the pending queue.  Keep the shared matrix
-            // helper's canonical target present so its boundary cases exercise
-            // the reach/dimension checks rather than the missing-target branch.
-            app.world_mut()
-                .spawn(LingtianPlot::new(BlockPos::new(0, 64, 0), None));
-            app.world_mut()
-                .resource_mut::<Events<CustomPayloadEvent>>()
-                .send(CustomPayloadEvent {
-                    client,
-                    channel: ident!("bong:client_request").into(),
-                    data: payload.to_string().into_bytes().into_boxed_slice(),
-                });
-            app.update();
-            (client, drain_lingtian_request_captures(&mut app))
-        }
-
-        #[test]
-        fn lingtian_c2s_dispatch_applies_shared_position_and_dimension_gate_to_all_actions() {
-            let target = BlockPos::new(0, 64, 0);
-            let boundary = DVec3::new(5.0, 64.5, 0.5);
-            let just_beyond = DVec3::new(5.000_001, 64.5, 0.5);
-            let cases = [
-                (
-                    "till",
-                    serde_json::json!({
-                        "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "hoe_instance_id": 7, "mode": "manual"
-                    }),
-                ),
-                (
-                    "renew",
-                    serde_json::json!({
-                        "type": "lingtian_start_renew", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "hoe_instance_id": 7
-                    }),
-                ),
-                (
-                    "planting",
-                    serde_json::json!({
-                        "type": "lingtian_start_planting", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "plant_id": "ci_she_hao"
-                    }),
-                ),
-                (
-                    "harvest",
-                    serde_json::json!({
-                        "type": "lingtian_start_harvest", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "mode": "manual"
-                    }),
-                ),
-                (
-                    "replenish",
-                    serde_json::json!({
-                        "type": "lingtian_start_replenish", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "source": "bone_coin"
-                    }),
-                ),
-                (
-                    "drain_qi",
-                    serde_json::json!({
-                        "type": "lingtian_start_drain_qi", "v": 1, "x": 0, "y": 64, "z": 0
-                    }),
-                ),
-            ];
-
-            for (kind, payload) in cases {
-                let (client, captures) = run_lingtian_dispatch_case(
-                    payload.clone(),
-                    Some(boundary),
-                    Some(DimensionKind::Overworld),
-                );
-                let expected = LingtianDispatchCapture {
-                    kind,
-                    pos: target,
-                    player: client,
-                    hoe_instance_id: (kind == "till" || kind == "renew").then_some(7),
-                    mode: (kind == "till" || kind == "harvest").then_some(SessionMode::Manual),
-                    plant_id: (kind == "planting").then(|| "ci_she_hao".to_string()),
-                    source: (kind == "replenish").then_some(ReplenishSource::BoneCoin),
-                };
-                assert_eq!(
-                    captures,
-                    vec![expected],
-                    "boundary Overworld {kind} request must preserve the full wire payload \
-                 (actor, BlockPos, and action-specific fields) and dispatch exactly once"
-                );
-                for (label, position, dimension) in [
-                    (
-                        "just beyond boundary",
-                        Some(just_beyond),
-                        Some(DimensionKind::Overworld),
-                    ),
-                    ("wrong dimension", Some(boundary), Some(DimensionKind::Tsy)),
-                    ("missing position", None, Some(DimensionKind::Overworld)),
-                    ("missing dimension", Some(boundary), None),
-                ] {
-                    assert!(
-                        run_lingtian_dispatch_case(payload.clone(), position, dimension)
-                            .1
-                            .is_empty(),
-                        "{label} {kind} request must be rejected before ECS dispatch"
-                    );
-                }
-            }
-
-            assert!(
-                run_lingtian_dispatch_case(
-                    serde_json::json!({
-                        "type": "lingtian_start_replenish", "v": 1,
-                        "x": 0, "y": 64, "z": 0, "source": "unknown_source"
-                    }),
-                    Some(boundary),
-                    Some(DimensionKind::Overworld),
-                )
-                .1
-                .is_empty(),
-                "unknown replenish source must preserve its existing parse rejection"
-            );
-        }
-
-        #[test]
-        fn lingtian_start_till_missing_plot_is_rejected_before_pending_queue() {
-            let mut app = App::new();
-            register_request_app(&mut app);
-            let (client_bundle, _helper) = create_mock_client("LingtianMissingTarget");
-            let client = app
-                .world_mut()
-                .spawn((
-                    client_bundle,
-                    Lifecycle::default(),
-                    CurrentDimension(DimensionKind::Overworld),
-                ))
-                .id();
-            app.world_mut()
-                .entity_mut(client)
-                .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
-
-            send_gate_test_payload(
-                &mut app,
-                client,
-                serde_json::json!({
-                    "type": "lingtian_start_till",
-                    "v": 1,
-                    "x": 99,
-                    "y": 64,
-                    "z": 99,
-                    "hoe_instance_id": 7,
-                    "mode": "manual"
-                }),
-            );
-            app.update();
-
-            assert!(
-                app.world_mut()
-                    .resource_mut::<Events<StartTillRequest>>()
-                    .drain()
-                    .next()
-                    .is_none(),
-                "a missing plot must not dispatch StartTillRequest"
-            );
-            assert!(
-                app.world_mut()
-                    .resource_mut::<Events<StartTillRequest>>()
-                    .drain()
-                    .next()
-                    .is_none(),
-                "a rejected missing-plot request must not leave a pending StartTillRequest"
-            );
-        }
-
-        #[test]
-        fn lingtian_start_till_accepts_authoritative_chunk_without_existing_plot() {
-            let scenario = ScenarioSingleClient::new();
-            let valence::testing::ScenarioSingleClient {
-                mut app,
-                client,
-                layer,
-                ..
-            } = scenario;
-            mark_test_layer_as_overworld(&mut app);
-            register_request_app(&mut app);
-
-            let target = BlockPos::new(0, 64, 0);
-            let mut chunk_layer = app
-                .world_mut()
-                .get_mut::<ChunkLayer>(layer)
-                .expect("ScenarioSingleClient must provide the authoritative overworld layer");
-            chunk_layer.insert_chunk([0, 0], UnloadedChunk::new());
-            chunk_layer.set_block(target, BlockState::DIRT);
-
-            app.world_mut().entity_mut(client).insert((
-                Lifecycle::default(),
-                CurrentDimension(DimensionKind::Overworld),
-                Position::new(DVec3::new(0.5, 64.5, 0.5)),
-            ));
-            send_gate_test_payload(
-                &mut app,
-                client,
-                serde_json::json!({
-                    "type": "lingtian_start_till",
-                    "v": 1,
-                    "x": target.x,
-                    "y": target.y,
-                    "z": target.z,
-                    "hoe_instance_id": 7,
-                    "mode": "manual"
-                }),
-            );
-            app.update();
-
-            assert_eq!(
-            drain_lingtian_request_captures(&mut app),
-            vec![LingtianDispatchCapture {
-                kind: "till",
-                pos: target,
-                player: client,
-                hoe_instance_id: Some(7),
-                mode: Some(SessionMode::Manual),
-                plant_id: None,
-                source: None,
-            }],
-            "a loaded authoritative world block must admit till ingress even before a LingtianPlot exists"
-        );
-            assert!(
-                drain_lingtian_request_captures(&mut app).is_empty(),
-                "an admitted till request must be consumed exactly once by the validator"
-            );
-        }
-
-        /// #13 — network ingress 集成契约：真实 producer → 真实 queue → 真实
-        /// validator 的多请求 wire FIFO。同 actor 一批三请求只 dispatch 第一条，
-        /// 其余保序回到队列；逐 tick 推进后按 wire 顺序逐条 dispatch。
-        #[test]
-        fn lingtian_c2s_ingress_queue_preserves_wire_fifo_order() {
-            let mut app = App::new();
-            register_request_app(&mut app);
-            let (client_bundle, _helper) = create_mock_client("LingtianFifo");
-            let client = app
-                .world_mut()
-                .spawn((client_bundle, Lifecycle::default()))
-                .id();
-            app.world_mut()
-                .entity_mut(client)
-                .insert(Position::new(DVec3::new(5.0, 64.5, 0.5)));
-            app.world_mut()
-                .entity_mut(client)
-                .insert(CurrentDimension(DimensionKind::Overworld));
-            app.world_mut()
-                .spawn(LingtianPlot::new(BlockPos::new(1, 64, 0), None));
-
-            let send = |app: &mut App, payload: serde_json::Value| {
-                app.world_mut()
-                    .resource_mut::<Events<CustomPayloadEvent>>()
-                    .send(CustomPayloadEvent {
-                        client,
-                        channel: ident!("bong:client_request").into(),
-                        data: payload.to_string().into_bytes().into_boxed_slice(),
-                    });
-            };
-            send(
-                &mut app,
-                serde_json::json!({
-                    "type": "lingtian_start_till", "v": 1, "x": 1, "y": 64, "z": 0,
-                    "hoe_instance_id": 7, "mode": "manual"
-                }),
-            );
-            send(
-                &mut app,
-                serde_json::json!({
-                    "type": "lingtian_start_harvest", "v": 1, "x": 2, "y": 64, "z": 0,
-                    "mode": "manual"
-                }),
-            );
-            send(
-                &mut app,
-                serde_json::json!({
-                    "type": "lingtian_start_planting", "v": 1, "x": 3, "y": 64, "z": 0,
-                    "plant_id": "ci_she_hao"
-                }),
-            );
-
-            app.update();
-            assert_eq!(
-                drain_lingtian_request_captures(&mut app),
-                vec![LingtianDispatchCapture {
-                    kind: "till",
-                    pos: BlockPos::new(1, 64, 0),
-                    player: client,
-                    hoe_instance_id: Some(7),
-                    mode: Some(SessionMode::Manual),
-                    plant_id: None,
-                    source: None,
-                }],
-                "first wire request dispatches first"
-            );
-            assert!(
-                drain_lingtian_request_captures(&mut app).is_empty(),
-                "the first validator pass must dispatch only the first wire request"
-            );
-
-            app.update();
-            assert_eq!(
-                drain_lingtian_request_captures(&mut app)
-                    .iter()
-                    .map(|capture| capture.kind)
-                    .collect::<Vec<_>>(),
-                vec!["harvest"],
-                "second wire request dispatches second"
-            );
-            assert!(
-                drain_lingtian_request_captures(&mut app).is_empty(),
-                "the second validator pass must dispatch only the second wire request"
-            );
-
-            app.update();
-            assert_eq!(
-                drain_lingtian_request_captures(&mut app)
-                    .iter()
-                    .map(|capture| capture.kind)
-                    .collect::<Vec<_>>(),
-                vec!["planting"],
-                "third wire request dispatches last"
-            );
-            assert!(
-                drain_lingtian_request_captures(&mut app).is_empty(),
-                "the third validator pass must drain the final wire request exactly once"
-            );
-        }
-
-        /// #16 — 生产装配回归：`LingtianRequestIngressSet` 的排序边是 producer 先于
-        /// validator 的唯一机制。validator 先注册、producer 后注册（反插入序）时，
-        /// 删除 `network/mod.rs` 里 producer 的 `.in_set(...)` 会让本测试撞红
-        /// （请求停留在持久队列、本 tick 无 dispatch）。
-        #[test]
-        fn production_ingress_wiring_orders_producer_before_validator() {
-            let mut app = App::new();
-            register_request_resources(&mut app);
-            app.init_resource::<LingtianPlotIndex>();
-            app.add_systems(
-                Update,
-                refresh_lingtian_plot_index.before(handle_client_request_payloads),
-            );
-            app.add_systems(
-                Update,
-                cleanup_client_request_budget.before(handle_client_request_payloads),
-            );
-            app.add_systems(
-                Update,
-                handle_client_request_payloads.in_set(crate::lingtian::LingtianRequestIngressSet),
-            );
-            app.add_systems(
-                Update,
-                crate::lingtian::systems::validate_and_dispatch_lingtian_requests
-                    .after(crate::lingtian::LingtianRequestIngressSet),
-            );
-
-            let (client_bundle, _helper) = create_mock_client("IngressWiring");
-            let client = app
-                .world_mut()
-                .spawn((client_bundle, Lifecycle::default()))
-                .id();
-            app.world_mut()
-                .entity_mut(client)
-                .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
-            app.world_mut()
-                .entity_mut(client)
-                .insert(CurrentDimension(DimensionKind::Overworld));
-            app.world_mut()
-                .spawn(LingtianPlot::new(BlockPos::new(0, 64, 0), None));
-            app.world_mut()
-                .resource_mut::<Events<CustomPayloadEvent>>()
-                .send(CustomPayloadEvent {
-                    client,
-                    channel: ident!("bong:client_request").into(),
-                    data: serde_json::json!({
-                        "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
-                        "hoe_instance_id": 7, "mode": "manual"
-                    })
-                    .to_string()
-                    .into_bytes()
-                    .into_boxed_slice(),
-                });
-
-            app.update();
-
-            assert_eq!(
-                drain_lingtian_request_captures(&mut app),
-                vec![LingtianDispatchCapture {
-                    kind: "till",
-                    pos: BlockPos::new(0, 64, 0),
-                    player: client,
-                    hoe_instance_id: Some(7),
-                    mode: Some(SessionMode::Manual),
-                    plant_id: None,
-                    source: None,
-                }],
-                "production ingress wiring must dispatch the wire request in the same tick"
-            );
-            assert!(
-                drain_lingtian_request_captures(&mut app).is_empty(),
-                "production ingress wiring must not leave a duplicate pending dispatch"
-            );
-        }
-
         fn send_gate_test_payload(app: &mut App, client: Entity, payload: serde_json::Value) {
             app.world_mut()
                 .resource_mut::<Events<CustomPayloadEvent>>()
@@ -4725,8 +4140,8 @@ mod external_ingress_tests {
         fn c2s_ingress_budget_drops_the_thirty_third_payload_before_decode() {
             let mut app = App::new();
             // This contract exercises only the ingress budget; omit the full
-            // lingtian emitter so its idle HUD snapshot cannot pollute the wire assertion.
-            register_request_resources_without_lingtian(&mut app);
+            // idle emitter so its snapshot cannot pollute the wire assertion.
+            register_request_resources(&mut app);
             register_request_systems(&mut app);
             let (client_bundle, mut helper) = create_mock_client("BudgetIngress");
             let client = app.world_mut().spawn(client_bundle).id();
@@ -5127,19 +4542,6 @@ mod external_ingress_tests {
         }
 
         fn register_request_resources(app: &mut App) {
-            // Use the existing public lingtian assembly so the handler tests exercise
-            // the real validator/start-handler wiring without opening a test-only seam.
-            app.insert_resource(crate::botany::PlantKindRegistry::default());
-            crate::lingtian::register(app);
-            register_request_handler_resources(app);
-        }
-
-        /// Minimal handler-only fixture for contracts that intentionally exercise a
-        /// missing optional resource. The full lingtian assembly contains systems
-        /// with a mandatory allocator parameter, so it cannot be used for that
-        /// negative branch without turning the fixture panic into the assertion.
-        fn register_request_resources_without_lingtian(app: &mut App) {
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             register_request_handler_resources(app);
         }
 
@@ -5186,12 +4588,6 @@ mod external_ingress_tests {
             app.add_event::<crate::fauna::dying_elder::GiveDanToElderIntent>();
             app.add_event::<crate::craft::WorkbenchOpenRequest>();
             app.add_event::<crate::world::container_open::ContainerOpenRequest>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<QiColorInspectRequest>();
@@ -5224,10 +4620,6 @@ mod external_ingress_tests {
             app.add_event::<crate::cmd::dev::block_picker::BlockPickerGiveIntent>();
         }
 
-        /// 生产装配：producer 经 `LingtianRequestIngressSet`（与
-        /// `network::register_app_wiring` 同路径），validator 排在该 set 之后
-        /// （与 `lingtian::register` 的 chain 同合同）。测试删掉 set membership
-        /// 会直接破坏这里的排序边（见 `production_ingress_wiring_orders_*`）。
         fn register_request_systems(app: &mut App) {
             app.init_resource::<ClientRequestBudget>();
             app.init_resource::<crate::qi_physics::WorldQiAccount>();
@@ -5237,19 +4629,11 @@ mod external_ingress_tests {
                 crate::alchemy::manual_qi::handle_manual_qi_injections
                     .after(handle_client_request_payloads),
             );
-            app.init_resource::<LingtianPlotIndex>();
-            app.add_systems(
-                Update,
-                refresh_lingtian_plot_index.before(handle_client_request_payloads),
-            );
             app.add_systems(
                 Update,
                 cleanup_client_request_budget.before(handle_client_request_payloads),
             );
-            app.add_systems(
-                Update,
-                handle_client_request_payloads.in_set(crate::lingtian::LingtianRequestIngressSet),
-            );
+            app.add_systems(Update, handle_client_request_payloads);
             app.add_systems(
                 Update,
                 crate::network::inventory_event_emit::emit_durability_changed_inventory_events
@@ -5257,7 +4641,7 @@ mod external_ingress_tests {
                     // 的 durability payload 必须同帧发出（`inventory_move_applies_*` 单
                     // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
                     // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
-                    .after(crate::lingtian::LingtianRequestIngressSet),
+                    .after(handle_client_request_payloads),
             );
         }
 
@@ -7831,7 +7215,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -7843,12 +7226,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -9847,7 +9224,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -9858,12 +9234,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -9917,7 +9287,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -9930,12 +9299,6 @@ mod external_ingress_tests {
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
             app.add_event::<SpiritNichePlaceRequest>();
             app.add_event::<SpiritNicheCoordinateRevealRequest>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -10152,7 +9515,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -10165,12 +9527,6 @@ mod external_ingress_tests {
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
             app.add_event::<SpiritNichePlaceRequest>();
             app.add_event::<SpiritNicheCoordinateRevealRequest>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -10240,7 +9596,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -10251,12 +9606,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -10304,7 +9653,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -10315,12 +9663,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11015,7 +10357,6 @@ mod external_ingress_tests {
         fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
             let mut app = App::new();
             app.init_resource::<ClientRequestBudget>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(load_test_technique_registry());
             app.insert_resource(CombatClock::default());
             app.insert_resource(GameplayActionQueue::default());
@@ -11033,12 +10374,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11107,7 +10442,6 @@ mod external_ingress_tests {
         fn learn_skill_scroll_duplicate_does_not_consume_item() {
             let mut app = App::new();
             app.init_resource::<ClientRequestBudget>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(load_test_technique_registry());
             app.insert_resource(CombatClock::default());
             app.insert_resource(GameplayActionQueue::default());
@@ -11125,12 +10459,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11201,7 +10529,6 @@ mod external_ingress_tests {
         fn learn_blueprint_consumes_scroll_item() {
             let mut app = App::new();
             app.init_resource::<ClientRequestBudget>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(load_test_technique_registry());
             app.insert_resource(CombatClock::default());
             app.insert_resource(GameplayActionQueue::default());
@@ -11219,12 +10546,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11759,7 +11080,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(test_forge_template_registry());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -11770,12 +11090,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11845,7 +11159,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(test_forge_template_registry());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -11856,12 +11169,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11923,7 +11230,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -11934,12 +11240,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -11989,7 +11289,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -12000,12 +11299,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -12051,7 +11344,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -12062,12 +11354,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -12117,7 +11403,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -12128,12 +11413,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -12179,7 +11458,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -12190,12 +11468,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -12246,7 +11518,6 @@ mod external_ingress_tests {
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -12257,12 +11528,6 @@ mod external_ingress_tests {
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -15036,10 +14301,6 @@ dispatch = "direct_generic"
         use crate::inventory::{
             ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         };
-        use crate::lingtian::events::{
-            StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-            StartReplenishRequest, StartTillRequest,
-        };
         use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
         use valence::testing::create_mock_client;
 
@@ -15115,7 +14376,6 @@ dispatch = "direct_generic"
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -15126,12 +14386,6 @@ dispatch = "direct_generic"
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();
@@ -15472,7 +14726,6 @@ dispatch = "direct_generic"
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
-            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             app.insert_resource(ItemRegistry::default());
             app.insert_resource(RecipeRegistry::default());
             app.add_event::<CustomPayloadEvent>();
@@ -15483,12 +14736,6 @@ dispatch = "direct_generic"
             app.add_event::<ApplyStatusEffectIntent>();
             app.add_event::<PlaceFurnaceRequest>();
             app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-            app.add_event::<StartTillRequest>();
-            app.add_event::<StartRenewRequest>();
-            app.add_event::<StartPlantingRequest>();
-            app.add_event::<StartHarvestRequest>();
-            app.add_event::<StartReplenishRequest>();
-            app.add_event::<StartDrainQiRequest>();
             app.add_event::<StartExtractRequestEvent>();
             app.add_event::<CancelExtractRequestEvent>();
             app.add_event::<MineralProbeIntent>();

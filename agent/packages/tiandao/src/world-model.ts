@@ -6,7 +6,6 @@ import type {
   NpcSnapshot,
   PlayerProfile,
   WorldStateV1,
-  ZonePressureCrossedV1,
   ZoneSnapshot,
 } from "@bong/schema";
 import { NEWBIE_POWER_THRESHOLD } from "@bong/schema";
@@ -169,7 +168,6 @@ export class WorldModel {
   readonly faunaEcologyHistory = new Map<string, FaunaZoneEcologyV1[]>();
   readonly zoneStressFlags = new Map<string, ZoneStressFlag>();
   readonly zoneAnomalyHistory = new Map<string, ZoneAnomalyLog[]>();
-  readonly latestZonePressureCrossed = new Map<string, ZonePressureCrossedV1>();
   private newPlayersThisTick = new Set<string>();
   private suppressNewPlayersThisTickOnNextUpdate = false;
 
@@ -310,10 +308,6 @@ export class WorldModel {
     }
   }
 
-  ingestZonePressureCrossed(event: ZonePressureCrossedV1): void {
-    this.latestZonePressureCrossed.set(event.zone, { ...event });
-  }
-
   getRecentBotanyEcologySnapshots(): BotanyEcologySnapshotV1[] {
     return this.botanyEcologySnapshots.map(cloneBotanyEcologySnapshot);
   }
@@ -357,11 +351,6 @@ export class WorldModel {
 
   getZoneAnomalyWindow(zoneName: string): ZoneAnomalyLog[] {
     return (this.zoneAnomalyHistory.get(zoneName) ?? []).map((entry) => ({ ...entry }));
-  }
-
-  getLatestZonePressureCrossed(zoneName: string): ZonePressureCrossedV1 | null {
-    const event = this.latestZonePressureCrossed.get(zoneName);
-    return event ? { ...event } : null;
   }
 
   setCurrentEra(currentEra: CurrentEra): void {

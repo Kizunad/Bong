@@ -103,7 +103,6 @@ SERVER_DATA_PAYLOAD_NAMES = {
     28: "mining_progress",
     29: "lumber_progress",
     30: "gathering_session",
-    31: "lingtian_session",
     32: "wounds_snapshot",
     33: "defense_window",
     34: "cast_sync",
@@ -215,6 +214,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     140: "body_plan_layout",
     141: "race_gate_meta",
     142: "morph_state",
+    143: "alchemy_world",
 }
 
 # These are deliberate compatibility labels, not a second wire registry.  The
@@ -1078,34 +1078,6 @@ def _gathering_session(data: bytes) -> dict[str, Any]:
         "tool_used": _optional_string(fields, 7),
         "interrupted": bool(_varint(fields, 8)),
         "completed": bool(_varint(fields, 9)),
-    }
-
-
-LINGTIAN_SESSION_KIND_NAMES = {
-    0: "unspecified",
-    1: "till",
-    2: "renew",
-    3: "planting",
-    4: "harvest",
-    5: "replenish",
-    6: "drain_qi",
-}
-
-
-def _lingtian_session(data: bytes) -> dict[str, Any]:
-    fields = _fields(data)
-    return {
-        "v": 1,
-        "type": "lingtian_session",
-        "active": bool(_varint(fields, 1)),
-        "kind": _enum_name(LINGTIAN_SESSION_KIND_NAMES, _varint(fields, 2)),
-        "pos": [_int32(fields, 3), _int32(fields, 4), _int32(fields, 5)],
-        "elapsed_ticks": _varint(fields, 6),
-        "target_ticks": _varint(fields, 7),
-        "plant_id": _optional_string(fields, 8),
-        "source": _optional_string(fields, 9),
-        "dye_contamination": _optional_float32(fields, 10),
-        "dye_contamination_warning": bool(_varint(fields, 11)),
     }
 
 
@@ -2103,7 +2075,6 @@ SERVER_DATA_PAYLOAD_DECODERS.update(
         25: _botany_harvest_progress,
         29: _lumber_progress,
         30: _gathering_session,
-        31: _lingtian_session,
         34: _cast_sync,
         SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
         36: _skill_bar_config,

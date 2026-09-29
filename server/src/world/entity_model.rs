@@ -30,7 +30,6 @@ use valence::protocol::VarInt;
 
 use crate::alchemy::furnace::AlchemyFurnace;
 use crate::forge::station::WeaponForgeStation;
-use crate::lingtian::plot::LingtianPlot;
 use crate::social::components::SpiritNiche;
 use crate::world::dimension::DimensionLayers;
 use crate::world::rift_portal::{RiftKind, RiftPortal};
@@ -48,7 +47,6 @@ pub const RIFT_PORTAL_ENTITY_KIND: EntityKind = EntityKind::new(151);
 pub const FORGE_STATION_ENTITY_KIND: EntityKind = EntityKind::new(152);
 pub const ALCHEMY_FURNACE_ENTITY_KIND: EntityKind = EntityKind::new(153);
 pub const FORMATION_CORE_ENTITY_KIND: EntityKind = EntityKind::new(154);
-pub const LINGTIAN_PLOT_ENTITY_KIND: EntityKind = EntityKind::new(155);
 pub const DRY_CORPSE_ENTITY_KIND: EntityKind = EntityKind::new(156);
 pub const BONE_SKELETON_ENTITY_KIND: EntityKind = EntityKind::new(157);
 pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(158);
@@ -78,7 +76,6 @@ pub enum BongVisualKind {
     ForgeStation,
     AlchemyFurnace,
     FormationCore,
-    LingtianPlot,
     DryCorpse,
     BoneSkeleton,
     StoragePouch,
@@ -112,7 +109,6 @@ impl BongVisualKind {
             Self::ForgeStation => FORGE_STATION_ENTITY_KIND,
             Self::AlchemyFurnace => ALCHEMY_FURNACE_ENTITY_KIND,
             Self::FormationCore => FORMATION_CORE_ENTITY_KIND,
-            Self::LingtianPlot => LINGTIAN_PLOT_ENTITY_KIND,
             Self::DryCorpse => DRY_CORPSE_ENTITY_KIND,
             Self::BoneSkeleton => BONE_SKELETON_ENTITY_KIND,
             Self::StoragePouch => STORAGE_POUCH_ENTITY_KIND,
@@ -215,7 +211,6 @@ pub fn register(app: &mut App) {
                 sync_forge_station_visuals,
                 sync_alchemy_furnace_visuals,
                 sync_zhenfa_anchor_visuals,
-                sync_lingtian_plot_visuals,
                 sync_tsy_container_visuals,
                 cleanup_orphan_visual_entities,
             ),
@@ -465,30 +460,6 @@ fn sync_zhenfa_anchor_visuals(
     }
 }
 
-fn sync_lingtian_plot_visuals(
-    mut commands: Commands,
-    layers: Option<Res<DimensionLayers>>,
-    plots: Query<(Entity, Ref<LingtianPlot>, Option<&BongVisualAttachment>)>,
-) {
-    let Some(layers) = layers else {
-        return;
-    };
-    for (source, plot, attachment) in &plots {
-        if attachment.is_some() && !plot.is_changed() {
-            continue;
-        }
-        upsert_attached_visual(
-            &mut commands,
-            source,
-            attachment,
-            layers.overworld,
-            BongVisualKind::LingtianPlot,
-            block_pos_center(plot.pos, 0.0),
-            lingtian_plot_visual_state(&plot),
-        );
-    }
-}
-
 fn sync_tsy_container_visuals(mut commands: Commands, containers: TsyContainerVisualQuery<'_, '_>) {
     for (source, container, pos, layer, attachment) in &containers {
         if attachment.is_some() && !container.is_changed() && !pos.is_changed() {
@@ -569,20 +540,6 @@ fn rift_portal_visual_state(kind: RiftKind) -> u8 {
     }
 }
 
-fn lingtian_plot_visual_state(plot: &LingtianPlot) -> u8 {
-    if let Some(crop) = &plot.crop {
-        if crop.is_ripe() {
-            3
-        } else {
-            2
-        }
-    } else if plot.is_barren() {
-        0
-    } else {
-        1
-    }
-}
-
 fn container_visual_kind(kind: ContainerKind) -> BongVisualKind {
     match kind {
         ContainerKind::DryCorpse => BongVisualKind::DryCorpse,
@@ -626,7 +583,7 @@ mod tests {
     use crate::world::dimension::DimensionKind;
     use crate::world::rift_portal::{PortalDirection, RiftPortal};
     use crate::world::tsy::DimensionAnchor;
-    use valence::prelude::{App, BlockPos, Update};
+    use valence::prelude::{App, Update};
 
     #[test]
     fn cleanup_orphan_visual_marks_despawned_not_raw_despawn() {
@@ -663,7 +620,6 @@ mod tests {
             FORGE_STATION_ENTITY_KIND,
             ALCHEMY_FURNACE_ENTITY_KIND,
             FORMATION_CORE_ENTITY_KIND,
-            LINGTIAN_PLOT_ENTITY_KIND,
             DRY_CORPSE_ENTITY_KIND,
             BONE_SKELETON_ENTITY_KIND,
             STORAGE_POUCH_ENTITY_KIND,
@@ -683,8 +639,8 @@ mod tests {
         assert_eq!(
             ids,
             [
-                146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-                162, 163, 165, 166, 167, 168
+                146, 147, 148, 149, 150, 151, 152, 153, 154, 156, 157, 158, 159, 160, 161, 162,
+                163, 165, 166, 167, 168
             ],
             "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
              延寿棺四档连号 160-163，Baolongwang=164，Workbench=165，容器=166..=168"
@@ -863,10 +819,5 @@ mod tests {
         assert_eq!(spirit_eye_visual_state(0.7), 1);
         assert_eq!(spirit_eye_visual_state(1.0), 2);
         assert_eq!(rift_portal_visual_state(RiftKind::CollapseTear), 2);
-
-        let mut plot = LingtianPlot::new(BlockPos::new(1, 64, 1), None);
-        assert_eq!(lingtian_plot_visual_state(&plot), 1);
-        plot.harvest_count = crate::lingtian::plot::N_RENEW;
-        assert_eq!(lingtian_plot_visual_state(&plot), 0);
     }
 }

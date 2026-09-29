@@ -345,16 +345,6 @@ public class VfxRegistryTest {
             "bootstrap should register gathering perfect VFX");
         assertTrue(VfxRegistry.instance().contains(BotanyPlantStagePlayer.ROUTE_ID),
             "bootstrap should register botany plant stage route");
-        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.TILL),
-            "bootstrap should register lingtian till rune");
-        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.PLANT),
-            "bootstrap should register lingtian plant rune");
-        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.REPLENISH),
-            "bootstrap should register lingtian replenish rune");
-        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.HARVEST),
-            "bootstrap should register lingtian harvest rune");
-        assertTrue(VfxRegistry.instance().contains(LingtianPlotRunePlayer.DRAIN),
-            "bootstrap should register lingtian drain rune");
         assertTrue(VfxRegistry.instance().contains(CultivationAbsorbPlayer.EVENT_ID),
             "bootstrap should register cultivation_absorb");
         assertTrue(VfxRegistry.instance().contains(MeridianOpenFlashPlayer.EVENT_ID),
@@ -386,12 +376,6 @@ public class VfxRegistryTest {
             "bootstrap should register alchemy_complete");
         assertTrue(VfxRegistry.instance().contains(AlchemyBrewVaporPlayer.EXPLODE),
             "bootstrap should register alchemy_explode");
-        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.TILL),
-            "bootstrap should register lingtian_till");
-        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.PLANT),
-            "bootstrap should register lingtian_plant");
-        assertTrue(VfxRegistry.instance().contains(LingtianActionVfxPlayer.REPLENISH),
-            "bootstrap should register lingtian_replenish");
         assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.TRAP),
             "bootstrap should register zhenfa_trap");
         assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.WARD),

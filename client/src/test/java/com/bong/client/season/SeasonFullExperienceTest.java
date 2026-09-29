@@ -4,8 +4,6 @@ import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.bong.client.audio.MusicStateMachine;
 import com.bong.client.botany.BotanyPlantVisualState;
 import com.bong.client.hud.HudRenderCommand;
-import com.bong.client.hud.LingtianOverlayHudPlanner;
-import com.bong.client.lingtian.state.LingtianSessionStore;
 import com.bong.client.network.VfxEventPayload;
 import com.bong.client.state.SeasonState;
 import net.minecraft.util.Identifier;
@@ -220,31 +218,6 @@ class SeasonFullExperienceTest {
         assertTrue(SeasonPlantVisuals.isFrostSpecies("xue_po_lian"));
     }
 
-    @Test
-    void lingtian_overlay_season_icon() {
-        LingtianSessionStore.Snapshot snapshot = new LingtianSessionStore.Snapshot(
-            true,
-            LingtianSessionStore.Kind.HARVEST,
-            1,
-            64,
-            1,
-            25,
-            100,
-            "凝脉草",
-            "manual",
-            0.0f,
-            false
-        );
-
-        List<HudRenderCommand> commands = LingtianOverlayHudPlanner.buildCommands(
-            snapshot,
-            320,
-            180,
-            new SeasonState(SeasonState.Phase.WINTER, 0L, 1000L, 0L)
-        );
-
-        assertTrue(commands.stream().anyMatch(command -> command.isRect() && command.color() == 0x99E8F4FF));
-    }
 
     @Test
     void migration_dust_particles() {

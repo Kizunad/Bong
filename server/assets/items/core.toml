@@ -366,7 +366,7 @@ grid_h = 1
 base_weight = 0.3
 rarity = "common"
 spirit_quality_initial = 0.7
-description = "灵气浸润之清水。可用于灵田补灵 / 部分丹方调和。"
+description = "灵气浸润之清水，可用于部分丹方调和。"
 
 # plan-backpack-equip-v1 P2 — 背包类物品
 #

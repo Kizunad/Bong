@@ -102,34 +102,6 @@ describe("EcologyAnalyzer", () => {
     expect(cooledDown).toHaveLength(0);
   });
 
-  it("combines high lingtian pressure with tainted low-qi botany state", () => {
-    const model = new WorldModel();
-    const analyzer = new EcologyAnalyzer();
-
-    analyzer.ingestBotanyEcology(
-      model,
-      snapshot(600, [
-        zone({ name: "starter_zone", spiritQi: 0.12, plants: 12, tainted: 3 }),
-      ]),
-    );
-
-    expect(
-      analyzer.ingestZonePressureCrossed(model, {
-        v: 1,
-        kind: "zone_pressure_crossed",
-        zone: "starter_zone",
-        level: "high",
-        raw_pressure: 1.2,
-        at_tick: 700,
-      }),
-    ).toEqual([
-      expect.objectContaining({
-        scope: "zone",
-        target: "starter_zone",
-        text: expect.stringContaining("灵田压过土息"),
-      }),
-    ]);
-  });
 });
 
 // plan-mundane-fauna-v1 P3：凡兽生态 narration（绝迹 / 迁徙 / 空 snapshot / 冷却）。

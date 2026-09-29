@@ -1,0 +1,1192 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "plants"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "number"
+    },
+    "plants": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "aliases",
+          "visual"
+        ],
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "aliases": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            }
+          },
+          "visual": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "tint_rgb",
+              "stages"
+            ],
+            "properties": {
+              "tint_rgb": {
+                "minimum": 0,
+                "maximum": 16777215,
+                "type": "integer"
+              },
+              "stages": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "mature"
+                ],
+                "properties": {
+                  "mature": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "billboard",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset",
+                          "geometry"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "geo",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          },
+                          "geometry": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "animation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "resource",
+                              "idle"
+                            ],
+                            "properties": {
+                              "resource": {
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                                "type": "string"
+                              },
+                              "idle": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "seedling": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "billboard",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset",
+                          "geometry"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "geo",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          },
+                          "geometry": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "animation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "resource",
+                              "idle"
+                            ],
+                            "properties": {
+                              "resource": {
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                                "type": "string"
+                              },
+                              "idle": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "growing": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "billboard",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset",
+                          "geometry"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "geo",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          },
+                          "geometry": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "animation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "resource",
+                              "idle"
+                            ],
+                            "properties": {
+                              "resource": {
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                                "type": "string"
+                              },
+                              "idle": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "wilted": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "billboard",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "texture",
+                          "scale",
+                          "offset",
+                          "geometry"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "geo",
+                            "type": "string"
+                          },
+                          "texture": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "scale": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          },
+                          "geometry": {
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "type": "string"
+                          },
+                          "animation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "resource",
+                              "idle"
+                            ],
+                            "properties": {
+                              "resource": {
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                                "type": "string"
+                              },
+                              "idle": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "wild": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "item_id",
+              "zone_tags",
+              "density_factor",
+              "growth_cost",
+              "survive_threshold",
+              "max_age_ticks",
+              "regen_ticks",
+              "spawn_mode",
+              "restore_ratio",
+              "v2"
+            ],
+            "properties": {
+              "item_id": {
+                "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+                "type": "string"
+              },
+              "zone_tags": {
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "plains",
+                      "type": "string"
+                    },
+                    {
+                      "const": "mountain",
+                      "type": "string"
+                    },
+                    {
+                      "const": "marsh",
+                      "type": "string"
+                    },
+                    {
+                      "const": "blood_valley",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cave",
+                      "type": "string"
+                    },
+                    {
+                      "const": "wastes",
+                      "type": "string"
+                    },
+                    {
+                      "const": "negative_field",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "density_factor": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "growth_cost": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "survive_threshold": {
+                "minimum": -1,
+                "maximum": 1,
+                "type": "number"
+              },
+              "max_age_ticks": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "regen_ticks": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "spawn_mode": {
+                "anyOf": [
+                  {
+                    "const": "zone_refresh",
+                    "type": "string"
+                  },
+                  {
+                    "const": "static_point",
+                    "type": "string"
+                  },
+                  {
+                    "const": "event_triggered",
+                    "type": "string"
+                  },
+                  {
+                    "const": "spread_by_crawl",
+                    "type": "string"
+                  }
+                ]
+              },
+              "restore_ratio": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "v2": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "survival_mode",
+                      "env_locks",
+                      "harvest_hazards",
+                      "base_mesh_ref",
+                      "tint_rgb",
+                      "tint_rgb_secondary",
+                      "model_overlay",
+                      "icon_prompt"
+                    ],
+                    "properties": {
+                      "survival_mode": {
+                        "anyOf": [
+                          {
+                            "const": "qi_absorb",
+                            "type": "string"
+                          },
+                          {
+                            "const": "neg_pressure_feed",
+                            "type": "string"
+                          },
+                          {
+                            "const": "pressure_differential",
+                            "type": "string"
+                          },
+                          {
+                            "const": "spirit_crystallize",
+                            "type": "string"
+                          },
+                          {
+                            "const": "ruin_resonance",
+                            "type": "string"
+                          },
+                          {
+                            "const": "thermal_convection",
+                            "type": "string"
+                          },
+                          {
+                            "const": "portal_siphon",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dual_metabolism",
+                            "type": "string"
+                          },
+                          {
+                            "const": "photo_luminance",
+                            "type": "string"
+                          },
+                          {
+                            "const": "water_pulse",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "env_locks": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "neg_pressure"
+                              ],
+                              "properties": {
+                                "neg_pressure": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "min"
+                                  ],
+                                  "properties": {
+                                    "min": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "qi_vein_flow"
+                              ],
+                              "properties": {
+                                "qi_vein_flow": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "min"
+                                  ],
+                                  "properties": {
+                                    "min": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "fracture_mask"
+                              ],
+                              "properties": {
+                                "fracture_mask": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "min"
+                                  ],
+                                  "properties": {
+                                    "min": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "ruin_density"
+                              ],
+                              "properties": {
+                                "ruin_density": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "min"
+                                  ],
+                                  "properties": {
+                                    "min": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "sky_island_mask"
+                              ],
+                              "properties": {
+                                "sky_island_mask": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "min",
+                                    "surface"
+                                  ],
+                                  "properties": {
+                                    "min": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    },
+                                    "surface": {
+                                      "anyOf": [
+                                        {
+                                          "const": "top",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "bottom",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "underground_tier"
+                              ],
+                              "properties": {
+                                "underground_tier": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "tier"
+                                  ],
+                                  "properties": {
+                                    "tier": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "const": "portal_rift_active",
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "adjacent_decoration"
+                              ],
+                              "properties": {
+                                "adjacent_decoration": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "kind",
+                                    "radius"
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "anyOf": [
+                                        {
+                                          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "minItems": 1,
+                                          "uniqueItems": true,
+                                          "type": "array",
+                                          "items": {
+                                            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+                                            "type": "string"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    "radius": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "adjacent_light_block"
+                              ],
+                              "properties": {
+                                "adjacent_light_block": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "radius"
+                                  ],
+                                  "properties": {
+                                    "radius": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "const": "snow_surface",
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "time_phase"
+                              ],
+                              "properties": {
+                                "time_phase": {
+                                  "const": "open",
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "harvest_hazards": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "qi_drain_on_approach"
+                              ],
+                              "properties": {
+                                "qi_drain_on_approach": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "radius_blocks",
+                                    "drain_per_sec"
+                                  ],
+                                  "properties": {
+                                    "radius_blocks": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    },
+                                    "drain_per_sec": {
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "wound_on_bare_hand"
+                              ],
+                              "properties": {
+                                "wound_on_bare_hand": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "wound",
+                                    "required_tool"
+                                  ],
+                                  "properties": {
+                                    "wound": {
+                                      "anyOf": [
+                                        {
+                                          "const": "abrasion",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "laceration",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "fracture",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "required_tool": {
+                                      "anyOf": [
+                                        {
+                                          "anyOf": [
+                                            {
+                                              "const": "CaiYaoDao",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "BaoChu",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "CaoLian",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "DunQiJia",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "GuaDao",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "GuHaiQian",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "const": "BingJiaShouTao",
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "dispersal_on_fail"
+                              ],
+                              "properties": {
+                                "dispersal_on_fail": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "dispersal_chance"
+                                  ],
+                                  "properties": {
+                                    "dispersal_chance": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "resonance_vision"
+                              ],
+                              "properties": {
+                                "resonance_vision": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "duration_secs",
+                                    "composure_loss"
+                                  ],
+                                  "properties": {
+                                    "duration_secs": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    },
+                                    "composure_loss": {
+                                      "minimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "season_required"
+                              ],
+                              "properties": {
+                                "season_required": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "phase"
+                                  ],
+                                  "properties": {
+                                    "phase": {
+                                      "const": "open",
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "attracts_mobs"
+                              ],
+                              "properties": {
+                                "attracts_mobs": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "mob_kind",
+                                    "min_count",
+                                    "max_count"
+                                  ],
+                                  "properties": {
+                                    "mob_kind": {
+                                      "anyOf": [
+                                        {
+                                          "const": "spirit_mice",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "mimic_spider",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "min_count": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    },
+                                    "max_count": {
+                                      "minimum": 0,
+                                      "maximum": 255,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "base_mesh_ref": {
+                        "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+                        "type": "string"
+                      },
+                      "tint_rgb": {
+                        "minimum": 0,
+                        "maximum": 16777215,
+                        "type": "integer"
+                      },
+                      "tint_rgb_secondary": {
+                        "anyOf": [
+                          {
+                            "minimum": 0,
+                            "maximum": 16777215,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "model_overlay": {
+                        "anyOf": [
+                          {
+                            "const": "none",
+                            "type": "string"
+                          },
+                          {
+                            "const": "emissive",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dual_phase",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "icon_prompt": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-bong-typebox-source-sha256": "4b9209d9764769792b2e770a11cfd91a6004c1159d73d2e4e9be508c8a2998e1"
+}

@@ -48,7 +48,6 @@ public final class HudRenderRegistry {
             List.of(asset("rect", "primitive-rect"), asset("socket", "status-socket"), asset("rim", "status-rim"),
                 asset("unknown", "status-unknown"), asset("blood", "status-blood"), asset("taint", "status-taint"))),
         command(HudRenderLayer.PROCESSING_HUD, "AlchemyProgressHudPlanner", "alchemy_session", "步骤文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.LINGTIAN_OVERLAY, "LingtianOverlayHudPlanner", "lingtian_session+season", "动态文字与物品图标仍走 Minecraft GUI"),
         svg(HudRenderLayer.MOVEMENT_HUD, "MovementHudPlanner", "movement_state+techniques_snapshot+clock", "身法 PNG 与区域反馈仍走 Minecraft GUI",
             List.of(asset("rect", "primitive-rect"), asset("track", "dash-track"), asset("tick", "dash-tick"), asset("flare", "dash-flare"))),
         command(HudRenderLayer.SEARCH_PROGRESS, "SearchProgressHudPlanner", "search_state+clock", "动态文字仍走 Minecraft GUI"),

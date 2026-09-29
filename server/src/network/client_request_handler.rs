@@ -16,7 +16,7 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, BlockPos, ChunkLayer, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
+    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
     EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
     UniqueId, Username, With, Without,
 };
@@ -84,9 +84,6 @@ use crate::inventory::{
     InventoryMoveRejectReason, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{AlchemyItemData, ItemEffect, ItemRegistry};
-use crate::lingtian::requests::PendingLingtianRequest;
-use crate::lingtian::session::{ReplenishSource, SessionMode};
-use crate::lingtian::LingtianPlot;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
 use crate::movement::{MovementAction, MovementActionIntent};
@@ -424,18 +421,6 @@ pub struct DroppedLootRequestParams<'w, 's> {
     pub remains_loot_tx: EventWriter<'w, crate::inventory::RemainsLootIntent>,
 }
 
-/// plan-lingtian-v1 §1.2-§1.7 + fix-spec-1901-v2 §4.1 — 6 类 intent 的 ingress
-/// 队列写入包，避开 SystemParam 16 上限。
-///
-/// v2 起 producer 不再读取 `Position` / `CurrentDimension`，也不再直接写
-/// `Start*Request` event：只把已解析请求 push 进 `PendingLingtianRequests`，
-/// 由 `LingtianPostTransferValidationSet` 的唯一 validator 在权威移动写入后
-/// dispatch（terrain / environment 的 chunk 读取也移到那里）。
-#[derive(SystemParam)]
-pub struct LingtianRequestParams<'w> {
-    pub pending: ResMut<'w, crate::lingtian::requests::PendingLingtianRequests>,
-}
-
 /// Runtime owner of the C2S ingress budget.  The pure token and aggregation
 /// accounting remains in [`BudgetStore`]; this wrapper only binds it to the
 /// lifetime of a connected ECS client and forgets state when a role generation
@@ -446,28 +431,7 @@ pub struct ClientRequestBudget {
     character_ids: HashMap<Entity, String>,
 }
 
-/// O(1) lookup surface for authoritative lingtian plot positions.  The
-/// snapshot is refreshed once per update; individual C2S requests do not
-/// rescan every plot.
-#[derive(Debug, Default, Resource)]
-pub struct LingtianPlotIndex {
-    positions: HashSet<BlockPos>,
-}
-
-impl LingtianPlotIndex {
-    fn contains(&self, position: &BlockPos) -> bool {
-        self.positions.contains(position)
-    }
-}
-
-pub fn refresh_lingtian_plot_index(
-    mut index: ResMut<LingtianPlotIndex>,
-    plots: Query<&LingtianPlot>,
-) {
-    index.positions.clear();
-    index.positions.extend(plots.iter().map(|plot| plot.pos));
-}
-
+//TODO:lingtian_refactor 新田块目标验证复用 C2S 权限与距离校验。
 impl ClientRequestBudget {
     fn prepare_client(&mut self, client: Entity, character_id: Option<&str>) -> bool {
         let current = character_id.unwrap_or("<unbound>");
@@ -550,7 +514,6 @@ pub struct ClientRequestIngressParams<'w, 's> {
     pub quick_slot_prefs_writes: Option<ResMut<'w, QuickSlotPrefsWriteQueue>>,
     pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
     pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
-    pub lingtian_plot_index: Option<Res<'w, LingtianPlotIndex>>,
     pub chunk_layers:
         Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     pub dimension_layers: Option<Res<'w, DimensionLayers>>,
@@ -758,7 +721,6 @@ fn meridian_label(id: &MeridianChannelId) -> &'static str {
 fn live_gate_request_kind(request: &ClientRequestV1) -> Option<&'static str> {
     match request {
         ClientRequestV1::GiveDanToElder { .. } => Some("give_dan_to_elder"),
-        ClientRequestV1::LingtianStartTill { .. } => Some("lingtian_start_till"),
         ClientRequestV1::CraftStart { .. } => Some("craft_start"),
         ClientRequestV1::MaterialMove { .. } => Some("material_move"),
         ClientRequestV1::WorkbenchOpen { .. } => Some("workbench_open"),
@@ -834,7 +796,6 @@ fn evaluate_live_gate(
     request: &ClientRequestV1,
     client: Entity,
     ingress: &ClientRequestIngressParams<'_, '_>,
-    lingtian_plot_index: Option<&LingtianPlotIndex>,
     dispatch: &ClientRequestDispatchParams<'_>,
     combat_params: &CombatRequestParams<'_, '_>,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -849,25 +810,6 @@ fn evaluate_live_gate(
             if inventories.get_mut(client).is_err() {
                 return Err(GateDenialReason::InvalidState);
             }
-        }
-        ClientRequestV1::LingtianStartTill { x, y, z, .. } => {
-            let target_block = BlockPos::new(*x, *y, *z);
-            let target_exists = lingtian_plot_index
-                .is_some_and(|index| index.contains(&target_block))
-                || ingress
-                    .chunk_layers
-                    .iter()
-                    .any(|layer| layer.block(target_block).is_some());
-            if !target_exists {
-                return Err(GateDenialReason::TargetNotFound);
-            }
-            let target = [
-                f64::from(*x) + 0.5,
-                f64::from(*y) + 0.5,
-                f64::from(*z) + 0.5,
-            ];
-            let context = requester.with_target(Some(target), Some(DimensionKind::Overworld), None);
-            gate.check(&context)?;
         }
         ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
             let entity_manager = combat_params
@@ -1091,7 +1033,6 @@ fn live_gate_feedback(
         }
         // Till has always been rejected without a client-facing response; its
         // existing post-transfer validator remains the domain-level authority.
-        ClientRequestV1::LingtianStartTill { .. } => LiveGateFeedback::Silent,
         _ => LiveGateFeedback::EventAlert,
     }
 }
@@ -1220,7 +1161,6 @@ pub fn handle_client_request_payloads(
     mut durability_changed_tx: Option<ResMut<Events<InventoryDurabilityChangedEvent>>>,
     mut combat_params: CombatRequestParams,
     mut dropped_loot_params: DroppedLootRequestParams,
-    mut lingtian_tx: LingtianRequestParams,
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
@@ -1382,12 +1322,6 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CancelExtractRequest { v }
             | ClientRequestV1::StartSearch { v, .. }
             | ClientRequestV1::CancelSearch { v }
-            | ClientRequestV1::LingtianStartTill { v, .. }
-            | ClientRequestV1::LingtianStartRenew { v, .. }
-            | ClientRequestV1::LingtianStartPlanting { v, .. }
-            | ClientRequestV1::LingtianStartHarvest { v, .. }
-            | ClientRequestV1::LingtianStartReplenish { v, .. }
-            | ClientRequestV1::LingtianStartDrainQi { v, .. }
             | ClientRequestV1::ForgeStartSession { v, .. }
             | ClientRequestV1::ForgeTemperingHit { v, .. }
             | ClientRequestV1::ForgeInscriptionScroll { v, .. }
@@ -1429,7 +1363,6 @@ pub fn handle_client_request_payloads(
                 &request,
                 ev.client,
                 &ingress,
-                ingress.lingtian_plot_index.as_deref(),
                 &dispatch,
                 &combat_params,
                 &mut inventories,
@@ -2577,99 +2510,6 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                 );
             }
-            // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
-            ClientRequestV1::LingtianStartTill {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                mode,
-                ..
-            } => {
-                // fix-spec-1901-v2 §4.1 — producer 只入队：不读位置/维度，不读
-                // chunk/terrain，不写 Start*Request；gate + terrain 派生都在
-                // post-transfer validator（LingtianPostTransferValidationSet）做。
-                lingtian_tx.pending.push(PendingLingtianRequest::Till {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    hoe_instance_id,
-                    mode: parse_session_mode(&mode),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartRenew {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                ..
-            } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Renew {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    hoe_instance_id,
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartPlanting {
-                x, y, z, plant_id, ..
-            } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Planting {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    plant_id: plant_id.clone(),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Harvest {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    mode: parse_session_mode(&mode),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartReplenish {
-                x, y, z, source, ..
-            } => {
-                let Some(parsed) = parse_replenish_source(&source) else {
-                    tracing::warn!(
-                        "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
-                    );
-                    continue;
-                };
-                lingtian_tx.pending.push(PendingLingtianRequest::Replenish {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    source: parsed,
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::DrainQi {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}] queued",
-                    ev.client
-                );
-            }
             // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
             ClientRequestV1::CraftStart {
                 recipe_id,
@@ -2762,37 +2602,6 @@ pub fn handle_client_request_payloads(
                 "session-domain request must be consumed before the legacy dispatch match"
             ),
         }
-    }
-}
-
-fn parse_session_mode(raw: &str) -> SessionMode {
-    match raw.to_ascii_lowercase().as_str() {
-        "auto" => SessionMode::Auto,
-        _ => SessionMode::Manual,
-    }
-}
-
-fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
-    match raw.to_ascii_lowercase().as_str() {
-        "zone" => Some(ReplenishSource::Zone),
-        "bone_coin" => Some(ReplenishSource::BoneCoin),
-        "beast_core" => Some(ReplenishSource::BeastCore),
-        "ling_shui" => Some(ReplenishSource::LingShui),
-        "pill_residue_failed_pill" | "failed_pill" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::FailedPill,
-        }),
-        "pill_residue_flawed_pill" | "flawed_pill" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::FlawedPill,
-        }),
-        "pill_residue_processing_dregs" | "processing_dregs" => {
-            Some(ReplenishSource::PillResidue {
-                residue_kind: crate::alchemy::residue::PillResidueKind::ProcessingDregs,
-            })
-        }
-        "pill_residue_aging_scraps" | "aging_scraps" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::AgingScraps,
-        }),
-        _ => None,
     }
 }
 

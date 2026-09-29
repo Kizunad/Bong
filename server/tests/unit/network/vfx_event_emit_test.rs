@@ -217,7 +217,6 @@ fn player_skill_vfx_families_promote_to_important() {
         "bong:combat_hit",
         "bong:combat_parry",
         "bong:movement_dash",
-        "bong:lingtian_till",
         "bong:cultivation_absorb",
         // plan-skill-anim-fidelity-v1 P5：NPC 施法粒子有意留在 Normal 档。
         // 去借用前它们借的 `bong:yidao_meridian_repair` / `bong:jiemai_neutralize_dust`

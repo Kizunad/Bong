@@ -1,9 +1,9 @@
 use valence::entity::Velocity;
 use valence::prelude::{Client, DVec3, Position, Query, Res, Vec3, With};
 
-use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
+use crate::world::weather_profile::ZoneWeatherProfileRegistry;
 use crate::world::zone::ZoneRegistry;
 
 const SWIRL_DEGREES_PER_HEIGHT_AMP: f64 = 40.0;
@@ -69,7 +69,7 @@ pub fn weather_dust_devil_push_system(
                     .profile_for(zone.name.as_str())
                     .dust_devil_push_strength()
             })
-            .unwrap_or(crate::lingtian::weather_profile::DEFAULT_DUST_DEVIL_PUSH_STRENGTH);
+            .unwrap_or(crate::world::weather_profile::DEFAULT_DUST_DEVIL_PUSH_STRENGTH);
 
         for effect in registry.current(zone.name.as_str()) {
             let EnvironmentEffect::DustDevil { center, radius, .. } = effect else {

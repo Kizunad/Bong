@@ -84,7 +84,6 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.MINING_PROGRESS, "mining_progress");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LUMBER_PROGRESS, "lumber_progress");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.GATHERING_SESSION, "gathering_session");
-        m.put(Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION, "lingtian_session");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.WOUNDS_SNAPSHOT, "wounds_snapshot");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DEFENSE_WINDOW, "defense_window");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.CAST_SYNC, "cast_sync");
@@ -372,10 +371,6 @@ public final class ProtoServerDataBridge {
                     new String[] {"target_type", "GATHERING_TARGET_TYPE_"},
                     new String[] {"quality_hint", "GATHERING_QUALITY_HINT_"});
         }
-        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION) {
-            return bridgeStripEnums(envelope.getLingtianSession(), typeString,
-                    new String[] {"kind", "LINGTIAN_SESSION_KIND_"});
-        }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CARRIER_STATE) {
             return bridgeStripEnums(envelope.getCarrierState(), typeString,
                     new String[] {"phase", "CARRIER_CHARGE_PHASE_"});
@@ -500,7 +495,6 @@ public final class ProtoServerDataBridge {
             case MINING_PROGRESS: return envelope.getMiningProgress();
             case LUMBER_PROGRESS: return envelope.getLumberProgress();
             case GATHERING_SESSION: return envelope.getGatheringSession();
-            case LINGTIAN_SESSION: return envelope.getLingtianSession();
             case WOUNDS_SNAPSHOT: return envelope.getWoundsSnapshot();
             case DEFENSE_WINDOW: return envelope.getDefenseWindow();
             case CAST_SYNC: return envelope.getCastSync();

@@ -59,9 +59,9 @@
 - `production_alchemy_brew_pill.py`：真炉放置、点火、投料、丹成入包与数量错误负分支。
 - `production_forge_station_real_place.py`：真砧放置、图谱、起炉拒因/受理、十次淬炼与成品入包。
 - `production_handcraft_stone_knife.py`、`production_craft_cancel_full_inventory_refund.py`、`production_craft_disconnect_resume.py`：制作完成、满包取消落地、断线恢复与 exactly-once 退款。
-- `production_lingtian_gathering_intents.py`、`production_spiritwood_full_inventory_drop.py`：权威地形开垦、深解码采集进度、240-tick 灵木采伐、freshness wire 保真与同实例拾回。
+- `production_botany_gathering.py`、`production_spiritwood_full_inventory_drop.py`：深解码采集进度、240-tick 灵木采伐、freshness wire 保真与同实例拾回。
 - `scripts/bot/make_novice_raster_fixture.py` 从 `server/zones.json` 生产 `spawn_distribution` 派生草地 tiles，避免用户名 hash 落入 Stone fallback。
-- **玩家可感知验收**：生产场景必须观察既有 typed 进度、成功/拒绝 outcome、库存数量与落地物；粒子、音效、HUD 和动画按炼丹/锻造/灵田/采集所属 finished plan 的既有 ID 对拍，本 plan 不以聊天提示代替这些可见结果，也不另立视觉规格。
+- **玩家可感知验收**：生产场景必须观察既有 typed 进度、成功/拒绝 outcome、库存数量与落地物；粒子、音效、HUD 和动画按炼丹/锻造/采集所属 finished plan 的既有 ID 对拍，本 plan 不以聊天提示代替这些可见结果，也不另立视觉规格。
 
 ## P5 — 多 bot 并发 ⏳
 
