@@ -2889,7 +2889,7 @@ if python3 - "$ROOT/server/src/main.rs" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-start = text.index("fn run_server() {")
+start = text.index("fn run_server")
 end = text.index("\n}", start)
 raise SystemExit("server_readiness::publish_if_requested_from_env" in text[start:end])
 PY

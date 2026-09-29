@@ -18,7 +18,7 @@ use crate::qi_physics::ledger::{
     assert_conservation, summarize_world_qi, QiAccountId, WorldQiAccount, WorldQiSnapshot,
 };
 use crate::qi_physics::QiTransferReason;
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use valence::custom_payload::CustomPayloadEvent;
@@ -113,8 +113,8 @@ fn duan_xu_san_shrinks_qi_max_without_release_when_current_fits() {
 #[test]
 fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
     let mut cultivation = Cultivation {
-        qi_current: SPIRIT_QI_TOTAL,
-        qi_max: SPIRIT_QI_TOTAL,
+        qi_current: TEST_QI_FIXTURE_TOTAL,
+        qi_max: TEST_QI_FIXTURE_TOTAL,
         ..Default::default()
     };
     let mut zones = ZoneRegistry::fallback();
@@ -125,7 +125,7 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
     let dimension = CurrentDimension(DimensionKind::Overworld);
     let life_record = LifeRecord::new("offline:duan-xu-san");
     let before = summarize_qi_state_for_test(&cultivation, &zones, &ledger);
-    assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
+    assert_eq!(before.total_observed(), TEST_QI_FIXTURE_TOTAL);
     let mut release: QiMaxShrinkReleaseContext<'_, WorldQiAccount> = QiMaxShrinkReleaseContext {
         entity: Entity::from_raw(501),
         position: Some(&position),
@@ -142,12 +142,12 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
         &mut release
     ));
 
-    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL * 0.97);
+    assert_eq!(cultivation.qi_max, TEST_QI_FIXTURE_TOTAL * 0.97);
     assert_eq!(cultivation.qi_current, cultivation.qi_max);
     let zone = zones
         .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
         .expect("player zone should receive qi released by the cap shrink");
-    let released = SPIRIT_QI_TOTAL * 0.03;
+    let released = TEST_QI_FIXTURE_TOTAL * 0.03;
     assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
 
     let mut reader = transfers.get_reader();
@@ -165,8 +165,8 @@ fn duan_xu_san_releases_excess_to_zone_and_emits_transfer() {
 #[test]
 fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
     let mut cultivation = Cultivation {
-        qi_current: SPIRIT_QI_TOTAL,
-        qi_max: SPIRIT_QI_TOTAL,
+        qi_current: TEST_QI_FIXTURE_TOTAL,
+        qi_max: TEST_QI_FIXTURE_TOTAL,
         ..Default::default()
     };
     let mut wounds = Wounds {
@@ -205,8 +205,8 @@ fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
         &mut release
     ));
 
-    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
-    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_max, TEST_QI_FIXTURE_TOTAL);
+    assert_eq!(cultivation.qi_current, TEST_QI_FIXTURE_TOTAL);
     assert_eq!(
         serde_json::to_value(&wounds).unwrap(),
         wounds_before,
@@ -220,8 +220,8 @@ fn duan_xu_san_missing_life_record_keeps_qi_shrink_fail_closed() {
 #[test]
 fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
     let mut cultivation = Cultivation {
-        qi_current: SPIRIT_QI_TOTAL,
-        qi_max: SPIRIT_QI_TOTAL,
+        qi_current: TEST_QI_FIXTURE_TOTAL,
+        qi_max: TEST_QI_FIXTURE_TOTAL,
         ..Default::default()
     };
     let mut zones = ZoneRegistry::fallback();
@@ -246,8 +246,8 @@ fn duan_xu_san_missing_ledger_keeps_qi_shrink_fail_closed() {
         &mut release
     ));
 
-    assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
-    assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+    assert_eq!(cultivation.qi_max, TEST_QI_FIXTURE_TOTAL);
+    assert_eq!(cultivation.qi_current, TEST_QI_FIXTURE_TOTAL);
     assert_eq!(zones.zones[0].spirit_qi, 0.0);
     assert_eq!(transfers.len(), 0);
 }
@@ -1868,7 +1868,7 @@ mod external_ingress_tests {
             FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
         };
         use crate::qi_physics::ledger::WorldQiAccount;
-        use crate::schema::common::SPIRIT_QI_TOTAL;
+        use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
         use crate::skill::components::{ScrollId, SkillId, SkillSet};
         use crate::zhenfa::trap_content::TrapTargetFace;
         use crate::zhenfa::{
@@ -7162,8 +7162,8 @@ mod external_ingress_tests {
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert((
                 crate::cultivation::components::Cultivation {
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 PlayerState::default(),
@@ -7647,8 +7647,8 @@ mod external_ingress_tests {
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app.world_mut().spawn(client_bundle).id();
             app.world_mut().entity_mut(entity).insert(Cultivation {
-                qi_current: SPIRIT_QI_TOTAL,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_current: TEST_QI_FIXTURE_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             });
             spawn_azure_furnace_with_session(&mut app, "offline:Azure");
@@ -7873,8 +7873,8 @@ mod external_ingress_tests {
                 let entity = app.world_mut().spawn(client_bundle).id();
                 app.world_mut().entity_mut(entity).insert((
                     crate::cultivation::components::Cultivation {
-                        qi_current: SPIRIT_QI_TOTAL,
-                        qi_max: SPIRIT_QI_TOTAL,
+                        qi_current: TEST_QI_FIXTURE_TOTAL,
+                        qi_max: TEST_QI_FIXTURE_TOTAL,
                         ..Default::default()
                     },
                     PlayerState::default(),
@@ -13393,7 +13393,7 @@ dispatch = "direct_generic"
             register_request_app(&mut app);
             app.insert_resource(crate::qi_physics::WorldQiAccount::default());
             app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
-                SPIRIT_QI_TOTAL,
+                TEST_QI_FIXTURE_TOTAL,
             ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
@@ -13422,8 +13422,8 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 Cultivation {
                     realm: Realm::Awaken,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 crate::combat::components::Stamina::default(),
@@ -13437,7 +13437,7 @@ dispatch = "direct_generic"
             // own qi transfer.
             app.update();
             let before = summarize_world_qi(app.world_mut());
-            assert_eq!(before.budget_initial_total, SPIRIT_QI_TOTAL);
+            assert_eq!(before.budget_initial_total, TEST_QI_FIXTURE_TOTAL);
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
@@ -13469,14 +13469,14 @@ dispatch = "direct_generic"
                 Some(&serde_json::json!("short"))
             );
             let cultivation = app.world().get::<Cultivation>(entity).unwrap();
-            assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL - 1.0);
+            assert_eq!(cultivation.qi_current, TEST_QI_FIXTURE_TOTAL - 1.0);
             let stamina = app
                 .world()
                 .get::<crate::combat::components::Stamina>(entity)
                 .unwrap();
             assert_eq!(stamina.current, 95.0);
             let after = summarize_world_qi(app.world_mut());
-            assert_eq!(after.budget_initial_total, SPIRIT_QI_TOTAL);
+            assert_eq!(after.budget_initial_total, TEST_QI_FIXTURE_TOTAL);
             assert_conservation(&before, &after, 0.0)
                 .expect("generic cast 起手扣费必须通过 qi ledger 守恒");
         }
@@ -13487,7 +13487,7 @@ dispatch = "direct_generic"
             register_request_app(&mut app);
             app.insert_resource(crate::qi_physics::WorldQiAccount::default());
             app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
-                SPIRIT_QI_TOTAL,
+                TEST_QI_FIXTURE_TOTAL,
             ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
@@ -13506,8 +13506,8 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 Cultivation {
                     realm: Realm::Awaken,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 crate::combat::components::Stamina::default(),
@@ -13540,7 +13540,7 @@ dispatch = "direct_generic"
             let cultivation = app.world().get::<Cultivation>(entity).unwrap();
             assert_eq!(
                 cultivation.qi_current,
-                SPIRIT_QI_TOTAL - 1.0,
+                TEST_QI_FIXTURE_TOTAL - 1.0,
                 "同一 update 的重复技能栏请求只能扣一次 generic cast 真元"
             );
             assert_eq!(
@@ -13573,7 +13573,7 @@ dispatch = "direct_generic"
             app.insert_resource(load_runtime_only_direct_generic_registry(EXPENSIVE_ID));
             app.insert_resource(crate::qi_physics::WorldQiAccount::default());
             app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
-                SPIRIT_QI_TOTAL,
+                TEST_QI_FIXTURE_TOTAL,
             ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
@@ -13598,8 +13598,8 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 Cultivation {
                     realm: Realm::Awaken,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 crate::combat::components::Stamina {
@@ -14531,7 +14531,7 @@ dispatch = "direct_generic"
             register_request_app(&mut app);
             app.insert_resource(crate::qi_physics::WorldQiAccount::default());
             app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
-                SPIRIT_QI_TOTAL,
+                TEST_QI_FIXTURE_TOTAL,
             ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
@@ -14551,8 +14551,8 @@ dispatch = "direct_generic"
                 // 故意不插入 MeridianSystem
                 Cultivation {
                     realm: Realm::Awaken,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 crate::combat::components::Stamina::default(),
@@ -14583,7 +14583,7 @@ dispatch = "direct_generic"
             register_request_app(&mut app);
             app.insert_resource(crate::qi_physics::WorldQiAccount::default());
             app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
-                SPIRIT_QI_TOTAL,
+                TEST_QI_FIXTURE_TOTAL,
             ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
@@ -14621,8 +14621,8 @@ dispatch = "direct_generic"
                 crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
                 Cultivation {
                     realm: Realm::Awaken,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 crate::combat::components::Stamina::default(),

@@ -9,8 +9,6 @@ use crate::world::zone::ZoneRegistry;
 use super::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use super::{finite_non_negative, QiPhysicsError};
 
-const SPIRIT_QI_TOTAL_ENV: &str = "BONG_SPIRIT_QI_TOTAL";
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldQiBudget {
     pub initial_total: f64,
@@ -38,14 +36,6 @@ impl WorldQiBudget {
             current_total: total,
             era_decay_accum: 0.0,
         }
-    }
-
-    pub fn from_env() -> Self {
-        std::env::var(SPIRIT_QI_TOTAL_ENV)
-            .ok()
-            .and_then(|raw| raw.parse::<f64>().ok())
-            .map(Self::from_total)
-            .unwrap_or_default()
     }
 
     pub fn apply_era_decay(&mut self, ratio: f64) -> Result<f64, QiPhysicsError> {
@@ -199,7 +189,7 @@ pub enum QiTransferReason {
     ///
     /// 半步 buff 是**容量扩张**，不是真元搬运（worldview §三:78 化虚稀缺 + qi_physics 守恒律）。
     /// 此变种用于在 ledger 留下"天道授予 N 真元容量"的可审计轨迹，amount = bonus capacity；
-    /// 实际 qi_current 不变、SPIRIT_QI_TOTAL 不变。emit 为 event，不调 `WorldQiAccount::transfer`
+    /// 实际 qi_current 不变、WorldQiBudget.initial_total 不变。emit 为 event，不调 `WorldQiAccount::transfer`
     /// （后者会变动 balance）。
     HalfStepBuff,
     /// plan-dandao-runtime-wiring-v1 P4 — 暴龙王真元吸取光环。
@@ -1198,8 +1188,8 @@ pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
 /// - `total_observed`：player+zone+container+ledger 的**已落位**真元（≤ 预算；minimal
 ///   世界起服后 zone qi 很低，远小于预算，勿误当 == DEFAULT_SPIRIT_QI_TOTAL）；
 /// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：已落位分量明细；
-/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算（守恒总量
-///   恒定的真锚点 = `DEFAULT_SPIRIT_QI_TOTAL`，仅被时代衰减拉低）与已累计衰减。
+/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：启动时注入的天道预算
+///   （守恒总量恒定的真锚点 = `WorldQiBudget.initial_total`，仅被时代衰减拉低）与已累计衰减。
 ///
 /// per-account 字段：每个被 ledger 记账过的账户一行 `account:<id>` → balance。
 ///

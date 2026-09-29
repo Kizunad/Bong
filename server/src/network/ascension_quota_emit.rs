@@ -271,9 +271,8 @@ mod tests {
         .expect("void-quota JueBi should count as an in-flight quota slot");
         let mut app = App::new();
         app.insert_resource(settings);
-        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：50.0 是旧尺度下 DEFAULT_VOID_QUOTA_K
-        // 本身（half-full budget → limit=1）；DEFAULT_VOID_QUOTA_K 缩放后必须用
-        // DEFAULT_SPIRIT_QI_TOTAL/2 保持同一"半满预算"语义，否则 limit 会跌到 0。
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：使用默认总量的一半模拟半满预算，
+        // 而不是写死旧尺度的 quota_k；启动总量变化时仍应保持 limit=1。
         let half_budget = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
         app.insert_resource(WorldQiBudget::from_total(half_budget));
         app.insert_resource(VoidQuotaConfig::default());
