@@ -35,12 +35,12 @@
 
 ## §5 修复计划骨架
 
-### P0：脱靶完整结算
+### P0：脱靶完整结算 ✅ 2026-09-29
 
 - 在 miss/OutOfRange/HitBlock/NaturalDecay 释放 `qi_evaporated + residual_qi` 的完整实际余额；carrier ledger 到外部 zone 用 `transfer_ledger_qi_to_zone`，外部 source 到 ledger 用 `transfer_external_qi_to_ledger`，只有纯 ledger 账户间才调用 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`，若 payload 已在命中效果中消费，则保持 HitTarget 的零 residual 语义并证明消费去向。
 - 将实际 carrier account/source identity 传入释放 helper，落点优先使用投射物当前位置，zone 不可达时走 overflow；不可把“evaporated”当作系统外流。
 
-### P1：回归契约
+### P1：回归契约 ✅ 2026-09-29
 
 - 每种非命中 despawn reason 断言释放金额等于剩余 payload、zone/overflow 与 `QiTransfer` 完整；命中目标不重复释放。
 - 保留 30/70 视觉效果计算断言，但把它与账本总量分开验证，防止修复反向改变 gameplay 伤害。
@@ -57,3 +57,12 @@
 - **三端契约符号：** Server 负责 payload 结算和账本；Agent：无变更，理由是继续读取既有 `ProjectileDespawnedEvent`/narration；Client：无变更，理由是投射物 despawn VFX/事件 payload 不增字段。
 - **Qi：** `qi_release_to_zone` 用 `QI_ZONE_UNIT_CAPACITY` 拆 zone/overflow；ECS/物品外部 source 先用 `transfer_external_qi_to_ledger`，真实 ledger source 对外部 zone 用 `transfer_ledger_qi_to_zone`，只有纯 ledger→ledger 才直接 `ledger.transfer(QiTransfer { from, to, amount, reason: QiTransferReason::ReleaseToZone })`。断言调用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
 - **worldview 锚点：** `docs/worldview.md` §二、§十的投射物衰减不销毁真元和总量守恒。
+
+## Finish Evidence
+
+- **验真结论：** 真 bug。复现测试先证明旧实现只为 `residual_qi=5.0` 发出转移，遗漏同一事件中的 `qi_evaporated=11.666...`；修复后 `projectile_miss_qi_release_system` 对 `HitBlock`、`OutOfRange`、`NaturalDecay` 将两部分合计，经 `qi_release_to_zone` 回流，zone 无空间时进入 overflow；`HitTarget` 仍不重复释放。
+- **落地清单：** P0 落在 `server/src/combat/carrier.rs:1388-1411` 的 `projectile_miss_qi_release_system`；P1 落在 `server/src/combat/carrier_tests.rs` 的完整 payload、满 zone overflow、命中不回流与端到端守恒契约测试。
+- **关键 commit：** `b5e8ed9f9`（2026-09-29，提升本 plan 为 Active）；`51d5d1fc2`（2026-09-29，脱靶完整真元回流及回归测试）。
+- **测试结果：** 修改前复现 `cargo test -p bong-server combat::carrier::tests::conservation_invariant_releases_full_miss_payload --lib -- --exact --nocapture` 失败（实际 5、期望 16.666...）；修复后 carrier 回归组 35 passed，`cargo fmt --check` 通过；端到端测试用 `SPIRIT_QI_TOTAL` 建预算并以 `qi_physics::assert_conservation` 断言。
+- **跨仓核验：** server 命中 `ProjectileDespawnedEvent`、`projectile_miss_qi_release_system`、`qi_release_to_zone`、`QiTransfer`、`SPIRIT_QI_TOTAL` 与 `assert_conservation`；agent 继续消费既有 despawn/narration 事件，client 继续消费既有投射物消失表现，wire schema 无变更。
+- **遗留 / 后续：** 本 plan 未改 agent、client、灵田、经脉、功法或身体部位；投射物到达脱靶点前的既有距离衰减语义不在本次范围。
