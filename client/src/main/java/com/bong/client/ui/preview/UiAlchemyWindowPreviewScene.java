@@ -149,12 +149,13 @@ final class UiAlchemyWindowPreviewScene implements UiPreviewScene {
                             notes.showHistory();
                             notesAdapter.title("炉记");
                         });
+                    if (oldContent != null) oldContent.close();
+                    if (oldAdapter != null) oldAdapter.close();
+                    // 旧资源完全关闭后才提交新引用，避免关闭失败时 state 与实际挂载内容脱节。
                     state = nextState;
                     adapter = nextAdapter;
                     content = nextContent;
                     focus(state);
-                    if (oldContent != null) oldContent.close();
-                    if (oldAdapter != null) oldAdapter.close();
                 } catch (Throwable failure) {
                     if (nextContent != null) {
                         try {
@@ -173,7 +174,7 @@ final class UiAlchemyWindowPreviewScene implements UiPreviewScene {
                     state = oldState;
                     adapter = oldAdapter;
                     content = oldContent;
-                    if (oldState == null && nextState != null) {
+                    if (nextState != null && nextState != oldState) {
                         try {
                             manager.close(nextState.key());
                         } catch (Throwable cleanupFailure) {
