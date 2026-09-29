@@ -2,7 +2,7 @@
 
 ## §0 摘要
 
-**来源 Issue：#1725。** C2S 炼丹注灵请求在 `handle_alchemy_intervention` 中直接调用 `AlchemySession::apply_intervention(InjectQi(q))`；该方法只把数值累加到 `session.qi_injected`，不读取玩家 `Cultivation`、不检查余额、也不产生 `QiTransfer`。炼丹配方只在结算时用 `qi_injected` 与 `recipe.fire_profile.qi_cost` 比较，因此客户端可免费注入任意数量真元并满足火候门槛。本 skeleton 不改生产代码。
+**来源 Issue：#1725。** 验真基线 `origin/main@7496457d0` 仍显示 C2S 炼丹注灵请求在 `handle_alchemy_intervention` 中直接调用 `AlchemySession::apply_intervention(InjectQi(q))`；该方法只把数值累加到 `session.qi_injected`，不读取玩家 `Cultivation`、不检查余额、也不产生 `QiTransfer`。本计划已落地守恒账本、玩家付款事务、取消/断线收口和回归契约测试。
 
 接入面：进料是玩家 C2S `alchemy_intervention`、所属 `AlchemyFurnace`/`AlchemySession`、玩家 `Cultivation` 和当前 zone；出料是玩家扣减、炉体/炼丹 session 的注入余额、zone/overflow 与结算结果。复用 `QiTransfer`、`qi_release_to_zone`/炉体 qi reserve 的既有边界，不能在 `AlchemySession` 内另造物理公式。server 内部修复不需要 agent/client schema 字段变化；worldview §十的真元零和与炼丹生产链是锚点。
 
@@ -35,21 +35,21 @@
 
 ## §5 修复计划骨架
 
-### P0：注灵付款事务
+### P0：注灵付款事务 ✅ 2026-09-29
 
 - 在网络 handler 或专用 alchemy service 中先验证 `InjectQi(q)` 为有限正数、玩家 `Cultivation.qi_current` 足够、炉体/session 可接受，再调用 `qi_physics::ledger::transfer_external_qi_to_ledger(&mut ledger, QiAccountId::player(player_id), QiAccountId::container(furnace_id), q, QiTransferReason::Crafting)`；该 helper 成功后才扣 `Cultivation.qi_current`、更新 session canonical balance，真实消费者必须更新余额而非只发事件。
 - 炉体结算读取已付款的 canonical balance；重复请求、拒绝请求、断线/炉体销毁必须幂等退款或回灌 zone/overflow，不能靠客户端 q 值造余额。
 - 复用 `qi_physics` 的单位、overflow 与 `QiTransferReason`，不要在 session.rs 自定义第二套真元 ledger。
 
-### P1：回归契约
+### P1：回归契约 ✅ 2026-09-29
 
 - 足额注灵、余额不足、负数/NaN、collapsed zone、非炉主和重复请求分别断言玩家 qi、session 注入量、zone/overflow、事件和结算门。
 - 炉体成功产丹时验证总量守恒；取消/过期/断线时验证未消费注资有明确去向。
 - 现有 `AlchemySession` 纯逻辑单测继续只测状态机，需新增 handler/ledger 契约而不是把付款逻辑藏进 fixture。
 
-## §6 验证计划
+## §6 验证计划 ✅ 2026-09-29
 
-实现后运行 server 栈 fmt、clippy、cargo test，并覆盖 alchemy 网络 handler、session 结算和 qi ledger。此 docs-only skeleton 阶段不编译。
+运行 server 栈 fmt、clippy、cargo test，并覆盖 alchemy 网络 handler、session 结算和 qi ledger；完整门禁已通过。
 
 ## §7 跨仓契约与可核验锚点
 
@@ -59,3 +59,33 @@
 - **三端契约符号：** Server 使用上述 handler/session/ledger；Agent：无变更，理由是只继续消费既有 alchemy snapshot；Client：无变更，理由是请求、炉体 snapshot 与 VFX payload 不增字段。
 - **Qi：** 在线玩家不是 ledger player 余额，必须调用 `transfer_external_qi_to_ledger(&mut ledger, from, to, amount, reason)`；helper 内部才以 `ledger.transfer(QiTransfer { from, to, amount, reason })` 临时镜像外部 source。zone 回灌用 `qi_release_to_zone`/`QiTransferReason::ReleaseToZone`/`QI_ZONE_UNIT_CAPACITY`，断言用 `qi_physics::ledger::assert_conservation`、`QI_EPSILON` 与 `crate::schema::common::SPIRIT_QI_TOTAL`。
 - **worldview 锚点：** `docs/worldview.md` §十的真元零和与炼丹生产链；session 数值不能替代真实付款。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/alchemy/qi.rs` 提供 `debit_player_qi_to_furnace`、`refund_furnace_qi_to_player`、`release_furnace_qi_to_overflow` 和 `AlchemyQiReservationBook`；`server/src/network/client_request_handler.rs` 的 `settle_alchemy_inject_qi_requests` 在 ledger 成功后才提交 `Cultivation.qi_current` 与 session，取丹、炉体移除、断线和关服均有明确调度收口。
+- P1：`server/src/alchemy/qi.rs` 的守恒测试引用 `SPIRIT_QI_TOTAL`、`summarize_world_qi` 和 `assert_conservation`，覆盖足额付款、余额不足、容量不足退款/overflow、同帧注灵提交、断线退款、炉体移除退款和关服转入持久化 overflow；网络契约测试覆盖坍缩区、非炉主、无 session、注灵后取丹顺序。
+
+### 关键 commit
+
+- `e4398b5c9`（2026-09-29）：推进炼丹注灵真元守恒修复计划。
+- `620c65e74`（2026-09-29）：接入玩家到炉体的 ledger 转移、退款、清理和契约测试。
+- `13d1c2080`（2026-09-29）：改用 `EventReader<AppExit>`，确保关服事件在 Last 阶段可见且无关服请求时不动账本。
+
+### 测试结果
+
+- `scripts/build-token.sh cargo fmt --check`：PASS。
+- `scripts/build-token.sh cargo clippy --all-targets -- -D warnings`：PASS。
+- `scripts/build-token.sh cargo test alchemy_ --lib`：71 passed，1 ignored。
+- `scripts/build-token.sh cargo test`：PASS；lib 10425 个测试及全部集成测试、文档测试无失败。
+
+### 跨仓库核验
+
+- Server：`Cultivation.qi_current`、`AlchemySession.qi_reserved`、`WorldQiAccount`、`QiTransferReason::Crafting`、`assert_conservation`。
+- Agent：无 schema 或 Redis 契约变更，继续消费既有炼丹 session snapshot。
+- Client：无请求或 snapshot 字段变更，既有 `InjectQi` 请求仍由 server 侧扣款后才生效。
+
+### 遗留 / 后续
+
+- `FurnaceQiReserve` 的 AutoProfile 路径继续是炉体自有储量，不计入玩家可退款余额；BlockEntity 炉体持久化仍由既有 plan 负责。本计划范围内所有玩家注灵余额在成功结算、取消、断线、炉体移除和关服路径都有 ledger 去向。
