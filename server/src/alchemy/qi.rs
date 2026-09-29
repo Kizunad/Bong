@@ -267,19 +267,19 @@ mod tests {
     use crate::cultivation::components::Cultivation;
     use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
     use crate::qi_physics::WorldQiBudget;
-    use crate::schema::common::SPIRIT_QI_TOTAL;
+    use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
     use valence::prelude::{App, AppExit, Client, Events, Last, Mut, Update};
     use valence::testing::create_mock_client;
 
     fn app_with_player(qi_current: f64) -> (App, Entity) {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         let player = app
             .world_mut()
             .spawn(Cultivation {
                 qi_current,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -288,11 +288,11 @@ mod tests {
 
     #[test]
     fn paid_injection_moves_qi_without_changing_world_total() {
-        let (mut app, player) = app_with_player(SPIRIT_QI_TOTAL);
+        let (mut app, player) = app_with_player(TEST_QI_FIXTURE_TOTAL);
         let furnace = app.world_mut().spawn_empty().id();
         let mut session = AlchemySession::new("hui_yuan_pill_v0".into(), "offline:alice".into());
         let before = summarize_world_qi(app.world_mut());
-        assert_eq!(before.budget_initial_total, SPIRIT_QI_TOTAL);
+        assert_eq!(before.budget_initial_total, TEST_QI_FIXTURE_TOTAL);
 
         let amount = 12.5;
         app.world_mut()
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn inject_request_system_commits_player_and_furnace_together() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.init_resource::<AlchemyQiReservationBook>();
@@ -421,8 +421,8 @@ mod tests {
             .world_mut()
             .spawn(client_bundle)
             .insert(Cultivation {
-                qi_current: SPIRIT_QI_TOTAL,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_current: TEST_QI_FIXTURE_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -449,7 +449,7 @@ mod tests {
             .expect("accepted request must debit player and credit furnace atomically");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
-            SPIRIT_QI_TOTAL - 7.5
+            TEST_QI_FIXTURE_TOTAL - 7.5
         );
         let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
         let session = furnace.session.as_ref().unwrap();
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn second_payer_is_rejected_while_first_furnace_reservation_is_pending() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.init_resource::<AlchemyQiReservationBook>();
@@ -480,8 +480,8 @@ mod tests {
             .world_mut()
             .spawn(alice_bundle)
             .insert(Cultivation {
-                qi_current: SPIRIT_QI_TOTAL / 2.0,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_current: TEST_QI_FIXTURE_TOTAL / 2.0,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -490,8 +490,8 @@ mod tests {
             .world_mut()
             .spawn(bob_bundle)
             .insert(Cultivation {
-                qi_current: SPIRIT_QI_TOTAL / 2.0,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_current: TEST_QI_FIXTURE_TOTAL / 2.0,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -523,11 +523,11 @@ mod tests {
             .expect("rejecting a second payer must preserve the qi total");
         assert_eq!(
             app.world().get::<Cultivation>(alice).unwrap().qi_current,
-            SPIRIT_QI_TOTAL / 2.0 - 7.5
+            TEST_QI_FIXTURE_TOTAL / 2.0 - 7.5
         );
         assert_eq!(
             app.world().get::<Cultivation>(bob).unwrap().qi_current,
-            SPIRIT_QI_TOTAL / 2.0
+            TEST_QI_FIXTURE_TOTAL / 2.0
         );
         assert_eq!(
             app.world()
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn finished_furnace_refunds_online_payer_before_overflow() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.init_resource::<AlchemyQiReservationBook>();
         app.add_systems(
@@ -560,7 +560,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(Cultivation {
                 qi_current: 80.0,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -586,7 +586,7 @@ mod tests {
             .expect("finished furnace refund must conserve qi");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
-            SPIRIT_QI_TOTAL
+            TEST_QI_FIXTURE_TOTAL
         );
         assert_eq!(
             app.world()
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn disconnect_refunds_tracked_furnace_qi_before_player_despawn() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.init_resource::<AlchemyQiReservationBook>();
         app.add_systems(
@@ -692,7 +692,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(Cultivation {
                 qi_current: 80.0,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -721,7 +721,7 @@ mod tests {
             .expect("disconnect refund must preserve total qi");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
-            SPIRIT_QI_TOTAL
+            TEST_QI_FIXTURE_TOTAL
         );
         assert_eq!(
             app.world()
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn removed_furnace_refunds_owner_or_overflow_instead_of_dropping_qi() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.init_resource::<AlchemyQiReservationBook>();
         app.add_systems(
@@ -752,7 +752,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(Cultivation {
                 qi_current: 80.0,
-                qi_max: SPIRIT_QI_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL,
                 ..Cultivation::default()
             })
             .id();
@@ -783,7 +783,7 @@ mod tests {
             .expect("removed furnace settlement must preserve total qi");
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().qi_current,
-            SPIRIT_QI_TOTAL
+            TEST_QI_FIXTURE_TOTAL
         );
         assert_eq!(
             app.world()
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn shutdown_moves_active_furnace_balance_to_persistent_overflow() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.init_resource::<AlchemyQiReservationBook>();
         app.add_event::<AppExit>();

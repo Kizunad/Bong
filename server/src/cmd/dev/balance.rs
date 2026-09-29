@@ -1029,7 +1029,7 @@ mod tests {
 
     /// ⑨ MINOR：handle() 注入 live VoidQuotaConfig 时 quota_k 使用 live 值（防 env 覆盖后撒谎）。
     ///   VoidQuotaConfig.quota_k != DEFAULT_VOID_QUOTA_K 时，build_balance_report 收到的
-    ///   config.quota_k 应等于 live VoidQuotaConfig.quota_k 而非编译时常数。
+    ///   config.quota_k 应等于 live VoidQuotaConfig.quota_k 而非默认门槛。
     #[test]
     fn handle_uses_live_void_quota_config_quota_k_when_available() {
         use crate::cultivation::tribulation::DEFAULT_VOID_QUOTA_K;
@@ -1064,13 +1064,13 @@ mod tests {
     /// ⑩ MAJOR 契约测试：真实 handle() 系统使用 live VoidQuotaConfig.quota_k 覆盖 TribulationBalanceConfig
     ///   的默认值，并将 live quota_k 输出到 emit 的 chat 消息中。
     ///
-    ///   验证方式：insert VoidQuotaConfig { quota_k: 80.0 }（与 DEFAULT_VOID_QUOTA_K=50.0 明显不同），
+    ///   验证方式：insert VoidQuotaConfig { quota_k: 80.0 }（与默认门槛明显不同），
     ///   dispatch `/balance tribulation` 命令驱动真实 handle() ECS system，
-    ///   捕获 GameMessageS2c 文本，断言包含 "quota_k=80.00" 而非 "quota_k=50.00"。
+    ///   捕获 GameMessageS2c 文本，断言包含 "quota_k=80.00" 而不是编译时默认门槛。
     ///   删除 handle() L220 的 `live_config.quota_k = vq.quota_k` 生产行后此测试必须变红。
     #[test]
     fn handle_emits_live_void_quota_k_in_chat_not_default() {
-        let live_quota_k = 80.0_f64; // 与 DEFAULT_VOID_QUOTA_K=50.0 明显不同
+        let live_quota_k = 80.0_f64; // 与默认门槛明显不同
 
         let mut app = App::new();
         app.insert_resource(crate::combat::CombatClock { tick: 100 });
@@ -1138,7 +1138,7 @@ mod tests {
         );
         assert!(
             !combined.contains("quota_k=50.00"),
-            "chat 不应输出 DEFAULT_VOID_QUOTA_K=50.00，应已被 live VoidQuotaConfig 覆盖，\
+            "chat 不应输出编译时默认门槛，应已被 live VoidQuotaConfig 覆盖，\
              got:\n{combined}"
         );
     }

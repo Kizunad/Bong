@@ -7,7 +7,7 @@ use crate::forge::artifact_meridian::{artifact_state_for_outcome, write_artifact
 use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiBudget};
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use valence::prelude::{App, Events, Position, Update};
 
 fn template(id: &str, name: &str, max_stack_count: u32) -> ItemTemplate {
@@ -121,7 +121,7 @@ fn charge_app() -> App {
 
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 0 });
-    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app.insert_resource(registry());
     app.insert_resource(ZoneRegistry::default());
     app.init_resource::<GuardLogDedup>();
@@ -152,8 +152,8 @@ fn spawn_charge_actor(app: &mut App) -> Entity {
     app.world_mut()
         .spawn((
             Cultivation {
-                qi_current: SPIRIT_QI_TOTAL,
-                qi_max: SPIRIT_QI_TOTAL * 2.0,
+                qi_current: TEST_QI_FIXTURE_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL * 2.0,
                 ..Default::default()
             },
             Position::new([0.0, 66.0, 0.0]),
@@ -174,8 +174,8 @@ fn spawn_full_resonance_charge_actor(app: &mut App) -> Entity {
     app.world_mut()
         .spawn((
             Cultivation {
-                qi_current: SPIRIT_QI_TOTAL,
-                qi_max: SPIRIT_QI_TOTAL * 2.0,
+                qi_current: TEST_QI_FIXTURE_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL * 2.0,
                 ..Default::default()
             },
             QiColor::default(),
@@ -273,7 +273,7 @@ fn full_charge_resonance_loss_returns_unsealed_qi_to_zone() {
         .unwrap()
         .spirit_qi = 0.0;
 
-    let qi_target = (SPIRIT_QI_TOTAL * 0.6) as f32;
+    let qi_target = (TEST_QI_FIXTURE_TOTAL * 0.6) as f32;
     app.world_mut().send_event(ChargeCarrierIntent {
         carrier: actor,
         slot: Some(CarrierSlot::MainHand),
@@ -287,7 +287,8 @@ fn full_charge_resonance_loss_returns_unsealed_qi_to_zone() {
 
     let cultivation = app.world().get::<Cultivation>(actor).unwrap();
     assert!(
-        (cultivation.qi_current - (SPIRIT_QI_TOTAL - f64::from(qi_target))).abs() < f64::EPSILON,
+        (cultivation.qi_current - (TEST_QI_FIXTURE_TOTAL - f64::from(qi_target))).abs()
+            < f64::EPSILON,
         "满蓄力应从玩家扣除投入真元，实际剩余 {}",
         cultivation.qi_current
     );
@@ -359,11 +360,11 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
     let actor = spawn_full_resonance_charge_actor(&mut app);
     let before = summarize_world_qi(app.world_mut());
     assert_eq!(
-        before.budget_initial_total, SPIRIT_QI_TOTAL,
-        "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须使用 TEST_QI_FIXTURE_TOTAL 作为预算锚点"
     );
 
-    let qi_target = (SPIRIT_QI_TOTAL * 0.6) as f32;
+    let qi_target = (TEST_QI_FIXTURE_TOTAL * 0.6) as f32;
     app.world_mut().send_event(ChargeCarrierIntent {
         carrier: actor,
         slot: Some(CarrierSlot::MainHand),
@@ -431,8 +432,8 @@ fn full_resonance_charge_and_out_of_range_miss_preserve_world_qi_budget() {
 
     let after = summarize_world_qi(app.world_mut());
     assert_eq!(
-        after.budget_initial_total, SPIRIT_QI_TOTAL,
-        "守恒快照必须使用 SPIRIT_QI_TOTAL 作为预算锚点"
+        after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须使用 TEST_QI_FIXTURE_TOTAL 作为预算锚点"
     );
     let expected_loss = f64::from(qi_target) - released_qi;
     assert_conservation(&before, &after, expected_loss).unwrap_or_else(|error| {
@@ -1512,7 +1513,7 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
     use crate::qi_physics::ledger::{QiTransfer, QiTransferReason};
 
     let mut app = miss_release_app();
-    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app.world_mut()
         .resource_mut::<crate::world::zone::ZoneRegistry>()
         .find_zone_mut("spawn")
@@ -1522,8 +1523,8 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
     let owner = app
         .world_mut()
         .spawn(Cultivation {
-            qi_current: SPIRIT_QI_TOTAL,
-            qi_max: SPIRIT_QI_TOTAL * 2.0,
+            qi_current: TEST_QI_FIXTURE_TOTAL,
+            qi_max: TEST_QI_FIXTURE_TOTAL * 2.0,
             ..Default::default()
         })
         .id();
