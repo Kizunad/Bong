@@ -10,6 +10,11 @@ use crate::qi_physics::{CarrierGrade as QiCarrierGrade, MediumKind, StyleAttack}
 pub struct QiProjectile {
     pub owner: Option<Entity>,
     pub qi_payload: f32,
+    /// 暗器投射物在蓄力时承载真元的 carrier instance；其他 qi 投射物为 `None`。
+    ///
+    /// 脱靶结算必须用这个 instance 与 owner 还原 `carrier_qi_account`，不能
+    /// 伪造一个玩家账户作为释放来源。
+    pub carrier_instance_id: Option<u64>,
 }
 
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
@@ -133,6 +138,7 @@ mod tests {
         let projectile = QiProjectile {
             owner: None,
             qi_payload: 12.0,
+            carrier_instance_id: None,
         };
 
         let attack = AnqiStyleAttack::new(&flight, &projectile);

@@ -250,6 +250,8 @@ pub struct CarrierImpactEvent {
 pub struct ProjectileDespawnedEvent {
     pub owner: Option<Entity>,
     pub projectile: Entity,
+    /// 仅内部账本结算使用；wire bridge 不暴露此字段。
+    pub carrier_instance_id: Option<u64>,
     pub reason: ProjectileDespawnReason,
     pub distance: f32,
     pub qi_evaporated: f32,
@@ -888,7 +890,8 @@ fn throw_carrier_intents(
             }
             continue;
         };
-        let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
+        let instance_id = item.instance_id;
+        let Some(imprint) = store.imprints_by_instance.remove(&instance_id) else {
             // 与上同构：手槽有非暗器物品（新手村 fixture 主手通常是 iron_sword）
             // 但无 anqi 印记——空手护栏的另一条实测路径。去重语义同上。
             if guard_log.should_emit(&wire_id, "no_anqi_imprint", clock.tick) {
@@ -937,6 +940,7 @@ fn throw_carrier_intents(
             QiProjectile {
                 owner: Some(intent.thrower),
                 qi_payload: imprint.qi_amount,
+                carrier_instance_id: Some(instance_id),
             },
             AnqiProjectileFlight {
                 carrier_kind: imprint.carrier_kind,
@@ -1364,6 +1368,7 @@ fn emit_projectile_despawn(
     despawned.send(ProjectileDespawnedEvent {
         owner: args.projectile.owner,
         projectile: args.projectile_entity,
+        carrier_instance_id: args.projectile.carrier_instance_id,
         reason: args.reason,
         distance,
         qi_evaporated,
@@ -1406,15 +1411,41 @@ pub fn projectile_miss_qi_release_system(
             continue;
         }
         let pos = DVec3::new(event.pos[0], event.pos[1], event.pos[2]);
-        release_residual_to_zone(
-            &mut zones,
+        let from = carrier_qi_account_for_projectile(event);
+        release_account_to_zone(
+            Some(&mut zones),
             &mut qi_transfers,
+            from,
             DimensionKind::Overworld,
             pos,
             residual,
             "anqi_projectile_miss",
             event.projectile.to_bits(),
         );
+    }
+}
+
+/// Resolve the ledger source for a despawned anqi projectile.
+///
+/// A charged carrier's qi lives in `carrier_qi_account(owner, instance_id)` from
+/// the moment channeling begins.  The fallback is reserved for malformed legacy
+/// events that lack the identity; it stays a container account so the release is
+/// still auditable and never pretends that a player's ECS account owns the qi.
+fn carrier_qi_account_for_projectile(event: &ProjectileDespawnedEvent) -> QiAccountId {
+    match (event.owner, event.carrier_instance_id) {
+        (Some(owner), Some(instance_id)) => carrier_qi_account(owner, instance_id),
+        _ => {
+            tracing::error!(
+                projectile = ?event.projectile,
+                owner = ?event.owner,
+                carrier_instance_id = ?event.carrier_instance_id,
+                "anqi projectile despawn event is missing carrier identity; using an auditable fallback container account"
+            );
+            QiAccountId::container(format!(
+                "anqi_carrier:unknown_projectile:{}",
+                event.projectile.to_bits()
+            ))
+        }
     }
 }
 
@@ -1430,7 +1461,10 @@ pub fn release_residual_to_zone(
     context: &str,
     entity_bits: u64,
 ) {
-    let from = QiAccountId::player(format!("{context}:entity:{entity_bits}"));
+    // Legacy callers without a carrier identity use an explicitly container-scoped
+    // fallback. Production despawn events resolve the real account through
+    // `carrier_qi_account_for_projectile` before reaching `release_account_to_zone`.
+    let from = QiAccountId::container(format!("{context}:entity:{entity_bits}"));
     release_account_to_zone(
         Some(zones),
         qi_transfers,
