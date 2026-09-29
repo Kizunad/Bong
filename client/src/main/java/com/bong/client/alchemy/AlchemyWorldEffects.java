@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /** 世界丹炉的有限寿命表现。由服务端广播驱动，与 Inspect 和工位窗口的生命周期无关。 */
 public final class AlchemyWorldEffects {
@@ -58,10 +59,20 @@ public final class AlchemyWorldEffects {
     private static void ensureWorld(ClientWorld next) {
         if (world == next) return;
         FURNACES.clear();
-        FURNACE_MODELS.clear();
+        resetFurnaceModels();
         ACTIONS.clear();
         world = next;
         tick = 0;
+    }
+
+    private static void resetFurnaceModels() {
+        resetFurnaceModels(FURNACE_MODELS, BongModeledEntity::resetAlchemyEffects);
+    }
+
+    /** 重置已登记模型后再丢弃索引，避免最后一帧的热度或过渡动画残留。 */
+    static <T> void resetFurnaceModels(Map<BlockPos, T> models, Consumer<? super T> resetter) {
+        models.values().forEach(resetter);
+        models.clear();
     }
 
     /** 统一 ServerDataRouter 已在客户端线程完成连接代际校验。 */
@@ -105,7 +116,7 @@ public final class AlchemyWorldEffects {
         FURNACES.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= tick
             || client.player.squaredDistanceTo(Vec3d.ofCenter(entry.getKey())) > 48 * 48);
         if (FURNACES.isEmpty() && ACTIONS.isEmpty()) {
-            FURNACE_MODELS.clear();
+            resetFurnaceModels();
             return;
         }
         Map<BlockPos, BongModeledEntity> models = new HashMap<>();
