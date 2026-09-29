@@ -1,6 +1,6 @@
 # plan-bughunt-hybrid-fusion-drained-qi-v1
 
-> 骨架：来源 #1450。融合 despawn 组件兽时未消费 RatBlackboard 的 drained_qi。
+> 骨架：来源 #1450、#1489。融合 despawn 组件兽或缝合兽死亡时未消费 blackboard 中从 zone 吸入的 qi。
 
 ## §0 摘要
 

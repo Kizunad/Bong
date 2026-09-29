@@ -1,6 +1,6 @@
 # plan-stale-spirit-niche-lifecycle-v1（骨架）
 
-> **骨架（草案）**。一句话主题：旧角色灵龛在 `social_spirit_niches` 持久化里残留，`create new character` 只清 username 级复活点、不清旧 `owner=char_id` 行；后续旧灵龛被 reveal 时又会反向清空**当前角色**的持久化复活点，形成“前世幽灵灵龛”与跨角色复活点误伤。
+> **骨架（草案）**。来源 issue：#1578。旧角色灵龛在 `social_spirit_niches` 持久化里残留，`create new character` 只清 username 级复活点、不清旧 `owner=char_id` 行；后续旧灵龛被 reveal 时又会反向清空**当前角色**的持久化复活点，形成“前世幽灵灵龛”与跨角色复活点误伤。
 
 > 立项动机：bughunt 线程 E 在限定 scope（`social` / `player` / `combat/lifecycle.rs` / `persistence`）内确认的 1 个高置信跨会话 bug。已对现有 bughunt plans 去重；不重复棺、派系、关服刷盘等已立项题。
 
