@@ -1,3 +1,4 @@
+pub mod authorization;
 pub mod gameplay;
 pub mod home_return;
 pub mod spawn_selector;
