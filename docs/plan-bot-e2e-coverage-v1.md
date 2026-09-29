@@ -12,6 +12,8 @@
 - **qi_physics 锚点**：本 plan 不定义物理公式或常数；涉及真元变动的场景只验证现有 `qi_physics::ledger::QiTransfer` 所驱动的外部可观察结果与守恒，不直接改写账户。
 - **运行基础设施边界**：P0 的 Bot CI/preview 启停依赖全机共享 Cargo/Gradle 槽与 identity-safe server lifecycle；`scripts/build-token.sh`、`scripts/lib/bong-server-lifecycle.sh`、`scripts/preview/run-server-headless.sh` 只承载测试 harness 的并发和清理权限，不改变 gameplay。对应回归必须锁住跨 worktree 共享锁域、PID/starttime/executable identity、精确 listener owner 与 fail-closed cleanup。
 
+RF-45 已在总纲 §9.9（2026-09-30）将 `scripts/bot/` 定位为正式支持的参考无头客户端；V 轨完成后须维护协议兼容承诺与版本纪律，挂机经济影响转由独立 `plan-bot-economy-eval-v1` 先测收益再议规则。
+
 ## 阶段总览
 
 | 阶段 | 内容 | 状态 |

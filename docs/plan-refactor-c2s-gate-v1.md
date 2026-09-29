@@ -104,6 +104,8 @@ P1 在 `bong:client_request` 未可信边界落每客户端 token bucket：默�
 
 P1 复用现有 `ServerDataPayloadV1::EventAlert { event: Generic, message: "目标不可用"/"当前状态不可用", zone: None, duration_ticks: Some(70) }` 给请求者单播；它没有 request/reason/request_id 字段，不能被宣称为结构化 ack。结构化 `request_rejected` 只有在 R6 冻结并落地契约后才启用；字段至少为 `request_kind`、安全折叠后的 `reason_code`、可选 `request_id`，且必须携双端正反 sample，绝不发送内部 target-resolution reason。R4 P1 不私改 R6 独占的 emit/proto 文件。
 
+RF-45 已在总纲 §9.7（2026-09-30）收口背压：机器可读限流反馈按连接/时间窗至多一次，只给多久后重试，不暴露 request kind 或剩余配额；R4 保留 32 容量、每 tick +8 的预算，待 V 轨实测后再校准。
+
 **落点**：`server/src/schema/server_data.rs` 的 `EventAlert`、`server/src/network/freshness_probe_emit.rs:67-93`、`client/src/main/java/com/bong/client/network/EventAlertHandler.java:33-67`；plan P1，R6 P1/P4。
 
 ### 5. 延寿棺 ownership 使用已认证持久化主体
