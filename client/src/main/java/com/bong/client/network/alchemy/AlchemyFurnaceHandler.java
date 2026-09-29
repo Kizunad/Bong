@@ -1,11 +1,9 @@
 package com.bong.client.network.alchemy;
 
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
-import com.bong.client.alchemy.state.AlchemySessionStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
-import com.bong.client.ui.window.UiWindowRuntime;
 import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 
@@ -32,14 +30,8 @@ public final class AlchemyFurnaceHandler implements ServerDataHandler {
                     && p.get("pos_z").isJsonPrimitive() && p.get("pos_z").getAsJsonPrimitive().isNumber()) {
                 pos = new BlockPos(p.get("pos_x").getAsInt(), p.get("pos_y").getAsInt(), p.get("pos_z").getAsInt());
             }
-            var previous = AlchemyFurnaceStore.snapshot();
             var next = new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession);
             AlchemyFurnaceStore.replace(next);
-            if (!java.util.Objects.equals(pos, previous.pos())) {
-                // 炉体快照本身是会话级权威状态，可以在窗口未打开时缓存；
-                // 清理关联 UI session 则必须经过窗口 owner，避免迟到包复活已关闭界面。
-                UiWindowRuntime.runIfAlchemyOpen(() -> AlchemySessionStore.replace(AlchemySessionStore.Snapshot.empty()));
-            }
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied alchemy_furnace snapshot to AlchemyFurnaceStore (tier=" + tier + ")");
         } catch (RuntimeException e) {

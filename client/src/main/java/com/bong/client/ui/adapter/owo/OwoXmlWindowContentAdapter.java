@@ -144,24 +144,34 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
 
     public void paperFrame() {
         if (paperFrame) return;
-        cancelInput();
-        setSizeExpanded(false);
-        adapter.rootComponent.surface(io.wispforest.owo.ui.core.Surface.BLANK);
-        // 纸页只替换内容区，不移除标题栏；背景、拖动区和合卷入口各有明确边界。
         var header = adapter.rootComponent.childById(FlowLayout.class, "window-header");
-        header.padding(Insets.of(0, 0, 12, 56));
-        header.surface((context, component) -> {
-            int x = component.x(), y = component.y(), w = component.width(), h = component.height();
-            context.fill(x, y, x + w, y + h, 0xFFD4C19A);
-            context.fill(x, y + h - 1, x + w, y + h, 0xFF8D7554);
-        });
-        adapter.rootComponent.childById(LabelComponent.class, "window-title")
-            .color(io.wispforest.owo.ui.core.Color.ofRgb(0x60392B));
+        var titleLabel = adapter.rootComponent.childById(LabelComponent.class, "window-title");
         var close = actions.childById(ButtonComponent.class, "window-close");
         if (close == null) throw new IllegalStateException("window-close control is required for paper frame");
         var originalActions = List.copyOf(actions.children());
         var originalMargins = actions.margins().get();
+        var originalRootSurface = adapter.rootComponent.surface();
+        var originalHeaderPadding = header.padding().get();
+        var originalHeaderSurface = header.surface();
+        var originalTitleColor = titleLabel.color().get();
+        var originalCloseTooltip = close.tooltip();
+        var originalCloseMessage = close.getMessage();
+        var originalCloseSizing = close.horizontalSizing().get();
+        var originalCloseRenderer = close.renderer();
+        boolean originalCloseTextShadow = close.textShadow();
+        boolean originalSizeExpanded = sizeExpanded;
         try {
+            cancelInput();
+            setSizeExpanded(false);
+            // 纸页只替换内容区，不移除标题栏；背景、拖动区和合卷入口各有明确边界。
+            adapter.rootComponent.surface(io.wispforest.owo.ui.core.Surface.BLANK);
+            header.padding(Insets.of(0, 0, 12, 56));
+            header.surface((context, component) -> {
+                int x = component.x(), y = component.y(), w = component.width(), h = component.height();
+                context.fill(x, y, x + w, y + h, 0xFFD4C19A);
+                context.fill(x, y + h - 1, x + w, y + h, 0xFF8D7554);
+            });
+            titleLabel.color(io.wispforest.owo.ui.core.Color.ofRgb(0x60392B));
             actions.clearChildren().child(close);
             actions.margins(Insets.of(1, 0, 0, 6));
             close.tooltip(Text.literal("合卷"));
@@ -175,15 +185,34 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
             applyBounds();
             paperFrame = true;
         } catch (Throwable failure) {
-            try {
-                actions.clearChildren();
-                for (var child : originalActions) actions.child(child);
-                actions.margins(originalMargins);
-            } catch (Throwable rollbackFailure) {
-                if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            Throwable rollbackFailure = failure;
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> close.tooltip(originalCloseTooltip));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> close.setMessage(originalCloseMessage));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> close.horizontalSizing(originalCloseSizing));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> close.textShadow(originalCloseTextShadow));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> close.renderer(originalCloseRenderer));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, actions::clearChildren);
+            for (var child : originalActions) {
+                rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> actions.child(child));
             }
-            OwoXmlWindowContentAdapter.<RuntimeException>throwUnchecked(failure);
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> actions.margins(originalMargins));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> titleLabel.color(originalTitleColor));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> header.surface(originalHeaderSurface));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> header.padding(originalHeaderPadding));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure,
+                () -> adapter.rootComponent.surface(originalRootSurface));
+            rollbackFailure = restorePaperFrameStep(rollbackFailure, () -> setSizeExpanded(originalSizeExpanded));
+            OwoXmlWindowContentAdapter.<RuntimeException>throwUnchecked(rollbackFailure);
         }
+    }
+
+    private static Throwable restorePaperFrameStep(Throwable primary, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable failure) {
+            if (primary != failure) primary.addSuppressed(failure);
+        }
+        return primary;
     }
 
     public void closeAction(Runnable action) {
