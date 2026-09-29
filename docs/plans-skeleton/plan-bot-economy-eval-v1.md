@@ -27,6 +27,11 @@
 - 既有 bot 场景可能使用 dev 命令作为铺垫；收益评估必须把铺垫消耗、生产动作、掉落、丢弃和回收分别标记，不能把测试赠品算入每小时收益。
 - 服务器成本和配额（并发连接、请求预算、loot/discard 上限、Redis/SQLite 写入）是观测维度，不是本 plan 新增的限流策略。
 
+## 防孤岛调研记录（2026-09-30）
+
+- 已读 `docs/finished_plans/plan-economy-v1.md`、`plan-zone-qi-economy-v1.md`、`plan-bot-e2e-timing-flaky-v1.md`，并核对 active V `docs/plan-bot-e2e-coverage-v1.md` 与总纲 §4.3/§9.9；既有 plan 已定义骨币/价格指数或 Bot 测试稳定性，但没有“正式参考无头客户端的挂机收益测量” owner。
+- 已核对 `agent/packages/schema/src/channels.ts:30-34` 与 V 轨的 `scripts/bot` 场景/CI stage；评估复用这些现有契约，不新增经济 channel、货币表示或 Bot 专用玩法旁路。
+
 ## 阶段总览
 
 | 阶段 | 交付物 | 状态 |

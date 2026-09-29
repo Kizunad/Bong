@@ -27,6 +27,11 @@
 - `scripts/bot/run_scenarios.py::ScenarioEnv.new_bot`（`:29-43`）按用户名建 Bot，`lookup_character_id`（`:45-83`）从 SQLite 反查角色；这是测试 harness 的现状，不是未来认证授权。
 - `docs/plan-client-login-ux-v1.md` 处理资源包 manifest、下载屏幕和资源包降级，不拥有账号认证；本 plan 不重复它，也不把资源包成功当作已登录。
 
+## 防孤岛调研记录（2026-09-30）
+
+- 已读 `docs/finished_plans/plan-client.md`、`plan-server.md`、`plan-agent.md`、`plan-agent-v2.md`、`plan-ipc-schema-v1.md`、`plan-social-renown-identity-bridge-v1.md`、`plan-bot-e2e-timing-flaky-v1.md`，并核对 active `plan-client-login-ux-v1.md`、R4、R6 与 V；它们分别覆盖连接体验、offline 身份投影、Redis/schema、社交 identity、Bot 稳定性或 C2S/S2C machinery，没有统一账号认证 plan。
+- `plan-client-login-ux-v1` 的登录措辞只指资源包连接阶段，现状代码也只有 `BongNetworkHandler` session lifecycle；因此本 skeleton 新建认证 owner，不重名、不把资源包 UX 改写成账号系统。
+
 ## 阶段总览
 
 | 阶段 | 交付物 | 状态 |
