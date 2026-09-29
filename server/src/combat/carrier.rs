@@ -1483,6 +1483,7 @@ fn carrier_qi_account_for_projectile(event: &ProjectileDespawnedEvent) -> QiAcco
 /// Shared helper: locate the zone at `pos`, apply the ledger release API, and emit its receipt.
 /// On zone-not-found or overflow, routes to an overflow account (qi never disappears).
 /// This is `pub` so `needle.rs` can reuse the same conservation path without duplicating logic.
+#[allow(clippy::too_many_arguments)]
 pub fn release_residual_to_zone(
     zones: &mut ZoneRegistry,
     qi_ledger: &mut WorldQiAccount,
