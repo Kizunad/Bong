@@ -18,6 +18,18 @@ fn cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant() {
     assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
 }
 
+#[test]
+fn cast_outcome_reject_dedicated_execution_maps_to_dedicated_proto_variant() {
+    use crate::schema::combat_hud::CastOutcomeV1;
+    let proto_value = cast_outcome_to_proto(&CastOutcomeV1::RejectDedicatedExecution);
+    assert_eq!(
+        proto_value,
+        bong::CastOutcome::RejectDedicatedExecution as i32
+    );
+    assert_ne!(proto_value, bong::CastOutcome::RejectInvalidTarget as i32);
+    assert_ne!(proto_value, bong::CastOutcome::Unspecified as i32);
+}
+
 fn alchemy_view(
     alchemy: Option<crate::inventory::AlchemyItemData>,
 ) -> crate::schema::inventory::InventoryItemViewV1 {

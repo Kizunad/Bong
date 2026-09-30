@@ -129,6 +129,7 @@ pub mod yidao_state_emit;
 pub mod zhenfa_v2_event_bridge;
 pub mod zhenmai_v2_event_bridge;
 pub mod zone_environment_bridge;
+pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
@@ -230,7 +231,7 @@ const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
 ///
 /// The marker is installed only after the Bot has negotiated the explicitly opt-in
 /// `/ping ambient_isolation` command. It is deliberately a component rather than a global
-/// switch so the production botany gathering witness can keep its
+/// switch so the production `production_lingtian_gathering_intents` witness can keep its
 /// ordinary ambient stream on the same server.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Default)]
 pub(crate) struct AmbientServerDataIsolation;
@@ -405,9 +406,15 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 /// 拆成两段是为了让接线门禁测试能跑**真正的生产装配路径**：`register_app_wiring` 只做
 /// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
 /// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
-pub(crate) fn register_client_request_ingress(app: &mut App) {
+pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
     app.init_resource::<client_request_handler::ClientRequestBudget>();
+    app.init_resource::<client_request_handler::LingtianPlotIndex>();
     app.init_resource::<client_request_handler::QuickSlotPrefsWriteQueue>();
+    app.add_systems(
+        Update,
+        client_request_handler::refresh_lingtian_plot_index
+            .before(client_request_handler::handle_client_request_payloads),
+    );
     app.add_systems(
         Update,
         client_request_handler::cleanup_client_request_budget
@@ -416,7 +423,8 @@ pub(crate) fn register_client_request_ingress(app: &mut App) {
     );
     app.add_systems(
         Update,
-        client_request_handler::handle_client_request_payloads,
+        client_request_handler::handle_client_request_payloads
+            .in_set(crate::lingtian::LingtianRequestIngressSet),
     );
     app.add_systems(
         Update,
@@ -594,11 +602,13 @@ pub(crate) fn register_app_wiring(app: &mut App) {
                 .after(npc_event_bridge::publish_named_faction_state_on_lifecycle_events),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
-            // 把 Bevy WeatherLifecycleEvent 转译成 RedisOutbound::WeatherEventUpdate；
-            // 必须在 weather generator /
+            zone_pressure_bridge::publish_zone_pressure_crossed_events
+                .after(crate::lingtian::systems::compute_zone_pressure_system),
+            // plan-lingtian-weather-v1 §3 / §4.4 — 把 Bevy WeatherLifecycleEvent
+            // 转译成 RedisOutbound::WeatherEventUpdate；必须在 weather generator /
             // apply system 之后跑，确保 Bevy events 已就位。
             weather_bridge::publish_weather_lifecycle_events
-                .after(crate::world::weather::expire_weather_system),
+                .after(crate::lingtian::weather::weather_apply_to_plot_system),
             zone_environment_bridge::mark_zone_environment_dirty_for_new_clients
                 .after(crate::world::weather_to_environment::weather_environment_sync_system),
             zone_environment_bridge::zone_environment_broadcast_system
@@ -864,6 +874,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             vfx_animation_trigger::emit_woliu_v2_visual_triggers,
             vfx_animation_trigger::emit_woliu_v2_visual_stop_triggers,
             vfx_animation_trigger::emit_botany_harvest_visual_triggers,
+            vfx_animation_trigger::emit_lingtian_visual_triggers,
             vfx_animation_trigger::emit_baomai_v3_visual_triggers,
             animation_trigger::emit_animation_trigger_components,
             vfx_animation_trigger::emit_tuike_v2_visual_triggers,
@@ -942,8 +953,43 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         tribulation_state_emit::emit_tribulation_state_payloads
             .after(crate::cultivation::tribulation::tribulation_wave_system),
     );
-    //TODO:lingtian_refactor 新田块请求通过公共权限入口分发。
-    register_client_request_ingress(app);
+    // fix-spec-1901-v2 §4.5 — lingtian C2S 入口排进 `LingtianRequestIngressSet`：
+    // 只入队，不读权威位置；post-transfer validator 排在其后（见 lingtian::register
+    // 的 chain：ingress → AuthoritativePositionCommitSet → validator）。
+    register_lingtian_ingress_wiring(app);
+    // 炼丹注灵的账本提交必须排在 C2S handler 之后，且在断线玩家被 despawn 前完成退款。
+    app.add_systems(
+        Update,
+        client_request_handler::settle_alchemy_inject_qi_requests
+            .after(client_request_handler::handle_client_request_payloads)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::dispatch_alchemy_take_back_requests
+            .after(client_request_handler::settle_alchemy_inject_qi_requests)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::settle_finished_alchemy_furnace_qi
+            .after(client_request_handler::dispatch_alchemy_take_back_requests)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::refund_removed_alchemy_furnace_qi
+            .after(client_request_handler::settle_finished_alchemy_furnace_qi)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::refund_alchemy_qi_on_disconnect
+            .after(client_request_handler::settle_finished_alchemy_furnace_qi)
+            .after(client_request_handler::settle_alchemy_inject_qi_requests)
+            .after(client_request_handler::refund_removed_alchemy_furnace_qi)
+            .before(crate::player::despawn_disconnected_clients),
+    );
     // plan-scroll-reading-v1 P2 §8.1 #4 — 读卷循环动画死亡/断线兜底清理（模板：
     // combat::shield_block::cleanup_shield_on_{death,disconnect}）。死亡分支需在
     // death_arbiter_tick 之后（DeathEvent 已 emit）；断线分支需在
@@ -1431,8 +1477,9 @@ fn publish_world_state_to_redis(
 ///
 /// 节奏：与 `publish_world_state_to_redis` 同为 `WORLD_STATE_PUBLISH_INTERVAL_TICKS`，
 /// 但用独立 `QiLedgerTimer` 计数（见其 doc-comment）。外部脚本可 `HGETALL bong:qi/ledger`
-/// 做守恒断言：守恒总量恒定的真锚点是 `budget_initial_total`（== `DEFAULT_SPIRIT_QI_TOTAL`），
-/// 而 `total_observed` 是**已落位**真元（≤ 预算，minimal 世界起服后远小于预算）。
+/// 做守恒断言：守恒总量恒定的真锚点是启动时注入的 `budget_initial_total`
+/// （`WorldQiBudget.initial_total`），而 `total_observed` 是**已落位**真元（≤ 预算，
+/// minimal 世界起服后远小于预算）。
 ///
 /// **只读发布，零真元流动**——不调 `WorldQiAccount::transfer`，不改任何 balance。
 fn publish_qi_ledger_to_redis(world: &mut bevy_ecs::world::World) {

@@ -14,8 +14,11 @@ use crate::player::state::{
     save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{assert_conservation, qi_flow_overflow_account, WorldQiSnapshot};
-use crate::schema::common::{NpcStateKind, SPIRIT_QI_TOTAL};
+use crate::qi_physics::ledger::{
+    assert_conservation, persistent_runtime_qi_accounts, qi_flow_overflow_account, QiAccountId,
+    QiTransfer, QiTransferReason, WorldQiSnapshot, ANQI_CARRIER_ACCOUNT_PREFIX,
+};
+use crate::schema::common::{NpcStateKind, TEST_QI_FIXTURE_TOTAL};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -4438,7 +4441,10 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let zone_absolute = record.qi_current * QI_ZONE_UNIT_CAPACITY;
     let mut seed_ledger = WorldQiAccount::default();
     seed_ledger
-        .set_balance(pending_inflow_account(), SPIRIT_QI_TOTAL - zone_absolute)
+        .set_balance(
+            pending_inflow_account(),
+            TEST_QI_FIXTURE_TOTAL - zone_absolute,
+        )
         .expect("seed pending inflow balance should be finite");
     let total_before_restart = zone_absolute + seed_ledger.total();
     persist_zone_runtime_snapshot_with_heartbeat(
@@ -4506,7 +4512,7 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let restored_ledger = app.world().resource::<WorldQiAccount>();
     assert_eq!(
         restored_ledger.balance(&pending_inflow_account()),
-        SPIRIT_QI_TOTAL - zone_absolute,
+        TEST_QI_FIXTURE_TOTAL - zone_absolute,
         "expected restart to restore the pending pool that backs the active pseudo-vein loan"
     );
     assert!(
@@ -4637,6 +4643,39 @@ fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
             .collect::<Vec<_>>(),
         vec!["player.known_techniques", "world.zone_runtime"],
         "production must install every wired production descriptor"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn last_persistence_without_shutdown_request_does_not_write_runtime_clock() {
+    let (settings, root) = persistence_settings("runtime-clock-no-shutdown");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture database should bootstrap");
+    persist_runtime_clock(&settings, 7, 1_234).expect("fixture runtime clock should persist");
+
+    let mut world = World::new();
+    world.insert_resource(PersistenceShutdownReader::default());
+    world.insert_resource(Events::<AppExit>::default());
+    world.insert_resource(settings.clone());
+    world.insert_resource(CultivationClock { tick: 99 });
+    world.insert_resource(PersistenceSliceRegistry::empty());
+
+    dispatch_persistence_shutdown_flushes(&mut world);
+
+    let connection = Connection::open(settings.db_path()).expect("fixture database should open");
+    let stored = connection
+        .query_row(
+            "SELECT tick, snapshot_wall FROM runtime_clock WHERE clock_id = ?1",
+            params![1_i64],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("runtime clock row should remain available");
+    assert_eq!(
+        stored,
+        (7, 1_234),
+        "Last frames without AppExit must not rewrite the runtime clock snapshot"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -9937,6 +9976,205 @@ fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
         hydrated.transfers().is_empty(),
         "restart must not restore audit history"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn carrier_overflow_account_survives_runtime_qi_restart() {
+    let (settings, root) = persistence_settings("carrier-overflow-runtime-restart");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+
+    let carrier_overflow = qi_flow_overflow_account();
+    assert!(
+        persistent_runtime_qi_accounts().contains(&carrier_overflow),
+        "carrier miss overflow must use a durable runtime account"
+    );
+
+    let mut source = WorldQiAccount::default();
+    source
+        .set_balance(carrier_overflow.clone(), 9.75)
+        .expect("carrier overflow fixture balance should be valid");
+    persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &crate::world::zone::ZoneRegistry::fallback(),
+        None,
+        &source,
+    )
+    .expect("runtime snapshot should persist the carrier overflow balance");
+
+    let mut hydrated = WorldQiAccount::default();
+    hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+        .expect("fresh ledger should hydrate the carrier overflow balance");
+    assert_eq!(hydrated.balance(&carrier_overflow), 9.75);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn carrier_account_survives_restart_and_miss_release_preserves_conservation() {
+    let (settings, root) = persistence_settings("carrier-account-runtime-restart");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+
+    let carrier = QiAccountId::container(format!("{ANQI_CARRIER_ACCOUNT_PREFIX}test-owner:7"));
+    let amount = 9.75;
+    let mut source = WorldQiAccount::default();
+    source
+        .set_balance(carrier.clone(), amount)
+        .expect("dynamic carrier balance should be valid");
+    persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &crate::world::zone::ZoneRegistry::fallback(),
+        None,
+        &source,
+    )
+    .expect("runtime snapshot should persist dynamic carrier balances");
+
+    let mut hydrated = WorldQiAccount::default();
+    assert_eq!(
+        hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+            .expect("fresh ledger should hydrate dynamic carrier balance"),
+        6,
+        "five fixed pools plus the active carrier account must hydrate"
+    );
+    assert_eq!(hydrated.balance(&carrier), amount);
+
+    let before = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: 0.0,
+        container_qi: 0.0,
+        ledger_qi: amount,
+        era_decay_accum: 0.0,
+        budget_initial_total: 0.0,
+        budget_current_total: 0.0,
+    };
+    hydrated
+        .transfer(
+            QiTransfer::new(
+                carrier.clone(),
+                qi_flow_overflow_account(),
+                amount,
+                QiTransferReason::ReleaseToZone,
+            )
+            .expect("miss release transfer should be representable"),
+        )
+        .expect("miss release should debit restored carrier and credit overflow");
+    assert_eq!(hydrated.balance(&carrier), 0.0);
+    assert_eq!(hydrated.balance(&qi_flow_overflow_account()), amount);
+    let after = WorldQiSnapshot {
+        container_qi: 0.0,
+        ledger_qi: hydrated.total(),
+        ..before
+    };
+    assert_conservation(&before, &after, 0.0)
+        .expect("restart recovery followed by miss release must preserve qi conservation");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn positive_carrier_row_missing_from_ledger_fails_closed_without_deletion() {
+    let (settings, root) = persistence_settings("carrier-row-missing-from-ledger");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let account_id = format!("{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:7");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "
+            INSERT INTO qi_runtime_accounts
+                (account_id, balance, schema_version, last_updated_wall)
+            VALUES (?1, 6.25, ?2, ?3)
+            ",
+            params![account_id, CURRENT_SCHEMA_VERSION, 100_i64],
+        )
+        .expect("fixture should seed a positive carrier row");
+
+    let source = WorldQiAccount::default();
+    let transaction = connection
+        .transaction()
+        .expect("save transaction should start");
+    let error = upsert_runtime_qi_account_balances(&transaction, &source, 200)
+        .expect_err("positive carrier data absent from the ledger must fail closed");
+    assert!(
+        error.to_string().contains(&account_id),
+        "failure should identify the unreconciled carrier account, actual={error}"
+    );
+    drop(transaction);
+
+    let persisted: f64 = connection
+        .query_row(
+            "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .expect("failed save must retain the durable carrier row");
+    assert_eq!(persisted, 6.25);
+    drop(connection);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn completed_carrier_lifecycles_remove_zero_rows_without_growth() {
+    let (settings, root) = persistence_settings("carrier-zero-row-reconciliation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+
+    for instance_id in 1..=8_u64 {
+        let account = QiAccountId::container(format!(
+            "{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:{instance_id}"
+        ));
+        let mut active = WorldQiAccount::default();
+        active
+            .set_balance(account.clone(), 2.0)
+            .expect("active carrier balance should be valid");
+        {
+            let transaction = connection
+                .transaction()
+                .expect("active carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64)
+                .expect("active carrier balance should persist");
+            transaction
+                .commit()
+                .expect("active carrier save should commit");
+        }
+
+        active
+            .transfer(
+                QiTransfer::new(
+                    account.clone(),
+                    qi_flow_overflow_account(),
+                    2.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .expect("carrier settlement transfer should be representable"),
+            )
+            .expect("carrier settlement should debit the active account");
+        assert_eq!(active.balance(&account), 0.0);
+        active.remove_balance(&account);
+        {
+            let transaction = connection
+                .transaction()
+                .expect("settled carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64 + 100)
+                .expect("settled carrier zero row should be removable");
+            transaction
+                .commit()
+                .expect("settled carrier cleanup should commit");
+        }
+        let dynamic_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id LIKE ?1",
+                params![format!("{ANQI_CARRIER_ACCOUNT_PREFIX}%")],
+                |row| row.get(0),
+            )
+            .expect("dynamic carrier row count should query");
+        assert_eq!(
+            dynamic_rows, 0,
+            "completed carrier lifecycle {instance_id} must not leave a dynamic row"
+        );
+    }
+    drop(connection);
     let _ = fs::remove_dir_all(root);
 }
 

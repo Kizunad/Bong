@@ -437,6 +437,14 @@ pub struct Casting {
     pub skill_config: Option<crate::skill::config::SkillConfig>,
 }
 
+/// Generic skill-bar casts carry this marker only after their qi cost has been
+/// accepted by `skill_cost::spend_qi_conserved`.
+///
+/// The marker is consumed by cast completion so a practice event cannot grant
+/// proficiency from a synthetic or otherwise uncharged `Casting` component.
+#[derive(Debug, Clone, Copy, Component)]
+pub struct QiSettledCast;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastSource {
     QuickSlot,

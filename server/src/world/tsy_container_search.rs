@@ -43,8 +43,10 @@ use crate::network::qi_attrition_emit::{
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
-use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer};
+use crate::qi_physics::attrition::{
+    apply_attrition_checked, apply_attrition_checked_with_ledger, is_attrition_exempt,
+};
+use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer, WorldQiAccount};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
 use crate::world::loot_pool::{roll_loot_pool, LootPoolRegistry};
@@ -243,6 +245,7 @@ pub fn apply_search_attrition(
     mut inventories: Query<(&mut PlayerInventory, &Position)>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut attrition_events: Option<ResMut<Events<AttritionAppliedEvent>>>,
     tsy_lifecycle: Option<Res<TsyZoneStateRegistry>>,
 ) {
@@ -270,11 +273,12 @@ pub fn apply_search_attrition(
                     (zone_name.clone(), zones.as_deref_mut())
                 {
                     if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                        apply_attrition_checked(
+                        apply_attrition_checked_with_ledger(
                             item,
                             AttritionOpKind::ContainerSearch,
                             Some(zone),
                             qi_transfers.as_deref_mut(),
+                            qi_ledger.as_deref_mut(),
                             tsy_lifecycle.as_deref(),
                         );
                     }

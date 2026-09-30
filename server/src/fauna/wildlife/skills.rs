@@ -56,6 +56,17 @@ impl WildlifeSkill {
         }
     }
 
+    /// 每个兽类招式的独立粒子路由；客户端 `BeastSkillVfxPlayer` 按这些 id 分化形态。
+    pub fn particle_event_id(self) -> &'static str {
+        match self {
+            Self::Pounce => "bong:fauna_lion_pounce",
+            Self::Rend => "bong:fauna_lion_rend",
+            Self::Dive => "bong:fauna_vulture_dive",
+            Self::Trample => "bong:fauna_horse_trample",
+            Self::Kick => "bong:fauna_horse_kick",
+        }
+    }
+
     pub fn active_ticks(self) -> u64 {
         match self {
             Self::Pounce => 12,
@@ -388,6 +399,41 @@ pub fn animate(world: &mut bevy_ecs::world::World, entity: Entity, animation: &s
     }
 }
 
+fn emit_skill_particle(
+    world: &mut bevy_ecs::world::World,
+    skill: WildlifeSkill,
+    position: DVec3,
+    direction: DVec3,
+) {
+    let (color, strength, count, duration_ticks) = match skill {
+        // 低位上扬的尘环：扑击起势时脚下腾尘。
+        WildlifeSkill::Pounce => ("#C3A57A", 0.80, 12, 18),
+        // 撕咬的红色飞屑：用单独 event_id 走 Point 血屑路线。
+        WildlifeSkill::Rend => ("#A83232", 0.90, 10, 16),
+        // 俯冲的冷色气流：方向由 caster→target 传给 Ribbon。
+        WildlifeSkill::Dive => ("#A8D8E8", 0.75, 8, 14),
+        // 蹄踏的土色贴地冲击环。
+        WildlifeSkill::Trample => ("#8A6A44", 0.95, 12, 20),
+        // 后踢的暖色定向冲击束。
+        WildlifeSkill::Kick => ("#E0B060", 0.80, 8, 12),
+    };
+    let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() else {
+        return;
+    };
+    events.send(VfxEventRequest::new(
+        position,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: skill.particle_event_id().to_string(),
+            origin: [position.x, position.y, position.z],
+            direction: Some([direction.x, direction.y, direction.z]),
+            color: Some(color.to_string()),
+            strength: Some(strength),
+            count: Some(count),
+            duration_ticks: Some(duration_ticks),
+        },
+    ));
+}
+
 pub fn tick_casts(world: &mut bevy_ecs::world::World) {
     let tick = now(world);
     let casts: Vec<_> = world
@@ -448,18 +494,7 @@ pub fn tick_casts(world: &mut bevy_ecs::world::World) {
                         debug_command: None,
                     });
                 cast.submitted_at = Some(tick);
-                if matches!(cast.skill, WildlifeSkill::Pounce | WildlifeSkill::Trample) {
-                    if let Some(mut effects) = world.get_resource_mut::<Events<VfxEventRequest>>() {
-                        effects.send(crate::fauna::experience::spawn_particle(
-                            "bong:fauna_spawn_dust",
-                            from,
-                            "#B9A081",
-                            0.6,
-                            8,
-                            12,
-                        ));
-                    }
-                }
+                emit_skill_particle(world, cast.skill, from, cast.direction);
             }
         }
         world.entity_mut(entity).insert(cast);
@@ -490,4 +525,29 @@ pub fn declare_dependencies(deps: &mut SkillMeridianDependencies) {
     deps.declare_channels("vulture.dive", vec!["vulture_wing".into()]);
     deps.declare_channels("horse.trample", vec!["horse_stride".into()]);
     deps.declare_channels("horse.kick", vec!["horse_stride".into()]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WildlifeSkill;
+
+    #[test]
+    fn beast_skills_have_distinct_particle_routes() {
+        let skills = [
+            WildlifeSkill::Pounce,
+            WildlifeSkill::Rend,
+            WildlifeSkill::Dive,
+            WildlifeSkill::Trample,
+            WildlifeSkill::Kick,
+        ];
+        let ids: Vec<_> = skills
+            .into_iter()
+            .map(WildlifeSkill::particle_event_id)
+            .collect();
+
+        assert_eq!(ids.len(), 5);
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "五招必须各自拥有独立粒子 event_id");
+        assert!(ids.iter().all(|id| *id != "bong:fauna_spawn_dust"));
+    }
 }

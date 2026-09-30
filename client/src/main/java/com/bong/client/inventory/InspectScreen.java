@@ -1704,13 +1704,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // 分堆既可投料，也可落入普通容器；新实例和两边数量由服务端快照一起确认。
         if (dragState.isSplitStack()) {
-            if (!UiWindowRuntime.dropAlchemyMaterial(mouseX, mouseY, dragged)) {
+            boolean sent = UiWindowRuntime.dropAlchemyMaterial(mouseX, mouseY, dragged);
+            if (!sent) {
                 var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
                 var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
-                if (pos != null) commitSplitDrop(grid, pos.row(), pos.col());
+                sent = pos != null && commitSplitDrop(grid, pos.row(), pos.col());
             }
-            returnDragToSource();
-            clearAllHighlights();
+            // 请求成功后来源槽保持空缺，等待服务端 authoritative snapshot 一次性重建两边；
+            // 只有未发出请求时才回填，避免同一 instance_id 在本地短暂复制。
+            completeAlchemyMaterialDrop(sent);
             return;
         }
 
@@ -1916,6 +1918,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         clearAllHighlights();
     }
 
+    /** 炼丹投料请求被本地拒绝时，必须把拖拽物还回原格，不能吞掉客户端物品。 */
+    boolean completeAlchemyMaterialDrop(boolean accepted) {
+        if (accepted) dragState.drop();
+        else returnDragToSource();
+        clearAllHighlights();
+        return accepted;
+    }
+
     /** 分堆只发送数量请求，避免把同一 instance_id 乐观复制到两个格子。 */
     boolean commitSplitDrop(BackpackGridPanel grid, int row, int col) {
         InventoryItem item = dragState.draggedItem();
@@ -1926,7 +1936,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         var source = snapshotSourceLocation();
         if (!(source instanceof com.bong.client.network.ClientRequestProtocol.ContainerLoc)) return false;
-        return com.bong.client.network.ClientRequestSender.sendInventoryMove(
+        return InventoryMoveService.move(
             item.instanceId(), source,
             new com.bong.client.network.ClientRequestProtocol.ContainerLoc(grid.containerId(), row, col),
             dragState.draggedRotated(), item.stackCount());
@@ -2332,7 +2342,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
             item.instanceId(), from, to, rotated, item.itemId());
-        boolean accepted = com.bong.client.network.ClientRequestSender.sendInventoryMove(
+        boolean accepted = InventoryMoveService.move(
             item.instanceId(), from, to, rotated);
         if (!accepted) {
             com.bong.client.BongClient.LOGGER.warn(
@@ -2550,7 +2560,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void clearAllHighlights() {
         for (BackpackGridPanel g : containerGrids) g.clearHighlights();
-        equipPanel.clearHighlights();
+        if (equipPanel != null) equipPanel.clearHighlights();
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
@@ -2559,7 +2569,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         if (lootPanel != null && lootPanel.lootGrid() != null) lootPanel.lootGrid().clearHighlights();
-        discardStrip.surface(Surface.flat(0xFF201010));
+        if (discardStrip != null) discardStrip.surface(Surface.flat(0xFF201010));
     }
 
     boolean tryLearnSkillScroll(InventoryItem item) {

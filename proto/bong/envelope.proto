@@ -1579,6 +1579,8 @@ enum CastOutcome {
   CAST_OUTCOME_REJECT_TECHNIQUE_INACTIVE = 15;
   // plan-race-system-v1 P3a：种族门拒绝（本体 race_id / is_humanoid 未通过 RaceGate）。
   CAST_OUTCOME_REJECT_RACE_MISMATCH = 16;
+  // 有专属输入消费者的招式不由技能栏施放（dash 闪避键 / shield_block 持盾长按）。
+  CAST_OUTCOME_REJECT_DEDICATED_EXECUTION = 17;
 }
 
 // 与 Rust CastSyncV1 精确对应。

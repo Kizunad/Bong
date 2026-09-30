@@ -17,6 +17,17 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 pub const VIEW_RADIUS: f64 = 48.0;
 
+fn world_effect_visible_to_client(
+    origin: DVec3,
+    position: &Position,
+    view_distance: &ViewDistance,
+) -> bool {
+    let client = position.get();
+    let radius =
+        crate::network::disguise_sync::sync_radius_blocks(view_distance.get()).max(VIEW_RADIUS);
+    (client.x - origin.x).abs() <= radius && (client.z - origin.z).abs() <= radius
+}
+
 #[derive(Debug, Clone)]
 pub enum AlchemyWorldAction {
     State,
@@ -155,7 +166,7 @@ pub fn emit_world_states(
     mut events: EventWriter<AlchemyWorldEffect>,
 ) {
     *ticks += 1;
-    if *ticks % 20 != 0 {
+    if !(*ticks).is_multiple_of(20) {
         return;
     }
     for furnace in &furnaces {
@@ -171,21 +182,30 @@ pub fn emit_world_states(
 
 pub fn emit_world_effects(
     mut events: EventReader<AlchemyWorldEffect>,
-    mut clients: Query<(Entity, &mut Client, &Position, &CurrentDimension)>,
+    mut clients: Query<(
+        Entity,
+        &mut Client,
+        &Position,
+        &CurrentDimension,
+        &ViewDistance,
+    )>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for event in events.read() {
-        let Ok(bytes) = serialize_server_data_payload_proto(&event.payload()) else {
+        let payload = event.payload();
+        let Ok(bytes) = serialize_server_data_payload_proto(&payload) else {
             continue;
         };
-        for (entity, mut client, position, dimension) in &mut clients {
+        let origin = event.origin();
+        let sound = event.sound().map(str::to_owned);
+        for (entity, mut client, position, dimension, view_distance) in &mut clients {
             if dimension.0 != DimensionKind::Overworld
-                || position.0.distance_squared(event.origin()) > VIEW_RADIUS * VIEW_RADIUS
+                || !world_effect_visible_to_client(origin, position, view_distance)
             {
                 continue;
             }
             send_server_data_payload(&mut client, &bytes);
-            if let Some(recipe) = event.sound() {
+            if let Some(recipe) = sound.as_deref() {
                 let (x, y, z) = event.furnace_pos;
                 audio.send(PlaySoundRecipeRequest {
                     recipe_id: recipe.to_string(),
@@ -320,6 +340,24 @@ mod tests {
             }
             assert_eq!(std::fs::read(path).unwrap(), bytes);
         }
+    }
+
+    #[test]
+    fn far_observer_does_not_receive_world_effect_visibility() {
+        let view_distance = ViewDistance::new(2);
+        let origin = DVec3::new(2.5, 65.0, 3.5);
+        let near = Position::new(DVec3::new(40.0, 65.0, 3.5));
+        let far = Position::new(DVec3::new(100.0, 65.0, 3.5));
+
+        assert!(world_effect_visible_to_client(
+            origin,
+            &near,
+            &view_distance
+        ));
+        assert!(
+            !world_effect_visible_to_client(origin, &far, &view_distance),
+            "视野外玩家不得收到炼丹炉世界表现"
+        );
     }
 
     #[test]

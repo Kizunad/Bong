@@ -143,20 +143,39 @@ public final class AlchemyFurnaceComponent extends ModelPreviewComponent {
             && (!detailsVisible() || !panelAt(mouseX, mouseY));
     }
 
-    // 输入：命中使用绝对屏幕坐标；owo 的局部事件坐标只在入口转换一次。
-    private Part partAt(double mouseX, double mouseY) {
-        var art = artwork();
+    /** 根据画布坐标计算部位命中；调用方决定传入局部还是屏幕坐标。 */
+    static Part hitPart(int artX, int artY, int artWidth, int artHeight,
+                        double mouseX, double mouseY) {
         for (var part : Part.values()) {
-            if (mouseX >= art.x + art.width * part.left && mouseX < art.x + art.width * (part.left + part.width)
-                && mouseY >= art.y + art.height * part.top && mouseY < art.y + art.height * (part.top + part.height)) return part;
+            if (mouseX >= artX + artWidth * part.left
+                && mouseX < artX + artWidth * (part.left + part.width)
+                && mouseY >= artY + artHeight * part.top
+                && mouseY < artY + artHeight * (part.top + part.height)) {
+                return part;
+            }
         }
         return null;
     }
 
+    private Part partAt(double mouseX, double mouseY) {
+        var art = artwork();
+        return hitPart(art.x, art.y, art.width, art.height, mouseX, mouseY);
+    }
+
+    private Part partAtLocal(double mouseX, double mouseY) {
+        var art = artwork();
+        return hitPart(art.x - x, art.y - y, art.width, art.height, mouseX, mouseY);
+    }
+
+    private boolean panelAtLocal(double mouseX, double mouseY) {
+        return mouseX >= panelLeft - x && mouseX < panelLeft - x + panelWidth
+            && mouseY >= panelTop - y && mouseY < panelTop - y + panelHeight;
+    }
+
     @Override public boolean onMouseDown(double mouseX, double mouseY, int button) {
         // 信息窗不把点击穿透给下方的取料口或引元处。
-        if (draggingMaterial || detailsVisible() && panelAt(x + mouseX, y + mouseY)) return true;
-        var part = partAt(x + mouseX, y + mouseY);
+        if (draggingMaterial || detailsVisible() && panelAtLocal(mouseX, mouseY)) return true;
+        var part = partAtLocal(mouseX, mouseY);
         if (button == 0 && part != null) {
             interact.accept(part);
             return true;
@@ -165,12 +184,12 @@ public final class AlchemyFurnaceComponent extends ModelPreviewComponent {
     }
 
     @Override public boolean onMouseScroll(double mouseX, double mouseY, double amount) {
-        if (detailsVisible() && panelAt(x + mouseX, y + mouseY)) {
+        if (detailsVisible() && panelAtLocal(mouseX, mouseY)) {
             detailScroll = Math.max(0, detailScroll - (int) (amount * 11));
             return true;
         }
         if (draggingMaterial) return true;
-        if (partAt(x + mouseX, y + mouseY) == Part.FIRE) {
+        if (partAtLocal(mouseX, mouseY) == Part.FIRE) {
             windows.temperature(Math.signum(amount) * .02);
             return true;
         }

@@ -96,6 +96,17 @@ bash scripts/dev-reload.sh
 bash scripts/smoke-test.sh
 ```
 
+## 代码 Wiki
+
+代码 Wiki 是由开源文档工具生成的静态 HTML，覆盖三端并提供一个统一的离线搜索入口：
+
+```bash
+bash scripts/wiki/build.sh
+bash scripts/wiki/publish.sh
+```
+
+`build.sh` 使用 Rust 工具链自带的 `rustdoc` 生成 server 文档，使用 Java 17 自带的 `javadoc` 生成 client 文档，并以固定版本 `typedoc@0.27.9` 生成 agent 文档；Python 标准库入口页把三端符号索引合并为跨端搜索。生成物放在被忽略的 `tmp/wiki/`，可直接用浏览器打开 `tmp/wiki/index.html`，也可通过 `file://` 离线查看。`publish.sh` 会把生成物普通提交并推送到私有的 [Bong-wiki](https://github.com/Kizunad/Bong-wiki) 仓库；HTML 不进入 Bong 主仓，也不依赖 GitHub Pages。
+
 ## 文档索引
 
 | 文档 | 内容 |

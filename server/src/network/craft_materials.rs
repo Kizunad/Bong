@@ -58,6 +58,12 @@ pub fn apply_craft_material_intents(
         };
         let mut staged = inventory.clone();
         let result = (|| {
+            // 整批返还（instance_id == None）是 ForgeWindows.close 的关窗路径。
+            // 这里有意不因 expected_revision 漂移拒绝它：关窗时若只是无关的背包版本
+            // 变化就拒绝，暂存材料会卡在炉里，代价高于一次同配方同工位的陈旧整批返还。
+            // 单件移动（instance_id 有值）仍必须匹配版本；紧随其后的 recipe_id / station_pos
+            // 校验也会挡住换配方或换工位的陈旧请求。未覆盖的仅是同配方同工位的陈旧关窗，
+            // 而请求按连接串行处理，这种交错实际难以发生。
             if session.is_some()
                 || (intent.instance_id.is_some()
                     && intent.expected_revision != inventory.revision.0)
@@ -82,20 +88,20 @@ pub fn apply_craft_material_intents(
             } else {
                 let instance = intent.instance_id.ok_or("未指定材料实例")?;
                 if let Some(pos) = intent.station_pos {
-                    let p = position.get();
-                    if !p.is_finite()
-                        || (p.x - f64::from(pos.0)).abs() > 3.0
-                        || (p.y - f64::from(pos.1)).abs() > 3.0
-                        || (p.z - f64::from(pos.2)).abs() > 3.0
-                        || dimension.map(|value| value.0)
-                            != Some(crate::world::dimension::DimensionKind::Overworld)
-                    {
-                        return Err("请靠近炼器砧后投料".into());
-                    }
                     let station = stations
                         .iter()
                         .find(|station| station.pos == Some(pos))
                         .ok_or("工位不存在")?;
+                    let player_dimension =
+                        dimension.map(|value| value.0).ok_or("请靠近炼器砧后投料")?;
+                    if !crate::forge::is_within_forge_scope(
+                        position.get(),
+                        player_dimension,
+                        station.pos,
+                        station.dimension,
+                    ) {
+                        return Err("请靠近炼器砧后投料".into());
+                    }
                     if station.owner.is_some_and(|owner| owner != entity)
                         || station.session.is_some()
                         || station.integrity <= 0.0

@@ -8,6 +8,7 @@ use valence::prelude::{Entity, Resource};
 use super::blueprint::{BlueprintId, StepKind};
 use super::steps::{ConsecrationResult, InscriptionResult, TemperingResult};
 use crate::cultivation::components::ColorKind;
+use crate::world::dimension::DimensionKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ForgeSessionId(pub u64);
@@ -82,6 +83,12 @@ pub struct ForgeSession {
     pub id: ForgeSessionId,
     pub blueprint: BlueprintId,
     pub station: Entity,
+    /// 起炉时快照的锻炉方块坐标；结算时即使锻炉实体被清理，成品仍有可靠落点。
+    #[serde(default)]
+    pub station_pos: Option<(i32, i32, i32)>,
+    /// 起炉时快照的锻炉维度；实体被清理或玩家换维度后仍能做权威范围校验。
+    #[serde(default)]
+    pub station_dimension: DimensionKind,
     pub caster: Entity,
     /// 当前步骤在图谱 steps[] 中的 index。
     pub step_index: usize,
@@ -124,6 +131,8 @@ impl ForgeSession {
             id,
             blueprint,
             station,
+            station_pos: None,
+            station_dimension: DimensionKind::Overworld,
             caster,
             step_index: 0,
             current_step: ForgeStep::Billet,

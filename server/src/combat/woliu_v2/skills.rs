@@ -1624,6 +1624,10 @@ fn known_woliu_proficiency(
     caster: Entity,
     skill: WoliuSkillId,
 ) -> f32 {
+    // fallback 与习得初值同口径（`learn_technique_if_allowed` 初值 0.0）。旧值 0.5 让
+    // 无 entry 的施放者按中位熟练度结算，比刚学会的玩家（0.0）更强；玩家路径经
+    // ownership 门 entry 恒存在，该 fallback 只对无 KnownTechniques 的非常规施放者
+    // 生效——不应白送半程熟练度。
     world
         .get::<KnownTechniques>(caster)
         .and_then(|known| {
@@ -1633,7 +1637,7 @@ fn known_woliu_proficiency(
                 .find(|entry| entry.id == skill.as_str())
         })
         .map(|entry| entry.proficiency)
-        .unwrap_or(0.5)
+        .unwrap_or(0.0)
         .clamp(0.0, 1.0)
 }
 
@@ -2147,6 +2151,64 @@ mod tests {
         );
     }
 
+    /// 熟练度 fallback 口径 pin：无 entry / 无组件的施放者按**习得初值 0.0** 结算，
+    /// 不是旧值 0.5——旧口径让没学过的施放者比刚学会的玩家（0.0）更强。玩家路径经
+    /// skill bar ownership 门 entry 恒存在，本 fallback 只对无组件的非常规施放者生效。
+    #[test]
+    fn known_woliu_proficiency_fallback_matches_learn_initial_zero() {
+        use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+        let mut world = bevy_ecs::world::World::new();
+
+        let no_component = world.spawn_empty().id();
+        assert_eq!(
+            known_woliu_proficiency(&world, no_component, WoliuSkillId::Hold),
+            0.0,
+            "无 KnownTechniques 组件的施放者应按习得初值 0.0 结算，不得白送 0.5 中位熟练度"
+        );
+
+        let empty_entries = world.spawn(KnownTechniques::default()).id();
+        assert_eq!(
+            known_woliu_proficiency(&world, empty_entries, WoliuSkillId::Hold),
+            0.0,
+            "有组件但无该招 entry 时应按习得初值 0.0 结算（与 learn_technique_if_allowed 初值同口径）"
+        );
+
+        let with_entry = world
+            .spawn(KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: WoliuSkillId::Hold.as_str().to_string(),
+                    proficiency: 0.7,
+                    active: true,
+                }],
+            })
+            .id();
+        assert_eq!(
+            known_woliu_proficiency(&world, with_entry, WoliuSkillId::Hold),
+            0.7,
+            "有 entry 时应读 entry 的真实熟练度"
+        );
+        assert_eq!(
+            known_woliu_proficiency(&world, with_entry, WoliuSkillId::Burst),
+            0.0,
+            "entry 只覆盖自己那招，其他招仍按初值 0.0"
+        );
+
+        let out_of_range = world
+            .spawn(KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: WoliuSkillId::Hold.as_str().to_string(),
+                    proficiency: 1.7,
+                    active: true,
+                }],
+            })
+            .id();
+        assert_eq!(
+            known_woliu_proficiency(&world, out_of_range, WoliuSkillId::Hold),
+            1.0,
+            "越界熟练度必须 clamp 进 [0,1]"
+        );
+    }
+
     /// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：15 变体
     /// `visual_for` 的 `icon_texture` 逐条对应 client main resources 磁盘真实
     /// 资产，防下发悬空引用。专属映射值本身由下方
@@ -2166,7 +2228,7 @@ mod tests {
             assert!(
                 disk.is_file(),
                 "woliu_v2 {skill:?} 的 runtime 图标 `{icon}` 在磁盘无对应资产 {}——\
-                 server payload 会下发悬空引用，client HudTextureProbe 探测必失败",
+                 server payload 会下发悬空引用，client TextureProbe 探测必失败",
                 disk.display()
             );
         }

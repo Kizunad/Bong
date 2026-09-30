@@ -1,5 +1,6 @@
 package com.bong.client.alchemy;
 
+import com.bong.client.alchemy.state.AlchemySessionStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.ui.contract.UiStateSource;
@@ -69,7 +70,12 @@ public final class AlchemyWindows {
     }
 
     public UiWindowManager.WindowState open(BlockPos target, UiWindowManager.Rect bounds) {
-        if (window != null && !target.equals(position)) manager.close(window.key());
+        if (window != null && !target.equals(position)) {
+            manager.close(window.key());
+            // 炉位切换使旧 session 不再属于当前窗口；等待新炉快照时保持空闲，
+            // 不能让旧炉的进度被暂时展示或用于发送操作。
+            AlchemySessionStore.replace(AlchemySessionStore.Snapshot.empty());
+        }
         var key = manager.key(DEFINITION.windowType(), target.toShortString());
         if (window != null && !window.closed()) {
             manager.openOrFocus(DEFINITION, key, bounds);
@@ -82,19 +88,32 @@ public final class AlchemyWindows {
         var owned = window;
         var ownedController = controller;
         owned.scope().addCleanup(() -> {
-            ownedController.onClose();
-            if (window == owned) {
-                window = null;
-                controller = null;
-                position = null;
-                feedback = "";
-                openBaseline = null;
-                pendingBaseline = null;
-                pendingIntent = null;
-                pendingMaterial = null;
-                confirmedEffect = null;
-                settlementBaseline = null;
-                confirmedResult = null;
+            Throwable primary = null;
+            try {
+                ownedController.onClose();
+            } catch (Throwable failure) {
+                primary = failure;
+            }
+            try {
+                if (window == owned) {
+                    window = null;
+                    controller = null;
+                    position = null;
+                    feedback = "";
+                    openBaseline = null;
+                    pendingBaseline = null;
+                    pendingIntent = null;
+                    pendingMaterial = null;
+                    confirmedEffect = null;
+                    settlementBaseline = null;
+                    confirmedResult = null;
+                }
+            } catch (Throwable cleanupFailure) {
+                if (primary == null) primary = cleanupFailure;
+                else if (primary != cleanupFailure) primary.addSuppressed(cleanupFailure);
+            }
+            if (primary != null) {
+                AlchemyWindows.<RuntimeException>throwUnchecked(primary);
             }
         });
         controller.onOpen(owned.scope());
@@ -478,5 +497,10 @@ public final class AlchemyWindows {
     private UiIntentResult reject(String message) {
         feedback = message;
         return UiIntentResult.rejected(message);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+        throw (T) failure;
     }
 }

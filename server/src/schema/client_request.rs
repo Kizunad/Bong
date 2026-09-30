@@ -706,6 +706,12 @@ pub enum ClientRequestV1 {
         #[serde(default)]
         params: std::collections::HashMap<String, String>,
     },
+    /// 将背包中的香料实例投入丹炉香座；追加以保留既有门禁矩阵编号。
+    AlchemyPlaceIncense {
+        v: u8,
+        furnace_pos: (i32, i32, i32),
+        item_instance_id: u64,
+    },
 }
 
 impl ClientRequestV1 {

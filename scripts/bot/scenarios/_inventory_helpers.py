@@ -45,6 +45,58 @@ def wait_join_and_inventory(bot, timeout: float = 15.0) -> dict[str, Any]:
     return latest_inventory_snapshot(bot, timeout=timeout)
 
 
+def fill_empty_carried_containers(bot, snapshot: dict) -> dict:
+    """按权威容器尺寸填满草根，兼容普通口袋和 OP 背包。装备槽不受影响。"""
+    if snapshot.get("placed_items"):
+        raise BotAssertionError("填满容器前必须清空携带网格，避免把已有物品算作空格")
+
+    # 草根是 1×1 Misc 材料，每栈 16。give 一次只能装入单个容器；先填大容器，
+    # 避免较小批次先占了大容器，随后整批无法放入剩余空间。
+    stack_size = 16
+    capacities = sorted(
+        (
+            int(container["rows"]) * int(container["cols"])
+            for container in snapshot["containers"]
+        ),
+        reverse=True,
+    )
+    expected_count = 0
+    for cells in capacities:
+        count = cells * stack_size
+        expected_count += count
+        anchor = max((event.t for event in bot.events), default=0.0)
+        bot.cmd(f"give grass_fiber {count}")
+        bot.wait_for(
+            lambda event: event.kind == "chat"
+            and event.t > anchor
+            and event.data["text"].startswith(f"[dev] gave grass_fiber x{count} revision="),
+            timeout=10.0,
+            description=f"填充 {cells} 格容器的 give 回执",
+        )
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            snapshot["revision"],
+            lambda candidate: sum(
+                placed["item"]["stack_count"]
+                for placed in candidate.get("placed_items", [])
+                if placed["item"]["item_id"] == "grass_fiber"
+            ) == expected_count,
+            f"携带容器已收到 {expected_count} 份草根",
+        )
+
+    for container in snapshot["containers"]:
+        occupied = {
+            (placed["row"], placed["col"])
+            for placed in snapshot["placed_items"]
+            if placed["container_id"] == container["id"]
+            and placed["item"]["item_id"] == "grass_fiber"
+        }
+        cells = int(container["rows"]) * int(container["cols"])
+        if len(occupied) != cells:
+            raise BotAssertionError(f"容器 {container['id']} 尚未填满：{len(occupied)}/{cells}")
+    return snapshot
+
+
 def latest_inventory_snapshot(bot, timeout: float = 10.0) -> dict[str, Any]:
     events = _inventory_snapshot_events(bot)
     if events:

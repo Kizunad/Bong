@@ -97,7 +97,7 @@ TECHNIQUES: list[tuple[str, str, str]] = [
      "a thin flying needle coated in dissonant corrupted qi, sickly green-black poison residue "
      "crawling along its tip, solid black background"),
     # —— 蛊道 v2 五招（dugu_v2 runtime visual 图标，非 TECHNIQUE_DEFINITIONS 条目；
-    #    消费链 = dugu_v2::skills::visual_for payload → client HudTextureProbe，
+    #    消费链 = dugu_v2::skills::visual_for payload → client TextureProbe，
     #    命名仍按 skill_scroll_<safe_id> 约定收编，plan-skill-av-relink-v1 P2。
     #    prompt 刻意精简：当前 hlool 网关 60s 硬超时，长 prompt 生成必 504）——
     ("dugu.eclipse", "蚀针",

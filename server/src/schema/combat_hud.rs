@@ -92,6 +92,8 @@ pub enum CastOutcomeV1 {
     /// is_humanoid 未通过该招式的 `RaceGate`（`RaceGate::Humanoid` 档最常见触发，
     /// 如非人形种族尝试施放剑道/爆脉类肢体依赖招式）。
     RejectRaceMismatch,
+    /// 有专属输入消费者的招式不由技能栏施放（如 dash 闪避键、shield_block 持盾长按）。
+    RejectDedicatedExecution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

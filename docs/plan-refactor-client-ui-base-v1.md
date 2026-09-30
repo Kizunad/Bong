@@ -753,6 +753,11 @@ Store / server snapshot
 - `UiHudWindowPreviewScene` 提供五伤并存夹具，只在显式 UI 预览中安装。Windows 原生 640×480、1366×768 和完好恢复共三张截图 `status=passed, completed=3`；受伤／恢复的画面差分落在对应伤势位置。证据目录 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260917-145113/`。给用户看的参考接触表与原生截图接触表位于本地 `local_images/mini-body-wounds/`，不作为已通过人工外观验收的证据。
 - 已同步新 jar、安全重启当前测试服并启动 Windows 原生客户端，`HandsPreview` 已连入，收到了人体布局、伤口及状态快照。当前角色伤口快照为 0，正常会话不注入演示伤势。运行日志仍有既有 proto bridge 解析与旧 UI prefs 读取告警，未纳入本批修复，不能据此宣称全栈日志无告警。
 
+#### P5d 前置决策（2026-09-29）
+
+- `settle_alchemy_inject_qi_requests`（`server/src/network/client_request_handler.rs:5530`）已经把注元交给 `server/src/alchemy/qi.rs:debit_player_qi_to_furnace`，先通过 `QiTransferReason::Crafting` 完成玩家到炉体的 ledger 转移，再更新 `Cultivation.qi_current`、`AlchemySession.qi_reserved` 和进度；退款与 overflow 分别走 `refund_furnace_qi_to_player`、`release_furnace_qi_to_overflow`。`server/src/alchemy/qi.rs` 的 `paid_injection_moves_qi_without_changing_world_total`、`rejected_injection_leaves_player_session_and_ledger_unchanged` 与 `inject_request_system_commits_player_and_furnace_together` 契约测试以 `SPIRIT_QI_TOTAL`、`summarize_world_qi` 和 `assert_conservation` 验证守恒。该决议对应本节 P5d 的“炉次／账本注元”交付物。
+- 炉次持续 tick、周期 session 快照和工位距离门禁仍由服务端现有 `AlchemySession::tick`、`alchemy_snapshot_emit::send_session_from_furnace` 与请求入口继续提供；完整丹方／残卷 Fabric／TypeBox 接入仍是后续 P1 范围。上述边界与验收条件写在 `client/design/alchemy-window.md` §5，未把客户端预览当成联网验收。
+
 #### P5d 炼丹窗口子批次（2026-09-28，当前版本已获用户验收）
 
 - 最终实现、请求接口和范围见 `client/design/alchemy-window.md`。已接入 PR #2310 丹炉模型及开合、投料、沸腾和失败动画，独立丹方／炉记、100×100 面板、世界特效／音效、库存分堆和 OP 背包。
@@ -764,7 +769,7 @@ Store / server snapshot
 - **独立视觉**：新 `AlchemyFurnaceComponent` 使用生成的工位背景 `assets/bong-client/textures/gui/alchemy/workbench-v2.png`，中央留炉位、左侧桌面；模型遵照用户要求等待 PR #2310 合入，合入前不用旧模型替代。图像沿用已授权的 cliproxy / gpt-image-2，提示词与源图保存在 `local_images/r7-alchemy/`。
 - **布局与操作**：撤销固定三页及常驻按钮，改为整幅工位、八处部位命中和悬停炉况。J/K/F/I/R 分别调火、注元、起炉、收取结果，数量和阶段有独立快捷键。丹方与炉记提取到 `AlchemyNotesContent` / `alchemy-notes.xml`，背包双击或右键阅读，桌面也可打开。收取需再次按键确认，拦截长按重复和拖物旋转误触；全部请求仍经 `AlchemyIntent` → `AlchemyClientIntentSink`，保留相关状态等待与超时。模型部位几何和开盖动画尚未接入，不能视为已完成沉浸工位。
 - **真实投料**：先起炉后投料；明确拖放区接收实时库存材料，按同类型总量支持多堆，服务端核验与扣除。发包不修改库存或丹方。`completed` 只表示阶段投过药，不能锁死其他材料；过早、过晚和 missed 阶段本地拒绝。四阶段上限来自现有客户端 intent 校验，并非 wire 的 u8 范围；不解析展示文案作为材料契约。
-- **需求与审查**：完整功能、C2S/S2C、布局及证据见 `client/design/alchemy-window.md`。补齐 history 丢失的成色、毒量、真元收益和炸炉数值，去掉默认演示预测／丹毒；数据缺失保持未知。确认服务端尚缺炉次持续 tick、周期 session 推送、完整丹方、真实残卷的 Fabric／TypeBox 接入及响应、工位距离门禁；注元请求未走真元扣除／QiTransfer，是守恒阻塞项。新 UI 不代表这些领域问题已解决，完整炼丹验收仍未完成。
+- **需求与审查**：完整功能、C2S/S2C、布局及证据见 `client/design/alchemy-window.md`。补齐 history 丢失的成色、毒量、真元收益和炸炉数值，去掉默认演示预测／丹毒；数据缺失保持未知。注元守恒已由 #2355 的 `settle_alchemy_inject_qi_requests` → `debit_player_qi_to_furnace` 接入 `QiTransfer` 并由上述契约测试锁定；炉次持续 tick、周期 session 推送、完整丹方、真实残卷的 Fabric／TypeBox 接入及响应、工位距离门禁仍是后续 P1 接入项。新 UI 不代表这些领域问题已解决，完整炼丹验收仍未完成。
 - **测试重构记录**：删除旧 `AlchemyScreenInventoryWiringTest`（手工重搭固定 5×7 背包，未调用真实 Screen 的实现镜像）和 `AlchemyScreenSkillHeaderTest`（硬编码倍率、三张配方表镜像），移除旧 Screen 和相应冻结清单。原 `AlchemyScreenSessionPresentationTest` 的 Rust protobuf→生产 handler→呈现／终态 HUD／收丹 wire 契约迁入 `AlchemyWindowsTest`，合并逐次刷新次数等实现断言；新增最小化／关闭、重开等待双快照、切炉和无乐观库存的必要回归。
 - **验证更正**：旧五张截图只检查按钮越界，未覆盖左右栏相交，不能作为充分布局验收；Windows 原生复现于 `item-windows-check-20260920-150153` 和独立冷启动 `153015`。重做最终版 Java 17 经 build-token 执行 `gradle test build --offline --no-daemon --console=plain` 通过（5,031 JUnit、3 GameTest，0 失败）；日志 `local_images/r7-alchemy/redesign-final-build.log`。Windows 原生五场景 `item-windows-check-20260920-155344` 为 `status=passed, completed=5`，检查最小窗口、宽窗、真实数量输入、投药 intent、滚动、同窗宽窄恢复、顶部／左右／底部不重叠及操作列对齐。场景根目录 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/`。未进行联网炼丹或人工外观验收，未提交或开 PR，P5d 与 R7 保持进行中。
 

@@ -19,6 +19,7 @@ use crate::inventory::{consume_item_instance_once, ItemInstance, ItemRegistry, P
 use crate::network::forge_snapshot_emit::send_station_snapshot_to_player;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
+use crate::world::dimension::DimensionKind;
 
 /// 砧 tier：1 凡铁 / 2 灵铁 / 3 玄铁 / 4 道砧。
 pub type StationTier = u8;
@@ -31,6 +32,8 @@ pub struct WeaponForgeStation {
     pub integrity: f32,
     // TODO(plan-persistence-v1): block_entity: Option<BlockEntityRef>
     pub pos: Option<(i32, i32, i32)>,
+    /// 锻炉所在逻辑维度；当前可放置锻炉只来自 Overworld layer。
+    pub dimension: DimensionKind,
 }
 
 impl Default for WeaponForgeStation {
@@ -41,6 +44,7 @@ impl Default for WeaponForgeStation {
             session: None,
             integrity: 1.0,
             pos: None,
+            dimension: DimensionKind::Overworld,
         }
     }
 }
@@ -58,6 +62,7 @@ impl WeaponForgeStation {
             tier,
             owner: Some(owner),
             pos: Some((pos.x, pos.y, pos.z)),
+            dimension: DimensionKind::Overworld,
             ..Default::default()
         }
     }

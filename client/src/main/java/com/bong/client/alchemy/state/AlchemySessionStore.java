@@ -87,6 +87,11 @@ public final class AlchemySessionStore {
         replace(null);
     }
 
+    /** 炉位变化后丢弃旧炉会话，避免下一次打开时短暂展示不属于当前炉的进度。 */
+    static void clearForFurnaceChange() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         snapshot = Snapshot.empty();
         listeners.clear();

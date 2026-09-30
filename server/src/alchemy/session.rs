@@ -78,6 +78,13 @@ pub struct AlchemySession {
     /// 累积 (tick, temp) 采样（每 tick 一条，用于偏差积分）。
     pub temp_track: Vec<(u32, f64)>,
     pub qi_injected: f64,
+    /// 已经从玩家 `Cultivation.qi_current` 真实付款、仍由炉体账户托管的数量。
+    ///
+    /// `qi_injected` 还包括 AutoProfile 的炉体独立注灵，因此不能拿它直接作为
+    /// 退款金额。旧存档没有这个字段时按 0 兼容；新请求只有 ledger 转账成功后才会
+    /// 写入该字段。
+    #[serde(default)]
+    pub qi_reserved: f64,
     /// 已投入的材料（含首段起炉料 + 中途料）。
     pub staged: StagedMaterials,
     pub interventions: Vec<Intervention>,
@@ -99,6 +106,7 @@ impl AlchemySession {
             elapsed_ticks: 0,
             temp_track: Vec::new(),
             qi_injected: 0.0,
+            qi_reserved: 0.0,
             staged: StagedMaterials::default(),
             interventions: Vec::new(),
             incense: None,
@@ -187,6 +195,33 @@ impl AlchemySession {
             .find(|burn| tick >= burn.start_tick && tick - burn.start_tick < burn.burned_ticks)
             .map(|burn| burn.effect.temp_band_scale)
             .unwrap_or(1.0)
+    }
+
+    /// 记录一笔已经由守恒账本结算成功的玩家注灵。
+    ///
+    /// 该方法故意与 `apply_intervention(InjectQi)` 分开：AutoProfile 使用炉体自己的
+    /// `FurnaceQiReserve`，没有玩家付款，不能进入可退款的 `qi_reserved`。
+    pub fn record_paid_qi(&mut self, amount: f64) {
+        if !amount.is_finite() || amount <= 0.0 {
+            return;
+        }
+        self.qi_injected += amount;
+        self.qi_reserved += amount;
+        self.interventions.push(Intervention::InjectQi(amount));
+    }
+
+    /// 在对应 ledger 转账成功后，移除 session 的已付款统计。
+    ///
+    /// 调用方必须先成功完成 `transfer_ledger_qi_to_external` 或等价的炉体转出，
+    /// 再调用此方法；这样 `qi_reserved` 始终与炉体账户余额同步，不会先扣字段再
+    /// 因 ledger 失败而丢失可退款记录。
+    pub fn remove_paid_qi_after_transfer(&mut self, amount: f64) {
+        if !amount.is_finite() || amount <= 0.0 {
+            return;
+        }
+        let removed = amount.min(self.qi_reserved.max(0.0));
+        self.qi_reserved -= removed;
+        self.qi_injected = (self.qi_injected - removed).max(0.0);
     }
 
     /// plan §1.3 投料记录 — 起炉投料（stage0）或中途投料。

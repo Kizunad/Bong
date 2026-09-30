@@ -16,6 +16,7 @@ from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
     find_item,
     wait_inventory_contains,
+    wait_inventory_revision_after,
     wait_join_and_inventory,
 )
 
@@ -151,20 +152,32 @@ def _expect_restored_session_idempotent(
     return restored
 
 
-def _start_craft(bot) -> tuple[int, int]:
+def _start_craft(bot, initial_snapshot: dict) -> tuple[int, int]:
     from bot.scenarios._craft_helpers import stage_material
     bot.cmd("clearinv all")
     bot.expect_chat("[dev] clearinv", timeout=10.0)
+    cleared = wait_inventory_revision_after(bot, initial_snapshot["revision"])
+    stone_give_anchor = last_event_time(bot)
     bot.cmd("give stone_chunk 2")
     bot.expect_chat("[dev] gave stone_chunk x2", timeout=10.0)
+    stone_snapshot = wait_inventory_contains(
+        bot,
+        "stone_chunk",
+        after_t=stone_give_anchor,
+        after_revision=cleared["revision"],
+    )
+    wood_give_anchor = last_event_time(bot)
     bot.cmd("give wood_handle 2")
     bot.expect_chat("[dev] gave wood_handle x2", timeout=10.0)
-    wait_inventory_contains(bot, "stone_chunk")
-    wait_inventory_contains(bot, "wood_handle")
-    time.sleep(1.0)
+    wood_snapshot = wait_inventory_contains(
+        bot,
+        "wood_handle",
+        after_t=wood_give_anchor,
+        after_revision=stone_snapshot["revision"],
+    )
 
-    stage_material(bot, RECIPE_ID, "stone_chunk")
-    stage_material(bot, RECIPE_ID, "wood_handle")
+    staged = stage_material(bot, RECIPE_ID, "stone_chunk", snapshot=wood_snapshot)
+    stage_material(bot, RECIPE_ID, "wood_handle", snapshot=staged)
     anchor = last_event_time(bot)
     bot.intent(
         {
@@ -192,8 +205,8 @@ def _start_craft(bot) -> tuple[int, int]:
 def run(env) -> None:
     # ---- 第一段连接：开出 session 并推进，然后异常断线 ----
     with env.new_bot("Stale") as bot:
-        wait_join_and_inventory(bot)
-        elapsed, completed = _start_craft(bot)
+        initial = wait_join_and_inventory(bot)
+        elapsed, completed = _start_craft(bot, initial)
 
     time.sleep(1.5)  # 等 server 检测断连并落盘
 

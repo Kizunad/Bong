@@ -76,6 +76,30 @@ use crate::world::zone::ZoneRegistry;
 
 type ForgeCasterSkillQueryItem<'a> = (&'a Cultivation, &'a QiColor, &'a SkillSet);
 
+/// 锻炉会话沿用制作台的 3 格 Chebyshev 交互半径，并要求玩家与锻炉同维。
+pub const FORGE_INTERACT_RANGE_BLOCKS: f64 = crate::reach::WORKBENCH_MAX_BLOCKS;
+
+/// 评估服务端锻炉操作的空间前置条件。
+///
+/// `station_pos` 和 `station_dimension` 来自服务端站点/会话快照，绝不信任客户端
+/// 自报的当前位置。缺少任一落点或维度时 fail-closed，调用方因此不会发出会消耗
+/// 材料、铭文残卷或真元的 Forge 事件。
+pub fn is_within_forge_scope(
+    player_position: DVec3,
+    player_dimension: DimensionKind,
+    station_pos: Option<(i32, i32, i32)>,
+    station_dimension: DimensionKind,
+) -> bool {
+    let Some((x, y, z)) = station_pos else {
+        return false;
+    };
+    player_dimension == station_dimension
+        && crate::reach::DistanceRule::WORKBENCH.allows(
+            player_position,
+            DVec3::new(f64::from(x), f64::from(y), f64::from(z)),
+        )
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][forge] registering plan-forge-v1 systems");
 
@@ -415,6 +439,8 @@ fn handle_start_forge_requests(
 
         let id = sessions.allocate_id();
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
+        session.station_pos = station.pos;
+        session.station_dimension = station.dimension;
         session.committed_materials = inputs;
         session.step_state = StepState::Billet(billet_res.state.clone());
         session.billet_flawed = billet_res.flawed;
@@ -1278,18 +1304,54 @@ mod tests {
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use crate::shelflife::probe::FreshnessProbeIntent;
     use crate::skill::events::SkillScrollUsed;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::extract_system::{
         CancelExtractRequest as CancelExtractRequestEvent,
         StartExtractRequest as StartExtractRequestEvent,
     };
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::custom_payload::CustomPayloadEvent;
-    use valence::prelude::{ident, App, BlockPos, Client, Entity, Events, Update};
+    use valence::prelude::{ident, App, BlockPos, Client, DVec3, Entity, Events, Position, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
     const INSCRIPTION_SCROLL_INSTANCE_ID: u64 = 43;
     const INSCRIPTION_INITIAL_REVISION: InventoryRevision = InventoryRevision(17);
+
+    #[test]
+    fn forge_scope_requires_same_dimension_and_station_reach() {
+        let station = Some((8, 66, 8));
+        assert!(is_within_forge_scope(
+            DVec3::new(8.5, 66.0, 8.5),
+            DimensionKind::Overworld,
+            station,
+            DimensionKind::Overworld,
+        ));
+        assert!(is_within_forge_scope(
+            DVec3::new(8.0 + FORGE_INTERACT_RANGE_BLOCKS, 66.0, 8.0),
+            DimensionKind::Overworld,
+            station,
+            DimensionKind::Overworld,
+        ));
+        assert!(!is_within_forge_scope(
+            DVec3::new(8.0 + FORGE_INTERACT_RANGE_BLOCKS + 0.01, 66.0, 8.0),
+            DimensionKind::Overworld,
+            station,
+            DimensionKind::Overworld,
+        ));
+        assert!(!is_within_forge_scope(
+            DVec3::new(8.5, 66.0, 8.5),
+            DimensionKind::Tsy,
+            station,
+            DimensionKind::Overworld,
+        ));
+        assert!(!is_within_forge_scope(
+            DVec3::new(8.5, 66.0, 8.5),
+            DimensionKind::Overworld,
+            None,
+            DimensionKind::Overworld,
+        ));
+    }
 
     fn add_minimal_client_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
@@ -1436,6 +1498,10 @@ mod tests {
                 learned,
             ))
             .id();
+        app.world_mut().entity_mut(caster).insert((
+            Position::new(DVec3::new(4.5, 64.0, 4.5)),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
 
         let session_id = ForgeSessionId(session_id);
         let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
@@ -1444,6 +1510,8 @@ mod tests {
 
         let mut session =
             ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
+        session.station_pos = Some((4, 64, 4));
+        session.station_dimension = DimensionKind::Overworld;
         match initial_step {
             ForgeStep::Billet => {
                 session.step_state = StepState::Billet(Default::default());
@@ -1543,6 +1611,10 @@ mod tests {
                 ),
             ))
             .id();
+        app.world_mut().entity_mut(caster).insert((
+            Position::new(DVec3::new(4.5, 64.0, 4.5)),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
 
         let session_id = ForgeSessionId(session_id);
         let mut station = WeaponForgeStation::placed(BlockPos::new(4, 64, 4), 2, caster);
@@ -1562,6 +1634,8 @@ mod tests {
         }
         let mut session =
             ForgeSession::new(session_id, "ling_feng_v0".to_string(), station, caster);
+        session.station_pos = Some((4, 64, 4));
+        session.station_dimension = DimensionKind::Overworld;
         session.current_step = ForgeStep::Tempering;
         session.step_index = 1;
         session.step_state = StepState::Tempering(tempering);

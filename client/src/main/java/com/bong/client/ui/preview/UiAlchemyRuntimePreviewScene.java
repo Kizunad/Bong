@@ -170,12 +170,29 @@ final class UiAlchemyRuntimePreviewScene implements UiPreviewScene {
 
     @Override
     public void cleanup() {
-        UiWindowRuntime.manager().reset();
-        UiWindowRuntime.endPreview();
-        requestedScene = false;
-        furnace = null;
-        beforeInventory = null;
-        window = null;
+        Throwable primary = null;
+        try {
+            UiWindowRuntime.manager().reset();
+        } catch (Throwable failure) {
+            primary = failure;
+        }
+        try {
+            UiWindowRuntime.endPreview();
+        } catch (Throwable failure) {
+            if (primary == null) primary = failure;
+            else if (primary != failure) primary.addSuppressed(failure);
+        } finally {
+            requestedScene = false;
+            furnace = null;
+            beforeInventory = null;
+            window = null;
+        }
+        if (primary != null) UiAlchemyRuntimePreviewScene.<RuntimeException>throwUnchecked(primary);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+        throw (T) failure;
     }
 
     private static void require(boolean condition, String message) {

@@ -221,6 +221,7 @@ SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
     "combat_attack_hit",
 )
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[143] = ("protocol_identity",)
 
 
 class VarIntTest(unittest.TestCase):

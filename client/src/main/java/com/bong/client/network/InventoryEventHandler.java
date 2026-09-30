@@ -265,7 +265,11 @@ public final class InventoryEventHandler implements ServerDataHandler {
                                                InventoryItem replacement, InventoryItem moveItem, Location target) {
         InventoryModel.Builder builder = InventoryModel.builder()
             .containers(current.containers())
-            .craftPreparation(current.craftRecipeId(), current.craftMaterials())
+            .materialPreparation(
+                current.preparationRecipeId(),
+                current.preparationStation(),
+                current.preparedMaterials()
+            )
             .weight(current.currentWeight(), current.maxWeight())
             .boneCoins(current.boneCoins())
             .cultivation(current.realm(), current.qiCurrent(), current.qiMax(), current.bodyLevel());

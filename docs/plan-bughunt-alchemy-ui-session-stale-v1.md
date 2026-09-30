@@ -1,5 +1,7 @@
 # BugHunt: 炼丹 UI/HUD 断线串会话
 
+> 批次 8 归并来源 Issue：#1570、#1718。
+
 ## Bug 摘要
 
 炼丹客户端把炉体、活跃 session、预测概率、丹毒、试药史等服务器 payload 驱动状态分别存在静态 store 里，但这些 store 只有 `resetForTests()`，没有生产态断线清理。`BongNetworkHandler.clearClientStateOnDisconnect()` 已清理多类跨 session UI store，却没有清理任何炼丹 store。

@@ -84,8 +84,8 @@ GATE_WAIT_SEC="${SLOT_REGISTRY_GATE_WAIT_SEC:-5}"
 # server/data 是测试/跑服自动产生的可再生、无密钥运行物；tmp/ 由
 # scripts/tests/cargo_dev_profile_config_test.sh:27 的 mktemp -d "$ROOT/tmp/..." 产生，
 # 同样可再生且无密钥。__pycache__ 由下方具名路径规则处理。向本列表新增目录前必须
-# 确认不会被误当作可删除项。
-CACHE_DIRS=("server/target" "client/build" "client/.gradle" "server/data" "tmp")
+# 确认不会被误当作可删除项。client/logs/ 是 Minecraft 客户端运行时日志，可再生、无密钥。
+CACHE_DIRS=("server/target" "client/build" "client/.gradle" "server/data" "tmp" "client/logs")
 REQUIRED_FIELDS=(task_id branch claim_sha agent_id owner_token state created_local_branch reserved_at)
 HANDOFF_DIR_NAME=manual-handoff
 REQUIRED_HANDOFF_FIELDS=(operation_id task_id branch claim_sha old_agent old_token recovery_agent new_token from_state target_state operator reason timestamp)

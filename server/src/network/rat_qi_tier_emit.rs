@@ -60,7 +60,7 @@ pub const RAT_QI_TIER_MAX: u8 = 2;
 /// 负值与**全部**非有限值（NaN / +inf / -inf）一律归 0 档：wire 上只允许
 /// 0..=`RAT_QI_TIER_MAX`，不能让脏数值变成客户端查不到的贴图下标。
 ///
-/// `+inf` 也归 0 而非饱和到满档：`drained_qi` 镜像的是被 `SPIRIT_QI_TOTAL` 封顶的账本余额，
+/// `+inf` 也归 0 而非饱和到满档：`drained_qi` 镜像的是被 `WorldQiBudget.initial_total` 封顶的账本余额，
 /// 物理上到不了 inf，出现即账本损坏——脏数据不该被奖励成最亮的表现，且 NaN 本就比较不出来，
 /// 给 `+inf` 开特例只会让这条规则多一个记不住的分叉。
 pub fn rat_qi_tier(drained_qi: f64) -> u8 {

@@ -128,7 +128,7 @@
 
 以下为本次源码审查确认的剩余缺口；客户端测试通过不能替代服务端链路验证。
 
-1. **P0：注元绕过资源扣除。** `handle_alchemy_intervention` 直接调用 `session.apply_intervention`，后者把 qi 加入累计值；该请求路径没有玩家真元扣减、炉储量扣减或 QiTransfer。它没有走 `auto_profile::InjectQiIntent` 的独立路径。UI 增加等待无法修复守恒问题。
+1. **P0：注元守恒（已由 #2355 接入）。** 生产请求由 `settle_alchemy_inject_qi_requests`（`server/src/network/client_request_handler.rs:5530`）调用 `debit_player_qi_to_furnace`（`server/src/alchemy/qi.rs`），先以 `QiTransferReason::Crafting` 通过 `WorldQiAccount` 完成玩家到炉体的转移，成功后才更新 `Cultivation.qi_current`、`AlchemySession.qi_reserved` 与 `qi_injected`；退款走 `refund_furnace_qi_to_player`，无法回到在线玩家时走 `release_furnace_qi_to_overflow`。`server/src/alchemy/qi.rs` 的 `paid_injection_moves_qi_without_changing_world_total`、`rejected_injection_leaves_player_session_and_ledger_unchanged` 和 `inject_request_system_commits_player_and_furnace_together` 测试以 `SPIRIT_QI_TOTAL`、`summarize_world_qi`、`assert_conservation` 锁住成功、拒绝和同帧路径。客户端只提交原有 InjectQi 请求，不自建第二套扣款逻辑。
 2. **P1：学习和开炉权限不完整。** 旧 `handle_alchemy_learn` 按 recipe_id 学习，没有残卷所有权/消费；`handle_alchemy_ignite` 校验配方存在、区域灵气和炉阶，却未检查 LearnedRecipes。普通客户端限制不能替代服务端授权。
 3. **P1：真实残卷链路未闭环。** 入门残卷 `fragment_alchemy_hui_yuan_pill` 不匹配当前 `recipe_scroll_` 前缀。新 fragment 请求只存在 Rust/protobuf，缺 Fabric sender、物品语义投影与 TypeBox；事件处理未直接回传丹方和库存，消费失败时也未回滚已学习状态。需要单独完成跨栈契约。
 4. **P1：投药无法判断同味是否已经足量。** session 只给 completed 布尔；服务端 feed_stage 对同味继续累加，客户端不能只凭该布尔禁止重复材料，否则会误伤同阶段其他药材。需要每阶段每味已投入量与服务器幂等/重复提交约束。

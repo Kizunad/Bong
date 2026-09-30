@@ -1,6 +1,6 @@
 package com.bong.client.alchemy;
 
-import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.render.ItemTextureResolver;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
@@ -48,7 +48,7 @@ final class AlchemyWorldRenderer {
                 matrices.translate(-bounds.getCenter().x, -bounds.getCenter().y, -bounds.getCenter().z);
                 effect.model.render(matrices, consumers);
             } else {
-                var texture = GridSlotComponent.textureIdForItemId(payload.item());
+                var texture = ItemTextureResolver.forItemId(payload.item());
                 if (texture != null) {
                     var vertices = consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
                     var matrix = matrices.peek().getPositionMatrix();

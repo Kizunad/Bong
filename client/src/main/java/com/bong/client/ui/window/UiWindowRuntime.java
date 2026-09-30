@@ -84,7 +84,7 @@ public final class UiWindowRuntime {
         StoreUiStateSource.pullOnOpen(ForgeViewModel::snapshot), new ForgeClientIntentSink(),
         ForgeScreenBootstrap::available, System::currentTimeMillis);
     private static final AlchemyWindows ALCHEMY = new AlchemyWindows(MANAGER, AlchemyUiStateSource.production(),
-        AlchemyClientIntentSink.production(), task -> MinecraftClient.getInstance().execute(task), AlchemyScreenBootstrap::available);
+        AlchemyClientIntentSink.production(), UiWindowRuntime::dispatchAlchemy, AlchemyScreenBootstrap::available);
     private static boolean initialized;
     private static Object connection;
     private static Object world;
@@ -130,7 +130,7 @@ public final class UiWindowRuntime {
             CONTAINERS.refresh();
             if (loadout != null) loadout.refresh();
             SKILL_CONFIGS.refresh();
-            FORGE.refresh();
+            FORGE.tick();
             ALCHEMY.refresh();
             FORGE.tickInjection(client.currentScreen instanceof InspectScreen && client.isWindowFocused()
                 && focusedKey != null && focusedKey.windowType().equals(ForgeWindows.DEFINITION.windowType()));
@@ -386,6 +386,24 @@ public final class UiWindowRuntime {
         return ALCHEMY.acceptMessage(message);
     }
 
+    /**
+     * 把炼丹状态回调投递到客户端线程，并在执行前再次验证工位窗口的 scope。
+     * 窗口关闭后，已经排队的旧回调会被丢弃，不会写入已销毁的内容。
+     */
+    private static void dispatchAlchemy(Runnable task) {
+        MinecraftClient.getInstance().execute(() -> runIfAlchemyOpen(task));
+    }
+
+    /** 网络快照需要在修改与炼丹窗口关联的状态前经过同一生命周期边界。 */
+    public static boolean runIfAlchemyOpen(Runnable task) {
+        for (var state : MANAGER.snapshot()) {
+            if (state.definition().equals(AlchemyWindows.DEFINITION) && !state.closed()) {
+                return state.scope().runIfOpen(task);
+            }
+        }
+        return false;
+    }
+
     private static void openAlchemyNotes(InventoryItem item, boolean history) {
         synchronizeContext(MinecraftClient.getInstance());
         loadPreferences();
@@ -417,6 +435,7 @@ public final class UiWindowRuntime {
         focusedKey = state.key();
         view(state);
     }
+
     public static void searchPractice(String query) {
         openPractice();
         practice().query(query);
@@ -763,8 +782,9 @@ public final class UiWindowRuntime {
                     adapter.content().childById(io.wispforest.owo.ui.container.FlowLayout.class, "body-inspect-content")
                         .removeChild(ownedView.bodyModel.component());
                 }
-                if (ownedView.forge != null) ownedView.forge.close();
-                if (ownedView.alchemy != null) ownedView.alchemy.close();
+                Runnable forgeClose = ownedView.forge == null ? null : ownedView.forge::close;
+                Runnable alchemyClose = ownedView.alchemy == null ? null : ownedView.alchemy::close;
+                closeOwnedResources(forgeClose, alchemyClose);
                 adapter.close();
                 if (state.key().equals(focusedKey)) focusedKey = null;
             });
@@ -784,6 +804,25 @@ public final class UiWindowRuntime {
             view.item = item;
         }
         return view;
+    }
+
+    static void closeOwnedResources(Runnable forgeClose, Runnable alchemyClose) {
+        Throwable primary = null;
+        try {
+            if (forgeClose != null) forgeClose.run();
+        } catch (Throwable failure) {
+            primary = failure;
+        }
+        try {
+            if (alchemyClose != null) alchemyClose.run();
+        } catch (Throwable failure) {
+            if (primary == null) primary = failure;
+            else if (primary != failure) primary.addSuppressed(failure);
+        }
+        if (primary == null) return;
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+        throw new RuntimeException(primary);
     }
 
     public static boolean mouseDown(double x, double y, int button) {
@@ -980,6 +1019,7 @@ public final class UiWindowRuntime {
         var view = VIEWS.get(state.key());
         return view != null && view.alchemy != null && view.alchemy.drop(x, y, item);
     }
+
     public static void focusContainerAt(double x, double y) {
         var state = windowAt(x, y);
         if (state == null || containerGridAt(x, y) == null) return;

@@ -324,6 +324,18 @@ printf 'server/target/\n' >> "$ROOT/.git/info/exclude"
 new_reservation token slot-1 cache "$branch" agent-cache
 check "occupy 接受窄 cache whitelist" mutate occupy slot-1 cache agent-cache "$token"
 mutate release slot-1 cache agent-cache "$token" >/dev/null; destroy_slot slot-1
+# Minecraft 客户端运行时日志可再生且无密钥；occupy 应放行整个 client/logs/ ignored 路径。
+branch=bugfix/client-logs; make_remote_branch "$branch" "$SHA"; create_slot slot-1 "$branch" "$SHA"
+mkdir -p "$ROOT/.agent-worktrees/slot-1/client/logs"; printf 'client/logs/\n' >> "$ROOT/.git/info/exclude"
+printf 'runtime log\n' > "$ROOT/.agent-worktrees/slot-1/client/logs/latest.log"
+new_reservation token slot-1 client-logs "$branch" agent-client-logs
+check "occupy 接受 client/logs 运行时日志" mutate occupy slot-1 client-logs agent-client-logs "$token"
+if [[ "$(field "$REGROOT/slot-1.lock/state")" == occupied ]]; then
+  mutate release slot-1 client-logs agent-client-logs "$token" >/dev/null
+else
+  mutate rollback slot-1 client-logs agent-client-logs "$token" >/dev/null
+fi
+destroy_slot slot-1
 # restore shared dynamic repository exclude fixture
 : > "$ROOT/.git/info/exclude"
 

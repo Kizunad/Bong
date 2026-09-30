@@ -61,9 +61,16 @@ def run(env):
         _wait_forge_payload_after(bot, anchor, "forge_blueprint_book",
                                  lambda p: any(entry["id"] == "iron_sword_v0" for entry in p["learned"]),
                                  30, "新角色也应拿到场景测试图谱")
+        fan_give_anchor = last_event_time(bot)
         bot.cmd("give fan_tie 3")
-        wait_inventory_contains(bot, "fan_tie")
-        prepared = stage_material(bot, "iron_sword_v0", "fan_tie", pos)
+        fan_snapshot = wait_inventory_contains(bot, "fan_tie", after_t=fan_give_anchor)
+        prepared = stage_material(
+            bot,
+            "iron_sword_v0",
+            "fan_tie",
+            pos,
+            snapshot=fan_snapshot,
+        )
         original_id = prepared["material_preparation"]["materials"][0]["instance_id"]
         bot.intent({"type": "material_move", "v": 1, "recipe_id": "iron_sword_v0",
                     "instance_id": None, "station_pos": pos, "returning": True,
@@ -74,7 +81,7 @@ def run(env):
             "开炉前关闭准备窗口必须把材料返还背包",
         )
         assert find_item(returned, "fan_tie")["item"]["instance_id"] == original_id, "返还不能重造实例"
-        stage_material(bot, "iron_sword_v0", "fan_tie", pos)
+        stage_material(bot, "iron_sword_v0", "fan_tie", pos, snapshot=returned)
         anchor = last_event_time(bot)
         bot.intent({"type": "forge_start_session", "v": 1, "station_pos": pos,
                     "blueprint_id": "iron_sword_v0", "materials": [["fan_tie", 3]]})

@@ -2689,24 +2689,61 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
     expect(target.uuid, "targetPlayer 应为 player_id 指定的玩家").toBe("offline:test-player");
   });
 
-  it("falls back to first online player when player_id not found in state", async () => {
+  it("player_id 未命中时拒绝把 TSY 发现面板错投给无关在线玩家", async () => {
     const uiRuntime = makeMockUiRuntime();
     const state = createTestWorldState(); // player uuid="offline:test-player"
-    // player_id 指向一个不在线的玩家 → 回退到在线第一个
+    // player_id 指向不在线的触发者；在线玩家不是该事件的 owner，不能代收面板。
     const event = makeTsyZoneActivatedV1({ player_id: "offline:unknown-player" });
+    const warnSpy = vi.fn();
 
     await processTsyZoneActivatedForUi({
       state,
       events: [event],
       agentUiRuntime: uiRuntime as never,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: { log: vi.fn(), warn: warnSpy },
     });
 
-    // Falls back to first online player
-    expect(uiRuntime.triggerUi, "should fallback to first online player").toHaveBeenCalledOnce();
+    expect(
+      uiRuntime.triggerUi,
+      "触发者不在线时不得把面板错投给 state.players[0]",
+    ).not.toHaveBeenCalled();
+    expect(warnSpy, "目标玩家未命中应留下可诊断告警").toHaveBeenCalledWith(
+      expect.stringContaining("offline:unknown-player"),
+    );
+  });
+
+  it("同批次目标 miss 后继续把后续 TSY 面板发给其真实触发者", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const warnSpy = vi.fn();
+    const events = [
+      makeTsyZoneActivatedV1({
+        family_id: "tsy_missing",
+        player_id: "offline:unknown-player",
+        tick: 1100,
+      }),
+      makeTsyZoneActivatedV1({
+        family_id: "tsy_valid",
+        player_id: "offline:test-player",
+        tick: 1101,
+      }),
+    ];
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: warnSpy },
+    });
+
+    expect(warnSpy, "首个事件 target miss 应记录一次告警").toHaveBeenCalledOnce();
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      "首个 miss 不得阻断后续有效事件，也不得为 miss 事件创建面板",
+    ).toHaveLength(1);
     const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
-    const target = opts["targetPlayer"] as { uuid: string };
-    expect(target.uuid, "target player uuid is the first online player").toBe("offline:test-player");
+    expect((opts["targetPlayer"] as { uuid: string }).uuid).toBe("offline:test-player");
+    expect((opts["params"] as Record<string, string>)["zone_name"]).toBe("tsy_valid");
   });
 
   it("skips triggerUi and logs when there are no online players", async () => {

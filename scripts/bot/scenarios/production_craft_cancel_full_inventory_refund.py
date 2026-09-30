@@ -4,8 +4,10 @@ import time
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
+    fill_empty_carried_containers,
     find_item,
     wait_inventory_contains,
+    wait_inventory_revision_after,
     wait_join_and_inventory,
 )
 
@@ -57,22 +59,34 @@ def _inventory_count(snapshot: dict, item_id: str) -> int:
 def run(env) -> None:
     refund_ids: set[int]
     with env.new_bot("Refund") as bot:
-        wait_join_and_inventory(bot)
+        initial = wait_join_and_inventory(bot)
         baseline_ids = {drop["instance_id"] for drop in _latest_drops(bot)}
 
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
+        cleared = wait_inventory_revision_after(bot, initial["revision"])
+        stone_give_anchor = last_event_time(bot)
         bot.cmd("give stone_chunk 2")
         bot.expect_chat("[dev] gave stone_chunk x2", timeout=10.0)
+        stone_snapshot = wait_inventory_contains(
+            bot,
+            "stone_chunk",
+            after_t=stone_give_anchor,
+            after_revision=cleared["revision"],
+        )
+        wood_give_anchor = last_event_time(bot)
         bot.cmd("give wood_handle 2")
         bot.expect_chat("[dev] gave wood_handle x2", timeout=10.0)
-        wait_inventory_contains(bot, "stone_chunk")
-        wait_inventory_contains(bot, "wood_handle")
-        time.sleep(1.0)
+        wood_snapshot = wait_inventory_contains(
+            bot,
+            "wood_handle",
+            after_t=wood_give_anchor,
+            after_revision=stone_snapshot["revision"],
+        )
 
         from bot.scenarios._craft_helpers import stage_material
-        stage_material(bot, RECIPE_ID, "stone_chunk")
-        stage_material(bot, RECIPE_ID, "wood_handle")
+        staged = stage_material(bot, RECIPE_ID, "stone_chunk", snapshot=wood_snapshot)
+        stage_material(bot, RECIPE_ID, "wood_handle", snapshot=staged)
         start_anchor = last_event_time(bot)
         bot.intent(
             {
@@ -109,12 +123,8 @@ def run(env) -> None:
         assert _inventory_count(consumed, "stone_chunk") == 0
         assert _inventory_count(consumed, "wood_handle") == 0
 
-        # Misc 每栈 16；默认背包 3x3、贴身口袋 2x3。分两次填满两个容器。
-        bot.cmd("give grass_fiber 144")
-        bot.expect_chat("[dev] gave grass_fiber x144", timeout=10.0)
-        bot.cmd("give grass_fiber 96")
-        bot.expect_chat("[dev] gave grass_fiber x96", timeout=10.0)
-        wait_inventory_contains(bot, "grass_fiber")
+        # OP 口袋会扩容；必须按权威网格填满，才能验证退款落地分支。
+        fill_empty_carried_containers(bot, consumed)
 
         cancel_anchor = last_event_time(bot)
         bot.intent({"type": "craft_cancel", "v": 1})

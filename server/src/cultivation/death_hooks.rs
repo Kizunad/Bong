@@ -23,6 +23,7 @@ use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
+use crate::qi_physics::ledger::QiLedgerOps;
 use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
@@ -75,6 +76,96 @@ type TerminatedPlayerQueryItem<'a> = (
     Option<&'a CurrentDimension>,
     Option<&'a LifeRecord>,
 );
+
+pub(crate) struct QiMaxShrinkReleaseContext<'a, L: QiLedgerOps + ?Sized = WorldQiAccount> {
+    pub(crate) entity: Entity,
+    pub(crate) position: Option<&'a Position>,
+    pub(crate) current_dimension: Option<&'a CurrentDimension>,
+    pub(crate) life_record: Option<&'a LifeRecord>,
+    pub(crate) zones: Option<&'a mut ZoneRegistry>,
+    pub(crate) ledger: Option<&'a mut L>,
+    pub(crate) qi_transfers: Option<&'a mut Events<QiTransfer>>,
+    pub(crate) source: &'static str,
+}
+
+impl<L: QiLedgerOps + ?Sized> QiMaxShrinkReleaseContext<'_, L> {
+    pub(crate) fn shrink_qi_max(&mut self, cultivation: &mut Cultivation, new_qi_max: f64) -> bool {
+        if let Some(excess) = qi_max_shrink_release_amount(cultivation.qi_current, new_qi_max) {
+            if !self.release_excess(cultivation, excess) {
+                return false;
+            }
+        }
+
+        cultivation.qi_max = new_qi_max;
+        true
+    }
+
+    fn release_excess(&mut self, cultivation: &mut Cultivation, amount: f64) -> bool {
+        let Some(ledger) = self.ledger.as_deref_mut() else {
+            tracing::warn!(
+                entity = ?self.entity,
+                source = self.source,
+                "[bong][cultivation] qi-cap shrink skipped because WorldQiAccount is unavailable"
+            );
+            return false;
+        };
+        let Some(qi_transfers) = self.qi_transfers.as_deref_mut() else {
+            tracing::warn!(
+                entity = ?self.entity,
+                source = self.source,
+                "[bong][cultivation] qi-cap shrink skipped because QiTransfer events are unavailable"
+            );
+            return false;
+        };
+
+        match release_qi_amount_to_zone_with_ledger(
+            cultivation,
+            amount,
+            self.position,
+            self.current_dimension,
+            self.life_record,
+            self.zones.as_deref_mut(),
+            ledger,
+            Some(qi_transfers),
+            self.source,
+        ) {
+            Ok(outcome)
+                if (outcome.source_debited - amount).abs()
+                    <= crate::qi_physics::constants::QI_EPSILON =>
+            {
+                true
+            }
+            Ok(outcome) => {
+                tracing::warn!(
+                    entity = ?self.entity,
+                    source = self.source,
+                    requested = amount,
+                    debited = outcome.source_debited,
+                    "[bong][cultivation] qi-cap shrink skipped because qi release was incomplete"
+                );
+                false
+            }
+            Err(error) => {
+                tracing::warn!(
+                    entity = ?self.entity,
+                    source = self.source,
+                    ?error,
+                    "[bong][cultivation] qi-cap shrink failed closed"
+                );
+                false
+            }
+        }
+    }
+}
+
+/// 返回缩减 qi 上限时必须释放的正 excess；`None` 表示无需释放。
+///
+/// 预检与实际缩容都使用此判定，保持任意正 excess（包括小于等于
+/// `QI_EPSILON` 的值）都经过相同的账本、事件和 `LifeRecord` 资源检查。
+pub(crate) fn qi_max_shrink_release_amount(qi_current: f64, new_qi_max: f64) -> Option<f64> {
+    let excess = (qi_current - new_qi_max).max(0.0);
+    (excess > 0.0).then_some(excess)
+}
 
 fn release_cultivation_qi_to_zone(
     cultivation: &mut Cultivation,
@@ -354,6 +445,31 @@ pub fn release_qi_amount_to_zone(
     life_record: Option<&LifeRecord>,
     zones: Option<&mut ZoneRegistry>,
     ledger: &mut WorldQiAccount,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    source: &'static str,
+) -> Result<QiFlowOutcome, QiFlowError> {
+    release_qi_amount_to_zone_with_ledger(
+        cultivation,
+        amount,
+        position,
+        current_dimension,
+        life_record,
+        zones,
+        ledger,
+        qi_transfers,
+        source,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn release_qi_amount_to_zone_with_ledger<L: QiLedgerOps + ?Sized>(
+    cultivation: &mut Cultivation,
+    amount: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    zones: Option<&mut ZoneRegistry>,
+    ledger: &mut L,
     mut qi_transfers: Option<&mut Events<QiTransfer>>,
     source: &'static str,
 ) -> Result<QiFlowOutcome, QiFlowError> {

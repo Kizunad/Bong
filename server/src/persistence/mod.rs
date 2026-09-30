@@ -84,8 +84,9 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v40 持久化 R5 真元事务固定 overflow 池；v41 持久化坍缩渊 drain 固定池；
 /// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放；
 /// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段；
-/// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据。
-const CURRENT_USER_VERSION: i32 = 44;
+/// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据；
+/// v45 持久化跨重启的共享运行时 tick，供保质期绝对 tick 继续单调推进。
+const CURRENT_USER_VERSION: i32 = 45;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -139,6 +140,7 @@ mod migrations;
 mod models;
 mod npc;
 mod player;
+mod runtime_clock;
 mod social;
 mod tribulation;
 mod void_actions;
@@ -155,6 +157,7 @@ pub use life::*;
 pub use models::*;
 pub use npc::*;
 pub(crate) use player::*;
+pub(crate) use runtime_clock::*;
 pub use social::*;
 pub use tribulation::*;
 pub use void_actions::*;
@@ -182,6 +185,7 @@ pub fn register(app: &mut App) {
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DormantRelicSweepState>()
         .init_resource::<DailyBackupState>()
+        .init_resource::<RuntimeClockSnapshotState>()
         .init_resource::<ZoneRuntimeSnapshotState>()
         .init_resource::<ZoneInfluenceSnapshotState>()
         .add_systems(
@@ -203,11 +207,19 @@ pub fn register(app: &mut App) {
                 persist_pending_dormant_relics_system,
                 sweep_dormant_relic_retention_system,
                 daily_midnight_backup_system,
+                persist_runtime_clock_system,
                 persist_zone_runtime_system,
                 persist_zone_influence_system,
             ),
         )
-        .add_systems(Last, dispatch_persistence_shutdown_flushes);
+        .add_systems(
+            Last,
+            (
+                crate::alchemy::qi::flush_furnace_qi_on_shutdown,
+                dispatch_persistence_shutdown_flushes,
+            )
+                .chain(),
+        );
 }
 
 #[cfg(test)]

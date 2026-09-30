@@ -131,19 +131,72 @@ final class UiAlchemyWindowPreviewScene implements UiPreviewScene {
     @Override public Screen createScreen() {
         return new Screen(Text.literal("炼丹工位预览")) {
             @Override protected void init() {
-                if (content != null) content.close();
-                if (adapter != null) adapter.close();
-                manager.resizeViewport(width, height);
-                state = windows.open(POSITION, AlchemyWorkspaceLayout.furnace(width, height, false));
-                adapter = new OwoXmlWindowContentAdapter(manager, state, () -> {});
-                adapter.title("炼丹");
-                content = new AlchemyWindowContent(adapter.content(), windows, state,
-                    UiAlchemyWindowPreviewScene.this::openNotes, () -> {
-                        openNotes();
-                        notes.showHistory();
-                        notesAdapter.title("炉记");
-                    });
-                focus(state);
+                var oldState = state;
+                var oldAdapter = adapter;
+                var oldContent = content;
+                UiWindowManager.WindowState nextState = null;
+                OwoXmlWindowContentAdapter nextAdapter = null;
+                AlchemyWindowContent nextContent = null;
+                try {
+                    manager.resizeViewport(width, height);
+                    nextState = windows.open(POSITION, AlchemyWorkspaceLayout.furnace(width, height, false));
+                    nextAdapter = new OwoXmlWindowContentAdapter(manager, nextState, () -> {});
+                    nextAdapter.title("炼丹");
+                    var candidateAdapter = nextAdapter;
+                    nextContent = new AlchemyWindowContent(candidateAdapter.content(), windows, nextState,
+                        UiAlchemyWindowPreviewScene.this::openNotes, () -> {
+                            openNotes();
+                            notes.showHistory();
+                            notesAdapter.title("炉记");
+                        });
+                    Throwable oldCleanupFailure = null;
+                    try {
+                        if (oldContent != null) oldContent.close();
+                    } catch (Throwable failure) {
+                        oldCleanupFailure = failure;
+                    }
+                    try {
+                        if (oldAdapter != null) oldAdapter.close();
+                    } catch (Throwable failure) {
+                        if (oldCleanupFailure == null) {
+                            oldCleanupFailure = failure;
+                        } else if (oldCleanupFailure != failure) {
+                            oldCleanupFailure.addSuppressed(failure);
+                        }
+                    }
+                    if (oldCleanupFailure != null) throw oldCleanupFailure;
+                    // 旧资源完全关闭后才提交新引用，避免关闭失败时 state 与实际挂载内容脱节。
+                    state = nextState;
+                    adapter = nextAdapter;
+                    content = nextContent;
+                    focus(state);
+                } catch (Throwable failure) {
+                    if (nextContent != null) {
+                        try {
+                            nextContent.close();
+                        } catch (Throwable cleanupFailure) {
+                            if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    if (nextAdapter != null) {
+                        try {
+                            nextAdapter.close();
+                        } catch (Throwable cleanupFailure) {
+                            if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    state = oldState;
+                    adapter = oldAdapter;
+                    content = oldContent;
+                    if (nextState != null && nextState != oldState) {
+                        try {
+                            manager.close(nextState.key());
+                        } catch (Throwable cleanupFailure) {
+                            if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    throwUnchecked(failure);
+                }
             }
 
             @Override public void render(DrawContext context, int x, int y, float delta) {
@@ -522,16 +575,38 @@ final class UiAlchemyWindowPreviewScene implements UiPreviewScene {
 
     @Override public String selectedTemplateId(Screen screen) { return "alchemy-window"; }
     @Override public boolean isReady(Screen screen) { return adapter != null; }
-    @Override public boolean initializationFailed(Screen screen) { return false; }
+    @Override public boolean initializationFailed(Screen screen) {
+        return screen == null || state == null || state.closed() || adapter == null || content == null;
+    }
     @Override public void cleanup() {
         animationFrames = null;
-        manager.reset();
-        if (content != null) content.close();
-        if (adapter != null) adapter.close();
-        if (notesAdapter != null) notesAdapter.close();
+        Throwable primary = null;
+        try {
+            manager.reset();
+        } catch (Throwable failure) {
+            primary = failure;
+        }
+        for (var cleanup : List.of(
+            (AutoCloseable) () -> { if (content != null) content.close(); },
+            (AutoCloseable) () -> { if (adapter != null) adapter.close(); },
+            (AutoCloseable) () -> { if (notesAdapter != null) notesAdapter.close(); },
+            (AutoCloseable) SessionScopedStoreRegistry::clearAllOnDisconnect
+        )) {
+            try {
+                cleanup.close();
+            } catch (Throwable failure) {
+                if (primary == null) primary = failure;
+                else if (primary != failure) primary.addSuppressed(failure);
+            }
+        }
         adapter = null;
         notesAdapter = null;
         content = null;
-        SessionScopedStoreRegistry.clearAllOnDisconnect();
+        if (primary != null) UiAlchemyWindowPreviewScene.<RuntimeException>throwUnchecked(primary);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+        throw (T) failure;
     }
 }

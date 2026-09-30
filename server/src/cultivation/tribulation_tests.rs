@@ -2,7 +2,7 @@ use super::*;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
-use crate::cultivation::components::MeridianId;
+use crate::cultivation::components::{Meridian, MeridianId, MeridianSystem};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState, PlayerInventory,
@@ -10,7 +10,9 @@ use crate::inventory::{
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::persistence::bootstrap_sqlite;
-use crate::qi_physics::QiTransfer;
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
+use crate::qi_physics::{QiTransfer, WorldQiAccount, WorldQiBudget};
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{App, Entity, Events, Position, Update};
@@ -222,6 +224,88 @@ fn all_meridians_open() -> MeridianSystem {
         meridian.opened_at = idx as u64;
     }
     meridians
+}
+
+#[test]
+fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
+    let mut app = App::new();
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
+    let mut meridians = MeridianSystem {
+        regular: (0..17)
+            .map(|index| Meridian::new(format!("tail_core_{index}").into()))
+            .collect(),
+        extraordinary: Vec::new(),
+    };
+    for meridian in meridians.iter_mut() {
+        meridian.opened = true;
+    }
+    let entity = app.world_mut().spawn(meridians).id();
+    app.world_mut().entity_mut(entity).insert((
+        Cultivation {
+            realm: Realm::Spirit,
+            qi_current: 12.0,
+            qi_max: 30.0,
+            ..Cultivation::default()
+        },
+        LifeRecord::new("offline:non-humanoid-tribulation"),
+    ));
+
+    let before = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须锚定 schema 的 TEST_QI_FIXTURE_TOTAL"
+    );
+
+    let mut cultivation = app.world().get::<Cultivation>(entity).unwrap().clone();
+    let life_record = app.world().get::<LifeRecord>(entity).unwrap().clone();
+    let released_qi = cultivation.qi_current;
+    {
+        let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
+        let outcome = release_qi_amount_to_zone(
+            &mut cultivation,
+            released_qi,
+            None,
+            None,
+            Some(&life_record),
+            None,
+            &mut ledger,
+            None,
+            "tribulation_failure_test",
+        )
+        .expect("tribulation failure should account for released qi before penalties");
+        assert_eq!(outcome.source_debited, released_qi);
+    }
+    *app.world_mut().get_mut::<Cultivation>(entity).unwrap() = cultivation.clone();
+
+    let (penalty_released_qi, severed_ids) = {
+        let meridians = app.world_mut().get_mut::<MeridianSystem>(entity);
+        apply_tribulation_failure_penalty(&mut cultivation, meridians, None)
+    };
+    assert_eq!(
+        penalty_released_qi, 0.0,
+        "penalty runs after the release path and must not debit qi a second time"
+    );
+    assert!(
+        severed_ids.is_empty(),
+        "non-humanoid channels have no legacy severed event representation"
+    );
+    *app.world_mut().get_mut::<Cultivation>(entity).unwrap() = cultivation;
+
+    let after = summarize_world_qi(app.world_mut());
+    let era_decay = 0.0;
+    assert_eq!(
+        after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须锚定 schema 的 TEST_QI_FIXTURE_TOTAL"
+    );
+    assert_conservation(&before, &after, era_decay).unwrap_or_else(|error| {
+        panic!(
+            "non-humanoid tribulation failure must conserve released qi: before={before:?}, after={after:?}, error={error:?}"
+        )
+    });
+    let meridians = app.world().get::<MeridianSystem>(entity).unwrap();
+    assert_eq!(meridians.opened_count(), 16);
+    assert!(!meridians.get("tail_core_16").opened);
 }
 fn test_item(instance_id: u64) -> ItemInstance {
     ItemInstance {

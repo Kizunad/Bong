@@ -606,6 +606,10 @@ class ProtoServerDataBridgeTest {
         if (depth > 6) {
             return;
         }
+        if (builder.getDescriptorForType().getFullName().equals("bong.AlchemyWorld")) {
+            populateAlchemyWorld(builder);
+            return;
+        }
         for (Descriptors.FieldDescriptor field : builder.getDescriptorForType().getFields()) {
             if (field.isMapField()) {
                 continue;
@@ -616,6 +620,22 @@ class ProtoServerDataBridgeTest {
                 builder.setField(field, nonDefaultScalarOrMessage(field, depth));
             }
         }
+    }
+
+    /** 炼丹世界消息的字段之间有生产约束，构造一条合法的非默认消息再走同一桥接路径。 */
+    private static void populateAlchemyWorld(com.google.protobuf.Message.Builder builder) {
+        var descriptor = builder.getDescriptorForType();
+        var furnacePos = descriptor.findFieldByName("furnace_pos");
+        builder.addRepeatedField(furnacePos, 2);
+        builder.addRepeatedField(furnacePos, 64);
+        builder.addRepeatedField(furnacePos, 3);
+        builder.setField(descriptor.findFieldByName("heat"), 0.6d);
+        builder.setField(descriptor.findFieldByName("incense"), true);
+        builder.setField(descriptor.findFieldByName("action"), "inject_qi");
+        var source = descriptor.findFieldByName("source");
+        builder.addRepeatedField(source, 1.0d);
+        builder.addRepeatedField(source, 65.1d);
+        builder.addRepeatedField(source, 2.0d);
     }
 
     private static Object nonDefaultScalarOrMessage(Descriptors.FieldDescriptor field, int depth) {

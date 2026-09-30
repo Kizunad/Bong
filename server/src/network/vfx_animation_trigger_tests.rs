@@ -606,7 +606,7 @@ fn guangbo_practice_emits_stretch_anim_and_happy_particle_for_skinned_player() {
     let player = spawn_skinned_npc_target(&mut app, "Stretcher", [3.0, 64.0, 9.0]);
 
     app.world_mut()
-        .send_event(GuangboTicaoPracticeEvent { entity: player });
+        .send_event(GuangboTicaoPracticeEvent::unverified(player));
     app.update();
 
     let emitted = drain_vfx(&mut app);
@@ -655,7 +655,7 @@ fn guangbo_practice_without_position_emits_nothing() {
     let player = app.world_mut().spawn_empty().id();
 
     app.world_mut()
-        .send_event(GuangboTicaoPracticeEvent { entity: player });
+        .send_event(GuangboTicaoPracticeEvent::unverified(player));
     app.update();
 
     let emitted = drain_vfx(&mut app);

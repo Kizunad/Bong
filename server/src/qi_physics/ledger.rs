@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use valence::prelude::{bevy_ecs, Event, Resource};
 
@@ -8,8 +8,6 @@ use crate::world::zone::ZoneRegistry;
 
 use super::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use super::{finite_non_negative, QiPhysicsError};
-
-const SPIRIT_QI_TOTAL_ENV: &str = "BONG_SPIRIT_QI_TOTAL";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldQiBudget {
@@ -40,20 +38,44 @@ impl WorldQiBudget {
         }
     }
 
-    pub fn from_env() -> Self {
-        std::env::var(SPIRIT_QI_TOTAL_ENV)
-            .ok()
-            .and_then(|raw| raw.parse::<f64>().ok())
-            .map(Self::from_total)
-            .unwrap_or_default()
-    }
-
     pub fn apply_era_decay(&mut self, ratio: f64) -> Result<f64, QiPhysicsError> {
         let ratio = finite_non_negative(ratio, "era_decay_ratio")?.clamp(0.0, 1.0);
         let decay = self.current_total * ratio;
         self.current_total = (self.current_total - decay).max(0.0);
         self.era_decay_accum += decay;
         Ok(decay)
+    }
+
+    /// 提交一个已经由具体 owner 结算出的衰减量。
+    ///
+    /// 投射物距离衰减等路径先由 `WorldQiAccount` 扣除真实 owner 余额，再调用此方法
+    /// 把同额计入全服预算的时代衰减槽；两边都成功前不得把衰减当作已完成。这个入口
+    /// 不接受比例，避免调用方用当前预算重新计算而与 owner 实际扣款产生漂移。
+    pub fn apply_era_decay_amount(&mut self, amount: f64) -> Result<f64, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "era_decay_amount")?;
+        if !self.current_total.is_finite() || self.current_total < 0.0 {
+            return Err(QiPhysicsError::InvalidAmount {
+                field: "world_qi_budget.current_total",
+                value: self.current_total,
+            });
+        }
+        if amount > self.current_total {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: "world_qi_budget".to_string(),
+                available: self.current_total,
+                requested: amount,
+            });
+        }
+        let after = self.current_total - amount;
+        if !after.is_finite() || after < 0.0 {
+            return Err(QiPhysicsError::InvalidAmount {
+                field: "world_qi_budget.current_total",
+                value: after,
+            });
+        }
+        self.current_total = after;
+        self.era_decay_accum += amount;
+        Ok(amount)
     }
 }
 
@@ -144,6 +166,14 @@ pub enum QiTransferReason {
     ReleaseToZone,
     Collision,
     Channeling,
+    /// 全力一击蓄力被打断时，把已沉积进 zone 或运行期 overflow 池的真元退还玩家。
+    ///
+    /// 守恒约束：
+    /// - zone 来源先减少 `zone.spirit_qi`，再等量增加 `Cultivation.qi_current`；
+    /// - overflow 来源走真实 `WorldQiAccount::transfer` 扣减余额，玩家侧仅保留审计影子；
+    /// - 实际退还不得超过沉积台账、来源当前可扣余额或玩家剩余容量；
+    /// - 任一不足都计入打断损失，绝不凭空铸造。
+    ChargeInterruptRefund,
     /// bughunt r5 — 经脉打通进度消耗 `qi_current` 后，真元逸散回所在 zone ledger。
     ///
     /// 守恒约束：`cultivation.qi_current -= cost`；同 tick 内必须把 cost 记入
@@ -191,7 +221,7 @@ pub enum QiTransferReason {
     ///
     /// 半步 buff 是**容量扩张**，不是真元搬运（worldview §三:78 化虚稀缺 + qi_physics 守恒律）。
     /// 此变种用于在 ledger 留下"天道授予 N 真元容量"的可审计轨迹，amount = bonus capacity；
-    /// 实际 qi_current 不变、SPIRIT_QI_TOTAL 不变。emit 为 event，不调 `WorldQiAccount::transfer`
+    /// 实际 qi_current 不变、WorldQiBudget.initial_total 不变。emit 为 event，不调 `WorldQiAccount::transfer`
     /// （后者会变动 balance）。
     HalfStepBuff,
     /// plan-dandao-runtime-wiring-v1 P4 — 暴龙王真元吸取光环。
@@ -361,6 +391,7 @@ impl QiTransferReason {
             | Self::ReleaseToZone
             | Self::Collision
             | Self::Channeling
+            | Self::ChargeInterruptRefund
             | Self::MeridianOpen
             | Self::Breakthrough
             | Self::MeridianForge
@@ -389,12 +420,13 @@ impl QiTransferReason {
 }
 
 #[cfg(test)]
-pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 36] = [
+pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 37] = [
     QiTransferReason::CultivationRegen,
     QiTransferReason::Excretion,
     QiTransferReason::ReleaseToZone,
     QiTransferReason::Collision,
     QiTransferReason::Channeling,
+    QiTransferReason::ChargeInterruptRefund,
     QiTransferReason::MeridianOpen,
     QiTransferReason::Breakthrough,
     QiTransferReason::MeridianForge,
@@ -485,6 +517,9 @@ impl QiTransfer {
 pub struct WorldQiAccount {
     balances: BTreeMap<QiAccountId, f64>,
     transfers: Vec<QiTransfer>,
+    /// 已完成释放且余额明确归零的动态 carrier 账户。持久化用它区分“已结算删除”
+    /// 与“账本未恢复却有正余额”的未知状态，后者必须 fail closed。
+    retired_carrier_accounts: BTreeSet<QiAccountId>,
 }
 
 impl Resource for WorldQiAccount {}
@@ -532,15 +567,244 @@ fn checked_source_debit(before: f64, amount: f64) -> Result<f64, QiPhysicsError>
     Ok(after)
 }
 
+/// `WorldQiAccount` 的轻量原子事务。
+///
+/// 事务只保存本次触及账户的 overlay 和本次新增的审计项；既有 `transfers` 历史不参与
+/// 暂存，避免高频路径按完整审计向量的长度做深拷贝。事务闭合成功后一次性提交，闭合
+/// 失败则丢弃 overlay，调用方看不到部分余额或审计记录。
+pub(crate) struct WorldQiAccountTransaction<'a> {
+    base_balances: &'a BTreeMap<QiAccountId, f64>,
+    changes: BTreeMap<QiAccountId, Option<f64>>,
+    transfers: Vec<QiTransfer>,
+}
+
+pub(crate) trait QiLedgerOps {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError>;
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer);
+}
+
+impl WorldQiAccountTransaction<'_> {
+    fn balance(&self, account: &QiAccountId) -> f64 {
+        match self.changes.get(account) {
+            Some(Some(balance)) => *balance,
+            Some(None) => 0.0,
+            None => self.base_balances.get(account).copied().unwrap_or(0.0),
+        }
+    }
+
+    fn has_account(&self, account: &QiAccountId) -> bool {
+        match self.changes.get(account) {
+            Some(balance) => balance.is_some(),
+            None => self.base_balances.contains_key(account),
+        }
+    }
+
+    pub(crate) fn set_balance(
+        &mut self,
+        account: QiAccountId,
+        amount: f64,
+    ) -> Result<(), QiPhysicsError> {
+        let amount = finite_non_negative(amount, "balance")?;
+        self.changes.insert(account, Some(amount));
+        Ok(())
+    }
+
+    fn remove_balance(&mut self, account: &QiAccountId) {
+        self.changes.insert(account.clone(), None);
+    }
+
+    fn transfer(&mut self, transfer: QiTransfer) -> Result<(), QiPhysicsError> {
+        reject_audit_only_qi_reason(transfer.reason)?;
+
+        let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
+        if transfer.from == transfer.to {
+            return Err(QiPhysicsError::SameAccountTransfer {
+                account: transfer.from.to_string(),
+            });
+        }
+        let available = self.balance(&transfer.from);
+        if amount > available {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: transfer.from.to_string(),
+                available,
+                requested: amount,
+            });
+        }
+
+        let to_balance = self.balance(&transfer.to);
+        let to_after = checked_destination_credit(to_balance, amount)?;
+        let from_after = checked_source_debit(available, amount)?;
+
+        self.set_balance(transfer.from.clone(), from_after)?;
+        self.set_balance(transfer.to.clone(), to_after)?;
+        self.transfers.push(transfer);
+        Ok(())
+    }
+
+    pub(crate) fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "transfer.amount")?;
+        reject_audit_only_qi_reason(reason)?;
+        if amount == 0.0 {
+            return Ok(None);
+        }
+        let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
+        if transfer.from == transfer.to {
+            return Err(QiPhysicsError::SameAccountTransfer {
+                account: from.to_string(),
+            });
+        }
+
+        // 外部 source 只在事务 overlay 里临时镜像；事务成功提交时恢复原状，原先不存在
+        // 的 source 则以删除标记结束，不会污染长期账本。
+        checked_destination_credit(self.balance(&transfer.to), amount)?;
+        let source_existed = self.has_account(&from);
+        let source_before = self.balance(&from);
+        let source_shadow = finite_non_negative(source_before + amount, "source_shadow_balance")?;
+        if source_shadow == source_before {
+            return Err(QiPhysicsError::UnrepresentableChange {
+                field: "source_shadow_balance",
+                before: source_before,
+                amount,
+            });
+        }
+        self.set_balance(from.clone(), source_shadow)?;
+
+        let result = self.transfer(transfer.clone());
+        if source_existed {
+            self.set_balance(from, source_before)?;
+        } else {
+            self.remove_balance(&from);
+        }
+
+        result.map(|()| Some(transfer))
+    }
+}
+
+impl QiLedgerOps for WorldQiAccount {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        transfer_external_qi_to_ledger(self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
+impl QiLedgerOps for valence::prelude::ResMut<'_, WorldQiAccount> {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        transfer_external_qi_to_ledger(self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
+impl QiLedgerOps for WorldQiAccountTransaction<'_> {
+    fn transfer_external_qi_to_ledger(
+        &mut self,
+        from: QiAccountId,
+        to: QiAccountId,
+        amount: f64,
+        reason: QiTransferReason,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        WorldQiAccountTransaction::transfer_external_qi_to_ledger(self, from, to, amount, reason)
+    }
+
+    fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+}
+
 impl WorldQiAccount {
+    /// 在不复制既有审计历史的前提下执行失败原子的账本操作。
+    pub(crate) fn with_transaction<T>(
+        &mut self,
+        operation: impl FnOnce(&mut WorldQiAccountTransaction<'_>) -> Result<T, QiPhysicsError>,
+    ) -> Result<T, QiPhysicsError> {
+        let mut transaction = WorldQiAccountTransaction {
+            base_balances: &self.balances,
+            changes: BTreeMap::new(),
+            transfers: Vec::new(),
+        };
+        let value = operation(&mut transaction)?;
+
+        let changes = std::mem::take(&mut transaction.changes);
+        let transfers = std::mem::take(&mut transaction.transfers);
+        drop(transaction);
+
+        for (account, balance) in changes {
+            match balance {
+                Some(balance) => {
+                    self.balances.insert(account, balance);
+                }
+                None => {
+                    self.balances.remove(&account);
+                }
+            }
+        }
+        self.transfers.extend(transfers);
+        Ok(value)
+    }
+
+    /// 只读探测，结果仅用于判定，不提交任何余额或转移。
+    ///
+    /// 闭包可以在事务 overlay 上执行完整的账本试算；闭包返回后 overlay 与新增审计项
+    /// 一并丢弃，真实 `WorldQiAccount` 保持不变。
+    pub(crate) fn probe_transaction<T>(
+        &mut self,
+        operation: impl FnOnce(&mut WorldQiAccountTransaction<'_>) -> T,
+    ) -> T {
+        let mut transaction = WorldQiAccountTransaction {
+            base_balances: &self.balances,
+            changes: BTreeMap::new(),
+            transfers: Vec::new(),
+        };
+        operation(&mut transaction)
+    }
+
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {
         let amount = finite_non_negative(amount, "balance")?;
+        self.retired_carrier_accounts.remove(&account);
         self.balances.insert(account, amount);
         Ok(())
     }
 
     pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
-        self.balances.remove(account)
+        let removed = self.balances.remove(account);
+        if is_anqi_carrier_account(account) && removed == Some(0.0) {
+            self.retired_carrier_accounts.insert(account.clone());
+        }
+        removed
+    }
+
+    pub fn is_retired_carrier_account(&self, account: &QiAccountId) -> bool {
+        self.retired_carrier_accounts.contains(account)
     }
 
     pub fn has_account(&self, account: &QiAccountId) -> bool {
@@ -605,6 +869,44 @@ impl WorldQiAccount {
         self.transfers.push(transfer);
     }
 
+    /// 从 ledger owner 原子提交不可回收的物理衰减，并留下 `EraDecay` 回执。
+    ///
+    /// `to=tiandao:tiandao` 是预算沉降槽的审计身份，不会作为长期余额写入 ledger。
+    /// owner 余额、预算当前值、预算沉降累计值和审计轨迹要么全部提交，要么全部保持
+    /// 原状；预算校验使用 [`WorldQiBudget::apply_era_decay_amount`] 的同一严格口径。
+    pub fn settle_era_decay(
+        &mut self,
+        budget: &mut WorldQiBudget,
+        from: QiAccountId,
+        amount: f64,
+    ) -> Result<Option<QiTransfer>, QiPhysicsError> {
+        let amount = finite_non_negative(amount, "decay.amount")?;
+        if amount == 0.0 {
+            return Ok(None);
+        }
+        let available = self.balance(&from);
+        if amount > available {
+            return Err(QiPhysicsError::InsufficientQi {
+                account: from.to_string(),
+                available,
+                requested: amount,
+            });
+        }
+        let transfer = QiTransfer::new(
+            from.clone(),
+            QiAccountId::tiandao(),
+            amount,
+            QiTransferReason::EraDecay,
+        )?;
+        let source_after = checked_source_debit(available, amount)?;
+        // 所有可能失败的检查都在 ledger 写入前完成；该调用成功后仅剩无失败的
+        // BTreeMap/Vec 提交，因此不会留下「扣了 owner 但预算没记」的半笔衰减。
+        budget.apply_era_decay_amount(amount)?;
+        self.balances.insert(from, source_after);
+        self.transfers.push(transfer.clone());
+        Ok(Some(transfer))
+    }
+
     /// plan-offscreen-war-v1 P0：守恒 telemetry 用——按 `QiAccountId` 升序（BTreeMap
     /// 天然有序）迭代每个账户的余额，供 `bong:qi/ledger` 把 per-zone / per-npc
     /// 账本暴露给外部脚本做精确守恒断言。只读，不改账本。
@@ -633,41 +935,44 @@ pub fn transfer_external_qi_to_ledger(
     amount: f64,
     reason: QiTransferReason,
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    let amount = finite_non_negative(amount, "transfer.amount")?;
-    reject_audit_only_qi_reason(reason)?;
+    account.with_transaction(|transaction| {
+        transaction.transfer_external_qi_to_ledger(from, to, amount, reason)
+    })
+}
+
+/// 将 [`WorldQiAccount`] 内的真实余额转入 ECS 等外部物理权威。
+///
+/// 目标账户只在本次事务期间作为审计影子存在，成功后恢复调用前的精确余额；源账户
+/// 则被真实扣减。这样调用方可以在 helper 成功后把同一份真元写回外部字段，不会在
+/// ledger 与 ECS 中同时保留余额。
+pub fn transfer_ledger_qi_to_external(
+    account: &mut WorldQiAccount,
+    from: QiAccountId,
+    to: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) -> Result<Option<QiTransfer>, QiPhysicsError> {
     if amount == 0.0 {
         return Ok(None);
     }
-    let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
+    let transfer = QiTransfer::new(from, to.clone(), amount, reason)?;
     if transfer.from == transfer.to {
         return Err(QiPhysicsError::SameAccountTransfer {
-            account: from.to_string(),
+            account: transfer.from.to_string(),
         });
     }
 
-    // 外部 source 会临时镜像入账本；预检必须在写入该影子余额前拒绝不可表示的 sink credit。
-    checked_destination_credit(account.balance(&transfer.to), amount)?;
-    let source_existed = account.has_account(&from);
-    let source_before = account.balance(&from);
-    let source_shadow = finite_non_negative(source_before + amount, "source_shadow_balance")?;
-    if source_shadow == source_before {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "source_shadow_balance",
-            before: source_before,
-            amount,
-        });
-    }
-    account.set_balance(from.clone(), source_shadow)?;
-
-    let result = account.transfer(transfer.clone());
-    if source_existed {
-        // source_before 已经通过 set_balance 验证过；这里恢复不应失败。
-        account.set_balance(from.clone(), source_before)?;
-    } else {
-        account.remove_balance(&from);
-    }
-
-    result.map(|()| Some(transfer))
+    account.with_transaction(|transaction| {
+        let destination_existed = transaction.has_account(&to);
+        let destination_before = transaction.balance(&to);
+        transaction.transfer(transfer.clone())?;
+        if destination_existed {
+            transaction.set_balance(to, destination_before)?;
+        } else {
+            transaction.remove_balance(&to);
+        }
+        Ok(Some(transfer))
+    })
 }
 
 /// Atomically debit a stable ledger owner and credit the external signed Zone owner.
@@ -839,6 +1144,15 @@ pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
 /// 坍缩渊与负压 drain 的稳定真元池。该余额无 ECS 字段承载，必须跨重启恢复。
 pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
+/// 暗器载体账本账户的稳定前缀。
+///
+/// 载体账户按 owner/instance 动态创建，但仍须进入运行期账户持久化枚举；前缀是
+/// SQLite 行与 `QiAccountId::Container` 之间的稳定契约。
+pub const ANQI_CARRIER_ACCOUNT_PREFIX: &str = "anqi_carrier:";
+
+pub fn is_anqi_carrier_account(account: &QiAccountId) -> bool {
+    account.kind == QiAccountKind::Container && account.id.starts_with(ANQI_CARRIER_ACCOUNT_PREFIX)
+}
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
 pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 5] = [
@@ -965,8 +1279,8 @@ pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
 /// - `total_observed`：player+zone+container+ledger 的**已落位**真元（≤ 预算；minimal
 ///   世界起服后 zone qi 很低，远小于预算，勿误当 == DEFAULT_SPIRIT_QI_TOTAL）；
 /// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：已落位分量明细；
-/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算（守恒总量
-///   恒定的真锚点 = `DEFAULT_SPIRIT_QI_TOTAL`，仅被时代衰减拉低）与已累计衰减。
+/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：启动时注入的天道预算
+///   （守恒总量恒定的真锚点 = `WorldQiBudget.initial_total`，仅被时代衰减拉低）与已累计衰减。
 ///
 /// per-account 字段：每个被 ledger 记账过的账户一行 `account:<id>` → balance。
 ///

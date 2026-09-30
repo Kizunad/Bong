@@ -33,6 +33,15 @@ public final class BongModeledEntity extends Entity implements GeoEntity {
 
     public void setAlchemyHeat(float heat) { alchemyHeat = Math.max(0, Math.min(1, heat)); }
 
+    /** 清除炼丹世界表现，让炉体回到无炉次时的常态。 */
+    public void resetAlchemyEffects() {
+        setAlchemyHeat(0);
+        transitionAnimation = null;
+        transitionTicks = 0;
+        playingAlchemyResult = false;
+        if (mainController != null) mainController.forceAnimationReset();
+    }
+
     public BongModeledEntity(
         EntityType<? extends BongModeledEntity> type,
         World world,

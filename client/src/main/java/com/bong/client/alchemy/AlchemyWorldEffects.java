@@ -18,10 +18,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /** 世界丹炉的有限寿命表现。由服务端广播驱动，与 Inspect 和工位窗口的生命周期无关。 */
 public final class AlchemyWorldEffects {
     private static final Map<BlockPos, FurnaceState> FURNACES = new HashMap<>();
+    /** 当前世界中可按方块坐标直达的丹炉模型，供瞬时 VFX 使用。 */
+    private static final Map<BlockPos, BongModeledEntity> FURNACE_MODELS = new HashMap<>();
     private static final List<ActionEffect> ACTIONS = new ArrayList<>();
     private static ClientWorld world;
     private static long tick;
@@ -56,9 +59,39 @@ public final class AlchemyWorldEffects {
     private static void ensureWorld(ClientWorld next) {
         if (world == next) return;
         FURNACES.clear();
+        resetFurnaceModels();
         ACTIONS.clear();
         world = next;
         tick = 0;
+    }
+
+    private static void resetFurnaceModels() {
+        resetFurnaceModels(FURNACE_MODELS, BongModeledEntity::resetAlchemyEffects);
+    }
+
+    /** 重置已登记模型后再丢弃索引，避免最后一帧的热度或过渡动画残留。 */
+    static <T> void resetFurnaceModels(Map<BlockPos, T> models, Consumer<? super T> resetter) {
+        Throwable primary = null;
+        for (T model : models.values()) {
+            try {
+                resetter.accept(model);
+            } catch (RuntimeException | Error failure) {
+                primary = accumulate(primary, failure);
+            }
+        }
+        try {
+            models.clear();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
+        }
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+    }
+
+    private static Throwable accumulate(Throwable primary, Throwable failure) {
+        if (primary == null) return failure;
+        if (primary != failure) primary.addSuppressed(failure);
+        return primary;
     }
 
     /** 统一 ServerDataRouter 已在客户端线程完成连接代际校验。 */
@@ -70,6 +103,16 @@ public final class AlchemyWorldEffects {
             if (ACTIONS.size() >= 128) ACTIONS.remove(0);
             ACTIONS.add(new ActionEffect(payload));
         }
+    }
+
+    /** 炸炉等瞬时表现按炉位查找模型，避免每个事件重新扫描世界实体。 */
+    public static BongModeledEntity furnaceAt(BlockPos position) {
+        var furnace = FURNACE_MODELS.get(position);
+        if (furnace == null || furnace.isRemoved()) {
+            if (furnace != null) FURNACE_MODELS.remove(position);
+            return null;
+        }
+        return furnace;
     }
 
     private static int materialColor(Map<String, Integer> materials) {
@@ -91,6 +134,10 @@ public final class AlchemyWorldEffects {
         tick++;
         FURNACES.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= tick
             || client.player.squaredDistanceTo(Vec3d.ofCenter(entry.getKey())) > 48 * 48);
+        if (FURNACES.isEmpty() && ACTIONS.isEmpty()) {
+            resetFurnaceModels();
+            return;
+        }
         Map<BlockPos, BongModeledEntity> models = new HashMap<>();
         for (var entity : world.getEntities()) {
             if (entity instanceof BongModeledEntity modeled && !entity.isRemoved()
@@ -98,6 +145,8 @@ public final class AlchemyWorldEffects {
                 models.put(entity.getBlockPos(), modeled);
             }
         }
+        FURNACE_MODELS.clear();
+        FURNACE_MODELS.putAll(models);
         for (var entry : FURNACES.entrySet()) {
             var model = models.get(entry.getKey());
             if (model == null) continue;

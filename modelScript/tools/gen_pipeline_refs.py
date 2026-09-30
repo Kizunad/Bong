@@ -46,10 +46,19 @@ PROMPT_TEMPLATES = {
         "dramatic rim light, centered photorealistic 3D item render, high contrast, clean silhouette, no watermark"
     ),
     "three_view_item": (
-        "Minecraft voxel style orthographic three-view reference sheet of the referenced wearable equipment/weapon, "
+        "Minecraft voxel style orthographic three-view reference sheet of the referenced wearable equipment/armor, "
         "equipped on a plain neutral matte grey featureless mannequin player biped model (纯灰色模特玩家), "
         "displaying Front view, Side view, and Back view side by side, "
-        "clean Minecraft cuboid blocky aesthetic, distinct voxel armor and weapon parts, "
+        "clean Minecraft cuboid blocky aesthetic, distinct voxel armor parts, "
+        "plain solid neutral background, clear proportions for 3D modeling reference"
+    ),
+    "three_view_held": (
+        "Minecraft voxel style orthographic three-view reference sheet of the referenced handheld weapon / tool / item, "
+        "held firmly in the RIGHT HAND ONLY of a plain neutral matte grey featureless mannequin player biped model (纯灰色模特玩家右手持握), "
+        "EXACTLY ONE single weapon/item instance (only one, DO NOT draw multiple weapons, DO NOT draw weapons on back), "
+        "correct Minecraft in-game handheld proportions (blade/head length is approximately half of mannequin player height, NOT oversized, NOT human-sized), "
+        "displaying Front view, Side view, and Back view side by side, "
+        "clean Minecraft cuboid blocky aesthetic, distinct voxel weapon parts, "
         "plain solid neutral background, clear proportions for 3D modeling reference"
     ),
     "three_view_standalone": (
@@ -198,7 +207,7 @@ def generate_single_step(
     step: Literal["concept", "icon", "three_view", "exploded"],
     subject_name: str,
     prompt: str = "",
-    target_type: Literal["item", "creature"] = "item",
+    target_type: Literal["item", "held", "standalone", "creature"] = "item",
     ref_path: Path | None = None,
     out_dir: Path = DEFAULT_OUTPUT_DIR,
     model: str = "gpt-image-2",
@@ -237,11 +246,17 @@ def generate_single_step(
         print(f"  参考图: {ref_path}")
         if target_type == "creature":
             template_key = "three_view_creature"
-        elif target_type == "item":
-            template_key = "three_view_item"
-        else:
+        elif target_type == "held":
+            template_key = "three_view_held"
+        elif target_type == "standalone":
             template_key = "three_view_standalone"
-        full_prompt = PROMPT_TEMPLATES[template_key]
+        else:
+            template_key = "three_view_item"
+        base_prompt = PROMPT_TEMPLATES[template_key]
+        if prompt:
+            full_prompt = f"{base_prompt}, additional details: {prompt}"
+        else:
+            full_prompt = base_prompt
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
@@ -254,10 +269,11 @@ def generate_single_step(
             ref_path = tv_path if tv_path.exists() else (out_dir / f"ref_{subject_name}_concept.png")
         print(f"\n[执行步骤: MC 体素爆炸分解图 (Exploded View)]")
         print(f"  参考图: {ref_path}")
+        base_prompt = PROMPT_TEMPLATES["exploded"]
         if prompt:
-            full_prompt = prompt
+            full_prompt = f"{base_prompt}, additional breakdown details: {prompt}"
         else:
-            full_prompt = PROMPT_TEMPLATES["exploded"]
+            full_prompt = base_prompt
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
@@ -273,9 +289,9 @@ def main() -> None:
     parser.add_argument("--prompt", default="", help="概念描述（生成 concept 必需，后续步骤默认使用标准图生图模板）")
     parser.add_argument(
         "--type",
-        choices=["item", "standalone", "creature"],
+        choices=["item", "held", "standalone", "creature"],
         default="item",
-        help="目标类型: item (人身佩戴装备/武器), standalone (独立放置设施/方块/炉子无模特), creature (生物)",
+        help="目标类型: item (人身穿戴防具/装备带模特), held (手持物/单手右手持握/MC手持比例), standalone (独立放置设施/方块/炉子无模特), creature (生物)",
     )
     parser.add_argument("--ref", type=Path, help="图生图的参考图路径（若不提供则自动在输出目录寻找前序产物）")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT_DIR, help="输出目录")

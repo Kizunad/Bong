@@ -17,6 +17,8 @@ pub const MSG_FORGE_BLUEPRINT_NOT_LEARNED: &str = "forge.blueprint_not_learned";
 pub const MSG_FORGE_MATERIALS_INSUFFICIENT: &str = "forge.materials_insufficient";
 /// plan-forge-session-entry-wiring-v1 修复轮 — 砧上已有进行中会话（对齐 alchemy is_busy）。
 pub const MSG_FORGE_STATION_BUSY: &str = "forge.station_busy";
+/// plan-bughunt-forge-outcome-full-inventory-loss-v1 — 背包满时锻造成品落地提示。
+pub const MSG_FORGE_OUTCOME_DROPPED: &str = "forge.outcome_dropped";
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct MineralFeedbackEvent {
@@ -108,6 +110,32 @@ impl MineralFeedbackEvent {
             player,
             message_id: MSG_FORGE_STATION_BUSY,
             text: "这座砧上已有进行中的锻造，须待其结束".to_string(),
+        }
+    }
+
+    /// plan-bughunt-forge-outcome-full-inventory-loss-v1 — 背包无成品空位时，
+    /// 锻造成品已写入玩家脚下的世界掉落。
+    pub fn forge_outcome_dropped(player: Entity, item_name: impl AsRef<str>) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_OUTCOME_DROPPED,
+            text: format!(
+                "背包已满，锻造成品《{}》已落地，请及时拾取",
+                item_name.as_ref()
+            ),
+        }
+    }
+
+    /// plan-bughunt-forge-outcome-full-inventory-loss-v1 review fix — 玩家位置不可用时，
+    /// 成品改落在会话绑定的锻炉旁，反馈必须指向这个可找回的位置。
+    pub fn forge_outcome_dropped_near_station(player: Entity, item_name: impl AsRef<str>) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_OUTCOME_DROPPED,
+            text: format!(
+                "背包已满，锻造成品《{}》已落在锻炉旁，请及时拾取",
+                item_name.as_ref()
+            ),
         }
     }
 
@@ -274,6 +302,21 @@ mod tests {
         );
         assert_eq!(insufficient.message_id, MSG_FORGE_MATERIALS_INSUFFICIENT);
         assert_eq!(insufficient.text, "材料不足：凡铁 2/4、杂钢 0/1，起炉失败");
+
+        let dropped = MineralFeedbackEvent::forge_outcome_dropped(player, "采药刀");
+        assert_eq!(dropped.message_id, MSG_FORGE_OUTCOME_DROPPED);
+        assert_eq!(
+            dropped.text,
+            "背包已满，锻造成品《采药刀》已落地，请及时拾取"
+        );
+
+        let station_drop =
+            MineralFeedbackEvent::forge_outcome_dropped_near_station(player, "采药刀");
+        assert_eq!(station_drop.message_id, MSG_FORGE_OUTCOME_DROPPED);
+        assert_eq!(
+            station_drop.text,
+            "背包已满，锻造成品《采药刀》已落在锻炉旁，请及时拾取"
+        );
     }
 
     #[test]

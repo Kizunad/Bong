@@ -2218,6 +2218,9 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
         CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
         CastOutcomeV1::RejectRaceMismatch => bong::CastOutcome::RejectRaceMismatch as i32,
+        CastOutcomeV1::RejectDedicatedExecution => {
+            bong::CastOutcome::RejectDedicatedExecution as i32
+        }
     }
 }
 

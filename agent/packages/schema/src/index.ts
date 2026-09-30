@@ -70,6 +70,7 @@ export * from "./payloads/agent-ui.js";
 
 // Validation & registry
 export * from "./schema-registry.js";
+export * from "./generation-manifest.js";
 export * from "./validate.js";
 
 // 修炼 (plan-cultivation-v1 §6)

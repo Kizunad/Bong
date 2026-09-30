@@ -15,6 +15,7 @@ import com.bong.client.tsy.ExtractState;
 import com.bong.client.tsy.ExtractStateStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.ConnectionStatusIndicator;
+import com.bong.client.util.TextureProbe;
 import com.bong.client.visual.realm_vision.PerceptionEdgeState;
 import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 
@@ -280,7 +281,7 @@ public final class BongHudOrchestrator {
                 nowMillis,
                 screenWidth,
                 screenHeight,
-                HudTextureProbe::exists
+                TextureProbe::exists
             ));
             // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
             commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));

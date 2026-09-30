@@ -3,7 +3,7 @@ package com.bong.client.inventory.component;
 import com.bong.client.combat.inspect.StatusPanelExtension;
 import com.bong.client.combat.StatusEffectIcons;
 import com.bong.client.combat.store.StatusEffectStore;
-import com.bong.client.hud.HudTextureProbe;
+import com.bong.client.util.TextureProbe;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -79,7 +79,7 @@ public class BuffBarPanel extends BaseComponent {
         // 内部底色
         ctx.fill(sx + 1, sy + 1, sx + SLOT_SIZE - 1, sy + SLOT_SIZE - 1, TRACK_BG);
         String texture = StatusEffectIcons.textureFor(e.id());
-        if (HudTextureProbe.exists(texture)) {
+        if (TextureProbe.exists(texture)) {
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
             try {
