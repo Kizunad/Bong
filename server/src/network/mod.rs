@@ -410,7 +410,10 @@ pub(crate) fn register_client_request_ingress(app: &mut App) {
             .before(client_request_handler::handle_client_request_payloads)
             .before(crate::player::despawn_disconnected_clients),
     );
-    app.add_systems(Update, client_request_handler::handle_client_request_payloads);
+    app.add_systems(
+        Update,
+        client_request_handler::handle_client_request_payloads,
+    );
     app.add_systems(
         Update,
         client_request_handler::flush_quick_slot_prefs_writes
