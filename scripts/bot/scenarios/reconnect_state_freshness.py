@@ -43,7 +43,7 @@ def _server_data_types(bot) -> frozenset[str]:
 
 
 def _join_payload_types(bot, context: str) -> frozenset[str]:
-    """等待 join hydration 静默后取集合，避免把尚未排出的首包误判为缺失。"""
+    """等待 join hydration 完成，再在有界收集窗内取集合。"""
     wait_join_and_inventory(bot)
     drain_event_stream(
         bot,
