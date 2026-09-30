@@ -54,6 +54,12 @@ export interface WriteGeneratedSchemasResult {
 type GeneratedSchemaContents = Record<string, string>;
 type GeneratedSchemaSourceHashes = Record<string, string>;
 
+interface GeneratedSchemaSnapshot {
+  entries: [string, unknown][];
+  contents: GeneratedSchemaContents;
+  sourceHashes: GeneratedSchemaSourceHashes;
+}
+
 function sourceHashForSchema(schema: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(schema))
@@ -94,30 +100,27 @@ function listGeneratedJsonFiles(outputDir: string): string[] {
     .sort();
 }
 
-function captureGeneratedSchemaContents(): GeneratedSchemaContents {
-  return Object.freeze(
-    Object.fromEntries(
-      sortedGeneratedSchemaEntries().map(([fileName, schema]) => [
-        fileName,
-        renderGeneratedSchema(schema),
-      ]),
-    ) as GeneratedSchemaContents,
-  );
+function captureGeneratedSchemaSnapshot(): GeneratedSchemaSnapshot {
+  const entries = sortedGeneratedSchemaEntries();
+  return {
+    entries,
+    contents: Object.freeze(
+      Object.fromEntries(
+        entries.map(([fileName, schema]) => [fileName, renderGeneratedSchema(schema)]),
+      ) as GeneratedSchemaContents,
+    ),
+    sourceHashes: Object.freeze(
+      Object.fromEntries(
+        entries.map(([fileName, schema]) => [fileName, sourceHashForSchema(schema)]),
+      ) as GeneratedSchemaSourceHashes,
+    ),
+  };
 }
 
-function captureGeneratedSchemaSourceHashes(): GeneratedSchemaSourceHashes {
-  return Object.freeze(
-    Object.fromEntries(
-      sortedGeneratedSchemaEntries().map(([fileName, schema]) => [
-        fileName,
-        sourceHashForSchema(schema),
-      ]),
-    ) as GeneratedSchemaSourceHashes,
-  );
-}
-
-const SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS = captureGeneratedSchemaContents();
-const SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES = captureGeneratedSchemaSourceHashes();
+const SNAPSHOTTED_GENERATED_SCHEMA = captureGeneratedSchemaSnapshot();
+const SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS = SNAPSHOTTED_GENERATED_SCHEMA.contents;
+const SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES =
+  SNAPSHOTTED_GENERATED_SCHEMA.sourceHashes;
 
 interface GeneratedSchemaPins {
   sourceHash?: string;
@@ -197,11 +200,11 @@ function readSchemaPackageVersion(): string {
 }
 
 /** 返回与当前 TypeBox registry 对拍的确定性 manifest。 */
-export function renderGenerationManifest(): string {
-  const artifacts = sortedGeneratedSchemaEntries().map(([fileName, schema]) => ({
+function renderGenerationManifestForSnapshot(snapshot: GeneratedSchemaSnapshot): string {
+  const artifacts = snapshot.entries.map(([fileName, schema]) => ({
     file: fileName,
     registry_keys: registryKeysForSchema(schema),
-    source_sha256: SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES[fileName],
+    source_sha256: snapshot.sourceHashes[fileName],
     generation_version: SCHEMA_GENERATION_VERSION,
     contract_version: contractVersionForFile(fileName),
     status: "declared" as const,
@@ -225,6 +228,10 @@ export function renderGenerationManifest(): string {
     null,
     2,
   )}\n`;
+}
+
+export function renderGenerationManifest(): string {
+  return renderGenerationManifestForSnapshot(captureGeneratedSchemaSnapshot());
 }
 
 function manifestMismatches(outputDir: string): string[] {
@@ -255,7 +262,7 @@ function manifestMismatches(outputDir: string): string[] {
 }
 
 export function renderGeneratedSchemas(): GeneratedSchemaContents {
-  return { ...captureGeneratedSchemaContents() };
+  return { ...captureGeneratedSchemaSnapshot().contents };
 }
 
 /**
@@ -263,10 +270,12 @@ export function renderGeneratedSchemas(): GeneratedSchemaContents {
  * 这让生成器的 deterministic 约束在写盘前也有独立的契约入口。
  */
 export function assertGeneratedSchemasDeterministic(): void {
-  const firstSchemas = renderGeneratedSchemas();
-  const secondSchemas = renderGeneratedSchemas();
-  const firstManifest = renderGenerationManifest();
-  const secondManifest = renderGenerationManifest();
+  const firstSnapshot = captureGeneratedSchemaSnapshot();
+  const secondSnapshot = captureGeneratedSchemaSnapshot();
+  const firstSchemas = firstSnapshot.contents;
+  const secondSchemas = secondSnapshot.contents;
+  const firstManifest = renderGenerationManifestForSnapshot(firstSnapshot);
+  const secondManifest = renderGenerationManifestForSnapshot(secondSnapshot);
   if (
     JSON.stringify(firstSchemas) !== JSON.stringify(secondSchemas) ||
     firstManifest !== secondManifest
@@ -364,7 +373,10 @@ export function writeGeneratedSchemas(outputDir = GENERATED_DIR): WriteGenerated
   }
 
   const manifestPath = join(outputDir, SCHEMA_GENERATION_MANIFEST_FILE_NAME);
-  writeFileSync(manifestPath, renderGenerationManifest());
+  writeFileSync(
+    manifestPath,
+    renderGenerationManifestForSnapshot(SNAPSHOTTED_GENERATED_SCHEMA),
+  );
   written.push(manifestPath);
 
   return {

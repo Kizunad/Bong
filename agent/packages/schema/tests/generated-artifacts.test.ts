@@ -20,6 +20,7 @@ import {
   assertGeneratedSchemasFresh,
   assertGeneratedSchemasDeterministic,
   GENERATED_DIR,
+  GENERATED_TYPEBOX_SOURCE_HASH_FIELD,
   GENERATED_SCHEMA_GENERATION_VERSION_FIELD,
   GENERATION_MANIFEST_PATH,
   getGeneratedSchemaDrift,
@@ -240,6 +241,16 @@ describe("generated schema freshness gate", () => {
         renderGeneratedSchemas()["chat-message-v1.json"],
       ) as Record<string, unknown>;
       expect(rendered.type).toBe("mutated-at-runtime");
+
+      const manifest = JSON.parse(renderGenerationManifest()) as {
+        artifacts: Array<Record<string, unknown>>;
+      };
+      const manifestEntry = manifest.artifacts.find(
+        (artifact) => artifact.file === "chat-message-v1.json",
+      );
+      expect(manifestEntry?.source_sha256).toBe(
+        rendered[GENERATED_TYPEBOX_SOURCE_HASH_FIELD],
+      );
     } finally {
       schema.type = originalType;
     }
