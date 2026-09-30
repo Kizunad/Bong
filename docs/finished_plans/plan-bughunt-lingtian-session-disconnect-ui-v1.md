@@ -1,5 +1,7 @@
 # BugHunt: 灵田会话 HUD 断线串场
 
+> 状态：已完成（2026-10-01）。灵田 client session store 的清理已由 R2 registry 收口；本 PR 不触碰灵田玩法与服务端语义。
+
 ## 摘要
 
 `LingtianSessionStore` 是 client 进程级 `static volatile` snapshot，但断线清理路径没有把它重置。玩家在开垦、种植、收获、补灵、吸灵等灵田动作进行中断线、切服或返回标题后，新连接收到新的 `lingtian_session` 快照前，旧的 active snapshot 仍会被 HUD 与音频条件读取。
@@ -48,3 +50,11 @@
 - 不重复 #1022 灵田 C2S 距离/维度门禁，也不重复 `docs/plans-skeleton/plan-bughunt-lingtian-c2s-range-gate-v1.md`。
 - 第 1 轮对抗否定了较弱的 `ProcessingSessionStore` 候选，理由是加工浮窗生产入口不可达。
 - 第 2 轮对抗支持本候选：HUD 证据硬，音频影响成立但依赖旧 `lingtian_drain` loop 已启动；分类为 Fabric client 非战斗 UI / local session hygiene，不是 combat A/V，也不是 server-only。
+
+## Finish Evidence
+
+- **落地清单**：`LingtianSessionStore.clearOnDisconnect()` 已登记到 `SessionScopedStoreRegistry`，断线 token 失效后与其他 session Store 一起清理；灵田 HUD/音频不再跨连接继承旧快照。
+- **关键 commit**：`c015e0ee8`（R2 P2，补齐裸 Store 与会话派生态，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`LingtianOverlayHudPlannerTest`、`LingtianSessionHandlerTest` 与 registry adapter pin；client 完整门禁和 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：服务端灵田 wire 与真元/物品逻辑不变；本 PR 仅清理 client session 状态，遵守冻结区。
+- **遗留 / 后续**：灵田玩法重构与服务端会话语义另按冻结区后的计划处理。

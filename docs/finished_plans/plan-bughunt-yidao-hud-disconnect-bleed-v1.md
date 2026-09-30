@@ -1,5 +1,7 @@
 # plan-bughunt-yidao-hud-disconnect-bleed-v1
 
+> 状态：已完成（2026-10-01）。`YidaoHudStateStore` 已纳入 R2 registry；医道玩法语义保持冻结。
+
 > Skeleton Plan。主题：`YidaoHudStateStore` 是客户端静态进程态，但断线 / 换服清理路径没有重置它；玩家上一会话的医道面板会继续被 `BongHudOrchestrator` 渲染，直到新会话收到新的 `yidao_hud_state` 覆盖。
 
 ## 一句话 bug
@@ -51,4 +53,12 @@
 
 ## 审计来源
 
-BugHunt worker：`client-combat` 分区，r10。方法：PR 去重、client HUD / server_data / disconnect 清理链路只读审计、两轮对抗 subagent 复核。当前结论为 **report-only**：高置信、可通过 client 单测稳定钉住；本 PR 只新增 plan，不修改代码 / 配置 / 资源 / 依赖。
+BugHunt worker：`client-combat` 分区，r10。方法：PR 去重、client HUD / server_data / disconnect 清理链路只读审计、两轮对抗 subagent 复核。生命周期切片已由 R2 P2/P3 落地；医道玩法语义仍由原 owner 负责。
+
+## Finish Evidence
+
+- **落地清单**：`YidaoHudStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 显式登记；清理后新 session 的首个 `yidao_hud_state` 仍可正常写入。
+- **关键 commit**：`c015e0ee8`（R2 P2，补齐 HUD Store 生命周期，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`YidaoHudPlannerTest`、`YidaoClientTest` 与 registry adapter pin；client 完整门禁和 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：医道 server_data wire 与结算不变；本 PR 不触碰经脉、功法、身体部位等冻结区。
+- **遗留 / 后续**：医道 NPC AI 状态和玩法扩展不属于本 lifecycle closeout。
