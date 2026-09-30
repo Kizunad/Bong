@@ -43,8 +43,10 @@ public final class WorkbenchScreenBootstrap {
         }
         var connection = client.getNetworkHandler();
         var world = client.world;
+        var ownerScreen = client.currentScreen;
         client.execute(() -> {
-            if (connection == client.getNetworkHandler() && world == client.world) {
+            if (connection == client.getNetworkHandler() && world == client.world
+                && client.currentScreen == ownerScreen) {
                 CraftScreenBootstrap.open(client, context);
             }
         });

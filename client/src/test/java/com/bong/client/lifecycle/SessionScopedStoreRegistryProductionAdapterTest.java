@@ -218,10 +218,11 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     void eachRegisteredHandleClearsItsDeclaredStoreWithoutTouchingCanary(ProductionAdapterCase adapter) {
         List<SessionStoreHandle> handles = SessionScopedStoreRegistry.registeredHandlesForTests();
         assertEquals(104, handles.size(), "P2 必须对生产 REGISTERED 的全部 104 个 handle 逐项验真");
-        SessionStoreHandle handle = handles.stream()
+        List<SessionStoreHandle> matches = handles.stream()
             .filter(candidate -> candidate.storeType() == adapter.storeType())
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("Missing registered handle: " + adapter.storeType()));
+            .toList();
+        assertEquals(1, matches.size(), "每个生产 Store 必须恰好有一个 cleaner handle：" + adapter.storeType());
+        SessionStoreHandle handle = matches.get(0);
         assertSame(
             adapter.storeType(),
             handle.storeType(),
