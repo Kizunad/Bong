@@ -18,7 +18,7 @@
 - **复用类型 / event / schema**：复用 `inventory_snapshot`、`player_state`、`bong:bone_coin_tick`、`bong:price_index`、现有 Bot scenario registry 和 CI Bot e2e stage；不新增一份货币或真元表示，不把聊天文案当经济事件。
 - **跨仓库契约**：server 继续产生现有经济与库存/玩家状态；agent 仅消费已有 `PRICE_INDEX`/经济快照，不为测量新增 gameplay channel；client/参考 bot 按 `bong:server_data` 与 MC 763 wire 观察同一结果；报告脚本只读 CI/服务器采样。
 - **worldview 锚点**：`worldview.md §九 L844-L892`（骨币是真元封存的、会贬值的唯一硬通货）、`worldview.md §十 L870-L910`（资源匮乏与搜打撤循环），以及 `worldview.md §一 L26-L46` 的匮乏/风险背景。测量不能把骨币当作稳定堆叠数字，也不能把真元收益与物品掉落重复计数。
-- **qi_physics 锚点**：本 plan 不定义公式或常数；真元相关指标只读取现有 `qi_physics`/ledger 可观察快照。运行时权威基准是服务器启动后注入的 `WorldQiBudget.initial_total/current_total`（`server/src/qi_physics/ledger.rs:13-47`），其来源由 `WorldQiTotalConfig` 解析 `--spirit-qi-total` / `BONG_SPIRIT_QI_TOTAL` 后经 `register_with_total` 注入（`server/src/qi_physics/mod.rs:40-50,359-370`）；`DEFAULT_SPIRIT_QI_TOTAL` 只作为未提供覆盖值时的默认元数据，不是测量脚本直接读取的权威总量。每个窗口用 `ledger::summarize_world_qi` 的 `WorldQiSnapshot` 记录 before/after；时代变化单独校验 `WorldQiBudget.initial_total == WorldQiBudget.current_total + WorldQiBudget.era_decay_accum`，因为 `WorldQiBudget::apply_era_decay` 只更新预算字段。只有观测账本实际发生等额减少时，才调用 `qi_physics::ledger::assert_conservation(before, after, observed_decay)`，不能把预算衰减值直接当作 observed 差额。测量脚本不得修改 `qi_current`、zone 灵气或账户。
+- **qi_physics 锚点**：本 plan 不定义公式或常数；真元相关指标只读取现有 `qi_physics`/ledger 可观察快照。本文把全局守恒总量契约简称为 `SPIRIT_QI_TOTAL`，但当前代码没有同名固定 Rust 数值；运行时权威基准是服务器启动后注入的 `WorldQiBudget.initial_total/current_total`（`server/src/qi_physics/ledger.rs:13-47`），其来源由 `WorldQiTotalConfig` 解析 `--spirit-qi-total` / `BONG_SPIRIT_QI_TOTAL` 后经 `register_with_total` 注入（`server/src/qi_physics/mod.rs:40-50,359-370`），每个 `WorldQiSnapshot.budget_initial_total` 都必须对拍该运行时 `SPIRIT_QI_TOTAL`。`DEFAULT_SPIRIT_QI_TOTAL` 只作为未提供覆盖值时的默认元数据，不是测量脚本直接读取的权威总量。每个窗口用 `ledger::summarize_world_qi` 的 `WorldQiSnapshot` 记录 before/after；时代变化单独校验预算字段，因为 `WorldQiBudget::apply_era_decay` 只更新预算字段。时代衰减只影响预算的窗口调用 `qi_physics::ledger::assert_conservation(before, after, 0.0)`；若未来某个已核准 ledger 操作确实减少 observed 总量，才传入独立记录的 `observed_decay`，绝不能从 before/after 差额反推。测量脚本不得修改 `qi_current`、zone 灵气或账户。
 
 ## 现状证据与不重复范围
 
@@ -56,7 +56,7 @@
 - 在 Bot harness/CI 侧记录每个场景的动作时间线和 typed payload，捕获 `inventory_snapshot`、`player_state`、`bong:bone_coin_tick`、`bong:price_index` 与服务器成本计数；采样不得改变请求节奏或玩法状态。
 - 给每个事件加统一 run/scenario/window 标签和单调 tick/时间戳，支持按请求、物品 instance、账号 principal（若认证 plan 已落地）回溯；不把 bearer、密码或内部数据库秘密写进报告。
 - 对连接断开、未知 payload、未解码事件、漏掉末页、跨维切换和重复事件 fail-closed 标记为无效样本；报告必须区分“没有收益”和“没有可观测数据”。
-- 任何真元统计只读 ledger/既有快照并执行守恒对拍：窗口开始和结束分别取 `WorldQiSnapshot`；若观测账本实际减少，调用 `qi_physics::ledger::assert_conservation(before, after, observed_decay)`，其中 `observed_decay` 必须来自账本实际差额。时代切换另行校验 `WorldQiBudget.initial_total == WorldQiBudget.current_total + WorldQiBudget.era_decay_accum`，不得把 `WorldQiBudget::apply_era_decay` 的预算返回值直接当作 observed 差额，也不能用默认常量或脚本自行推算。评估工具不得调用 `/qi set`、`/give` 或其它 dev 命令作为计时内动作。
+- 任何真元统计只读 ledger/既有快照并执行守恒对拍：窗口开始和结束分别取 `WorldQiSnapshot`，确认 `budget_initial_total` 对应运行时 `SPIRIT_QI_TOTAL`；时代变化只更新预算字段时，以独立确定的 `0.0` 调用 `qi_physics::ledger::assert_conservation(before, after, 0.0)`。只有另有正式 ledger 操作记录了 observed 减少时，才传入该操作独立给出的 `observed_decay`，不得把 `before.total_observed() - after.total_observed()` 当作参数。时代切换另行校验预算及在途借款，不能用默认常量或脚本自行推算。评估工具不得调用 `/qi set`、`/give` 或其它 dev 命令作为计时内动作。
 
 ## P2 — 测量矩阵 ⬜
 
@@ -68,7 +68,7 @@
 ## P3 — 报告与数据质量 ⬜
 
 - 输出每场景每小时收益/消耗、净持有变化、真元变化、丢弃/拾回、失败率、请求速率和服务器成本；同时给出样本数、有效窗口比例、median/p95 或区间，不只给单个平均数。
-- 把骨币封存真元、普通物品、消耗品、地面掉落、容器存量和服务器资源分开报；对重复事件、断线窗口、跨窗口持有物和 setup 赠品做审计表，并保留每个窗口快照中的 `budget_initial_total`、`budget_current_total`、`era_decay_accum`，使运行时覆盖值和时代衰减可复核。
+- 把骨币封存真元、普通物品、消耗品、地面掉落、容器存量和服务器资源分开报；对重复事件、断线窗口、跨窗口持有物和 setup 赠品做审计表，并保留每个窗口快照中的 `budget_initial_total`、`budget_current_total`、`era_decay_accum`。涉及 `borrow_explode_zone_qi` 的窗口还要记录 `VoidQiReturnSchedule` 中待归还 `ScheduledQiReturn.amount` 的总和；在途借款未归还前不得把预算校验误报为漂移。
 - 用 V 轨 bot e2e 与现有经济 schema/Redis channel 做数据完整性 pin；schema 漂移、未知字段、经济快照缺失或守恒不闭合时报告失败，不自动补零。
 - 报告同时回答“单 bot 是否能稳定收益”“并发是否放大收益/成本”“长时间持有是否因半衰改变收益结构”“discard/loot 配额是否成为瓶颈”，不直接回答该不该封禁或该定多少。
 
@@ -80,7 +80,7 @@
 
 ## 验收与边界
 
-- 验收要求：前置 V 轨完成可核验；同一 commit/seed/fixture 可重放；所有窗口有完整标签和原始样本；收益与消耗逐类可追溯；从运行时 `WorldQiBudget`/`WorldQiSnapshot` 读取启动基准，单独验证 `initial_total == current_total + era_decay_accum`，并且仅在观测账本实际减少时以 `qi_physics::ledger::assert_conservation(before, after, observed_decay)` 对拍；`WorldQiBudget::apply_era_decay` 的返回值只用于预算衰减记录，不直接作为 observed 差额；`DEFAULT_SPIRIT_QI_TOTAL` 仅在服务器未提供覆盖值时作为初始化回退元数据；坏包/未知事件不会让统计脚本崩溃或吞样本；报告明确不确定性和无效窗口。
+- 验收要求：前置 V 轨完成可核验；同一 commit/seed/fixture 可重放；所有窗口有完整标签和原始样本；收益与消耗逐类可追溯；从运行时 `WorldQiBudget`/`WorldQiSnapshot` 读取 `SPIRIT_QI_TOTAL` 对应的启动基准；时代预算校验使用 `initial_total == current_total + era_decay_accum + outstanding_temporary_borrow`，其中 `outstanding_temporary_borrow` 是 `VoidQiReturnSchedule` 待归还金额之和，或推迟到所有待归还项由 `apply_due_qi_returns` 处理完毕；时代变化只更新预算字段的窗口以 `qi_physics::ledger::assert_conservation(before, after, 0.0)` 对拍，其他正式 ledger 操作才使用独立记录的 observed 差额；`WorldQiBudget::apply_era_decay` 的返回值不直接作为 observed 差额；`DEFAULT_SPIRIT_QI_TOTAL` 仅在服务器未提供覆盖值时作为初始化回退元数据；坏包/未知事件不会让统计脚本崩溃或吞样本；报告明确不确定性和无效窗口。
 - 本 plan 不改 `server/`、`client/`、`agent/` gameplay 或经济规则，不新增认证、货币、真元公式、限流信号、bot-only 旁路，也不修改 `docs/worldview.md` 或 `docs/library/`。
 
 ## §8 开放问题（升 active / P0 决策门前收口）
