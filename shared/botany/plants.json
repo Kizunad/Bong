@@ -230,14 +230,15 @@
             "texture": "bong-client:textures/gui/botany/stages/chi_sui_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/chi_sui_cao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/chi_sui_cao.png"
+            "texture": "bong:textures/entity/plants/chi_sui_cao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -661,14 +662,15 @@
             "texture": "bong-client:textures/gui/botany/stages/gu_yuan_gen_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/gu_yuan_gen.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/gu_yuan_gen.png"
+            "texture": "bong:textures/entity/plants/gu_yuan_gen.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -717,14 +719,15 @@
             "texture": "bong-client:textures/gui/botany/stages/hei_gu_jun_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/hei_gu_jun.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/hei_gu_jun.png"
+            "texture": "bong:textures/entity/plants/hei_gu_jun.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1315,14 +1318,15 @@
             "texture": "bong-client:textures/gui/botany/stages/ling_yan_shi_zhi_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/ling_yan_shi_zhi.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/ling_yan_shi_zhi.png"
+            "texture": "bong:textures/entity/plants/ling_yan_shi_zhi.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2083,14 +2087,15 @@
             "texture": "bong-client:textures/gui/botany/stages/xue_po_lian_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/xue_po_lian.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/xue_po_lian.png"
+            "texture": "bong:textures/entity/plants/xue_po_lian.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2688,6 +2693,116 @@
         "zone_tags": [
           "negative_field"
         ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "乳白色人形根茎，触碰时微动。",
+      "id": "hua_xing_gen",
+      "name": "化形根",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/hua_xing_gen.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/hua_xing_gen.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "灰绿色苔藓，表面呈鳞片状纹路。",
+      "id": "long_lin_tai",
+      "name": "龙鳞苔",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/long_lin_tai.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/long_lin_tai.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "心形叶片上分布暗红脉络。",
+      "id": "shou_xin_cao",
+      "name": "兽心草",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/shou_xin_cao.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/shou_xin_cao.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "暗紫色藤蔓，缠绕骨骼生长。",
+      "id": "tui_gu_teng",
+      "name": "蜕骨藤",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/tui_gu_teng.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/tui_gu_teng.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "金黄色花蕊，发出微弱光芒。",
+      "id": "xu_yuan_rui",
+      "name": "续元蕊",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/xu_yuan_rui.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/xu_yuan_rui.png"
+          }
+        },
+        "tint_rgb": 16777215
       }
     }
   ],

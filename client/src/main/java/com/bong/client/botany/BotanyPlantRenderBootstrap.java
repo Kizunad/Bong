@@ -13,5 +13,6 @@ public final class BotanyPlantRenderBootstrap {
             BotanyPlantEntityRenderer::new
         );
         BotanyPlantStageWorldRenderer.register();
+        PlantPreviewCommand.register();
     }
 }

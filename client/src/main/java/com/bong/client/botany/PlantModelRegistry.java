@@ -17,6 +17,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -52,6 +53,17 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
         return definition == null ? OptionalIntValue.empty() : OptionalIntValue.of(definition.tintRgb);
     }
 
+    public static List<String> geoPlantIds() {
+        return definitions.values().stream()
+            .filter(definition -> definition.stages.get(PlantGrowthStage.MATURE).isGeo())
+            .map(PlantDefinition::id).distinct().sorted().toList();
+    }
+
+    public static String displayName(String plantId) {
+        PlantDefinition definition = definitions.get(normalize(plantId));
+        return definition == null ? plantId : definition.name();
+    }
+
     static void loadForTest(String json) {
         definitions = parse(json);
     }
@@ -67,6 +79,7 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
 
     @Override
     public void reload(ResourceManager manager) {
+        PlantGeoRenderer.clearCache();
         Optional<Resource> resource = manager.getResource(CATALOG_ID);
         if (resource.isEmpty()) {
             definitions = Map.of();
@@ -129,7 +142,8 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
                 continue;
             }
             int tint = integerValue(visual, "tint_rgb", 0xFFFFFF) & 0xFFFFFF;
-            PlantDefinition definition = new PlantDefinition(tint, stageModels);
+            String name = stringValue(plant, "name");
+            PlantDefinition definition = new PlantDefinition(id, name == null ? id : name, tint, Map.copyOf(stageModels));
             parsed.put(normalize(id), definition);
             JsonArray aliases = plant.getAsJsonArray("aliases");
             if (aliases != null) {
@@ -148,6 +162,10 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
             return null;
         }
         JsonObject stage = element.getAsJsonObject();
+        String kind = stringValue(stage, "kind");
+        if (!"billboard".equals(kind) && !"geo".equals(kind)) {
+            return null;
+        }
         String texture = stringValue(stage, "texture");
         if (texture == null) {
             return null;
@@ -166,7 +184,31 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
                 offset[index] = rawOffset.get(index).getAsFloat();
             }
         }
-        return new PlantStageModel(textureId, Math.max(0.01f, scale), offset);
+        if (!Float.isFinite(scale) || scale <= 0
+            || !Float.isFinite(offset[0]) || !Float.isFinite(offset[1]) || !Float.isFinite(offset[2])) {
+            return null;
+        }
+        Identifier geometry = null;
+        PlantAnimation animation = null;
+        if ("geo".equals(kind)) {
+            String path = stringValue(stage, "geometry");
+            geometry = path == null ? null : Identifier.tryParse(path);
+            if (geometry == null || !geometry.getPath().endsWith(".geo.json")) {
+                return null;
+            }
+            JsonObject clip = objectValue(stage, "animation");
+            if (clip != null) {
+                String resource = stringValue(clip, "resource");
+                String idle = stringValue(clip, "idle");
+                Identifier resourceId = resource == null ? null : Identifier.tryParse(resource);
+                if (resourceId == null || !resourceId.getPath().endsWith(".animation.json")
+                    || idle == null || idle.isBlank()) {
+                    return null;
+                }
+                animation = new PlantAnimation(resourceId, idle);
+            }
+        }
+        return new PlantStageModel(textureId, scale, offset, geometry, animation);
     }
 
     private static JsonObject objectValue(JsonObject object, String field) {
@@ -192,7 +234,11 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    public record PlantStageModel(Identifier texture, float scale, float[] offset) {
+    public record PlantAnimation(Identifier resource, String idle) {
+    }
+
+    public record PlantStageModel(Identifier texture, float scale, float[] offset,
+                                  Identifier geometry, PlantAnimation animation) {
         public PlantStageModel {
             offset = offset == null || offset.length != 3 ? new float[] { 0.0f, 0.0f, 0.0f } : offset.clone();
         }
@@ -208,6 +254,10 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
         public float offsetZ() {
             return offset[2];
         }
+
+        public boolean isGeo() {
+            return geometry != null;
+        }
     }
 
     public record OptionalIntValue(boolean present, int value) {
@@ -220,6 +270,6 @@ public final class PlantModelRegistry implements SimpleSynchronousResourceReload
         }
     }
 
-    private record PlantDefinition(int tintRgb, Map<PlantGrowthStage, PlantStageModel> stages) {
+    private record PlantDefinition(String id, String name, int tintRgb, Map<PlantGrowthStage, PlantStageModel> stages) {
     }
 }
