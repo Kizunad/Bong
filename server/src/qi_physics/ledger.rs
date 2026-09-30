@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use valence::prelude::{bevy_ecs, Event, Resource};
 
@@ -517,6 +517,9 @@ impl QiTransfer {
 pub struct WorldQiAccount {
     balances: BTreeMap<QiAccountId, f64>,
     transfers: Vec<QiTransfer>,
+    /// 已完成释放且余额明确归零的动态 carrier 账户。持久化用它区分“已结算删除”
+    /// 与“账本未恢复却有正余额”的未知状态，后者必须 fail closed。
+    retired_carrier_accounts: BTreeSet<QiAccountId>,
 }
 
 impl Resource for WorldQiAccount {}
@@ -787,12 +790,21 @@ impl WorldQiAccount {
 
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {
         let amount = finite_non_negative(amount, "balance")?;
+        self.retired_carrier_accounts.remove(&account);
         self.balances.insert(account, amount);
         Ok(())
     }
 
     pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
-        self.balances.remove(account)
+        let removed = self.balances.remove(account);
+        if is_anqi_carrier_account(account) && removed == Some(0.0) {
+            self.retired_carrier_accounts.insert(account.clone());
+        }
+        removed
+    }
+
+    pub fn is_retired_carrier_account(&self, account: &QiAccountId) -> bool {
+        self.retired_carrier_accounts.contains(account)
     }
 
     pub fn has_account(&self, account: &QiAccountId) -> bool {

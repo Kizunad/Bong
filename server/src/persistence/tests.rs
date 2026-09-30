@@ -10072,6 +10072,113 @@ fn carrier_account_survives_restart_and_miss_release_preserves_conservation() {
 }
 
 #[test]
+fn positive_carrier_row_missing_from_ledger_fails_closed_without_deletion() {
+    let (settings, root) = persistence_settings("carrier-row-missing-from-ledger");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let account_id = format!("{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:7");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "
+            INSERT INTO qi_runtime_accounts
+                (account_id, balance, schema_version, last_updated_wall)
+            VALUES (?1, 6.25, ?2, ?3)
+            ",
+            params![account_id, CURRENT_SCHEMA_VERSION, 100_i64],
+        )
+        .expect("fixture should seed a positive carrier row");
+
+    let source = WorldQiAccount::default();
+    let transaction = connection
+        .transaction()
+        .expect("save transaction should start");
+    let error = upsert_runtime_qi_account_balances(&transaction, &source, 200)
+        .expect_err("positive carrier data absent from the ledger must fail closed");
+    assert!(
+        error.to_string().contains(&account_id),
+        "failure should identify the unreconciled carrier account, actual={error}"
+    );
+    drop(transaction);
+
+    let persisted: f64 = connection
+        .query_row(
+            "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .expect("failed save must retain the durable carrier row");
+    assert_eq!(persisted, 6.25);
+    drop(connection);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn completed_carrier_lifecycles_remove_zero_rows_without_growth() {
+    let (settings, root) = persistence_settings("carrier-zero-row-reconciliation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+
+    for instance_id in 1..=8_u64 {
+        let account = QiAccountId::container(format!(
+            "{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:{instance_id}"
+        ));
+        let mut active = WorldQiAccount::default();
+        active
+            .set_balance(account.clone(), 2.0)
+            .expect("active carrier balance should be valid");
+        {
+            let transaction = connection
+                .transaction()
+                .expect("active carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64)
+                .expect("active carrier balance should persist");
+            transaction
+                .commit()
+                .expect("active carrier save should commit");
+        }
+
+        active
+            .transfer(
+                QiTransfer::new(
+                    account.clone(),
+                    qi_flow_overflow_account(),
+                    2.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .expect("carrier settlement transfer should be representable"),
+            )
+            .expect("carrier settlement should debit the active account");
+        assert_eq!(active.balance(&account), 0.0);
+        active.remove_balance(&account);
+        {
+            let transaction = connection
+                .transaction()
+                .expect("settled carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64 + 100)
+                .expect("settled carrier zero row should be removable");
+            transaction
+                .commit()
+                .expect("settled carrier cleanup should commit");
+        }
+        let dynamic_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id LIKE ?1",
+                params![format!("{ANQI_CARRIER_ACCOUNT_PREFIX}%")],
+                |row| row.get(0),
+            )
+            .expect("dynamic carrier row count should query");
+        assert_eq!(
+            dynamic_rows, 0,
+            "completed carrier lifecycle {instance_id} must not leave a dynamic row"
+        );
+    }
+    drop(connection);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn revival_qi_transaction_rolls_back_every_durable_owner_on_late_quota_failure() {
     use crate::qi_physics::ledger::{
         dying_elder_dan_excess_account, dying_elder_release_overflow_account,

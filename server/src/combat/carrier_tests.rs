@@ -250,20 +250,69 @@ fn begin_charge_channels_prepaid_qi_into_carrier_account() {
         .iter_current_update_events()
         .find(|transfer| {
             transfer.reason == QiTransferReason::Channeling
-                && transfer.to == carrier_qi_account(actor, 7)
+                && transfer.to == carrier_qi_account_for_entity(actor, 7)
         })
         .expect("暗器开始充能扣 prepaid_qi 后必须把真元封入 carrier container");
     assert_eq!(
         transfer.from,
-        QiAccountId::player(format!("entity:{actor:?}"))
+        QiAccountId::player(format!("legacy_entity:{actor:?}"))
     );
     assert!((transfer.amount - 30.0).abs() < f64::EPSILON);
     assert_eq!(
         app.world()
             .resource::<WorldQiAccount>()
-            .balance(&carrier_qi_account(actor, 7)),
+            .balance(&carrier_qi_account_for_entity(actor, 7)),
         30.0,
         "充能后 carrier 账本账户必须持有实际投入量"
+    );
+}
+
+#[test]
+fn begin_charge_uses_persisted_character_id_for_carrier_account() {
+    let mut app = charge_app();
+    let character_id = "offline:charge-stable-character";
+    let actor = app
+        .world_mut()
+        .spawn((
+            Lifecycle {
+                character_id: character_id.to_string(),
+                ..Default::default()
+            },
+            Cultivation {
+                qi_current: TEST_QI_FIXTURE_TOTAL,
+                qi_max: TEST_QI_FIXTURE_TOTAL * 2.0,
+                ..Default::default()
+            },
+            Position::new([0.0, 66.0, 0.0]),
+            inventory_with_main_hand(ANQI_MATERIAL_TEMPLATE_ID),
+            CarrierStore::default(),
+        ))
+        .id();
+
+    app.world_mut().send_event(ChargeCarrierIntent {
+        carrier: actor,
+        slot: Some(CarrierSlot::MainHand),
+        qi_target: Some(60.0),
+        issued_at_tick: 0,
+    });
+    app.update();
+
+    let transfers = app.world().resource::<Events<QiTransfer>>();
+    let transfer = transfers
+        .iter_current_update_events()
+        .find(|transfer| transfer.reason == QiTransferReason::Channeling)
+        .expect("stable-id charge should emit a channeling transfer");
+    assert_eq!(
+        transfer.to,
+        carrier_qi_account(character_id, 7),
+        "充能账本账户必须按 Lifecycle.character_id 定位，不能再按运行期 Entity 定位"
+    );
+    assert_eq!(
+        app.world()
+            .get::<CarrierCharging>(actor)
+            .expect("stable-id charging state should be attached")
+            .owner_id,
+        character_id
     );
 }
 
@@ -337,7 +386,7 @@ fn full_charge_resonance_loss_returns_unsealed_qi_to_zone() {
         .iter_current_update_events()
         .find(|transfer| {
             transfer.reason == QiTransferReason::ReleaseToZone
-                && transfer.from == carrier_qi_account(actor, 7)
+                && transfer.from == carrier_qi_account_for_entity(actor, 7)
         })
         .expect("效率折损的未封印真元必须从 carrier account 释放回 zone");
     let expected_release = f64::from(qi_target - sealed_qi);
@@ -509,7 +558,7 @@ fn interrupted_charge_releases_unsealed_prepaid_qi_to_zone() {
         .iter_current_update_events()
         .find(|transfer| {
             transfer.reason == QiTransferReason::ReleaseToZone
-                && transfer.from == carrier_qi_account(actor, 7)
+                && transfer.from == carrier_qi_account_for_entity(actor, 7)
         })
         .expect("移动中断时未封存的 prepaid_qi 必须释放回 zone，不能吞真元");
     assert_eq!(transfer.to, QiAccountId::zone("spawn".to_string()));
@@ -712,6 +761,7 @@ fn projectile_hit_despawns_without_damage_or_impact_on_creative_target() {
             owner: None,
             qi_payload: 20.0,
             carrier_instance_id: None,
+            carrier_owner_id: None,
         },
         AnqiProjectileFlight {
             carrier_kind: CarrierKind::BoneChip,
@@ -779,6 +829,7 @@ fn projectile_hit_body_part_at_height(flight_y: f64) -> crate::body_plan::BodyPa
             owner: None,
             qi_payload: 20.0,
             carrier_instance_id: None,
+            carrier_owner_id: None,
         },
         AnqiProjectileFlight {
             carrier_kind: CarrierKind::BoneChip,
@@ -1011,6 +1062,7 @@ mod partboxes_carrier_production_integration_tests {
                 owner: None,
                 qi_payload: 20.0,
                 carrier_instance_id: None,
+                carrier_owner_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
@@ -1167,6 +1219,7 @@ mod partboxes_carrier_production_integration_tests {
                 owner: None,
                 qi_payload: 20.0,
                 carrier_instance_id: None,
+                carrier_owner_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
@@ -1304,7 +1357,7 @@ fn spawn_entity(app: &mut App) -> Entity {
 fn seed_carrier_account(app: &mut App, owner: Entity, instance_id: u64, amount: f64) {
     app.world_mut()
         .resource_mut::<WorldQiAccount>()
-        .set_balance(carrier_qi_account(owner, instance_id), amount)
+        .set_balance(carrier_qi_account_for_entity(owner, instance_id), amount)
         .expect("测试 carrier 余额必须可写入账本");
 }
 
@@ -1320,6 +1373,7 @@ fn make_despawn_event(
         owner,
         projectile,
         carrier_instance_id: owner.map(|_| 7),
+        carrier_owner_id: None,
         reason,
         distance: 5.0,
         qi_evaporated: 0.7 * residual_qi / 0.3,
@@ -1467,6 +1521,7 @@ fn no_zone_at_position_routes_to_overflow_transfer() {
         owner: Some(projectile),
         projectile,
         carrier_instance_id: Some(7),
+        carrier_owner_id: None,
         reason: ProjectileDespawnReason::OutOfRange,
         distance: 80.0,
         qi_evaporated: 7.0,
@@ -1512,6 +1567,7 @@ fn full_zone_routes_complete_miss_payload_to_overflow() {
         owner: Some(projectile),
         projectile,
         carrier_instance_id: Some(7),
+        carrier_owner_id: None,
         reason: ProjectileDespawnReason::HitBlock,
         distance: 5.0,
         qi_evaporated: 7.0,
@@ -1556,7 +1612,7 @@ fn natural_decay_expiry_settles_carrier_account_and_preserves_conservation() {
             },
         ))
         .id();
-    let carrier = carrier_qi_account(owner, 7);
+    let carrier = carrier_qi_account_for_entity(owner, 7);
     app.world_mut()
         .resource_mut::<WorldQiAccount>()
         .set_balance(carrier.clone(), 4.0)
@@ -1578,6 +1634,12 @@ fn natural_decay_expiry_settles_carrier_account_and_preserves_conservation() {
         app.world().resource::<WorldQiAccount>().balance(&carrier),
         0.0,
         "自然衰减过期后 carrier ledger 账户必须归零"
+    );
+    assert!(
+        !app.world()
+            .resource::<WorldQiAccount>()
+            .has_account(&carrier),
+        "自然衰减沉降完成后零余额 carrier 账户必须清理"
     );
     assert_eq!(after.era_decay_accum, 4.0);
     assert_conservation(&before, &after, 4.0).expect("自然衰减过期进入沉降槽后仍必须保持全服守恒");
@@ -1616,7 +1678,7 @@ fn natural_decay_budget_failure_keeps_carrier_projection_and_equipment() {
             },
         ))
         .id();
-    let carrier = carrier_qi_account(owner, 7);
+    let carrier = carrier_qi_account_for_entity(owner, 7);
     app.world_mut()
         .resource_mut::<WorldQiAccount>()
         .set_balance(carrier.clone(), 4.0)
@@ -1716,7 +1778,7 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
         .id();
     let projectile = spawn_entity(&mut app);
     let payload = 10.0;
-    let carrier = carrier_qi_account(owner, 7);
+    let carrier = carrier_qi_account_for_entity(owner, 7);
     let mut transfer_reader = app.world().resource::<Events<QiTransfer>>().get_reader();
     let before = summarize_world_qi(app.world_mut());
 
@@ -1738,6 +1800,7 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
         owner: Some(owner),
         projectile,
         carrier_instance_id: Some(7),
+        carrier_owner_id: None,
         reason: ProjectileDespawnReason::OutOfRange,
         distance: 5.0,
         qi_evaporated: 7.0,
@@ -1801,10 +1864,101 @@ fn miss_release_debits_carrier_account_and_preserves_world_conservation() {
 fn throw_app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 0 });
+    app.insert_resource(WorldQiAccount::default());
     app.init_resource::<GuardLogDedup>();
     app.add_event::<ThrowCarrierIntent>();
     app.add_systems(Update, throw_carrier_intents);
     app
+}
+
+#[test]
+fn reconnect_restores_stable_carrier_balance_and_miss_release() {
+    use crate::combat::components::Lifecycle;
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = throw_app();
+    app.add_event::<ProjectileDespawnedEvent>();
+    app.add_event::<QiTransfer>();
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
+    app.insert_resource(ZoneRegistry::default());
+    app.add_systems(Update, projectile_miss_qi_release_system);
+
+    let character_id = "offline:stable-carrier-character";
+    let owner = app
+        .world_mut()
+        .spawn((
+            Lifecycle {
+                character_id: character_id.to_string(),
+                ..Default::default()
+            },
+            Position::new([0.0, 66.0, 0.0]),
+            inventory_with_main_hand(ANQI_CHARGED_TEMPLATE_ID),
+            CarrierStore::default(),
+        ))
+        .id();
+    let carrier = carrier_qi_account(character_id, 7);
+    app.world_mut()
+        .resource_mut::<WorldQiAccount>()
+        .set_balance(carrier.clone(), 10.0)
+        .expect("restored stable carrier balance should be valid");
+
+    send_throw(&mut app, owner, [1.0, 0.0, 0.0]);
+
+    let projectile = {
+        let mut query = app.world_mut().query::<(Entity, &QiProjectile)>();
+        query
+            .iter(app.world())
+            .find_map(|(entity, projectile)| {
+                (projectile.carrier_instance_id == Some(7)).then_some((entity, projectile.clone()))
+            })
+            .expect("reconnected charged inventory must restore its carrier imprint and throw")
+    };
+    assert_eq!(projectile.1.carrier_owner_id.as_deref(), Some(character_id));
+    assert!(
+        app.world()
+            .get::<CarrierStore>(owner)
+            .expect("reconnected owner should retain its store")
+            .imprints_by_instance
+            .is_empty(),
+        "throw should consume the restored imprint exactly once"
+    );
+
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("fallback registry should contain spawn")
+        .spirit_qi;
+    app.world_mut().send_event(ProjectileDespawnedEvent {
+        owner: Some(owner),
+        projectile: projectile.0,
+        carrier_instance_id: Some(7),
+        carrier_owner_id: Some(character_id.to_string()),
+        reason: ProjectileDespawnReason::OutOfRange,
+        distance: 5.0,
+        qi_evaporated: 7.0,
+        residual_qi: 3.0,
+        pos: [0.0, 66.0, 0.0],
+        tick: 10,
+    });
+    app.update();
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("fallback registry should contain spawn")
+        .spirit_qi;
+    assert!(
+        zone_after > zone_before,
+        "reconnected carrier miss must return qi to zone"
+    );
+    assert!(
+        !app.world()
+            .resource::<WorldQiAccount>()
+            .has_account(&carrier),
+        "successful miss release must clean the zero-balance stable carrier account"
+    );
 }
 
 /// 生成一个持有已充能暗器（`instance_id=7`，与 `inventory_with_main_hand`
@@ -1998,6 +2152,7 @@ fn spawn_defensive_projectile(app: &mut App, spawn_pos: DVec3, velocity: DVec3) 
                 owner: None,
                 qi_payload: 20.0,
                 carrier_instance_id: None,
+                carrier_owner_id: None,
             },
             AnqiProjectileFlight {
                 carrier_kind: CarrierKind::BoneChip,
