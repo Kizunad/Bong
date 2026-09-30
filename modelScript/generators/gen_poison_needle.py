@@ -133,7 +133,10 @@ def part_shaft() -> list[tuple]:
 def part_tail() -> list[tuple]:
     """生成几圈细红丝线缠绕与下垂细丝 (tail)。
 
-    每圈 0.32~0.38px 粗，圈与圈之间露出深色针身；外加 2 根细红丝从缠绕处垂下来，长短不一。
+    落实调度复核第 2 轮要求：
+    - 缠绕圈：3 圈独立缠绕，圈间露出深色针身；
+    - 从最下一圈缠绕处（y~3.30）向下垂挂 3 根细红丝，每根 0.22~0.28px 粗，长短不一（长 1.8~3.2px），
+      略向外侧斜垂，直接垂挂至木质握柄下方，在 FRONT 与 SIDE 视角均清晰可见。
     """
     cubes = []
     # 1. 穿过红丝缠绕内部的针身内芯（露出部在圈与圈之间，y: 3.20 -> 5.20, hw: 0.25）
@@ -144,11 +147,15 @@ def part_tail() -> list[tuple]:
     for i, (y0, y1) in enumerate(ring_ys):
         cubes.extend(octagon("tail", "red_thread", f"thread_ring_{i}", 0.36, y0, y1, hz=0.36))
 
-    # 3. 2 根从缠绕处下垂的长短不一细红丝须
-    # 丝须 1 (长丝，垂至 y=1.75，微调起始高度避开木柄环槽共面)
-    cubes.append(block("tail", "red_thread", "thread_dangle_long", 0.34, 0.46, 1.75, 3.80, -0.06, 0.06, rot=(0.0, 0.0, -10.0)))
-    # 丝须 2 (短丝，垂至 y=2.45，微调起始高度避开木柄环槽 2.40 共面)
-    cubes.append(block("tail", "red_thread", "thread_dangle_short", 0.32, 0.44, 2.45, 4.20, 0.15, 0.27, rot=(12.0, 0.0, -6.0)))
+    # 3. 3 根从最下一圈缠绕处往下垂挂的长短不一细红丝须（垂到握柄下方）
+    # 丝须 1: 偏右侧前斜长丝 (粗 0.24px, 从 y=3.45 垂至 y=0.45，长 3.0px，掠过握柄前右侧)
+    cubes.append(block("tail", "red_thread", "thread_dangle_long_r", 0.52, 0.76, 0.45, 3.45, 0.12, 0.36, rot=(8.0, 0.0, -12.0)))
+
+    # 丝须 2: 偏左侧斜垂中长丝 (粗 0.22px, 从 y=3.35 垂至 y=1.25，长 2.1px，掠过握柄左侧)
+    cubes.append(block("tail", "red_thread", "thread_dangle_mid_l", -0.74, -0.52, 1.25, 3.35, -0.15, 0.07, rot=(0.0, 0.0, 15.0)))
+
+    # 丝须 3: 后侧微斜短丝 (粗 0.20px, 从 y=3.30 垂至 y=1.75，长 1.55px，掠过握柄后侧)
+    cubes.append(block("tail", "red_thread", "thread_dangle_short_b", -0.10, 0.10, 1.75, 3.30, -0.72, -0.52, rot=(-14.0, 0.0, 6.0)))
 
     return cubes
 
