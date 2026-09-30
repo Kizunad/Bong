@@ -12,17 +12,24 @@ import time
 
 from bot.bot import BotAssertionError
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
-from bot.scenarios._rejection_helpers import wait_for_server_data_quiet
+from bot.scenarios._rejection_helpers import drain_event_stream
 
 DESCRIPTION = "断线重连后首批 server_data 快照集合完整，旧 session 不会替代新灌入"
 MODULES = ["network", "persistence"]
 
 # 这些快照由每个正常玩家的 join 组件生成，不依赖可选的炼丹 mock 或玩法事件。
+# 技能经验快照只在已存在技能变更时发送；新身份没有技能行时不产生该 payload，
+# 因而不能把它列为所有身份都必须收到的 join 契约。
 REQUIRED_JOIN_PAYLOAD_TYPES = frozenset(
-    {"inventory_snapshot", "skill_snapshot", "techniques_snapshot"}
+    {"inventory_snapshot", "techniques_snapshot"}
 )
-SERVER_DATA_QUIET_SECONDS = 0.75
-SERVER_DATA_QUIET_TIMEOUT_SECONDS = 8.0
+# narration 是欢迎流程的动态文案，不是 client Store 的状态快照；它可能只在首次
+# 建档时出现，不能把它纳入两次连接的集合相等性断言。
+NON_SNAPSHOT_PAYLOAD_TYPES = frozenset({"narration"})
+# join 的 deferred attach 可能在 inventory_snapshot 之后继续排出状态；用一个有界
+# 收集窗覆盖这段尾流，而不是要求全连接进入静默。heartbeat / HUD 周期流不会阻塞
+# 场景，且两次连接使用相同的收集窗来比较 join 快照集合。
+JOIN_PAYLOAD_COLLECTION_SECONDS = 1.5
 DISCONNECT_SETTLE_SECONDS = 0.75
 
 
@@ -38,12 +45,12 @@ def _server_data_types(bot) -> frozenset[str]:
 def _join_payload_types(bot, context: str) -> frozenset[str]:
     """等待 join hydration 静默后取集合，避免把尚未排出的首包误判为缺失。"""
     wait_join_and_inventory(bot)
-    wait_for_server_data_quiet(
+    drain_event_stream(
         bot,
-        quiet_s=SERVER_DATA_QUIET_SECONDS,
-        max_s=SERVER_DATA_QUIET_TIMEOUT_SECONDS,
+        quiet_s=JOIN_PAYLOAD_COLLECTION_SECONDS,
+        max_s=JOIN_PAYLOAD_COLLECTION_SECONDS,
     )
-    payload_types = _server_data_types(bot)
+    payload_types = _server_data_types(bot) - NON_SNAPSHOT_PAYLOAD_TYPES
     missing = REQUIRED_JOIN_PAYLOAD_TYPES - payload_types
     if missing:
         raise BotAssertionError(
