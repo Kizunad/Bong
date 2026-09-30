@@ -129,7 +129,6 @@ pub mod yidao_state_emit;
 pub mod zhenfa_v2_event_bridge;
 pub mod zhenmai_v2_event_bridge;
 pub mod zone_environment_bridge;
-pub mod zone_pressure_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
@@ -588,7 +587,6 @@ pub(crate) fn register_app_wiring(app: &mut App) {
                 .after(npc_event_bridge::publish_named_faction_state_on_lifecycle_events),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
-            zone_pressure_bridge::publish_zone_pressure_crossed_events,
             // 转译 Bevy 天气生命周期事件；天气状态由公共 world systems 维护。
             weather_bridge::publish_weather_lifecycle_events,
             zone_environment_bridge::mark_zone_environment_dirty_for_new_clients
