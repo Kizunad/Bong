@@ -10716,6 +10716,7 @@ mod external_ingress_tests {
                 session: None,
                 integrity: 1.0,
                 pos: Some((8, 66, 8)),
+                dimension: DimensionKind::Overworld,
             });
 
             send_forge_start_session(
