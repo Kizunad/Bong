@@ -9,6 +9,7 @@ use super::*;
 use crate::player::state::{open_player_connection, PlayerStatePersistence};
 
 const SESSION_CHECKPOINT_SCHEMA_VERSION: i32 = 1;
+type StoredCraftRestoreGuardRow = (String, i64, i64, String, String);
 
 /// S-07 在 durable commit 时生成的一次性恢复能力。
 ///
@@ -357,7 +358,7 @@ fn load_checkpoint_row(
 fn load_guard_row(
     connection: &Connection,
     session_key: &str,
-) -> io::Result<Option<(String, i64, i64, String, String)>> {
+) -> io::Result<Option<StoredCraftRestoreGuardRow>> {
     connection
         .query_row(
             "
