@@ -46,6 +46,7 @@ use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
 #[allow(unused_imports)]
 pub use raster::{
     raster_dir_from_manifest_path, FossilBbox, Poi, TerrainProvider, TerrainProviders,
+    WildPlantSpawnPoint,
 };
 
 // plan-supply-coffin-v1：物资棺刷新选点需要 zone xz 边界。其余 giant_sword 内部

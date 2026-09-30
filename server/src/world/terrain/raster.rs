@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -201,6 +201,28 @@ pub struct Bounds2D {
     pub max_x: i32,
     pub min_z: i32,
     pub max_z: i32,
+}
+
+/// BongWorldGen 导出的稀疏野外灵植刷新点。
+///
+/// 刷新点与逐列装饰字段分开：它表达的是一个可再生的 gameplay 锚点，
+/// 而不是该列是否要放置一块视觉装饰。缺失 sidecar 时保持旧世界兼容。
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WildPlantSpawnPoint {
+    pub id: u64,
+    pub plant_id: String,
+    pub zone_name: String,
+    pub position: [i32; 3],
+    #[serde(default)]
+    pub regen_ticks: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WildPlantSpawnFile {
+    version: u32,
+    points: Vec<WildPlantSpawnPoint>,
 }
 
 #[allow(dead_code)]
@@ -407,6 +429,8 @@ pub struct TerrainProvider {
     placement_index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>,
     /// Total number of authored placement blocks loaded (for startup logging).
     placement_block_count: usize,
+    /// Sparse gameplay anchors exported by BongWorldGen.
+    wild_plant_points: Vec<WildPlantSpawnPoint>,
     /// Test-only provenance metadata from Bot-owned raster manifests. Production
     /// manifests omit it; when present it is validated before any ready marker is emitted.
     bot_fixture: Option<BotRasterFixture>,
@@ -843,6 +867,7 @@ impl TerrainProvider {
             fossil_bboxes: Vec::new(),
             placement_index: HashMap::new(),
             placement_block_count: 0,
+            wild_plant_points: Vec::new(),
             bot_fixture: None,
         }
     }
@@ -936,6 +961,14 @@ impl TerrainProvider {
         Self {
             placement_index: index,
             placement_block_count: count,
+            ..Self::empty_for_tests()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_wild_plant_points_for_tests(points: Vec<WildPlantSpawnPoint>) -> Self {
+        Self {
+            wild_plant_points: points,
             ..Self::empty_for_tests()
         }
     }
@@ -1077,6 +1110,17 @@ impl TerrainProvider {
             }
         };
 
+        let wild_plant_points = match load_wild_plant_points(
+            &raster_dir.join("wild_plant_points.json"),
+            &manifest.world_bounds,
+        ) {
+            Ok(points) => points,
+            Err(error) => {
+                diagnostics.extend(prefix_multiline_diagnostics("wild plant", &error));
+                Vec::new()
+            }
+        };
+
         let raster_root = match std::fs::canonicalize(raster_dir) {
             Ok(root) => Some(root),
             Err(error) => {
@@ -1214,6 +1258,7 @@ impl TerrainProvider {
             fossil_bboxes,
             placement_index,
             placement_block_count,
+            wild_plant_points,
             bot_fixture: bot_fixture.expect("validated bot fixture result must be present"),
         })
     }
@@ -1238,6 +1283,11 @@ impl TerrainProvider {
     /// Total authored placement blocks loaded from the sidecar (for logging).
     pub fn placement_block_count(&self) -> usize {
         self.placement_block_count
+    }
+
+    /// 返回由世界生成器提供的稀疏野外灵植刷新点。
+    pub fn wild_plant_points(&self) -> &[WildPlantSpawnPoint] {
+        &self.wild_plant_points
     }
 
     pub fn bot_fixture(&self) -> Option<&BotRasterFixture> {
@@ -2099,6 +2149,84 @@ pub fn raster_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, St
 // ---------------------------------------------------------------------------
 // P1 — placement manifest loading helpers
 // ---------------------------------------------------------------------------
+
+const EXPECTED_WILD_PLANT_POINTS_VERSION: u32 = 1;
+
+/// Load the optional sparse wild-plant sidecar emitted by the worldgen probe.
+/// A missing file is compatible with existing rasters; a present malformed file
+/// must fail startup instead of silently dropping gameplay refresh anchors.
+fn load_wild_plant_points(
+    sidecar_path: &Path,
+    bounds: &ManifestBounds,
+) -> Result<Vec<WildPlantSpawnPoint>, String> {
+    let mut file = match super::nbt_io::open_regular_file_no_follow(sidecar_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "failed to open wild plant sidecar {} as a regular file without following symlinks: {error}",
+                sidecar_path.display()
+            ));
+        }
+    };
+
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(|error| {
+        format!(
+            "failed to read wild plant sidecar {}: {error}",
+            sidecar_path.display()
+        )
+    })?;
+    let manifest: WildPlantSpawnFile = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "failed to parse wild plant sidecar {}: {error}",
+            sidecar_path.display()
+        )
+    })?;
+    if manifest.version != EXPECTED_WILD_PLANT_POINTS_VERSION {
+        return Err(format!(
+            "wild plant sidecar {} has unsupported version {} (expected {})",
+            sidecar_path.display(),
+            manifest.version,
+            EXPECTED_WILD_PLANT_POINTS_VERSION,
+        ));
+    }
+
+    let mut ids = HashSet::new();
+    let mut positions = HashSet::new();
+    for point in &manifest.points {
+        if point.id == 0 || !ids.insert(point.id) {
+            return Err(format!(
+                "wild plant sidecar {} contains a missing or duplicate point id {}",
+                sidecar_path.display(),
+                point.id
+            ));
+        }
+        if point.plant_id.trim().is_empty() || point.zone_name.trim().is_empty() {
+            return Err(format!(
+                "wild plant sidecar {} contains an empty plant or zone id at point {}",
+                sidecar_path.display(),
+                point.id
+            ));
+        }
+        if !positions.insert(point.position) {
+            return Err(format!(
+                "wild plant sidecar {} contains duplicate point position {:?}",
+                sidecar_path.display(),
+                point.position
+            ));
+        }
+        let [x, _y, z] = point.position;
+        if x < bounds.min_x || x > bounds.max_x || z < bounds.min_z || z > bounds.max_z {
+            return Err(format!(
+                "wild plant point {} at ({x}, {z}) falls outside raster bounds",
+                point.id
+            ));
+        }
+    }
+
+    Ok(manifest.points)
+}
 
 const EXPECTED_PLACEMENT_MANIFEST_VERSION: u32 = 1;
 
