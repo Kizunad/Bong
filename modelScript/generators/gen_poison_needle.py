@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """毒蛊飞针 (poison_needle / PoisonNeedle) Blockbench .bbmodel 生成器。
 
-严格依据 AI 参考图（概念图、物品图标、三视图与爆炸分解图）形制建模：
-- 末法残土幽微暗器写实画风：细长暗化淬毒硬骨长针体，针尖浸渍墨绿/深黑侵蚀性毒斑，针尾收口处紧密缠绕一圈微小暗赤色丝线与微凸线结。
-- 暗器捏持比例：纯灰模特右手两指轻捏，体素尺寸紧凑纤细，全长 14.5px。
-
-分 3 大 Group（Bone 骨骼节点）：
-    1. shaft  - 细长暗化骨针身（needle_shaft / 深灰暗化兽骨直身，带有细微骨髓纹与微糙质感）
-    2. tip    - 针尖淬蚀浸渍区（venom_tip / 前端渐收锐针与墨绿黑腐蚀性浸渍毒芒）
-    3. tail   - 赤丝尾缠与线结（red_thread_tail / 针尾收口处缠绕的暗赤丝线与微突线结）
+严格依据 three_view.png 右侧 ITEM DETAIL 与 exploded.png 右上 BONE DART BREAKDOWN：
+- 结构顺序（自顶向下）：
+    1. tip   - 细长锯齿叶状矿物箭尖（venom_tip / 亮绿 #7fb03a 带暗绿 #2e4a1c 斑驳，边缘 2~3 级错开小齿，无白色块，直接接深色针身）
+    2. shaft - 深黑灰暗化细长针身（needle_shaft / 贯穿主干，极细硬质针体）
+    3. tail  - 针身下段细红丝缠绕与垂须（red_thread_wrap / 几圈 0.35px 细红线圈，圈间露出深色针身，垂下 2~3 根长短不一细红丝须）
+    4. grip  - 木质握柄与底端收口（wooden_grip / 比针身粗一圈，深棕与浅棕相间的横向环纹缠绳/刻槽，底端深色小收口）
 
 尺寸规范（MC px，16px = 1 格）：
-    全长约 14.5px ≈ 0.91 格（暗器飞针尺度）。
-    针身直径 Ø0.48~0.60px (hw=0.24..0.30)。
-    针尾赤丝缠裹 Ø0.72px (hw=0.36)。
-    针尖逐渐锐化收细至 0.08px。
+    全长约 15.5px ≈ 0.97 格。
+    底端收口与木柄 (grip): y: 0.00 -> 3.20 (长 3.2px, hw=0.48)
+    红丝缠绕区 (tail): y: 3.20 -> 5.20 (长 2.0px, 细线圈 hw=0.38，垂须下垂至 y=2.20)
+    深色针身 (shaft): y: 5.20 -> 11.50 (长 6.3px, hw=0.28)
+    锯齿矿物绿尖 (tip): y: 11.50 -> 16.50 (长 5.0px, 宽 0.85px, 带错落齿尖)
 
 贴图规范（64×64 四象限 Atlas）：
-    - 细长针身 (needle_bone): 深黑灰阴炼骨质 (RGB 50..70)
-    - 淬毒针尖 (venom_green): 墨绿暗黑侵蚀毒斑与尖端惨白冷光 (RGB 25..55, 绿 60..90)
-    - 针尾赤丝 (red_thread): 暗赤红色粗丝线 (RGB 145..175, 30..45, 25..40)
+    - 矿物绿尖 (venom_tip): 亮绿 #7fb03a (RGB 127,176,58) 与暗绿 #2e4a1c (RGB 46,74,28) 斑驳
+    - 细长针身 (needle_shaft): 深黑灰阴炼骨质 (RGB 48..65)
+    - 细红丝线 (red_thread): 红色 #b3261e (RGB 179,38,30) 与暗部 #6e1512 (RGB 110,21,18)
+    - 木质握柄 (wooden_grip): 深棕 #3b2a1e (RGB 59,42,30) 与浅棕 #6b4a30 (RGB 107,74,48) 相间环纹
 
 支持逐部件单独导出与单件渲染（--export-parts）。
 """
@@ -48,26 +48,30 @@ REVIEW_PARTS_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-rev
 PX = 16.0
 RES = 64
 
-# ── 纵向与结构坐标规划（y: 针尾=0.0，针尖位于 y=14.50）────────
-TAIL_Y0 = 0.00
-TAIL_Y1 = 2.20               # 尾部赤丝缠线区 (长 2.2px)
+# ── 纵向与结构坐标规划（自底向上 y: 0.00 -> 16.50）────────
+GRIP_Y0 = 0.00
+GRIP_Y1 = 3.20
 
-SHAFT_Y0 = 2.20
-SHAFT_Y1 = 9.50              # 针身主段 (长 7.3px)
+THREAD_Y0 = 3.20
+THREAD_Y1 = 5.20
 
-TIP_Y0 = 9.50
-TIP_Y1 = 14.50               # 淬毒收尖区 (长 5.0px)
+SHAFT_Y0 = 5.20
+SHAFT_Y1 = 11.50
 
-# 手持居中对齐偏移（以两指捏持针身中下段 y=4.50 处为捏持中心）
-PINCH_CENTER_Y = 4.50
+TIP_Y0 = 11.50
+TIP_Y1 = 16.50
+
+# 手持居中对齐偏移（以木质握柄 y=1.60 处为持握中心）
+GRIP_CENTER_Y = 1.60
 BLOCK_CENTRE_PX = 8.0
-EMIT_OFFSET = (BLOCK_CENTRE_PX, BLOCK_CENTRE_PX - PINCH_CENTER_Y, BLOCK_CENTRE_PX)
+EMIT_OFFSET = (BLOCK_CENTRE_PX, BLOCK_CENTRE_PX - GRIP_CENTER_Y, BLOCK_CENTRE_PX)
 
 # 贴图象限规划 (64x64)
 MAT_ZONE = {
-    "needle_bone": (0, 0, 32, 32),
-    "venom_green": (32, 0, 64, 32),
+    "venom_tip": (0, 0, 32, 32),
+    "needle_shaft": (32, 0, 64, 32),
     "red_thread": (0, 32, 32, 64),
+    "wooden_grip": (32, 32, 64, 64),
 }
 
 
@@ -86,64 +90,85 @@ def octagon(bone, mat, name, hw, y0, y1, hz=None):
     ]
 
 
-def part_tail() -> list[tuple]:
-    """生成赤丝尾缠与线结 (tail)。
+def part_tip() -> list[tuple]:
+    """生成锯齿状矿物绿箭尖 (tip)。
 
-    针尾收口处紧密缠绕一圈微小暗赤色丝线与两指捏持微突线结。
+    像一片细长叶子，边缘有 2~3 级错开的小齿，亮绿带暗绿斑驳；无白色块，直接接深色针身。
     """
     cubes = []
-    # 1. 针尾内部微缩骨核 (y: 0.10 -> 2.20, hw: 0.22)
-    cubes.extend(octagon("tail", "needle_bone", "tail_core", 0.22, 0.10, TAIL_Y1, hz=0.22))
+    # 1. 绿尖基部插芯（与针身顶端顺畅衔接，y: 11.50 -> 12.20, hw: 0.28）
+    cubes.append(block("tip", "venom_tip", "venom_base_socket", -0.28, 0.28, 11.50, 12.20, -0.16, 0.16))
 
-    # 2. 针尾平整外露骨底端 (y: 0.00 -> 0.10, hw: 0.25)
-    cubes.extend(octagon("tail", "needle_bone", "tail_base", 0.25, TAIL_Y0, 0.10, hz=0.25))
+    # 2. 细长叶状矿物箭尖主叶身 (扁平菱形叶身，y: 12.20 -> 15.60, 宽 0.70px, 厚 0.18px)
+    cubes.append(block("tip", "venom_tip", "venom_blade_core", -0.35, 0.35, 12.20, 15.60, -0.09, 0.09))
 
-    # 3. 针尾紧密密缠的暗赤丝线带 (y: 0.40 -> 2.00, hw: 0.36)
-    cubes.extend(octagon("tail", "red_thread", "thread_wrap_main", 0.36, 0.40, 2.00, hz=0.36))
+    # 3. 边缘 3 级交错凸出的小锯齿 (serrated mineral teeth)
+    # (a) 左侧齿 1 (低位齿, y: 12.50 -> 13.20, 凸向 -X)
+    cubes.append(block("tip", "venom_tip", "venom_tooth_l1", -0.62, -0.35, 12.50, 13.20, -0.07, 0.07, rot=(0.0, 0.0, -18.0)))
+    # (b) 右侧齿 1 (中低位错开齿, y: 13.20 -> 13.90, 凸向 +X)
+    cubes.append(block("tip", "venom_tip", "venom_tooth_r1", 0.35, 0.65, 13.20, 13.90, -0.07, 0.07, rot=(0.0, 0.0, 18.0)))
+    # (c) 左侧齿 2 (高位齿, y: 13.90 -> 14.60, 凸向 -X)
+    cubes.append(block("tip", "venom_tip", "venom_tooth_l2", -0.55, -0.35, 13.90, 14.60, -0.06, 0.06, rot=(0.0, 0.0, -15.0)))
+    # (d) 右侧齿 2 (高位微齿, y: 14.50 -> 15.10, 凸向 +X)
+    cubes.append(block("tip", "venom_tip", "venom_tooth_r2", 0.35, 0.52, 14.50, 15.10, -0.06, 0.06, rot=(0.0, 0.0, 15.0)))
 
-    # 4. 微小下垂赤丝线结与须尾 (y: 0.20 -> 0.90, 微偏向一侧)
-    cubes.append(block("tail", "red_thread", "thread_knot_bead", 0.25, 0.52, 0.50, 0.95, -0.15, 0.15))
-    cubes.append(block("tail", "red_thread", "thread_tail_fringe", 0.32, 0.48, 0.15, 0.50, -0.08, 0.08, rot=(0.0, 0.0, -12.0)))
+    # 4. 渐收顶尖锐锋 (y: 15.60 -> 16.50, 平滑收至 0.08px 单针尖)
+    cubes.append(block("tip", "venom_tip", "venom_taper_upper", -0.18, 0.18, 15.60, 16.15, -0.06, 0.06))
+    cubes.append(block("tip", "venom_tip", "venom_needle_point", -0.05, 0.05, 16.15, 16.50, -0.04, 0.04))
 
     return cubes
 
 
 def part_shaft() -> list[tuple]:
-    """生成细长暗化针身 (shaft)。
+    """生成深黑灰暗化细长针身 (shaft)。
 
-    深灰暗化硬兽骨直身，带有细微骨髓纹与微糙微光。
+    深色贯穿硬质针杆，接在 tip 与缠丝之间。
     """
     cubes = []
-    # 细长直针体分 3 段平滑圆柱微过渡 (y: 2.20 -> 9.50)
-    # (a) 下段微粗承力段 (y: 2.20 -> 4.80, hw: 0.30)
-    cubes.extend(octagon("shaft", "needle_bone", "shaft_lower", 0.30, TAIL_Y1, 4.80, hz=0.30))
+    # 细长直针杆 (y: 5.20 -> 11.50, 长 6.3px, hw: 0.26)
+    cubes.extend(octagon("shaft", "needle_shaft", "shaft_main", 0.26, SHAFT_Y0, SHAFT_Y1, hz=0.26))
+    return cubes
 
-    # (b) 中段轻巧捏持段 (y: 4.80 -> 7.20, hw: 0.28)
-    cubes.extend(octagon("shaft", "needle_bone", "shaft_mid", 0.28, 4.80, 7.20, hz=0.28))
 
-    # (c) 上段平滑渐收段 (y: 7.20 -> 9.50, hw: 0.25)
-    cubes.extend(octagon("shaft", "needle_bone", "shaft_upper", 0.25, 7.20, TIP_Y0, hz=0.25))
+def part_tail() -> list[tuple]:
+    """生成几圈细红丝线缠绕与下垂细丝 (tail)。
+
+    每圈 0.32~0.38px 粗，圈与圈之间露出深色针身；外加 2 根细红丝从缠绕处垂下来，长短不一。
+    """
+    cubes = []
+    # 1. 穿过红丝缠绕内部的针身内芯（露出部在圈与圈之间，y: 3.20 -> 5.20, hw: 0.25）
+    cubes.extend(octagon("tail", "needle_shaft", "tail_shaft_core", 0.25, THREAD_Y0, THREAD_Y1, hz=0.25))
+
+    # 2. 3 圈独立缠绕的细红线圈 (每圈高 0.40px, 间隙 0.25px 露出深色骨芯)
+    ring_ys = [(3.30, 3.75), (4.00, 4.45), (4.70, 5.15)]
+    for i, (y0, y1) in enumerate(ring_ys):
+        cubes.extend(octagon("tail", "red_thread", f"thread_ring_{i}", 0.36, y0, y1, hz=0.36))
+
+    # 3. 2 根从缠绕处下垂的长短不一细红丝须
+    # 丝须 1 (长丝，垂至 y=1.75，微调起始高度避开木柄环槽共面)
+    cubes.append(block("tail", "red_thread", "thread_dangle_long", 0.34, 0.46, 1.75, 3.80, -0.06, 0.06, rot=(0.0, 0.0, -10.0)))
+    # 丝须 2 (短丝，垂至 y=2.45，微调起始高度避开木柄环槽 2.40 共面)
+    cubes.append(block("tail", "red_thread", "thread_dangle_short", 0.32, 0.44, 2.45, 4.20, 0.15, 0.27, rot=(12.0, 0.0, -6.0)))
 
     return cubes
 
 
-def part_tip() -> list[tuple]:
-    """生成针尖淬蚀浸渍区 (tip)。
+def part_grip() -> list[tuple]:
+    """生成木质握柄与底端小收口 (grip)。
 
-    针尖前端约 1/3 (y: 9.50 -> 14.50) 浸渍墨绿/深黑渐变色泽，4 级平滑收拢至极锐利飞针尖芒。
+    位于红丝线下方，比针身粗一圈 (hw: 0.46)，深棕与浅棕相间的横向环纹（缠绳/刻槽），底端一个深色小收口。
     """
     cubes = []
-    # 1. 淬毒浸渍过渡基段 (y: 9.50 -> 11.20, hw: 0.22)
-    cubes.extend(octagon("tip", "venom_green", "venom_tier_1", 0.22, TIP_Y0, 11.20, hz=0.22))
+    # 1. 内部木柄轴芯 (y: 0.35 -> 3.20, hw: 0.42)
+    cubes.extend(octagon("grip", "wooden_grip", "grip_wood_core", 0.42, 0.35, GRIP_Y1, hz=0.42))
 
-    # 2. 淬蚀渐收段 (y: 11.20 -> 12.60, hw: 0.17)
-    cubes.extend(octagon("tip", "venom_green", "venom_tier_2", 0.17, 11.20, 12.60, hz=0.17))
+    # 2. 3 圈凸起的横向刻槽环纹 (深棕与浅棕相间, hw: 0.50)
+    groove_ys = [(0.50, 1.15), (1.45, 2.10), (2.40, 3.05)]
+    for i, (y0, y1) in enumerate(groove_ys):
+        cubes.extend(octagon("grip", "wooden_grip", f"grip_band_{i}", 0.50, y0, y1, hz=0.50))
 
-    # 3. 极细锐化段 (y: 12.60 -> 13.70, hw: 0.12)
-    cubes.extend(octagon("tip", "venom_green", "venom_tier_3", 0.12, 12.60, 13.70, hz=0.12))
-
-    # 4. 极致破甲穿刺单针尖芒 (y: 13.70 -> 14.50, 宽 0.08px, 极锐利冷光)
-    cubes.append(block("tip", "venom_green", "venom_needle_point", -0.04, 0.04, 13.70, 14.50, -0.04, 0.04))
+    # 3. 底端深色小收口端头 (y: 0.00 -> 0.35, hw: 0.38)
+    cubes.extend(octagon("grip", "wooden_grip", "grip_butt_cap", 0.38, 0.00, 0.35, hz=0.38))
 
     return cubes
 
@@ -151,9 +176,10 @@ def part_tip() -> list[tuple]:
 def all_cubes() -> list[tuple]:
     """汇总飞针所有部件。"""
     cubes = []
-    cubes.extend(part_tail())
-    cubes.extend(part_shaft())
     cubes.extend(part_tip())
+    cubes.extend(part_shaft())
+    cubes.extend(part_tail())
+    cubes.extend(part_grip())
     return cubes
 
 
@@ -187,48 +213,57 @@ def make_texture_atlas() -> Image.Image:
     img = Image.new("RGBA", (RES, RES), (0, 0, 0, 0))
     rng = np.random.default_rng(42)
 
-    # 1. 细长针身 (Q1: 0..32, 0..32) - 深黑灰暗化骨质
-    shaft_arr = np.zeros((32, 32, 4), dtype=np.uint8)
-    for y in range(32):
-        for x in range(32):
-            base_r = rng.integers(50, 70)
-            base_g = rng.integers(48, 66)
-            base_b = rng.integers(46, 62)
-            if (x + y) % 4 == 0:
-                base_r -= 10
-                base_g -= 10
-                base_b -= 10
-            shaft_arr[y, x] = [int(np.clip(base_r, 0, 255)), int(np.clip(base_g, 0, 255)), int(np.clip(base_b, 0, 255)), 255]
-    img.paste(Image.fromarray(shaft_arr, "RGBA"), (0, 0))
-
-    # 2. 淬毒针尖 (Q2: 32..64, 0..32) - 墨绿暗黑侵蚀毒斑与冷光尖芒
+    # 1. 锯齿矿物绿尖 (Q1: 0..32, 0..32)
+    # 亮绿 #7fb03a (RGB 127,176,58) 与暗绿 #2e4a1c (RGB 46,74,28) 斑驳，无白块
     tip_arr = np.zeros((32, 32, 4), dtype=np.uint8)
     for y in range(32):
         for x in range(32):
-            if y <= 6:
-                # 极细锋芒尖刃 (冷白惨白高亮 RGB 225..248)
-                base_r = rng.integers(215, 235)
-                base_g = rng.integers(235, 252)
-                base_b = rng.integers(220, 240)
-            else:
-                # 墨绿与深黑渐变腐蚀毒液浸渍
-                t = (y - 6) / 26.0
-                base_r = int(25 + 30 * t + rng.integers(-4, 5))
-                base_g = int(78 - 30 * t + rng.integers(-5, 6))
-                base_b = int(35 + 20 * t + rng.integers(-4, 5))
-            tip_arr[y, x] = [int(np.clip(base_r, 0, 255)), int(np.clip(base_g, 0, 255)), int(np.clip(base_b, 0, 255)), 255]
-    img.paste(Image.fromarray(tip_arr, "RGBA"), (32, 0))
+            t = (x * 3 + y * 5) % 17 / 17.0
+            r = int(46 + (127 - 46) * t + rng.integers(-6, 7))
+            g = int(74 + (176 - 74) * t + rng.integers(-8, 9))
+            b = int(28 + (58 - 28) * t + rng.integers(-5, 6))
+            tip_arr[y, x] = [int(np.clip(r, 0, 255)), int(np.clip(g, 0, 255)), int(np.clip(b, 0, 255)), 255]
+    img.paste(Image.fromarray(tip_arr, "RGBA"), (0, 0))
 
-    # 3. 针尾赤丝 (Q3: 0..32, 32..64) - 暗赤红粗丝线
+    # 2. 细长针身 (Q2: 32..64, 0..32) - 深黑灰暗化骨质
+    shaft_arr = np.zeros((32, 32, 4), dtype=np.uint8)
+    for y in range(32):
+        for x in range(32):
+            base_val = rng.integers(48, 65)
+            if (x + y) % 4 == 0:
+                base_val -= 10
+            shaft_arr[y, x] = [base_val, int(np.clip(base_val - 2, 0, 255)), int(np.clip(base_val - 4, 0, 255)), 255]
+    img.paste(Image.fromarray(shaft_arr, "RGBA"), (32, 0))
+
+    # 3. 细红丝线 (Q3: 0..32, 32..64)
+    # 红色 #b3261e (RGB 179,38,30) 与暗部 #6e1512 (RGB 110,21,18)
     thread_arr = np.zeros((32, 32, 4), dtype=np.uint8)
     for y in range(32):
         for x in range(32):
-            stripe = (y % 3) * 8
-            base_r = rng.integers(150, 175) - stripe
-            base_g = rng.integers(32, 48) - (stripe // 2)
-            base_b = rng.integers(26, 40) - (stripe // 2)
-            thread_arr[y, x] = [int(np.clip(base_r, 50, 255)), int(np.clip(base_g, 10, 200)), int(np.clip(base_b, 10, 180)), 255]
+            t = (y % 4) / 4.0
+            r = int(110 + (179 - 110) * t + rng.integers(-8, 9))
+            g = int(21 + (38 - 21) * t + rng.integers(-4, 5))
+            b = int(18 + (30 - 18) * t + rng.integers(-3, 4))
+            thread_arr[y, x] = [int(np.clip(r, 0, 255)), int(np.clip(g, 0, 255)), int(np.clip(b, 0, 255)), 255]
     img.paste(Image.fromarray(thread_arr, "RGBA"), (0, 32))
+
+    # 4. 木质握柄 (Q4: 32..64, 32..64)
+    # 深棕 #3b2a1e (RGB 59,42,30) 与浅棕 #6b4a30 (RGB 107,74,48) 相间环纹
+    grip_arr = np.zeros((32, 32, 4), dtype=np.uint8)
+    for y in range(32):
+        for x in range(32):
+            if (y % 6) < 3:
+                # 浅棕色环纹
+                r = rng.integers(100, 115)
+                g = rng.integers(68, 80)
+                b = rng.integers(42, 54)
+            else:
+                # 深棕色沟槽
+                r = rng.integers(54, 66)
+                g = rng.integers(38, 48)
+                b = rng.integers(26, 36)
+            grip_arr[y, x] = [r, g, b, 255]
+    img.paste(Image.fromarray(grip_arr, "RGBA"), (32, 32))
 
     return img
 
@@ -315,7 +350,7 @@ def build_bbmodel(cubes: list[tuple], tex_img: Image.Image, model_name: str = "P
         elements.append(element)
 
     out_groups = []
-    for g_name in ["shaft", "tip", "tail"]:
+    for g_name in ["tip", "shaft", "tail", "grip"]:
         if g_name in groups_map:
             out_groups.append({
                 "name": g_name,
@@ -366,9 +401,10 @@ def export_parts() -> None:
     tex = make_texture_atlas()
 
     parts = [
-        ("shaft", part_shaft()),
         ("tip", part_tip()),
+        ("shaft", part_shaft()),
         ("tail", part_tail()),
+        ("grip", part_grip()),
     ]
 
     for part_name, part_cubes in parts:
@@ -400,7 +436,7 @@ def self_test() -> None:
 
     bad_cubes = list(clean_cubes)
     c0 = bad_cubes[0]
-    bad_cube = ("tail", "needle_bone", "inject_coplanar", (c0[3][0], c0[3][1], c0[3][2]), (c0[4][0], c0[4][1], c0[4][2]), (0, 0, 0))
+    bad_cube = ("tip", "venom_tip", "inject_coplanar", (c0[3][0], c0[3][1], c0[3][2]), (c0[4][0], c0[4][1], c0[4][2]), (0, 0, 0))
     bad_cubes.append(bad_cube)
 
     caught = False

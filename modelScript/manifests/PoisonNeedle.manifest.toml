@@ -6,6 +6,7 @@ mirror_x = 8.0
 size = 260
 
 [features]
-needle_shaft     = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 60 }
-venom_tip        = { elements = ["venom_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 25 }
-red_thread_tail  = { elements = ["thread_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 15 }
+venom_tip        = { elements = ["venom_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 30 }
+needle_shaft     = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 50 }
+red_thread_wrap  = { elements = ["thread_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 15 }
+wooden_grip      = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 25 }
