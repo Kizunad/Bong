@@ -168,7 +168,7 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 ## Finish Evidence
 
 - **落地清单**：`ClientConnectionStatusStore.invalidateSession(...)`、`BongNetworkHandler.disconnectSession(...)`、`SessionScopedStoreRegistry.clearAllOnDisconnect()` 及 105 个强类型 Store handle；`scripts/bot/scenarios/reconnect_state_freshness.py` 验证同身份重连后的首批 `bong:server_data` 集合包含首次加入集合。
-- **关键 commit**：`8edb4b24c`（P1，2026-07-28）、`c015e0ee8`（P2，2026-07-29）、`d5dfd668a`（P3，2026-08-06）、`387dfa4d1`（P4，2026-10-01）。
-- **测试结果**：`BongServerDataThreadingTest` 覆盖旧 handler 迟到 payload、排队 session payload 与新 handler 合法首包的顺序；`SessionScopedStoreRegistryProductionAdapterTest` 覆盖全部生产 adapter；client Java 17 完整门禁、bot 协议单测及 `reconnect_state_freshness` 在本 PR 验收。
+- **关键 commit**：`8edb4b24c`（P1，2026-07-28）、`c015e0ee8`（P2，2026-07-29）、`d5dfd668a`（P3，2026-08-06）、`387dfa4d1`、`d81083726`（P4，2026-10-01）。
+- **测试结果**：`BongServerDataThreadingTest` 覆盖旧 handler 迟到 payload、排队 session payload 与新 handler 合法首包的顺序；`SessionScopedStoreRegistryProductionAdapterTest` 覆盖全部生产 adapter；client Java 17 完整门禁、bot 协议单测（570/570）及 `reconnect_state_freshness` 在本 PR 验收。场景用 join 屏障后的有界收集窗比较状态快照，排除动态 `narration`，并保留 `inventory_snapshot` / `techniques_snapshot` 必达断言。
 - **跨仓库核验**：server 继续复用既有 join snapshot producers 与 `bong:server_data` CustomPayload，未新增 schema、Redis key 或玩法语义；client 仅消费并清理现有契约。
 - **遗留 / 后续**：炼丹、锻造、灵宝的 Screen 关闭、权威 hydration、freshness gate，以及 track:R2 尚未归属的并发/玩法 issue 保留给各自 owner；灵田、经脉、功法、身体部位冻结区未改动。
