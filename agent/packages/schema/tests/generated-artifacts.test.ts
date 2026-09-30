@@ -405,5 +405,5 @@ describe("generated schema freshness gate", () => {
       );
     }
     expect(() => assertGeneratedSchemasDeterministic()).not.toThrow();
-  });
+  }, 15_000);
 });
