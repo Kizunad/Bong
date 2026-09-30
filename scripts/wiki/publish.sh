@@ -47,7 +47,7 @@ require_private_github_remote() {
       ssh://git@github.com/*)
         repo_path=${remote_url#ssh://git@github.com/}
         ;;
-      https://github.com/*|http://github.com/*)
+      https://github.com/*)
         repo_path=${remote_url#*github.com/}
         ;;
       *)
