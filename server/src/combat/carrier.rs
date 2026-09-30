@@ -36,9 +36,11 @@ use crate::inventory::{
     bump_revision, ItemInstance, ItemRegistry, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     EQUIP_SLOT_OFF_HAND,
 };
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
-use crate::qi_physics::release::qi_release_to_zone;
+use crate::qi_physics::ledger::{
+    is_anqi_carrier_account, qi_flow_overflow_account, transfer_external_qi_to_ledger,
+    transfer_ledger_qi_to_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    WorldQiBudget, ANQI_CARRIER_ACCOUNT_PREFIX,
+};
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
@@ -173,10 +175,12 @@ pub struct CarrierStore {
     pub imprints_by_instance: HashMap<u64, CarrierImprint>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, bevy_ecs::component::Component)]
+#[derive(Debug, Clone, PartialEq, bevy_ecs::component::Component)]
 pub struct CarrierCharging {
     pub slot: CarrierSlot,
     pub instance_id: u64,
+    /// 充能开始时锁定的持久化角色身份，避免中途重连/重建实体后换账。
+    pub owner_id: String,
     pub qi_target: f32,
     pub prepaid_qi: f32,
     pub started_at_tick: u64,
@@ -252,6 +256,8 @@ pub struct ProjectileDespawnedEvent {
     pub projectile: Entity,
     /// 仅内部账本结算使用；wire bridge 不暴露此字段。
     pub carrier_instance_id: Option<u64>,
+    /// 暗器 carrier 的持久化角色身份；缺失时仅兼容旧事件的实体回退路径。
+    pub carrier_owner_id: Option<String>,
     pub reason: ProjectileDespawnReason,
     pub distance: f32,
     pub qi_evaporated: f32,
@@ -431,6 +437,7 @@ fn begin_charge_carrier(
     mut intents: EventReader<ChargeCarrierIntent>,
     mut commands: Commands,
     mut actors: Query<BeginChargeActor<'_>>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: EventWriter<QiTransfer>,
     mut began_events: EventWriter<CarrierChargeBeganEvent>,
 ) {
@@ -456,17 +463,21 @@ fn begin_charge_carrier(
             continue;
         };
         let prepaid = qi_target * 0.5;
-        cultivation.qi_current =
-            (cultivation.qi_current - f64::from(prepaid)).clamp(0.0, cultivation.qi_max);
-        emit_carrier_channeling_transfer(
+        let owner_id = carrier_owner_id(lifecycle, entity);
+        if !transfer_player_qi_to_carrier(
+            &mut qi_ledger,
             &mut qi_transfers,
-            entity,
+            &owner_id,
             item.instance_id,
             f64::from(prepaid),
-        );
+        ) {
+            continue;
+        }
+        cultivation.qi_current -= f64::from(prepaid);
         commands.entity(entity).insert(CarrierCharging {
             slot,
             instance_id: item.instance_id,
+            owner_id,
             qi_target,
             prepaid_qi: prepaid,
             started_at_tick: intent.issued_at_tick.max(clock.tick),
@@ -514,6 +525,7 @@ fn charge_carrier_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
     mut commands: Commands,
     mut actors: Query<ChargingActor<'_>>,
     mut events: EventWriter<CarrierChargedEvent>,
@@ -537,6 +549,7 @@ fn charge_carrier_tick(
                 &cultivation,
                 position.get(),
                 zones.as_deref_mut(),
+                &mut qi_ledger,
                 &mut qi_transfers,
                 clock.tick,
                 false,
@@ -553,14 +566,16 @@ fn charge_carrier_tick(
         if cultivation.qi_current + f64::EPSILON < f64::from(remaining) {
             continue;
         }
-        cultivation.qi_current =
-            (cultivation.qi_current - f64::from(remaining)).clamp(0.0, cultivation.qi_max);
-        emit_carrier_channeling_transfer(
+        if !transfer_player_qi_to_carrier(
+            &mut qi_ledger,
             &mut qi_transfers,
-            entity,
+            &charging.owner_id,
             charging.instance_id,
             f64::from(remaining),
-        );
+        ) {
+            continue;
+        }
+        cultivation.qi_current -= f64::from(remaining);
         finish_charge(
             &registry,
             &mut commands,
@@ -572,6 +587,7 @@ fn charge_carrier_tick(
             &cultivation,
             position.get(),
             zones.as_deref_mut(),
+            &mut qi_ledger,
             &mut qi_transfers,
             clock.tick,
             true,
@@ -594,6 +610,7 @@ fn finish_charge(
     cultivation: &Cultivation,
     position: DVec3,
     zones: Option<&mut ZoneRegistry>,
+    qi_ledger: &mut WorldQiAccount,
     qi_transfers: &mut EventWriter<QiTransfer>,
     tick: u64,
     full_charge: bool,
@@ -623,8 +640,9 @@ fn finish_charge(
     if qi_amount <= f32::EPSILON {
         release_unsealed_carrier_qi(
             zones,
+            qi_ledger,
             qi_transfers,
-            entity,
+            &charging.owner_id,
             charging.instance_id,
             position,
             f64::from(total_deducted),
@@ -678,8 +696,9 @@ fn finish_charge(
     }
     release_unsealed_carrier_qi(
         zones,
+        qi_ledger,
         qi_transfers,
-        entity,
+        &charging.owner_id,
         charging.instance_id,
         position,
         f64::from((total_deducted - sealed_qi).max(0.0)),
@@ -687,33 +706,61 @@ fn finish_charge(
     commands.entity(entity).remove::<CarrierCharging>();
 }
 
-fn carrier_qi_account(owner: Entity, instance_id: u64) -> QiAccountId {
-    QiAccountId::container(format!("anqi_carrier:{owner:?}:{instance_id}"))
+fn carrier_qi_account(owner_id: &str, instance_id: u64) -> QiAccountId {
+    QiAccountId::container(format!(
+        "{ANQI_CARRIER_ACCOUNT_PREFIX}{owner_id}:{instance_id}"
+    ))
 }
 
-fn emit_carrier_channeling_transfer(
+fn carrier_owner_id(lifecycle: Option<&Lifecycle>, entity: Entity) -> String {
+    lifecycle
+        .map(|lifecycle| lifecycle.character_id.trim())
+        .filter(|character_id| !character_id.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("legacy_entity:{entity:?}"))
+}
+
+fn carrier_qi_account_for_entity(owner: Entity, instance_id: u64) -> QiAccountId {
+    carrier_qi_account(&format!("legacy_entity:{owner:?}"), instance_id)
+}
+
+fn transfer_player_qi_to_carrier(
+    qi_ledger: &mut WorldQiAccount,
     qi_transfers: &mut EventWriter<QiTransfer>,
-    owner: Entity,
+    owner_id: &str,
     instance_id: u64,
     amount: f64,
-) {
+) -> bool {
     if amount <= f64::EPSILON {
-        return;
+        return true;
     }
-    if let Ok(transfer) = QiTransfer::new(
-        QiAccountId::player(format!("entity:{owner:?}")),
-        carrier_qi_account(owner, instance_id),
-        amount,
-        QiTransferReason::Channeling,
-    ) {
-        qi_transfers.send(transfer);
+    let from = QiAccountId::player(owner_id.to_owned());
+    let to = carrier_qi_account(owner_id, instance_id);
+    match transfer_external_qi_to_ledger(qi_ledger, from, to, amount, QiTransferReason::Channeling)
+    {
+        Ok(Some(transfer)) => {
+            qi_transfers.send(transfer);
+            true
+        }
+        Ok(None) => true,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                owner_id,
+                instance_id,
+                amount,
+                "anqi carrier channeling ledger transfer rejected"
+            );
+            false
+        }
     }
 }
 
 fn release_unsealed_carrier_qi(
     zones: Option<&mut ZoneRegistry>,
+    qi_ledger: &mut WorldQiAccount,
     qi_transfers: &mut EventWriter<QiTransfer>,
-    owner: Entity,
+    owner_id: &str,
     instance_id: u64,
     pos: DVec3,
     amount: f64,
@@ -723,8 +770,9 @@ fn release_unsealed_carrier_qi(
     }
     release_account_to_zone(
         zones,
+        qi_ledger,
         qi_transfers,
-        carrier_qi_account(owner, instance_id),
+        carrier_qi_account(owner_id, instance_id),
         DimensionKind::Overworld,
         pos,
         amount,
@@ -738,6 +786,52 @@ fn carrier_sealed_qi_amount(base_qi_amount: f32, resonance: Option<f64>) -> f32 
         * resonance
             .map(carrier_seal_efficiency_multiplier)
             .unwrap_or(1.0)
+}
+
+fn restore_carrier_imprints_from_inventory(
+    store: &mut CarrierStore,
+    inventory: &PlayerInventory,
+    qi_ledger: &WorldQiAccount,
+    owner_id: &str,
+    tick: u64,
+) {
+    for slot in [CarrierSlot::MainHand, CarrierSlot::OffHand] {
+        let Some(item) = inventory
+            .equipped
+            .get(slot.equip_key())
+            .and_then(|slot| slot.held.as_ref())
+        else {
+            continue;
+        };
+        let Some(carrier_kind) = CarrierKind::from_template_id(&item.template_id) else {
+            continue;
+        };
+        if item.template_id != carrier_kind.charged_template_id()
+            || store.imprints_by_instance.contains_key(&item.instance_id)
+        {
+            continue;
+        }
+        let account = carrier_qi_account(owner_id, item.instance_id);
+        let qi_amount = qi_ledger.balance(&account);
+        if qi_amount <= f64::EPSILON {
+            continue;
+        }
+        let qi_amount = qi_amount as f32;
+        store.imprints_by_instance.insert(
+            item.instance_id,
+            CarrierImprint {
+                carrier_kind,
+                qi_amount,
+                qi_amount_initial: qi_amount,
+                qi_color: ColorKind::Mellow,
+                source_realm: Realm::Awaken,
+                half_life_min: carrier_kind.half_life_min(),
+                decay_started_at_tick: tick,
+                bond_kind: BondKind::HandheldCarrier,
+                injection_kind: None,
+            },
+        );
+    }
 }
 
 fn transform_equipped_item(
@@ -772,13 +866,22 @@ fn transform_equipped_item(
 fn carry_decay_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
-    mut stores: Query<(Entity, &mut CarrierStore)>,
+    mut stores: Query<(Entity, &mut CarrierStore, Option<&Lifecycle>)>,
     mut inventories: Query<&mut PlayerInventory>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
+    mut qi_budget: ResMut<WorldQiBudget>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;
     }
-    for (entity, mut store) in &mut stores {
+    for (entity, mut store, lifecycle) in &mut stores {
+        let owner_id = carrier_owner_id(lifecycle, entity);
+        if let Ok(inventory) = inventories.get_mut(entity) {
+            restore_carrier_imprints_from_inventory(
+                &mut store, &inventory, &qi_ledger, &owner_id, clock.tick,
+            );
+        }
         let mut expired = Vec::new();
         for (instance_id, imprint) in &mut store.imprints_by_instance {
             if imprint.bond_kind != BondKind::HandheldCarrier {
@@ -798,11 +901,22 @@ fn carry_decay_tick(
         if expired.is_empty() {
             continue;
         }
+        let mut settled = Vec::new();
         for instance_id in &expired {
-            store.imprints_by_instance.remove(instance_id);
+            // Imprint decay is only a projection; the stable carrier account owns the actual
+            // qi. Settle that balance into the era-decay sink before removing the projection.
+            if settle_carrier_era_decay(
+                &mut qi_ledger,
+                &mut qi_budget,
+                &mut qi_transfers,
+                carrier_qi_account(&owner_id, *instance_id),
+            ) {
+                store.imprints_by_instance.remove(instance_id);
+                settled.push(*instance_id);
+            }
         }
         if let Ok(mut inventory) = inventories.get_mut(entity) {
-            for instance_id in expired {
+            for instance_id in settled {
                 degrade_equipped_instance(&mut inventory, &registry, instance_id);
             }
         }
@@ -845,6 +959,7 @@ type ThrowCarrierActorQuery<'w, 's> = Query<
         &'static mut CarrierStore,
         Option<&'static mut Stamina>,
         Option<&'static UniqueId>,
+        Option<&'static Lifecycle>,
     ),
 >;
 
@@ -853,6 +968,7 @@ fn throw_carrier_intents(
     mut commands: Commands,
     mut intents: EventReader<ThrowCarrierIntent>,
     mut actors: ThrowCarrierActorQuery<'_, '_>,
+    qi_ledger: Option<Res<WorldQiAccount>>,
     // 护栏 guard info! 按 (carrier, reason) 去重：e2e 场景只需一条关联标记，
     // 而任意连接可反复发 throw_carrier 空手请求——若每条都写 info 日志，
     // 无操作请求就被转换成无界日志输出。去重经共享资源 GuardLogDedup 按 tick
@@ -862,11 +978,17 @@ fn throw_carrier_intents(
     mut guard_log: ResMut<GuardLogDedup>,
 ) {
     for intent in intents.read() {
-        let Ok((position, mut inventory, mut store, stamina, unique_id)) =
+        let Ok((position, mut inventory, mut store, stamina, unique_id, lifecycle)) =
             actors.get_mut(intent.thrower)
         else {
             continue;
         };
+        let owner_id = carrier_owner_id(lifecycle, intent.thrower);
+        if let Some(qi_ledger) = qi_ledger.as_deref() {
+            restore_carrier_imprints_from_inventory(
+                &mut store, &inventory, qi_ledger, &owner_id, clock.tick,
+            );
+        }
         let wire_id = entity_wire_id(unique_id, intent.thrower);
         let Some(item) = inventory
             .equipped
@@ -941,6 +1063,7 @@ fn throw_carrier_intents(
                 owner: Some(intent.thrower),
                 qi_payload: imprint.qi_amount,
                 carrier_instance_id: Some(instance_id),
+                carrier_owner_id: Some(owner_id),
             },
             AnqiProjectileFlight {
                 carrier_kind: imprint.carrier_kind,
@@ -1369,6 +1492,7 @@ fn emit_projectile_despawn(
         owner: args.projectile.owner,
         projectile: args.projectile_entity,
         carrier_instance_id: args.projectile.carrier_instance_id,
+        carrier_owner_id: args.projectile.carrier_owner_id.clone(),
         reason: args.reason,
         distance,
         qi_evaporated,
@@ -1385,7 +1509,7 @@ fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
 
 /// qc-P0：anqi 投射物 miss / OutOfRange / HitBlock / NaturalDecay despawn 时，
 /// 把脱靶事件中的完整余额（`qi_evaporated + residual_qi`）经
-/// qi_release_to_zone 归还落点 zone。
+/// `transfer_ledger_qi_to_zone` 归还落点 zone。
 ///
 /// HitTarget 分支在 `emit_projectile_despawn` 内已将两部分分别设为
 /// `qi_at_despawn` 与 0.0，但命中路径不应释放；因此只有非命中 reason 才会进入
@@ -1395,6 +1519,8 @@ fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
 pub fn projectile_miss_qi_release_system(
     mut events: EventReader<ProjectileDespawnedEvent>,
     mut zones: ResMut<ZoneRegistry>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
+    mut qi_budget: ResMut<crate::qi_physics::ledger::WorldQiBudget>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for event in events.read() {
@@ -1414,26 +1540,33 @@ pub fn projectile_miss_qi_release_system(
         let from = carrier_qi_account_for_projectile(event);
         release_account_to_zone(
             Some(&mut zones),
+            &mut qi_ledger,
             &mut qi_transfers,
-            from,
+            from.clone(),
             DimensionKind::Overworld,
             pos,
             residual,
             "anqi_projectile_miss",
             event.projectile.to_bits(),
         );
+        settle_carrier_era_decay(&mut qi_ledger, &mut qi_budget, &mut qi_transfers, from);
     }
 }
 
 /// Resolve the ledger source for a despawned anqi projectile.
 ///
-/// A charged carrier's qi lives in `carrier_qi_account(owner, instance_id)` from
+/// A charged carrier's qi lives in `carrier_qi_account(owner_id, instance_id)` from
 /// the moment channeling begins.  The fallback is reserved for malformed legacy
 /// events that lack the identity; it stays a container account so the release is
 /// still auditable and never pretends that a player's ECS account owns the qi.
 fn carrier_qi_account_for_projectile(event: &ProjectileDespawnedEvent) -> QiAccountId {
-    match (event.owner, event.carrier_instance_id) {
-        (Some(owner), Some(instance_id)) => carrier_qi_account(owner, instance_id),
+    match (
+        event.carrier_owner_id.as_deref(),
+        event.owner,
+        event.carrier_instance_id,
+    ) {
+        (Some(owner_id), _, Some(instance_id)) => carrier_qi_account(owner_id, instance_id),
+        (None, Some(owner), Some(instance_id)) => carrier_qi_account_for_entity(owner, instance_id),
         _ => {
             tracing::error!(
                 projectile = ?event.projectile,
@@ -1449,11 +1582,13 @@ fn carrier_qi_account_for_projectile(event: &ProjectileDespawnedEvent) -> QiAcco
     }
 }
 
-/// Shared helper: locate the zone at `pos`, apply `qi_release_to_zone`, and emit `QiTransfer`.
+/// Shared helper: locate the zone at `pos`, apply the ledger release API, and emit its receipt.
 /// On zone-not-found or overflow, routes to an overflow account (qi never disappears).
 /// This is `pub` so `needle.rs` can reuse the same conservation path without duplicating logic.
+#[allow(clippy::too_many_arguments)]
 pub fn release_residual_to_zone(
     zones: &mut ZoneRegistry,
+    qi_ledger: &mut WorldQiAccount,
     qi_transfers: &mut EventWriter<QiTransfer>,
     dim: DimensionKind,
     pos: DVec3,
@@ -1467,6 +1602,7 @@ pub fn release_residual_to_zone(
     let from = QiAccountId::container(format!("{context}:entity:{entity_bits}"));
     release_account_to_zone(
         Some(zones),
+        qi_ledger,
         qi_transfers,
         from,
         dim,
@@ -1481,6 +1617,7 @@ pub fn release_residual_to_zone(
 #[allow(clippy::too_many_arguments)]
 fn release_account_to_zone(
     zones: Option<&mut ZoneRegistry>,
+    qi_ledger: &mut WorldQiAccount,
     qi_transfers: &mut EventWriter<QiTransfer>,
     from: QiAccountId,
     dim: DimensionKind,
@@ -1489,53 +1626,63 @@ fn release_account_to_zone(
     context: &str,
     entity_bits: u64,
 ) {
+    let cleanup_account = from.clone();
     if residual <= f64::EPSILON {
+        cleanup_zero_carrier_account(qi_ledger, &cleanup_account);
         return;
     }
 
     // Look up zone name first (immutable borrow), then mutably update.
     let Some(zones) = zones else {
-        let overflow_to =
-            QiAccountId::overflow(format!("{context}_no_zone_registry:{entity_bits}"));
-        if let Ok(t) = QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
-        {
-            qi_transfers.send(t);
-        }
+        release_to_overflow(
+            qi_ledger,
+            qi_transfers,
+            from,
+            residual,
+            context,
+            entity_bits,
+        );
         return;
     };
 
     let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
 
     if let Some(zone_name) = zone_name {
-        let to = QiAccountId::zone(zone_name.clone());
         // Safe: we just found the zone by name, find_zone_mut should succeed.
         if let Some(zone) = zones.find_zone_mut(&zone_name) {
-            let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-            match qi_release_to_zone(
-                residual,
+            match transfer_ledger_qi_to_zone(
+                qi_ledger,
                 from.clone(),
-                to,
-                zone_current,
-                QI_ZONE_UNIT_CAPACITY,
+                &zone_name,
+                &mut zone.spirit_qi,
+                residual,
+                1.0,
+                QiTransferReason::ReleaseToZone,
             ) {
-                Ok(outcome) => {
-                    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-                    if let Some(t) = outcome.transfer {
-                        qi_transfers.send(t);
-                    }
-                    if outcome.overflow > f64::EPSILON {
-                        let overflow_to = QiAccountId::overflow(format!(
-                            "{context}_overflow:entity:{entity_bits}"
-                        ));
-                        if let Ok(t) = QiTransfer::new(
+                Ok(Some(transfer)) => {
+                    let accepted = transfer.amount;
+                    qi_transfers.send(transfer);
+                    let overflow = residual - accepted;
+                    if overflow > f64::EPSILON {
+                        release_to_overflow(
+                            qi_ledger,
+                            qi_transfers,
                             from,
-                            overflow_to,
-                            outcome.overflow,
-                            QiTransferReason::ReleaseToZone,
-                        ) {
-                            qi_transfers.send(t);
-                        }
+                            overflow,
+                            context,
+                            entity_bits,
+                        );
                     }
+                }
+                Ok(None) => {
+                    release_to_overflow(
+                        qi_ledger,
+                        qi_transfers,
+                        from,
+                        residual,
+                        context,
+                        entity_bits,
+                    );
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -1545,37 +1692,105 @@ fn release_account_to_zone(
                         residual,
                         "[bong][qc_p0] qi release error; routing to overflow"
                     );
-                    let overflow_to = QiAccountId::overflow(format!(
-                        "{context}_err_overflow:entity:{entity_bits}"
-                    ));
-                    if let Ok(t) = QiTransfer::new(
+                    release_to_overflow(
+                        qi_ledger,
+                        qi_transfers,
                         from,
-                        overflow_to,
                         residual,
-                        QiTransferReason::ReleaseToZone,
-                    ) {
-                        qi_transfers.send(t);
-                    }
+                        context,
+                        entity_bits,
+                    );
                 }
             }
         } else {
             // find_zone returned Some but find_zone_mut returned None — very unlikely but safe.
-            let overflow_to =
-                QiAccountId::overflow(format!("{context}_no_mut_zone:entity:{entity_bits}"));
-            if let Ok(t) =
-                QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
-            {
-                qi_transfers.send(t);
-            }
+            release_to_overflow(
+                qi_ledger,
+                qi_transfers,
+                from,
+                residual,
+                context,
+                entity_bits,
+            );
         }
     } else {
         // No zone at despawn position — overflow fallback.
-        let overflow_to = QiAccountId::overflow(format!("{context}_no_zone:entity:{entity_bits}"));
-        if let Ok(t) = QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
-        {
-            qi_transfers.send(t);
+        release_to_overflow(
+            qi_ledger,
+            qi_transfers,
+            from,
+            residual,
+            context,
+            entity_bits,
+        );
+    }
+    cleanup_zero_carrier_account(qi_ledger, &cleanup_account);
+}
+
+fn cleanup_zero_carrier_account(qi_ledger: &mut WorldQiAccount, account: &QiAccountId) {
+    if is_anqi_carrier_account(account) && qi_ledger.balance(account) == 0.0 {
+        qi_ledger.remove_balance(account);
+    }
+}
+
+fn release_to_overflow(
+    qi_ledger: &mut WorldQiAccount,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    context: &str,
+    entity_bits: u64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    let to = qi_flow_overflow_account();
+    let cleanup_account = from.clone();
+    let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone) else {
+        tracing::error!(
+            amount,
+            context,
+            entity_bits,
+            "anqi carrier overflow transfer was not representable"
+        );
+        return;
+    };
+    match qi_ledger.transfer(transfer.clone()) {
+        Ok(()) => {
+            qi_transfers.send(transfer);
+            cleanup_zero_carrier_account(qi_ledger, &cleanup_account);
+        }
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                amount,
+                context,
+                entity_bits,
+                "anqi carrier overflow transfer failed"
+            );
         }
     }
+}
+
+fn settle_carrier_era_decay(
+    qi_ledger: &mut WorldQiAccount,
+    qi_budget: &mut crate::qi_physics::ledger::WorldQiBudget,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+) -> bool {
+    let decay = qi_ledger.balance(&from);
+    if decay <= f64::EPSILON {
+        cleanup_zero_carrier_account(qi_ledger, &from);
+        return true;
+    }
+    let cleanup_account = from.clone();
+    let Ok(Some(transfer)) = qi_ledger.settle_era_decay(qi_budget, from, decay) else {
+        tracing::error!(?decay, "anqi carrier era decay ledger debit failed");
+        return false;
+    };
+    qi_transfers.send(transfer);
+    cleanup_zero_carrier_account(qi_ledger, &cleanup_account);
+    true
 }
 
 #[cfg(test)]
