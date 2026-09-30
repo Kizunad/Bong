@@ -229,23 +229,17 @@ describe("generated schema freshness gate", () => {
     ]);
   });
 
-  it("uses a stable generated snapshot even if runtime schema objects are mutated", () => {
-    const expectedChatSchema = renderGeneratedSchemas()["chat-message-v1.json"];
+  it("re-renders generated artifacts from the current registry definitions", () => {
     const schema = GENERATED_SCHEMA_FILES["chat-message-v1.json"] as Record<string, unknown>;
     const originalType = schema.type;
 
     schema.type = "mutated-at-runtime";
 
     try {
-      expect(renderGeneratedSchemas()["chat-message-v1.json"]).toBe(expectedChatSchema);
-      expect(getGeneratedSchemaDrift(GENERATED_DIR)).toEqual({
-        missing: [],
-        changed: [],
-        unexpected: [],
-        pinMismatches: [],
-        manifestMismatches: [],
-      });
-      expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
+      const rendered = JSON.parse(
+        renderGeneratedSchemas()["chat-message-v1.json"],
+      ) as Record<string, unknown>;
+      expect(rendered.type).toBe("mutated-at-runtime");
     } finally {
       schema.type = originalType;
     }
@@ -366,6 +360,14 @@ describe("generated schema freshness gate", () => {
     expect(manifest.generation_version).toBe(SCHEMA_GENERATION_VERSION);
     expect(manifest.artifact_count).toBe(Object.keys(GENERATED_SCHEMA_FILES).length);
     expect(manifest.artifacts).toHaveLength(manifest.artifact_count);
+    const artifactNames = manifest.artifacts.map((artifact) => artifact.file as string);
+    expect(artifactNames).toEqual(
+      [...artifactNames].sort((left, right) => {
+        if (left < right) return -1;
+        if (left > right) return 1;
+        return 0;
+      }),
+    );
     expect(manifest.artifacts.every((artifact) =>
       typeof artifact.source_sha256 === "string" &&
       artifact.generation_version === SCHEMA_GENERATION_VERSION &&
@@ -390,6 +392,18 @@ describe("generated schema freshness gate", () => {
     expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
       /generation manifest mismatch/,
     );
+  });
+
+  it("reports manifest read failures separately from content drift", () => {
+    const outputDir = createTempDir();
+    writeGeneratedSchemas(outputDir);
+    const manifestPath = join(outputDir, "generation-manifest.json");
+    rmSync(manifestPath);
+    mkdirSync(manifestPath);
+
+    expect(getGeneratedSchemaDrift(outputDir).manifestMismatches).toEqual([
+      "generation-manifest.json:read_or_render_error",
+    ]);
   });
 
   it("produces byte-identical schemas and manifest on repeated writes", () => {

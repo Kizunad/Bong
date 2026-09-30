@@ -61,9 +61,11 @@ function sourceHashForSchema(schema: unknown): string {
 }
 
 function sortedGeneratedSchemaEntries(): [string, unknown][] {
-  return Object.entries(GENERATED_SCHEMA_FILES).sort(([left], [right]) =>
-    left.localeCompare(right),
-  );
+  return Object.entries(GENERATED_SCHEMA_FILES).sort(([left], [right]) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
 }
 
 function renderGeneratedSchema(schema: unknown): string {
@@ -230,18 +232,30 @@ function manifestMismatches(outputDir: string): string[] {
   if (!existsSync(manifestPath)) {
     return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:missing`];
   }
+
+  let actualManifest: string;
   try {
-    if (readFileSync(manifestPath, "utf8") !== renderGenerationManifest()) {
-      return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:stale`];
-    }
+    actualManifest = readFileSync(manifestPath, "utf8");
   } catch {
-    return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:invalid_json`];
+    return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:read_or_render_error`];
   }
+
+  let expectedManifest: string;
+  try {
+    expectedManifest = renderGenerationManifest();
+  } catch {
+    return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:read_or_render_error`];
+  }
+
+  if (actualManifest !== expectedManifest) {
+    return [`${SCHEMA_GENERATION_MANIFEST_FILE_NAME}:stale`];
+  }
+
   return [];
 }
 
 export function renderGeneratedSchemas(): GeneratedSchemaContents {
-  return { ...SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS };
+  return { ...captureGeneratedSchemaContents() };
 }
 
 /**
