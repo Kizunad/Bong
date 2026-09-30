@@ -117,11 +117,6 @@ function captureGeneratedSchemaSnapshot(): GeneratedSchemaSnapshot {
   };
 }
 
-const SNAPSHOTTED_GENERATED_SCHEMA = captureGeneratedSchemaSnapshot();
-const SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS = SNAPSHOTTED_GENERATED_SCHEMA.contents;
-const SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES =
-  SNAPSHOTTED_GENERATED_SCHEMA.sourceHashes;
-
 interface GeneratedSchemaPins {
   sourceHash?: string;
   generationVersion?: string;
@@ -146,14 +141,14 @@ function readGeneratedSchemaPins(content: string): GeneratedSchemaPins {
 }
 
 export function getGeneratedSchemaSourceHashes(): GeneratedSchemaSourceHashes {
-  return { ...SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES };
+  return { ...captureGeneratedSchemaSnapshot().sourceHashes };
 }
 
 function sourceHashMismatches(
   outputDir: string,
-  expectedFiles: GeneratedSchemaContents,
+  snapshot: GeneratedSchemaSnapshot,
 ): string[] {
-  return Object.entries(expectedFiles).flatMap(([fileName]) => {
+  return Object.entries(snapshot.contents).flatMap(([fileName]) => {
     const filePath = join(outputDir, fileName);
     if (!existsSync(filePath)) return [];
     let pins: GeneratedSchemaPins;
@@ -163,7 +158,7 @@ function sourceHashMismatches(
       return [`${fileName}:invalid_json`];
     }
     const mismatches: string[] = [];
-    if (pins.sourceHash !== SNAPSHOTTED_GENERATED_SCHEMA_SOURCE_HASHES[fileName]) {
+    if (pins.sourceHash !== snapshot.sourceHashes[fileName]) {
       mismatches.push(`${fileName}:source_sha256`);
     }
     if (pins.generationVersion !== SCHEMA_GENERATION_VERSION) {
@@ -287,7 +282,8 @@ export function assertGeneratedSchemasDeterministic(): void {
 }
 
 export function getGeneratedSchemaDrift(outputDir = GENERATED_DIR): GeneratedSchemaDrift {
-  const expectedFiles = SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS;
+  const snapshot = captureGeneratedSchemaSnapshot();
+  const expectedFiles = snapshot.contents;
   const missing: string[] = [];
   const changed: string[] = [];
 
@@ -313,7 +309,7 @@ export function getGeneratedSchemaDrift(outputDir = GENERATED_DIR): GeneratedSch
   const unexpected = listGeneratedJsonFiles(outputDir).filter(
     (fileName) => !(fileName in expectedFiles),
   );
-  const pinMismatches = sourceHashMismatches(outputDir, expectedFiles);
+  const pinMismatches = sourceHashMismatches(outputDir, snapshot);
   const manifestDrift = manifestMismatches(outputDir);
 
   return {
@@ -352,7 +348,8 @@ export function assertGeneratedSchemasFresh(outputDir = GENERATED_DIR): void {
 export function writeGeneratedSchemas(outputDir = GENERATED_DIR): WriteGeneratedSchemasResult {
   mkdirSync(outputDir, { recursive: true });
 
-  const expectedFiles = SNAPSHOTTED_GENERATED_SCHEMA_CONTENTS;
+  const snapshot = captureGeneratedSchemaSnapshot();
+  const expectedFiles = snapshot.contents;
   const written: string[] = [];
   const removed: string[] = [];
 
@@ -375,7 +372,7 @@ export function writeGeneratedSchemas(outputDir = GENERATED_DIR): WriteGenerated
   const manifestPath = join(outputDir, SCHEMA_GENERATION_MANIFEST_FILE_NAME);
   writeFileSync(
     manifestPath,
-    renderGenerationManifestForSnapshot(SNAPSHOTTED_GENERATED_SCHEMA),
+    renderGenerationManifestForSnapshot(snapshot),
   );
   written.push(manifestPath);
 

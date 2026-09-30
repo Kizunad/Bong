@@ -256,6 +256,21 @@ describe("generated schema freshness gate", () => {
     }
   });
 
+  it("writes and validates an immediate snapshot after the registry changes", () => {
+    const outputDir = createTempDir();
+    const schema = GENERATED_SCHEMA_FILES["chat-message-v1.json"] as Record<string, unknown>;
+    const originalType = schema.type;
+
+    schema.type = "mutated-before-write";
+
+    try {
+      writeGeneratedSchemas(outputDir);
+      expect(() => assertGeneratedSchemasFresh(outputDir)).not.toThrow();
+    } finally {
+      schema.type = originalType;
+    }
+  });
+
   it("discovers called Tiandao runtime V1 validators and checks registry identity", () => {
     const validators = discoverCalledSchemaValidators(TIANDAO_SOURCE_DIR);
     expect(validators.size).toBeGreaterThan(0);
