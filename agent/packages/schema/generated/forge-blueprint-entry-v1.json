@@ -78,5 +78,6 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "d6dfed7b02befb9f23df45ba6ab9c762814d01246fdb1d9cf1169f847d5231bc"
+  "x-bong-typebox-source-sha256": "d6dfed7b02befb9f23df45ba6ab9c762814d01246fdb1d9cf1169f847d5231bc",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }
