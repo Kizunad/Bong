@@ -18,12 +18,17 @@ import { validateWorldStateV1Contract } from "../src/world-state.js";
 import * as schemaExports from "../src/index.js";
 import {
   assertGeneratedSchemasFresh,
+  assertGeneratedSchemasDeterministic,
   GENERATED_DIR,
+  GENERATED_SCHEMA_GENERATION_VERSION_FIELD,
+  GENERATION_MANIFEST_PATH,
   getGeneratedSchemaDrift,
   getGeneratedSchemaSourceHashes,
+  renderGenerationManifest,
   renderGeneratedSchemas,
   writeGeneratedSchemas,
 } from "../src/generated-artifacts.js";
+import { SCHEMA_GENERATION_VERSION } from "../src/generation-manifest.js";
 import { GENERATED_SCHEMA_FILES, SCHEMA_REGISTRY } from "../src/schema-registry.js";
 
 const tempDirs: string[] = [];
@@ -192,6 +197,7 @@ describe("generated schema freshness gate", () => {
       changed: ["chat-message-v1.json"],
       unexpected: ["unexpected.json"],
       pinMismatches: [],
+      manifestMismatches: [],
     });
 
     writeGeneratedSchemas(outputDir);
@@ -208,14 +214,19 @@ describe("generated schema freshness gate", () => {
 
     delete artifact["x-bong-typebox-source-sha256"];
     writeFileSync(filePath, `${JSON.stringify(artifact, null, 2)}\n`);
-    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual(["chat-message-v1.json"]);
+    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual([
+      "chat-message-v1.json:source_sha256",
+    ]);
     expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
-      /source hash mismatch: chat-message-v1\.json/,
+      /source hash\/version pin mismatch: chat-message-v1\.json/,
     );
 
     artifact["x-bong-typebox-source-sha256"] = "stale";
+    artifact[GENERATED_SCHEMA_GENERATION_VERSION_FIELD] = SCHEMA_GENERATION_VERSION;
     writeFileSync(filePath, `${JSON.stringify(artifact, null, 2)}\n`);
-    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual(["chat-message-v1.json"]);
+    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual([
+      "chat-message-v1.json:source_sha256",
+    ]);
   });
 
   it("uses a stable generated snapshot even if runtime schema objects are mutated", () => {
@@ -232,6 +243,7 @@ describe("generated schema freshness gate", () => {
         changed: [],
         unexpected: [],
         pinMismatches: [],
+        manifestMismatches: [],
       });
       expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
     } finally {
@@ -324,6 +336,7 @@ describe("generated schema freshness gate", () => {
       changed: [],
       unexpected: [],
       pinMismatches: [],
+      manifestMismatches: [],
     });
     expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
   });
@@ -335,6 +348,62 @@ describe("generated schema freshness gate", () => {
         readFileSync(join(GENERATED_DIR, fileName), "utf8"),
       ) as Record<string, unknown>;
       expect(artifact["x-bong-typebox-source-sha256"], fileName).toBe(expectedHash);
+      expect(artifact[GENERATED_SCHEMA_GENERATION_VERSION_FIELD], fileName).toBe(
+        SCHEMA_GENERATION_VERSION,
+      );
     }
+  });
+
+  it("keeps a registry-derived source/version inventory in the committed manifest", () => {
+    const manifest = JSON.parse(renderGenerationManifest()) as {
+      manifest_version: number;
+      generation_version: string;
+      artifact_count: number;
+      artifacts: Array<Record<string, unknown>>;
+      stages: Array<Record<string, unknown>>;
+    };
+    expect(manifest.manifest_version).toBe(1);
+    expect(manifest.generation_version).toBe(SCHEMA_GENERATION_VERSION);
+    expect(manifest.artifact_count).toBe(Object.keys(GENERATED_SCHEMA_FILES).length);
+    expect(manifest.artifacts).toHaveLength(manifest.artifact_count);
+    expect(manifest.artifacts.every((artifact) =>
+      typeof artifact.source_sha256 === "string" &&
+      artifact.generation_version === SCHEMA_GENERATION_VERSION &&
+      artifact.production_reachable === false,
+    )).toBe(true);
+    expect(manifest.stages.map((stage) => stage.production_reachable)).not.toContain(true);
+    expect(readFileSync(GENERATION_MANIFEST_PATH, "utf8")).toBe(renderGenerationManifest());
+  });
+
+  it("fails closed when the manifest or generation version pin is missing", () => {
+    const outputDir = createTempDir();
+    writeGeneratedSchemas(outputDir);
+    rmSync(join(outputDir, "generation-manifest.json"));
+    const versionFile = join(outputDir, "chat-message-v1.json");
+    const artifact = JSON.parse(readFileSync(versionFile, "utf8")) as Record<string, unknown>;
+    delete artifact[GENERATED_SCHEMA_GENERATION_VERSION_FIELD];
+    writeFileSync(versionFile, `${JSON.stringify(artifact, null, 2)}\n`);
+
+    const drift = getGeneratedSchemaDrift(outputDir);
+    expect(drift.manifestMismatches).toEqual(["generation-manifest.json:missing"]);
+    expect(drift.pinMismatches).toContain("chat-message-v1.json:generation_version");
+    expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
+      /generation manifest mismatch/,
+    );
+  });
+
+  it("produces byte-identical schemas and manifest on repeated writes", () => {
+    const firstDir = createTempDir();
+    const secondDir = createTempDir();
+    writeGeneratedSchemas(firstDir);
+    writeGeneratedSchemas(secondDir);
+    const files = readdirSync(firstDir).sort();
+    expect(files).toEqual(readdirSync(secondDir).sort());
+    for (const fileName of files) {
+      expect(readFileSync(join(firstDir, fileName))).toEqual(
+        readFileSync(join(secondDir, fileName)),
+      );
+    }
+    expect(() => assertGeneratedSchemasDeterministic()).not.toThrow();
   });
 });

@@ -1,0 +1,4621 @@
+{
+  "manifest_version": 1,
+  "generation_version": "r6-p1-v1",
+  "generator": {
+    "package": "@bong/schema",
+    "package_version": "0.1.0",
+    "entrypoint": "agent/packages/schema/src/generate.ts",
+    "registry": "agent/packages/schema/src/schema-registry.ts",
+    "output_directory": "agent/packages/schema/generated"
+  },
+  "stages": [
+    {
+      "id": "typebox-to-json-schema",
+      "status": "declared",
+      "owner": "R6 P1",
+      "source": [
+        "src/*.ts",
+        "src/schema-registry.ts",
+        "src/generate.ts"
+      ],
+      "output": [
+        "generated/*.json"
+      ],
+      "production_reachable": false,
+      "note": "TypeBox registry 到 committed JSON Schema；由单入口 generate.ts 生成。"
+    },
+    {
+      "id": "json-schema-to-dist",
+      "status": "unwired",
+      "owner": "R6 P1 / 后续 schema 发布阶段",
+      "source": [
+        "generated/*.json"
+      ],
+      "output": [
+        "dist/*.js",
+        "dist/*.d.ts"
+      ],
+      "production_reachable": false,
+      "note": "dist 是包构建产物，当前不作为 server/client transport 的生产来源。"
+    },
+    {
+      "id": "proto-generated-mirrors",
+      "status": "unwired",
+      "owner": "R6 P3",
+      "source": [
+        "proto/bong/*.proto"
+      ],
+      "output": [
+        "server/src/schema/proto_gen.rs",
+        "client/build/generated"
+      ],
+      "production_reachable": false,
+      "note": "protobuf mirror 与生成代码仍由现有构建链维护，P1 不切换 producer。"
+    },
+    {
+      "id": "rust-converter",
+      "status": "unwired",
+      "owner": "R6 P3/P4",
+      "source": [
+        "server/src/schema/proto_convert.rs"
+      ],
+      "output": [
+        "server/src/schema/*_convert.rs"
+      ],
+      "production_reachable": false,
+      "note": "Rust conversion pin 留给 mirror/transport activation，不在 P1 宣称完成。"
+    },
+    {
+      "id": "java-bridge-router",
+      "status": "unwired",
+      "owner": "R6 P2/P3",
+      "source": [
+        "client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java",
+        "client/src/main/java/com/bong/client/network/ServerDataRouter.java"
+      ],
+      "output": [
+        "client/src/main/java/com/bong/client/network/*"
+      ],
+      "production_reachable": false,
+      "note": "Java bridge/router 仍沿用现有接收路径，P1 只冻结 generation 边界。"
+    },
+    {
+      "id": "craft-restore-guard-contract",
+      "status": "test-only",
+      "owner": "R6 P1（producer 由 R1、persistence 由 R3、consumer 由 R2）",
+      "source": [
+        "A-CS A-01..A-08 frozen artifacts",
+        "docs/plan-refactor-wire-s2c-v1.md"
+      ],
+      "output": [
+        "CraftRestoreGuard { owner_key, session_key, generation, phase_revision, restore_token }"
+      ],
+      "production_reachable": false,
+      "note": "只登记控制帧的 owner/字段边界；真实 frame→Restore→Store cutover 由 M-10 放行。"
+    }
+  ],
+  "artifact_count": 411,
+  "artifacts": [
+    {
+      "file": "agent-command-v1.json",
+      "registry_keys": [
+        "agentCommandV1"
+      ],
+      "source_sha256": "31efe3dedeac640c72ed751e06af5378d15bbb0f2c6a005e04b667ede7ad3ce4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "agent-ui-response-payload-v1.json",
+      "registry_keys": [
+        "agentUiResponsePayloadV1"
+      ],
+      "source_sha256": "737a7e6e44c46a29693024b13d93d3c09e17dc72cc7b9301025457e9842368f7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "agent-world-model-envelope-v1.json",
+      "registry_keys": [
+        "agentWorldModelEnvelopeV1"
+      ],
+      "source_sha256": "d613c7875f6a0b4eef6be021c9741f64394559ba1b00ea39da782ddbdf457901",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "agent-world-model-snapshot-v1.json",
+      "registry_keys": [
+        "agentWorldModelSnapshotV1"
+      ],
+      "source_sha256": "e271863871b99271d86ab5ded5e21d0777512b63a942bc5b5dbdac764aa3cc71",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "aging-event-v1.json",
+      "registry_keys": [
+        "agingEventV1"
+      ],
+      "source_sha256": "e949c84256ff1233722b9d1b59c457f2ec1d225adfabf96b9d1d0b362fb6c992",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-contamination-level-v1.json",
+      "registry_keys": [
+        "alchemyContaminationLevelV1"
+      ],
+      "source_sha256": "764424c385fd3718f23628d15f810202401c173a9cabb074256d64d14d1d8962",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-insight-v1.json",
+      "registry_keys": [
+        "alchemyInsightV1"
+      ],
+      "source_sha256": "8992433370607f4e52b47e9be28dba92db09019d07fe7aad3da76a383c5c9f3b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-intervention-result-v1.json",
+      "registry_keys": [
+        "alchemyInterventionResultV1"
+      ],
+      "source_sha256": "e9d6e7bd4c0dd4b520beff192a87f941b004c6e87804a2b2f2e75d46b323190a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-intervention-v1.json",
+      "registry_keys": [
+        "alchemyInterventionV1"
+      ],
+      "source_sha256": "d9378531154a463d0f802c3dd5baab8c34f0e643d950240133eda8f645f3dbbf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-outcome-bucket.json",
+      "registry_keys": [
+        "alchemyOutcomeBucket"
+      ],
+      "source_sha256": "a812e4e05183903c6c0681b8a57a426fa9e339e350f2fbeff78557b7a2fbc56b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-recipe-entry-v1.json",
+      "registry_keys": [
+        "alchemyRecipeEntryV1"
+      ],
+      "source_sha256": "dbb5ac04099478ee8213d344aff281d066107386a36f049dab5e428f5bf685a7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-session-end-v1.json",
+      "registry_keys": [
+        "alchemySessionEndV1"
+      ],
+      "source_sha256": "a9c61be0ef03ff119f3a69a6f61ad9f15a204303f50b001b3b47bf8b8552b13b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-session-start-v1.json",
+      "registry_keys": [
+        "alchemySessionStartV1"
+      ],
+      "source_sha256": "361ec361a7ea4f277008aaa93c556b0ed759e89697f3e28e5012a0faa9b53e0f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "alchemy-stage-hint-v1.json",
+      "registry_keys": [
+        "alchemyStageHintV1"
+      ],
+      "source_sha256": "533a0fa4caea5547eae1d4ff6beb8a4347749cb9df8126a79131e6d0428caa3c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "anqi-hud-v1.json",
+      "registry_keys": [
+        "anqiHudV1"
+      ],
+      "source_sha256": "575d31dd571260541255c00b3c1c45bfe7e314c6986ebce672cfa3c73829b9b4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "anticheat-report-v1.json",
+      "registry_keys": [
+        "antiCheatReportV1"
+      ],
+      "source_sha256": "45675cfa53d5851f79b79be55c5b68f1f2d566a5f3aa53f8ec5ac891541666c5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "armor-durability-changed-v1.json",
+      "registry_keys": [
+        "armorDurabilityChangedV1"
+      ],
+      "source_sha256": "f14aa4e209bcb1273a9dbc1bb85e2ccf9ccdc64194c6c2a187b46f7ceac21b0f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "audio-event-v1.json",
+      "registry_keys": [
+        "audioEventV1"
+      ],
+      "source_sha256": "eecb44bb3258f0ef4c4a6e7c31840743fd0a256811a755b8b1afa49dacb92c76",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-skill-event-v1.json",
+      "registry_keys": [
+        "baomaiSkillEventV1"
+      ],
+      "source_sha256": "21a05885bc5d562f0050506a54c609421604df1c695881363f194986b12bd211",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-skill-id-v1.json",
+      "registry_keys": [
+        "baomaiSkillIdV1"
+      ],
+      "source_sha256": "cbfbe57939bf76767c38b00d8e1fddee5b72f351ef80f8376c0796449ec91b23",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-v4-iron-cocoon-stage-up-v1.json",
+      "registry_keys": [
+        "baomaiV4IronCocoonStageUpV1"
+      ],
+      "source_sha256": "4c8693515f120a414fe326162e01b214a737eb1d0e43dc4a92977dc463bf0e28",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-v4-resonance-lock-end-v1.json",
+      "registry_keys": [
+        "baomaiV4ResonanceLockEndV1"
+      ],
+      "source_sha256": "57eb024951c2bc3786e672b2267d2a384192c65a9a34b404f2c38af89a81c7c4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-v4-resonance-lock-v1.json",
+      "registry_keys": [
+        "baomaiV4ResonanceLockV1"
+      ],
+      "source_sha256": "e2ef9811b013befda5e29f5644cf9baab19b49d77cb568c8e35b84f5ae4ba564",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-v4-scar-circuit-broken-v1.json",
+      "registry_keys": [
+        "baomaiV4ScarCircuitBrokenV1"
+      ],
+      "source_sha256": "ebddbaa48428ae718cbfbb46d8a661d60c1c60e139c67ee09fd60c1f54aa5d80",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "baomai-v4-scar-circuit-formed-v1.json",
+      "registry_keys": [
+        "baomaiV4ScarCircuitFormedV1"
+      ],
+      "source_sha256": "8283dbf68e9937a15b636badd6cecdab79f0f7287767785bdb89ad881d4a5d9c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "barrier-geometry-v1.json",
+      "registry_keys": [
+        "barrierGeometryV1"
+      ],
+      "source_sha256": "7249230f0db223aa5691d3d07e480b4d1112c6486e6689c841a0d085689225ec",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "biography-entry-v1.json",
+      "registry_keys": [
+        "biographyEntryV1"
+      ],
+      "source_sha256": "b548ecb2cec84d8733d13b09429cff5087659cabb0b2ed95506cf1ca1afbc9c4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "bone-coin-tick-v1.json",
+      "registry_keys": [
+        "boneCoinTickV1"
+      ],
+      "source_sha256": "02e2f4b4f254128c2a8736aa23d4281df3325b91774c8c128395225ada871b01",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "botany-ecology-snapshot-v1.json",
+      "registry_keys": [
+        "botanyEcologySnapshotV1"
+      ],
+      "source_sha256": "f083f4df358ef861f23a13150e858c4e1a270530be871c1098be05bd6f680380",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "botany-model-overlay-v1.json",
+      "registry_keys": [
+        "botanyModelOverlayV1"
+      ],
+      "source_sha256": "7585c38844408204fba7530539bce9b46cd405423ea4e19fa1f2f540c5ce1cbe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "botany-plant-v2-render-profile-v1.json",
+      "registry_keys": [
+        "botanyPlantV2RenderProfileV1"
+      ],
+      "source_sha256": "6fad77b0db1c3435f509def5becdb2fd43b0a8e97c5abfc252a97fadc88a7741",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "breakthrough-cinematic-event-v1.json",
+      "registry_keys": [
+        "breakthroughCinematicEventV1"
+      ],
+      "source_sha256": "5728d9ee2db2052225823bfc85e08034c0f2f0f6cb4c9bb223f8381b63c77ec3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "breakthrough-event-v1.json",
+      "registry_keys": [
+        "breakthroughEventV1"
+      ],
+      "source_sha256": "58fffd6453cc29c24cceda04269d77b135799360ce6b2ad007c241de2bba6df5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "burst-meridian-event-v1.json",
+      "registry_keys": [
+        "burstMeridianEventV1"
+      ],
+      "source_sha256": "7575790a5411ea993764953144f51eefb54d90303051e64bed4b9955a0a47e62",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "calamity-intent-v1.json",
+      "registry_keys": [
+        "calamityIntentV1"
+      ],
+      "source_sha256": "5429239b1a66a1f6bbd894b0eaa8beca078141b952f8a949cf8774956ab6698a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "calamity-kind-v1.json",
+      "registry_keys": [
+        "calamityKindV1"
+      ],
+      "source_sha256": "1ddb7e482de913c27b79db222973133672510b2cfa781c52edf8bf5121d462f3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "chat-message-v1.json",
+      "registry_keys": [
+        "chatMessageV1"
+      ],
+      "source_sha256": "e30a45c6a8efdf1f03f3b56da61056833e5df34ff73c276b417380dafc8e730e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "chat-signal.json",
+      "registry_keys": [
+        "chatSignal"
+      ],
+      "source_sha256": "f71e6617a25621c5cdbb51f4627dc46321d69c54b393569b0af5694fc88b137f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-event-alert-v1.json",
+      "registry_keys": [
+        "clientPayloadEventAlertV1"
+      ],
+      "source_sha256": "37d4e0f648bd64538508a7bc88dd42c8b0dc3a27b461c63589cfb5c5bdec0ab9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-heartbeat-v1.json",
+      "registry_keys": [
+        "clientPayloadHeartbeatV1"
+      ],
+      "source_sha256": "aa28fcedb7f9f10b05b177748ee02744414d756d35d53ad82db6beb7dddcb87e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-locust-swarm-warning-v1.json",
+      "registry_keys": [
+        "clientPayloadLocustSwarmWarningV1"
+      ],
+      "source_sha256": "39e185d22feab1e0c50b24138fbdcf39f43e39dd530815c1d7f117013bf115a8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-narration-v1.json",
+      "registry_keys": [
+        "clientPayloadNarrationV1"
+      ],
+      "source_sha256": "a5d4eeb3043a9811d71024e03ee84d27813c44ed17e5cbf4857439aebf56348c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-player-state-v1.json",
+      "registry_keys": [
+        "clientPayloadPlayerStateV1"
+      ],
+      "source_sha256": "15182a71b7d0c75b9c13a1aa57bc9bf0f45acce0d1523f721636be824b860242",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-v1.json",
+      "registry_keys": [
+        "clientPayloadV1"
+      ],
+      "source_sha256": "73d57100d8e4960f5781030b659eba12c3027f0b24fb34626a46879af3293dac",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-welcome-v1.json",
+      "registry_keys": [
+        "clientPayloadWelcomeV1"
+      ],
+      "source_sha256": "bbe83759776cf8dd94194f61ad295f26c93a549f368cc90cbabf36b39211c168",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-payload-zone-info-v1.json",
+      "registry_keys": [
+        "clientPayloadZoneInfoV1"
+      ],
+      "source_sha256": "680f2a74b03de713404b194211d8baef3660e9aca84e65d80ea43539fd9e1b5e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-abort-tribulation-v1.json",
+      "registry_keys": [
+        "clientRequestAbortTribulationV1"
+      ],
+      "source_sha256": "6834f1d21e6f98f21cdcc28616ac0ec74361b66b56a30f5a94f2f0f479b3cd6a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-feed-slot-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyFeedSlotV1"
+      ],
+      "source_sha256": "02715e2f6d7d3d61a236b33cac7f87d897364631e0b2a53a596f10c18f70ce1f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-furnace-place-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyFurnacePlaceV1"
+      ],
+      "source_sha256": "1024a4fab8a184aad801b1a0de61fd0c116bf1d39192ffd26bf993f97ac989f3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-ignite-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyIgniteV1"
+      ],
+      "source_sha256": "71421046e330d02acab0469edca87a8cc798e44997ea1ded4fbf29a2c43e1f27",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-intervention-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyInterventionV1"
+      ],
+      "source_sha256": "31f07208f0d3908f4e17b6507276f8405b972dfc870d026e00dbc3f4ca9e304e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-learn-recipe-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyLearnRecipeV1"
+      ],
+      "source_sha256": "271db02c11c1278f928f1081f10654d9606e098da195615367d468e809f0015a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-open-furnace-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyOpenFurnaceV1"
+      ],
+      "source_sha256": "fc1f5f1d985234dad7e6221c888dd1b7eb027b5a92d016445ad0caaec851dec8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-place-incense-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyPlaceIncenseV1"
+      ],
+      "source_sha256": "530fd45b2ef6cad3a413363e789ed8722f7b9d8e354adb688baf4daf4de87af5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-take-back-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyTakeBackV1"
+      ],
+      "source_sha256": "b25521fce58ce7e66c1b1f6dda32d663a889c9e8a5a81435aaf0154b174fb4ef",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-take-pill-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyTakePillV1"
+      ],
+      "source_sha256": "53c8776244ac1fb7e5aee3d7ec0ab0bfecbe4a92cc2b6187aec72d19e49a1a1a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-alchemy-turn-page-v1.json",
+      "registry_keys": [
+        "clientRequestAlchemyTurnPageV1"
+      ],
+      "source_sha256": "4e317c4ee5cea6ad7c0c3503385d64d677171319338671bf3a7bf3c69c980745",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-block-place-v1.json",
+      "registry_keys": [
+        "clientRequestBlockPlaceV1"
+      ],
+      "source_sha256": "1ef0d5c826c8a6788bed56ebbd524e1ed5072d360544738a6c705d28c1511d4b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-botany-harvest-v1.json",
+      "registry_keys": [
+        "clientRequestBotanyHarvestV1"
+      ],
+      "source_sha256": "3ecda798d94d0719751b6cb586dc2c6a28328d7442c74e6e544e20525c07c934",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-breakthrough-v1.json",
+      "registry_keys": [
+        "clientRequestBreakthroughV1"
+      ],
+      "source_sha256": "930ad474a7adffccd54d195572f78321ff2f0d42bed700db1e19ba859c2e9e02",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-cancel-extract-v1.json",
+      "registry_keys": [
+        "clientRequestCancelExtractV1"
+      ],
+      "source_sha256": "21aee10bf92ec0f8cc568297dc996eeceebe8b707db4c15bc17a21c6bb8e691f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-cancel-search-v1.json",
+      "registry_keys": [
+        "clientRequestCancelSearchV1"
+      ],
+      "source_sha256": "16faaebe8f3e18798c61a1b4579eaa01f30ebd73318faf66bf4b1399b2c278d6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-coffin-enter-v1.json",
+      "registry_keys": [
+        "clientRequestCoffinEnterV1"
+      ],
+      "source_sha256": "e95a8a8c4e671df0d82e264cee08dca2c0fc9de8e759c31435e4bfeefb8c8027",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-coffin-leave-v1.json",
+      "registry_keys": [
+        "clientRequestCoffinLeaveV1"
+      ],
+      "source_sha256": "7da89fbcb6e2092c84a2390490d4192985ef56233ee1447a87f1d24a7eb8975b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-coffin-open-v1.json",
+      "registry_keys": [
+        "clientRequestCoffinOpenV1"
+      ],
+      "source_sha256": "7a7057df322aa1cafb571a1c966e2d9af800ceaee1c517bf3b8203bb14b9a343",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-coffin-place-v1.json",
+      "registry_keys": [
+        "clientRequestCoffinPlaceV1"
+      ],
+      "source_sha256": "4f0390fbaee82708e0c91f4d109d3c7f129939db3811fa6ee8c23ede2163da3f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-combat-create-new-character-v1.json",
+      "registry_keys": [
+        "clientRequestCombatCreateNewCharacterV1"
+      ],
+      "source_sha256": "1b3cff46f80055f180d5c2bfd67fc27daba94fd6c7dfa46067b20ea56d5f0bef",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-combat-reincarnate-v1.json",
+      "registry_keys": [
+        "clientRequestCombatReincarnateV1"
+      ],
+      "source_sha256": "bfccc6127b84e71ea5adeab3bbcf6343b60a37492924230f8262fcafe515323b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-combat-terminate-v1.json",
+      "registry_keys": [
+        "clientRequestCombatTerminateV1"
+      ],
+      "source_sha256": "68e55a2b2a0c0086999a7e605a90b958c35029770df319add990e582102c0fb7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-duo-she-v1.json",
+      "registry_keys": [
+        "clientRequestDuoSheV1"
+      ],
+      "source_sha256": "b457cbb0c3f4cd1610ccce4e99ae95551f8251a4f7ffe02df4e5073cec381075",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-equip-false-skin-v1.json",
+      "registry_keys": [
+        "clientRequestEquipFalseSkinV1"
+      ],
+      "source_sha256": "e43d2a57b9303638b01030e5ccd6bc77db84634549e52e7b188bb780edd10f4f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-blueprint-turn-page-v1.json",
+      "registry_keys": [
+        "clientRequestForgeBlueprintTurnPageV1"
+      ],
+      "source_sha256": "8b17e80a5b7cd82f5e7d825d89adc6c51396a6b8f9f3d770add023e79804127e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-consecration-inject-v1.json",
+      "registry_keys": [
+        "clientRequestForgeConsecrationInjectV1"
+      ],
+      "source_sha256": "114be8ac23f83c5c66cf6af992e1543620e22acccc6a4f7a5ed3774dc4d99099",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-false-skin-v1.json",
+      "registry_keys": [
+        "clientRequestForgeFalseSkinV1"
+      ],
+      "source_sha256": "5cf31ebfefaa5c426d4e26407154cedfe46c17c5bab4c76e6cfd635ad4d75de4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-inscription-scroll-v1.json",
+      "registry_keys": [
+        "clientRequestForgeInscriptionScrollV1"
+      ],
+      "source_sha256": "ca08ae467e152c7a9ffadf585715c1f0fce6555849aeb05660061704c4090bea",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-learn-blueprint-v1.json",
+      "registry_keys": [
+        "clientRequestForgeLearnBlueprintV1"
+      ],
+      "source_sha256": "1ef4c7ed161a784f3661e2b53c2c124c130cc66305cfa72ea2774b2295fbdb79",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-start-session-v1.json",
+      "registry_keys": [
+        "clientRequestForgeStartSessionV1"
+      ],
+      "source_sha256": "02e939a29662c6b85dd106b4833fbde4ea13ee7b0056bf074d6dc065453c32b1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-station-place-v1.json",
+      "registry_keys": [
+        "clientRequestForgeStationPlaceV1"
+      ],
+      "source_sha256": "66040d103eb1ff14cd3ef93615cb2f95cbecd362e39dde763ace6e5953709995",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-step-advance-v1.json",
+      "registry_keys": [
+        "clientRequestForgeStepAdvanceV1"
+      ],
+      "source_sha256": "5a5becb6cf9e83a17316dd20e7b9b1f8901c0b4183650d99b642cec7747053cc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-tempering-hit-v1.json",
+      "registry_keys": [
+        "clientRequestForgeTemperingHitV1"
+      ],
+      "source_sha256": "2895007fa2b5c8c2123170a206620bad0ada52bf87fa21d92fb1c936408c4cf6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-forge-v1.json",
+      "registry_keys": [
+        "clientRequestForgeV1"
+      ],
+      "source_sha256": "e7de738caf013d6c11acc82642f8656535cd3065090cc6cbf44193e443bd5564",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-freshness-probe-v1.json",
+      "registry_keys": [
+        "clientRequestFreshnessProbeV1"
+      ],
+      "source_sha256": "583d82e47a52c12eeb9bed9012a5221205a64dcd208367fdc45f34c8b5160a3e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-heart-demon-decision-v1.json",
+      "registry_keys": [
+        "clientRequestHeartDemonDecisionV1"
+      ],
+      "source_sha256": "5b8c26994ebb93c33018194fd84330115eb589a3a37e2b3891a5805a23cdb39c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-insight-decision-v1.json",
+      "registry_keys": [
+        "clientRequestInsightDecisionV1"
+      ],
+      "source_sha256": "868b22f65490233b8efeea136bcc3d8df13adad040a72b202c90225322d42164",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-mineral-probe-v1.json",
+      "registry_keys": [
+        "clientRequestMineralProbeV1"
+      ],
+      "source_sha256": "e489caccc2037f24ac3e3ee5d84cab212ccf7ba218d795b72eaa747de897d0da",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-movement-action-v1.json",
+      "registry_keys": [
+        "clientRequestMovementActionV1"
+      ],
+      "source_sha256": "8fea125eef3dc779c518c11027c9b9585a75fbfd462762aed85a3879558c634f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-npc-dialogue-choice-v1.json",
+      "registry_keys": [
+        "clientRequestNpcDialogueChoiceV1"
+      ],
+      "source_sha256": "8a16c3b6d483a19578a9cbb5fa70fc59eb690e9df0f096a6f8dddb0454729f64",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-npc-inspect-v1.json",
+      "registry_keys": [
+        "clientRequestNpcInspectV1"
+      ],
+      "source_sha256": "186bcd352c2699a19d7e7aab73c06cdb93a98cbfd49b4ec49d45460a50d5e13c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-npc-trade-v1.json",
+      "registry_keys": [
+        "clientRequestNpcTradeV1"
+      ],
+      "source_sha256": "8dc186c5dc6a5a0b34b21c4fa2344cba58228c7b6b4e9d296d5309932d1e2369",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-qi-color-inspect-v1.json",
+      "registry_keys": [
+        "clientRequestQiColorInspectV1"
+      ],
+      "source_sha256": "4ff0154626aafe4c5ac2e52ff11b80c26afd5ce0937f2fc401e258243836c907",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-quick-slot-bind-v1.json",
+      "registry_keys": [
+        "clientRequestQuickSlotBindV1"
+      ],
+      "source_sha256": "dc03d92cefbbc75211bd1b088d4217b3023f3a70e055f741dbd0a2f0937272f6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-self-antidote-v1.json",
+      "registry_keys": [
+        "clientRequestSelfAntidoteV1"
+      ],
+      "source_sha256": "1d31badf886d6bf3510e455a0d18ab7dd867553474524934ccbd52179dc58e2b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-set-meridian-target-v1.json",
+      "registry_keys": [
+        "clientRequestSetMeridianTargetV1"
+      ],
+      "source_sha256": "a575023f79f1b0717cf15a820452e67404d3a34e63b7646a9e29e5220f1b7686",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-skill-bar-bind-v1.json",
+      "registry_keys": [
+        "clientRequestSkillBarBindV1"
+      ],
+      "source_sha256": "8745e2e94bb1a3897884bb30fec0e34dded1c4964dafd8d03204dde8e0b81dce",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-skill-bar-cast-v1.json",
+      "registry_keys": [
+        "clientRequestSkillBarCastV1"
+      ],
+      "source_sha256": "ad06b94ee38e896236f3f7a27c89700cbf4c1343e7346f968f97ef2709acf4b8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-skill-config-intent-v1.json",
+      "registry_keys": [
+        "clientRequestSkillConfigIntentV1"
+      ],
+      "source_sha256": "ae2778ab8d0b4bc43898c7b41c1a29dd28d1567473ef9387e5a15a65d94cba8d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-sparring-invite-response-v1.json",
+      "registry_keys": [
+        "clientRequestSparringInviteResponseV1"
+      ],
+      "source_sha256": "c8e5e98fe82b14a4b34a86307e2feca764b5233a8efd32220a97175badb549b1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-spirit-niche-repair-v1.json",
+      "registry_keys": [
+        "clientRequestSpiritNicheRepairV1"
+      ],
+      "source_sha256": "3a352391c85704455fa7d87ef56f2d30e763b50ca62e255fed26674a3388defa",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-start-du-xu-v1.json",
+      "registry_keys": [
+        "clientRequestStartDuXuV1"
+      ],
+      "source_sha256": "99a1e7d80c1baea77bd488981b35b2734126f4e070a71dbbec95e4ff87b363ec",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-start-extract-v1.json",
+      "registry_keys": [
+        "clientRequestStartExtractV1"
+      ],
+      "source_sha256": "4703934d9e348be7a179af102c50ee2bf1b52290d84efad2fcb85349b63193b7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-start-search-v1.json",
+      "registry_keys": [
+        "clientRequestStartSearchV1"
+      ],
+      "source_sha256": "18a3b8c4728f1fd27e86c0ba2b9e84124c12a7f90be58783ce4cb478a24a9b8a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-trade-offer-response-v1.json",
+      "registry_keys": [
+        "clientRequestTradeOfferResponseV1"
+      ],
+      "source_sha256": "d9410451164c16814d1a3f38a973c6a5990bfa183ff4c573946b98ec93dacc46",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-trade-offer-v1.json",
+      "registry_keys": [
+        "clientRequestTradeOfferV1"
+      ],
+      "source_sha256": "b03fa4a4c4fe6a11d0c77f221bb89715fd3f81daaefdcc0b2996e1bf95a97731",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-use-life-core-v1.json",
+      "registry_keys": [
+        "clientRequestUseLifeCoreV1"
+      ],
+      "source_sha256": "e3671a1aa118a99c985e17c22b0905771f7b3aa516b96f17f61e51f6e9ae4fc1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-use-quick-slot-v1.json",
+      "registry_keys": [
+        "clientRequestUseQuickSlotV1"
+      ],
+      "source_sha256": "876e8e99386b74ad4bdca8bc3704781fc2af223afc83d31ad58d78a0f5465943",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-v1.json",
+      "registry_keys": [
+        "clientRequestV1"
+      ],
+      "source_sha256": "9f3aace0c74e85dae362cf80505cfa2fc77ef0270b6d9e943cce4f5b76ad197d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-void-action-v1.json",
+      "registry_keys": [
+        "clientRequestVoidActionV1"
+      ],
+      "source_sha256": "50e756cabd283b2788a14590987afbaf56553e28f20518d5cd24682365170830",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-zhenfa-disarm-v1.json",
+      "registry_keys": [
+        "clientRequestZhenfaDisarmV1"
+      ],
+      "source_sha256": "21baec1641a38fc4b7bf5a848433b28ed2dda7f15fd57a0e70843866ce6a0292",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-zhenfa-place-v1.json",
+      "registry_keys": [
+        "clientRequestZhenfaPlaceV1"
+      ],
+      "source_sha256": "813bda6018bb5b2b8a5d6cfaa57de77c19441886df03c722dec808165db53087",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "client-request-zhenfa-trigger-v1.json",
+      "registry_keys": [
+        "clientRequestZhenfaTriggerV1"
+      ],
+      "source_sha256": "66242dc6e9c835b24c1a84bffe766b9e882b8cc0883475387b9da30b738c1954",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "coffin-opened-v1.json",
+      "registry_keys": [
+        "coffinOpenedV1"
+      ],
+      "source_sha256": "1d2e7ac4236e2fb6b7cc4116ec918d30adb54e9d8b50491a4490ae2206facb61",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "coffin-state-v1.json",
+      "registry_keys": [
+        "coffinStateV1"
+      ],
+      "source_sha256": "ad8e07c7d05f9e8281506d0208cee2aef2f3ac42e244c7e84485031b128f358b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "combat-hud-state-v1.json",
+      "registry_keys": [
+        "combatHudStateV1"
+      ],
+      "source_sha256": "d4d7e22ddc5e6128450997d3f69fc4817935fb35a8c91a2209bc2d8952c1cb66",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "combat-realtime-event-v1.json",
+      "registry_keys": [
+        "combatRealtimeEventV1"
+      ],
+      "source_sha256": "0656dc5c3cceddac77e2336fdd659da01c165a9fd7f95dded396b17789762c64",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "combat-summary-v1.json",
+      "registry_keys": [
+        "combatSummaryV1"
+      ],
+      "source_sha256": "46b1e314a97a6f4262fb551998c8cdd79196163f7467fe3b18a0d32ed73b8980",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "container-state-v1.json",
+      "registry_keys": [
+        "containerStateV1"
+      ],
+      "source_sha256": "60f6b04407f8cee04907c30547962e800decb40c011b5168e10c09bb817be717",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "craft-outcome-v1.json",
+      "registry_keys": [
+        "craftOutcomeV1"
+      ],
+      "source_sha256": "0f45fa66d51e723a51a5cd9fbf9a2803afe567c8cfcc30a116c9507a57df47c2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cultivation-death-v1.json",
+      "registry_keys": [
+        "cultivationDeathV1"
+      ],
+      "source_sha256": "a4671245183d6b6599f392f9a5135e98182dbf378db980911cd32e29c89fbde6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "daoxiang-spawned-v1.json",
+      "registry_keys": [
+        "daoxiangSpawnedV1"
+      ],
+      "source_sha256": "84440310fb4760c09023d78b92616181e5ae27e2798c2788946ef66a204b557f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "death-cinematic-s2c-v1.json",
+      "registry_keys": [
+        "deathCinematicS2cV1"
+      ],
+      "source_sha256": "3f0929e70981d71bc59cdde5484f784cd9a3f171cf1405de3e280d768a6365a8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "death-insight-request-v1.json",
+      "registry_keys": [
+        "deathInsightRequestV1"
+      ],
+      "source_sha256": "241b4f437618354b29f46eb4d972a7e5dc6159364fc34ae50525a82c9bbab478",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "death-registry-v1.json",
+      "registry_keys": [
+        "deathRegistryV1"
+      ],
+      "source_sha256": "5b4e5363727261158847a7d842f5cc58fb5880ed070722607a100024996db25d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "deceased-exposure-snapshot-v1.json",
+      "registry_keys": [
+        "deceasedExposureSnapshotV1"
+      ],
+      "source_sha256": "5f5007d7a48cf7c0ed796572b2d10188d63cfc94b26cacdfd7f1ee376e5736cf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "deceased-index-entry-v1.json",
+      "registry_keys": [
+        "deceasedIndexEntryV1"
+      ],
+      "source_sha256": "e2367b2aaf14bd989c40ec33d47bcbd70ffd5e34b8b223d1ba0f6c8f4d7c6380",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "deceased-renown-snapshot-v1.json",
+      "registry_keys": [
+        "deceasedRenownSnapshotV1"
+      ],
+      "source_sha256": "1a9fd286466468c4b5e43eca34e4e98541cab3546e907d962c39122996d10bca",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "deceased-snapshot-v1.json",
+      "registry_keys": [
+        "deceasedSnapshotV1"
+      ],
+      "source_sha256": "6d8495fb61b9ba319d184075c655ef41172b792daf347abfff14191fea6c7038",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "deceased-social-snapshot-v1.json",
+      "registry_keys": [
+        "deceasedSocialSnapshotV1"
+      ],
+      "source_sha256": "34ad8b0e8788a7de57d6bfdaf0e624600e2b201f61404a1bf1c7cb6163b55722",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "du-xu-outcome-v1.json",
+      "registry_keys": [
+        "duXuOutcomeV1"
+      ],
+      "source_sha256": "f937b039aa8f59c91449915d8bd78f80cf1d0abc8dde6b3b278b51902d156fcf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "du-xu-result-v1.json",
+      "registry_keys": [
+        "duXuResultV1"
+      ],
+      "source_sha256": "e1d8aa88540b090eff61082f352f995a2636206b3691575161749e3623a0e97e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-antidote-result-event-v1.json",
+      "registry_keys": [
+        "antidoteResultEventV1"
+      ],
+      "source_sha256": "a7546429cf2ddfd08c129b30a8eeba7ad26f827c6d5a27aab3ae119bb71b29e2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-antidote-result-v1.json",
+      "registry_keys": [
+        "antidoteResultV1"
+      ],
+      "source_sha256": "202cbc73cf1e1e997a41817d784d2d9ea75545c6a68e46a89794d7deb9b80d15",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-obfuscation-state-v1.json",
+      "registry_keys": [
+        "duguObfuscationStateV1"
+      ],
+      "source_sha256": "311b2ac6d7e17b8d28b275a8ba13ce5515affa342eab62575ee6c095e1082f9d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-poison-progress-event-v1.json",
+      "registry_keys": [
+        "duguPoisonProgressEventV1"
+      ],
+      "source_sha256": "dc5c074d2159a9529e33eb6980696a9c8fb23a1099ad36e8a45ecc0010e96c98",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-poison-state-v1.json",
+      "registry_keys": [
+        "duguPoisonStateV1"
+      ],
+      "source_sha256": "12c94a411d882a6d68031052d17a427372611a34d09e4338ec924055da02217a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-revealed-event-v1.json",
+      "registry_keys": [
+        "duguRevealedEventV1"
+      ],
+      "source_sha256": "8ee44bad766e6923156908197f9292a06f87dd2c5e0d7016ecfe052c0b517207",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-reverse-triggered-v1.json",
+      "registry_keys": [
+        "duguReverseTriggeredV1"
+      ],
+      "source_sha256": "15c13a595b4eb4ce6a9e314133775465ce7cf08f31b27e2bd6e7702998007bd9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-self-cure-progress-v1.json",
+      "registry_keys": [
+        "duguSelfCureProgressV1"
+      ],
+      "source_sha256": "25b855bce121845bf21470c2dd4626f6a102aec20be049d67117053b3f9eb4a1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-taint-tier-v1.json",
+      "registry_keys": [
+        "duguTaintTierV1"
+      ],
+      "source_sha256": "75890ab2cedcf39f01c6eff605ce481e53ae63b9378281fc3c1d321021c417a0",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-v2-skill-cast-v1.json",
+      "registry_keys": [
+        "duguV2SkillCastV1"
+      ],
+      "source_sha256": "1efe3ef6e7345ac13e5d6436fbe538628302f1cfa438af46dc3109229741d2f3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "dugu-v2-skill-id-v1.json",
+      "registry_keys": [
+        "duguV2SkillIdV1"
+      ],
+      "source_sha256": "1b1215ebd26cff5002e27b9d49d5ecf41313a4ace7cf9466bd56ec1943887126",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "duo-she-event-v1.json",
+      "registry_keys": [
+        "duoSheEventV1"
+      ],
+      "source_sha256": "b206010858ec41bbc21b641cafdd8bf9282b57486aca5f0b1a8df49a9022154c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "elder-encounter-event-v1.json",
+      "registry_keys": [
+        "elderEncounterEventV1"
+      ],
+      "source_sha256": "cd84a463eaa30d49391dfd42cf96b5d7da4789bb1777c7529e3a45c0fff1e5af",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "environment-effect-v1.json",
+      "registry_keys": [
+        "environmentEffectV1"
+      ],
+      "source_sha256": "201fb5a83f3848e64ed9ddb234e759127f709f2dc1b02cada00cbae34bb1e718",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "exposure-kind-v1.json",
+      "registry_keys": [
+        "exposureKindV1"
+      ],
+      "source_sha256": "4b63797005cf030e236187fe83959c6b3f2ab12aec863341b8863b73bfa4b1f4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "extract-aborted-v1.json",
+      "registry_keys": [
+        "extractAbortedV1"
+      ],
+      "source_sha256": "848c9cfee0017f4630af9b6a66b297b6af14ce29949aca79aad422bda670ad91",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "extract-completed-v1.json",
+      "registry_keys": [
+        "extractCompletedV1"
+      ],
+      "source_sha256": "b6f0195f9b4f31ba8ad2966ba9f1876f4637d0802a2be1dd406722714086dc90",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "extract-failed-v1.json",
+      "registry_keys": [
+        "extractFailedV1"
+      ],
+      "source_sha256": "a2b48a18fefe6bdbfeefb2ac55a29a9a34da326bfa46539e7c0ec02b25cac637",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "extract-progress-v1.json",
+      "registry_keys": [
+        "extractProgressV1"
+      ],
+      "source_sha256": "0979813f3b55024491786ebe8f1d0a709edb217e555832d6806bba8a2d0002de",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "extract-started-v1.json",
+      "registry_keys": [
+        "extractStartedV1"
+      ],
+      "source_sha256": "55acd83af3b8cdd21d507ed5f8a23cd0b87f1c7a3f6f0b5b5828fb787ea91b7b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "faction-event-kind-v1.json",
+      "registry_keys": [
+        "factionEventKindV1"
+      ],
+      "source_sha256": "930216a35291a6a08c793970846b83dbd01eb71f567008dcf136740a070683ad",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "faction-event-v1.json",
+      "registry_keys": [
+        "factionEventV1"
+      ],
+      "source_sha256": "87ca1e9924b8f1bc4ef77568ab9e8b4489cfe5d752f7be705858630c4a4b176a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "faction-id-v1.json",
+      "registry_keys": [
+        "factionIdV1"
+      ],
+      "source_sha256": "701ac55a10c1d9c6db2e6cea4240c269901857d3dfbf6017ade01c5e355b2c9c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "faction-membership-snapshot-v1.json",
+      "registry_keys": [
+        "factionMembershipSnapshotV1"
+      ],
+      "source_sha256": "bb049cee69e6f88a47ca6fb5315de1817814e217429c52023fd4311b7d107a63",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "faction-war-event-v1.json",
+      "registry_keys": [
+        "factionWarEventV1"
+      ],
+      "source_sha256": "1678c484cac151b450a6b4418a985f070a27c1e3f19ece8225ea65db5494fe7f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "false-skin-kind-v1.json",
+      "registry_keys": [
+        "falseSkinKindV1"
+      ],
+      "source_sha256": "7cf8a16539d9c562237e8d5cefb6d28c60fe8853bba4bc010861ed9890585485",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "false-skin-stack-state-v1.json",
+      "registry_keys": [
+        "falseSkinStackStateV1"
+      ],
+      "source_sha256": "e231f1bd85a563e0e09d77b7e11d202a388e12d9ae700bb098799913194e66bc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "false-skin-state-v1.json",
+      "registry_keys": [
+        "falseSkinStateV1"
+      ],
+      "source_sha256": "648fb31749cbb4ee28f6eb593d0b8202bf9e9a1e20bd4428446e268590e1c2f1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "fauna-ecology-snapshot-v1.json",
+      "registry_keys": [
+        "faunaEcologySnapshotV1"
+      ],
+      "source_sha256": "bf9158c9e6a76b662dbf25a4d19f623c1f99c74cbafaf04d95a210bb9312134c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "fog-shape-v1.json",
+      "registry_keys": [
+        "fogShapeV1"
+      ],
+      "source_sha256": "dce6cddde764315ae4837663431a2a3c3bc6843c591c9709fa3bf0d61972513d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-blueprint-book-data-v1.json",
+      "registry_keys": [
+        "forgeBlueprintBookDataV1"
+      ],
+      "source_sha256": "8057dfb169a1b51b75c8ab8b25b749661d9afee1d0299d9f9b6a193ace0f9f3e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-blueprint-entry-v1.json",
+      "registry_keys": [
+        "forgeBlueprintEntryV1"
+      ],
+      "source_sha256": "d6dfed7b02befb9f23df45ba6ab9c762814d01246fdb1d9cf1169f847d5231bc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-event-v1.json",
+      "registry_keys": [
+        "forgeEventV1"
+      ],
+      "source_sha256": "22434b16d311f27c720c7b54c3214101ab1b96bc712b720e132dba0a0bae793d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-outcome-bucket.json",
+      "registry_keys": [
+        "forgeOutcomeBucket"
+      ],
+      "source_sha256": "a812e4e05183903c6c0681b8a57a426fa9e339e350f2fbeff78557b7a2fbc56b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-outcome-data-v1.json",
+      "registry_keys": [
+        "forgeOutcomeDataV1"
+      ],
+      "source_sha256": "a81915813b6935ed3661be9256db49035d257f69f58ab0d264af7d5292307370",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-outcome-payload-v1.json",
+      "registry_keys": [
+        "forgeOutcomePayloadV1"
+      ],
+      "source_sha256": "8b38954e01cc6f7187ba567c3b4fc97d4543de6f85ecc0cf8c876a659a2809b0",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-session-data-v1.json",
+      "registry_keys": [
+        "forgeSessionDataV1"
+      ],
+      "source_sha256": "d26b5d34c77afbda875e40eaaa5843a3dab7a0f98d9c264bc6bfbeb664e129d5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-start-payload-v1.json",
+      "registry_keys": [
+        "forgeStartPayloadV1"
+      ],
+      "source_sha256": "8a466cd726be6982d8bc4ae83e52a5430f28e28dbf88ae4092bec63466ad30ac",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-step-state.json",
+      "registry_keys": [
+        "forgeStepState"
+      ],
+      "source_sha256": "578b1c49784a6bdb7243f4dcd4b262137109d5a3f007e6105d1c42df1c6e07fe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "forge-step.json",
+      "registry_keys": [
+        "forgeStep"
+      ],
+      "source_sha256": "d9a242427664016dad564022b37bb77207b480194af09d96cdcc9a7792b60e95",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "freshness-update-v1.json",
+      "registry_keys": [
+        "freshnessUpdateV1"
+      ],
+      "source_sha256": "4dcac7cea25cf63eef48f349db9e29b96b7ea7a314d827ea2a162bc74faface9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "full-power-charging-state-v1.json",
+      "registry_keys": [
+        "fullPowerChargingStateV1"
+      ],
+      "source_sha256": "92fc40462918a5272a3754ea0cf3f676e783f21bd0fcfd7385a29ee4e1706c44",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "full-power-exhausted-state-v1.json",
+      "registry_keys": [
+        "fullPowerExhaustedStateV1"
+      ],
+      "source_sha256": "64d28b8996e5d155fff3afd2f95faecff7f122239aba64b1794d9f2e414ea885",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "full-power-release-v1.json",
+      "registry_keys": [
+        "fullPowerReleaseV1"
+      ],
+      "source_sha256": "6676147c5ec91bb6b8d80ae282582da9e0eb0b6ce5d44f42a72d1d5fedec7bca",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "guardian-kind-v1.json",
+      "registry_keys": [
+        "guardianKindV1"
+      ],
+      "source_sha256": "c09cef78708b7aaad4b4bc2457c6bf5e908e2c78beb723e3e35c828d42d6c7ca",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "halfstep-rechallenge-trigger-payload-v1.json",
+      "registry_keys": [
+        "halfStepRechallengeTriggerPayloadV1"
+      ],
+      "source_sha256": "99e453f4762efcd3dcca88b07ba0859cc90149cd10ca84794238e9e0e8e431dd",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "healer-npc-ai-state-v1.json",
+      "registry_keys": [
+        "healerNpcAiStateV1"
+      ],
+      "source_sha256": "29438d2449b2a84bd2ef55e0bcd230c326e8c02fb62b7e0ad92c033ef54e6418",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "heart-demon-offer-choice-v1.json",
+      "registry_keys": [
+        "heartDemonOfferChoiceV1"
+      ],
+      "source_sha256": "60f9d0897f92889e626567432ff7b3956d620bcf78eff17f5509d9986fa5e08e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "heart-demon-offer-draft-v1.json",
+      "registry_keys": [
+        "heartDemonOfferDraftV1"
+      ],
+      "source_sha256": "45915ee70b731ecbee06617c9ce7fb6a41f5a955bc3ab61291a0b77f429d8a2e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "heart-demon-outcome-v1.json",
+      "registry_keys": [
+        "heartDemonOutcomeV1"
+      ],
+      "source_sha256": "b95e70df46fb04ba857834918d3d4cf740dda2c5a683d099bb86e85affa87dcb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "heart-demon-pregen-request-v1.json",
+      "registry_keys": [
+        "heartDemonPregenRequestV1"
+      ],
+      "source_sha256": "86b08668a91cbb6e37ab402819d441fb6dee1edf7b1f44d5bdfa54174ac42ef8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "high-renown-milestone-event-v1.json",
+      "registry_keys": [
+        "highRenownMilestoneEventV1"
+      ],
+      "source_sha256": "2331ff2c64c94142616c3d5fff740f17046689b0564dddad6eb01ae753a3ff57",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "identity-panel-state-v1.json",
+      "registry_keys": [
+        "identityPanelStateV1"
+      ],
+      "source_sha256": "96dbf3cd1aa1490bdf7a4462de22a0f9120f830ac9375bf1895c8370a6b42ccb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "insight-offer-v1.json",
+      "registry_keys": [
+        "insightOfferV1"
+      ],
+      "source_sha256": "7f75f418b44084233ca805dbfb293433881a59241726d9b6712735048f1279b9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "insight-request-v1.json",
+      "registry_keys": [
+        "insightRequestV1"
+      ],
+      "source_sha256": "41c4f0a05f03001d8bdd75ae72af6b98de0c81808ab0383f5b6c194b2ac4286c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "inventory-event-v1.json",
+      "registry_keys": [
+        "inventoryEventV1"
+      ],
+      "source_sha256": "7187c1885397a97b09282599050586a579d76229a8d750679771ba89abd26b2f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "inventory-snapshot-v1.json",
+      "registry_keys": [
+        "inventorySnapshotV1"
+      ],
+      "source_sha256": "b7a2b722c9c58834be2f92b5f9ab0f197a322a4c722663151ab77528c16fbca6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "lifespan-cap-by-realm-v1.json",
+      "registry_keys": [
+        "lifespanCapByRealmV1"
+      ],
+      "source_sha256": "e822890e84624cd347ba38d45252fa94163a4d7b91ac8ff4e92ab4670da07fec",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "lifespan-component-v1.json",
+      "registry_keys": [
+        "lifespanComponentV1"
+      ],
+      "source_sha256": "267cb76613e8f531f3b95943412500cd86404f9c42ac8aa123d17d3ffdfbe7e8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "lifespan-event-v1.json",
+      "registry_keys": [
+        "lifespanEventV1"
+      ],
+      "source_sha256": "0ae5522b3bf408e6c58610684945a65067afd80e1822ca5bf8d698163d4853b9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "lifespan-preview-v1.json",
+      "registry_keys": [
+        "lifespanPreviewV1"
+      ],
+      "source_sha256": "0116680fb4a61f0b919f341efa51d7f79d18aacadf060369986770ab0913e0df",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "medical-contract-state-v1.json",
+      "registry_keys": [
+        "medicalContractStateV1"
+      ],
+      "source_sha256": "0fbc4720f76d3c0ed05f345af9dc5ad94e20b5363dfb8dfb243a709be590c93b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "meridian-severed-event-v1.json",
+      "registry_keys": [
+        "meridianSeveredEventV1"
+      ],
+      "source_sha256": "d2fc1781593f9a1f84553b6f5a905f49cbae8cb1e009f0c92ec6da5e8e5972da",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "movement-action-request-v1.json",
+      "registry_keys": [
+        "movementActionRequestV1"
+      ],
+      "source_sha256": "e6eba578d4f8e6a422219c5f038dcf534d52466a168ad6d0813a2741a9a95099",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "movement-action-v1.json",
+      "registry_keys": [
+        "movementActionV1"
+      ],
+      "source_sha256": "87acc5da30fffc872a2c604bf0e4cd3447792edf99c8e8acb36e8fc4909c8959",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "movement-state-v1.json",
+      "registry_keys": [
+        "movementStateV1"
+      ],
+      "source_sha256": "53f1b5c409aaa7767ffab529a297a5a69097dac1d6c389e511f8691efb588107",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "movement-zone-kind-v1.json",
+      "registry_keys": [
+        "movementZoneKindV1"
+      ],
+      "source_sha256": "7d907463e6ed4c8b9b3747dd17aea43b48546e24690dc5537ca2fc50cd0b4472",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "named-faction-state-v1.json",
+      "registry_keys": [
+        "namedFactionStateV1"
+      ],
+      "source_sha256": "f08fc4ba2316540f40a42fe9cb9262ca9d824629d75725e1cac81ac890f566d4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "narration-v1.json",
+      "registry_keys": [
+        "narrationV1"
+      ],
+      "source_sha256": "c975a24c1fd110d34f1e1ca14306eee0f385f10e6d0eec1a40fae953dbe5bf5e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "niche-guardian-broken-v1.json",
+      "registry_keys": [
+        "nicheGuardianBrokenV1"
+      ],
+      "source_sha256": "cc162395c63be880a148256d95e048b14f5656d06d2ca8e9982fa5017cf03046",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "niche-guardian-fatigue-v1.json",
+      "registry_keys": [
+        "nicheGuardianFatigueV1"
+      ],
+      "source_sha256": "c1edfd9fdfa7f4cb6e5c9489bf81d3f661d823e7a64b52d910ce581455523b14",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "niche-intrusion-event-v1.json",
+      "registry_keys": [
+        "nicheIntrusionEventV1"
+      ],
+      "source_sha256": "b8ecba7016e9e62150cf8dea6ed82dc3b9e27a97cedc0ba5e07596a333399b31",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "npc-archetype-v1.json",
+      "registry_keys": [
+        "npcArchetypeV1"
+      ],
+      "source_sha256": "1a06f05c077c7ba2af4ff493a70e4c0de0521c0535487f20c118dd83ba7ce7b1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "npc-death-cause-v1.json",
+      "registry_keys": [
+        "npcDeathCauseV1"
+      ],
+      "source_sha256": "f09b35608b7a00a548910ea9452806bec10c64324ba6438eebc51d083d071fac",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "npc-death-v1.json",
+      "registry_keys": [
+        "npcDeathV1"
+      ],
+      "source_sha256": "00a0d59679346dc46f1062119e48243b814ace0923b9c9dbaaed06b326ecd27f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "npc-spawn-source-v1.json",
+      "registry_keys": [
+        "npcSpawnSourceV1"
+      ],
+      "source_sha256": "7aa66cab29a15e16760d5bdd99f6f9d8d5ba316dd93e1ade49eb3d5e2b815fd2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "npc-spawned-v1.json",
+      "registry_keys": [
+        "npcSpawnedV1"
+      ],
+      "source_sha256": "803767dd92d350b544661e834d2ed37f4f4fb14bded994edb35eee13e7e95dbe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "play-sound-recipe-event-v1.json",
+      "registry_keys": [
+        "playSoundRecipeEventV1"
+      ],
+      "source_sha256": "e474409331a48edb44d44fdcaf09dbe9e523016b150059ef5a5f616d76234fd3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "player-social-snapshot-v1.json",
+      "registry_keys": [
+        "playerSocialSnapshotV1"
+      ],
+      "source_sha256": "f8e533da575837631b371796e67bd034892f1f7e43599e412dff9892b52e3656",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poi-novice-kind-v1.json",
+      "registry_keys": [
+        "poiNoviceKindV1"
+      ],
+      "source_sha256": "77f6957fe29a802a43a3b4f8d8024f002dc8f21570befe6770b26e0ceec15145",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poi-spawned-event-v1.json",
+      "registry_keys": [
+        "poiSpawnedEventV1"
+      ],
+      "source_sha256": "f37f42616ff798a9b5c588841fc31843d9f1dd5374205c8024af22d8a7526f58",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poison-dose-event-v1.json",
+      "registry_keys": [
+        "poisonDoseEventV1"
+      ],
+      "source_sha256": "3f1bea2a3776377f0ab8a0b8b74c8a442ce69824f19a1586ee6ca76ef3b8e45a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poison-overdose-event-v1.json",
+      "registry_keys": [
+        "poisonOverdoseEventV1"
+      ],
+      "source_sha256": "c76a20576a339e5c83a1d15d2e169af6916f0f38ed362dfd6d3d7c0b409e4514",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poison-overdose-severity-v1.json",
+      "registry_keys": [
+        "poisonOverdoseSeverityV1"
+      ],
+      "source_sha256": "ab3559eb8924ec0ce42bafdde954e25fd0b8a126832b0489ad434b2d55b861bb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poison-side-effect-tag-v1.json",
+      "registry_keys": [
+        "poisonSideEffectTagV1"
+      ],
+      "source_sha256": "1bf6de8b2b039403ce38c9836f92bd9841edc1ed40f1389cf5541a5aa6ac752e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "poison-trait-state-v1.json",
+      "registry_keys": [
+        "poisonTraitStateV1"
+      ],
+      "source_sha256": "c1211923e694ee667e38dd160474d531d8fa7b1deb9f831292463f5f04ad7d62",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "price-index-v1.json",
+      "registry_keys": [
+        "priceIndexV1"
+      ],
+      "source_sha256": "ec7fea7e0ede0f4cb71acbc66729dd2f603a9aea9a080522b957956a3f92a0e2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "price-sample-v1.json",
+      "registry_keys": [
+        "priceSampleV1"
+      ],
+      "source_sha256": "6966f66de81b80a53511c3acbf280745e4f48a8dc78df72310bfd989f3c1c2d5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "processing-kind-v1.json",
+      "registry_keys": [
+        "processingKindV1"
+      ],
+      "source_sha256": "2f0dc1f3447c998a9f61b8555e22535b02b1e99c5241235800196f778431c289",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "processing-session-data-v1.json",
+      "registry_keys": [
+        "processingSessionDataV1"
+      ],
+      "source_sha256": "1871ea4a9762f30ac36fc08b862725b1b23449607a4d7a2155a7baa122a70739",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "pseudo-vein-dissipate-event-v1.json",
+      "registry_keys": [
+        "pseudoVeinDissipateEventV1"
+      ],
+      "source_sha256": "b159b140d887cea404b407caab430b0c9ef71080688b5b805adcd69078e35922",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "pseudo-vein-season-v1.json",
+      "registry_keys": [
+        "pseudoVeinSeasonV1"
+      ],
+      "source_sha256": "b75d029afaa15ba4d2c29186e0a1e2c11f04188a8242450dd319a09e5ad86cc9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "pseudo-vein-snapshot-v1.json",
+      "registry_keys": [
+        "pseudoVeinSnapshotV1"
+      ],
+      "source_sha256": "88df52b1fe364eea691294f4b5f05b21014e2c5b3a4f635b566bb06a69cd4a5f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "qi-color-observed-v1.json",
+      "registry_keys": [
+        "qiColorObservedV1"
+      ],
+      "source_sha256": "f9625d3900b98d223a4d79be2ea1565104d7123ebcc932dfbc2e6839f0520342",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "quick-slot-config-v1.json",
+      "registry_keys": [
+        "quickSlotConfigV1"
+      ],
+      "source_sha256": "8c48b4356e34ae13036e254cfe627fb29e31077164e64e54b401c099665b45a8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "quick-slot-entry-v1.json",
+      "registry_keys": [
+        "quickSlotEntryV1"
+      ],
+      "source_sha256": "e431c5dd600e3ffd0d3b0baf824e43803f27b1ed11feb499900a57abe687efd2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rat-phase-change-event-v1.json",
+      "registry_keys": [
+        "ratPhaseChangeEventV1"
+      ],
+      "source_sha256": "3d178df4632622c92d57fd7529a39266f1f457120893734f90920455e483f38b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rat-phase-v1.json",
+      "registry_keys": [
+        "ratPhaseV1"
+      ],
+      "source_sha256": "b7df6a2cef6bdf2e0b0bab04b807bc2150d95b1ec0e66cc104c2c13a2fb39948",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "realm-vision-params-v1.json",
+      "registry_keys": [
+        "realmVisionParamsV1"
+      ],
+      "source_sha256": "e3ada74550f98ae90f9baad380157f4be4c612e029c09bc69b4323161605c1e7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rebirth-chance-input-v1.json",
+      "registry_keys": [
+        "rebirthChanceInputV1"
+      ],
+      "source_sha256": "1d2623f01977c616e2a65cdd4b0f296b79bee1ce2e07ba654d0e227e0a6303fc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rebirth-chance-result-v1.json",
+      "registry_keys": [
+        "rebirthChanceResultV1"
+      ],
+      "source_sha256": "53a26390eb992a3bb4dd1c6c767aebca0470b84b9bbcb375a449188b9bcaab97",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "recipe-unlocked-v1.json",
+      "registry_keys": [
+        "recipeUnlockedV1"
+      ],
+      "source_sha256": "210d9ce46e73a2e6536af0e6c5b2d92ece4f02251ce03e5de6e51d4a300c1953",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "relationship-kind-v1.json",
+      "registry_keys": [
+        "relationshipKindV1"
+      ],
+      "source_sha256": "9167d271baf8b2ffeb1ebd30c63a744fe9c22d7cc7e66990615e904de5792716",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "relationship-snapshot-v1.json",
+      "registry_keys": [
+        "relationshipSnapshotV1"
+      ],
+      "source_sha256": "1f6f71107d03d8018686567f9ed915b63014dba8a94785525cb940270c73f3b2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "renown-snapshot-v1.json",
+      "registry_keys": [
+        "renownSnapshotV1"
+      ],
+      "source_sha256": "6826dcd12eda220ed8a9609ae76197e97c8554ed01a2b87bf94de4601a81ca13",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "renown-tag-v1.json",
+      "registry_keys": [
+        "renownTagV1"
+      ],
+      "source_sha256": "cc6ae17c951dd99094be24b50cdccac699323616a0a4c91a71395b34d1778a4a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rift-portal-removed-v1.json",
+      "registry_keys": [
+        "riftPortalRemovedV1"
+      ],
+      "source_sha256": "dba32b83b99936c6c514ed8a384f6c42381a9b24452b64cf591471a8b18a2a3f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "rift-portal-state-v1.json",
+      "registry_keys": [
+        "riftPortalStateV1"
+      ],
+      "source_sha256": "9d99fd247c965503d32bfaf3b17646c33f84c62edbdaf0b53ccd1aa3f6bb8902",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "search-aborted-v1.json",
+      "registry_keys": [
+        "searchAbortedV1"
+      ],
+      "source_sha256": "4dde30c238a081aedae01885d1543834801fbe94e6dcc66945a0cb708ecd3b78",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "search-completed-v1.json",
+      "registry_keys": [
+        "searchCompletedV1"
+      ],
+      "source_sha256": "ca56a311c2590582b77c285d189adf86536c416b596045526f23542606d5b6a2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "search-progress-v1.json",
+      "registry_keys": [
+        "searchProgressV1"
+      ],
+      "source_sha256": "c0282a85affc292a6e420ebeef8968690a814cbb10d13e1b8af24b8d444fbcda",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "search-started-v1.json",
+      "registry_keys": [
+        "searchStartedV1"
+      ],
+      "source_sha256": "e6e6656d83caeddaf1e7db460b0760854b6acedf8ef443f28528458770f32bc6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "sense-entry-v1.json",
+      "registry_keys": [
+        "senseEntryV1"
+      ],
+      "source_sha256": "1bf389635633fd7bdc4d37f76c459aa851251b34f79d3caaffbde9f5c12dd945",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "sense-kind-v1.json",
+      "registry_keys": [
+        "senseKindV1"
+      ],
+      "source_sha256": "94be485b09d84b5e66713d9fae04a466fae1996337425795ddb933d888354f5d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-contamination-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyContaminationV1"
+      ],
+      "source_sha256": "90de7a429dae6fb1b251bdfd6449b6491d1c9e9a3af6294314c497d29928aa9d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-furnace-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyFurnaceV1"
+      ],
+      "source_sha256": "4852803269ad8d3b5c4d61ca0008dd8cf840a8257bd6b7b353d811fbff169abe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-outcome-forecast-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyOutcomeForecastV1"
+      ],
+      "source_sha256": "b99baf27bd48fdd59920a521da3baae8f153c974ffd4b837712860fd2fb6b15b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-outcome-resolved-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyOutcomeResolvedV1"
+      ],
+      "source_sha256": "b28e823b5fa43186e14e4ed2576480e7f93c5c42744afda00485d94edfc70b1c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-recipe-book-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyRecipeBookV1"
+      ],
+      "source_sha256": "845f0240393231a82ab52abb7dcf47893aeb15c3acc2bb3a4b47e25a1d3b0a7e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-session-v1.json",
+      "registry_keys": [
+        "serverDataAlchemySessionV1"
+      ],
+      "source_sha256": "e5927c8f114a82e8ad13636c20a2069449a089ad502faeb818c3f129e2b93bb8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-alchemy-world-v1.json",
+      "registry_keys": [
+        "serverDataAlchemyWorldV1"
+      ],
+      "source_sha256": "2be2496ce4d6626eaf0a41bfe9a947a878b361eff9d83b63ac7d45f90a76d0f9",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-anqi-hud-v1.json",
+      "registry_keys": [
+        "serverDataAnqiHudV1"
+      ],
+      "source_sha256": "7375a4651ae3a413d5a786a6b3b2aed1af1fecc2a958c85d705209ca5381de3b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-ascension-quota-v1.json",
+      "registry_keys": [
+        "serverDataAscensionQuotaV1"
+      ],
+      "source_sha256": "5a89a89549a92bca0672590d20e544515e8695a4ec59ab3c2518071d57d68eaf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-botany-harvest-progress-v1.json",
+      "registry_keys": [
+        "serverDataBotanyHarvestProgressV1"
+      ],
+      "source_sha256": "9789ec27d474659f18f5e99904f7d5a35d9c45997a4b7a452ca99f3928b48d44",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-botany-plant-v2-render-profiles-v1.json",
+      "registry_keys": [
+        "serverDataBotanyPlantV2RenderProfilesV1"
+      ],
+      "source_sha256": "d3d0c45503375bb90a9bf61fc24b41aec8b822944b53daeaf3015028323efe45",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-botany-skill-v1.json",
+      "registry_keys": [
+        "serverDataBotanySkillV1"
+      ],
+      "source_sha256": "354742a89277653e4db48fe72e0ce15dbd94c71852ce904b9cda1913ab87137f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-coffin-state-v1.json",
+      "registry_keys": [
+        "serverDataCoffinStateV1"
+      ],
+      "source_sha256": "ec5f2612958190fbe80b7c1f36f00ac91afdf8516a3e75b7cc958081247cc0a4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-combat-hud-state-v1.json",
+      "registry_keys": [
+        "serverDataCombatHudStateV1"
+      ],
+      "source_sha256": "bd25d5b0b04c340ce260523ac6446faee6b10c15b06e7c7dd816a85867d743aa",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-death-screen-v1.json",
+      "registry_keys": [
+        "serverDataDeathScreenV1"
+      ],
+      "source_sha256": "0d1d0a5d411ba7faff02141e5c0b51e1701d233f6e0766a24b61d8a8b684f174",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-dugu-poison-state-v1.json",
+      "registry_keys": [
+        "serverDataDuguPoisonStateV1"
+      ],
+      "source_sha256": "2643d748a6dc87795b512893d61e6b92cd6dddb60cbf489449c405132bd34232",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-extract-aborted-v1.json",
+      "registry_keys": [
+        "serverDataExtractAbortedV1"
+      ],
+      "source_sha256": "373a0ff4332784e7bd5e7daff6920d669b165db152c2f8b4c760a348bc0e2964",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-extract-completed-v1.json",
+      "registry_keys": [
+        "serverDataExtractCompletedV1"
+      ],
+      "source_sha256": "4e18e74e09be5a846c96498d63781147e17a4e5c92ae5f373a252bee6ed11c1e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-extract-failed-v1.json",
+      "registry_keys": [
+        "serverDataExtractFailedV1"
+      ],
+      "source_sha256": "5343d7343d02c7e97f3e113c2e66a342d8a6e1c8217430c06d0eb33fb0bd6a78",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-extract-progress-v1.json",
+      "registry_keys": [
+        "serverDataExtractProgressV1"
+      ],
+      "source_sha256": "4ac3dcd014fe06718fa39b1a3a78bd1c81998f1931f42ab364b40722895ffacb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-extract-started-v1.json",
+      "registry_keys": [
+        "serverDataExtractStartedV1"
+      ],
+      "source_sha256": "386b476c577cd726d4560dfe87c75c9b0cfcfc97dc82f8ae19e8386adbcc3c1f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-false-skin-state-v1.json",
+      "registry_keys": [
+        "serverDataFalseSkinStateV1"
+      ],
+      "source_sha256": "4ae1ba18bd9151301c752b87bd0180abad31a5b88a59acc6143a970258b748b4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-forge-blueprint-book-v1.json",
+      "registry_keys": [
+        "serverDataForgeBlueprintBookV1"
+      ],
+      "source_sha256": "0fc89992ae76535b36f3dff903fe566358fa80f33a864d19d0c68b49c1237a62",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-forge-outcome-v1.json",
+      "registry_keys": [
+        "serverDataForgeOutcomeV1"
+      ],
+      "source_sha256": "a648303905559a2bb3fb4dd8c95507184af439421f0bc54fc11c17c7b05166a4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-forge-session-v1.json",
+      "registry_keys": [
+        "serverDataForgeSessionV1"
+      ],
+      "source_sha256": "609c8d57375f0090da56b89f09239a02520bb06d49566d513f20881c0872f4dc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-forge-station-v1.json",
+      "registry_keys": [
+        "serverDataForgeStationV1"
+      ],
+      "source_sha256": "578e929aabb9216eb94317bf3829a245960f4cb74f8f3c4b8835950c29e3c850",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-freshness-update-v1.json",
+      "registry_keys": [
+        "serverDataFreshnessUpdateV1"
+      ],
+      "source_sha256": "9c2b4c4f11649dd4704519d7e78663a0b4032e6861da215e8bf65f73b2afa416",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-full-power-charging-state-v1.json",
+      "registry_keys": [
+        "serverDataFullPowerChargingStateV1"
+      ],
+      "source_sha256": "4c91e7aa626c4c61bc0ef1f199a83743ef1910d3827bf1fc2ea585e47dae8245",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-full-power-exhausted-state-v1.json",
+      "registry_keys": [
+        "serverDataFullPowerExhaustedStateV1"
+      ],
+      "source_sha256": "47987a3fbab277c1bb56a13b771e03e914e7a5e97f6539d6a3c5f6b994b5098d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-full-power-release-v1.json",
+      "registry_keys": [
+        "serverDataFullPowerReleaseV1"
+      ],
+      "source_sha256": "68b531e76e29ddb906afe0ff82d429f0bef912dcd26ba508d038e738d33005d4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-gathering-session-v1.json",
+      "registry_keys": [
+        "serverDataGatheringSessionV1"
+      ],
+      "source_sha256": "14d117a4a2dae477d6e979bb6f89ecd7714bddf217d570dd9d47f7630284938d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-healer-npc-ai-state-v1.json",
+      "registry_keys": [
+        "serverDataHealerNpcAiStateV1"
+      ],
+      "source_sha256": "00881fd0103a3b77328b48edfab2b85dce52e1e4bf80ff28f2d1e8b824da5966",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-heart-demon-offer-v1.json",
+      "registry_keys": [
+        "serverDataHeartDemonOfferV1"
+      ],
+      "source_sha256": "7bebbc3a8669d0d1feb17267057088abe3dab76d3c82c55badaaba42b12c87b7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-inventory-move-rejected-v1.json",
+      "registry_keys": [
+        "serverDataInventoryMoveRejectedV1"
+      ],
+      "source_sha256": "249e2b71b0bd48f7c0d3e4e0f77b260e5f1e4131ea4cb2135b532aad2a2484f8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-knockback-sync-v1.json",
+      "registry_keys": [
+        "serverDataKnockbackSyncV1"
+      ],
+      "source_sha256": "895a1b1a583b49943702adb2ea26e58b761e48cc9bfd37add5b2a83db0652398",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-lumber-progress-v1.json",
+      "registry_keys": [
+        "serverDataLumberProgressV1"
+      ],
+      "source_sha256": "6106568da964ea1e570cbeab139d30ee89d78ec4dc8a99330d959a131b78a234",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-mineral-probe-result-v1.json",
+      "registry_keys": [
+        "serverDataMineralProbeResultV1"
+      ],
+      "source_sha256": "00988dde31ca229df4df93319b77f076337fb67a94266bbd2960e6cf8455aa1f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-movement-state-v1.json",
+      "registry_keys": [
+        "serverDataMovementStateV1"
+      ],
+      "source_sha256": "ace87b3c6c7e2c03ba8f0673955408f208026ceea6614413d8cd4ef5fe8a4f27",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-niche-guardian-broken-v1.json",
+      "registry_keys": [
+        "serverDataNicheGuardianBrokenV1"
+      ],
+      "source_sha256": "da207d4c7d7d366733aae7dcf303512fa82b07b4afa593e1c5b69e38e9055b21",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-niche-guardian-fatigue-v1.json",
+      "registry_keys": [
+        "serverDataNicheGuardianFatigueV1"
+      ],
+      "source_sha256": "6d09e4a3521e2ba2287940e0067238880d315e0cbafba2f75c1f9016cbfc1adc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-niche-intrusion-v1.json",
+      "registry_keys": [
+        "serverDataNicheIntrusionV1"
+      ],
+      "source_sha256": "78ff34e8b1a0c4adfa1e6914b00ead142ce22826897133a169d4568f4d5ab90c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-poison-dose-event-v1.json",
+      "registry_keys": [
+        "serverDataPoisonDoseEventV1"
+      ],
+      "source_sha256": "d4a0058e7df0f477ab6e23c87f735fa6fe677d411779e2b87695f4edbac0b44a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-poison-overdose-event-v1.json",
+      "registry_keys": [
+        "serverDataPoisonOverdoseEventV1"
+      ],
+      "source_sha256": "67377392af39e58840d73604a4871cfb4c4b3864c96d1399ce89f1c832caa730",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-poison-trait-state-v1.json",
+      "registry_keys": [
+        "serverDataPoisonTraitStateV1"
+      ],
+      "source_sha256": "2823c288847b860589d2203a647308e48bde567d0017508cc8ba3da1628bf579",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-processing-session-v1.json",
+      "registry_keys": [
+        "serverDataProcessingSessionV1"
+      ],
+      "source_sha256": "6df1684c6e7997e6116086d2c25bb9dc47d479e82c665c00ab8b150ade3db5ef",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-quick-slot-config-v1.json",
+      "registry_keys": [
+        "serverDataQuickSlotConfigV1"
+      ],
+      "source_sha256": "d28b69d6dc5c1fbbae6e79817508cd40009b81232d792430e2f720bd156da7a7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-realm-vision-params-v1.json",
+      "registry_keys": [
+        "serverDataRealmVisionParamsV1"
+      ],
+      "source_sha256": "37ac9cc3619297cdcf6565a83d6b22767e6c6f8588504537436687a6a806a771",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-rift-portal-removed-v1.json",
+      "registry_keys": [
+        "serverDataRiftPortalRemovedV1"
+      ],
+      "source_sha256": "a2e1beff9d07f1e8fd7fb3f80ce42f9ab24d258af97036c152aa9eb4a1ecd910",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-rift-portal-state-v1.json",
+      "registry_keys": [
+        "serverDataRiftPortalStateV1"
+      ],
+      "source_sha256": "b58b04e306fbc312c32f2c16d11956eb9d3383f18dbb07b92f214d42e659882d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-scroll-open-v1.json",
+      "registry_keys": [
+        "serverDataScrollOpenV1"
+      ],
+      "source_sha256": "5014edd3b989d8ba65b2831366fc68f2cf395984e09fd02195e7df4ca4ad2a5a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-shield-block-hit-v1.json",
+      "registry_keys": [
+        "serverDataShieldBlockHitV1"
+      ],
+      "source_sha256": "f4f6c37f8e47ed9e43fac98819b63f55e06bcbb24c75307493266622dc75bb83",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-shield-broken-v1.json",
+      "registry_keys": [
+        "serverDataShieldBrokenV1"
+      ],
+      "source_sha256": "1ed8f040e63a8fc444d628705dd2b59219ad71a02762f8d9a9fc5fc66ce81d54",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-bar-config-v1.json",
+      "registry_keys": [
+        "serverDataSkillBarConfigV1"
+      ],
+      "source_sha256": "e6a0ce372c808779cbf1962f63d81fdcd0684585de460d7f48c0be4868b57f56",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-cap-changed-v1.json",
+      "registry_keys": [
+        "serverDataSkillCapChangedV1"
+      ],
+      "source_sha256": "22515dcbf28c7025ffa3e2312fc130f774dc0c015cce1f8de7f6b3a6ac829ce6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-config-snapshot-v1.json",
+      "registry_keys": [
+        "serverDataSkillConfigSnapshotV1"
+      ],
+      "source_sha256": "505714ee7951e81a426b3b987e1c743f47727ef8f27f5b5d5a602f4463cfa0f8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-lv-up-v1.json",
+      "registry_keys": [
+        "serverDataSkillLvUpV1"
+      ],
+      "source_sha256": "c85e2a52690b9b5b568ce65cc6b6430cece8d9b2eca22decf6ca62bd9d1f8d8e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-scroll-used-v1.json",
+      "registry_keys": [
+        "serverDataSkillScrollUsedV1"
+      ],
+      "source_sha256": "77e714cc458df268c93baef44096528353cc0accdcac9cd09267cfd7a8ae57b1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-snapshot-v1.json",
+      "registry_keys": [
+        "serverDataSkillSnapshotV1"
+      ],
+      "source_sha256": "b3a7c3bc90829654684cbce368cb926bf9980381ef524ceefd3e83a4d63a739c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-skill-xp-gain-v1.json",
+      "registry_keys": [
+        "serverDataSkillXpGainV1"
+      ],
+      "source_sha256": "52691a4e47842937d86c0f4bafe35581cf3e70f740b9d6f6d784f824003eb323",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-social-anonymity-v1.json",
+      "registry_keys": [
+        "serverDataSocialAnonymityV1"
+      ],
+      "source_sha256": "a94cb02e5f2680d214f8ea7cdbebae51fe21e84a1df377dad124dee1d150c851",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-social-exposure-v1.json",
+      "registry_keys": [
+        "serverDataSocialExposureV1"
+      ],
+      "source_sha256": "bffcac6412aaa588bc0a7e25c4203c63bd57c167162f7857baf5e3a40bcd6ace",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-social-feud-v1.json",
+      "registry_keys": [
+        "serverDataSocialFeudV1"
+      ],
+      "source_sha256": "a0386f612572b584c3dc9cb45e3f8f3c852d64d577e2c35fec9814ec6bafcf27",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-social-pact-v1.json",
+      "registry_keys": [
+        "serverDataSocialPactV1"
+      ],
+      "source_sha256": "e9da383832802b126b9d9bd6b09550dd60ef73e02ea993ee905c7774e2c047f7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-social-renown-delta-v1.json",
+      "registry_keys": [
+        "serverDataSocialRenownDeltaV1"
+      ],
+      "source_sha256": "dbcff61290a237fa6943c66cf1730eb74c5456f90725c6fcb06340b4081dc0c2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-sparring-invite-v1.json",
+      "registry_keys": [
+        "serverDataSparringInviteV1"
+      ],
+      "source_sha256": "2c3eca32ea7835459b351827ac5b7251821962b56ecee10ebcca941a51de1f94",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-spirit-treasure-dialogue-v1.json",
+      "registry_keys": [
+        "serverDataSpiritTreasureDialogueV1"
+      ],
+      "source_sha256": "3ab036ea0e21f58ad39a8f30608fd0ed632186edde363caad5049f817d686a51",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-spirit-treasure-state-v1.json",
+      "registry_keys": [
+        "serverDataSpiritTreasureStateV1"
+      ],
+      "source_sha256": "ff02bd4d0d1a8274e95f1ed83299925c0839b6ac1bdce0c1f84ecf45953e1f58",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-spiritual-sense-targets-v1.json",
+      "registry_keys": [
+        "serverDataSpiritualSenseTargetsV1"
+      ],
+      "source_sha256": "45d483637764fe4a057c4b8cf8d5e3cbdbc67aa248f390ce28cd704002ce085e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-techniques-snapshot-v1.json",
+      "registry_keys": [
+        "serverDataTechniquesSnapshotV1"
+      ],
+      "source_sha256": "80d6ac6024ac05b43f979187239b2db977511602600d7d709bd77e4d4a1b92f3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-terminate-screen-v1.json",
+      "registry_keys": [
+        "serverDataTerminateScreenV1"
+      ],
+      "source_sha256": "8639983a760072a1b4460d9e1944367e385272910b36b4f435386da0fe8eacf3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-trade-offer-v1.json",
+      "registry_keys": [
+        "serverDataTradeOfferV1"
+      ],
+      "source_sha256": "72d2a7375759f55aacb8529e0636946dfd34a0320481512f6248eee09cd0da68",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-treasure-equipped-v1.json",
+      "registry_keys": [
+        "serverDataTreasureEquippedV1"
+      ],
+      "source_sha256": "1b68657482922b7d602b5bc7273d2af3a8c0997cf18dc467e83d40c330e64681",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-tribulation-broadcast-v1.json",
+      "registry_keys": [
+        "serverDataTribulationBroadcastV1"
+      ],
+      "source_sha256": "2494c209244018db6650f9ffd2536ad81fd0297649ca630d15abc05006002991",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-tribulation-state-v1.json",
+      "registry_keys": [
+        "serverDataTribulationStateV1"
+      ],
+      "source_sha256": "51836e0980a2ddacca802887d03114116fdba7da90501b74afb85b119dad3251",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-tsy-collapse-started-ipc-v1.json",
+      "registry_keys": [
+        "serverDataTsyCollapseStartedIpcV1"
+      ],
+      "source_sha256": "c7095d135fdf34f1696d48a9b9b888a2a20a9b5b013797cc07c8a5fb4b5e434a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-v1.json",
+      "registry_keys": [
+        "serverDataV1"
+      ],
+      "source_sha256": "480f23ff0c9f2d5e44a144eb2b186d79c7a010152d999976e381f0a27876674b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-weapon-broken-v1.json",
+      "registry_keys": [
+        "serverDataWeaponBrokenV1"
+      ],
+      "source_sha256": "ebca1758c42bd51ed8453406f5efaececde29849e06a2ff12fc9da4ad05e4355",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-weapon-equipped-v1.json",
+      "registry_keys": [
+        "serverDataWeaponEquippedV1"
+      ],
+      "source_sha256": "a91c79bfaec6504da7a7621970c22b1936919f3eeb6dc65acf103679a62e8701",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "server-data-yidao-hud-state-v1.json",
+      "registry_keys": [
+        "serverDataYidaoHudStateV1"
+      ],
+      "source_sha256": "081420a11de35d21e20e0a3b2be47c178bd3d9982d6958d539fdce83f4277d4b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "shed-event-v1.json",
+      "registry_keys": [
+        "shedEventV1"
+      ],
+      "source_sha256": "0f8570de62a51e42c2196b3c79ccc5e095ff66440da2e32399a569d2581d9cc4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "shield-broken-v1.json",
+      "registry_keys": [
+        "shieldBrokenV1"
+      ],
+      "source_sha256": "82a32bb65d9f300c37e79bfb318bca1b7dafbf719e2e58573a614ef25738a8eb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "skill-bar-config-v1.json",
+      "registry_keys": [
+        "skillBarConfigV1"
+      ],
+      "source_sha256": "befc6b1a43d40bccb4ebd0561e0ac25c336d354f64c1b4d1e31d1f8924178a43",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "skill-bar-entry-v1.json",
+      "registry_keys": [
+        "skillBarEntryV1"
+      ],
+      "source_sha256": "d7e087953db9fe1c9481eb1b4c0da53a4240bfbd52e17a58cab418d799d77ffd",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "skill-config-snapshot-v1.json",
+      "registry_keys": [
+        "skillConfigSnapshotV1"
+      ],
+      "source_sha256": "1dbe39c2ab5ad32839a6cadf97d74247089d0faf07a1af1f05855be2b96a5993",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "skill-config-v1.json",
+      "registry_keys": [
+        "skillConfigV1"
+      ],
+      "source_sha256": "5a1118e15a3cb8f65c9aa3329fc97a418c75d62c6c7e8692d58c53373e332807",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "skill-lv-up-payload-v1.json",
+      "registry_keys": [
+        "skillLvUpPayloadV1"
+      ],
+      "source_sha256": "5541c61c2868a03fd3fd272b6a3e695e1fced3a005587383e0a2a340997b7db8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-anonymity-payload-v1.json",
+      "registry_keys": [
+        "socialAnonymityPayloadV1"
+      ],
+      "source_sha256": "6597564fa3d862aff94d34a71b1c8461eb5424f43168b24d34e3f77f8921d8fb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-exposure-event-v1.json",
+      "registry_keys": [
+        "socialExposureEventV1"
+      ],
+      "source_sha256": "f1ccabed8322deabbcad366e73b445758766ba6d8cf4983260e9d320eaeca198",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-feud-event-v1.json",
+      "registry_keys": [
+        "socialFeudEventV1"
+      ],
+      "source_sha256": "dbff88464e7bfc1ddbacef4d0bc40a4ad9da4e8c84b75ad06c17eac3b95b4926",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-pact-event-v1.json",
+      "registry_keys": [
+        "socialPactEventV1"
+      ],
+      "source_sha256": "2c9232edcd32bcf2a201256b41e32bc605bd76b26102772a43a9d638628e1f9f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-remote-identity-v1.json",
+      "registry_keys": [
+        "socialRemoteIdentityV1"
+      ],
+      "source_sha256": "e9252f2aa538034dfe7d18d641da0cad63fe6bc320f621002b90ec5a735d3cfe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "social-renown-delta-v1.json",
+      "registry_keys": [
+        "socialRenownDeltaV1"
+      ],
+      "source_sha256": "6ef2ee43cb5dd17897c88b7b45ed0752263235d1b10f7b5158cc51387319bff4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "sound-recipe-v1.json",
+      "registry_keys": [
+        "soundRecipeV1"
+      ],
+      "source_sha256": "fefb9d20dbfb97d42b279cfcbc4dd17a9d614e1693b59ec76c376645a0b2a82f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "sparring-invite-payload-v1.json",
+      "registry_keys": [
+        "sparringInvitePayloadV1"
+      ],
+      "source_sha256": "e6ac78c76a7e0cac5dfeedb2ce87b6d45e23f0d5d6fa905395d43a720120f03c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-eye-coordinate-note-v1.json",
+      "registry_keys": [
+        "spiritEyeCoordinateNoteV1"
+      ],
+      "source_sha256": "9c163a953d10d30a308f066c6b136666a258d759d359404b06fbd805ec4255fd",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-eye-discovered-v1.json",
+      "registry_keys": [
+        "spiritEyeDiscoveredV1"
+      ],
+      "source_sha256": "0ed1939be3d7479bce2c7ad7fb7004ea8103b64d7b68bd244ee1b9b88ae8a56c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-eye-migrate-v1.json",
+      "registry_keys": [
+        "spiritEyeMigrateV1"
+      ],
+      "source_sha256": "6acbe6f6d188787fdd3f2aaaf1b1fb95499343d863b856b88f85582bb726c57e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-eye-used-for-breakthrough-v1.json",
+      "registry_keys": [
+        "spiritEyeUsedForBreakthroughV1"
+      ],
+      "source_sha256": "b164ccb2b75823d643678ca2d960b44d9a229317d994128370b626b4077678db",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-niche-activate-guardian-v1.json",
+      "registry_keys": [
+        "spiritNicheActivateGuardianV1"
+      ],
+      "source_sha256": "293f5fe67b2acec066366a47ad7f533781a43bfc392e8edddf6a62e74184a41d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-treasure-dialogue-payload-v1.json",
+      "registry_keys": [
+        "spiritTreasureDialoguePayloadV1"
+      ],
+      "source_sha256": "be00463a064e9a1d2eb4a98db1b152000372f3809a61f869142e8d941de545d2",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-treasure-dialogue-request-v1.json",
+      "registry_keys": [
+        "spiritTreasureDialogueRequestV1"
+      ],
+      "source_sha256": "e4975dbf39bd303ea847da08d47811ef6119146005f6cb5f999bb9bfd6c57b3e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-treasure-dialogue-v1.json",
+      "registry_keys": [
+        "spiritTreasureDialogueV1"
+      ],
+      "source_sha256": "cf1224137f17a2219cd12e4669b23b704722ea026d237590c3f61b81f7c83881",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spirit-treasure-state-payload-v1.json",
+      "registry_keys": [
+        "spiritTreasureStatePayloadV1"
+      ],
+      "source_sha256": "756442f4b11226c6a7fab9615e836ca77a8621ffffa9e18ab4d3c66ecdc76b3a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "spiritual-sense-targets-v1.json",
+      "registry_keys": [
+        "spiritualSenseTargetsV1"
+      ],
+      "source_sha256": "08899a7d52da3187f768fb0c1f5c0f17be1603ed660fc3271128234e04f450e5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "stop-sound-recipe-event-v1.json",
+      "registry_keys": [
+        "stopSoundRecipeEventV1"
+      ],
+      "source_sha256": "6f065c8383dc6289b12496e1e7b59114f90e084927bbf2d4b5815ff943878dd8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "style-balance-telemetry-event-v1.json",
+      "registry_keys": [
+        "styleBalanceTelemetryEventV1"
+      ],
+      "source_sha256": "ba43113dc84aca5226873fd1f0f53211f8a53e55bd488a46e480f3c1cd49e1d0",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "style-telemetry-color-snapshot-v1.json",
+      "registry_keys": [
+        "styleTelemetryColorSnapshotV1"
+      ],
+      "source_sha256": "ef10e71afb6f04bc82ef0f14061a15341826d2b8d2a1098e97c32d98efdfad96",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "techniques-snapshot-v1.json",
+      "registry_keys": [
+        "techniquesSnapshotV1"
+      ],
+      "source_sha256": "fb848bfd3d1c792a449bc1bba9e0aceaab3222068708aa9a7feb98433753b442",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "temper-beat.json",
+      "registry_keys": [
+        "temperBeat"
+      ],
+      "source_sha256": "5c76edd89fe5922255766f7e91bc81a1fc27874cee14c811092039afe5726348",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tiandao-hunt-narration-request-v1.json",
+      "registry_keys": [
+        "tiandaoHuntNarrationRequestV1"
+      ],
+      "source_sha256": "4884761436769a014b7fb4283a7bbd0749e6a252d54b6c092ce4334c8cbb0532",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tiandao-hunt-response-level-v1.json",
+      "registry_keys": [
+        "tiandaoHuntResponseLevelV1"
+      ],
+      "source_sha256": "a364a4167d79d7aeef6c45d50374d7be297d651816ba15e2bd6923c518ac853b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "trade-item-summary-v1.json",
+      "registry_keys": [
+        "tradeItemSummaryV1"
+      ],
+      "source_sha256": "7b37fd3dc3b12f8e34556269d9f81b314482f619dfa9f5a1a688e44cf6f10cd8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "trade-offer-payload-v1.json",
+      "registry_keys": [
+        "tradeOfferPayloadV1"
+      ],
+      "source_sha256": "0259d493402d514caffa96fab3bf4ffde9f699d0dcb318cb3906ac98f441dd82",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "treasure-equipped-v1.json",
+      "registry_keys": [
+        "treasureEquippedV1"
+      ],
+      "source_sha256": "fcb7577e155bb309c03be4a196d0de170f3459e6c6b046eb8cc1b36a44401a5b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "treasure-view-v1.json",
+      "registry_keys": [
+        "treasureViewV1"
+      ],
+      "source_sha256": "a855506946588349a10c84325ed4f9425ef3ba1ed3fb513f96a67b488d19cb92",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "trespass-event-v1.json",
+      "registry_keys": [
+        "trespassEventV1"
+      ],
+      "source_sha256": "a8d3ee7bb9e504059b7456412f9405b295a39aa6593b7f89f2e30816464daea8",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tribulation-event-v1.json",
+      "registry_keys": [
+        "tribulationEventV1"
+      ],
+      "source_sha256": "620f512027e587d81b44e8735962a2d375fdb17a222d7ac54921195c001fd828",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tribulation-kind-v1.json",
+      "registry_keys": [
+        "tribulationKindV1"
+      ],
+      "source_sha256": "acc909ef3a474be12c0228fa98c6fdb81468936ab482131564dd1ee077a427c6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tribulation-phase-v1.json",
+      "registry_keys": [
+        "tribulationPhaseV1"
+      ],
+      "source_sha256": "940b8e141bcf3f2aab2514e3a8c569f9e899478be12fc66e28b3ec2a8d3fabb4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-collapse-completed-v1.json",
+      "registry_keys": [
+        "tsyCollapseCompletedV1"
+      ],
+      "source_sha256": "ea37cdf13d5dbb26c864dad55d76a769030fe90bf02defac18f82c3109919aaf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-collapse-started-ipc-v1.json",
+      "registry_keys": [
+        "tsyCollapseStartedIpcV1"
+      ],
+      "source_sha256": "b6d95336309680dfcaf908b0b0f892482b61da3ac36c3d9adb4fc20b5b6b50b0",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-collapse-started-v1.json",
+      "registry_keys": [
+        "tsyCollapseStartedV1"
+      ],
+      "source_sha256": "bb64a0610f500840f864ed86ed32445e7eab9a2f5763747bb94320895f022630",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-corpse-spawn-event-v1.json",
+      "registry_keys": [
+        "tsyCorpseSpawnEventV1"
+      ],
+      "source_sha256": "b5078587a8dd720b12aff87c6e676d16fbbed501a66e80390faed38482aed51b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-enter-event-v1.json",
+      "registry_keys": [
+        "tsyEnterEventV1"
+      ],
+      "source_sha256": "723abb715910bd89b4424b6db4831b0259a7c80b2755b1d62fa7332a19ad0c6a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-exit-event-v1.json",
+      "registry_keys": [
+        "tsyExitEventV1"
+      ],
+      "source_sha256": "c65471ff7506f2e7ecbde357184fa7b162f65950c6612c5740f698a25001cd8a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-hostile-archetype-v1.json",
+      "registry_keys": [
+        "tsyHostileArchetypeV1"
+      ],
+      "source_sha256": "ed3acf4cfb5047d7878d4d07a50660e21afd142d6e2236a13ab26ae5c51d05e0",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-npc-spawned-v1.json",
+      "registry_keys": [
+        "tsyNpcSpawnedV1"
+      ],
+      "source_sha256": "e44ac692e96b36904f1ab6b9e7533948f666f0d51c66ce2e3379f4124c9b4c06",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-sentinel-phase-changed-v1.json",
+      "registry_keys": [
+        "tsySentinelPhaseChangedV1"
+      ],
+      "source_sha256": "ac00de8cd2e8be991e03c1bee3e95caa94f7bbf898bc9c6cbe2f7d0e5f86c3f7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tsy-zone-activated-v1.json",
+      "registry_keys": [
+        "tsyZoneActivatedV1"
+      ],
+      "source_sha256": "997fadffb6d0a95027d5c0c3e4b1a24d80dc8db3a0eb9f74e6ce2cc44cbe663d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tuike-ash-decay-v1.json",
+      "registry_keys": [
+        "tuikeAshDecayV1"
+      ],
+      "source_sha256": "d9eaa5e7c3c12cf2f64b23c24fed2279932e6a8dd60d0f6c705a41b1cb4b9685",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tuike-v2-skill-event-v1.json",
+      "registry_keys": [
+        "tuikeV2SkillEventV1"
+      ],
+      "source_sha256": "888e613dcd2befac46b7adcb846ba982031609bc31e1a2415a5949c0689dd2bc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tutorial-hook-event-v1.json",
+      "registry_keys": [
+        "tutorialHookEventV1"
+      ],
+      "source_sha256": "b5d02e491216c2f5b7f55e5b907fc5f184a56b666281909d1acea91cf46e070f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "tutorial-hook-v1.json",
+      "registry_keys": [
+        "tutorialHookV1"
+      ],
+      "source_sha256": "e2268da6a2084a95c571c3f053e2984454f07489de354f528bbfffdc1b2d203a",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "vfx-event-v1.json",
+      "registry_keys": [
+        "vfxEventV1"
+      ],
+      "source_sha256": "10bd2914b098c48cb3c5bb1cbebe1462d46bd89a76d839a3149086cb40cd78b4",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "violation-kind-v1.json",
+      "registry_keys": [
+        "violationKindV1"
+      ],
+      "source_sha256": "15486cc87fb613c3fba1d515c8702f2c8a5547a78f1297d72e575c662a5e77ee",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-broadcast-v1.json",
+      "registry_keys": [
+        "voidActionBroadcastV1"
+      ],
+      "source_sha256": "339e6f08b0411044f3dded2912cbf0ac8beb4aa255a778d77b781a7b8670f1a6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-cooldown-v1.json",
+      "registry_keys": [
+        "voidActionCooldownV1"
+      ],
+      "source_sha256": "c24798bc948865ff554041339b91968d8fd1fc290f2883105d74cd46cbc22570",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-cost-v1.json",
+      "registry_keys": [
+        "voidActionCostV1"
+      ],
+      "source_sha256": "faafad371944ef1cf9c92935935ceff5ab072bb3f698ba7d7ce5a15a0d9ded0c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-kind-v1.json",
+      "registry_keys": [
+        "voidActionKindV1"
+      ],
+      "source_sha256": "0e6b6466ab81d4f8671e9c67d2ea4002cc0d24c18d4730b854ac5cb716b96239",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-request-v1.json",
+      "registry_keys": [
+        "voidActionRequestV1"
+      ],
+      "source_sha256": "448e944b2107efc0d6e283e92dcf29232982a136d8762aa23530bcd523630eaf",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-response-v1.json",
+      "registry_keys": [
+        "voidActionResponseV1"
+      ],
+      "source_sha256": "f6e573e762019fc0b4b1980bf7254bf5f10fb83e8afe16683dad0d93a6ed671e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-action-state-v1.json",
+      "registry_keys": [
+        "voidActionStateV1"
+      ],
+      "source_sha256": "5e450d75ecfe5be6f2024ffcef342b65a2a8ba8043898f6098d29a1c49c3e4ea",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-erosion-event-v1.json",
+      "registry_keys": [
+        "voidErosionEventV1"
+      ],
+      "source_sha256": "bc45558201daaf73ff8b222f887812e62014343466b507f694566c973376a9c6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-erosion-stage-v1.json",
+      "registry_keys": [
+        "voidErosionStageV1"
+      ],
+      "source_sha256": "6f27593fbce99aa58a5185bdcd74b6a887a78ca70bfe4c4b131a0f69117c5ec1",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-erosion-state-v1.json",
+      "registry_keys": [
+        "voidErosionStateV1"
+      ],
+      "source_sha256": "e22deef2cb418e6fb65a4217736a0149963436adcdddb23d5aa55489accfbe34",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-erosion-tiandao-modifier-v1.json",
+      "registry_keys": [
+        "voidErosionTiandaoModifierV1"
+      ],
+      "source_sha256": "e7a7f372d1bef6ca028a55040e636b99bb223d86f2aaa00a26b08ac90aceef4b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "void-erosion-visual-sync-payload-v1.json",
+      "registry_keys": [
+        "voidErosionVisualSyncPayloadV1"
+      ],
+      "source_sha256": "6de5c7ff40398284119b9987803d8ccad195146f69db73951e33191a91a19919",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "wanted-player-event-v1.json",
+      "registry_keys": [
+        "wantedPlayerEventV1"
+      ],
+      "source_sha256": "02138f02f661a979de36b3ab92f7d323998eb18f7a2980b6a7fb9a7a3b08769b",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weapon-broken-v1.json",
+      "registry_keys": [
+        "weaponBrokenV1"
+      ],
+      "source_sha256": "82a32bb65d9f300c37e79bfb318bca1b7dafbf719e2e58573a614ef25738a8eb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weapon-equipped-v1.json",
+      "registry_keys": [
+        "weaponEquippedV1"
+      ],
+      "source_sha256": "dcd3126c0534f6aca2a0248f342b4831767d0d05f17ca434a7c0ef3e785075bb",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weapon-forge-station-data-v1.json",
+      "registry_keys": [
+        "weaponForgeStationDataV1"
+      ],
+      "source_sha256": "47f7b862fc5d4a84b69a540f5db90f92a2acc7e294c02346dcd6f2552d7c32ac",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weapon-tier.json",
+      "registry_keys": [
+        "weaponTier"
+      ],
+      "source_sha256": "98717932d2c4c73c969dae610e79da5da684e54312e84faa2259ee2fdebb8e24",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "unversioned",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weapon-view-v1.json",
+      "registry_keys": [
+        "weaponViewV1"
+      ],
+      "source_sha256": "37fe1d75969e37d3368f4e628c0ba91566a5fade027176cdae1f8017d3d422cd",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weather-event-data-v1.json",
+      "registry_keys": [
+        "weatherEventDataV1"
+      ],
+      "source_sha256": "c7e931518d8f160d9f147ae1087373705b307a5314aa13f87cdec0d21e4f2c38",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weather-event-kind-v1.json",
+      "registry_keys": [
+        "weatherEventKindV1"
+      ],
+      "source_sha256": "fad712f0c6e9508441417b9c9089150f2356848b72b6c0f774f1c909d4d31564",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "weather-event-update-v1.json",
+      "registry_keys": [
+        "weatherEventUpdateV1"
+      ],
+      "source_sha256": "ebc1d7e8d0b092745d667dd85d5172ad58791a5b508cfbec4601829dd9eb74db",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "world-state-v1.json",
+      "registry_keys": [
+        "worldStateV1"
+      ],
+      "source_sha256": "d7ec96ac2392797921b186ac8604829d8afac53e0d47db8c011ddec8ccb00a4e",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "yidao-event-kind-v1.json",
+      "registry_keys": [
+        "yidaoEventKindV1"
+      ],
+      "source_sha256": "3370ec411977f88b35c2106aa166ad3fa2f2153d2e9a27b7639d750162946c9c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "yidao-event-v1.json",
+      "registry_keys": [
+        "yidaoEventV1"
+      ],
+      "source_sha256": "c6f282f8b2f160f96d232b2135fedb835396d56d0cb7eac56c6e9cad07cc6c99",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "yidao-hud-state-v1.json",
+      "registry_keys": [
+        "yidaoHudStateV1"
+      ],
+      "source_sha256": "004ec3c49f2c3b977463ca767473e1821a1ed53163f3e412aa2d1a1bc718f1ab",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "yidao-skill-id-v1.json",
+      "registry_keys": [
+        "yidaoSkillIdV1"
+      ],
+      "source_sha256": "579421ba6204f94af83f8545b5c4ddcea520b70914c65530bd11479c1e8ec48c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zhenfa-v2-event-v1.json",
+      "registry_keys": [
+        "zhenfaV2EventV1"
+      ],
+      "source_sha256": "95a9c3180ebebbdcd5978590bec1dc3f88135b8a8ad900b6a84e75dccadb4a1f",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zhenmai-skill-event-v1.json",
+      "registry_keys": [
+        "zhenmaiSkillEventV1"
+      ],
+      "source_sha256": "80996a2163da512b23fbb3c97a79d2e2174c6c6a925ff810b1ec1784c0ac7eba",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zone-environment-state-v1.json",
+      "registry_keys": [
+        "zoneEnvironmentStateV1"
+      ],
+      "source_sha256": "7817a41ceb60dc20394a252d6274f0cd2e1541595297c2c7be10c8f1e6c1c0cc",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zone-pressure-crossed-v1.json",
+      "registry_keys": [
+        "zonePressureCrossedV1"
+      ],
+      "source_sha256": "42303d805077cd435d7c245d4a9aefc92141332fb7a8cc5d7b9827a7f21c2a15",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zone-pressure-level-v1.json",
+      "registry_keys": [
+        "zonePressureLevelV1"
+      ],
+      "source_sha256": "f2ede5749f31ea95f53a6b2a24ae0497a3593a24077ab5f5969ec96bff799ca7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zong-core-activation-v1.json",
+      "registry_keys": [
+        "zongCoreActivationV1"
+      ],
+      "source_sha256": "4861712d288962dea09d6cfdbe8f9587b2ceedbae1d49c7763b8e15be6967e8c",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "zongmen-origin-id-v1.json",
+      "registry_keys": [
+        "zongmenOriginIdV1"
+      ],
+      "source_sha256": "aeaf0bfa20edf2d2ce58a1d16bfc40d413ef96b98f55ea10b754e46cc98f28d7",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    }
+  ]
+}

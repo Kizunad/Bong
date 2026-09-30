@@ -10970,5 +10970,6 @@
       "type": "number"
     }
   },
-  "x-bong-typebox-source-sha256": "b7a2b722c9c58834be2f92b5f9ab0f197a322a4c722663151ab77528c16fbca6"
+  "x-bong-typebox-source-sha256": "b7a2b722c9c58834be2f92b5f9ab0f197a322a4c722663151ab77528c16fbca6",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

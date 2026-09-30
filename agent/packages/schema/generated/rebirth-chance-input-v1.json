@@ -83,5 +83,6 @@
       "type": "boolean"
     }
   },
-  "x-bong-typebox-source-sha256": "1d2623f01977c616e2a65cdd4b0f296b79bee1ce2e07ba654d0e227e0a6303fc"
+  "x-bong-typebox-source-sha256": "1d2623f01977c616e2a65cdd4b0f296b79bee1ce2e07ba654d0e227e0a6303fc",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

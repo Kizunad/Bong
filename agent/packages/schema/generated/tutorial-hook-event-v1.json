@@ -79,5 +79,6 @@
       "type": "integer"
     }
   },
-  "x-bong-typebox-source-sha256": "b5d02e491216c2f5b7f55e5b907fc5f184a56b666281909d1acea91cf46e070f"
+  "x-bong-typebox-source-sha256": "b5d02e491216c2f5b7f55e5b907fc5f184a56b666281909d1acea91cf46e070f",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }
