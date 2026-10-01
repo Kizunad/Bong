@@ -72,13 +72,19 @@ def _run_agent_roundtrip(target_name: str, marker: str) -> dict:
             f"exit={completed.returncode} stdout={completed.stdout!r} stderr={completed.stderr!r}"
         )
 
-    lines = [line for line in completed.stdout.splitlines() if line.strip()]
-    try:
-        evidence = json.loads(lines[-1])
-    except (IndexError, json.JSONDecodeError) as error:
+    evidence = None
+    for line in reversed([line for line in completed.stdout.splitlines() if line.strip()]):
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and candidate.get("chat_channel"):
+            evidence = candidate
+            break
+    if evidence is None:
         raise BotAssertionError(
             f"Tiandao 回流适配器未输出可解析证据 JSON：stdout={completed.stdout!r}"
-        ) from error
+        )
 
     expected_player = f"offline:{target_name}"
     narration = evidence.get("narration", {})
