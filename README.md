@@ -32,7 +32,7 @@ Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
 已实装流派：**体修·爆脉流**、**器修·暗器流**、**地师·阵法流**（诡雷 / 警戒场 / 陷阱阵旗）、**毒蛊流**（凝针与经脉永久损伤）、**黑无室剑道**、**截脉震爆流**、**绝灵涡流**、**替尸蜕壳**（伪装）、**医道**（接续经脉 / 续命）。每招都有独立的动画、粒子、音效、HUD 反馈与图标。
 
 ### 生产与经济
-炼丹（火候三系统 + 丹毒节拍 + 副作用识别）、炼器（四步状态机）、锻造台配方、野生植物采集生态、灵田（季节 / 天气 / 二级加工）、矿物体系、灵木采伐、通用保质期（三路径衰减）。**骨币是唯一真货币**（异变兽骨 + 阵法锁真元），灵石只是劣质燃料，金银是废土。
+炼丹（火候三系统 + 丹毒节拍 + 副作用识别）、炼器（四步状态机）、锻造台配方、野生植物采集生态、季节天气、作物加工、矿物体系、灵木采伐、通用保质期（三路径衰减）。**骨币是唯一真货币**（异变兽骨 + 阵法锁真元），灵石只是劣质燃料，金银是废土。
 
 ### 坍缩渊（TSY）：搜打撤秘境
 上古大能透支天地而陨落之处，灵压极低（-1.2）。类塔科夫的搜打撤循环：5 档容器搜刮、四档敌对 NPC（道伥 / 执念 / 守灵 / 畸变体）、撤离点倒计时、秘境塌缩。负灵域也是战术空间——通灵境修士可以躲入逃避天劫，低境界也能靠灵压差极限反杀高境界。
@@ -122,13 +122,13 @@ bash scripts/wiki/publish.sh
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-07-27 · 共 170 份 plan_
+_自动生成于 2026-07-27 · 共 168 份 plan_
 
 ```text
-总进度  ███████████████████████████░░░  88.7%
+总进度  ███████████████████████████░░░  88.6%
 ```
 
-**分布**：`merged` 139 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
+**分布**：`merged` 137 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
 
 ### 坍缩渊（TSY）
 
@@ -167,12 +167,12 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 20 份 · 组均 84%_
 
 ### 修炼 / 经济
 
-_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 · 组均 92%_
+_六境修炼、天劫、炼丹/炼器、矿物、天气、保质期 · 27 份 · 组均 92%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
 | `merged` | **炼丹客户端闭环** <br/><sub>`finished_plans/plan-alchemy-client-v1.md`</sub> | `████████████` 100% | #93 | 2026-06-08 |
-| `merged` | **炼丹废料反哺灵田** <br/><sub>`finished_plans/plan-alchemy-recycle-v1.md`</sub> | `████████████` 100% | #139 | 2026-06-08 |
+| `merged` | **炼丹废料** <br/><sub>`finished_plans/plan-alchemy-recycle-v1.md`</sub> | `████████████` 100% | #139 | 2026-06-08 |
 | `merged` | **炼丹 v2：副作用与丹心识别** <br/><sub>`finished_plans/plan-alchemy-v2.md`</sub> | `████████████` 100% | #125 | 2026-06-08 |
 | `merged` | **植物生态扩展** <br/><sub>`finished_plans/plan-botany-v2.md`</sub> | `████████████` 100% | #83 #128 | 2026-06-08 |
 | `merged` | **修炼正典境界与经脉门槛对齐** <br/><sub>`finished_plans/plan-cultivation-canonical-align-v1.md`</sub> | `████████████` 100% | #99 | 2026-06-08 |
@@ -181,7 +181,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 | `merged` | **收口炼器桥接与客户端交互** <br/><sub>`finished_plans/plan-forge-leftovers-v1.md`</sub> | `████████████` 100% | #66 #103 | 2026-06-08 |
 | `merged` | **半步化虚重渡跨层集成** <br/><sub>`finished_plans/plan-halfstep-rechallenge-integration-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **寿元系统精细实装** <br/><sub>`finished_plans/plan-lifespan-v1.md`</sub> | `████████████` 100% | #117 | 2026-06-08 |
-| `merged` | **灵田作物二级加工** <br/><sub>`finished_plans/plan-lingtian-process-v1.md`</sub> | `████████████` 100% | #134 | 2026-06-08 |
+| `merged` | **作物加工与保鲜** <br/><sub>`finished_plans/plan-lingtian-process-v1.md`</sub> | `████████████` 100% | #134 | 2026-06-08 |
 | `merged` | **矿物材料正典** <br/><sub>`finished_plans/plan-mineral-v1.md`</sub> | `████████████` 100% | #44 #104 | 2026-06-08 |
 | `merged` | **负灵域逃遁战术** <br/><sub>`finished_plans/plan-neg-domain-escape-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **灵气物品搬运磨损** <br/><sub>`finished_plans/plan-qi-handling-attrition-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
@@ -194,15 +194,14 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 | `merged` | **渡虚劫 / 域崩 / 定向天罚** <br/><sub>`finished_plans/plan-tribulation-v1.md`</sub> | `████████████` 100% | #96 | 2026-06-08 |
 | `merged` | **化虚专属 action** <br/><sub>`finished_plans/plan-void-actions-v1.md`</sub> | `████████████` 100% | #163 | 2026-06-08 |
 | `merged` | **世界灵气预算化虚名额** <br/><sub>`finished_plans/plan-void-quota-v1.md`</sub> | `████████████` 100% | #159 | 2026-06-08 |
-| `merged` | **灵田专项** <br/><sub>`finished_plans/plan-lingtian-v1.md`</sub> | `███████████░`  88% | #26 #127 #115 | 2026-06-08 |
-| `merged` | **灵田季节天气消费层** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
+| `merged` | **季节天气** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
 | `wip` | **种族 BodyPlan 通用化+固元易形功法** <br/><sub>`plan-race-system-v1.md`</sub> | `███████░░░░░`  60% | #1160 #1180 #1184 #1198 #1201 #1202 #1203 #1204 #1206 #1250 | 2026-07-27 |
 | `wip` | **渡虚劫系统性平衡矩阵校准** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `██████░░░░░░`  50% | #533 #560 | 2026-06-14 |
 | `design` | **半步化虚 buff 运营数值校准** <br/><sub>`plan-halfstep-buff-calibration-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
 
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 35 份 · 组均 82%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 34 份 · 组均 82%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -218,7 +217,6 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 35 份 · 组均 8
 | `merged` | **Inventory v1** <br/><sub>`finished_plans/plan-inventory-v1.md`</sub> | `████████████` 100% | #27 | 2026-06-08 |
 | `merged` | **背包 v2 堆叠与批量入包** <br/><sub>`finished_plans/plan-inventory-v2.md`</sub> | `████████████` 100% | #115 | 2026-06-08 |
 | `merged` | **已亡七宗宗门志入库** <br/><sub>`finished_plans/plan-library-jiuzong-history-v1.md`</sub> | `████████████` 100% | #114 | 2026-06-08 |
-| `merged` | **散修灵田与天道叙事** <br/><sub>`finished_plans/plan-lingtian-npc-v1.md`</sub> | `████████████` 100% | #137 | 2026-06-08 |
 | `merged` | **多世人生与历代生平** <br/><sub>`finished_plans/plan-multi-life-v1.md`</sub> | `████████████` 100% | #148 | 2026-06-08 |
 | `merged` | **混元多流派修炼路径** <br/><sub>`finished_plans/plan-multi-style-v1.md`</sub> | `████████████` 100% | #129 | 2026-06-08 |
 | `merged` | **灵龛守家与龛侵追凶闭环** <br/><sub>`finished_plans/plan-niche-defense-v1.md`</sub> | `████████████` 100% | #130 | 2026-06-08 |

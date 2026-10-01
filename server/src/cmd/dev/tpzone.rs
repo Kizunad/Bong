@@ -29,7 +29,7 @@ pub fn register(app: &mut App) {
     app.add_command::<TpzoneCmd>().add_systems(
         Update,
         // fix-spec-1901-v2 §4.2 — 直接写 `Position` 的 dev teleport 必须进统一
-        // commit set：灵田 post-transfer validator / completion 复验排在它之后，
+        // commit set：位置相关 validator / completion 复验排在它之后，
         // 保证同 tick teleport 不会被旧位置通过。
         handle_tpzone.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
     );

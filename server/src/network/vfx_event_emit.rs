@@ -135,8 +135,8 @@ pub const VFX_PER_CLIENT_PER_TICK_MAX: u32 = 32;
 /// plan §2.5 / §6.3：VFX 优先级。合批后按 priority desc 排序,超上限时低优先被丢。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VfxPriority {
-    /// P3 verbose：灵田 tick / 自然恢复 / 低价值环境粒子。
-    /// 保留为未来 ambient 粒子(灵田脉动、区域灵气涌动等)使用,当前 gameplay 路径暂未触达。
+    /// P3 verbose：自然恢复 / 低价值环境粒子。
+    /// 保留为未来 ambient 粒子（区域灵气涌动等）使用，当前 gameplay 路径暂未触达。
     #[allow(dead_code)]
     Verbose = 0,
     /// P2 normal：普通命中、环境/杂项粒子（`combat_hit` / `formation_activate`）。

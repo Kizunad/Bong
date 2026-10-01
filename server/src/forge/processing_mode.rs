@@ -1,17 +1,15 @@
-//! plan-lingtian-process-v1 P2 — 丹炉炮制模式入口。
+//! 丹炉炮制模式入口。
 //!
 //! 这里不复用武器锻造四步状态机；它只把“丹炉可启动炮制/萃取 session”的
-//! 权限和配方校验封成事件入口，实际加工推进仍由 `lingtian::processing` 负责。
+//! 权限和配方校验封成事件入口，实际加工推进仍由 `crate::processing` 负责。
 
 use valence::prelude::{bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Res};
 
-use crate::lingtian::{
-    processing::{
-        validate_processing_start, ItemStack, ProcessingKind, ProcessingRecipeRegistry,
-        ProcessingSession, ProcessingSkillLevels,
-    },
-    LingtianClock, BEVY_TICKS_PER_LINGTIAN_TICK,
+use crate::processing::{
+    validate_processing_start, ItemStack, ProcessingKind, ProcessingRecipeRegistry,
+    ProcessingSession, ProcessingSkillLevels,
 };
+use crate::world::clock::{MinuteClock, TICKS_PER_MINUTE};
 
 #[derive(Debug, Clone, Event)]
 pub struct StartForgeProcessingRequest {
@@ -35,7 +33,7 @@ pub struct ForgeProcessingAccepted {
 pub fn forge_processing_mode_handler(
     mut commands: Commands,
     registry: Res<ProcessingRecipeRegistry>,
-    clock: Option<Res<LingtianClock>>,
+    clock: Option<Res<MinuteClock>>,
     mut requests: EventReader<StartForgeProcessingRequest>,
     mut accepted: EventWriter<ForgeProcessingAccepted>,
 ) {
@@ -65,11 +63,7 @@ pub fn forge_processing_mode_handler(
         };
         let started_at_tick = clock
             .as_deref()
-            .map(|clock| {
-                clock
-                    .lingtian_tick
-                    .saturating_mul(BEVY_TICKS_PER_LINGTIAN_TICK as u64)
-            })
+            .map(|clock| clock.minute.saturating_mul(TICKS_PER_MINUTE as u64))
             .unwrap_or_default();
         commands
             .entity(request.player)
@@ -94,11 +88,8 @@ pub fn forge_processing_mode_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lingtian::{
-        processing::{
-            ProcessingRecipe, RecipeInput, RecipeOutput, SkillRequirement, EXTRACTION_TICKS,
-        },
-        LingtianClock,
+    use crate::processing::{
+        ProcessingRecipe, RecipeInput, RecipeOutput, SkillRequirement, EXTRACTION_TICKS,
     };
     use valence::prelude::{App, Update};
 
@@ -133,7 +124,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(registry);
-        app.insert_resource(LingtianClock { lingtian_tick: 5 });
+        app.insert_resource(MinuteClock { minute: 5 });
         app.add_event::<StartForgeProcessingRequest>();
         app.add_event::<ForgeProcessingAccepted>();
         app.add_systems(Update, forge_processing_mode_handler);
@@ -163,10 +154,7 @@ mod tests {
         let session = app.world().get::<ProcessingSession>(player).unwrap();
         assert_eq!(session.recipe_id, "forge_ci_she_hao");
         assert_eq!(session.kind, ProcessingKind::ForgingAlchemy);
-        assert_eq!(
-            session.started_at_tick,
-            5 * BEVY_TICKS_PER_LINGTIAN_TICK as u64
-        );
+        assert_eq!(session.started_at_tick, 5 * TICKS_PER_MINUTE as u64);
     }
 
     #[test]

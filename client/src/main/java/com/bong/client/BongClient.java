@@ -43,7 +43,6 @@ import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.inventory.LootContainerScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
-import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.dying_elder.DyingElderInteractionKeybindings;
 import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcLodWorldRenderer;
@@ -109,7 +108,6 @@ public class BongClient implements ClientModInitializer {
         com.bong.client.alchemy.AlchemyWorldEffects.register();
         ClientUiBootstrap.registerCraftScreen();
         IdentityPanelScreenBootstrap.register();
-        LingtianActionScreenBootstrap.register();
         VoidActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());

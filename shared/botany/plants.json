@@ -1,0 +1,2810 @@
+{
+  "plants": [
+    {
+      "aliases": [],
+      "description": "淡黄色桃形果，生于青云残峰外门梯田。可镇心镜，对顿悟修士尤佳。",
+      "id": "an_shen_guo",
+      "name": "安神果",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/an_shen_guo_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/an_shen_guo.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/an_shen_guo_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.003,
+        "item_id": "an_shen_guo",
+        "max_age_ticks": 9000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.3,
+        "v2": null,
+        "zone_tags": [
+          "mountain"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "灰白盐晶附在细叶上，日照下才肯把零散灵气逼成盐粒。",
+      "id": "bai_yan_peng",
+      "name": "白盐蓬",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/bai_yan_peng_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/bai_yan_peng.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/bai_yan_peng_seedling.png"
+          }
+        },
+        "tint_rgb": 16316648
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.002,
+        "item_id": "bai_yan_peng",
+        "max_age_ticks": 8000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "dead_bush",
+          "env_locks": [],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.6
+              }
+            },
+            {
+              "attracts_mobs": {
+                "max_count": 5,
+                "min_count": 2,
+                "mob_kind": "spirit_mice"
+              }
+            }
+          ],
+          "icon_prompt": "white saltbush with tiny spirit salt crystals, dry wasteland herb icon",
+          "model_overlay": "none",
+          "survival_mode": "spirit_crystallize",
+          "tint_rgb": 16316648,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "宗门遗迹残阵旁长出的灰青灵芝，菌丝里夹着紫色断纹。",
+      "id": "bei_wen_zhi",
+      "name": "碑文芝",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/bei_wen_zhi_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/bei_wen_zhi.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/bei_wen_zhi_seedling.png"
+          }
+        },
+        "tint_rgb": 8423568
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "bei_wen_zhi",
+        "max_age_ticks": 13000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "red_mushroom",
+          "env_locks": [
+            {
+              "ruin_density": {
+                "min": 0.3
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": "array_disc_remnant",
+                "radius": 2
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.5
+              }
+            }
+          ],
+          "icon_prompt": "gray-blue ganoderma with purple inscription veins, ruined sect herb icon",
+          "model_overlay": "none",
+          "survival_mode": "ruin_resonance",
+          "tint_rgb": 8423568,
+          "tint_rgb_secondary": 6299808
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [
+        "xue_cao"
+      ],
+      "description": "色赤入髓，药性偏烈，常用于重症筋骨与血络调理。",
+      "id": "chi_sui_cao",
+      "name": "赤髓草",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/chi_sui_cao_growing.png"
+          },
+          "mature": {
+            "geometry": "bong:geo/plants/chi_sui_cao.geo.json",
+            "kind": "geo",
+            "offset": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong:textures/entity/plants/chi_sui_cao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/chi_sui_cao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.005,
+        "item_id": "chi_sui_cao",
+        "max_age_ticks": 8500,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.25,
+        "v2": null,
+        "zone_tags": [
+          "blood_valley"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "辛苦微毒，常用于试探经络反应的入门药材。",
+      "id": "ci_she_hao",
+      "name": "刺舌蒿",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ci_she_hao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/ci_she_hao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ci_she_hao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 4.0,
+        "growth_cost": 0.002,
+        "item_id": "ci_she_hao",
+        "max_age_ticks": 6000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.2,
+        "v2": null,
+        "zone_tags": [
+          "plains"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "扎在古战场金属遗物缝里的暗血荆刺，采下时仍有怨念回响。",
+      "id": "duan_ji_ci",
+      "name": "断戟刺",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/duan_ji_ci_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/duan_ji_ci.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/duan_ji_ci_seedling.png"
+          }
+        },
+        "tint_rgb": 6037007
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "duan_ji_ci",
+        "max_age_ticks": 12000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "sweet_berry_bush",
+          "env_locks": [
+            {
+              "ruin_density": {
+                "min": 0.3
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": [
+                  "broken_spear_tree",
+                  "war_banner_post"
+                ],
+                "radius": 1
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "resonance_vision": {
+                "composure_loss": 0.05,
+                "duration_secs": 3
+              }
+            },
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "CaoLian",
+                "wound": "laceration"
+              }
+            }
+          ],
+          "icon_prompt": "blood-dark thorn growing around broken spear fragments, battlefield herb icon",
+          "model_overlay": "none",
+          "survival_mode": "ruin_resonance",
+          "tint_rgb": 6037007,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "山间孤生的圆润灵果，表皮隐隐流光。食之可微暖经脉、小助修炼，过峰腐烂极速。",
+      "id": "food.spirit_fruit.ling_guo",
+      "name": "灵果",
+      "visual": {
+        "stages": {
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "minecraft:textures/block/grass.png"
+          }
+        },
+        "tint_rgb": 10543200
+      },
+      "wild": {
+        "density_factor": 0.5,
+        "growth_cost": 0.003,
+        "item_id": "food.spirit_fruit.ling_guo",
+        "max_age_ticks": 8000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "sweet_berry_bush",
+          "env_locks": [],
+          "harvest_hazards": [],
+          "icon_prompt": "round luminous spirit fruit on mountain shrub, rare food item icon, jade-green glow",
+          "model_overlay": "none",
+          "survival_mode": "qi_absorb",
+          "tint_rgb": 10543200,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": [
+          "mountain",
+          "plains"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "看似无害，孢子飘散三里。吸入者真元自漏，勿轻易摘。毒·可采不可炼。",
+      "id": "fu_chen_cao",
+      "name": "浮尘草",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_chen_cao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/fu_chen_cao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_chen_cao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.2,
+        "growth_cost": 0.002,
+        "item_id": "fu_chen_cao",
+        "max_age_ticks": 10000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.0,
+        "v2": null,
+        "zone_tags": [
+          "negative_field",
+          "wastes"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "看似清丽，食一瓣即发狂，三日内必伤同伴。毒·可采不可炼。",
+      "id": "fu_you_hua",
+      "name": "蜉蝣花",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_you_hua_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/fu_you_hua.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_you_hua_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.002,
+        "item_id": "fu_you_hua",
+        "max_age_ticks": 6000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.2,
+        "v2": null,
+        "zone_tags": [
+          "plains"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "北荒负灵域里的暗紫蕨叶，叶脉会顺着天地倒吸一同呼吸。",
+      "id": "fu_yuan_jue",
+      "name": "负元蕨",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_yuan_jue_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/fu_yuan_jue.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/fu_yuan_jue_seedling.png"
+          }
+        },
+        "tint_rgb": 4861530
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "fu_yuan_jue",
+        "max_age_ticks": 14400,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "large_fern",
+          "env_locks": [
+            {
+              "neg_pressure": {
+                "min": 0.3
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "qi_drain_on_approach": {
+                "drain_per_sec": 0.4,
+                "radius_blocks": 5
+              }
+            }
+          ],
+          "icon_prompt": "dark purple reverse-breathing fern, salt-dry wasteland herb icon",
+          "model_overlay": "none",
+          "survival_mode": "neg_pressure_feed",
+          "tint_rgb": 4861530,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "根性沉稳，能在低灵压环境下维持元气不散。",
+      "id": "gu_yuan_gen",
+      "name": "固元根",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/gu_yuan_gen_growing.png"
+          },
+          "mature": {
+            "geometry": "bong:geo/plants/gu_yuan_gen.geo.json",
+            "kind": "geo",
+            "offset": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong:textures/entity/plants/gu_yuan_gen.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/gu_yuan_gen_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.01,
+        "item_id": "gu_yuan_gen",
+        "max_age_ticks": 10000,
+        "regen_ticks": 7200,
+        "restore_ratio": 0.8,
+        "spawn_mode": "static_point",
+        "survive_threshold": 0.6,
+        "v2": null,
+        "zone_tags": [
+          "marsh",
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "生于死人骨缝。毒入经脉，三息化骨为粉。炼丹师亦不敢动。",
+      "id": "hei_gu_jun",
+      "name": "黑骨菌",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hei_gu_jun_growing.png"
+          },
+          "mature": {
+            "geometry": "bong:geo/plants/hei_gu_jun.geo.json",
+            "kind": "geo",
+            "offset": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong:textures/entity/plants/hei_gu_jun.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hei_gu_jun_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "hei_gu_jun",
+        "max_age_ticks": 20000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "残灰方块表面之薄层苔藓，灰黑与方块同色。可外敷止血，不可久服。",
+      "id": "hui_jin_tai",
+      "name": "灰烬苔",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hui_jin_tai_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/hui_jin_tai.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hui_jin_tai_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "hui_jin_tai",
+        "max_age_ticks": 10000,
+        "regen_ticks": 2400,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [
+        "bai_cao"
+      ],
+      "description": "枝液温润，可与丹引配伍以回补亏虚真元。",
+      "id": "hui_yuan_zhi",
+      "name": "回元枝",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hui_yuan_zhi_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/hui_yuan_zhi.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/hui_yuan_zhi_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 1.5,
+        "growth_cost": 0.003,
+        "item_id": "hui_yuan_zhi",
+        "max_age_ticks": 8000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.35,
+        "v2": null,
+        "zone_tags": [
+          "marsh"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "血谷裂隙火脉旁的焦黑藤蔓，藤芯像未熄的橙红炭线。",
+      "id": "jiao_mai_teng",
+      "name": "焦脉藤",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jiao_mai_teng_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/jiao_mai_teng.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jiao_mai_teng_seedling.png"
+          }
+        },
+        "tint_rgb": 3149840
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.004,
+        "item_id": "jiao_mai_teng",
+        "max_age_ticks": 12000,
+        "regen_ticks": 3600,
+        "restore_ratio": 0.8,
+        "spawn_mode": "static_point",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "weeping_vines",
+          "env_locks": [
+            {
+              "fracture_mask": {
+                "min": 0.4
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": "fire_vein_cactus",
+                "radius": 3
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "DunQiJia",
+                "wound": "fracture"
+              }
+            }
+          ],
+          "icon_prompt": "charred vein vine with orange ember core, rift valley herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "pressure_differential",
+          "tint_rgb": 3149840,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": [
+          "blood_valley"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "紫色小花，幽暗地穴湿处所生。解毒蛊之必备，涉湿地者须常备一颗。",
+      "id": "jie_gu_rui",
+      "name": "解蛊蕊",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jie_gu_rui_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/jie_gu_rui.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jie_gu_rui_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.8,
+        "growth_cost": 0.004,
+        "item_id": "jie_gu_rui",
+        "max_age_ticks": 7500,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.4,
+        "v2": null,
+        "zone_tags": [
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "灵泉眼吐纳开期才肯舒展的翠青藻，合期采之会被井口反吸。",
+      "id": "jing_xin_zao",
+      "name": "井心藻",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jing_xin_zao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/jing_xin_zao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/jing_xin_zao_seedling.png"
+          }
+        },
+        "tint_rgb": 4235424
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.005,
+        "item_id": "jing_xin_zao",
+        "max_age_ticks": 14000,
+        "regen_ticks": 14400,
+        "restore_ratio": 0.8,
+        "spawn_mode": "static_point",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "seagrass",
+          "env_locks": [
+            {
+              "qi_vein_flow": {
+                "min": 0.6
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": [
+                  "ling_yun_mangrove",
+                  "spirit_willow"
+                ],
+                "radius": 8
+              }
+            },
+            {
+              "time_phase": "open"
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "season_required": {
+                "phase": "open"
+              }
+            }
+          ],
+          "icon_prompt": "cyan algae from spirit well heart, soft luminous water herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "water_pulse",
+          "tint_rgb": 4235424,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": [
+          "marsh"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "负灵域中异变之残灰，形若兽骨。可炼抗灵压丹，极少见。",
+      "id": "kong_shou_hen",
+      "name": "空兽痕",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/kong_shou_hen_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/kong_shou_hen.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/kong_shou_hen_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "kong_shou_hen",
+        "max_age_ticks": 20000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "坍缩渊裂缝口的紫黑苔，靠两界压差泵出的微弱流维生。",
+      "id": "lie_yuan_tai",
+      "name": "裂渊苔",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/lie_yuan_tai_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/lie_yuan_tai.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/lie_yuan_tai_seedling.png"
+          }
+        },
+        "tint_rgb": 4202592
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.003,
+        "item_id": "lie_yuan_tai",
+        "max_age_ticks": 9000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "glow_lichen",
+          "env_locks": [
+            "portal_rift_active"
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.4
+              }
+            }
+          ],
+          "icon_prompt": "purple-black moss clinging to a dimensional rift, abyss portal herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "portal_siphon",
+          "tint_rgb": 4202592,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "大能陨坑晶柱漏点上缠出的紫晶须，能暂补上古器物的损耗。",
+      "id": "ling_jing_xu",
+      "name": "灵晶须",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ling_jing_xu_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/ling_jing_xu.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ling_jing_xu_seedling.png"
+          }
+        },
+        "tint_rgb": 10510591
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "ling_jing_xu",
+        "max_age_ticks": 13000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "twisting_vines",
+          "env_locks": [
+            {
+              "adjacent_decoration": {
+                "kind": "qi_crystal_pillar",
+                "radius": 3
+              }
+            },
+            {
+              "qi_vein_flow": {
+                "min": 0.5
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "GuaDao",
+                "wound": "abrasion"
+              }
+            },
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.6
+              }
+            }
+          ],
+          "icon_prompt": "purple crystal tendrils around ancient qi pillar, TSY crater herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "pressure_differential",
+          "tint_rgb": 10510591,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "菌形，白如玉。仅生于灵眼正上方三尺，固元突破之最佳辅料。",
+      "id": "ling_yan_shi_zhi",
+      "name": "灵眼石芝",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ling_yan_shi_zhi_growing.png"
+          },
+          "mature": {
+            "geometry": "bong:geo/plants/ling_yan_shi_zhi.geo.json",
+            "kind": "geo",
+            "offset": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong:textures/entity/plants/ling_yan_shi_zhi.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ling_yan_shi_zhi_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "ling_yan_shi_zhi",
+        "max_age_ticks": 30000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "隐居茅舍残痕里生出的暖黄小薇，带一点近代高手留下的温润残灵。",
+      "id": "mao_xin_wei",
+      "name": "茅心薇",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/mao_xin_wei_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/mao_xin_wei.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/mao_xin_wei_seedling.png"
+          }
+        },
+        "tint_rgb": 15253568
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.002,
+        "item_id": "mao_xin_wei",
+        "max_age_ticks": 9000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "wheat",
+          "env_locks": [
+            {
+              "adjacent_decoration": {
+                "kind": [
+                  "thatched_hermitage",
+                  "lone_grave_mound",
+                  "daily_artifact_cache"
+                ],
+                "radius": 2
+              }
+            }
+          ],
+          "harvest_hazards": [],
+          "icon_prompt": "warm yellow thatch-heart vetch, hermitage remnant herb icon",
+          "model_overlay": "none",
+          "survival_mode": "ruin_resonance",
+          "tint_rgb": 15253568,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "坍缩渊战场沉淀里的骨白蘑菇，低负压把怨念凝成菌伞。",
+      "id": "ming_gu_gu",
+      "name": "冥骨菇",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ming_gu_gu_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/ming_gu_gu.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ming_gu_gu_seedling.png"
+          }
+        },
+        "tint_rgb": 15261904
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "ming_gu_gu",
+        "max_age_ticks": 14000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "brown_mushroom",
+          "env_locks": [
+            {
+              "ruin_density": {
+                "min": 0.4
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": "bone_mountain",
+                "radius": 3
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "resonance_vision": {
+                "composure_loss": 0.08,
+                "duration_secs": 5
+              }
+            },
+            {
+              "attracts_mobs": {
+                "max_count": 3,
+                "min_count": 1,
+                "mob_kind": "mimic_spider"
+              }
+            }
+          ],
+          "icon_prompt": "bone-white mushroom growing from silent battlefield bones, TSY herb icon",
+          "model_overlay": "none",
+          "survival_mode": "ruin_resonance",
+          "tint_rgb": 15261904,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [
+        "kai_mai_cao"
+      ],
+      "description": "性平而凝，常用于稳固气机与收束散乱经脉。",
+      "id": "ning_mai_cao",
+      "name": "凝脉草",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ning_mai_cao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/ning_mai_cao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ning_mai_cao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 3.0,
+        "growth_cost": 0.003,
+        "item_id": "ning_mai_cao",
+        "max_age_ticks": 7200,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.4,
+        "v2": null,
+        "zone_tags": [
+          "plains"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "叶五瓣，生于馈赠区与负灵域交界。可中和异种真元，专克染色浊乱者。",
+      "id": "qing_zhuo_cao",
+      "name": "清浊草",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/qing_zhuo_cao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/qing_zhuo_cao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/qing_zhuo_cao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 1.2,
+        "growth_cost": 0.003,
+        "item_id": "qing_zhuo_cao",
+        "max_age_ticks": 7000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.3,
+        "v2": null,
+        "zone_tags": [
+          "plains",
+          "negative_field"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "幽暗地穴洞壁生蔓，发光暴露位置。固元丹辅料、清脉汤主料。",
+      "id": "shao_hou_man",
+      "name": "烧喉蔓",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/shao_hou_man_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/shao_hou_man.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/shao_hou_man_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.4,
+        "growth_cost": 0.008,
+        "item_id": "shao_hou_man",
+        "max_age_ticks": 9000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.4,
+        "v2": null,
+        "zone_tags": [
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "负灵域地面蔓生的黑色苔藓，每踏一步都在吸食踩踏者的真元。不可采集，不可入药。",
+      "id": "shi_ling_xian",
+      "name": "噬灵藓",
+      "visual": {
+        "stages": {
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "minecraft:textures/block/grass.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "shi_ling_xian",
+        "max_age_ticks": 1200,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "spread_by_crawl",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": [
+          "negative_field"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "生于负灵域浅层，剧毒。毒蛊原料，误食即经脉暴走。每处裂隙仅生一株。",
+      "id": "shi_mai_gen",
+      "name": "噬脉根",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/shi_mai_gen_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/shi_mai_gen.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/shi_mai_gen_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "shi_mai_gen",
+        "max_age_ticks": 25000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": [
+          "negative_field"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "末法残土最常见的灵草。生于灵气 0.3 之上的馈赠区。炼丹基础。",
+      "id": "spirit_grass",
+      "name": "灵草",
+      "visual": {
+        "stages": {
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/spirit_grass.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 20.0,
+        "growth_cost": 0.002,
+        "item_id": "spirit_grass",
+        "max_age_ticks": 4000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.2,
+        "v2": null,
+        "zone_tags": [
+          "plains"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "伪灵脉消散焦土所生，稍纵即逝。真元沸腾——自杀攻击之用。",
+      "id": "tian_nu_jiao",
+      "name": "天怒椒",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/tian_nu_jiao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/tian_nu_jiao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/tian_nu_jiao_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "tian_nu_jiao",
+        "max_age_ticks": 1200,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "形如安神果然无棱。误食即失语，永不能复。毒·可采不可炼。",
+      "id": "wu_yan_guo",
+      "name": "无言果",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/wu_yan_guo_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/wu_yan_guo.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/wu_yan_guo_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.002,
+        "item_id": "wu_yan_guo",
+        "max_age_ticks": 8000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.25,
+        "v2": null,
+        "zone_tags": [
+          "mountain"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "从浮岛底面垂落的翠绿藤薇，根尖有虹吸沉积出的锐晶。",
+      "id": "xuan_gen_wei",
+      "name": "悬根薇",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xuan_gen_wei_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/xuan_gen_wei.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xuan_gen_wei_seedling.png"
+          }
+        },
+        "tint_rgb": 6344832
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.004,
+        "item_id": "xuan_gen_wei",
+        "max_age_ticks": 11000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "vine",
+          "env_locks": [
+            {
+              "sky_island_mask": {
+                "min": 0.2,
+                "surface": "bottom"
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "DunQiJia",
+                "wound": "laceration"
+              }
+            }
+          ],
+          "icon_prompt": "hanging green root vine with crystal tips, floating island underside herb icon",
+          "model_overlay": "none",
+          "survival_mode": "pressure_differential",
+          "tint_rgb": 6344832,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "深渊二层温差带里的漆黑绒苔，银光只在掌心靠近时浮出。",
+      "id": "xuan_rong_tai",
+      "name": "玄绒苔",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xuan_rong_tai_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/xuan_rong_tai.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xuan_rong_tai_seedling.png"
+          }
+        },
+        "tint_rgb": 1052693
+      },
+      "wild": {
+        "density_factor": 0.3,
+        "growth_cost": 0.004,
+        "item_id": "xuan_rong_tai",
+        "max_age_ticks": 12000,
+        "regen_ticks": 7200,
+        "restore_ratio": 0.8,
+        "spawn_mode": "static_point",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "moss_carpet",
+          "env_locks": [
+            {
+              "underground_tier": {
+                "tier": 2
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "GuaDao",
+                "wound": "abrasion"
+              }
+            }
+          ],
+          "icon_prompt": "black velvet moss with faint silver glow, abyss middle-tier herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "thermal_convection",
+          "tint_rgb": 1052693,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": [
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "雪线以上冻结灵气的霜白莲，手温稍近便会化作雾。",
+      "id": "xue_po_lian",
+      "name": "雪魄莲",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xue_po_lian_growing.png"
+          },
+          "mature": {
+            "geometry": "bong:geo/plants/xue_po_lian.geo.json",
+            "kind": "geo",
+            "offset": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong:textures/entity/plants/xue_po_lian.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xue_po_lian_seedling.png"
+          }
+        },
+        "tint_rgb": 15792383
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.006,
+        "item_id": "xue_po_lian",
+        "max_age_ticks": 16000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "lily_of_the_valley",
+          "env_locks": [
+            "snow_surface",
+            {
+              "qi_vein_flow": {
+                "min": 0.3
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "BingJiaShouTao",
+                "wound": "laceration"
+              }
+            }
+          ],
+          "icon_prompt": "snow-white lotus with frost-blue rim, high snowline herb icon",
+          "model_overlay": "none",
+          "survival_mode": "spirit_crystallize",
+          "tint_rgb": 15792383,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "昼夜两相的古战场脉草，日叶可清浊，夜叶则近毒。",
+      "id": "xue_se_mai_cao",
+      "name": "血色脉草",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xue_se_mai_cao_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/xue_se_mai_cao.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/xue_se_mai_cao_seedling.png"
+          }
+        },
+        "tint_rgb": 12595232
+      },
+      "wild": {
+        "density_factor": 1.5,
+        "growth_cost": 0.008,
+        "item_id": "xue_se_mai_cao",
+        "max_age_ticks": 10000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "tall_grass",
+          "env_locks": [
+            {
+              "ruin_density": {
+                "min": 0.2
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.4
+              }
+            },
+            {
+              "wound_on_bare_hand": {
+                "required_tool": "CaoLian",
+                "wound": "laceration"
+              }
+            }
+          ],
+          "icon_prompt": "two-phase vein grass, red day leaf and blue-green night leaf, toxic battlefield herb icon",
+          "model_overlay": "dual_phase",
+          "survival_mode": "dual_metabolism",
+          "tint_rgb": 12595232,
+          "tint_rgb_secondary": 2117696
+        },
+        "zone_tags": [
+          "blood_valley"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "生于死域边缘，绿如铁锈。可养经脉裂痕，爆脉之后必服。",
+      "id": "yang_jing_tai",
+      "name": "养经苔",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yang_jing_tai_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/yang_jing_tai.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yang_jing_tai_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "yang_jing_tai",
+        "max_age_ticks": 15000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "生于幽暗地穴深处。藤能缠物吸真元，采时须戴十层麻手套。",
+      "id": "ye_ku_teng",
+      "name": "夜枯藤",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ye_ku_teng_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/ye_ku_teng.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ye_ku_teng_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.2,
+        "growth_cost": 0.01,
+        "item_id": "ye_ku_teng",
+        "max_age_ticks": 12000,
+        "regen_ticks": 9000,
+        "restore_ratio": 0.8,
+        "spawn_mode": "static_point",
+        "survive_threshold": 0.5,
+        "v2": null,
+        "zone_tags": [
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "深穴浅层的暖橙发光菇，须借邻近光源才能维持菌丝循环。",
+      "id": "ying_yuan_gu",
+      "name": "萤渊菇",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ying_yuan_gu_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/ying_yuan_gu.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/ying_yuan_gu_seedling.png"
+          }
+        },
+        "tint_rgb": 16752704
+      },
+      "wild": {
+        "density_factor": 2.5,
+        "growth_cost": 0.005,
+        "item_id": "ying_yuan_gu",
+        "max_age_ticks": 10000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "red_mushroom",
+          "env_locks": [
+            {
+              "underground_tier": {
+                "tier": 1
+              }
+            },
+            {
+              "adjacent_light_block": {
+                "radius": 2
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.3
+              }
+            },
+            {
+              "attracts_mobs": {
+                "max_count": 2,
+                "min_count": 1,
+                "mob_kind": "mimic_spider"
+              }
+            }
+          ],
+          "icon_prompt": "warm orange glowing abyss mushroom, emissive cave herb icon",
+          "model_overlay": "emissive",
+          "survival_mode": "photo_luminance",
+          "tint_rgb": 16752704,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": [
+          "cave"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "共生于渊泥黑树伞下的玉红蕨体，灵质极高，也最经不起磨损。",
+      "id": "yuan_ni_hong_yu",
+      "name": "渊泥红玉",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yuan_ni_hong_yu_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/yuan_ni_hong_yu.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yuan_ni_hong_yu_seedling.png"
+          }
+        },
+        "tint_rgb": 12591168
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.008,
+        "item_id": "yuan_ni_hong_yu",
+        "max_age_ticks": 18000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "large_fern",
+          "env_locks": [
+            {
+              "underground_tier": {
+                "tier": 3
+              }
+            },
+            {
+              "adjacent_decoration": {
+                "kind": "yuan_ni_ebony",
+                "radius": 5
+              }
+            },
+            {
+              "qi_vein_flow": {
+                "min": 0.5
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.5
+              }
+            }
+          ],
+          "icon_prompt": "red jade fern under black abyss mud tree, precious herb icon",
+          "model_overlay": "none",
+          "survival_mode": "pressure_differential",
+          "tint_rgb": 12591168,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "浮岛顶面开放的银白兰草，根浅而轻，离开高空气流便散。",
+      "id": "yun_ding_lan",
+      "name": "云顶兰",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yun_ding_lan_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/items/yun_ding_lan.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/yun_ding_lan_seedling.png"
+          }
+        },
+        "tint_rgb": 15267071
+      },
+      "wild": {
+        "density_factor": 1.0,
+        "growth_cost": 0.003,
+        "item_id": "yun_ding_lan",
+        "max_age_ticks": 9000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": -1.0,
+        "v2": {
+          "base_mesh_ref": "lily_of_the_valley",
+          "env_locks": [
+            {
+              "sky_island_mask": {
+                "min": 0.2,
+                "surface": "top"
+              }
+            }
+          ],
+          "harvest_hazards": [
+            {
+              "dispersal_on_fail": {
+                "dispersal_chance": 0.7
+              }
+            }
+          ],
+          "icon_prompt": "silver-white orchid from floating cloud peak, light airy herb icon",
+          "model_overlay": "none",
+          "survival_mode": "qi_absorb",
+          "tint_rgb": 15267071,
+          "tint_rgb_secondary": null
+        },
+        "zone_tags": []
+      }
+    },
+    {
+      "aliases": [],
+      "description": "烈辛草本，青云残峰与灵泉湿地均有。凝脉散疏通药、刺经膏主料。",
+      "id": "zhen_jie_zi",
+      "name": "针芥子",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/zhen_jie_zi_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/zhen_jie_zi.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/zhen_jie_zi_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.6,
+        "growth_cost": 0.005,
+        "item_id": "zhen_jie_zi",
+        "max_age_ticks": 8000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.8,
+        "spawn_mode": "zone_refresh",
+        "survive_threshold": 0.3,
+        "v2": null,
+        "zone_tags": [
+          "mountain",
+          "marsh"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "毒蛊师之终极原料，养藤者多自身先死。烧之三日不熄。",
+      "id": "zhong_yan_teng",
+      "name": "终焉藤",
+      "visual": {
+        "stages": {
+          "growing": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/zhong_yan_teng_growing.png"
+          },
+          "mature": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/zhong_yan_teng.png"
+          },
+          "seedling": {
+            "kind": "billboard",
+            "offset": [
+              0.0,
+              0.02,
+              0.0
+            ],
+            "scale": 1.0,
+            "texture": "bong-client:textures/gui/botany/stages/zhong_yan_teng_seedling.png"
+          }
+        },
+        "tint_rgb": 16777215
+      },
+      "wild": {
+        "density_factor": 0.0,
+        "growth_cost": 0.0,
+        "item_id": "zhong_yan_teng",
+        "max_age_ticks": 30000,
+        "regen_ticks": 0,
+        "restore_ratio": 0.0,
+        "spawn_mode": "event_triggered",
+        "survive_threshold": -1.0,
+        "v2": null,
+        "zone_tags": [
+          "negative_field"
+        ]
+      }
+    },
+    {
+      "aliases": [],
+      "description": "乳白色人形根茎，触碰时微动。",
+      "id": "hua_xing_gen",
+      "name": "化形根",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/hua_xing_gen.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/hua_xing_gen.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "灰绿色苔藓，表面呈鳞片状纹路。",
+      "id": "long_lin_tai",
+      "name": "龙鳞苔",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/long_lin_tai.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/long_lin_tai.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "心形叶片上分布暗红脉络。",
+      "id": "shou_xin_cao",
+      "name": "兽心草",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/shou_xin_cao.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/shou_xin_cao.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "暗紫色藤蔓，缠绕骨骼生长。",
+      "id": "tui_gu_teng",
+      "name": "蜕骨藤",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/tui_gu_teng.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/tui_gu_teng.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    },
+    {
+      "aliases": [],
+      "description": "金黄色花蕊，发出微弱光芒。",
+      "id": "xu_yuan_rui",
+      "name": "续元蕊",
+      "visual": {
+        "stages": {
+          "mature": {
+            "geometry": "bong:geo/plants/xu_yuan_rui.geo.json",
+            "kind": "geo",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "scale": 1,
+            "texture": "bong:textures/entity/plants/xu_yuan_rui.png"
+          }
+        },
+        "tint_rgb": 16777215
+      }
+    }
+  ],
+  "schema_version": 1
+}

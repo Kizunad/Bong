@@ -4,7 +4,7 @@ import com.bong.client.processing.state.FreshnessStore;
 
 import java.util.Locale;
 
-/** plan-lingtian-process-v1 P3 — inventory tooltip freshness 文案。 */
+/** inventory tooltip freshness 文案。 */
 public final class FreshnessTooltipHook {
     private FreshnessTooltipHook() {}
 

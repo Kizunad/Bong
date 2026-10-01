@@ -60,11 +60,6 @@ const EMIT_MANIFEST: &[(&str, &str, &str)] = &[
         "redis_only",
     ),
     (
-        "server/src/lingtian/network_emit.rs",
-        "helper_only",
-        "server_data_only",
-    ),
-    (
         "server/src/network/alchemy_snapshot_emit.rs",
         "helper_only",
         "server_data_only",
@@ -397,7 +392,7 @@ const EMIT_MANIFEST: &[(&str, &str, &str)] = &[
 ];
 
 const API_SHAPES: &[(&str, usize)] = &[
-    ("helper_only", 51),
+    ("helper_only", 50),
     ("direct_only", 13),
     ("both", 1),
     ("no_client_send", 2),
@@ -405,7 +400,7 @@ const API_SHAPES: &[(&str, usize)] = &[
 ];
 
 const WIRE_CLASSES: &[(&str, usize)] = &[
-    ("server_data_only", 53),
+    ("server_data_only", 52),
     ("dedicated_only", 12),
     ("channel_mixed", 0),
     ("domain_only", 2),
@@ -972,8 +967,8 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
     );
     assert_eq!(
         actual_paths.len(),
-        68,
-        "P0 baseline is exactly 68 emit files"
+        67,
+        "P0 baseline is exactly 67 emit files"
     );
 
     let mut counts = BTreeMap::new();

@@ -4,7 +4,6 @@ import com.bong.client.forge.state.*;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.forge.ForgeOutcomeHandler;
 import com.bong.client.ui.intent.UiIntentResult;
@@ -54,7 +53,7 @@ class ForgeWindowsTest {
         prepare(2, 1);
         assertEquals(UiIntentResult.Kind.LOCAL_ACCEPTED, windows.start().kind());
         assertEquals(List.of(new ForgeIntent.Start(pos, "iron_sword_v0",
-            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 3)))), sent,
+            List.of(new ForgeIntent.MaterialAmount("fan_tie", 3)))), sent,
             "多堆入炉矿物必须按 canonical id 汇总，不能从背包补料");
         assertFalse(windows.model().session().active(), "发送成功不代表服务端已经开炉");
         assertEquals(UiIntentResult.Kind.LOCAL_REJECTED, windows.start().kind());
@@ -174,6 +173,25 @@ class ForgeWindowsTest {
         var refund = assertInstanceOf(ForgeIntent.Material.class, sent.get(0));
         assertTrue(refund.returning(), "离站关窗必须返还尚未投入炉次的材料");
         assertNull(refund.instanceId(), "自动返还不能依赖过期的单件实例选择");
+    }
+
+    @Test void reopeningStationWaitsForRefundConfirmationBeforeAcceptingNewOperations() {
+        prepare(3, 0);
+        var state = windows.open(pos, bounds);
+
+        windows.close(state);
+        var reopened = windows.open(pos, bounds);
+
+        assertTrue(windows.closingPending(), "返还回执到达前必须保留关闭快照");
+        assertFalse(windows.available(), "返还回执到达前不能重新操作工位");
+        assertEquals(UiIntentResult.Kind.LOCAL_REJECTED, windows.material(1L, false).kind(),
+            "旧返还请求未确认时不能与新投料并发");
+
+        now = 6_000;
+        windows.refresh();
+        assertTrue(windows.closingPending(), "超时提示不能把未确认的返还误当成已完成");
+        assertFalse(windows.available(), "返还仍未确认时必须继续阻止操作");
+        assertFalse(reopened.closed(), "等待回执期间重开的窗口仍可显示状态");
     }
 
     private void prepare(int first, int second) {

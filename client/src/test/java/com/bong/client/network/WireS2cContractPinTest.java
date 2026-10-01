@@ -172,7 +172,6 @@ final class WireS2cContractPinTest {
         "GUARDIAN_KIND_",
         "INSIGHT_TRIGGER_",
         "KEY_KIND_",
-        "LINGTIAN_SESSION_KIND_",
         "MOVEMENT_ACTION_",
         "MOVEMENT_ACTION_REQUEST_KIND_",
         "MOVEMENT_ZONE_KIND_",
@@ -417,20 +416,20 @@ final class WireS2cContractPinTest {
         int bridgeReferences = BRIDGE_NORMALIZATIONS.values().stream()
             .mapToInt(Integer::intValue)
             .sum();
-        assertEquals(43, BRIDGE_NORMALIZATIONS.keySet().stream()
+        assertEquals(42, BRIDGE_NORMALIZATIONS.keySet().stream()
             .map(NormalizationSite::prefix)
             .collect(java.util.stream.Collectors.toSet()).size());
-        assertEquals(59, bridgeReferences,
+        assertEquals(58, bridgeReferences,
             "P0 semantic bridge normalization ledger must cover every reachable field operation");
         assertEquals(
             BRIDGE_PREFIX_LITERAL_COUNTS,
             sourceModel.bridgePrefixLiteralCounts(),
-            "P0 bridge source must retain the exact 43-prefix/59-literal lexical multiset"
+            "P0 bridge source must retain the exact 42-prefix/58-literal lexical multiset"
         );
         assertEquals(
-            59,
+            58,
             BRIDGE_PREFIX_LITERAL_COUNTS.values().stream().mapToInt(Integer::intValue).sum(),
-            "P0 bridge lexical baseline remains 59 prefix literals"
+            "P0 bridge lexical baseline remains 58 prefix literals"
         );
 
         assertEquals(
@@ -443,9 +442,9 @@ final class WireS2cContractPinTest {
         );
 
         sourceModel.assertProductionPrefixLiteralInventory();
-        assertEquals(45, sourceModel.productionPrefixLiteralCount(),
-            "完整 production receive path 基线为 45 个 enum 前缀 literal");
-        assertEquals(61, bridgeReferences + sourceModel.inventoryNormalizations().size(),
+        assertEquals(44, sourceModel.productionPrefixLiteralCount(),
+            "完整 production receive path 基线为 44 个 enum 前缀 literal");
+        assertEquals(60, bridgeReferences + sourceModel.inventoryNormalizations().size(),
             "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exceptions");
     }
 
@@ -530,7 +529,6 @@ final class WireS2cContractPinTest {
                 {"bucket", "ALCHEMY_OUTCOME_BUCKET_"},
                 {"target_type", "GATHERING_TARGET_TYPE_"},
                 {"quality_hint", "GATHERING_QUALITY_HINT_"},
-                {"kind", "LINGTIAN_SESSION_KIND_"},
                 {"phase", "CARRIER_CHARGE_PHASE_"},
                 {"main", "COLOR_KIND_"}, {"secondary", "COLOR_KIND_"},
                 {"event", "EVENT_KIND_"},
@@ -616,7 +614,6 @@ final class WireS2cContractPinTest {
             site("target_type", "GATHERING_TARGET_TYPE_"),
             site("quality_hint", "GATHERING_QUALITY_HINT_")
         ));
-        normalizations.put("getLingtianSession", Set.of(site("kind", "LINGTIAN_SESSION_KIND_")));
         normalizations.put("getCarrierState", Set.of(site("phase", "CARRIER_CHARGE_PHASE_")));
         normalizations.put("getQiColorObserved", Set.of(
             site("main", "COLOR_KIND_"),

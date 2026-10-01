@@ -4,7 +4,7 @@
 //! tier 限制能使用的图谱（凡铁砧最高锻法器）。
 //!
 //! TODO(plan-persistence-v1): 将 `WeaponForgeStation` 接到方块实体存档；预留字段形如
-//! `block_entity: Option<BlockEntityRef>`，与 alchemy furnace / lingtian plot 一并落地。
+//! `block_entity: Option<BlockEntityRef>`，与炼丹炉等可放置工位一并落地。
 
 use std::collections::HashSet;
 

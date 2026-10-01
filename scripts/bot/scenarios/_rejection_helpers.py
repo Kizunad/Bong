@@ -65,7 +65,6 @@ AMBIENT_SERVER_DATA_TYPES = frozenset(
         # （derived_attrs_emit.rs，含 join 首次 attach）
         "morph_state",        # join 首帧 + 每 20 tick 周期全量重发 + 易形增删 delta
         "cultivation_detail",  # 每 20 tick 周期全量重发（cultivation_detail_emit.rs）
-        "lingtian_session",  # 每帧全量推送的灵田 HUD 同步（lingtian/network_emit.rs，无请求也每帧发，active 覆盖）
         "spiritual_sense_targets",  # 神识扫描周期/玩家加入时的目标快照（cultivation/spiritual_sense/push.rs）
         "remains_sync",  # 遗骸 join 快照/内容 diff 广播（network/remains_sync_emit.rs）
         "combat_hud_state",  # Changed<Cultivation/Stamina/Wounds> 驱动的战斗 HUD 同步

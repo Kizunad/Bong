@@ -12,7 +12,6 @@ use bong_server::cultivation::meridian::severed::MeridianSeveredPermanent;
 use bong_server::cultivation::tribulation::JueBiTriggerEvent;
 use bong_server::fauna::components::*;
 use bong_server::inventory::*;
-use bong_server::lingtian::*;
 use bong_server::network::gameplay_vfx;
 use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::npc::spawn::DecoyTarget;
@@ -148,21 +147,6 @@ fn spawn_player_with_inventory(
             inventory,
         ))
         .id()
-}
-
-fn spawn_plot(app: &mut App, pos: [i32; 3], cap: f32) -> Entity {
-    let mut plot = LingtianPlot::new(block_pos_from_array(pos), None);
-    plot.plot_qi_cap = cap;
-    app.world_mut().spawn(plot).id()
-}
-
-fn plot_cap(app: &mut App, pos: [i32; 3]) -> f32 {
-    app.world_mut()
-        .query::<&LingtianPlot>()
-        .iter(app.world())
-        .find(|plot| plot.pos == block_pos_from_array(pos))
-        .map(|plot| plot.plot_qi_cap)
-        .expect("test plot should exist")
 }
 
 fn send_lingju_place(app: &mut App, player: Entity, pos: [i32; 3], tick: u64) {
@@ -475,70 +459,14 @@ fn send_bait_attack(app: &mut App, attacker: Entity, target: Entity, tick: u64) 
 }
 
 #[test]
-fn lingju_tick_applies_cap_bonus_inside_radius_only() {
+fn lingju_decay_emits_decay_event() {
     let mut app = app_with_loaded_zhenfa();
     let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
-    spawn_plot(&mut app, [20, 64, 0], PLOT_QI_CAP_BASE);
-    spawn_plot(&mut app, [21, 64, 0], PLOT_QI_CAP_BASE);
-
-    send_lingju_place(&mut app, owner, [0, 64, 0], 1);
-    app.update();
-    let instance = app
-        .world()
-        .resource::<ZhenfaRegistry>()
-        .find_at([0, 64, 0])
-        .expect("Lingju 应成功放置");
-    assert_eq!(
-        instance.effect_radius, 20,
-        "Lingju 必须使用 profile radius，不能沿用旧 trap_effect_radius 的 0-2 格半径"
-    );
-
-    app.world_mut().resource_mut::<CombatClock>().tick = 2;
-    app.update();
-
-    assert!(
-        (plot_cap(&mut app, [20, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS)).abs()
-            < 1e-6,
-        "恰好在 Lingju 半径边缘的 plot 应获得 +QI_LINGJU_ARRAY_CAP_BONUS cap"
-    );
-    assert!(
-        (plot_cap(&mut app, [21, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "半径外 1 格 plot 不应被 Lingju 影响"
-    );
-}
-
-#[test]
-fn lingju_cap_bonus_is_clamped_to_plot_qi_cap_max() {
-    let mut app = app_with_loaded_zhenfa();
-    let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
-    let near_max_cap = PLOT_QI_CAP_MAX - (QI_LINGJU_ARRAY_CAP_BONUS * 0.5);
-    spawn_plot(&mut app, [0, 64, 0], near_max_cap);
 
     send_lingju_place(&mut app, owner, [0, 64, 0], 1);
     app.update();
     app.world_mut().resource_mut::<CombatClock>().tick = 2;
     app.update();
-
-    let actual = plot_cap(&mut app, [0, 64, 0]);
-    assert!(
-        (actual - PLOT_QI_CAP_MAX).abs() < 1e-6,
-        "expected cap={} because Lingju bonus must clamp at PLOT_QI_CAP_MAX; actual={}",
-        PLOT_QI_CAP_MAX,
-        actual
-    );
-}
-
-#[test]
-fn lingju_decay_clears_cap_bonus_and_emits_decay_event() {
-    let mut app = app_with_loaded_zhenfa();
-    let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
-    spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
-
-    send_lingju_place(&mut app, owner, [0, 64, 0], 1);
-    app.update();
-    app.world_mut().resource_mut::<CombatClock>().tick = 2;
-    app.update();
-    assert!((plot_cap(&mut app, [0, 64, 0]) - 2.0).abs() < 1e-6);
 
     let expires_at_tick = app
         .world()
@@ -549,119 +477,11 @@ fn lingju_decay_clears_cap_bonus_and_emits_decay_event() {
     app.world_mut().resource_mut::<CombatClock>().tick = expires_at_tick;
     app.update();
 
-    assert!(
-        (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "Lingju decay 后 plot cap 必须恢复原值"
-    );
     assert!(app
         .world()
         .resource::<Events<ArrayDecayEvent>>()
         .iter_current_update_events()
         .any(|event| event.kind == ZhenfaKind::Lingju));
-}
-
-#[test]
-fn lingju_force_break_clears_cap_bonus() {
-    let mut app = app_with_loaded_zhenfa();
-    let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
-    spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
-
-    send_lingju_place(&mut app, owner, [0, 64, 0], 1);
-    app.update();
-    app.world_mut().resource_mut::<CombatClock>().tick = 2;
-    app.update();
-    assert!(
-        (plot_cap(&mut app, [0, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS)).abs()
-            < 1e-6
-    );
-
-    app.world_mut().send_event(ZhenfaDisarmRequest {
-        player: owner,
-        pos: [0, 64, 0],
-        mode: ZhenfaDisarmMode::ForceBreak,
-        requested_at_tick: 3,
-    });
-    app.update();
-
-    assert!(
-        (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "Lingju force break 后 plot cap 必须恢复原值"
-    );
-}
-
-#[test]
-fn overlapping_lingju_arrays_use_boolean_or_not_stacking() {
-    let (mut app, layer_entity) = app_with_zhenfa_layer();
-    app.world_mut()
-        .get_mut::<ChunkLayer>(layer_entity)
-        .expect("test layer should carry ChunkLayer")
-        .insert_chunk([1, 0], UnloadedChunk::new());
-    let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
-    spawn_plot(&mut app, [10, 64, 0], PLOT_QI_CAP_BASE);
-
-    send_lingju_place(&mut app, owner, [0, 64, 0], 1);
-    app.update();
-    send_lingju_place(&mut app, owner, [20, 64, 0], 2);
-    app.update();
-    app.world_mut().resource_mut::<CombatClock>().tick = 3;
-    app.update();
-
-    let boosted = PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS;
-    assert!(
-        (plot_cap(&mut app, [10, 64, 0]) - boosted).abs() < 1e-6,
-        "双 Lingju 覆盖同一 plot 只能取 OR/max，不能叠加到 +2.0"
-    );
-
-    app.world_mut().send_event(ZhenfaDisarmRequest {
-        player: owner,
-        pos: [0, 64, 0],
-        mode: ZhenfaDisarmMode::ForceBreak,
-        requested_at_tick: 4,
-    });
-    app.update();
-    assert!(
-        (plot_cap(&mut app, [10, 64, 0]) - boosted).abs() < 1e-6,
-        "拆掉一个 Lingju 后，仍被另一个覆盖的 plot 应保持 boosted"
-    );
-
-    app.world_mut()
-        .entity_mut(owner)
-        .insert(Position::new([20.5, 64.0, 0.5]));
-    app.world_mut().send_event(ZhenfaDisarmRequest {
-        player: owner,
-        pos: [20, 64, 0],
-        mode: ZhenfaDisarmMode::ForceBreak,
-        requested_at_tick: 5,
-    });
-    app.update();
-    assert!(
-        (plot_cap(&mut app, [10, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "最后一个 Lingju 清除后 plot cap 才恢复基线"
-    );
-}
-
-#[test]
-fn network_array_and_full_lingju_use_max_bonus_not_stacking() {
-    let mut app = app_with_loaded_zhenfa();
-    let owner = spawn_player_with_inventory(
-        &mut app,
-        "Alice",
-        [0.5, 64.0, 0.5],
-        network_array_test_inventory(),
-    );
-    spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
-
-    send_lingju_place(&mut app, owner, [8, 64, 8], 1);
-    app.update();
-    place_basic_network_array(&mut app, owner, 2);
-    app.world_mut().resource_mut::<CombatClock>().tick = 10;
-    app.update();
-
-    let expected = PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS;
-    assert!(
-        (plot_cap(&mut app, [2, 64, 2]) - expected).abs() < 1e-6,
-        "Full Lingju + NetworkArray 覆盖同 plot 必须取 max(+1.0)，不能叠加到 +1.5"
-    );
 }
 
 #[test]

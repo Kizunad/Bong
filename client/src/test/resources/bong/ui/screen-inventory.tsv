@@ -12,7 +12,6 @@ identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO_XML	OWO_XML_TEMPLATE	f
 insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
 inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
 inventory/LootContainerScreen.java	LootContainerScreen	BASE_OWO	CODE	true	Code-built FlowLayout
-lingtian/LingtianActionScreen.java	LingtianActionScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 menu/MainMenuScreen.java	MainMenuScreen	OWO_XML	OWO_XML_TEMPLATE	false	Multiplayer-only title screen; local XML
 npc/NpcDialogueScreen.java	NpcDialogueScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 npc/NpcInspectScreen.java	NpcInspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout

@@ -24,7 +24,6 @@ use super::forge::{
 };
 use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
-use super::lingtian::LingtianSessionDataV1;
 use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
@@ -215,7 +214,6 @@ pub enum ServerDataType {
     PoisonTraitState,
     CarrierState,
     FalseSkinState,
-    LingtianSession,
     DeathScreen,
     TerminateScreen,
     RiftPortalState,
@@ -516,7 +514,6 @@ pub enum ServerDataPayloadV1 {
     PoisonTraitState(PoisonTraitStateV1),
     CarrierState(CarrierStateV1),
     FalseSkinState(FalseSkinStateV1),
-    LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
         cause: String,
@@ -1867,10 +1864,6 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         state: FalseSkinStateV1,
     },
-    LingtianSession {
-        #[serde(flatten)]
-        lingtian_session: LingtianSessionDataV1,
-    },
     DeathScreen {
         visible: bool,
         cause: String,
@@ -3086,9 +3079,6 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::FalseSkinState { state } => Ok(Self::FalseSkinState(state)),
-            ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
-                Ok(Self::LingtianSession(Box::new(lingtian_session)))
-            }
             ServerDataPayloadWireV1::DeathScreen {
                 visible,
                 cause,
@@ -3728,9 +3718,6 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::FalseSkinState(state) => Self::FalseSkinState {
                 state: state.clone(),
             },
-            ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
-                lingtian_session: (**s).clone(),
-            },
             ServerDataPayloadV1::DeathScreen {
                 visible,
                 cause,
@@ -4289,7 +4276,6 @@ impl ServerDataPayloadV1 {
             Self::PoisonTraitState(..) => ServerDataType::PoisonTraitState,
             Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::FalseSkinState(..) => ServerDataType::FalseSkinState,
-            Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
             Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
@@ -4456,7 +4442,6 @@ impl ServerDataPayloadV1 {
             Self::PoisonTraitState(..) => false,
             Self::CarrierState(..) => false,
             Self::FalseSkinState(..) => false,
-            Self::LingtianSession(..) => false,
             Self::DeathScreen { .. } => false,
             Self::TerminateScreen { .. } => false,
             Self::RiftPortalState(..) => false,

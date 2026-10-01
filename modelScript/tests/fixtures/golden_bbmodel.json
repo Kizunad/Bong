@@ -188,7 +188,7 @@
  "gen_hei_gu_jun.py": {
   "exit": 0,
   "outputs": {
-   "HeiGuJun.bbmodel": "98506cc695a43ae465d9cf6fd816a8f9b19da47118e4743f7979a67a2d2f5bb8"
+   "HeiGuJun.bbmodel": "cac5b5852c7b2dfb6b0aca7dead58e6389c34a17d0585f7aaa239c5ab3a9a60c"
   }
  },
  "gen_herb_crate.py": {
@@ -371,7 +371,7 @@
  "gen_long_lin_tai.py": {
   "exit": 0,
   "outputs": {
-   "LongLinTai.bbmodel": "de8bcd06d47a59e17e1d2fcf1b7010a7125d08a79afdecd45f91ca059eda2f60"
+   "LongLinTai.bbmodel": "22d027484bacdc3a5a1746d516b1d8ab3a854bbf7e5006c98dbfdb5651a63a1e"
   }
  },
  "gen_loot_crates.py": {
@@ -483,7 +483,7 @@
  "gen_tui_gu_teng.py": {
   "exit": 0,
   "outputs": {
-   "TuiGuTeng.bbmodel": "4de3e8023079b53ed2eaa5589c59247341cecfe8b221c2a931972944af53500e"
+   "TuiGuTeng.bbmodel": "b8458e336e2865f365b9cd605c44e0dbeac37834356354ab911bb02bab82bc42"
   }
  },
  "gen_wooden_club.py": {
@@ -527,7 +527,7 @@
  "gen_xu_yuan_rui.py": {
   "exit": 0,
   "outputs": {
-   "XuYuanRui.bbmodel": "0fa72fe49eb7e787d61b002685178ddb59566dddbfd34fcb1a6e2e342b02f4b7"
+   "XuYuanRui.bbmodel": "bf72ab0aef2222fa6f0a61fc5d6d025948ad7195a979ee0969b4bf892da0fa1f"
   }
  },
  "gen_xuan_iron.py": {

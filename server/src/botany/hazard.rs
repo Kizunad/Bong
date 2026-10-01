@@ -20,7 +20,7 @@ use crate::world::mob_spawn::{era_beast_spawn_gate, spawn_natural_mob_at, Natura
 use crate::world::zone::ZoneRegistry;
 
 pub fn hazard_hints_for_kind(
-    kind_id: super::registry::BotanyPlantId,
+    kind_id: impl AsRef<str>,
     registry: &BotanyKindRegistry,
 ) -> Vec<String> {
     let Some(kind) = registry.get(kind_id) else {
@@ -89,7 +89,7 @@ pub fn tick_harvest_hazards(
 
     let mut positions = positions;
     for session in store.iter() {
-        let Some(kind) = kind_registry.get(session.target_plant) else {
+        let Some(kind) = kind_registry.get(&session.target_plant) else {
             continue;
         };
         let Some(spec) = kind.v2_spec() else {
@@ -156,7 +156,7 @@ pub fn tick_harvest_hazards(
 /// 返回本次调用是否有 `WoundOnBareHand` hazard 实际命中（即缺 required_tool 触发了伤）。
 /// plan-gathering-tool-bind-v1 P1：调用侧据此决定是否 emit 割手音效/粒子/HUD 事件流。
 pub fn apply_completion_hazards(
-    kind_id: super::registry::BotanyPlantId,
+    kind_id: impl AsRef<str>,
     registry: &BotanyKindRegistry,
     cultivation: Option<&mut Cultivation>,
     contamination: Option<&mut Contamination>,
@@ -174,7 +174,7 @@ pub fn apply_completion_hazards(
     let mut contamination = contamination;
     let mut wounds = wounds;
     let mut bare_hand_wound_applied = false;
-    for hazard in spec.harvest_hazards {
+    for hazard in &spec.harvest_hazards {
         match hazard {
             HarvestHazard::ResonanceVision { composure_loss, .. } => {
                 if let Some(cultivation) = cultivation.as_deref_mut() {
@@ -222,7 +222,7 @@ pub fn apply_completion_hazards(
 }
 
 pub fn attracts_mobs_hazards_for_kind(
-    kind_id: super::registry::BotanyPlantId,
+    kind_id: impl AsRef<str>,
     registry: &BotanyKindRegistry,
 ) -> Vec<(FaunaKind, u8, u8)> {
     let Some(kind) = registry.get(kind_id) else {
@@ -398,10 +398,7 @@ fn contamination_amount(wound: WoundLevel) -> f64 {
     }
 }
 
-pub fn failure_dispersal_chance(
-    kind_id: super::registry::BotanyPlantId,
-    registry: &BotanyKindRegistry,
-) -> f32 {
+pub fn failure_dispersal_chance(kind_id: impl AsRef<str>, registry: &BotanyKindRegistry) -> f32 {
     let Some(kind) = registry.get(kind_id) else {
         return 0.0;
     };
@@ -409,7 +406,7 @@ pub fn failure_dispersal_chance(
         return 0.0;
     };
     let mut chance = 0.0_f32;
-    for hazard in spec.harvest_hazards {
+    for hazard in &spec.harvest_hazards {
         match hazard {
             HarvestHazard::DispersalOnFail { dispersal_chance } => {
                 chance = chance.max(*dispersal_chance);

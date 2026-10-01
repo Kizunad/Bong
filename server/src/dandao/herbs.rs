@@ -1,7 +1,7 @@
 //! P2 §3.1 — 丹道专属灵草（5 种）注册到 BotanyKindRegistry。
 //!
 //! 蜕骨藤、兽心草、龙鳞苔、续元蕊、化形根。
-//! 走 BotanyKindRegistry 静态表（野生采集侧），不走 PlantKindRegistry（灵田侧）。
+//! 走 BotanyKindRegistry 静态表（野生采集侧）；种植侧由后续重构独立接入。
 
 use crate::botany::registry::{EnvLock, HarvestHazard, WoundLevel};
 use crate::tools::ToolKind;

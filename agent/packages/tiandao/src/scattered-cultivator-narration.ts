@@ -2,13 +2,11 @@ import {
   CHANNELS,
   type Narration,
   type NicheIntrusionEventV1,
-  type ZonePressureCrossedV1,
   validateNarrationV1Contract,
   validateNicheIntrusionEventV1Contract,
-  validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 
-const { AGENT_NARRATE, SOCIAL_NICHE_INTRUSION, ZONE_PRESSURE_CROSSED } = CHANNELS;
+const { AGENT_NARRATE, SOCIAL_NICHE_INTRUSION } = CHANNELS;
 
 export interface ScatteredCultivatorNarrationRuntimeClient {
   subscribe(channel: string): Promise<unknown>;
@@ -51,7 +49,7 @@ export class ScatteredCultivatorNarrationRuntime {
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
-    if (channel !== ZONE_PRESSURE_CROSSED && channel !== SOCIAL_NICHE_INTRUSION) return;
+    if (channel !== SOCIAL_NICHE_INTRUSION) return;
     void this.handlePayload(channel, message);
   };
 
@@ -63,13 +61,12 @@ export class ScatteredCultivatorNarrationRuntime {
 
   async connect(): Promise<void> {
     if (this.connected) return;
-    await this.sub.subscribe(ZONE_PRESSURE_CROSSED);
     await this.sub.subscribe(SOCIAL_NICHE_INTRUSION);
     this.sub.off?.("message", this.onMessage);
     this.sub.on("message", this.onMessage);
     this.connected = true;
     this.logger.info(
-      `[scattered-cultivator-runtime] subscribed to ${ZONE_PRESSURE_CROSSED}, ${SOCIAL_NICHE_INTRUSION}`,
+      `[scattered-cultivator-runtime] subscribed to ${SOCIAL_NICHE_INTRUSION}`,
     );
   }
 
@@ -114,20 +111,6 @@ export class ScatteredCultivatorNarrationRuntime {
   }
 
   private parseNarration(channel: string, parsed: unknown): Narration | null {
-    if (channel === ZONE_PRESSURE_CROSSED) {
-      const validation = validateZonePressureCrossedV1Contract(parsed);
-      if (!validation.ok) {
-        this.stats.rejectedContract += 1;
-        this.logger.warn(
-          "[scattered-cultivator-runtime] ZonePressureCrossedV1 contract rejected:",
-          validation.errors.join("; "),
-        );
-        return null;
-      }
-      this.stats.received += 1;
-      return renderPressureNarration(parsed as ZonePressureCrossedV1);
-    }
-
     if (channel === SOCIAL_NICHE_INTRUSION) {
       const validation = validateNicheIntrusionEventV1Contract(parsed);
       if (!validation.ok) {
@@ -156,27 +139,7 @@ function isNpcIntruder(intruderId: string): boolean {
   return intruderId.startsWith("npc:") || intruderId.startsWith("npc_");
 }
 
-export function renderPressureNarration(payload: ZonePressureCrossedV1): Narration {
-  return {
-    scope: "zone",
-    target: payload.zone,
-    text: pressureText(payload),
-    style: "narration",
-    kind: "npc_farm_pressure",
-  };
-}
-
-function pressureText(payload: ZonePressureCrossedV1): string {
-  switch (payload.level) {
-    case "low":
-      return `${payload.zone} 散修渐多，垄畔灵息已有聚账。`;
-    case "mid":
-      return `${payload.zone} 田埂人影相续，灵气被各自抽走，天上尚不作声。`;
-    case "high":
-      return `${payload.zone} 散修聚众，地脉已被榨到阈上；此地又一波将逝。`;
-  }
-  return `${payload.zone} 散修扰动灵田，天道账簿又添一笔。`;
-}
+//TODO:lingtian_refactor 耕作叙事等待新版事件契约。
 
 export function renderNpcIntrusionNarration(payload: NicheIntrusionEventV1): Narration {
   const [x, y, z] = payload.niche_pos;

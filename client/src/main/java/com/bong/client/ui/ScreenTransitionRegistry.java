@@ -9,7 +9,6 @@ import com.bong.client.cultivation.voidaction.VoidActionScreen;
 import com.bong.client.identity.IdentityPanelScreen;
 import com.bong.client.insight.InsightOfferScreen;
 import com.bong.client.inventory.InspectScreen;
-import com.bong.client.lingtian.LingtianActionScreen;
 import com.bong.client.processing.ProcessingActionScreen;
 import com.bong.client.npc.NpcDialogueScreen;
 import com.bong.client.npc.NpcInspectScreen;
@@ -69,9 +68,6 @@ public final class ScreenTransitionRegistry {
         ));
         register(IdentityPanelScreen.class, TransitionConfig.of(
             IdentityPanelScreen.class, ScreenTransition.Type.FADE, 250, ScreenTransition.Type.FADE, 200
-        ));
-        register(LingtianActionScreen.class, TransitionConfig.of(
-            LingtianActionScreen.class, ScreenTransition.Type.FADE, 300, ScreenTransition.Type.FADE, 200
         ));
         register(VoidActionScreen.class, TransitionConfig.of(
             VoidActionScreen.class, ScreenTransition.Type.FADE, 300, ScreenTransition.Type.FADE, 200

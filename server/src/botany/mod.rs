@@ -1,11 +1,7 @@
-//! plan-botany-v1 — 植物物种 registry（野生 + 灵田共用）+ 野生 lifecycle/harvest。
-//!
-//! 本模块同时托管两条链：
-//!   * `PlantKind` / `PlantKindRegistry` + TOML loader — lingtian（可种植子集）
-//!   * `BotanyKindRegistry` + lifecycle/harvest/ecology — 野生采集
-//!
-//! 两套 registry 共用相同 canonical id（22 种正典），但数据结构与 spawn 路径独立。
+//! 野生植物生命周期、采集与生态事件。
+//TODO:lingtian_refactor 新种植实现通过独立模块接入，不复用野生生命周期。
 
+pub mod catalog;
 pub mod components;
 pub mod ecology;
 pub mod env_lock;
@@ -14,15 +10,9 @@ pub mod harvest;
 pub mod hazard;
 pub mod integration;
 pub mod lifecycle;
-pub mod plant_kind;
 pub mod registry;
 pub mod shiling_xian;
 pub mod skill_hook;
-
-#[allow(unused_imports)]
-pub use plant_kind::{GrowthCost, PlantId, PlantKind, PlantRarity};
-#[allow(unused_imports)]
-pub use registry::{load_plant_kind_registry, PlantKindRegistry};
 
 use valence::prelude::{
     Added, App, EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, Startup, Update,
@@ -55,17 +45,6 @@ use lifecycle::{initialize_static_points_from_zones, run_botany_lifecycle_tick};
 use registry::BotanyKindRegistry;
 
 pub fn register(app: &mut App) {
-    // lingtian 侧 registry：TOML 驱动的 cultivable 集合
-    let plant_kind_registry = load_plant_kind_registry().unwrap_or_else(|error| {
-        panic!("[bong][botany] failed to load plant kind registry: {error}");
-    });
-    tracing::info!(
-        "[bong][botany] loaded {} plant kind(s) from assets/botany/plants.toml ({} cultivable)",
-        plant_kind_registry.len(),
-        plant_kind_registry.cultivable_ids().count(),
-    );
-    app.insert_resource(plant_kind_registry);
-
     // 野生侧 registry + 生命周期 / harvest / ecology
     app.insert_resource(BotanyKindRegistry::default());
     app.insert_resource(PlantLifecycleClock::default());
@@ -295,7 +274,7 @@ fn emit_botany_harvest_progress(
             interrupted: false,
             completed: false,
             detail: String::new(),
-            hazard_hints: hazard_hints_for_kind(session.target_plant, kind_registry.as_ref()),
+            hazard_hints: hazard_hints_for_kind(&session.target_plant, kind_registry.as_ref()),
             target_pos,
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -433,10 +412,10 @@ pub fn ensure_botany_inventory_primitives(
     kind_registry: &BotanyKindRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
 ) -> Result<(), String> {
-    let mut missing: Vec<&'static str> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
     for kind in kind_registry.iter() {
-        if item_registry.get(kind.item_id).is_none() {
-            missing.push(kind.item_id);
+        if item_registry.get(&kind.item_id).is_none() {
+            missing.push(&kind.item_id);
         }
     }
     if !missing.is_empty() {
@@ -500,7 +479,6 @@ mod tests {
         use valence::prelude::Events;
 
         assert!(app.world().contains_resource::<BotanyKindRegistry>());
-        assert!(app.world().contains_resource::<PlantKindRegistry>());
         assert!(app.world().contains_resource::<PlantLifecycleClock>());
         assert!(app.world().contains_resource::<PlantStaticPointStore>());
         assert!(app.world().contains_resource::<HarvestSessionStore>());

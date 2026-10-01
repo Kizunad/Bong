@@ -37,9 +37,6 @@ use crate::cultivation::technique_scroll::TechniqueLearnedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
 use crate::forge::events::TemperingHit;
 use crate::forge::session::{ForgeSessions, ForgeStep};
-use crate::lingtian::events::{
-    DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
-};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -85,13 +82,7 @@ const VFX_GUANGBO_TICAO_PRACTICE: &str = "bong:guangbo_ticao_practice";
 /// 广播体操动画分层 priority —— 落在 schema 合法区间 [100, 3999] 内、低于战斗招式
 /// （COMBAT_PRIORITY=1000），使练习姿态让位于实际战斗动画。
 const GUANGBO_TICAO_PRIORITY: u16 = 500;
-const ANIM_LINGTIAN_TILL: &str = "bong:lingtian_till";
 const BOTANY_HARVEST_VFX: &str = "bong:botany_harvest";
-const LINGTIAN_TILL_VFX: &str = "bong:lingtian_till";
-const LINGTIAN_PLANT_VFX: &str = "bong:lingtian_plant";
-const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
-const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
-const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
 const WOLIU_STOP_FADE_OUT_TICKS: u8 = 4;
 const BAOMAI_PRIORITY: u16 = 1500;
@@ -752,70 +743,6 @@ pub fn emit_baomai_v3_visual_triggers(
             Some(2),
             &players,
             &mut vfx_events,
-        );
-    }
-}
-
-pub fn emit_lingtian_visual_triggers(
-    mut tills: EventReader<TillCompleted>,
-    mut plantings: EventReader<PlantingCompleted>,
-    mut harvests: EventReader<HarvestCompleted>,
-    mut replenishes: EventReader<ReplenishCompleted>,
-    mut drains: EventReader<DrainQiCompleted>,
-    mut vfx_events: EventWriter<VfxEventRequest>,
-    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
-) {
-    for event in tills.read() {
-        emit_play_for_entity(
-            event.player,
-            ANIM_LINGTIAN_TILL,
-            COMBAT_PRIORITY,
-            Some(2),
-            &players,
-            &mut vfx_events,
-        );
-        emit_block_decal(
-            &mut vfx_events,
-            LINGTIAN_TILL_VFX,
-            event.pos,
-            "#44CCCC",
-            0.65,
-        );
-    }
-    for event in plantings.read() {
-        emit_block_decal(
-            &mut vfx_events,
-            LINGTIAN_PLANT_VFX,
-            event.pos,
-            "#55EE88",
-            0.75,
-        );
-    }
-    for event in harvests.read() {
-        emit_block_decal(
-            &mut vfx_events,
-            LINGTIAN_HARVEST_VFX,
-            event.pos,
-            "#88FF66",
-            0.85,
-        );
-    }
-    for event in replenishes.read() {
-        emit_block_decal(
-            &mut vfx_events,
-            LINGTIAN_REPLENISH_VFX,
-            event.pos,
-            "#44DDCC",
-            (0.55 + event.plot_qi_added).clamp(0.55, 1.0),
-        );
-    }
-    for event in drains.read() {
-        emit_block_decal(
-            &mut vfx_events,
-            LINGTIAN_DRAIN_VFX,
-            event.pos,
-            "#888888",
-            0.7,
         );
     }
 }
@@ -1643,28 +1570,6 @@ fn emit_stop_for_entity(
             fade_out_ticks: Some(fade_out_ticks),
         },
     ));
-}
-
-fn emit_block_decal(
-    vfx_events: &mut EventWriter<VfxEventRequest>,
-    event_id: &'static str,
-    pos: valence::prelude::BlockPos,
-    color: &'static str,
-    strength: f32,
-) {
-    emit_spawn_particle(
-        vfx_events,
-        event_id,
-        valence::prelude::DVec3::new(
-            f64::from(pos.x) + 0.5,
-            f64::from(pos.y) + 1.01,
-            f64::from(pos.z) + 0.5,
-        ),
-        color,
-        strength,
-        1,
-        80,
-    );
 }
 
 fn emit_spawn_particle(

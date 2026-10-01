@@ -63,29 +63,19 @@ public final class CraftMaterialGrid {
 
     public void refresh(CraftRecipe recipe, InventoryModel inventory, CraftSessionStateView state, int quantity) {
         this.inventory = inventory;
-        var states = CraftInventoryCounter.materialStates(recipe, inventory, quantity);
-        var templates = states.stream().map(CraftMaterialState::templateId).toList();
-        if (!templates.equals(targets.stream().map(MaterialRow::templateId).toList())) {
+        if (recipe == null) {
             rows.clearChildren();
             targets.clear();
-        }
-        if (recipe == null) {
             cost.text(Text.empty());
             progress.refresh(null, state);
             return;
         }
+
+        var states = CraftInventoryCounter.materialStates(recipe, inventory, quantity);
+        List<FlowLayout> nextRows = new ArrayList<>();
+        List<MaterialRow> nextTargets = new ArrayList<>();
         for (int index = 0; index < states.size(); index++) {
             var material = states.get(index);
-            if (index < targets.size()) {
-                var target = targets.get(index);
-                target.icon.setContent(material.templateId(), material.have(), material.sufficient());
-                target.text.color(Color.ofArgb(material.sufficient() ? 0xFFB7D7B1 : 0xFFD3BCAF));
-                target.count.text(Text.literal(material.have() + " / " + material.need()));
-                target.root.tooltip(Text.literal(materialName(inventory, material.templateId()) + " · 已放入 "
-                    + material.have() + " / 需要 " + material.need() + " · 右键取回一叠"));
-                updateText(target);
-                continue;
-            }
             var row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.MATERIAL_SLOT_SIZE));
             row.gap(6);
             row.verticalAlignment(VerticalAlignment.CENTER);
@@ -108,9 +98,28 @@ public final class CraftMaterialGrid {
                 return true;
             });
             var target = new MaterialRow(material.templateId(), row, icon, text, count);
-            targets.add(target);
+            nextTargets.add(target);
             updateText(target);
-            rows.child(row);
+            nextRows.add(row);
+        }
+
+        List<io.wispforest.owo.ui.core.Component> previousChildren = List.copyOf(rows.children());
+        List<MaterialRow> previousTargets = List.copyOf(targets);
+        try {
+            rows.clearChildren();
+            for (var row : nextRows) rows.child(row);
+            targets.clear();
+            targets.addAll(nextTargets);
+        } catch (RuntimeException | Error failure) {
+            try {
+                rows.clearChildren();
+                for (var child : previousChildren) rows.child(child);
+                targets.clear();
+                targets.addAll(previousTargets);
+            } catch (RuntimeException | Error rollbackFailure) {
+                if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
         }
         cost.text(Text.literal(recipe.qiCost() > 0
             ? String.format("真元 %.0f / %.0f", inventory.qiCurrent(), recipe.qiCost() * quantity) : ""));

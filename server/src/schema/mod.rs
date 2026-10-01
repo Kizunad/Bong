@@ -38,8 +38,6 @@ pub mod forge_bridge;
 pub mod halfstep_rechallenge;
 pub mod identity;
 pub mod inventory;
-pub mod lingtian;
-pub mod lingtian_weather;
 pub mod meridian_severed;
 pub mod movement;
 pub mod narration;
@@ -65,6 +63,7 @@ pub mod tuike;
 pub mod tuike_v2;
 pub mod vfx_event;
 pub mod void_actions;
+pub mod weather;
 pub mod woliu;
 pub mod woliu_erosion;
 pub mod woliu_v2;
@@ -73,7 +72,6 @@ pub mod yidao;
 pub mod zhenfa_v2;
 pub mod zhenmai_v2;
 pub mod zone_environment;
-pub mod zone_pressure;
 pub mod zong_formation;
 
 // Protobuf codegen (prost) — `proto/bong/*.proto` → Rust types.

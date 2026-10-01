@@ -1,5 +1,7 @@
 # Bong · plan-lingtian-process-v1
 
+> 2026-09-29：旧种植实现已删除，公共加工逻辑迁至 `server/src/processing.rs`。加工配方、炼丹/炼器调用和保鲜逻辑保留；种植物料来源见 `//TODO:lingtian_refactor`。下文旧田块链路仅为历史记录。
+
 **作物二级加工**（晾晒 / 碾粉 / 炮制 / 萃取）。在 plan-lingtian-v1 收获 ci_she_hao / ning_mai_cao / ling_mu_miao 等"原作物"基础上，加一层后处理产物作为 alchemy 丹方与日常消耗的中间形态。区分"鲜采直接投料"（损耗大、品质低）vs "炮制后投料"（损耗小、品质加成）。
 
 **世界观锚点**：

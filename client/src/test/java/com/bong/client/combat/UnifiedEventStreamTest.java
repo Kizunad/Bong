@@ -65,7 +65,7 @@ class UnifiedEventStreamTest {
     void expireRemovesP3AfterLifetime() {
         UnifiedEventStream s = new UnifiedEventStream();
         s.publish(UnifiedEvent.Channel.SYSTEM, UnifiedEvent.Priority.P3_VERBOSE,
-            "tick", "灵田 tick", 0, 0L);
+            "tick", "环境 tick", 0, 0L);
         s.publish(UnifiedEvent.Channel.SYSTEM, UnifiedEvent.Priority.P0_CRITICAL,
             "death", "击杀 妖兽", 0, 0L);
         s.expire(3_000L);
