@@ -48,7 +48,7 @@ grid_h = 1
 base_weight = 0.15
 rarity = "common"
 spirit_quality_initial = 0.0
-description = "兽骨碾磨的粉末，灵田肥料或丹药辅料。"
+description = "兽骨碾磨的粉末，可作为丹药辅料。"
 
 [[item]]
 id = "spirit_charcoal"

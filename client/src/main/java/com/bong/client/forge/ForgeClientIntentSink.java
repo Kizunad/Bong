@@ -9,7 +9,11 @@ public final class ForgeClientIntentSink implements UiIntentSink<ForgeIntent> {
     @Override public UiIntentResult dispatch(ForgeIntent intent) {
         try {
             if (intent instanceof ForgeIntent.Start value) {
-                ClientRequestSender.sendForgeStartSession(value.station(), value.blueprint(), value.materials());
+                var materials = value.materials().stream()
+                    .map(material -> new com.bong.client.network.ClientRequestProtocol.ForgeMaterial(
+                        material.materialId(), material.count()))
+                    .toList();
+                ClientRequestSender.sendForgeStartSession(value.station(), value.blueprint(), materials);
             } else if (intent instanceof ForgeIntent.TurnPage value) {
                 ClientRequestSender.sendForgeBlueprintTurnPage(value.delta());
             } else if (intent instanceof ForgeIntent.Material value) {
@@ -17,7 +21,10 @@ public final class ForgeClientIntentSink implements UiIntentSink<ForgeIntent> {
             } else if (intent instanceof ForgeIntent.Advance value) {
                 ClientRequestSender.sendForgeStepAdvance(value.session());
             } else if (intent instanceof ForgeIntent.Hit value) {
-                ClientRequestSender.sendForgeTemperingHit(value.session(), value.beat(), 1);
+                ClientRequestSender.sendForgeTemperingHit(
+                    value.session(),
+                    com.bong.client.network.ClientRequestProtocol.TemperBeat.valueOf(value.beat().name()),
+                    1);
             } else if (intent instanceof ForgeIntent.Inscribe value) {
                 ClientRequestSender.sendForgeInscriptionScroll(value.session(), value.inscription());
             } else if (intent instanceof ForgeIntent.Inject value) {

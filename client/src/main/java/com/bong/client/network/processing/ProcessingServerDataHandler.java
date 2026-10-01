@@ -8,7 +8,7 @@ import com.bong.client.processing.state.ProcessingSessionStore;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
-/** plan-lingtian-process-v1 P3 — processing_session / freshness_update payload handler. */
+/** processing_session / freshness_update payload handler. */
 public final class ProcessingServerDataHandler implements ServerDataHandler {
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {

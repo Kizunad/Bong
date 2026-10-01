@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn gate_spec_registry_pins_the_five_live_request_paths() {
+fn gate_spec_registry_pins_live_request_paths() {
     let cases = [
         (
             "give_dan_to_elder",
@@ -15,24 +15,6 @@ fn gate_spec_registry_pins_the_five_live_request_paths() {
                 distance: DistanceRule::NEARBY_INTERACT,
                 dimension: DimensionRule::Same,
                 ownership: OwnershipRule::Any,
-                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
-            },
-        ),
-        (
-            "lingtian_start_till",
-            ClientRequestV1::LingtianStartTill {
-                v: 1,
-                x: -12,
-                y: 64,
-                z: 38,
-                hoe_instance_id: 9,
-                mode: "manual".to_owned(),
-            },
-            GateSpec {
-                target: GateTarget::RequestBlockPosition,
-                distance: DistanceRule::NEARBY_INTERACT,
-                dimension: DimensionRule::Same,
-                ownership: OwnershipRule::None,
                 state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
             },
         ),

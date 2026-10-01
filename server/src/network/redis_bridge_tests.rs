@@ -1725,26 +1725,6 @@ fn publishes_npc_and_faction_events_on_dedicated_channels() {
         }
         other => panic!("expected publish, got {other:?}"),
     }
-
-    let pressure =
-        prepare_outbound_command(RedisOutbound::ZonePressureCrossed(ZonePressureCrossedV1 {
-            v: 1,
-            kind: "zone_pressure_crossed".to_string(),
-            zone: "spawn".to_string(),
-            level: "high".to_string(),
-            raw_pressure: 1.25,
-            at_tick: 42,
-        }))
-        .expect("zone pressure payload should serialize");
-    match pressure {
-        RedisIoCommand::Publish { channel, payload } => {
-            assert_eq!(channel, CH_ZONE_PRESSURE_CROSSED);
-            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
-            assert_eq!(v["kind"], "zone_pressure_crossed");
-            assert_eq!(v["level"], "high");
-        }
-        other => panic!("expected publish, got {other:?}"),
-    }
 }
 
 #[test]

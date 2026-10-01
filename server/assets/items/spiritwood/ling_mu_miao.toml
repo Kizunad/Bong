@@ -7,4 +7,4 @@ grid_h = 1
 base_weight = 0.5
 rarity = "rare"
 spirit_quality_initial = 1.0
-description = "灵田可栽的灵木幼苗；它不是成材灵木原木。"
+description = "可栽培的灵木幼苗；它不是成材灵木原木。"

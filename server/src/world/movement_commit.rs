@@ -1,22 +1,7 @@
-//! fix-spec-1901-v2 §4.2 — 权威移动写入统一 commit set。
+//! 权威移动写入的统一阶段。
 //!
-//! 所有能改变玩家权威 `Position` / `CurrentDimension` 的系统必须进入本 set：
-//! 灵田的 post-transfer validator 与 completion 复验都排在它之后，保证
-//! "本 tick 所有移动/维度写入已完成"是唯一可读状态。`DimensionTransferSet`
-//! 继续作为本 set 的成员（或成员之一），不再是灵田排序的唯一依据。
-//!
-//! 约束：
-//! ```text
-//! AuthoritativePositionCommitSet
-//!     → LingtianPostTransferValidationSet
-//!     → LingtianStartSet
-//!     → tick_lingtian_sessions
-//!     → apply_completed_sessions
-//! ```
-//!
-//! 若某 writer 位于 `PostUpdate` 或其它晚于 `Update` 的 schedule，必须把
-//! validator/completion 同样移到其后的统一阶段；不允许"set 名称存在但仍有
-//! writer 在 set 外晚写"的假排序。
+//! 修改玩家位置或维度的 Update 系统进入本集合；依赖最终位置的校验排在其后。
+//TODO:lingtian_refactor 新田块交互校验需要排在权威移动提交后。
 
 use valence::prelude::bevy_ecs;
 

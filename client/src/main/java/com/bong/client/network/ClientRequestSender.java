@@ -553,31 +553,7 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeGiveDanToElder(pillInstanceId, elderEntityId));
     }
 
-    // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
-
-    public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartTill(x, y, z, hoeInstanceId, mode));
-    }
-
-    public static void sendLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartRenew(x, y, z, hoeInstanceId));
-    }
-
-    public static void sendLingtianStartPlanting(int x, int y, int z, String plantId) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartPlanting(x, y, z, plantId));
-    }
-
-    public static void sendLingtianStartHarvest(int x, int y, int z, String mode) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartHarvest(x, y, z, mode));
-    }
-
-    public static void sendLingtianStartReplenish(int x, int y, int z, String source) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartReplenish(x, y, z, source));
-    }
-
-    public static void sendLingtianStartDrainQi(int x, int y, int z) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartDrainQi(x, y, z));
-    }
+    //TODO:lingtian_refactor 新交互请求在玩法重写后接入。
 
     // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
 

@@ -142,7 +142,6 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toSet()));
         Map<String, String> expectedTargets = Map.ofEntries(
             Map.entry("spirit_treasure_open", "UNKNOWN"),
-            Map.entry("lingtian_open", "UNKNOWN"),
             Map.entry("identity_open", "O"),
             Map.entry("void_action_open", "UNKNOWN"),
             Map.entry("extract_cancel", "U"),
@@ -485,7 +484,6 @@ class R7FoundationContractTest {
     private static Map<String, String> expectedProductionKeySources() {
         return Map.ofEntries(
             Map.entry("spirit_treasure_open", "spirittreasure/SpiritTreasureScreenBootstrap.java"),
-            Map.entry("lingtian_open", "lingtian/LingtianActionScreenBootstrap.java"),
             Map.entry("identity_open", "identity/IdentityPanelScreenBootstrap.java"),
             Map.entry("void_action_open", "cultivation/voidaction/VoidActionScreenBootstrap.java"),
             Map.entry("extract_cancel", "tsy/ExtractInteractionBootstrap.java"),

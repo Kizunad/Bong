@@ -4,7 +4,6 @@ import type {
   FaunaEcologySnapshotV1,
   FaunaZoneEcologyV1,
   Narration,
-  ZonePressureCrossedV1,
 } from "@bong/schema";
 import type { WorldModel } from "./world-model.js";
 
@@ -135,33 +134,7 @@ export class EcologyAnalyzer {
     };
   }
 
-  ingestZonePressureCrossed(
-    worldModel: WorldModel,
-    event: ZonePressureCrossedV1,
-  ): Narration[] {
-    worldModel.ingestZonePressureCrossed(event);
-    if (event.level !== "high") {
-      return [];
-    }
-
-    const zone = worldModel.botany_ecology?.zones.find((entry) => entry.zone === event.zone);
-    if (!zone || zone.spirit_qi >= 0.2 || variantCount(zone, "tainted") <= 2) {
-      return [];
-    }
-
-    if (!this.canNarrate(`joint:${event.zone}`, event.at_tick)) {
-      return [];
-    }
-
-    return [
-      {
-        scope: "zone",
-        target: event.zone,
-        style: "narration",
-        text: "此地灵田压过土息，草木紫斑仍不肯退。天道只记账，不问是谁先伸手。",
-      },
-    ];
-  }
+  //TODO:lingtian_refactor 新田块生态信号通过独立事件接入。
 
   private maybeNarrateQiReallocation(
     worldModel: WorldModel,

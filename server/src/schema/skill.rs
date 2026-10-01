@@ -268,10 +268,9 @@ mod tests {
 
     #[test]
     fn xp_gain_source_tagged_union_parses_all_variants() {
-        let action: XpGainSourceV1 = serde_json::from_str(
-            r#"{"type":"action","plan_id":"lingtian","action":"harvest_auto"}"#,
-        )
-        .unwrap();
+        let action: XpGainSourceV1 =
+            serde_json::from_str(r#"{"type":"action","plan_id":"botany","action":"harvest_auto"}"#)
+                .unwrap();
         assert!(matches!(action, XpGainSourceV1::Action { .. }));
 
         let scroll: XpGainSourceV1 = serde_json::from_str(

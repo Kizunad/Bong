@@ -72,19 +72,6 @@ cols = 3
   template_id = "ash_spider_silk"
   stack_count = 1
 
-  # bone_spike 占 1×2，row 1-2 col 0 均被占用，种子放 col 1-2
-  [[containers.items]]
-  row = 2
-  col = 1
-  template_id = "ci_she_hao_seed"
-  stack_count = 4
-
-  [[containers.items]]
-  row = 2
-  col = 2
-  template_id = "ning_mai_cao_seed"
-  stack_count = 4
-
 # ─── 装备 ─────────────────────────────────────────────────────────────────
 # 决议 #17：破草包按 ContainerSpec.equip_slot="chest" 作 chest 身体槽 worn 层穿戴。
 [[equip]]

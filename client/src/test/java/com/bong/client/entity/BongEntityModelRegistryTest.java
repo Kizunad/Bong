@@ -33,14 +33,14 @@ public class BongEntityModelRegistryTest {
         // raw_id 146-159: contiguous block (plan-entity-model-v1 / plan-supply-coffin-v1).
         // raw_id 160-163: plan-coffin-tiers-v1 延寿棺四档，与上面同在一个注册循环里连号。
         // Baolongwang BOSS（独立 bootstrap）取 164；deferred marker 注册取 165..=168。
-        int expectedRawId = 146;
-        for (BongEntityModelKind kind : BongEntityRegistry.baseKindsForTests()) {
-            assertEquals(
-                expectedRawId++,
-                kind.expectedRawId(),
-                "Base entity model raw ids must stay 146..=163 before Baolongwang"
-            );
-        }
+        assertEquals(
+            List.of(146, 147, 148, 149, 150, 151, 152, 153, 154, 156, 157, 158, 159, 160, 161,
+                162, 163),
+            BongEntityRegistry.baseKindsForTests().stream()
+                .map(BongEntityModelKind::expectedRawId)
+                .toList(),
+            "Base entity model raw ids must preserve the reserved compatibility slot 155"
+        );
         assertEquals(164, BaolongwangEntities.EXPECTED_RAW_ID,
             "Baolongwang must keep raw_id=164 between base model entities and deferred workbench");
         assertEquals(
@@ -115,8 +115,7 @@ public class BongEntityModelRegistryTest {
     }
 
     @Test
-    void lingtianAndTsyContainerRenderersRegister() {
-        assertRenderer(BongEntityModelKind.LINGTIAN_PLOT, LingtianPlotRenderer.class, 4);
+    void tsyContainerRenderersRegister() {
         assertRenderer(BongEntityModelKind.DRY_CORPSE, DryCorpseRenderer.class, 3);
         assertRenderer(BongEntityModelKind.BONE_SKELETON, BoneSkeletonRenderer.class, 3);
         assertRenderer(BongEntityModelKind.STORAGE_POUCH, StoragePouchRenderer.class, 3);

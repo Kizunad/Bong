@@ -3,7 +3,7 @@ package com.bong.client.processing.state;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** plan-lingtian-process-v1 P3 — item_uuid → freshness UI tag 缓存。 */
+/** item_uuid → freshness UI tag 缓存。 */
 public final class FreshnessStore {
     public record Entry(String itemUuid, float freshness, String profileName) {}
 

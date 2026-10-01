@@ -62,7 +62,7 @@ pub mod external_container;
 pub mod corpse;
 // plan-food-v1 P2 — 灵食消费路径（consume_food + FoodRegen 临时修炼加速）。
 pub mod food;
-// plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
+// 在线 tick freshness cache + season/anqi multiplier；种植来源由后续重构接入。
 pub mod freshness;
 pub(crate) mod operator;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
@@ -5917,8 +5917,7 @@ fn validate_equip_to(
         | EquipSlotV1::ExtraHand1 => {
             // 类型校验：武器 / 工具 / 锄头。off_hand 另接受 Treasure / Shield。
             let is_weapon = template.weapon_spec.is_some();
-            let is_tool = matches!(template.category, ItemCategory::Tool)
-                || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some();
+            let is_tool = matches!(template.category, ItemCategory::Tool);
             let off_hand_extra = matches!(slot, EquipSlotV1::OffHand)
                 && matches!(
                     template.category,

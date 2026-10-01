@@ -113,12 +113,6 @@ public final class VfxBootstrap {
         registry.register(BotanyHarvestBurstPlayer.GATHER_COMPLETE, gatheringBurst);
         registry.register(BotanyHarvestBurstPlayer.GATHER_PERFECT, gatheringBurst);
         registry.register(BotanyPlantStagePlayer.ROUTE_ID,       new BotanyPlantStagePlayer());
-        LingtianPlotRunePlayer lingtianPlotRunes = new LingtianPlotRunePlayer();
-        registry.register(LingtianPlotRunePlayer.TILL,           lingtianPlotRunes);
-        registry.register(LingtianPlotRunePlayer.PLANT,          lingtianPlotRunes);
-        registry.register(LingtianPlotRunePlayer.REPLENISH,      lingtianPlotRunes);
-        registry.register(LingtianPlotRunePlayer.HARVEST,        lingtianPlotRunes);
-        registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
         // plan-ambient-threat-v1 P2 — rat 袭扰咬击瞬间灰白尘粒反馈。复用
@@ -253,12 +247,6 @@ public final class VfxBootstrap {
             new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.COMPLETE));
         registry.register(AlchemyBrewVaporPlayer.EXPLODE,
             new AlchemyBrewVaporPlayer(AlchemyBrewVaporPlayer.Kind.EXPLODE));
-        registry.register(LingtianActionVfxPlayer.TILL,
-            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.TILL));
-        registry.register(LingtianActionVfxPlayer.PLANT,
-            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.PLANT));
-        registry.register(LingtianActionVfxPlayer.REPLENISH,
-            new LingtianActionVfxPlayer(LingtianActionVfxPlayer.Kind.REPLENISH));
         registry.register(ZhenfaActionVfxPlayer.TRAP,
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.TRAP));
         registry.register(ZhenfaActionVfxPlayer.WARD,

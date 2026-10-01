@@ -1,0 +1,35 @@
+# 野生采药使用的三档锄头，统一走工具装备入口。
+# TODO:lingtian_refactor 新耕作规则另行定义。
+
+[[item]]
+id = "hoe_iron"
+name = "铁锄"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.7
+description = "铁制药锄，适合挖取草药根部。"
+
+[[item]]
+id = "hoe_lingtie"
+name = "灵铁锄"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.4
+rarity = "uncommon"
+spirit_quality_initial = 0.85
+description = "灵铁所制的药锄，轻巧而锋利。"
+
+[[item]]
+id = "hoe_xuantie"
+name = "玄铁锄"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "玄铁所打的药锄，适合采挖坚韧的药根。"

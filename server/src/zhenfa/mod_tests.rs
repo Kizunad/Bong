@@ -6,7 +6,6 @@ use crate::inventory::{
     inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
     ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents, EQUIP_SLOT_MAIN_HAND,
 };
-use crate::lingtian::PLOT_QI_CAP_BASE;
 use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
 use valence::testing::ScenarioSingleClient;
 
@@ -137,21 +136,6 @@ fn spawn_player_with_inventory(
         .id()
 }
 
-fn spawn_plot(app: &mut App, pos: [i32; 3], cap: f32) -> Entity {
-    let mut plot = LingtianPlot::new(block_pos_from_array(pos), None);
-    plot.plot_qi_cap = cap;
-    app.world_mut().spawn(plot).id()
-}
-
-fn plot_cap(app: &mut App, pos: [i32; 3]) -> f32 {
-    app.world_mut()
-        .query::<&LingtianPlot>()
-        .iter(app.world())
-        .find(|plot| plot.pos == block_pos_from_array(pos))
-        .map(|plot| plot.plot_qi_cap)
-        .expect("test plot should exist")
-}
-
 fn send_lingju_place(app: &mut App, player: Entity, pos: [i32; 3], tick: u64) {
     app.world_mut().send_event(ZhenfaPlaceRequest {
         player,
@@ -167,7 +151,7 @@ fn send_lingju_place(app: &mut App, player: Entity, pos: [i32; 3], tick: u64) {
 }
 
 #[test]
-fn network_array_three_flags_and_eye_form_active_cap_feedback_and_consume_items() {
+fn network_array_three_flags_and_eye_activate_emit_feedback_and_consume_items() {
     let mut app = app_with_loaded_zhenfa();
     app.insert_resource(ZoneRegistry::fallback());
     app.add_event::<VfxEventRequest>();
@@ -177,7 +161,6 @@ fn network_array_three_flags_and_eye_form_active_cap_feedback_and_consume_items(
         [0.5, 64.0, 0.5],
         network_array_test_inventory(),
     );
-    spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
 
     place_basic_network_array(&mut app, owner, 1);
 
@@ -188,12 +171,6 @@ fn network_array_three_flags_and_eye_form_active_cap_feedback_and_consume_items(
         networks[0].flag_instance_ids.len(),
         3,
         "成阵后必须记录 3 面阵旗，供破阵和 HUD 文案使用"
-    );
-    assert!(
-        (plot_cap(&mut app, [2, 64, 2]) - (PLOT_QI_CAP_BASE + QI_NETWORK_ARRAY_LINGJU_CAP_BONUS))
-            .abs()
-            < 1e-6,
-        "圈内 plot 应获得凡阶组网阵 +QI_NETWORK_ARRAY_LINGJU_CAP_BONUS cap"
     );
 
     let network_events = app.world().resource::<Events<NetworkArrayDeployEvent>>();
@@ -232,7 +209,7 @@ fn network_array_three_flags_and_eye_form_active_cap_feedback_and_consume_items(
 }
 
 #[test]
-fn network_array_two_flags_and_eye_do_not_activate_or_boost_plot() {
+fn network_array_two_flags_and_eye_do_not_activate() {
     let mut app = app_with_loaded_zhenfa();
     let owner = spawn_player_with_inventory(
         &mut app,
@@ -244,7 +221,6 @@ fn network_array_two_flags_and_eye_do_not_activate_or_boost_plot() {
             (8201, NETWORK_ARRAY_EYE_ITEM_ID),
         ]),
     );
-    spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
 
     place_network_array_node(&mut app, owner, [0, 64, 0], 8101, 1);
     place_network_array_node(&mut app, owner, [6, 64, 0], 8102, 2);
@@ -259,10 +235,6 @@ fn network_array_two_flags_and_eye_do_not_activate_or_boost_plot() {
         "两旗低于凸多边形下限，阵眼不应激活组网阵"
     );
     assert!(
-        (plot_cap(&mut app, [2, 64, 2]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "未成阵时 plot cap 必须保持基线"
-    );
-    assert!(
         app.world()
             .resource::<Events<NetworkArrayDeployEvent>>()
             .iter_current_update_events()
@@ -273,7 +245,7 @@ fn network_array_two_flags_and_eye_do_not_activate_or_boost_plot() {
 }
 
 #[test]
-fn network_array_breaking_flag_dissolves_network_and_restores_cap() {
+fn network_array_breaking_flag_dissolves_network() {
     let mut app = app_with_loaded_zhenfa();
     app.add_event::<VfxEventRequest>();
     let owner = spawn_player_with_inventory(
@@ -282,13 +254,7 @@ fn network_array_breaking_flag_dissolves_network_and_restores_cap() {
         [0.5, 64.0, 0.5],
         network_array_test_inventory(),
     );
-    spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
     place_basic_network_array(&mut app, owner, 1);
-    assert!(
-        (plot_cap(&mut app, [2, 64, 2]) - (PLOT_QI_CAP_BASE + QI_NETWORK_ARRAY_LINGJU_CAP_BONUS))
-            .abs()
-            < 1e-6
-    );
 
     app.world_mut().send_event(ZhenfaDisarmRequest {
         player: owner,
@@ -305,10 +271,6 @@ fn network_array_breaking_flag_dissolves_network_and_restores_cap() {
             .count(),
         0,
         "任一阵旗被拆后 active network 必须失效"
-    );
-    assert!(
-        (plot_cap(&mut app, [2, 64, 2]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "组网阵破后 plot cap 必须恢复基线"
     );
     assert!(
         app.world_mut()
@@ -676,47 +638,6 @@ fn buried_scatter_bead_trigger_requires_owner() {
         "owner 可以触发自己的预埋散灵珠"
     );
     assert!(!burials.beads.contains_key(&bead_id));
-}
-
-#[test]
-fn clear_lingju_effect_ignores_removed_or_unknown_instance() {
-    let mut app = app_with_zhenfa();
-    spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
-    let owner = app.world_mut().spawn_empty().id();
-    let anchor_entity = app.world_mut().spawn_empty().id();
-    let instance = ZhenfaInstance {
-        id: 404,
-        kind: ZhenfaKind::Lingju,
-        owner,
-        owner_player_id: "offline:Alice".to_string(),
-        pos: [0, 64, 0],
-        carrier: ZhenfaCarrierKind::BeastCoreInlaid,
-        qi_invest_ratio: 0.30,
-        qi_invest_amount: 30.0,
-        realm_at_cast: Realm::Induce,
-        mastery_at_cast: 0.0,
-        effect_radius: 20,
-        ward_radius: 20,
-        placed_at_tick: 1,
-        expires_at_tick: 100,
-        triggered_at: None,
-        trigger: None,
-        color_main: ColorKind::Intricate,
-        color_secondary: None,
-        anchor_entity,
-    };
-
-    app.world_mut()
-        .resource_scope(|world, mut registry: Mut<ZhenfaRegistry>| {
-            let mut plots = world.query::<&mut LingtianPlot>();
-            clear_lingju_effect_for_plots(&instance, &mut registry, plots.iter_mut(world));
-        });
-    app.update();
-
-    assert!(
-        (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
-        "未知/已移除 Lingju 清理不应 panic，也不应改动未覆盖 plot"
-    );
 }
 
 fn array_flag_item(instance_id: u64) -> ItemInstance {
@@ -2062,7 +1983,6 @@ fn lingju_expiry_releases_sealed_qi_to_zone() {
     let mut zones = ZoneRegistry::fallback();
     zones.zones[0].spirit_qi = 0.0;
     app.insert_resource(zones);
-    spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
 
     let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
 

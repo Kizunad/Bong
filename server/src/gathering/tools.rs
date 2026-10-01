@@ -186,7 +186,7 @@ pub fn spec_for_item_id(item_id: &str) -> Option<GatheringToolSpec> {
         .find(|spec| spec.item_id == item_id)
         .or_else(|| vanilla_pickaxe_alias_spec(item_id))
         .or_else(|| {
-            // 玄铁锄是 lingtian 既有高档锄头；采集系统按轻快高质档处理。
+            // 玄铁锄沿用高档工具的轻快高质档处理。
             (item_id == "hoe_xuantie").then_some(GatheringToolSpec::new(
                 "hoe_xuantie",
                 "玄铁锄",

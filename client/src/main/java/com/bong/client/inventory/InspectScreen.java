@@ -1743,7 +1743,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             clearAllHighlights();
             return;
         }
-
         if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) {
             var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
             var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);

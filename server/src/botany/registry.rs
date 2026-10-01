@@ -1,477 +1,69 @@
-//! plan-botany-v1 §1 — 双 registry：
-//!  * `PlantKindRegistry` + TOML loader（lingtian / 可种植子集）
-//!  * `BotanyKindRegistry` + 22 种正典静态表（野生采集 / ecology 事件触发）
-//!
-//! 两者独立：lingtian 走 `PlantKindRegistry`（由 `assets/botany/plants.toml` 驱动）；
-//! botany 野生 lifecycle / harvest / ecology 走 `BotanyKindRegistry`（静态 22 种）。
-
+//! 野生植物注册表：内容来自 shared/botany/plants.json，行为由野生生态系统执行。
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::Resource;
 
-use super::plant_kind::{PlantId, PlantKind};
+use super::catalog::{valid_id, PlantCatalog};
 use crate::tools::ToolKind;
 use crate::world::zone::{BotanyZoneTag, Zone};
-
-const DEFAULT_PLANTS_PATH: &str = "assets/botany/plants.toml";
-
-// ============================================================================
-// lingtian 侧：PlantKindRegistry（TOML 驱动，cultivable 标签过滤）
-// ============================================================================
-
-#[derive(Debug, Default)]
-pub struct PlantKindRegistry {
-    plants: HashMap<PlantId, PlantKind>,
-}
-
-impl Resource for PlantKindRegistry {}
-
-impl PlantKindRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&mut self, plant: PlantKind) -> Result<(), String> {
-        if self.plants.contains_key(&plant.id) {
-            return Err(format!("duplicate plant id: {}", plant.id));
-        }
-        self.plants.insert(plant.id.clone(), plant);
-        Ok(())
-    }
-
-    pub fn get(&self, id: &str) -> Option<&PlantKind> {
-        self.plants.get(id)
-    }
-
-    pub fn len(&self) -> usize {
-        self.plants.len()
-    }
-
-    // TODO: plan-lingtian-v1 注册表接入完成后取消 allow（is_empty/iter 供后续 registry 消费者使用）
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.plants.is_empty()
-    }
-
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = (&PlantId, &PlantKind)> {
-        self.plants.iter()
-    }
-
-    /// plan-lingtian-v1 §4 — `SeedRegistry` 由可种植子集派生。
-    pub fn cultivable_ids(&self) -> impl Iterator<Item = &PlantId> {
-        self.plants
-            .iter()
-            .filter_map(|(id, kind)| kind.cultivable.then_some(id))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct PlantsFile {
-    #[serde(default)]
-    plant: Vec<PlantKind>,
-}
-
-pub fn load_plant_kind_registry() -> Result<PlantKindRegistry, String> {
-    load_plant_kind_registry_from(Path::new(DEFAULT_PLANTS_PATH))
-}
-
-pub fn load_plant_kind_registry_from(path: &Path) -> Result<PlantKindRegistry, String> {
-    let raw = fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let parsed: PlantsFile =
-        toml::from_str(&raw).map_err(|e| format!("parse {}: {}", path.display(), e))?;
-    let mut registry = PlantKindRegistry::new();
-    for plant in parsed.plant {
-        registry.insert(plant)?;
-    }
-    Ok(registry)
-}
-
-// ============================================================================
-// botany 野生侧：BotanyKindRegistry（22 种正典静态表）
-// ============================================================================
-
-// plan-cultivation-pacing-v1 P1.8 — 灵草（最基础的 Plains 采集草）
-pub const SPIRIT_GRASS: &str = "spirit_grass";
-
-// 已有 6 种（MVP 初始）
-pub const CI_SHE_HAO: &str = "ci_she_hao";
-pub const NING_MAI_CAO: &str = "ning_mai_cao";
-pub const HUI_YUAN_ZHI: &str = "hui_yuan_zhi";
-pub const CHI_SUI_CAO: &str = "chi_sui_cao";
-pub const GU_YUAN_GEN: &str = "gu_yuan_gen";
-pub const KONG_SHOU_HEN: &str = "kong_shou_hen";
-
-// plan §1.1 正典扩展（末法药材十七种 + 辛草试毒录 去重 22 种）
-pub const JIE_GU_RUI: &str = "jie_gu_rui";
-pub const YANG_JING_TAI: &str = "yang_jing_tai";
-pub const QING_ZHUO_CAO: &str = "qing_zhuo_cao";
-pub const AN_SHEN_GUO: &str = "an_shen_guo";
-pub const SHI_MAI_GEN: &str = "shi_mai_gen";
-pub const LING_YAN_SHI_ZHI: &str = "ling_yan_shi_zhi";
-pub const YE_KU_TENG: &str = "ye_ku_teng";
-pub const HUI_JIN_TAI: &str = "hui_jin_tai";
-pub const ZHEN_JIE_ZI: &str = "zhen_jie_zi";
-pub const SHAO_HOU_MAN: &str = "shao_hou_man";
-pub const TIAN_NU_JIAO: &str = "tian_nu_jiao";
-pub const FU_YOU_HUA: &str = "fu_you_hua";
-pub const WU_YAN_GUO: &str = "wu_yan_guo";
-pub const HEI_GU_JUN: &str = "hei_gu_jun";
-pub const FU_CHEN_CAO: &str = "fu_chen_cao";
-pub const ZHONG_YAN_TENG: &str = "zhong_yan_teng";
-
-// plan-botany-v2 §2 — 绝地草木拾遗十七味（野生 only，不进 PlantKindRegistry/SeedRegistry）。
-pub const FU_YUAN_JUE: &str = "fu_yuan_jue";
-pub const BAI_YAN_PENG: &str = "bai_yan_peng";
-pub const DUAN_JI_CI: &str = "duan_ji_ci";
-pub const XUE_SE_MAI_CAO: &str = "xue_se_mai_cao";
-pub const YUN_DING_LAN: &str = "yun_ding_lan";
-pub const XUAN_GEN_WEI: &str = "xuan_gen_wei";
-pub const YING_YUAN_GU: &str = "ying_yuan_gu";
-pub const XUAN_RONG_TAI: &str = "xuan_rong_tai";
-pub const YUAN_NI_HONG_YU: &str = "yuan_ni_hong_yu";
-pub const JING_XIN_ZAO: &str = "jing_xin_zao";
-pub const XUE_PO_LIAN: &str = "xue_po_lian";
-pub const JIAO_MAI_TENG: &str = "jiao_mai_teng";
-pub const LIE_YUAN_TAI: &str = "lie_yuan_tai";
-pub const MING_GU_GU: &str = "ming_gu_gu";
-pub const BEI_WEN_ZHI: &str = "bei_wen_zhi";
-pub const LING_JING_XU: &str = "ling_jing_xu";
-pub const MAO_XIN_WEI: &str = "mao_xin_wei";
-// plan-food-v1 P0 — 灵果（Mountain/Plains 稀有档食物植物）
-pub const LING_GUO: &str = "food.spirit_fruit.ling_guo";
-// plan-neg-domain-fauna-v1 P1 — 噬灵藓（负灵域 tainted 地块危害，不可采集）
-pub const SHI_LING_XIAN: &str = "shi_ling_xian";
-
-const HAZARD_NONE: &[HarvestHazard] = &[];
-const ENV_FU_YUAN_JUE: &[EnvLock] = &[EnvLock::NegPressure { min: 0.3 }];
-const HAZARD_FU_YUAN_JUE: &[HarvestHazard] = &[HarvestHazard::QiDrainOnApproach {
-    radius_blocks: 5,
-    drain_per_sec: 0.4,
-}];
-const ENV_BAI_YAN_PENG: &[EnvLock] = &[];
-const HAZARD_BAI_YAN_PENG: &[HarvestHazard] = &[
-    HarvestHazard::DispersalOnFail {
-        dispersal_chance: 0.6,
-    },
-    HarvestHazard::AttractsMobs {
-        mob_kind: FaunaKind::SpiritMice,
-        min_count: 2,
-        max_count: 5,
-    },
-];
-const ENV_DUAN_JI_CI: &[EnvLock] = &[
-    EnvLock::RuinDensity { min: 0.3 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::Any(&["broken_spear_tree", "war_banner_post"]),
-        radius: 1,
-    },
-];
-const HAZARD_DUAN_JI_CI: &[HarvestHazard] = &[
-    HarvestHazard::ResonanceVision {
-        duration_secs: 3,
-        composure_loss: 0.05,
-    },
-    // plan-gathering-tool-bind-v1 §8.1 决议 #4：断戟刺锐叶割手，草镰接通本职。
-    HarvestHazard::WoundOnBareHand {
-        wound: WoundLevel::Laceration,
-        required_tool: Some(ToolKind::CaoLian),
-    },
-];
-const ENV_XUE_SE_MAI_CAO: &[EnvLock] = &[EnvLock::RuinDensity { min: 0.2 }];
-const HAZARD_XUE_SE_MAI_CAO: &[HarvestHazard] = &[
-    HarvestHazard::DispersalOnFail {
-        dispersal_chance: 0.4,
-    },
-    // plan-gathering-tool-bind-v1 §8.1 决议 #4：血色麦草丛生锐叶割手，草镰接通本职。
-    HarvestHazard::WoundOnBareHand {
-        wound: WoundLevel::Laceration,
-        required_tool: Some(ToolKind::CaoLian),
-    },
-];
-const ENV_YUN_DING_LAN: &[EnvLock] = &[EnvLock::SkyIslandMask {
-    min: 0.2,
-    surface: SkyIsleSurface::Top,
-}];
-const HAZARD_YUN_DING_LAN: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
-    dispersal_chance: 0.7,
-}];
-const ENV_XUAN_GEN_WEI: &[EnvLock] = &[EnvLock::SkyIslandMask {
-    min: 0.2,
-    surface: SkyIsleSurface::Bottom,
-}];
-const HAZARD_XUAN_GEN_WEI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
-    wound: WoundLevel::Laceration,
-    required_tool: Some(ToolKind::DunQiJia),
-}];
-const ENV_YING_YUAN_GU: &[EnvLock] = &[
-    EnvLock::UndergroundTier { tier: 1 },
-    EnvLock::AdjacentLightBlock { radius: 2 },
-];
-const HAZARD_YING_YUAN_GU: &[HarvestHazard] = &[
-    HarvestHazard::DispersalOnFail {
-        dispersal_chance: 0.3,
-    },
-    HarvestHazard::AttractsMobs {
-        mob_kind: FaunaKind::MimicSpider,
-        min_count: 1,
-        max_count: 2,
-    },
-];
-const ENV_XUAN_RONG_TAI: &[EnvLock] = &[EnvLock::UndergroundTier { tier: 2 }];
-const HAZARD_XUAN_RONG_TAI: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
-    wound: WoundLevel::Abrasion,
-    required_tool: Some(ToolKind::GuaDao),
-}];
-const ENV_YUAN_NI_HONG_YU: &[EnvLock] = &[
-    EnvLock::UndergroundTier { tier: 3 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::One("yuan_ni_ebony"),
-        radius: 5,
-    },
-    EnvLock::QiVeinFlow { min: 0.5 },
-];
-const HAZARD_YUAN_NI_HONG_YU: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
-    dispersal_chance: 0.5,
-}];
-const ENV_JING_XIN_ZAO: &[EnvLock] = &[
-    EnvLock::QiVeinFlow { min: 0.6 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::Any(&["ling_yun_mangrove", "spirit_willow"]),
-        radius: 8,
-    },
-    EnvLock::TimePhase(WaterPulsePhase::Open),
-];
-const HAZARD_JING_XIN_ZAO: &[HarvestHazard] = &[HarvestHazard::SeasonRequired {
-    phase: WaterPulsePhase::Open,
-}];
-const ENV_XUE_PO_LIAN: &[EnvLock] = &[EnvLock::SnowSurface, EnvLock::QiVeinFlow { min: 0.3 }];
-const HAZARD_XUE_PO_LIAN: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
-    wound: WoundLevel::Laceration,
-    required_tool: Some(ToolKind::BingJiaShouTao),
-}];
-const ENV_JIAO_MAI_TENG: &[EnvLock] = &[
-    EnvLock::FractureMask { min: 0.4 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::One("fire_vein_cactus"),
-        radius: 3,
-    },
-];
-const HAZARD_JIAO_MAI_TENG: &[HarvestHazard] = &[HarvestHazard::WoundOnBareHand {
-    wound: WoundLevel::Fracture,
-    required_tool: Some(ToolKind::DunQiJia),
-}];
-const ENV_LIE_YUAN_TAI: &[EnvLock] = &[EnvLock::PortalRiftActive];
-const HAZARD_LIE_YUAN_TAI: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
-    dispersal_chance: 0.4,
-}];
-const ENV_MING_GU_GU: &[EnvLock] = &[
-    EnvLock::RuinDensity { min: 0.4 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::One("bone_mountain"),
-        radius: 3,
-    },
-];
-const HAZARD_MING_GU_GU: &[HarvestHazard] = &[
-    HarvestHazard::ResonanceVision {
-        duration_secs: 5,
-        composure_loss: 0.08,
-    },
-    HarvestHazard::AttractsMobs {
-        mob_kind: FaunaKind::MimicSpider,
-        min_count: 1,
-        max_count: 3,
-    },
-];
-const ENV_BEI_WEN_ZHI: &[EnvLock] = &[
-    EnvLock::RuinDensity { min: 0.3 },
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::One("array_disc_remnant"),
-        radius: 2,
-    },
-];
-const HAZARD_BEI_WEN_ZHI: &[HarvestHazard] = &[HarvestHazard::DispersalOnFail {
-    dispersal_chance: 0.5,
-}];
-const ENV_LING_JING_XU: &[EnvLock] = &[
-    EnvLock::AdjacentDecoration {
-        kind: DecorationLock::One("qi_crystal_pillar"),
-        radius: 3,
-    },
-    EnvLock::QiVeinFlow { min: 0.5 },
-];
-const HAZARD_LING_JING_XU: &[HarvestHazard] = &[
-    HarvestHazard::WoundOnBareHand {
-        wound: WoundLevel::Abrasion,
-        required_tool: Some(ToolKind::GuaDao),
-    },
-    HarvestHazard::DispersalOnFail {
-        dispersal_chance: 0.6,
-    },
-];
-const ENV_MAO_XIN_WEI: &[EnvLock] = &[EnvLock::AdjacentDecoration {
-    kind: DecorationLock::Any(&[
-        "thatched_hermitage",
-        "lone_grave_mound",
-        "daily_artifact_cache",
-    ]),
-    radius: 2,
-}];
-
-// plan-food-v1 P0 — 灵果：山地/平原稀有档，无特殊 env 约束，无采集危害。
-const ENV_LING_GUO: &[EnvLock] = &[];
 
 pub const KAI_MAI_CAO_ALIAS: &str = "kai_mai_cao";
 pub const XUE_CAO_ALIAS: &str = "xue_cao";
 pub const BAI_CAO_ALIAS: &str = "bai_cao";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BotanyPlantId {
-    SpiritGrass,
-    CiSheHao,
-    NingMaiCao,
-    HuiYuanZhi,
-    ChiSuiCao,
-    GuYuanGen,
-    KongShouHen,
-    JieGuRui,
-    YangJingTai,
-    QingZhuoCao,
-    AnShenGuo,
-    ShiMaiGen,
-    LingYanShiZhi,
-    YeKuTeng,
-    HuiJinTai,
-    ZhenJieZi,
-    ShaoHouMan,
-    TianNuJiao,
-    FuYouHua,
-    WuYanGuo,
-    HeiGuJun,
-    FuChenCao,
-    ZhongYanTeng,
-    FuYuanJue,
-    BaiYanPeng,
-    DuanJiCi,
-    XueSeMaiCao,
-    YunDingLan,
-    XuanGenWei,
-    YingYuanGu,
-    XuanRongTai,
-    YuanNiHongYu,
-    JingXinZao,
-    XuePoLian,
-    JiaoMaiTeng,
-    LieYuanTai,
-    MingGuGu,
-    BeiWenZhi,
-    LingJingXu,
-    MaoXinWei,
-    /// plan-food-v1 P0 — 灵果：Mountain/Plains 稀有档食物植物，item_id = food.spirit_fruit.ling_guo。
-    LingGuo,
-    /// plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害。
-    /// 非药材：item_id = "shi_ling_xian"（无 drop/harvest/合成路径），v2 = None。
-    /// spawn_mode = SpreadByCrawl（由 moss_spread_system 驱动 noise-based 蔓延）。
-    ShiLingXian,
-}
+// 兼容现有行为代码的物品 ID。植物注册本身仍由 shared/botany/plants.json 驱动。
+pub const SPIRIT_GRASS: &str = "spirit_grass";
+pub const HUI_YUAN_ZHI: &str = "hui_yuan_zhi";
 
+/// 开放的字符串 ID。借用形式用于已有专属行为的常量，配置加载得到 owned 字符串。
+/// 常量仅供代码引用，既不是完整物种清单，也不参与注册或新物种准入。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BotanyPlantId(Cow<'static, str>);
+
+#[allow(non_upper_case_globals)]
 impl BotanyPlantId {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SpiritGrass => SPIRIT_GRASS,
-            Self::CiSheHao => CI_SHE_HAO,
-            Self::NingMaiCao => NING_MAI_CAO,
-            Self::HuiYuanZhi => HUI_YUAN_ZHI,
-            Self::ChiSuiCao => CHI_SUI_CAO,
-            Self::GuYuanGen => GU_YUAN_GEN,
-            Self::KongShouHen => KONG_SHOU_HEN,
-            Self::JieGuRui => JIE_GU_RUI,
-            Self::YangJingTai => YANG_JING_TAI,
-            Self::QingZhuoCao => QING_ZHUO_CAO,
-            Self::AnShenGuo => AN_SHEN_GUO,
-            Self::ShiMaiGen => SHI_MAI_GEN,
-            Self::LingYanShiZhi => LING_YAN_SHI_ZHI,
-            Self::YeKuTeng => YE_KU_TENG,
-            Self::HuiJinTai => HUI_JIN_TAI,
-            Self::ZhenJieZi => ZHEN_JIE_ZI,
-            Self::ShaoHouMan => SHAO_HOU_MAN,
-            Self::TianNuJiao => TIAN_NU_JIAO,
-            Self::FuYouHua => FU_YOU_HUA,
-            Self::WuYanGuo => WU_YAN_GUO,
-            Self::HeiGuJun => HEI_GU_JUN,
-            Self::FuChenCao => FU_CHEN_CAO,
-            Self::ZhongYanTeng => ZHONG_YAN_TENG,
-            Self::FuYuanJue => FU_YUAN_JUE,
-            Self::BaiYanPeng => BAI_YAN_PENG,
-            Self::DuanJiCi => DUAN_JI_CI,
-            Self::XueSeMaiCao => XUE_SE_MAI_CAO,
-            Self::YunDingLan => YUN_DING_LAN,
-            Self::XuanGenWei => XUAN_GEN_WEI,
-            Self::YingYuanGu => YING_YUAN_GU,
-            Self::XuanRongTai => XUAN_RONG_TAI,
-            Self::YuanNiHongYu => YUAN_NI_HONG_YU,
-            Self::JingXinZao => JING_XIN_ZAO,
-            Self::XuePoLian => XUE_PO_LIAN,
-            Self::JiaoMaiTeng => JIAO_MAI_TENG,
-            Self::LieYuanTai => LIE_YUAN_TAI,
-            Self::MingGuGu => MING_GU_GU,
-            Self::BeiWenZhi => BEI_WEN_ZHI,
-            Self::LingJingXu => LING_JING_XU,
-            Self::MaoXinWei => MAO_XIN_WEI,
-            Self::LingGuo => LING_GUO,
-            Self::ShiLingXian => SHI_LING_XIAN,
-        }
+    pub const SpiritGrass: Self = Self(Cow::Borrowed("spirit_grass"));
+    pub const CiSheHao: Self = Self(Cow::Borrowed("ci_she_hao"));
+    pub const NingMaiCao: Self = Self(Cow::Borrowed("ning_mai_cao"));
+    pub const HuiYuanZhi: Self = Self(Cow::Borrowed("hui_yuan_zhi"));
+    pub const ChiSuiCao: Self = Self(Cow::Borrowed("chi_sui_cao"));
+    pub const GuYuanGen: Self = Self(Cow::Borrowed("gu_yuan_gen"));
+    pub const KongShouHen: Self = Self(Cow::Borrowed("kong_shou_hen"));
+    pub const FuYuanJue: Self = Self(Cow::Borrowed("fu_yuan_jue"));
+    pub const BaiYanPeng: Self = Self(Cow::Borrowed("bai_yan_peng"));
+    pub const DuanJiCi: Self = Self(Cow::Borrowed("duan_ji_ci"));
+    pub const XueSeMaiCao: Self = Self(Cow::Borrowed("xue_se_mai_cao"));
+    pub const XuanGenWei: Self = Self(Cow::Borrowed("xuan_gen_wei"));
+    pub const XuanRongTai: Self = Self(Cow::Borrowed("xuan_rong_tai"));
+    pub const XuePoLian: Self = Self(Cow::Borrowed("xue_po_lian"));
+    pub const JiaoMaiTeng: Self = Self(Cow::Borrowed("jiao_mai_teng"));
+    pub const LieYuanTai: Self = Self(Cow::Borrowed("lie_yuan_tai"));
+    pub const LingJingXu: Self = Self(Cow::Borrowed("ling_jing_xu"));
+    pub const ShiLingXian: Self = Self(Cow::Borrowed("shi_ling_xian"));
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
     pub fn from_canonical(id: &str) -> Option<Self> {
-        match id {
-            SPIRIT_GRASS => Some(Self::SpiritGrass),
-            CI_SHE_HAO => Some(Self::CiSheHao),
-            NING_MAI_CAO => Some(Self::NingMaiCao),
-            HUI_YUAN_ZHI => Some(Self::HuiYuanZhi),
-            CHI_SUI_CAO => Some(Self::ChiSuiCao),
-            GU_YUAN_GEN => Some(Self::GuYuanGen),
-            KONG_SHOU_HEN => Some(Self::KongShouHen),
-            JIE_GU_RUI => Some(Self::JieGuRui),
-            YANG_JING_TAI => Some(Self::YangJingTai),
-            QING_ZHUO_CAO => Some(Self::QingZhuoCao),
-            AN_SHEN_GUO => Some(Self::AnShenGuo),
-            SHI_MAI_GEN => Some(Self::ShiMaiGen),
-            LING_YAN_SHI_ZHI => Some(Self::LingYanShiZhi),
-            YE_KU_TENG => Some(Self::YeKuTeng),
-            HUI_JIN_TAI => Some(Self::HuiJinTai),
-            ZHEN_JIE_ZI => Some(Self::ZhenJieZi),
-            SHAO_HOU_MAN => Some(Self::ShaoHouMan),
-            TIAN_NU_JIAO => Some(Self::TianNuJiao),
-            FU_YOU_HUA => Some(Self::FuYouHua),
-            WU_YAN_GUO => Some(Self::WuYanGuo),
-            HEI_GU_JUN => Some(Self::HeiGuJun),
-            FU_CHEN_CAO => Some(Self::FuChenCao),
-            ZHONG_YAN_TENG => Some(Self::ZhongYanTeng),
-            FU_YUAN_JUE => Some(Self::FuYuanJue),
-            BAI_YAN_PENG => Some(Self::BaiYanPeng),
-            DUAN_JI_CI => Some(Self::DuanJiCi),
-            XUE_SE_MAI_CAO => Some(Self::XueSeMaiCao),
-            YUN_DING_LAN => Some(Self::YunDingLan),
-            XUAN_GEN_WEI => Some(Self::XuanGenWei),
-            YING_YUAN_GU => Some(Self::YingYuanGu),
-            XUAN_RONG_TAI => Some(Self::XuanRongTai),
-            YUAN_NI_HONG_YU => Some(Self::YuanNiHongYu),
-            JING_XIN_ZAO => Some(Self::JingXinZao),
-            XUE_PO_LIAN => Some(Self::XuePoLian),
-            JIAO_MAI_TENG => Some(Self::JiaoMaiTeng),
-            LIE_YUAN_TAI => Some(Self::LieYuanTai),
-            MING_GU_GU => Some(Self::MingGuGu),
-            BEI_WEN_ZHI => Some(Self::BeiWenZhi),
-            LING_JING_XU => Some(Self::LingJingXu),
-            MAO_XIN_WEI => Some(Self::MaoXinWei),
-            LING_GUO => Some(Self::LingGuo),
-            SHI_LING_XIAN => Some(Self::ShiLingXian),
-            _ => None,
-        }
+        PlantCatalog::builtin()
+            .get(id)
+            .map(|plant| plant.id.clone())
+    }
+}
+
+impl AsRef<str> for BotanyPlantId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for BotanyPlantId {
+    fn borrow(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -482,24 +74,17 @@ pub enum BotanyHerbAlias {
     Bai,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BotanySpawnMode {
     ZoneRefresh,
     StaticPoint,
-    /// plan §1.2.3 事件触发（兽死 / 残灰 / 天劫余波 / 负灵域裂缝）。
-    /// 不参与 ZoneRefresh / StaticPoint spawn loop；不检查 zone 支持性与 spirit_qi 下限。
+    /// 兽死、残灰等事件触发，不参与区域刷新或静态点刷新。
     EventTriggered,
-    /// plan-neg-domain-fauna-v1 P1 — 噬灵藓专属扩散模式。
-    /// 不走 ZoneRefresh/StaticPoint；由 `moss_spread_system` 驱动 noise-based 蔓延。
-    /// spirit_qi >= 0 时停止蔓延并启动 60s 枯萎倒计时。
+    /// 噬灵藓独立蔓延行为；新增该行为的植物仍需专属系统支持。
     SpreadByCrawl,
 }
 
-/// plan §7 TODO 植物变异：特殊 zone 环境下的稀有变种。
-/// - `Thunder` 天劫余波 zone（active_events 含 thunder / tribulation）
-/// - `Tainted` 负灵域 / spirit_qi 负值 zone
-///
-/// 变种影响 drop 品质、XP、显示名前缀（"雷 · " / "黑 · "），但共用同一 canonical plant_kind。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlantVariant {
@@ -509,7 +94,34 @@ pub enum PlantVariant {
     Tainted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+impl PlantVariant {
+    pub fn display_prefix(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Thunder => Some("雷"),
+            Self::Tainted => Some("黑"),
+        }
+    }
+
+    pub fn quality_modifier(self) -> f64 {
+        match self {
+            Self::None => 0.0,
+            Self::Thunder => 0.10,
+            Self::Tainted => -0.15,
+        }
+    }
+
+    pub fn xp_delta(self) -> i64 {
+        match self {
+            Self::None => 0,
+            Self::Thunder => 2,
+            Self::Tainted => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SurvivalMode {
     QiAbsorb,
     NegPressureFeed,
@@ -523,33 +135,37 @@ pub enum SurvivalMode {
     WaterPulse,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SkyIsleSurface {
     Top,
     Bottom,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WaterPulsePhase {
     Open,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum DecorationLock {
-    One(&'static str),
-    Any(&'static [&'static str]),
+    One(String),
+    Any(Vec<String>),
 }
 
 impl DecorationLock {
-    pub fn names(self) -> Vec<&'static str> {
+    pub fn names(&self) -> Vec<&str> {
         match self {
-            Self::One(expected) => vec![expected],
-            Self::Any(expected) => expected.to_vec(),
+            Self::One(expected) => vec![expected.as_str()],
+            Self::Any(expected) => expected.iter().map(String::as_str).collect(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvLock {
     NegPressure { min: f32 },
     QiVeinFlow { min: f32 },
@@ -564,20 +180,23 @@ pub enum EnvLock {
     TimePhase(WaterPulsePhase),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WoundLevel {
     Abrasion,
     Laceration,
     Fracture,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FaunaKind {
     SpiritMice,
     MimicSpider,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum HarvestHazard {
     QiDrainOnApproach {
         radius_blocks: u8,
@@ -604,59 +223,34 @@ pub enum HarvestHazard {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelOverlay {
     None,
     Emissive,
     DualPhase,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BotanyV2Spec {
     pub survival_mode: SurvivalMode,
-    pub env_locks: &'static [EnvLock],
-    pub harvest_hazards: &'static [HarvestHazard],
-    pub base_mesh_ref: &'static str,
+    pub env_locks: Vec<EnvLock>,
+    pub harvest_hazards: Vec<HarvestHazard>,
+    pub base_mesh_ref: String,
     pub tint_rgb: u32,
     pub tint_rgb_secondary: Option<u32>,
     pub model_overlay: ModelOverlay,
-    pub icon_prompt: &'static str,
+    pub icon_prompt: String,
 }
 
-impl PlantVariant {
-    pub fn display_prefix(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::Thunder => Some("雷"),
-            Self::Tainted => Some("黑"),
-        }
-    }
-
-    /// 加到 ItemInstance.spirit_quality 上（最终 clamp 到 [0,1]）。
-    pub fn quality_modifier(self) -> f64 {
-        match self {
-            Self::None => 0.0,
-            Self::Thunder => 0.10,
-            Self::Tainted => -0.15,
-        }
-    }
-
-    /// 加到 harvest XP 上：两种变种都给 bonus（均为稀有事件），品相差别只反映在 quality 上。
-    /// Thunder 额外高 2，Tainted +1（挑战系数：需进负灵域采）。
-    pub fn xp_delta(self) -> i64 {
-        match self {
-            Self::None => 0,
-            Self::Thunder => 2,
-            Self::Tainted => 1,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BotanyPlantKind {
+    #[serde(skip)]
     pub id: BotanyPlantId,
-    pub item_id: &'static str,
-    pub zone_tags: &'static [BotanyZoneTag],
+    pub item_id: String,
+    pub zone_tags: Vec<BotanyZoneTag>,
     pub density_factor: f32,
     pub growth_cost: f32,
     pub survive_threshold: f32,
@@ -667,790 +261,146 @@ pub struct BotanyPlantKind {
     pub v2: Option<BotanyV2Spec>,
 }
 
+impl BotanyPlantKind {
+    pub fn is_v2(&self) -> bool {
+        self.v2.is_some()
+    }
+
+    pub fn v2_spec(&self) -> Option<&BotanyV2Spec> {
+        self.v2.as_ref()
+    }
+
+    pub(super) fn validate(&self) -> Result<(), String> {
+        let unit = |value: f32| value.is_finite() && (0.0..=1.0).contains(&value);
+        if !valid_id(&self.item_id)
+            || self.max_age_ticks == 0
+            || self.max_age_ticks > 9_007_199_254_740_991
+            || self.regen_ticks > 9_007_199_254_740_991
+            || !self.density_factor.is_finite()
+            || self.density_factor < 0.0
+            || !self.growth_cost.is_finite()
+            || self.growth_cost < 0.0
+            || !(-1.0..=1.0).contains(&self.survive_threshold)
+            || !unit(self.restore_ratio)
+        {
+            return Err(
+                "wild: invalid item_id, ticks, density, qi threshold or restore ratio".into(),
+            );
+        }
+        let mut zone_tags = std::collections::HashSet::new();
+        if self.zone_tags.iter().any(|tag| !zone_tags.insert(tag)) {
+            return Err("wild.zone_tags: duplicate tag".into());
+        }
+        if let Some(spec) = &self.v2 {
+            if !valid_id(&spec.base_mesh_ref)
+                || spec.tint_rgb > 0xffffff
+                || spec.tint_rgb_secondary.is_some_and(|rgb| rgb > 0xffffff)
+            {
+                return Err("wild.v2: invalid base_mesh_ref or tint".into());
+            }
+            for lock in &spec.env_locks {
+                let valid = match lock {
+                    EnvLock::NegPressure { min }
+                    | EnvLock::QiVeinFlow { min }
+                    | EnvLock::FractureMask { min }
+                    | EnvLock::RuinDensity { min }
+                    | EnvLock::SkyIslandMask { min, .. } => unit(*min),
+                    EnvLock::AdjacentDecoration { kind, .. } => {
+                        let names = kind.names();
+                        !names.is_empty()
+                            && names.iter().all(|name| valid_id(name))
+                            && names.iter().collect::<std::collections::HashSet<_>>().len()
+                                == names.len()
+                    }
+                    _ => true,
+                };
+                if !valid {
+                    return Err("wild.v2.env_locks: invalid threshold or decoration".into());
+                }
+            }
+            for hazard in &spec.harvest_hazards {
+                let valid = match hazard {
+                    HarvestHazard::QiDrainOnApproach { drain_per_sec, .. } => {
+                        drain_per_sec.is_finite() && *drain_per_sec >= 0.0
+                    }
+                    HarvestHazard::DispersalOnFail { dispersal_chance } => unit(*dispersal_chance),
+                    HarvestHazard::ResonanceVision { composure_loss, .. } => unit(*composure_loss),
+                    HarvestHazard::AttractsMobs {
+                        min_count,
+                        max_count,
+                        ..
+                    } => *min_count >= 1 && max_count >= min_count,
+                    _ => true,
+                };
+                if !valid {
+                    return Err("wild.v2.harvest_hazards: invalid amount or count range".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BotanyKindRegistry {
     by_id: HashMap<BotanyPlantId, BotanyPlantKind>,
+    aliases: HashMap<String, BotanyPlantId>,
 }
 
 impl Resource for BotanyKindRegistry {}
 
 impl Default for BotanyKindRegistry {
     fn default() -> Self {
-        let kinds = [
-            // plan-cultivation-pacing-v1 P1.8 — 灵草（Plains 最基础采集草，高密度）
-            BotanyPlantKind {
-                id: BotanyPlantId::SpiritGrass,
-                item_id: SPIRIT_GRASS,
-                zone_tags: &[BotanyZoneTag::Plains],
-                density_factor: 20.0,
-                growth_cost: 0.002,
-                survive_threshold: 0.2,
-                max_age_ticks: 4_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::CiSheHao,
-                item_id: CI_SHE_HAO,
-                zone_tags: &[BotanyZoneTag::Plains],
-                density_factor: 4.0,
-                growth_cost: 0.002,
-                survive_threshold: 0.2,
-                max_age_ticks: 6_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::NingMaiCao,
-                item_id: NING_MAI_CAO,
-                zone_tags: &[BotanyZoneTag::Plains],
-                density_factor: 3.0,
-                growth_cost: 0.003,
-                survive_threshold: 0.4,
-                max_age_ticks: 7_200,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::HuiYuanZhi,
-                item_id: HUI_YUAN_ZHI,
-                zone_tags: &[BotanyZoneTag::Marsh],
-                density_factor: 1.5,
-                growth_cost: 0.003,
-                survive_threshold: 0.35,
-                max_age_ticks: 8_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::ChiSuiCao,
-                item_id: CHI_SUI_CAO,
-                zone_tags: &[BotanyZoneTag::BloodValley],
-                density_factor: 1.0,
-                growth_cost: 0.005,
-                survive_threshold: 0.25,
-                max_age_ticks: 8_500,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::GuYuanGen,
-                item_id: GU_YUAN_GEN,
-                zone_tags: &[BotanyZoneTag::Marsh, BotanyZoneTag::Cave],
-                density_factor: 0.3,
-                growth_cost: 0.01,
-                survive_threshold: 0.6,
-                max_age_ticks: 10_000,
-                regen_ticks: 7_200,
-                spawn_mode: BotanySpawnMode::StaticPoint,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // plan §1.2.3：异变兽死亡 → 尸旁生成空兽痕（library 正典）。
-            // 不扣 zone spirit_qi，不受 biome 过滤，长寿命单次结实植物。
-            BotanyPlantKind {
-                id: BotanyPlantId::KongShouHen,
-                item_id: KONG_SHOU_HEN,
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 20_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            // ===== 常用七味 剩 4 种（plan §1.1 / 末法药材十七种）=====
-            BotanyPlantKind {
-                id: BotanyPlantId::JieGuRui,
-                item_id: JIE_GU_RUI,
-                zone_tags: &[BotanyZoneTag::Cave],
-                density_factor: 0.8,
-                growth_cost: 0.004,
-                survive_threshold: 0.4,
-                max_age_ticks: 7_500,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::YangJingTai,
-                item_id: YANG_JING_TAI,
-                // 死域边缘——plan §1.2.3 特殊生境，事件触发 + 不扣灵气；
-                // DeathEdge 是动态边界不是 zone tag，故此处留空；spawn 依赖未来的死域事件系统
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 15_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::QingZhuoCao,
-                item_id: QING_ZHUO_CAO,
-                zone_tags: &[BotanyZoneTag::Plains, BotanyZoneTag::NegativeField],
-                density_factor: 1.2,
-                growth_cost: 0.003,
-                survive_threshold: 0.3,
-                max_age_ticks: 7_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::AnShenGuo,
-                item_id: AN_SHEN_GUO,
-                zone_tags: &[BotanyZoneTag::Mountain],
-                density_factor: 1.0,
-                growth_cost: 0.003,
-                survive_threshold: 0.3,
-                max_age_ticks: 9_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // ===== 稀见五味 剩 3 种 =====
-            BotanyPlantKind {
-                id: BotanyPlantId::ShiMaiGen,
-                item_id: SHI_MAI_GEN,
-                zone_tags: &[BotanyZoneTag::NegativeField],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 25_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            // 灵眼未实装 → MVP 禁用生成（EventTriggered 占位，永不 spawn）
-            BotanyPlantKind {
-                id: BotanyPlantId::LingYanShiZhi,
-                item_id: LING_YAN_SHI_ZHI,
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 30_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::YeKuTeng,
-                item_id: YE_KU_TENG,
-                zone_tags: &[BotanyZoneTag::Cave],
-                density_factor: 0.2,
-                growth_cost: 0.01,
-                survive_threshold: 0.5,
-                max_age_ticks: 12_000,
-                regen_ticks: 9_000,
-                spawn_mode: BotanySpawnMode::StaticPoint,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // ===== 辛草剩 3 种（辛草试毒录）=====
-            // 残灰方块未实装，挂 ResidueAsh tag 占位；EventTriggered 不自动 spawn
-            BotanyPlantKind {
-                id: BotanyPlantId::HuiJinTai,
-                item_id: HUI_JIN_TAI,
-                // ResidueAsh 是 block 级属性（残灰方块表面），非 zone tag；
-                // spawn 依赖未来的残灰 block 事件系统（plan-residue 待立）
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 10_000,
-                regen_ticks: 2_400, // 40 min @ 1t/30s 近似
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::ZhenJieZi,
-                item_id: ZHEN_JIE_ZI,
-                zone_tags: &[BotanyZoneTag::Mountain, BotanyZoneTag::Marsh],
-                density_factor: 0.6,
-                growth_cost: 0.005,
-                survive_threshold: 0.3,
-                max_age_ticks: 8_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::ShaoHouMan,
-                item_id: SHAO_HOU_MAN,
-                zone_tags: &[BotanyZoneTag::Cave],
-                density_factor: 0.4,
-                growth_cost: 0.008,
-                survive_threshold: 0.4,
-                max_age_ticks: 9_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // 伪灵脉焦土（天道陷阱，事件触发稍纵即逝）
-            // FakeVeinBurn 是事件级临时状态，非 zone tag；spawn 依赖 plan-tribulation 的伪灵脉消散事件
-            BotanyPlantKind {
-                id: BotanyPlantId::TianNuJiao,
-                item_id: TIAN_NU_JIAO,
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 1_200, // 稍纵即逝：1 分钟窗口
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            // ===== 毒性五味（可采不可炼）=====
-            BotanyPlantKind {
-                id: BotanyPlantId::FuYouHua,
-                item_id: FU_YOU_HUA,
-                zone_tags: &[BotanyZoneTag::Plains],
-                density_factor: 0.3,
-                growth_cost: 0.002,
-                survive_threshold: 0.2,
-                max_age_ticks: 6_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::WuYanGuo,
-                item_id: WU_YAN_GUO,
-                zone_tags: &[BotanyZoneTag::Mountain],
-                density_factor: 0.3,
-                growth_cost: 0.002,
-                survive_threshold: 0.25,
-                max_age_ticks: 8_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // 生于死人之骨缝——死域事件触发；DeathEdge 非 zone tag 故此处留空
-            BotanyPlantKind {
-                id: BotanyPlantId::HeiGuJun,
-                item_id: HEI_GU_JUN,
-                zone_tags: &[],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 20_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            BotanyPlantKind {
-                id: BotanyPlantId::FuChenCao,
-                item_id: FU_CHEN_CAO,
-                zone_tags: &[BotanyZoneTag::NegativeField, BotanyZoneTag::Wastes],
-                density_factor: 0.2,
-                growth_cost: 0.002,
-                survive_threshold: 0.0,
-                max_age_ticks: 10_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::ZoneRefresh,
-                restore_ratio: 0.8,
-                v2: None,
-            },
-            // 毒蛊师终极原料——事件触发，极稀
-            BotanyPlantKind {
-                id: BotanyPlantId::ZhongYanTeng,
-                item_id: ZHONG_YAN_TENG,
-                zone_tags: &[BotanyZoneTag::NegativeField],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 30_000,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::EventTriggered,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-            // ===== plan-botany-v2：绝地草木拾遗十七味（v2 走 EnvLock，不走 zone tag）=====
-            botany_v2_kind(
-                BotanyPlantId::FuYuanJue,
-                FU_YUAN_JUE,
-                0.004,
-                14_400,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::NegPressureFeed,
-                    env_locks: ENV_FU_YUAN_JUE,
-                    harvest_hazards: HAZARD_FU_YUAN_JUE,
-                    base_mesh_ref: "large_fern",
-                    tint_rgb: 0x4A2E5A,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "dark purple reverse-breathing fern, salt-dry wasteland herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::BaiYanPeng,
-                BAI_YAN_PENG,
-                0.002,
-                8_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::SpiritCrystallize,
-                    env_locks: ENV_BAI_YAN_PENG,
-                    harvest_hazards: HAZARD_BAI_YAN_PENG,
-                    base_mesh_ref: "dead_bush",
-                    tint_rgb: 0xF8F8E8,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "white saltbush with tiny spirit salt crystals, dry wasteland herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::DuanJiCi,
-                DUAN_JI_CI,
-                0.004,
-                12_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::RuinResonance,
-                    env_locks: ENV_DUAN_JI_CI,
-                    harvest_hazards: HAZARD_DUAN_JI_CI,
-                    base_mesh_ref: "sweet_berry_bush",
-                    tint_rgb: 0x5C1E0F,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "blood-dark thorn growing around broken spear fragments, battlefield herb icon",
-                },
-            ),
-            // plan-cultivation-pacing-v1 P1.8 — ZoneRefresh BloodValley, density 1.5
-            botany_v2_kind_with_density(
-                BotanyPlantId::XueSeMaiCao,
-                XUE_SE_MAI_CAO,
-                0.008,
-                10_000,
-                1.5,
-                &[BotanyZoneTag::BloodValley],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::DualMetabolism,
-                    env_locks: ENV_XUE_SE_MAI_CAO,
-                    harvest_hazards: HAZARD_XUE_SE_MAI_CAO,
-                    base_mesh_ref: "tall_grass",
-                    tint_rgb: 0xC03020,
-                    tint_rgb_secondary: Some(0x205040),
-                    model_overlay: ModelOverlay::DualPhase,
-                    icon_prompt: "two-phase vein grass, red day leaf and blue-green night leaf, toxic battlefield herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::YunDingLan,
-                YUN_DING_LAN,
-                0.003,
-                9_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::QiAbsorb,
-                    env_locks: ENV_YUN_DING_LAN,
-                    harvest_hazards: HAZARD_YUN_DING_LAN,
-                    base_mesh_ref: "lily_of_the_valley",
-                    tint_rgb: 0xE8F4FF,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "silver-white orchid from floating cloud peak, light airy herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::XuanGenWei,
-                XUAN_GEN_WEI,
-                0.004,
-                11_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PressureDifferential,
-                    env_locks: ENV_XUAN_GEN_WEI,
-                    harvest_hazards: HAZARD_XUAN_GEN_WEI,
-                    base_mesh_ref: "vine",
-                    tint_rgb: 0x60D080,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "hanging green root vine with crystal tips, floating island underside herb icon",
-                },
-            ),
-            // plan-cultivation-pacing-v1 P1.8 — ZoneRefresh Cave, density 2.5
-            botany_v2_kind_with_density(
-                BotanyPlantId::YingYuanGu,
-                YING_YUAN_GU,
-                0.005,
-                10_000,
-                2.5,
-                &[BotanyZoneTag::Cave],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PhotoLuminance,
-                    env_locks: ENV_YING_YUAN_GU,
-                    harvest_hazards: HAZARD_YING_YUAN_GU,
-                    base_mesh_ref: "red_mushroom",
-                    tint_rgb: 0xFFA040,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "warm orange glowing abyss mushroom, emissive cave herb icon",
-                },
-            ),
-            // plan-cultivation-pacing-v1 P1.8 — StaticPoint Cave, regen 7200 ticks (60 min)
-            botany_v2_static_point(
-                BotanyPlantId::XuanRongTai,
-                XUAN_RONG_TAI,
-                0.004,
-                12_000,
-                7_200,
-                &[BotanyZoneTag::Cave],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::ThermalConvection,
-                    env_locks: ENV_XUAN_RONG_TAI,
-                    harvest_hazards: HAZARD_XUAN_RONG_TAI,
-                    base_mesh_ref: "moss_carpet",
-                    tint_rgb: 0x101015,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "black velvet moss with faint silver glow, abyss middle-tier herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::YuanNiHongYu,
-                YUAN_NI_HONG_YU,
-                0.008,
-                18_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PressureDifferential,
-                    env_locks: ENV_YUAN_NI_HONG_YU,
-                    harvest_hazards: HAZARD_YUAN_NI_HONG_YU,
-                    base_mesh_ref: "large_fern",
-                    tint_rgb: 0xC02040,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "red jade fern under black abyss mud tree, precious herb icon",
-                },
-            ),
-            // plan-cultivation-pacing-v1 P1.8 — StaticPoint Marsh, regen 14400 ticks (2 h)
-            botany_v2_static_point(
-                BotanyPlantId::JingXinZao,
-                JING_XIN_ZAO,
-                0.005,
-                14_000,
-                14_400,
-                &[BotanyZoneTag::Marsh],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::WaterPulse,
-                    env_locks: ENV_JING_XIN_ZAO,
-                    harvest_hazards: HAZARD_JING_XIN_ZAO,
-                    base_mesh_ref: "seagrass",
-                    tint_rgb: 0x40A0A0,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "cyan algae from spirit well heart, soft luminous water herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::XuePoLian,
-                XUE_PO_LIAN,
-                0.006,
-                16_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::SpiritCrystallize,
-                    env_locks: ENV_XUE_PO_LIAN,
-                    harvest_hazards: HAZARD_XUE_PO_LIAN,
-                    base_mesh_ref: "lily_of_the_valley",
-                    tint_rgb: 0xF0F8FF,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "snow-white lotus with frost-blue rim, high snowline herb icon",
-                },
-            ),
-            // plan-cultivation-pacing-v1 P1.8 — StaticPoint BloodValley, regen 3600 ticks (30 min)
-            botany_v2_static_point(
-                BotanyPlantId::JiaoMaiTeng,
-                JIAO_MAI_TENG,
-                0.004,
-                12_000,
-                3_600,
-                &[BotanyZoneTag::BloodValley],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PressureDifferential,
-                    env_locks: ENV_JIAO_MAI_TENG,
-                    harvest_hazards: HAZARD_JIAO_MAI_TENG,
-                    base_mesh_ref: "weeping_vines",
-                    tint_rgb: 0x301010,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "charred vein vine with orange ember core, rift valley herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::LieYuanTai,
-                LIE_YUAN_TAI,
-                0.003,
-                9_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PortalSiphon,
-                    env_locks: ENV_LIE_YUAN_TAI,
-                    harvest_hazards: HAZARD_LIE_YUAN_TAI,
-                    base_mesh_ref: "glow_lichen",
-                    tint_rgb: 0x402060,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "purple-black moss clinging to a dimensional rift, abyss portal herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::MingGuGu,
-                MING_GU_GU,
-                0.004,
-                14_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::RuinResonance,
-                    env_locks: ENV_MING_GU_GU,
-                    harvest_hazards: HAZARD_MING_GU_GU,
-                    base_mesh_ref: "brown_mushroom",
-                    tint_rgb: 0xE8E0D0,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "bone-white mushroom growing from silent battlefield bones, TSY herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::BeiWenZhi,
-                BEI_WEN_ZHI,
-                0.004,
-                13_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::RuinResonance,
-                    env_locks: ENV_BEI_WEN_ZHI,
-                    harvest_hazards: HAZARD_BEI_WEN_ZHI,
-                    base_mesh_ref: "red_mushroom",
-                    tint_rgb: 0x808890,
-                    tint_rgb_secondary: Some(0x6020A0),
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "gray-blue ganoderma with purple inscription veins, ruined sect herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::LingJingXu,
-                LING_JING_XU,
-                0.004,
-                13_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::PressureDifferential,
-                    env_locks: ENV_LING_JING_XU,
-                    harvest_hazards: HAZARD_LING_JING_XU,
-                    base_mesh_ref: "twisting_vines",
-                    tint_rgb: 0xA060FF,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::Emissive,
-                    icon_prompt: "purple crystal tendrils around ancient qi pillar, TSY crater herb icon",
-                },
-            ),
-            botany_v2_kind(
-                BotanyPlantId::MaoXinWei,
-                MAO_XIN_WEI,
-                0.002,
-                9_000,
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::RuinResonance,
-                    env_locks: ENV_MAO_XIN_WEI,
-                    harvest_hazards: HAZARD_NONE,
-                    base_mesh_ref: "wheat",
-                    tint_rgb: 0xE8C040,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "warm yellow thatch-heart vetch, hermitage remnant herb icon",
-                },
-            ),
-            // plan-food-v1 P0 — 灵果：Mountain/Plains 稀有档食物植物，density_factor=0.5
-            botany_v2_kind_with_density(
-                BotanyPlantId::LingGuo,
-                LING_GUO,
-                0.003,
-                8_000,
-                0.5,
-                &[BotanyZoneTag::Mountain, BotanyZoneTag::Plains],
-                BotanyV2Spec {
-                    survival_mode: SurvivalMode::QiAbsorb,
-                    env_locks: ENV_LING_GUO,
-                    harvest_hazards: HAZARD_NONE,
-                    base_mesh_ref: "sweet_berry_bush",
-                    tint_rgb: 0xA0E060,
-                    tint_rgb_secondary: None,
-                    model_overlay: ModelOverlay::None,
-                    icon_prompt: "round luminous spirit fruit on mountain shrub, rare food item icon, jade-green glow",
-                },
-            ),
-            // plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害，非药材。
-            // zone_tags: NegativeField（spirit_qi < 0 zone 自动推入）。
-            // spawn_mode: SpreadByCrawl（moss_spread_system 驱动）。
-            // max_age_ticks: 1200（60s × 20tick，spirit_qi >= 0 时开始 60s 枯萎倒计时）。
-            // v2: None（不走 harvest/skill_hook 路径）。
-            BotanyPlantKind {
-                id: BotanyPlantId::ShiLingXian,
-                item_id: SHI_LING_XIAN,
-                zone_tags: &[BotanyZoneTag::NegativeField],
-                density_factor: 0.0,
-                growth_cost: 0.0,
-                survive_threshold: -1.0,
-                max_age_ticks: 1_200,
-                regen_ticks: 0,
-                spawn_mode: BotanySpawnMode::SpreadByCrawl,
-                restore_ratio: 0.0,
-                v2: None,
-            },
-        ];
-
-        Self {
-            by_id: kinds.into_iter().map(|kind| (kind.id, kind)).collect(),
-        }
+        Self::from_catalog(PlantCatalog::builtin())
     }
 }
 
 impl BotanyKindRegistry {
-    pub fn get(&self, id: BotanyPlantId) -> Option<&BotanyPlantKind> {
-        self.by_id.get(&id)
+    pub fn from_catalog(catalog: &PlantCatalog) -> Self {
+        let mut by_id = HashMap::new();
+        let mut aliases = HashMap::new();
+        for plant in catalog.iter() {
+            if let Some(wild) = &plant.wild {
+                by_id.insert(plant.id.clone(), wild.clone());
+                for alias in &plant.aliases {
+                    aliases.insert(alias.clone(), plant.id.clone());
+                }
+            }
+        }
+        Self { by_id, aliases }
+    }
+
+    pub fn get(&self, id: impl AsRef<str>) -> Option<&BotanyPlantKind> {
+        self.by_id.get(id.as_ref())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &BotanyPlantKind> {
         self.by_id.values()
     }
 
-    #[allow(dead_code)]
     pub fn canonicalize(&self, raw: &str) -> Result<BotanyPlantId, String> {
-        canonicalize_herb_id(raw)
+        let normalized = raw.trim().to_ascii_lowercase();
+        self.by_id
+            .get(normalized.as_str())
+            .map(|kind| kind.id.clone())
+            .or_else(|| self.aliases.get(&normalized).cloned())
+            .ok_or_else(|| format!("unknown plant id `{raw}`"))
     }
 
-    /// plan-botany-harvest-full-inventory-loss-v1 P0 测试专用：构造一个不含任何
-    /// `BotanyPlantKind` 的空注册表，用于单测 `complete_harvest_for_player` 里
-    /// `kind_registry.get(...)` 的结构性失败分支（生产环境 `default()` 始终覆盖全部
-    /// `BotanyPlantId` 变体，这条分支正常游玩不可达，只能靠人造空注册表命中）。
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
             by_id: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 }
 
-fn botany_v2_kind(
-    id: BotanyPlantId,
-    item_id: &'static str,
-    growth_cost: f32,
-    max_age_ticks: u64,
-    v2: BotanyV2Spec,
-) -> BotanyPlantKind {
-    BotanyPlantKind {
-        id,
-        item_id,
-        zone_tags: &[],
-        density_factor: 1.0,
-        growth_cost,
-        survive_threshold: -1.0,
-        max_age_ticks,
-        regen_ticks: 0,
-        spawn_mode: BotanySpawnMode::ZoneRefresh,
-        restore_ratio: 0.8,
-        v2: Some(v2),
-    }
-}
-
-/// plan-cultivation-pacing-v1 P1.8 — v2 herb with explicit zone_tags + density_factor (ZoneRefresh).
-fn botany_v2_kind_with_density(
-    id: BotanyPlantId,
-    item_id: &'static str,
-    growth_cost: f32,
-    max_age_ticks: u64,
-    density_factor: f32,
-    zone_tags: &'static [BotanyZoneTag],
-    v2: BotanyV2Spec,
-) -> BotanyPlantKind {
-    BotanyPlantKind {
-        id,
-        item_id,
-        zone_tags,
-        density_factor,
-        growth_cost,
-        survive_threshold: -1.0,
-        max_age_ticks,
-        regen_ticks: 0,
-        spawn_mode: BotanySpawnMode::ZoneRefresh,
-        restore_ratio: 0.8,
-        v2: Some(v2),
-    }
-}
-
-/// plan-cultivation-pacing-v1 P1.8 — v2 herb with StaticPoint spawn_mode + explicit zone_tags + regen_ticks.
-fn botany_v2_static_point(
-    id: BotanyPlantId,
-    item_id: &'static str,
-    growth_cost: f32,
-    max_age_ticks: u64,
-    regen_ticks: u64,
-    zone_tags: &'static [BotanyZoneTag],
-    v2: BotanyV2Spec,
-) -> BotanyPlantKind {
-    BotanyPlantKind {
-        id,
-        item_id,
-        zone_tags,
-        density_factor: 0.3,
-        growth_cost,
-        survive_threshold: -1.0,
-        max_age_ticks,
-        regen_ticks,
-        spawn_mode: BotanySpawnMode::StaticPoint,
-        restore_ratio: 0.8,
-        v2: Some(v2),
-    }
-}
-
-impl BotanyPlantKind {
-    pub fn is_v2(&self) -> bool {
-        self.v2.is_some()
-    }
-
-    pub fn v2_spec(&self) -> Option<BotanyV2Spec> {
-        self.v2
-    }
-}
-
-#[allow(dead_code)]
-pub fn canonical_herb_id(id: BotanyPlantId) -> &'static str {
-    id.as_str()
-}
-
 pub fn canonicalize_herb_id(raw: &str) -> Result<BotanyPlantId, String> {
-    let normalized = raw.trim().to_ascii_lowercase();
-    if let Some(id) = BotanyPlantId::from_canonical(normalized.as_str()) {
-        return Ok(id);
-    }
-
-    match normalized.as_str() {
-        KAI_MAI_CAO_ALIAS => Ok(BotanyPlantId::NingMaiCao),
-        XUE_CAO_ALIAS => Ok(BotanyPlantId::ChiSuiCao),
-        BAI_CAO_ALIAS => Ok(BotanyPlantId::HuiYuanZhi),
-        other => Err(format!("non-canonical herb id `{other}` is not allowed")),
-    }
+    PlantCatalog::builtin()
+        .resolve(&raw.trim().to_ascii_lowercase())
+        .map(|plant| plant.id.clone())
+        .ok_or_else(|| format!("non-canonical herb id `{raw}` is not allowed"))
 }
 
 pub fn alias_of(raw: &str) -> Option<BotanyHerbAlias> {
@@ -1469,592 +419,5 @@ pub fn zone_supports(kind: &BotanyPlantKind, zone: &Zone) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn loads_default_assets_with_test_trio() {
-        let registry = load_plant_kind_registry().expect("default plants.toml should load");
-        assert!(
-            registry.get("ci_she_hao").is_some(),
-            "ci_she_hao 是 §3.1 测试三作物之一"
-        );
-        assert!(registry.get("ning_mai_cao").is_some());
-        assert!(registry.get("ling_mu_miao").is_some());
-    }
-
-    #[test]
-    fn cultivable_filter_excludes_wild_only() {
-        let registry = load_plant_kind_registry().unwrap();
-        let cultivable: Vec<_> = registry.cultivable_ids().cloned().collect();
-        assert!(cultivable.iter().any(|id| id == "ci_she_hao"));
-        if let Some(plant) = registry.get("shi_mai_gen") {
-            assert!(!plant.cultivable, "shi_mai_gen 必须 cultivable=false");
-        }
-    }
-
-    #[test]
-    fn canonical_registry_rejects_non_canonical_ids() {
-        assert!(canonicalize_herb_id("shi_xin_hua").is_err());
-    }
-
-    #[test]
-    fn canonical_registry_accepts_aliases_via_explicit_mapping() {
-        assert_eq!(
-            canonicalize_herb_id("kai_mai_cao").unwrap(),
-            BotanyPlantId::NingMaiCao
-        );
-        assert_eq!(
-            canonicalize_herb_id("xue_cao").unwrap(),
-            BotanyPlantId::ChiSuiCao
-        );
-        assert_eq!(
-            canonicalize_herb_id("bai_cao").unwrap(),
-            BotanyPlantId::HuiYuanZhi
-        );
-    }
-
-    #[test]
-    fn canonical_registry_accepts_known_ids() {
-        for id in [
-            SPIRIT_GRASS,
-            CI_SHE_HAO,
-            NING_MAI_CAO,
-            HUI_YUAN_ZHI,
-            CHI_SUI_CAO,
-            GU_YUAN_GEN,
-            KONG_SHOU_HEN,
-            JIE_GU_RUI,
-            YANG_JING_TAI,
-            QING_ZHUO_CAO,
-            AN_SHEN_GUO,
-            SHI_MAI_GEN,
-            LING_YAN_SHI_ZHI,
-            YE_KU_TENG,
-            HUI_JIN_TAI,
-            ZHEN_JIE_ZI,
-            SHAO_HOU_MAN,
-            TIAN_NU_JIAO,
-            FU_YOU_HUA,
-            WU_YAN_GUO,
-            HEI_GU_JUN,
-            FU_CHEN_CAO,
-            ZHONG_YAN_TENG,
-            FU_YUAN_JUE,
-            BAI_YAN_PENG,
-            DUAN_JI_CI,
-            XUE_SE_MAI_CAO,
-            YUN_DING_LAN,
-            XUAN_GEN_WEI,
-            YING_YUAN_GU,
-            XUAN_RONG_TAI,
-            YUAN_NI_HONG_YU,
-            JING_XIN_ZAO,
-            XUE_PO_LIAN,
-            JIAO_MAI_TENG,
-            LIE_YUAN_TAI,
-            MING_GU_GU,
-            BEI_WEN_ZHI,
-            LING_JING_XU,
-            MAO_XIN_WEI,
-            SHI_LING_XIAN,
-        ] {
-            assert!(canonicalize_herb_id(id).is_ok(), "{id} should be canonical");
-        }
-    }
-
-    #[test]
-    fn plant_variant_accessors_are_consistent() {
-        assert_eq!(PlantVariant::None.display_prefix(), None);
-        assert_eq!(PlantVariant::Thunder.display_prefix(), Some("雷"));
-        assert_eq!(PlantVariant::Tainted.display_prefix(), Some("黑"));
-
-        assert!(PlantVariant::None.quality_modifier().abs() < f64::EPSILON);
-        assert!(PlantVariant::Thunder.quality_modifier() > 0.0);
-        assert!(PlantVariant::Tainted.quality_modifier() < 0.0);
-
-        assert_eq!(PlantVariant::None.xp_delta(), 0);
-        assert!(PlantVariant::Thunder.xp_delta() > 0);
-        // Tainted 也给 +XP：采到稀有变种即奖励，品质差别通过 quality_modifier 单独体现
-        assert!(PlantVariant::Tainted.xp_delta() > 0);
-        assert!(PlantVariant::Thunder.xp_delta() > PlantVariant::Tainted.xp_delta());
-    }
-
-    #[test]
-    fn default_registry_contains_23_v1_and_17_v2_canonical_kinds() {
-        // plan-botany-v1 22 种 + plan-cultivation-pacing-v1 P1.8 spirit_grass 1 种 +
-        // plan-botany-v2 绝地草木拾遗 17 种 + plan-food-v1 P0 ling_guo 1 种 +
-        // plan-neg-domain-fauna-v1 P1 shi_ling_xian 1 种 = 42。
-        let registry = BotanyKindRegistry::default();
-        let count = registry.iter().count();
-        assert_eq!(
-            count, 42,
-            "BotanyKindRegistry should register exactly 42 canonical kinds (23 v1 + 17 v2 + 1 food + 1 hazard), got {count}"
-        );
-        assert_eq!(
-            registry.iter().filter(|kind| kind.is_v2()).count(),
-            18,
-            "18 v2 kinds expected (17 botany-v2 + 1 food ling_guo); shi_ling_xian is v1"
-        );
-    }
-
-    #[test]
-    fn shi_ling_xian_registered_as_spread_by_crawl_negative_field() {
-        // pin 测试：噬灵藓注册为 SpreadByCrawl + NegativeField + 非药材（v2=None）。
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::ShiLingXian)
-            .expect("ShiLingXian 应在 BotanyKindRegistry 中注册（plan-neg-domain-fauna-v1 P1）");
-        assert_eq!(
-            kind.item_id, SHI_LING_XIAN,
-            "ShiLingXian item_id 应为 'shi_ling_xian'，实际 {}",
-            kind.item_id
-        );
-        assert_eq!(
-            kind.spawn_mode,
-            BotanySpawnMode::SpreadByCrawl,
-            "ShiLingXian spawn_mode 应为 SpreadByCrawl（噬灵藓专属蔓延模式）"
-        );
-        assert_eq!(
-            kind.zone_tags,
-            &[BotanyZoneTag::NegativeField],
-            "ShiLingXian 必须属于 NegativeField（负灵域地块危害）"
-        );
-        assert_eq!(
-            kind.max_age_ticks, 1_200,
-            "ShiLingXian max_age_ticks 应为 1200（60s × 20tick 枯萎倒计时），实际 {}",
-            kind.max_age_ticks
-        );
-        assert!(
-            !kind.is_v2(),
-            "ShiLingXian 是地块危害而非药材，v2 应为 None"
-        );
-        assert_eq!(
-            kind.restore_ratio, 0.0,
-            "ShiLingXian restore_ratio 应为 0.0（不走 harvest/恢复路径），实际 {}",
-            kind.restore_ratio
-        );
-    }
-
-    // ===== plan-cultivation-pacing-v1 P1.8 灵草刷新配置验收测试 =====
-
-    #[test]
-    fn spirit_grass_registered_as_zone_refresh_plains() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::SpiritGrass)
-            .expect("SpiritGrass should be registered in BotanyKindRegistry");
-        assert_eq!(kind.item_id, SPIRIT_GRASS);
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
-        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
-        assert!(
-            (kind.density_factor - 20.0).abs() < f32::EPSILON,
-            "SpiritGrass density_factor should be 20.0 (highest density herb), got {}",
-            kind.density_factor
-        );
-        assert!(
-            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
-            "SpiritGrass growth_cost should be 0.002, got {}",
-            kind.growth_cost
-        );
-        assert!(!kind.is_v2(), "SpiritGrass should be a v1 kind");
-    }
-
-    #[test]
-    fn spirit_grass_canonical_id_roundtrip() {
-        assert_eq!(
-            BotanyPlantId::from_canonical(SPIRIT_GRASS),
-            Some(BotanyPlantId::SpiritGrass)
-        );
-        assert_eq!(BotanyPlantId::SpiritGrass.as_str(), SPIRIT_GRASS);
-    }
-
-    #[test]
-    fn ci_she_hao_density_matches_plan_spec() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::CiSheHao)
-            .expect("CiSheHao should be registered");
-        assert!(
-            (kind.density_factor - 4.0).abs() < f32::EPSILON,
-            "CiSheHao density_factor should be 4.0, got {}",
-            kind.density_factor
-        );
-        assert!(
-            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
-            "CiSheHao growth_cost should be 0.002, got {}",
-            kind.growth_cost
-        );
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
-        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
-    }
-
-    #[test]
-    fn ning_mai_cao_density_updated_to_3() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::NingMaiCao)
-            .expect("NingMaiCao should be registered");
-        assert!(
-            (kind.density_factor - 3.0).abs() < f32::EPSILON,
-            "NingMaiCao density_factor should be 3.0 (updated from 2.0), got {}",
-            kind.density_factor
-        );
-        assert!(
-            (kind.growth_cost - 0.003).abs() < f32::EPSILON,
-            "NingMaiCao growth_cost should be 0.003, got {}",
-            kind.growth_cost
-        );
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
-    }
-
-    #[test]
-    fn ying_yuan_gu_zone_refresh_cave_with_density() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::YingYuanGu)
-            .expect("YingYuanGu should be registered");
-        assert!(kind.is_v2(), "YingYuanGu should be a v2 kind");
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
-        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
-        assert!(
-            (kind.density_factor - 2.5).abs() < f32::EPSILON,
-            "YingYuanGu density_factor should be 2.5, got {}",
-            kind.density_factor
-        );
-        assert!(
-            (kind.growth_cost - 0.005).abs() < f32::EPSILON,
-            "YingYuanGu growth_cost should be 0.005, got {}",
-            kind.growth_cost
-        );
-    }
-
-    #[test]
-    fn xue_se_mai_cao_zone_refresh_blood_valley_with_density() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::XueSeMaiCao)
-            .expect("XueSeMaiCao should be registered");
-        assert!(kind.is_v2(), "XueSeMaiCao should be a v2 kind");
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
-        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
-        assert!(
-            (kind.density_factor - 1.5).abs() < f32::EPSILON,
-            "XueSeMaiCao density_factor should be 1.5, got {}",
-            kind.density_factor
-        );
-        assert!(
-            (kind.growth_cost - 0.008).abs() < f32::EPSILON,
-            "XueSeMaiCao growth_cost should be 0.008, got {}",
-            kind.growth_cost
-        );
-    }
-
-    #[test]
-    fn duan_ji_ci_gains_wound_on_bare_hand_hazard_requiring_cao_lian() {
-        // plan-gathering-tool-bind-v1 §8.1 决议 #4：断戟刺锐叶割手，草镰接通本职。
-        // "叠加"而非"替换"——原有 ResonanceVision 必须还在，新 hazard 是追加的。
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::DuanJiCi)
-            .expect("DuanJiCi should be registered");
-        let spec = kind.v2_spec().expect("DuanJiCi should be a v2 kind");
-        assert!(
-            spec.harvest_hazards
-                .iter()
-                .any(|h| matches!(h, HarvestHazard::ResonanceVision { .. })),
-            "DuanJiCi should keep its original ResonanceVision hazard (叠加不是替换); got {:?}",
-            spec.harvest_hazards
-        );
-        assert!(
-            spec.harvest_hazards.iter().any(|h| matches!(
-                h,
-                HarvestHazard::WoundOnBareHand {
-                    wound: WoundLevel::Laceration,
-                    required_tool: Some(ToolKind::CaoLian),
-                }
-            )),
-            "DuanJiCi should gain WoundOnBareHand{{Laceration, CaoLian}}; got {:?}",
-            spec.harvest_hazards
-        );
-    }
-
-    #[test]
-    fn xue_se_mai_cao_gains_wound_on_bare_hand_hazard_requiring_cao_lian() {
-        // plan-gathering-tool-bind-v1 §8.1 决议 #4：血色麦草丛生锐叶割手，草镰接通本职。
-        // "叠加"而非"替换"——原有 DispersalOnFail 必须还在。
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::XueSeMaiCao)
-            .expect("XueSeMaiCao should be registered");
-        let spec = kind.v2_spec().expect("XueSeMaiCao should be a v2 kind");
-        assert!(
-            spec.harvest_hazards
-                .iter()
-                .any(|h| matches!(h, HarvestHazard::DispersalOnFail { .. })),
-            "XueSeMaiCao should keep its original DispersalOnFail hazard (叠加不是替换); got {:?}",
-            spec.harvest_hazards
-        );
-        assert!(
-            spec.harvest_hazards.iter().any(|h| matches!(
-                h,
-                HarvestHazard::WoundOnBareHand {
-                    wound: WoundLevel::Laceration,
-                    required_tool: Some(ToolKind::CaoLian),
-                }
-            )),
-            "XueSeMaiCao should gain WoundOnBareHand{{Laceration, CaoLian}}; got {:?}",
-            spec.harvest_hazards
-        );
-    }
-
-    #[test]
-    fn spirit_grass_does_not_gain_wound_on_bare_hand_hazard() {
-        // plan-gathering-tool-bind-v1 §8.1 决议 #4 明确不选 spirit_grass——最基础灵草
-        // 不应设工具门槛。回归锁：spirit_grass 是 v1（无 v2_spec），必须继续如此。
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::SpiritGrass)
-            .expect("SpiritGrass should be registered");
-        assert!(
-            kind.v2_spec().is_none(),
-            "SpiritGrass must remain a v1 kind (no harvest_hazards) per §8.1 决议 #4"
-        );
-    }
-
-    #[test]
-    fn jiao_mai_teng_static_point_blood_valley() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::JiaoMaiTeng)
-            .expect("JiaoMaiTeng should be registered");
-        assert!(kind.is_v2(), "JiaoMaiTeng should be a v2 kind");
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
-        assert_eq!(
-            kind.spawn_mode,
-            BotanySpawnMode::StaticPoint,
-            "JiaoMaiTeng should be StaticPoint spawn_mode"
-        );
-        assert_eq!(
-            kind.regen_ticks, 3_600,
-            "JiaoMaiTeng regen_ticks should be 3600 (30 min)"
-        );
-    }
-
-    #[test]
-    fn xuan_rong_tai_static_point_cave() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::XuanRongTai)
-            .expect("XuanRongTai should be registered");
-        assert!(kind.is_v2(), "XuanRongTai should be a v2 kind");
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
-        assert_eq!(
-            kind.spawn_mode,
-            BotanySpawnMode::StaticPoint,
-            "XuanRongTai should be StaticPoint spawn_mode"
-        );
-        assert_eq!(
-            kind.regen_ticks, 7_200,
-            "XuanRongTai regen_ticks should be 7200 (60 min)"
-        );
-    }
-
-    #[test]
-    fn jing_xin_zao_static_point_marsh() {
-        let registry = BotanyKindRegistry::default();
-        let kind = registry
-            .get(BotanyPlantId::JingXinZao)
-            .expect("JingXinZao should be registered");
-        assert!(kind.is_v2(), "JingXinZao should be a v2 kind");
-        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Marsh]);
-        assert_eq!(
-            kind.spawn_mode,
-            BotanySpawnMode::StaticPoint,
-            "JingXinZao should be StaticPoint spawn_mode"
-        );
-        assert_eq!(
-            kind.regen_ticks, 14_400,
-            "JingXinZao regen_ticks should be 14400 (2 h)"
-        );
-    }
-
-    #[test]
-    fn all_zone_tags_covered_by_herbs() {
-        let registry = BotanyKindRegistry::default();
-        let all_tags: std::collections::HashSet<BotanyZoneTag> = registry
-            .iter()
-            .flat_map(|kind| kind.zone_tags.iter().copied())
-            .collect();
-        for expected in [
-            BotanyZoneTag::Plains,
-            BotanyZoneTag::Mountain,
-            BotanyZoneTag::Marsh,
-            BotanyZoneTag::BloodValley,
-            BotanyZoneTag::Cave,
-        ] {
-            assert!(
-                all_tags.contains(&expected),
-                "BotanyZoneTag::{expected:?} should have at least one herb registered"
-            );
-        }
-    }
-
-    #[test]
-    fn v2_static_point_herbs_not_in_zone_refresh_set() {
-        let registry = BotanyKindRegistry::default();
-        let static_v2: Vec<_> = registry
-            .iter()
-            .filter(|kind| kind.is_v2() && kind.spawn_mode == BotanySpawnMode::StaticPoint)
-            .collect();
-        assert_eq!(
-            static_v2.len(),
-            3,
-            "should have exactly 3 v2 StaticPoint herbs (JiaoMaiTeng, XuanRongTai, JingXinZao)"
-        );
-        for kind in &static_v2 {
-            assert!(
-                kind.regen_ticks > 0,
-                "{:?} is StaticPoint but regen_ticks is 0",
-                kind.id
-            );
-            assert!(
-                !kind.zone_tags.is_empty(),
-                "{:?} is StaticPoint but zone_tags is empty (needed for zone_supports check)",
-                kind.id
-            );
-        }
-    }
-
-    #[test]
-    fn zone_refresh_density_ordering_matches_rarity() {
-        // 越基础的草越高密度：spirit_grass > ci_she_hao > ning_mai_cao
-        let registry = BotanyKindRegistry::default();
-        let spirit = registry.get(BotanyPlantId::SpiritGrass).unwrap();
-        let ci = registry.get(BotanyPlantId::CiSheHao).unwrap();
-        let ning = registry.get(BotanyPlantId::NingMaiCao).unwrap();
-        assert!(
-            spirit.density_factor > ci.density_factor,
-            "SpiritGrass ({}) should be denser than CiSheHao ({})",
-            spirit.density_factor,
-            ci.density_factor
-        );
-        assert!(
-            ci.density_factor > ning.density_factor,
-            "CiSheHao ({}) should be denser than NingMaiCao ({})",
-            ci.density_factor,
-            ning.density_factor
-        );
-    }
-
-    // ── plan-food-v1 P0 — 灵果植物注册测试 ──
-
-    #[test]
-    fn ling_guo_plant_id_in_registry() {
-        let reg = BotanyKindRegistry::default();
-        let kind = reg.get(BotanyPlantId::LingGuo);
-        assert!(
-            kind.is_some(),
-            "BotanyPlantId::LingGuo should be in BotanyKindRegistry::default — \
-             check registry.rs LingGuo entry in default() array"
-        );
-    }
-
-    #[test]
-    fn ling_guo_item_id_points_to_food_spirit_fruit() {
-        let reg = BotanyKindRegistry::default();
-        let kind = reg
-            .get(BotanyPlantId::LingGuo)
-            .expect("LingGuo must be registered");
-        assert_eq!(
-            kind.item_id, "food.spirit_fruit.ling_guo",
-            "LingGuo item_id should be food.spirit_fruit.ling_guo — \
-             matching the food.toml item template ID"
-        );
-    }
-
-    #[test]
-    fn ling_guo_as_str_matches_item_id_constant() {
-        assert_eq!(
-            BotanyPlantId::LingGuo.as_str(),
-            LING_GUO,
-            "BotanyPlantId::LingGuo.as_str() should equal LING_GUO constant"
-        );
-        assert_eq!(
-            LING_GUO, "food.spirit_fruit.ling_guo",
-            "LING_GUO constant should be food.spirit_fruit.ling_guo"
-        );
-    }
-
-    #[test]
-    fn ling_guo_from_canonical_roundtrip() {
-        let id = BotanyPlantId::from_canonical(LING_GUO);
-        assert_eq!(
-            id,
-            Some(BotanyPlantId::LingGuo),
-            "from_canonical(LING_GUO) should return Some(LingGuo) for roundtrip"
-        );
-    }
-
-    #[test]
-    fn ling_guo_zone_tags_include_mountain_and_plains() {
-        let reg = BotanyKindRegistry::default();
-        let kind = reg
-            .get(BotanyPlantId::LingGuo)
-            .expect("LingGuo must be registered");
-        assert!(
-            kind.zone_tags
-                .contains(&crate::world::zone::BotanyZoneTag::Mountain),
-            "LingGuo should include Mountain zone_tag as a mountain-dwelling spirit fruit"
-        );
-        assert!(
-            kind.zone_tags
-                .contains(&crate::world::zone::BotanyZoneTag::Plains),
-            "LingGuo should include Plains zone_tag for broader spawn coverage"
-        );
-    }
-
-    #[test]
-    fn ling_guo_density_factor_is_rare() {
-        // density_factor ≈ 0.5 — rare relative to spirit_grass (20.0)
-        let reg = BotanyKindRegistry::default();
-        let kind = reg
-            .get(BotanyPlantId::LingGuo)
-            .expect("LingGuo must be registered");
-        assert!(
-            kind.density_factor <= 1.0,
-            "LingGuo density_factor {} should be ≤ 1.0 (rare plant), \
-             much less than spirit_grass 20.0",
-            kind.density_factor
-        );
-        assert!(
-            kind.density_factor > 0.0,
-            "LingGuo density_factor must be > 0 to actually spawn"
-        );
-    }
-
-    #[test]
-    fn ling_guo_spawn_mode_is_zone_refresh() {
-        let reg = BotanyKindRegistry::default();
-        let kind = reg
-            .get(BotanyPlantId::LingGuo)
-            .expect("LingGuo must be registered");
-        assert_eq!(
-            kind.spawn_mode,
-            BotanySpawnMode::ZoneRefresh,
-            "LingGuo should use ZoneRefresh spawn_mode per plan-food-v1 design decision"
-        );
-    }
-
-    #[test]
-    fn ling_guo_v2_spec_is_some() {
-        let reg = BotanyKindRegistry::default();
-        let kind = reg
-            .get(BotanyPlantId::LingGuo)
-            .expect("LingGuo must be registered");
-        assert!(
-            kind.v2.is_some(),
-            "LingGuo should have BotanyV2Spec because all new plants added after plan-botany-v2 must use v2"
-        );
-    }
-}
+#[path = "catalog_tests.rs"]
+mod tests;

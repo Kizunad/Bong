@@ -13,7 +13,6 @@ import type {
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
-  ZonePressureCrossedV1,
   ZoneSnapshot,
 } from "@bong/schema";
 import type { AgentUiRuntime } from "./ui/agentUiRuntime.js";
@@ -160,7 +159,6 @@ export interface RuntimeRedis {
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
   drainFaunaEcologyEvents?(): FaunaEcologySnapshotV1[];
-  drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
@@ -951,7 +949,6 @@ async function processEcologyEvents(args: {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
   const faunaEcologyEvents = redis.drainFaunaEcologyEvents?.() ?? [];
-  const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
 
@@ -963,11 +960,6 @@ async function processEcologyEvents(args: {
   for (const event of faunaEcologyEvents) {
     sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
     narrations.push(...ecologyAnalyzer.ingestFaunaEcology(worldModel, event));
-  }
-
-  for (const event of pressureEvents) {
-    sourceTick = Math.max(sourceTick ?? event.at_tick, event.at_tick);
-    narrations.push(...ecologyAnalyzer.ingestZonePressureCrossed(worldModel, event));
   }
 
   if (narrations.length === 0 || sourceTick === null) {
@@ -1041,8 +1033,8 @@ export async function processWeatherEvents(args: {
     }
     narrations.push(narration);
     sourceTick = Math.max(
-      sourceTick ?? event.data.started_at_lingtian_tick,
-      event.data.started_at_lingtian_tick,
+      sourceTick ?? event.data.started_at_minute,
+      event.data.started_at_minute,
     );
   }
   if (narrations.length === 0 || sourceTick === null) {

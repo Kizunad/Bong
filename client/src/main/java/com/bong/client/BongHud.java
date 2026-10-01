@@ -529,10 +529,6 @@ public class BongHud {
         BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
         BongEventAlertOverlay.render(surface, snapshot.eventAlert());
         renderToast(surface, snapshot.toast());
-        com.bong.client.lingtian.LingtianSessionHud.render(
-            surface,
-            com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
-        );
         com.bong.client.combat.baomai.v3.BaomaiV3Hud.render(surface, snapshot.nowMs());
     }
 

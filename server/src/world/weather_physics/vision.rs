@@ -2,10 +2,10 @@ use valence::prelude::{
     bevy_ecs, Client, Commands, Component, Entity, Position, Query, Res, ViewDistance, With,
 };
 
-use crate::lingtian::weather_profile::DEFAULT_VISION_OBSCURE_RADIUS;
-use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
+use crate::world::weather_profile::ZoneWeatherProfileRegistry;
+use crate::world::weather_profile::DEFAULT_VISION_OBSCURE_RADIUS;
 use crate::world::zone::ZoneRegistry;
 
 pub const OPAQUE_FOG_DENSITY_THRESHOLD: f32 = 0.85;
@@ -155,7 +155,7 @@ fn chunks_for_radius(radius_blocks: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lingtian::ZoneWeatherProfile;
+    use crate::world::weather_profile::ZoneWeatherProfile;
     use valence::prelude::ViewDistance;
 
     fn veil(density: f32) -> EnvironmentEffect {

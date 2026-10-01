@@ -5,10 +5,10 @@ use valence::prelude::{
     bevy_ecs, App, Event, EventWriter, IntoSystemConfigs, Resource, Startup, Update,
 };
 
-use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
-use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::dimension::DimensionKind;
 use crate::world::environment_overlay::EnvironmentOverlays;
+use crate::world::weather::{ActiveWeather, WeatherEvent};
+use crate::world::weather_profile::ZoneWeatherProfileRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -323,14 +323,14 @@ pub fn default_effects_for_zone(
     default_effects_for_zone_with_profile(
         zone,
         active_weather,
-        &crate::lingtian::ZoneWeatherProfile::default(),
+        &crate::world::weather_profile::ZoneWeatherProfile::default(),
     )
 }
 
 pub fn default_effects_for_zone_with_profile(
     zone: &Zone,
     active_weather: Option<WeatherEvent>,
-    profile: &crate::lingtian::ZoneWeatherProfile,
+    profile: &crate::world::weather_profile::ZoneWeatherProfile,
 ) -> Vec<EnvironmentEffect> {
     let mut effects = Vec::new();
 

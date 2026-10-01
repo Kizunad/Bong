@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
-    death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, server_readiness, shader,
+    death_lifecycle, economy, fauna, forge, gathering, identity, inventory, mineral, movement,
+    network, npc, persistence, player, preview, processing, qi_physics, server_readiness, shader,
     shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world,
     zhenfa,
 };
@@ -157,7 +157,7 @@ fn build_server_app(spirit_qi_total: qi_physics::WorldQiTotalConfig) -> App {
     spiritwood::register(&mut app);
     forge::register(&mut app);
     gathering::register(&mut app);
-    lingtian::register(&mut app);
+    processing::register(&mut app);
     mineral::register(&mut app);
     shelflife::register(&mut app);
     economy::register(&mut app);

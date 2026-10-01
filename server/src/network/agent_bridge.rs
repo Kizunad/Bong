@@ -157,7 +157,6 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PoisonTraitState => "poison_trait_state",
         ServerDataType::CarrierState => "carrier_state",
         ServerDataType::FalseSkinState => "false_skin_state",
-        ServerDataType::LingtianSession => "lingtian_session",
         ServerDataType::DeathScreen => "death_screen",
         ServerDataType::TerminateScreen => "terminate_screen",
         ServerDataType::RiftPortalState => "rift_portal_state",

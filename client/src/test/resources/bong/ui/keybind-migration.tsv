@@ -1,6 +1,5 @@
 # action	translation_key	current_type	current_default	target_type	target_default	conflict	production_owner	p1_resolution
 spirit_treasure_open	key.bong-client.open_spirit_treasure_screen	KEYSYM	T	KEYSYM	UNKNOWN	VANILLA_CHAT	spirittreasure/SpiritTreasureScreenBootstrap.java	Leave passive/open action unbound by default; player may bind explicitly.
-lingtian_open	key.bong-client.open_lingtian_action_screen	KEYSYM	L	KEYSYM	UNKNOWN	VANILLA_ADVANCEMENTS	lingtian/LingtianActionScreenBootstrap.java	Leave screen hotkey unbound by default; interaction entry remains available.
 identity_open	key.bong-client.open_identity_panel	KEYSYM	O	KEYSYM	O	BONG_O_DUPLICATE	identity/IdentityPanelScreenBootstrap.java	Keep the established identity entry point.
 void_action_open	key.bong-client.open_void_action_screen	KEYSYM	O	KEYSYM	UNKNOWN	BONG_O_DUPLICATE	cultivation/voidaction/VoidActionScreenBootstrap.java	Leave the secondary O action unbound by default.
 extract_cancel	key.bong-client.tsy_extract_cancel	KEYSYM	U	KEYSYM	U	BONG_U_DUPLICATE	tsy/ExtractInteractionBootstrap.java	Keep extraction cancellation on U; the extracting path is authoritative and Forge remains unbound.

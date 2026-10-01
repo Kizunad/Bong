@@ -62,14 +62,51 @@ final class UiForgeWindowPreviewScene implements UiPreviewScene {
     @Override public Screen createScreen() {
         return new Screen(Text.literal("锻造窗口预览")) {
             @Override protected void init() {
-                if (content != null) content.close();
-                if (adapter != null) adapter.close();
+                UiWindowManager.WindowState previousState = state;
+                OwoXmlWindowContentAdapter previousAdapter = adapter;
+                ForgeWindowContent previousContent = content;
+                UiWindowManager.WindowState nextState = null;
+                OwoXmlWindowContentAdapter nextAdapter = null;
+                ForgeWindowContent nextContent = null;
                 manager.resizeViewport(width, height);
-                state = windows.open(pos, new UiWindowManager.Rect(8, 8,
-                    Math.min(640, width - 16), Math.min(390, height - 16)));
-                adapter = new OwoXmlWindowContentAdapter(manager, state, () -> {});
-                adapter.title("锻造");
-                content = new ForgeWindowContent(adapter.content(), windows, state, () -> {});
+                try {
+                    nextState = windows.open(pos, new UiWindowManager.Rect(8, 8,
+                        Math.min(640, width - 16), Math.min(390, height - 16)));
+                    nextAdapter = new OwoXmlWindowContentAdapter(manager, nextState, () -> {});
+                    nextAdapter.title("锻造");
+                    nextContent = new ForgeWindowContent(nextAdapter.content(), windows, nextState, () -> {});
+                } catch (RuntimeException | Error failure) {
+                    if (nextContent != null) {
+                        try {
+                            nextContent.close();
+                        } catch (RuntimeException | Error cleanupFailure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    if (nextAdapter != null) {
+                        try {
+                            nextAdapter.close();
+                        } catch (RuntimeException | Error cleanupFailure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    if (nextState != null && nextState != previousState) {
+                        try {
+                            manager.close(nextState.key());
+                        } catch (RuntimeException | Error cleanupFailure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    state = previousState;
+                    adapter = previousAdapter;
+                    content = previousContent;
+                    throw failure;
+                }
+                state = nextState;
+                adapter = nextAdapter;
+                content = nextContent;
+                if (previousContent != null) previousContent.close();
+                if (previousAdapter != null) previousAdapter.close();
             }
             @Override public void render(DrawContext context, int x, int y, float delta) {
                 context.fill(0, 0, width, height, 0xFF111A23);
@@ -189,10 +226,39 @@ final class UiForgeWindowPreviewScene implements UiPreviewScene {
     @Override public boolean isReady(Screen screen) { return adapter != null; }
     @Override public boolean initializationFailed(Screen screen) { return false; }
     @Override public void cleanup() {
-        if (content != null) content.close();
-        if (adapter != null) adapter.close();
+        Throwable primary = null;
+        try {
+            if (content != null) content.close();
+        } catch (Throwable failure) {
+            primary = failure;
+        }
+        try {
+            if (adapter != null) adapter.close();
+        } catch (Throwable failure) {
+            primary = accumulate(primary, failure);
+        }
         adapter = null;
-        manager.reset();
-        SessionScopedStoreRegistry.clearAllOnDisconnect();
+        try {
+            manager.reset();
+        } catch (Throwable failure) {
+            primary = accumulate(primary, failure);
+        }
+        try {
+            SessionScopedStoreRegistry.clearAllOnDisconnect();
+        } catch (Throwable failure) {
+            primary = accumulate(primary, failure);
+        }
+        if (primary != null) throwUnchecked(primary);
+    }
+
+    private static Throwable accumulate(Throwable primary, Throwable failure) {
+        if (primary == null) return failure;
+        if (primary != failure) primary.addSuppressed(failure);
+        return primary;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+        throw (T) failure;
     }
 }

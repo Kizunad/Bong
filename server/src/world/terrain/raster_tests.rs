@@ -136,6 +136,7 @@ fn build_fixture() -> RasterFixture {
         fossil_bboxes: Vec::new(),
         placement_index: HashMap::new(),
         placement_block_count: 0,
+        wild_plant_points: Vec::new(),
         bot_fixture: None,
     };
 
@@ -1965,6 +1966,94 @@ fn load_placement_index_from_valid_fixture_produces_all_blocks() {
     assert!(!index.is_empty());
 }
 
+#[test]
+fn load_wild_plant_points_accepts_missing_and_valid_sidecars() {
+    let bounds = ManifestBounds {
+        min_x: -4,
+        max_x: 4,
+        min_z: -4,
+        max_z: 4,
+    };
+    let missing = unique_temp_dir().join("wild_plant_points.json");
+    assert_eq!(
+        load_wild_plant_points(&missing, &bounds).expect("missing sidecar is optional"),
+        Vec::new()
+    );
+
+    let root = unique_temp_dir();
+    fs::create_dir_all(&root).expect("wild plant fixture directory should be creatable");
+    let path = root.join("wild_plant_points.json");
+    fs::write(
+        &path,
+        r#"{
+            "version": 1,
+            "points": [{
+                "id": 7,
+                "plant_id": "gu_yuan_gen",
+                "zone_name": "lingquan_marsh",
+                "position": [2, 75, -3],
+                "regen_ticks": 7200
+            }]
+        }"#,
+    )
+    .expect("valid wild plant sidecar should be writable");
+
+    let points = load_wild_plant_points(&path, &bounds).expect("valid sidecar should load");
+    assert_eq!(points.len(), 1);
+    assert_eq!(points[0].id, 7);
+    assert_eq!(points[0].position, [2, 75, -3]);
+    assert_eq!(points[0].regen_ticks, 7200);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn load_wild_plant_points_rejects_invalid_contracts() {
+    let bounds = ManifestBounds {
+        min_x: 0,
+        max_x: 8,
+        min_z: 0,
+        max_z: 8,
+    };
+    let root = unique_temp_dir();
+    fs::create_dir_all(&root).expect("wild plant fixture directory should be creatable");
+    let path = root.join("wild_plant_points.json");
+
+    fs::write(&path, r#"{"version":2,"points":[]}"#).expect("write version fixture");
+    assert!(load_wild_plant_points(&path, &bounds)
+        .expect_err("unsupported sidecar versions must fail")
+        .contains("unsupported version 2"));
+
+    fs::write(
+        &path,
+        r#"{
+            "version": 1,
+            "points": [
+                {"id": 1, "plant_id": "gu_yuan_gen", "zone_name": "zone", "position": [1, 64, 1]},
+                {"id": 2, "plant_id": "gu_yuan_gen", "zone_name": "zone", "position": [1, 64, 1]}
+            ]
+        }"#,
+    )
+    .expect("write duplicate position fixture");
+    assert!(load_wild_plant_points(&path, &bounds)
+        .expect_err("duplicate positions must fail")
+        .contains("duplicate point position"));
+
+    fs::write(
+        &path,
+        r#"{
+            "version": 1,
+            "points": [{"id": 1, "plant_id": "gu_yuan_gen", "zone_name": "zone", "position": [9, 64, 1]}]
+        }"#,
+    )
+    .expect("write out-of-bounds fixture");
+    assert!(load_wild_plant_points(&path, &bounds)
+        .expect_err("points outside raster bounds must fail")
+        .contains("falls outside raster bounds"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
 // ----- authored NBT palette zero-drop contract ------------------------------------------------
 
 /// Every block name authored in dan_zong / wangyintai structures must be indexed
@@ -2180,6 +2269,7 @@ fn build_spans_provider(cols: &[(ColumnSpanList, f32, u8)]) -> RasterFixture {
         fossil_bboxes: Vec::new(),
         placement_index: HashMap::new(),
         placement_block_count: 0,
+        wild_plant_points: Vec::new(),
         bot_fixture: None,
     };
     RasterFixture {
@@ -2251,6 +2341,7 @@ fn build_botany_provider(cols: &[(ColumnSpanList, f32, u8)]) -> RasterFixture {
         fossil_bboxes: Vec::new(),
         placement_index: HashMap::new(),
         placement_block_count: 0,
+        wild_plant_points: Vec::new(),
         bot_fixture: None,
     };
     RasterFixture {
@@ -2324,16 +2415,16 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
         surface: SkyIsleSurface::Bottom,
     };
     assert!(
-        check_env_lock(yun_ding_lan, 0, 0, provider, &zone, &manifest),
+        check_env_lock(&yun_ding_lan, 0, 0, provider, &zone, &manifest),
         "yun_ding_lan (sky-isle Top) must pass on the isle column via the span path"
     );
     assert!(
-        check_env_lock(xuan_gen_wei, 1, 0, provider, &zone, &manifest),
+        check_env_lock(&xuan_gen_wei, 1, 0, provider, &zone, &manifest),
         "xuan_gen_wei (sky-isle Bottom) must pass on the isle column"
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 1 },
+            &EnvLock::UndergroundTier { tier: 1 },
             2,
             0,
             provider,
@@ -2344,7 +2435,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 2 },
+            &EnvLock::UndergroundTier { tier: 2 },
             3,
             0,
             provider,
@@ -2355,7 +2446,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     );
     assert!(
         check_env_lock(
-            EnvLock::UndergroundTier { tier: 3 },
+            &EnvLock::UndergroundTier { tier: 3 },
             4,
             0,
             provider,
@@ -2368,12 +2459,12 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     // And each lock must FAIL where its semantic layer is absent — proving the
     // span refactor did not silently make every column pass (position drift).
     assert!(
-        !check_env_lock(yun_ding_lan, 2, 0, provider, &zone, &manifest),
+        !check_env_lock(&yun_ding_lan, 2, 0, provider, &zone, &manifest),
         "sky-isle Top must NOT pass on a non-isle underground column"
     );
     assert!(
         !check_env_lock(
-            EnvLock::UndergroundTier { tier: 3 },
+            &EnvLock::UndergroundTier { tier: 3 },
             2,
             0,
             provider,
@@ -2385,7 +2476,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
     // qi_vein_flow lock (part of yuan_ni_hong_yu) reads its own layer, set 1.0.
     assert!(
         check_env_lock(
-            EnvLock::QiVeinFlow { min: 0.5 },
+            &EnvLock::QiVeinFlow { min: 0.5 },
             4,
             0,
             provider,
@@ -2394,7 +2485,7 @@ fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
         ),
         "yuan_ni_hong_yu qi_vein_flow lock must pass with the constant 1.0 layer"
     );
-    let _ = DecorationLock::One("yuan_ni_ebony"); // keep the import meaningful
+    let _ = DecorationLock::One("yuan_ni_ebony".to_string()); // keep the import meaningful
 }
 
 #[test]

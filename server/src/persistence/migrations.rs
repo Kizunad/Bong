@@ -1383,6 +1383,46 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 46 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS suspended_session_checkpoints (
+                session_key       TEXT PRIMARY KEY,
+                owner_key         TEXT NOT NULL,
+                generation        INTEGER NOT NULL CHECK (generation >= 0),
+                phase_revision    INTEGER NOT NULL CHECK (phase_revision >= 0),
+                placed_id         TEXT,
+                checkpoint_json   TEXT NOT NULL,
+                schema_version    INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE INDEX IF NOT EXISTS idx_suspended_checkpoints_owner
+            ON suspended_session_checkpoints (owner_key, session_key);
+            CREATE TABLE IF NOT EXISTS craft_restore_guards (
+                session_key       TEXT PRIMARY KEY,
+                owner_key         TEXT NOT NULL,
+                generation        INTEGER NOT NULL CHECK (generation >= 0),
+                phase_revision    INTEGER NOT NULL CHECK (phase_revision >= 0),
+                restore_token     TEXT NOT NULL,
+                frame_json        TEXT NOT NULL,
+                schema_version    INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                FOREIGN KEY (session_key)
+                    REFERENCES suspended_session_checkpoints (session_key)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_craft_restore_guards_owner
+            ON craft_restore_guards (owner_key, session_key);
+            PRAGMA user_version = 46;
+            ",
+        )?;
+        assert_suspended_session_schema_ready(&transaction)?;
+        transaction.commit()?;
+    }
+
     let deceased_schema_transaction = connection.transaction()?;
     if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
         assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
@@ -1396,6 +1436,10 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     let runtime_clock_schema_transaction = connection.transaction()?;
     assert_runtime_clock_schema_ready(&runtime_clock_schema_transaction)?;
     runtime_clock_schema_transaction.commit()?;
+
+    let suspended_session_schema_transaction = connection.transaction()?;
+    assert_suspended_session_schema_ready(&suspended_session_schema_transaction)?;
+    suspended_session_schema_transaction.commit()?;
 
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
@@ -1458,6 +1502,53 @@ pub(super) fn assert_runtime_clock_schema_ready(
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 io::Error::other(format!(
                     "v45 migration completed but runtime_clock CHECK `{required_check}` missing"
+                )),
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn assert_suspended_session_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    for (table, required_columns) in [
+        (
+            "suspended_session_checkpoints",
+            [
+                "session_key",
+                "owner_key",
+                "generation",
+                "phase_revision",
+                "placed_id",
+                "checkpoint_json",
+                "schema_version",
+                "last_updated_wall",
+            ],
+        ),
+        (
+            "craft_restore_guards",
+            [
+                "session_key",
+                "owner_key",
+                "generation",
+                "phase_revision",
+                "restore_token",
+                "frame_json",
+                "schema_version",
+                "last_updated_wall",
+            ],
+        ),
+    ] {
+        let columns = table_columns(transaction, table)?;
+        if let Some(missing) = required_columns
+            .iter()
+            .find(|column| !columns.iter().any(|name| name == **column))
+        {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v46 migration completed but {table}.{missing} column missing"
                 )),
             )));
         }

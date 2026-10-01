@@ -763,8 +763,9 @@ def all_cubes() -> list[Cube]:
 
 
 def create_texture() -> Image.Image:
-    """生成 64x64 UV Atlas 天然玄曜石与金华贴图。"""
-    img = Image.new("RGBA", (TEXTURE_RES, TEXTURE_RES), (0, 0, 0, 0))
+    """按 64x64 像素稿绘制续元蕊图集，再放大到 UV 使用的分辨率。"""
+    # 下方绘图坐标属于原始像素稿，不能直接在 128x128 画布上绘制。
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
 
     # ─────────────────────────────────────────────────────────────
     # 1. 天然黑曜石内生金矿脉 A (rock_vein_a: 0,0~32,20)

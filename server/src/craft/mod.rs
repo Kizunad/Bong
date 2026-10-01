@@ -681,7 +681,7 @@ pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Reg
     Ok(())
 }
 
-/// plan-gathering-ux-v1 P4：斧 / 镐凡器配方。锄头沿用 lingtian 既有三档。
+/// plan-gathering-ux-v1 P4：斧 / 镐凡器配方。锄头沿用现有三档。
 pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     const BONE_COIN_TEMPLATE: &str = "bone_coin_5";
     let scroll = |id: &str| {

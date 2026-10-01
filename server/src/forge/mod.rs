@@ -1295,10 +1295,6 @@ mod tests {
         ContainerState, DroppedLootRegistry, InventoryRevision, ItemInstance, ItemRarity,
         ItemRegistry, PlacedItemState,
     };
-    use crate::lingtian::events::{
-        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-        StartReplenishRequest, StartTillRequest,
-    };
     use crate::mineral::MineralProbeIntent;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::network::client_request_handler::{
@@ -1373,12 +1369,6 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-        app.add_event::<StartTillRequest>();
-        app.add_event::<StartRenewRequest>();
-        app.add_event::<StartPlantingRequest>();
-        app.add_event::<StartHarvestRequest>();
-        app.add_event::<StartReplenishRequest>();
-        app.add_event::<StartDrainQiRequest>();
         app.add_event::<StartExtractRequestEvent>();
         app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<MineralProbeIntent>();
@@ -1389,9 +1379,6 @@ mod tests {
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
-        // fix-spec-1901-v2 §4.1 — `handle_client_request_payloads` 的 lingtian
-        // 分支现在 enqueue 进 `PendingLingtianRequests`，测试 app 必须 init。
-        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
     }
 
     fn flush_all_client_packets(app: &mut App) {

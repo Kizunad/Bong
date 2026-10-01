@@ -1360,10 +1360,10 @@ impl ActiveEventsResource {
                             player: None,
                             target: Some("all_wither_zone".to_string()),
                             zone: Some(event.zone_name.clone()),
-                            details: Some(HashMap::from([
-                                ("botany_state".to_string(), json!("withered")),
-                                ("lingtian_state".to_string(), json!("withered")),
-                            ])),
+                            details: Some(HashMap::from([(
+                                "botany_state".to_string(),
+                                json!("withered"),
+                            )])),
                         });
                     }
                 }

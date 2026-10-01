@@ -120,7 +120,6 @@ import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.inventory.state.RaceGateMetaStore;
 import com.bong.client.inventory.state.RemainsStore;
-import com.bong.client.lingtian.state.LingtianSessionStore;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
 import com.bong.client.network.ClientRequestSender;
@@ -218,12 +217,16 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     @MethodSource("productionAdapters")
     void eachRegisteredHandleClearsItsDeclaredStoreWithoutTouchingCanary(ProductionAdapterCase adapter) {
         List<SessionStoreHandle> handles = SessionScopedStoreRegistry.registeredHandlesForTests();
-        assertEquals(105, handles.size(), "P2 必须对生产 REGISTERED 的全部 105 个 handle 逐项验真");
-        SessionStoreHandle handle = handles.get(adapter.index());
+        assertEquals(104, handles.size(), "P2 必须对生产 REGISTERED 的全部 104 个 handle 逐项验真");
+        List<SessionStoreHandle> matches = handles.stream()
+            .filter(candidate -> candidate.storeType() == adapter.storeType())
+            .toList();
+        assertEquals(1, matches.size(), "每个生产 Store 必须恰好有一个 cleaner handle：" + adapter.storeType());
+        SessionStoreHandle handle = matches.get(0);
         assertSame(
             adapter.storeType(),
             handle.storeType(),
-            "测试 case 必须按生产声明顺序取得对应 Class handle，不能重建 cleaner 映射"
+            "每个生产 Store 必须有唯一对应的 cleaner handle"
         );
 
         adapter.seed().run();
@@ -611,10 +614,6 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             adapter(74, RemainsStore.class,
                 () -> RemainsStore.putOrReplace(remains("old-remains", 1.0)),
                 () -> RemainsStore.snapshot().isEmpty()),
-            adapter(75, LingtianSessionStore.class,
-                () -> LingtianSessionStore.replace(new LingtianSessionStore.Snapshot(
-                    true, LingtianSessionStore.Kind.TILL, 1, 2, 3, 1, 2, "old", "old", 0.1f, true)),
-                () -> LingtianSessionStore.Snapshot.empty().equals(LingtianSessionStore.snapshot())),
             adapter(77, NpcInteractionLogStore.class,
                 () -> NpcInteractionLogStore.record(new NpcInteractionLogEntry(1, "old", "old", "old", 1_000L)),
                 () -> NpcInteractionLogStore.snapshot().isEmpty() && !NpcInteractionLogStore.visible()),

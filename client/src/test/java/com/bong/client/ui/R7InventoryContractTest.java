@@ -204,7 +204,7 @@ class R7InventoryContractTest {
             case "combat/screen/ForgeCarrierScreen.java" -> "P4 XML migration slice;暗器注入";
             case "combat/screen/RepairScreen.java" -> "P4 XML migration slice; weapon repair";
             case "inventory/LootContainerScreen.java",
-                "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
+                "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
                 "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java" -> "Code-built FlowLayout";
             case "cultivation/TechniqueScrollReadScreen.java" ->
                 "Suffix matches Screen.java but class is a toast/text helper";
