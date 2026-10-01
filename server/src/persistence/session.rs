@@ -96,7 +96,12 @@ pub fn persist_suspended_session_checkpoint(
 ) -> io::Result<SuspendedCheckpointPersistOutcome> {
     validate_checkpoint_and_guard(checkpoint, reconnect_guard)?;
     let mut connection = open_player_connection(persistence)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
+    // A lifecycle transition must be serialized before we compare the existing
+    // checkpoint and restore credential.  Otherwise two writers can both pass
+    // the version check and the older credential can overwrite a later one.
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
     let outcome = persist_suspended_session_checkpoint_in_transaction(
         &transaction,
         checkpoint,
@@ -120,6 +125,7 @@ pub(crate) fn persist_suspended_session_checkpoint_in_transaction(
     let generation = sqlite_u64("generation", reconnect_guard.generation)?;
     let phase_revision = sqlite_u64("phase_revision", reconnect_guard.phase_revision)?;
     let existing = load_existing_checkpoint_version(transaction, &reconnect_guard.session_key)?;
+    let existing_guard = load_existing_guard_version(transaction, &reconnect_guard.session_key)?;
     let was_existing = existing.is_some();
     if let Some((existing_owner, existing_generation, existing_revision)) = existing {
         if existing_owner != reconnect_guard.owner_key {
@@ -140,8 +146,44 @@ pub(crate) fn persist_suspended_session_checkpoint_in_transaction(
             return Ok(SuspendedCheckpointPersistOutcome::IgnoredStale);
         }
     }
+    if let Some((existing_owner, existing_generation, existing_revision, existing_token)) =
+        existing_guard
+    {
+        if existing_owner != reconnect_guard.owner_key {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "restore guard for session `{}` belongs to `{existing_owner}`, refusing owner `{}`",
+                    reconnect_guard.session_key, reconnect_guard.owner_key
+                ),
+            ));
+        }
+        if is_stale_version(
+            existing_generation,
+            existing_revision,
+            generation,
+            phase_revision,
+        ) {
+            return Ok(SuspendedCheckpointPersistOutcome::IgnoredStale);
+        }
+        if existing_generation == generation
+            && existing_revision == phase_revision
+            && existing_token != reconnect_guard.restore_token
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "restore guard for session `{}` already has a different token at generation {generation}, revision {phase_revision}",
+                    reconnect_guard.session_key
+                ),
+            ));
+        }
+    }
 
     let last_updated_wall = current_unix_seconds();
+    // The guard table has a foreign key to the checkpoint row.  Write the
+    // parent first; the enclosing transaction rolls it back if the guard CAS
+    // rejects the lifecycle.
     upsert_checkpoint_row(
         transaction,
         checkpoint,
@@ -174,13 +216,17 @@ pub fn load_suspended_session_bundle(
     session_key: &str,
 ) -> io::Result<Option<SuspendedSessionBundle>> {
     validate_non_empty_key("session_key", session_key)?;
-    let connection = open_player_connection(persistence)?;
-    let checkpoint = load_checkpoint_row(&connection, session_key)?;
+    let mut connection = open_player_connection(persistence)?;
+    // Both rows belong to one lifecycle snapshot.  Keep the reads in one
+    // SQLite snapshot so a concurrent commit cannot make the version check
+    // compare a checkpoint from one lifecycle with a guard from another.
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let checkpoint = load_checkpoint_row(&transaction, session_key)?;
     let Some(checkpoint) = checkpoint else {
         return Ok(None);
     };
 
-    let guard_row = load_guard_row(&connection, session_key)?.ok_or_else(|| {
+    let guard_row = load_guard_row(&transaction, session_key)?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Suspended checkpoint `{session_key}` has no reconnect guard"),
@@ -204,6 +250,8 @@ pub fn load_suspended_session_bundle(
             format!("CraftRestoreGuard `{session_key}` does not match reconnect guard"),
         ));
     }
+
+    transaction.commit().map_err(io::Error::other)?;
 
     Ok(Some(SuspendedSessionBundle {
         checkpoint,
@@ -229,6 +277,31 @@ fn load_existing_checkpoint_version(
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)
+}
+
+fn load_existing_guard_version(
+    transaction: &rusqlite::Transaction<'_>,
+    session_key: &str,
+) -> io::Result<Option<(String, i64, i64, String)>> {
+    transaction
+        .query_row(
+            "
+            SELECT owner_key, generation, phase_revision, restore_token
+            FROM craft_restore_guards
+            WHERE session_key = ?1
+            ",
+            params![session_key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
@@ -291,7 +364,7 @@ fn upsert_craft_restore_guard_row(
     let craft_restore_guard = CraftRestoreGuard::from(reconnect_guard);
     let frame_json = serde_json::to_string(&craft_restore_guard)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    transaction
+    let changed = transaction
         .execute(
             "
             INSERT INTO craft_restore_guards (
@@ -312,6 +385,19 @@ fn upsert_craft_restore_guard_row(
                 frame_json = excluded.frame_json,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
+            WHERE craft_restore_guards.owner_key = excluded.owner_key
+              AND (
+                  craft_restore_guards.generation < excluded.generation
+                  OR (
+                      craft_restore_guards.generation = excluded.generation
+                      AND craft_restore_guards.phase_revision < excluded.phase_revision
+                  )
+                  OR (
+                      craft_restore_guards.generation = excluded.generation
+                      AND craft_restore_guards.phase_revision = excluded.phase_revision
+                      AND craft_restore_guards.restore_token = excluded.restore_token
+                  )
+              )
             ",
             params![
                 reconnect_guard.session_key,
@@ -325,6 +411,15 @@ fn upsert_craft_restore_guard_row(
             ],
         )
         .map_err(io::Error::other)?;
+    if changed != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "restore guard compare-and-swap rejected session `{}`",
+                reconnect_guard.session_key
+            ),
+        ));
+    }
     Ok(())
 }
 
