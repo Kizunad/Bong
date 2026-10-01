@@ -17,9 +17,11 @@ from bot.scenarios._rejection_helpers import drain_event_stream
 DESCRIPTION = "断线重连后首批 server_data 快照集合完整，旧 session 不会替代新灌入"
 MODULES = ["network", "persistence"]
 
-# 这些快照由每个正常玩家的 join 组件生成，不依赖可选的炼丹 mock 或玩法事件。
-# 技能经验快照只在已存在技能变更时发送；新身份没有技能行时不产生该 payload，
-# 因而不能把它列为所有身份都必须收到的 join 契约。
+# inventory_snapshot 是每个正常玩家 join 都必须收到的通用快照，不依赖可选的炼丹
+# mock 或玩法事件。techniques_snapshot 取决于该身份 hydration 后实际可观察到的功法
+# 状态；Fresh 身份可能没有可展示功法，不能把它提升为所有身份都必须收到的契约。
+# 若某个身份的首包实际包含 techniques_snapshot，下面的首次/重连集合差异断言会把
+# 它保留为该身份自己的重连契约。
 REQUIRED_JOIN_PAYLOAD_TYPES = frozenset(
     {"inventory_snapshot"}
 )
