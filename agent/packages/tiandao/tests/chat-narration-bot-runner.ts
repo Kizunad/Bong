@@ -24,6 +24,15 @@ if (!targetName || !chatToken) {
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
+function appendSuppressedFailure(primaryFailure: unknown, cleanupFailure: unknown): void {
+  if (!(primaryFailure instanceof Error)) {
+    return;
+  }
+
+  const withSuppressed = primaryFailure as Error & { suppressed?: unknown[] };
+  withSuppressed.suppressed = [...(withSuppressed.suppressed ?? []), cleanupFailure];
+}
+
 const deterministicAnnotator: LlmClient = {
   async chat(model, messages) {
     const prompt = messages.find((message) => message.role === "user")?.content;
@@ -51,23 +60,20 @@ const deterministicAnnotator: LlmClient = {
   },
 };
 
-function findMatchingMessage(messages: ChatMessageV1[]): ChatMessageV1 | undefined {
-  return messages.find(
-    (message) =>
-      message.raw.includes(chatToken!) && message.player === `offline:${targetName}`,
-  );
-}
-
 const ipc = new RedisIpc({ url: redisUrl });
 let matchedMessage: ChatMessageV1 | undefined;
+let primaryFailure: unknown;
+let hasPrimaryFailure = false;
 
 try {
   await ipc.connect();
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (!matchedMessage && Date.now() < deadline) {
-    matchedMessage = findMatchingMessage(
-      await ipc.drainPlayerChat({ maxItems: 128, logger: console }),
-    );
+    matchedMessage = await ipc.takeMatchingPlayerChat({
+      player: `offline:${targetName}`,
+      token: chatToken,
+      logger: console,
+    });
     if (!matchedMessage) {
       await delay(POLL_INTERVAL_MS);
     }
@@ -125,6 +131,18 @@ try {
       narration,
     })}\n`,
   );
+} catch (error) {
+  hasPrimaryFailure = true;
+  primaryFailure = error;
+  throw error;
 } finally {
-  await ipc.disconnect().catch(() => undefined);
+  try {
+    await ipc.disconnect();
+  } catch (cleanupFailure) {
+    if (hasPrimaryFailure) {
+      appendSuppressedFailure(primaryFailure, cleanupFailure);
+    } else {
+      throw cleanupFailure;
+    }
+  }
 }

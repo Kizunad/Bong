@@ -210,6 +210,20 @@ redis.call('del', drainKey)
 return result
 `;
 
+// Selective consumption keeps other consumers' chat messages in the shared list.
+// The scan and removal run in one Redis script, so a second consumer cannot take
+// the same matching message between the two operations.
+const TAKE_MATCHING_PLAYER_CHAT_SCRIPT = `
+local items = redis.call('lrange', KEYS[1], 0, -1)
+for _, item in ipairs(items) do
+  if string.find(item, ARGV[1], 1, true) and string.find(item, ARGV[2], 1, true) then
+    redis.call('lrem', KEYS[1], 1, item)
+    return item
+  end
+end
+return false
+`;
+
 interface MultiExecResult<T = unknown> {
   0: Error | null;
   1: T;
@@ -1056,6 +1070,31 @@ export class RedisIpc {
       return [];
     }
     return parseChatMessages(raw, logger);
+  }
+
+  async takeMatchingPlayerChat(options: {
+    player: string;
+    token: string;
+    logger?: Pick<typeof console, "warn">;
+  }): Promise<ChatMessageV1 | undefined> {
+    if (!this.pub.eval || options.player.length === 0 || options.token.length === 0) {
+      return undefined;
+    }
+
+    const logger = options.logger ?? console;
+    const playerField = `"player":${JSON.stringify(options.player)}`;
+    const result = await this.pub.eval(
+      TAKE_MATCHING_PLAYER_CHAT_SCRIPT,
+      1,
+      PLAYER_CHAT,
+      playerField,
+      options.token,
+    );
+    if (typeof result !== "string") {
+      return undefined;
+    }
+
+    return parseChatMessages([result], logger)[0];
   }
 
   async drainPlayerChatRaw(): Promise<string[]> {
