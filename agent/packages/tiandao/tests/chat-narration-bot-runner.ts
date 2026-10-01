@@ -34,13 +34,15 @@ function attachCleanupFailure(primaryFailure: unknown, cleanupFailure: unknown):
     );
   }
 
-  const withCause = primaryFailure as Error & { cause?: unknown };
-  if (primaryFailure !== cleanupFailure) {
-    const existingCause = withCause.cause;
-    withCause.cause = existingCause === undefined
-      ? cleanupFailure
-      : new AggregateError([existingCause, cleanupFailure], "清理阶段又发生异常");
+  if (primaryFailure === cleanupFailure) {
+    return;
   }
+
+  const withSuppressed = primaryFailure as Error & { suppressed?: unknown[] };
+  const suppressed = Array.isArray(withSuppressed.suppressed)
+    ? withSuppressed.suppressed
+    : [];
+  withSuppressed.suppressed = [...suppressed, cleanupFailure];
 }
 
 const deterministicAnnotator: LlmClient = {
