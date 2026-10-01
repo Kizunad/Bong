@@ -239,7 +239,7 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 ## Finish Evidence
 
 - **落地清单**：P5b 由 `scripts/bot/scenarios/cultivation_tribulation_party_scope.py`、`scripts/bot/proto_min.py` 与 `scripts/bot/test_protocol.py` 覆盖；P5c 由 `scripts/bot/scenarios/agent_chat_narration_roundtrip.py`、`agent/packages/tiandao/tests/chat-narration-bot-runner.ts` 与 `scripts/bot-e2e.sh` roster 接入覆盖。既有 P0–P4、P6 交付物保持原路径。
-- **关键 commit**：`9f807127d`（2026-10-01，补齐渡劫广播 field 67 解码与协议测试）；`bea0ca8bc`（2026-10-01，补齐渡劫组队与 Agent 聊天回流 Bot 场景）。
-- **测试结果**：`python3 scripts/bot/test_protocol.py`（571 tests）；两份新增场景通过 Python 编译与 runner discovery；`cd agent/packages/schema && npm test`、`cd agent/packages/tiandao && npm run check` 由 CI 与最终门禁复验。
+- **关键 commit**：`9f807127d`（2026-10-01，补齐渡劫广播 field 67 解码与协议测试）；`bea0ca8bc`（2026-10-01，补齐渡劫组队与 Agent 聊天回流 Bot 场景）；`45c768974`（2026-10-01，修正多连接 Bot 的事件水位）；`5f69a44d9`（2026-10-01，修正 Agent 回流证据行解析）。
+- **测试结果**：`python3 scripts/bot/test_protocol.py`（571 tests）；两份新增场景通过 Python 编译与 runner discovery；`agent_chat_narration_roundtrip` 已完成本地 Redis 往返验收。组队场景在空数据库本地启动时仍受约 199 个 ambient NPC 负载影响（约 5.2 TPS，75 秒锁定阶段超时），未改 server 行为，CI bot-e2e 负责最终链路验收；`cd agent/packages/schema && npm test`、`cd agent/packages/tiandao && npm run check` 由 CI 与最终门禁复验。
 - **跨仓库核验**：server 侧对拍 `TribulationState`/`TribulationBroadcastV1` 与 `bong:agent_narrate` 消费；agent 侧对拍 `RedisIpc.drainPlayerChat`、`processChatBatch`、`RedisIpc.publishNarrations`；client 侧对拍 `TribulationStateHandler`、`TribulationBroadcastHandler` 与 `NarrationHandler` 的既有 `bong:server_data` 消费。
 - **遗留 / 后续**：本 plan 范围内 P5 与 P6 均完成；渡劫 typed state 的既有全服广播行为未在本卡改动，若未来需要更细的 zone 过滤另开 server 行为卡。
