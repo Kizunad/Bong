@@ -40,12 +40,6 @@ KNOWN_TYPEBOX_GAPS = frozenset(
         "craft_start",
         "craft_cancel",
         "give_dan_to_elder",
-        "lingtian_start_till",
-        "lingtian_start_renew",
-        "lingtian_start_planting",
-        "lingtian_start_harvest",
-        "lingtian_start_replenish",
-        "lingtian_start_drain_qi",
     }
 )
 

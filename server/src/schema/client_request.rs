@@ -562,51 +562,6 @@ pub enum ClientRequestV1 {
         v: u8,
         session_id: u64,
     },
-    // ─── 已废弃灵田 wire 兼容契约 ─────────────────────────────
-    // 这些变体仍保留在 JSON wire enum 中，保证旧客户端反序列化与 C2S
-    // 矩阵稳定；旧灵田运行时已退出，ingress 会明确拒绝而不会启动 session。
-    LingtianStartTill {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        hoe_instance_id: u64,
-        mode: String,
-    },
-    LingtianStartRenew {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        hoe_instance_id: u64,
-    },
-    LingtianStartPlanting {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        plant_id: String,
-    },
-    LingtianStartHarvest {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        mode: String,
-    },
-    LingtianStartReplenish {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        source: String,
-    },
-    LingtianStartDrainQi {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-    },
     // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
     /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
     /// plan-forge-session-entry-wiring-v1 §4.1#3 — 寻址从 `station_id: String`
@@ -876,14 +831,6 @@ impl ClientRequestV1 {
                 ],
             }),
             Self::ExternalContainerClose { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            // Legacy wire variants remain enumerable for compatibility, but the
-            // retired runtime deliberately has no live gate or mutation path.
-            Self::LingtianStartTill { .. }
-            | Self::LingtianStartRenew { .. }
-            | Self::LingtianStartPlanting { .. }
-            | Self::LingtianStartHarvest { .. }
-            | Self::LingtianStartReplenish { .. }
-            | Self::LingtianStartDrainQi { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeStartSession { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeTemperingHit { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeInscriptionScroll { .. } => RequestGate::NoGate(NoGateReason::InvalidState),

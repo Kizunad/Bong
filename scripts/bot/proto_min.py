@@ -103,8 +103,6 @@ SERVER_DATA_PAYLOAD_NAMES = {
     28: "mining_progress",
     29: "lumber_progress",
     30: "gathering_session",
-    # Retired runtime payload kept as a wire-compatible identity-only row.
-    31: "lingtian_session",
     32: "wounds_snapshot",
     33: "defense_window",
     34: "cast_sync",
