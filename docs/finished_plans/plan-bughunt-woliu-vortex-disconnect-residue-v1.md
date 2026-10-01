@@ -1,5 +1,7 @@
 # BugHunt：涡流 HUD 断线短窗口残留
 
+> 状态：已完成（2026-10-01）。`VortexStateStore` 已纳入 R2 registry，保留服务端周期 baseline 的原有语义。
+
 ## 结论
 
 `VortexStateStore` 是客户端静态 HUD 状态，`vortex_state` payload 写入后会被 `BongHudOrchestrator` 每帧读取并渲染涡流面板、反噬 vignette、紊流 tint 等反馈。但断线清理链没有重置它，玩家在涡流施放、冷却、反噬或紊流显示期间断线/切服后，新连接首帧到下一次 server baseline 前会短暂看到上一连接的涡流 HUD 状态。
@@ -47,3 +49,11 @@
 - [ ] 在断线清理链中重置 `VortexStateStore`，优先接入 `CombatHudBootstrap.resetOnDisconnect()`，必要时同步评估 `BongNetworkHandler.clearClientStateOnDisconnect()` 是否也应覆盖。
 - [ ] 为 `CombatHudBootstrapTest` 增加断线清理 pin：先写入非 `NONE` 的 `VortexStateStore.State`，调用 `resetOnDisconnect()` 后断言回到 `State.NONE`。
 - [ ] 补一条 HUD 回归：旧 active/backfire/turbulence 状态断线清理后，`WoliuV2HudPlanner` 不再产生命令。
+
+## Finish Evidence
+
+- **落地清单**：`VortexStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 统一调用，断线后 active/backfire/turbulence 状态立即归零。
+- **关键 commit**：`c015e0ee8`（R2 P2，combat Store 与循环资源清理，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`WoliuV2HudPlannerTest`、`CombatHandlersTest`、`DisconnectClearStoreTest` 与 registry adapter pin；client 完整门禁和 bot 场景在本 PR 验收。
+- **跨仓库核验**：涡流 payload、server 周期 inactive baseline 和技能语义未改，R2 只补 client session 边界。
+- **遗留 / 后续**：server baseline 频率与涡流玩法数值不在本计划内。

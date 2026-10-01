@@ -1,5 +1,7 @@
 # BugHunt: PlayerAnimator 重连旧层缓存导致同招静默无动画
 
+> 状态：已完成（2026-10-01）。动画资源的断线清理已由 R2 P2/P3 收口，重连后新 stack 可重新接收动画层。
+
 > Skeleton Plan / report-only。client-combat 20260708 r01 发现：`BongAnimationPlayer` 把玩家动画层按 `UUID + animId` 缓存在静态 map；断线 / 切服 / 重连时没有清理。重连后的同一玩家 UUID 再次播放断线前登记过的同一 `animId` 时，客户端会命中旧 `ModifierLayer`，只在旧 layer 上 `replaceAnimationWithFade` 并返回成功，不会把动画层挂到新 `PlayerEntity` 的 `AnimationStack`，表现为同招骨骼动画静默缺失。
 
 ## Bug 摘要
@@ -60,3 +62,11 @@
 - 直接清空所有动画层状态会截断断线瞬间的淡出队列；但断线时旧 world / player entity 本就不再可见，清理比保留旧 stack binding 更合理。
 - 若未来支持同客户端多 world preview 或 fake player animation stack，需要确认清理只在真实网络 session 生命周期触发。
 - 若选择 stack identity 自愈而非只做 disconnect 清理，需要避免引入强引用泄漏；测试应覆盖 pending removal 和 active map 都能释放旧 binding。
+
+## Finish Evidence
+
+- **落地清单**：`BongAnimationPlayer.clearOnDisconnect()` 与 `AnimationLayerManager.clearOnDisconnect()` 作为 session adjunct 由 `BongNetworkHandler.clearClientStateOnDisconnect()` 统一调用，旧 layer 不跨重连复用。
+- **关键 commit**：`c015e0ee8`（R2 P2，动画与音频 adjunct 清理，2026-07-29）、`d5dfd668a`（R2 P3，全量 Store/adjunct 生命周期门禁，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`AnimationDisconnectCleanupTest`、`AnimationLayerManagerTest`、`BongAnimationPlayerTest` 与 registry/source-scan pin；client 完整门禁和 bot 场景在本 PR 验收。
+- **跨仓库核验**：动画 payload 与 server bridge 未改；仅清理 client 内存中的旧 world binding。
+- **遗留 / 后续**：非断线的 stack identity 自愈和动画表现扩展另立动画轨道处理。

@@ -1,5 +1,7 @@
 # plan-bughunt-client-freshness-store-session-stale-v1
 
+> 状态：已完成（2026-10-01）。`FreshnessStore` 已纳入 R2 会话清理注册表，重连首包验收见 `reconnect_state_freshness`。
+
 > 一句话主题：client `FreshnessStore` 未在断线 / 切服 / 重连时清理，旧 `instance_id` 鲜度缓存会污染新会话 tooltip，并让 InspectScreen 对新会话同 id 物品误发 `freshness_probe` 与本地音效反馈。
 
 ## 阶段总览
@@ -56,3 +58,11 @@
 - Client 单测覆盖 `FreshnessStore.clearOnDisconnect()`。
 - Client 单测覆盖断线清理后 `FreshnessTooltipHook.tooltipLine(oldId)` 返回空字符串。
 - Client 单测覆盖断线清理后 `InspectScreen.maybeProbeFreshness()` 对同 id 新物品返回 false，不发送 `freshness_probe`，不触发本地音效。
+
+## Finish Evidence
+
+- **落地清单**：`FreshnessStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 显式登记；断线 token 失效后先于迟到 payload 清空旧 `instance_id` 缓存。
+- **关键 commit**：`8edb4b24c`（R2 P1，首批 Store 生命周期接入，2026-07-28）、`c015e0ee8`（R2 P2，补齐裸 Store，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`ProcessingClientTest`、`InspectScreenFreshnessProbeTest` 与 registry adapter pin 覆盖清理后的 tooltip/探针边界；client 完整门禁与 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：server freshness wire 保持不变，client 只清本地 session cache，bot 观察既有首包快照。
+- **遗留 / 后续**：freshness 数据的 server 权威与物品语义不在 R2 范围内。

@@ -1,5 +1,9 @@
 # plan-bughunt-niche-guardian-cross-session-leak-v1
 
+## Status Overview
+
+状态：已完成（2026-10-01）。`NicheGuardianStore` 的断线清理已由 R2 registry 收口。
+
 > **骨架**（2026-07-05）。一句话主题：`NicheGuardianStore` 是纯 client 侧事件累积 store，但没有任何断线清理或清空协议；一旦收到 `niche_guardian_fatigue` / `niche_guardian_broken` / `niche_intrusion`，灵龛守护 HUD 会跨 session 挂着旧世界的状态继续显示，直到玩家重启客户端或刚好被新的灵龛事件覆盖。
 
 ## 复现路径
@@ -77,3 +81,11 @@
 - 已避开已知题：toast cross-session、`false_skin_state` 残留、毒蛊 v2 HUD 串局、identity panel stale session、`zone_info` 同区不刷新、surface stash 标签缺口、realm gate 广播泄漏。
 - 实地 grep `docs/plans-skeleton`、`docs/finished_plans`、`docs/plan-*`，未见现成的 `NicheGuardianStore` 跨 session / disconnect 清理题。
 - 本会话未启用 subagent；两轮反方裁决改为本地人工对抗式复核。该退化处理需在后续 PR 正文如实记录。
+
+## Finish Evidence
+
+- **落地清单**：`NicheGuardianStore.clearOnDisconnect()` 显式登记到 `SessionScopedStoreRegistry`，灵龛守护 HUD 的 guardian/intrusion 临时态在 session 边界清空。
+- **关键 commit**：`c015e0ee8`（R2 P2，补齐裸 Store，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`NicheGuardianStoreTest`、`NicheGuardianHudPlannerTest`、`BongHudOrchestratorTest` 与 registry adapter pin；client 完整门禁和 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：灵龛事件 wire 保持不变，R2 只清理 client session 临时态，不扩展灵田/经脉/功法/身体部位玩法。
+- **遗留 / 后续**：灵龛事件的服务端状态与新 UI 语义另行维护。

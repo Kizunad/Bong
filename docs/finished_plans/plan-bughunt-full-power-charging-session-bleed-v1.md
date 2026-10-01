@@ -1,7 +1,9 @@
 # BugHunt：全力一击蓄力 HUD 断线跨会话残留
 
+> 状态：已完成（2026-10-01）。`FullPowerStateStore` 已由 R2 registry 在断线边界清理，蓄力玩法语义保持不变。
+
 > 一句话主题：全力一击蓄力 HUD 的 `FullPowerStateStore` charging 态缺少 disconnect session 边界，导致重连后 `ChargingProgressBarHud` 可能继续渲染上一会话蓄力条。
-> 分区：client-combat / r08。结论：高置信真 bug。只记录 plan，不在本分支修复代码。
+> 分区：client-combat / r08。结论：高置信真 bug；生命周期修复由 R2 P2/P3 完成。
 
 ## 一句话
 
@@ -96,3 +98,11 @@
 
 - `cd client && ./gradlew test build`
 - 手动：蓄力全力一击期间断线重连，重进后底部不再出现旧“蓄力中 X/Y 真元”条；重新正常蓄力时 HUD 仍按新 payload 渲染。
+
+## Finish Evidence
+
+- **落地清单**：`FullPowerStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 显式登记；`BongServerDataThreadingTest` 锁住 token 失效、清理、重连新 payload 的顺序。
+- **关键 commit**：`c015e0ee8`（R2 P2，combat Store 会话清理，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`FullPowerStateHandlerTest`、`ChargingProgressBarHudTest`、`DisconnectClearStoreTest` 与 registry adapter pin；client 完整门禁及 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：full-power payload、server cast 结算与协议均未修改；本 PR 只保证 client session 生命周期。
+- **遗留 / 后续**：蓄力数值、施法结算和 A/V 语义由 combat/cast 轨道负责。

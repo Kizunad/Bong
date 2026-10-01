@@ -54,7 +54,7 @@
   - **测试抓手**：source-scan 精确断言 registry-managed session FQCN 集等于 registry 集；生产源码不得从断线路径调用 `resetForTests` / `resetForTest` / `clearForTests`；新增 Store 未分类、session Store 未登记、重复登记均失败。
   - **跨仓库契约**：仍为 client-only；schema、Redis key、CustomPayload 均不变。
   - **合入证据**：PR #1309；`client/src/main/java/com/bong/client/BongNetworkHandler.java`、`client/src/main/java/com/bong/client/lifecycle/ClientStoreScopeManifest.java`、`SessionScopedStoreRegistry.java`、`client/src/test/java/com/bong/client/lifecycle/JavaLifecycleSourceInspector.java`、`BongNetworkHandlerTest.java`。
-- ⬜ **P4 断线 / 重连验收 + 归档**（尚未开始）：client 契约 pin 覆盖旧 handler 迟到断线、旧 session 排队 payload、清空后新首包重灌；bot `reconnect_state_freshness` 验首包集合。只批量归档被 R2 完整修复的 plan；部分吸收项保留其 UI hydration / freshness gate 等独立工作。
+- ✅ 2026-10-01 **P4 断线 / 重连验收 + 归档**：client 契约 pin 覆盖旧 handler 迟到断线、旧 session 排队 payload、清空后新首包重灌；bot `reconnect_state_freshness` 验首包集合。仅归档被 R2 完整修复的 plan，部分吸收项保留其 UI hydration / freshness gate 工作。
   - **模块 / symbol**：`ClientConnectionStatusStore.invalidateSession(...)`；`BongNetworkHandler.disconnectSession(...)`；`scripts/bot/scenarios/reconnect_state_freshness.*`；被完全吸收 plan 的 `## Finish Evidence`。
   - **测试抓手**：Java 17 `./gradlew test build`；断线→旧 payload 到达→重连→新首包重灌的 client 契约测试；bot e2e 精确验完整首包集合；source-scan 终态全集门禁。
   - **跨仓库契约**：只复用既有 join 首包 CustomPayload symbol，不新增 schema / Redis key；bot 验收 server 重发与 client 新 session 接收的现有契约。
@@ -164,3 +164,11 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 ### §10.4 单次 consume-plan 全自动到 merge
 
 用户提交一次 `/consume-plan plan-refactor-client-store-lifecycle-v1` 后，调度方按 §10.2 串行完成 PR-1 至 PR-5：每个 PR 使用独立实施 / 返工上下文，自动执行 §10.3 门禁、等待 review、修复真 finding；每次修复产生新 HEAD 后自动重新独立评论 `/review`，并等待该新 HEAD 对应的 e2e 与 CodeRabbit re-review 通过后才 merge，绝不复用旧 HEAD 证据。除必须由用户裁决的产品方向或不可逆操作外不中途回问。终态为计划全部阶段 `✅ YYYY-MM-DD`、`## Finish Evidence` 完整，并迁入 `docs/finished_plans/plan-refactor-client-store-lifecycle-v1.md`。
+
+## Finish Evidence
+
+- **落地清单**：`ClientConnectionStatusStore.invalidateSession(...)`、`BongNetworkHandler.disconnectSession(...)`、`SessionScopedStoreRegistry.clearAllOnDisconnect()` 及 105 个强类型 Store handle；`scripts/bot/scenarios/reconnect_state_freshness.py` 验证同身份重连后的首批 `bong:server_data` 集合包含首次加入集合。
+- **关键 commit**：`8edb4b24c`（P1，2026-07-28）、`c015e0ee8`（P2，2026-07-29）、`d5dfd668a`（P3，2026-08-06）、`387dfa4d1`、`d81083726`（P4，2026-10-01）。
+- **测试结果**：`BongServerDataThreadingTest` 覆盖旧 handler 迟到 payload、排队 session payload 与新 handler 合法首包的顺序；`SessionScopedStoreRegistryProductionAdapterTest` 覆盖全部生产 adapter；client Java 17 完整门禁、bot 协议单测（570/570）及 `reconnect_state_freshness` 在本 PR 验收。场景用 join 屏障后的有界收集窗比较状态快照，排除动态 `narration`，并保留 `inventory_snapshot` / `techniques_snapshot` 必达断言。
+- **跨仓库核验**：server 继续复用既有 join snapshot producers 与 `bong:server_data` CustomPayload，未新增 schema、Redis key 或玩法语义；client 仅消费并清理现有契约。
+- **遗留 / 后续**：炼丹、锻造、灵宝的 Screen 关闭、权威 hydration、freshness gate，以及 track:R2 尚未归属的并发/玩法 issue 保留给各自 owner；灵田、经脉、功法、身体部位冻结区未改动。

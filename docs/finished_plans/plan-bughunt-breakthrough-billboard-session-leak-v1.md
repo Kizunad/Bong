@@ -1,5 +1,7 @@
 # plan-bughunt-breakthrough-billboard-session-leak-v1
 
+> 状态：已完成（2026-10-01）。`BreakthroughRenderStateStore` 已纳入 R2 会话清理注册表，重连首包验收见 `reconnect_state_freshness`。
+
 > **Active plan（由 bughunt promotion）**。一句话主题：`BreakthroughRenderStateStore` 在断线/切服时未清理，若玩家在突破远景标记的 1.5-5s 剩余窗口内快速进入新 session，且旧坐标仍满足 distant/global 可见条件，新世界会短暂渲染上一 session 的“劫/成/破”远景标记。
 
 > 立项动机：这是一个低严重度但高置信的 client visual session hygiene 缺口。它不是长期串档，也不是所有重连必现；问题集中在突破演出 billboard 的短视觉窗口内，当前 store 没有 session/world/dimension 绑定，也没有进入 `BongNetworkHandler.clearClientStateOnDisconnect()` 的清理表。该 plan 已按 active fix plan 收口，允许后续流水线消费。
@@ -82,3 +84,11 @@ TODO:
 
 - 清理过早可能让同一 session 内短暂网络抖动期间的远景标消失；应只挂在明确 disconnect/world unload 边界。
 - 如果未来突破演出需要跨维观测，应显式在 payload 中携带可验证 session/world 语义，而不是依赖进程级 static store。
+
+## Finish Evidence
+
+- **落地清单**：`BreakthroughRenderStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 显式登记，`BongNetworkHandler.disconnectSession(...)` 在 token 失效后统一清理；同会话自然过期语义保持不变。
+- **关键 commit**：`8edb4b24c`（R2 P1，首批 Store 生命周期接入，2026-07-28）、`c015e0ee8`（R2 P2，补齐裸 Store 与动画资源，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：Java registry adapter pin 覆盖该 Store；`BongServerDataThreadingTest` 覆盖旧 token 迟到 payload 不得复活状态；client 完整门禁与 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：server 复用既有 join snapshot producers，bot 只观察 `bong:server_data`，不新增 schema 或 Redis key。
+- **遗留 / 后续**：未来若突破 wire 需要跨维观测，需另立带 session/world 语义的契约；不在本计划内改变玩法演出。
