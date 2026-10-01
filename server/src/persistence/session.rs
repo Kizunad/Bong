@@ -127,6 +127,15 @@ pub(crate) fn persist_suspended_session_checkpoint_in_transaction(
     let existing = load_existing_checkpoint_version(transaction, &reconnect_guard.session_key)?;
     let existing_guard = load_existing_guard_version(transaction, &reconnect_guard.session_key)?;
     let was_existing = existing.is_some();
+    if existing.is_some() && existing_guard.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "checkpoint `{}` exists without a reconnect guard",
+                reconnect_guard.session_key
+            ),
+        ));
+    }
     if let Some((existing_owner, existing_generation, existing_revision)) = existing {
         if existing_owner != reconnect_guard.owner_key {
             return Err(io::Error::new(

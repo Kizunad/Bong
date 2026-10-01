@@ -1204,6 +1204,24 @@ fn suspended_checkpoint_roundtrips_with_matching_craft_restore_guard() {
 }
 
 #[test]
+fn suspended_checkpoint_write_rejects_replay_after_guard_consumed() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-replay");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect_err("a consumed guard must not recreate the restore capability");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(load_suspended_session_bundle(&persistence, &checkpoint.session_key).is_err());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn suspended_checkpoint_write_rejects_stale_version_without_replacing_guard() {
     let (settings, root) = persistence_settings("suspended-checkpoint-stale");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
