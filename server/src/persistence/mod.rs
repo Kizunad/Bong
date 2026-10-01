@@ -85,8 +85,10 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放；
 /// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段；
 /// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据；
-/// v45 持久化跨重启的共享运行时 tick，供保质期绝对 tick 继续单调推进。
-const CURRENT_USER_VERSION: i32 = 45;
+/// v45 持久化跨重启的共享运行时 tick，供保质期绝对 tick 继续单调推进；
+/// v46 将 R1 的 Suspended checkpoint、ReconnectGuard 与 R6/R2 的 CraftRestoreGuard
+/// control frame 纳入同一持久化 seam。
+const CURRENT_USER_VERSION: i32 = 46;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -141,6 +143,7 @@ mod models;
 mod npc;
 mod player;
 mod runtime_clock;
+mod session;
 mod social;
 mod tribulation;
 mod void_actions;
@@ -158,6 +161,7 @@ pub use models::*;
 pub use npc::*;
 pub(crate) use player::*;
 pub(crate) use runtime_clock::*;
+pub use session::*;
 pub use social::*;
 pub use tribulation::*;
 pub use void_actions::*;
