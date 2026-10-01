@@ -997,7 +997,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         crate::alchemy::apply_alchemy_explode_outcomes
-            .after(client_request_handler::handle_client_request_payloads),
+            .after(client_request_handler::dispatch_alchemy_take_back_requests),
     );
     // ── plan-craft-v1 P2/P3：通用手搓 IPC（client_request → intent → session → outcome
     //    + 三渠道解锁 intent → unlock_via_* → RecipeUnlocked）──

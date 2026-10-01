@@ -237,6 +237,7 @@ fn register_explosion_test_resources(app: &mut App) {
     app.insert_resource(SkillMeridianDependencies::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(AlchemyMockState::default());
+    app.init_resource::<crate::alchemy::AlchemyQiReservationBook>();
     app.insert_resource(DroppedLootRegistry::default());
     app.add_event::<crate::inventory::RemainsLootIntent>();
     app.insert_resource(ItemRegistry::default());
@@ -282,6 +283,8 @@ fn register_explosion_test_resources(app: &mut App) {
     app.add_event::<crate::zhenfa::ScatterBeadUseRequest>();
     app.add_event::<InventoryDurabilityChangedEvent>();
     app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+    app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
+    app.add_event::<crate::alchemy::InjectQiRequest>();
     app.add_event::<crate::combat::events::CombatEvent>();
     app.add_event::<crate::combat::events::DeathEvent>();
     app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -300,12 +303,23 @@ fn register_explosion_test_systems(app: &mut App) {
     crate::network::register_client_request_ingress(app);
     app.add_systems(
         Update,
+        crate::network::client_request_handler::settle_alchemy_inject_qi_requests
+            .after(handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        crate::network::client_request_handler::dispatch_alchemy_take_back_requests
+            .after(crate::network::client_request_handler::settle_alchemy_inject_qi_requests),
+    );
+    app.add_systems(
+        Update,
         crate::network::inventory_event_emit::emit_durability_changed_inventory_events
             .after(handle_client_request_payloads),
     );
     app.add_systems(
         Update,
-        crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        crate::alchemy::apply_alchemy_explode_outcomes
+            .after(crate::network::client_request_handler::dispatch_alchemy_take_back_requests),
     );
 }
 
@@ -4114,6 +4128,8 @@ mod external_ingress_tests {
                 station,
                 caster,
             );
+            session.station_pos = Some((8, 66, 8));
+            session.station_dimension = DimensionKind::Overworld;
             session.current_step = step;
             session.step_state = match step {
                 ForgeStep::Inscription => StepState::Inscription(Default::default()),
@@ -4124,6 +4140,10 @@ mod external_ingress_tests {
             };
             sessions.insert(session);
             app.insert_resource(sessions);
+            app.world_mut().entity_mut(caster).insert((
+                Position::new(DVec3::new(8.0, 66.0, 8.0)),
+                CurrentDimension(DimensionKind::Overworld),
+            ));
         }
 
         fn send_gate_test_payload(app: &mut App, client: Entity, payload: serde_json::Value) {
@@ -4555,6 +4575,7 @@ mod external_ingress_tests {
             app.insert_resource(SkillMeridianDependencies::default());
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(AlchemyMockState::default());
+            app.init_resource::<crate::alchemy::AlchemyQiReservationBook>();
             app.insert_resource(DroppedLootRegistry::default());
             // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
             app.add_event::<crate::inventory::RemainsLootIntent>();
@@ -4602,6 +4623,8 @@ mod external_ingress_tests {
             app.add_event::<ScatterBeadUseRequest>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+            app.add_event::<crate::alchemy::AlchemyTakeBackRequest>();
+            app.add_event::<crate::alchemy::InjectQiRequest>();
             app.add_event::<crate::combat::events::CombatEvent>();
             app.add_event::<crate::combat::events::DeathEvent>();
             app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
@@ -4634,6 +4657,14 @@ mod external_ingress_tests {
                 cleanup_client_request_budget.before(handle_client_request_payloads),
             );
             app.add_systems(Update, handle_client_request_payloads);
+            app.add_systems(
+                Update,
+                settle_alchemy_inject_qi_requests.after(handle_client_request_payloads),
+            );
+            app.add_systems(
+                Update,
+                dispatch_alchemy_take_back_requests.after(settle_alchemy_inject_qi_requests),
+            );
             app.add_systems(
                 Update,
                 crate::network::inventory_event_emit::emit_durability_changed_inventory_events
@@ -10602,6 +10633,14 @@ mod external_ingress_tests {
             blueprint_id: &str,
             materials: &[(&str, u32)],
         ) {
+            app.world_mut().entity_mut(client).insert((
+                Position::new(DVec3::new(
+                    f64::from(station_pos.0),
+                    f64::from(station_pos.1),
+                    f64::from(station_pos.2),
+                )),
+                CurrentDimension(DimensionKind::Overworld),
+            ));
             let materials_json: Vec<String> = materials
                 .iter()
                 .map(|(m, c)| format!("[\"{m}\",{c}]"))
@@ -12014,6 +12053,10 @@ dispatch = "direct_generic"
             // 通用路径无条件插入 Casting 并把 SkillConfigStore 里的配置带入 Casting.skill_config。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -12039,6 +12082,15 @@ dispatch = "direct_generic"
                 skill_bar,
                 QuickSlotBindings::default(),
                 empty_inventory(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    qi_max: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
             app.world_mut()
@@ -12938,6 +12990,10 @@ dispatch = "direct_generic"
             // 作载体：经脉门放行后走通用路径，无条件插入 Casting，纯粹锁住「无 MeridianSystem 放行」语义。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+            ));
 
             let (client_bundle, _helper) = create_mock_client("Azure");
             let mut skill_bar = SkillBarBindings::default();
@@ -12954,6 +13010,15 @@ dispatch = "direct_generic"
                 QuickSlotBindings::default(),
                 empty_inventory(),
                 // 故意不插入 MeridianSystem
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    qi_max: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
@@ -12977,6 +13042,10 @@ dispatch = "direct_generic"
             // 引入经脉门后，无依赖招的通用路径行为不变。
             let mut app = App::new();
             register_request_app(&mut app);
+            app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+            app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+                crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+            ));
             app.world_mut()
                 .resource_mut::<SkillConfigStore>()
                 .set_config(
@@ -13011,6 +13080,15 @@ dispatch = "direct_generic"
                 empty_inventory(),
                 ms,
                 crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    qi_max: crate::schema::common::TEST_QI_FIXTURE_TOTAL,
+                    ..Default::default()
+                },
+                crate::combat::components::Stamina::default(),
+                crate::cultivation::life_record::LifeRecord::new("offline:Azure"),
+                CurrentDimension(DimensionKind::Overworld),
                 known(&["body.guangbo_ticao"]),
             ));
 
