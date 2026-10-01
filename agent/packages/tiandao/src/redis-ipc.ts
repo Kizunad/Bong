@@ -216,7 +216,11 @@ return result
 const TAKE_MATCHING_PLAYER_CHAT_SCRIPT = `
 local items = redis.call('lrange', KEYS[1], 0, -1)
 for _, item in ipairs(items) do
-  if string.find(item, ARGV[1], 1, true) and string.find(item, ARGV[2], 1, true) then
+  local ok, message = pcall(cjson.decode, item)
+  if ok and type(message) == 'table'
+      and message.player == ARGV[1]
+      and type(message.raw) == 'string'
+      and string.find(message.raw, ARGV[2], 1, true) then
     redis.call('lrem', KEYS[1], 1, item)
     return item
   end
@@ -1082,12 +1086,11 @@ export class RedisIpc {
     }
 
     const logger = options.logger ?? console;
-    const playerField = `"player":${JSON.stringify(options.player)}`;
     const result = await this.pub.eval(
       TAKE_MATCHING_PLAYER_CHAT_SCRIPT,
       1,
       PLAYER_CHAT,
-      playerField,
+      options.player,
       options.token,
     );
     if (typeof result !== "string") {

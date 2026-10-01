@@ -21,10 +21,12 @@ if (!targetName || !chatToken) {
   throw new Error("TARGET_NAME and CHAT_TOKEN are required");
 }
 
+const expectedPlayer = `offline:${targetName}`;
+
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-function appendSuppressedFailure(primaryFailure: unknown, cleanupFailure: unknown): void {
+function attachCleanupFailure(primaryFailure: unknown, cleanupFailure: unknown): void {
   if (!(primaryFailure instanceof Error)) {
     throw new AggregateError(
       [primaryFailure, cleanupFailure],
@@ -32,9 +34,12 @@ function appendSuppressedFailure(primaryFailure: unknown, cleanupFailure: unknow
     );
   }
 
-  const withSuppressed = primaryFailure as Error & { suppressed?: unknown[] };
+  const withCause = primaryFailure as Error & { cause?: unknown };
   if (primaryFailure !== cleanupFailure) {
-    withSuppressed.suppressed = [...(withSuppressed.suppressed ?? []), cleanupFailure];
+    const existingCause = withCause.cause;
+    withCause.cause = existingCause === undefined
+      ? cleanupFailure
+      : new AggregateError([existingCause, cleanupFailure], "清理阶段又发生异常");
   }
 }
 
@@ -74,11 +79,14 @@ try {
   await ipc.connect();
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (!matchedMessage && Date.now() < deadline) {
-    matchedMessage = await ipc.takeMatchingPlayerChat({
-      player: `offline:${targetName}`,
+    const candidate = await ipc.takeMatchingPlayerChat({
+      player: expectedPlayer,
       token: chatToken,
       logger: console,
     });
+    if (candidate?.player === expectedPlayer && candidate.raw.includes(chatToken)) {
+      matchedMessage = candidate;
+    }
     if (!matchedMessage) {
       await delay(POLL_INTERVAL_MS);
     }
@@ -145,7 +153,7 @@ try {
     await ipc.disconnect();
   } catch (cleanupFailure) {
     if (hasPrimaryFailure) {
-      appendSuppressedFailure(primaryFailure, cleanupFailure);
+      attachCleanupFailure(primaryFailure, cleanupFailure);
     } else {
       throw cleanupFailure;
     }

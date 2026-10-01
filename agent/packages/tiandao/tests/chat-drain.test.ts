@@ -36,7 +36,12 @@ class FakeRedisClient implements RedisIpcClient {
     if (thirdArgument !== undefined) {
       const current = this.bus.lists.get(chatKey) ?? [];
       const index = current.findIndex(
-        (item) => item.includes(secondArgument) && item.includes(thirdArgument),
+        (item) => {
+          const message = JSON.parse(item) as { player?: unknown; raw?: unknown };
+          return message.player === secondArgument
+            && typeof message.raw === "string"
+            && message.raw.includes(thirdArgument);
+        },
       );
       if (index < 0) {
         return false;
@@ -91,6 +96,13 @@ describe("RedisIpc atomic player_chat drain", () => {
       raw: "token-42 目标消息",
       zone: "spawn",
     });
+    const prefixPlayer = JSON.stringify({
+      v: 1,
+      ts: 1_700_000_009,
+      player: "offline:Target2",
+      raw: "token-42 另一位玩家的消息",
+      zone: "spawn",
+    });
     const otherPlayer = JSON.stringify({
       v: 1,
       ts: 1_700_000_011,
@@ -106,6 +118,7 @@ describe("RedisIpc atomic player_chat drain", () => {
       zone: "spawn",
     });
 
+    bus.pushToList(PLAYER_CHAT_KEY, prefixPlayer);
     bus.pushToList(PLAYER_CHAT_KEY, target);
     bus.pushToList(PLAYER_CHAT_KEY, otherPlayer);
     bus.pushToList(PLAYER_CHAT_KEY, otherToken);
@@ -122,7 +135,7 @@ describe("RedisIpc atomic player_chat drain", () => {
     });
 
     expect(matched?.raw).toBe("token-42 目标消息");
-    expect(bus.lists.get(PLAYER_CHAT_KEY)).toEqual([otherPlayer, otherToken]);
+    expect(bus.lists.get(PLAYER_CHAT_KEY)).toEqual([prefixPlayer, otherPlayer, otherToken]);
   });
 
   it("preserves concurrent writes for the next drain round", async () => {
