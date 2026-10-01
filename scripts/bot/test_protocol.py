@@ -221,6 +221,18 @@ SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
     "combat_attack_hit",
 )
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[3] = (
+    "protocol_identity",
+    "agent_chat_narration_roundtrip",
+)
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[66] = (
+    "protocol_identity",
+    "cultivation_tribulation_party_scope",
+)
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[67] = (
+    "protocol_identity",
+    "cultivation_tribulation_party_scope",
+)
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[143] = ("protocol_identity",)
 
 
@@ -2114,6 +2126,19 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertFalse(decoded["active"])
         self.assertEqual(decoded["result"], "ascended")
         self.assertEqual(decoded["wave_current"], 5)
+
+    def test_proto_tribulation_broadcast_payload_decodes_scope_fields(self):
+        decoded = decode_server_data_payload(_server_data_tribulation_broadcast_bytes())
+
+        self.assertEqual(decoded["type"], "tribulation_broadcast")
+        self.assertTrue(decoded["active"])
+        self.assertEqual(decoded["actor_name"], "DuxLeader")
+        self.assertEqual(decoded["stage"], "locked")
+        self.assertEqual(decoded["world_x"], 1200.0)
+        self.assertEqual(decoded["world_z"], -800.0)
+        self.assertEqual(decoded["expires_at_ms"], 1700000012345)
+        self.assertTrue(decoded["spectate_invite"])
+        self.assertEqual(decoded["spectate_distance"], 12.5)
 
     def test_proto_tribulation_state_asymmetric_failed_only(self):
         # review finding major-7：failed=true / half_step_on_success=false 必须落各自独
@@ -8516,6 +8541,21 @@ def _server_data_tribulation_state_bytes(
     if result is not None:
         body += _pb_string(16, result)
     return _pb_message(66, body)
+
+
+def _server_data_tribulation_broadcast_bytes() -> bytes:
+    """field 67 `tribulation_broadcast` 的非对称 wire fixture。"""
+    body = (
+        _pb_varint(1, 1)
+        + _pb_string(2, "DuxLeader")
+        + _pb_string(3, "locked")
+        + _pb_fixed64(4, 1200.0)
+        + _pb_fixed64(5, -800.0)
+        + _pb_varint(6, 1700000012345)
+        + _pb_varint(7, 1)
+        + _pb_fixed64(8, 12.5)
+    )
+    return _pb_message(67, body)
 
 
 def _server_data_heart_demon_offer_bytes() -> bytes:
