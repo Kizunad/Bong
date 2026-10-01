@@ -4138,6 +4138,66 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 container_entity_id: *container_entity_id,
             }),
             ClientRequestV1::CancelSearch { .. } => Payload::CancelSearch(bong::CancelSearch {}),
+            // ─── 已退役灵田 C2S wire 兼容 ─────────────────────────
+            // 旧客户端仍可能发送这些 payload；它们保留 protobuf 编码，
+            // 但 ingress 会在运行时明确拒绝，不再启动旧灵田 session。
+            ClientRequestV1::LingtianStartTill {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                mode,
+                ..
+            } => Payload::LingtianStartTill(bong::LingtianStartTill {
+                x: *x,
+                y: *y,
+                z: *z,
+                hoe_instance_id: *hoe_instance_id,
+                mode: mode.clone(),
+            }),
+            ClientRequestV1::LingtianStartRenew {
+                x,
+                y,
+                z,
+                hoe_instance_id,
+                ..
+            } => Payload::LingtianStartRenew(bong::LingtianStartRenew {
+                x: *x,
+                y: *y,
+                z: *z,
+                hoe_instance_id: *hoe_instance_id,
+            }),
+            ClientRequestV1::LingtianStartPlanting {
+                x, y, z, plant_id, ..
+            } => Payload::LingtianStartPlanting(bong::LingtianStartPlanting {
+                x: *x,
+                y: *y,
+                z: *z,
+                plant_id: plant_id.clone(),
+            }),
+            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
+                Payload::LingtianStartHarvest(bong::LingtianStartHarvest {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                    mode: mode.clone(),
+                })
+            }
+            ClientRequestV1::LingtianStartReplenish {
+                x, y, z, source, ..
+            } => Payload::LingtianStartReplenish(bong::LingtianStartReplenish {
+                x: *x,
+                y: *y,
+                z: *z,
+                source: source.clone(),
+            }),
+            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
+                Payload::LingtianStartDrainQi(bong::LingtianStartDrainQi {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                })
+            }
             // ─── 锻造 C2S ────────────────────────────────────────
             ClientRequestV1::ForgeStartSession {
                 station_pos,

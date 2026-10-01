@@ -12,7 +12,6 @@ import "bong/common.proto";
 // ─── S2C 信封（Server → Client） ────────────────────────────────
 
 message ServerDataEnvelope {
-  reserved 31; // 已删除消息的编号不可复用。
   oneof payload {
     Welcome           welcome            = 1;
     Heartbeat         heartbeat          = 2;
@@ -45,6 +44,8 @@ message ServerDataEnvelope {
     MiningProgress          mining_progress           = 28;
     LumberProgress          lumber_progress           = 29;
     GatheringSession        gathering_session         = 30;
+    // 旧灵田 wire 类型保留用于兼容；运行时已退役。
+    LingtianSessionData     lingtian_session          = 31;
     // ─── P2 B2：战斗 / 伤口 / 防御 / 施法 / 毒 / 载体 / 暗器 ────
     WoundsSnapshot          wounds_snapshot           = 32;
     DefenseWindow           defense_window            = 33;
@@ -235,7 +236,6 @@ message WorkbenchOpen {
 // ─── C2S 信封（Client → Server） ────────────────────────────────
 
 message ClientRequestEnvelope {
-  reserved 22 to 27; // 已删除请求的编号不可复用。
   oneof payload {
     SetMeridianTarget   set_meridian_target   = 1;
     BreakthroughRequest breakthrough_request  = 2;
@@ -259,6 +259,13 @@ message ClientRequestEnvelope {
     CraftStart                craft_start                 = 19;
     CraftCancel               craft_cancel                = 20;
     BotanyHarvestRequest      botany_harvest_request      = 21;
+    // 旧灵田 wire 类型保留用于兼容；服务端会拒绝退役请求。
+    LingtianStartTill         lingtian_start_till         = 22;
+    LingtianStartRenew        lingtian_start_renew        = 23;
+    LingtianStartPlanting     lingtian_start_planting     = 24;
+    LingtianStartHarvest      lingtian_start_harvest      = 25;
+    LingtianStartReplenish    lingtian_start_replenish    = 26;
+    LingtianStartDrainQi      lingtian_start_drain_qi     = 27;
     MineralProbe              mineral_probe               = 28;
     // ─── P2 B2：战斗 / 暗器 / 技能栏 / 死亡 C2S ──────────────────
     Jiemai                    jiemai                      = 29;
@@ -1508,7 +1515,74 @@ message GatheringSession {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//TODO:lingtian_refactor 使用新的田块消息定义。
+// P2 B1 — 旧灵田 wire 兼容类型（运行时已退役）
+// ═══════════════════════════════════════════════════════════════
+
+enum LingtianSessionKind {
+  LINGTIAN_SESSION_KIND_UNSPECIFIED = 0;
+  LINGTIAN_SESSION_KIND_TILL        = 1;
+  LINGTIAN_SESSION_KIND_RENEW       = 2;
+  LINGTIAN_SESSION_KIND_PLANTING    = 3;
+  LINGTIAN_SESSION_KIND_HARVEST     = 4;
+  LINGTIAN_SESSION_KIND_REPLENISH   = 5;
+  LINGTIAN_SESSION_KIND_DRAIN_QI    = 6;
+}
+
+message LingtianSessionData {
+  bool                active                    = 1;
+  LingtianSessionKind kind                      = 2;
+  int32               pos_x                     = 3;
+  int32               pos_y                     = 4;
+  int32               pos_z                     = 5;
+  uint32              elapsed_ticks             = 6;
+  uint32              target_ticks              = 7;
+  optional string     plant_id                  = 8;
+  optional string     source                    = 9;
+  optional float      dye_contamination         = 10;
+  bool                dye_contamination_warning  = 11;
+}
+
+message LingtianStartTill {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 hoe_instance_id  = 4;
+  string mode             = 5;
+}
+
+message LingtianStartRenew {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 hoe_instance_id  = 4;
+}
+
+message LingtianStartPlanting {
+  int32  x        = 1;
+  int32  y        = 2;
+  int32  z        = 3;
+  string plant_id = 4;
+}
+
+message LingtianStartHarvest {
+  int32  x    = 1;
+  int32  y    = 2;
+  int32  z    = 3;
+  string mode = 4;
+}
+
+message LingtianStartReplenish {
+  int32  x      = 1;
+  int32  y      = 2;
+  int32  z      = 3;
+  string source = 4;
+}
+
+message LingtianStartDrainQi {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
 
 // P2 B1 — 矿石 C2S
 // ═══════════════════════════════════════════════════════════════

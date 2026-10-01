@@ -368,7 +368,7 @@ class ProtoServerDataBridgeTest {
     // 下那层 oneof 未设置，会走 "has no oneof variant set" 分支报错——这是预期行为
     // （测的是"映射表是否穷尽"，不是"每个 variant 塞空数据也必须成功桥接"）。
     //
-    // 排除清单（13 个）：
+    // 排除清单（14 个）：
     //   - VFX_EVENT / AUDIO_PLAY_EVENT / AUDIO_STOP_EVENT / AMBIENT_ZONE_EVENT /
     //     ZONE_ENVIRONMENT_STATE：各自走独立 CustomPayload channel
     //     （bong:vfx_event / bong:audio/play / bong:audio/stop /
@@ -378,6 +378,8 @@ class ProtoServerDataBridgeTest {
     //     TSY_EXIT_EVENT / TSY_NPC_SPAWNED / TSY_SENTINEL_PHASE_CHANGED：
     //     全仓（含 main 与 test）零 getter 引用，proto schema 预留字段，尚无 client
     //     消费方——接线时需同时补 CASE_TO_TYPE / extractInner 并从此排除清单移除。
+    //   - LINGTIAN_SESSION：旧灵田运行时已退役，客户端没有对应消费者；服务端保留
+    //     该字段仅为旧 wire 客户端兼容，不能在此伪造现行客户端 handler。
     //   - FACTION_WAR_STATE（plan-wire-format-bridge-v1 P5，2026-07-03 摘除）：
     //     proto 消息仍在，但 #667「移除涌现冲突战事 HUD」已拆掉 client 侧 HUD
     //     handler/planner/store，server 侧 npc/war/settle.rs 也不再构造/广播该
@@ -400,6 +402,7 @@ class ProtoServerDataBridgeTest {
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_EXIT_EVENT,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED,
+                    Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION,
                     Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE
                     // morph_state（易形状态，proto field 142）：PR-5a 只交付 server 机制 +
                     // 协议/schema/bot 解码，client 消费留白；PR-5b 已补 MorphStateHandler

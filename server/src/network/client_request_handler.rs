@@ -1352,6 +1352,12 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::WorkbenchOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
             | ClientRequestV1::ExternalContainerClose { v, .. }
+            | ClientRequestV1::LingtianStartTill { v, .. }
+            | ClientRequestV1::LingtianStartRenew { v, .. }
+            | ClientRequestV1::LingtianStartPlanting { v, .. }
+            | ClientRequestV1::LingtianStartHarvest { v, .. }
+            | ClientRequestV1::LingtianStartReplenish { v, .. }
+            | ClientRequestV1::LingtianStartDrainQi { v, .. }
             | ClientRequestV1::GiveDanToElder { v, .. }
             | ClientRequestV1::RaiseShield { v }
             | ClientRequestV1::LowerShield { v }
@@ -1603,6 +1609,17 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStationPlace { .. }
             | ClientRequestV1::ForgeStationOpen { .. } => {
                 unreachable!("Forge requests are dispatched by the typed Forge dispatcher")
+            }
+            ClientRequestV1::LingtianStartTill { .. }
+            | ClientRequestV1::LingtianStartRenew { .. }
+            | ClientRequestV1::LingtianStartPlanting { .. }
+            | ClientRequestV1::LingtianStartHarvest { .. }
+            | ClientRequestV1::LingtianStartReplenish { .. }
+            | ClientRequestV1::LingtianStartDrainQi { .. } => {
+                tracing::warn!(
+                    "[bong][network] rejected retired lingtian request from entity={:?}",
+                    ev.client
+                );
             }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 tracing::info!(
