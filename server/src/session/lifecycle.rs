@@ -532,15 +532,8 @@ fn identity_rejection(
     }
 }
 
-fn check_identity(
-    state: &SessionRecord,
-    identity: &SessionIdentity,
-) -> Result<(), SessionDecision> {
-    if let Some(reason) = identity_rejection(state, identity) {
-        Err(SessionDecision::rejected(state.state, reason))
-    } else {
-        Ok(())
-    }
+fn check_identity(state: &SessionRecord, identity: &SessionIdentity) -> Option<SessionDecision> {
+    identity_rejection(state, identity).map(|reason| SessionDecision::rejected(state.state, reason))
 }
 
 fn prepare_handoff(state: &mut SessionRecord, cause: TerminationCause) -> SessionDecision {
@@ -580,7 +573,7 @@ pub fn reduce_session_with_context(
         | SessionEvent::StartupEpochDetected { identity, .. }
         | SessionEvent::CraftStart { identity, .. } => identity,
     };
-    if let Err(decision) = check_identity(state, identity) {
+    if let Some(decision) = check_identity(state, identity) {
         return decision;
     }
 
