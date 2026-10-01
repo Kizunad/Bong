@@ -215,7 +215,7 @@ from bot.run_scenarios import (  # noqa: E402
 # decoder dispatch are reviewed.  The rows are field tags because three
 # historical scenario labels intentionally differ from proto spelling.
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX = {
-    field: ("protocol_identity",) for field in (*range(1, 31), *range(32, 144))
+    field: ("protocol_identity",) for field in (*range(1, 32), *range(32, 144))
 }
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
@@ -8794,7 +8794,11 @@ class ProtoMinTest(unittest.TestCase):
 
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
-        self.assertEqual(proto_min.server_data_payload_name(envelope), "field_31")
+        self.assertEqual(
+            proto_min.server_data_payload_name(envelope),
+            "lingtian_session",
+            "退役灵田 payload 仍保留 wire identity，供兼容解码而不重新接入运行时",
+        )
         self.assertEqual(
             proto_min.server_data_payload_name(_pb_len_field(34, b"")),
             "cast_sync",
