@@ -33,7 +33,9 @@ function appendSuppressedFailure(primaryFailure: unknown, cleanupFailure: unknow
   }
 
   const withSuppressed = primaryFailure as Error & { suppressed?: unknown[] };
-  withSuppressed.suppressed = [...(withSuppressed.suppressed ?? []), cleanupFailure];
+  if (primaryFailure !== cleanupFailure) {
+    withSuppressed.suppressed = [...(withSuppressed.suppressed ?? []), cleanupFailure];
+  }
 }
 
 const deterministicAnnotator: LlmClient = {
