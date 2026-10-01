@@ -1,6 +1,8 @@
 # plan-bughunt-perception-edge-session-leak-v1
 
-> 状态：已完成（2026-10-01）。`PerceptionEdgeStateStore` 已纳入 R2 registry，重连首包验收见 `reconnect_state_freshness`。
+## Status Overview
+
+状态：已完成（2026-10-01）。`PerceptionEdgeStateStore` 已纳入 R2 registry，重连首包验收见 `reconnect_state_freshness`。
 
 > BugHunt client-ui r09。仅新增 plan 文档，不修代码。主题：`PerceptionEdgeStateStore` 是 `spiritual_sense_targets` 的 client 本地静态快照，但断线 / 切服清理路径没有 reset；同一 Minecraft 进程进入新 session 后，旧神识 / 灵觉边缘 marker 与通灵+ 威胁边框可能继续渲染，直到新 session 发出下一份有效 `spiritual_sense_targets` 覆盖。
 

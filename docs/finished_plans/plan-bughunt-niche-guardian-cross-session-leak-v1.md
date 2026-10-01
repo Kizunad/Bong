@@ -1,6 +1,8 @@
 # plan-bughunt-niche-guardian-cross-session-leak-v1
 
-> 状态：已完成（2026-10-01）。`NicheGuardianStore` 的断线清理已由 R2 registry 收口。
+## Status Overview
+
+状态：已完成（2026-10-01）。`NicheGuardianStore` 的断线清理已由 R2 registry 收口。
 
 > **骨架**（2026-07-05）。一句话主题：`NicheGuardianStore` 是纯 client 侧事件累积 store，但没有任何断线清理或清空协议；一旦收到 `niche_guardian_fatigue` / `niche_guardian_broken` / `niche_intrusion`，灵龛守护 HUD 会跨 session 挂着旧世界的状态继续显示，直到玩家重启客户端或刚好被新的灵龛事件覆盖。
 

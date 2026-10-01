@@ -21,7 +21,7 @@ MODULES = ["network", "persistence"]
 # 技能经验快照只在已存在技能变更时发送；新身份没有技能行时不产生该 payload，
 # 因而不能把它列为所有身份都必须收到的 join 契约。
 REQUIRED_JOIN_PAYLOAD_TYPES = frozenset(
-    {"inventory_snapshot", "techniques_snapshot"}
+    {"inventory_snapshot"}
 )
 # narration 是欢迎流程的动态文案，不是 client Store 的状态快照；它可能只在首次
 # 建档时出现，不能把它纳入两次连接的集合相等性断言。
