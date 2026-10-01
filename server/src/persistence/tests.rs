@@ -1145,6 +1145,246 @@ fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
     )
 }
 
+fn suspended_checkpoint_fixture(
+    owner_key: &str,
+    session_key: &str,
+    generation: u64,
+    phase_revision: u64,
+) -> (SuspendedSessionCheckpoint, ReconnectGuard) {
+    let checkpoint = SuspendedSessionCheckpoint {
+        owner_key: owner_key.to_string(),
+        session_key: session_key.to_string(),
+        generation,
+        phase_revision,
+        placed_id: Some("placed:workbench:azure".to_string()),
+        checkpoint_json: r#"{"phase":"suspended","remaining_ticks":12}"#.to_string(),
+    };
+    let guard = ReconnectGuard {
+        owner_key: owner_key.to_string(),
+        session_key: session_key.to_string(),
+        generation,
+        phase_revision,
+        restore_token: "RestoreToken_0123456789abcdefghijklmnop".to_string(),
+    };
+    (checkpoint, guard)
+}
+
+#[test]
+fn suspended_checkpoint_roundtrips_with_matching_craft_restore_guard() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-roundtrip");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+            .expect("checkpoint and guard should commit"),
+        SuspendedCheckpointPersistOutcome::Inserted
+    );
+    let bundle = load_suspended_session_bundle(&persistence, &checkpoint.session_key)
+        .expect("checkpoint should load")
+        .expect("matching guard should make checkpoint restorable");
+    assert_eq!(bundle.checkpoint, checkpoint);
+    assert_eq!(bundle.reconnect_guard, guard);
+    assert_eq!(
+        bundle.craft_restore_guard,
+        CraftRestoreGuard::from(&bundle.reconnect_guard)
+    );
+
+    assert!(
+        consume_reconnect_guard(&persistence, &bundle.reconnect_guard)
+            .expect("matching guard should be consumed")
+    );
+    assert!(
+        !consume_reconnect_guard(&persistence, &bundle.reconnect_guard)
+            .expect("a consumed guard must not be replayable")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_write_rejects_replay_after_guard_consumed() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-replay");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect_err("a consumed guard must not recreate the restore capability");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(load_suspended_session_bundle(&persistence, &checkpoint.session_key).is_err());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_after_consumed_guard_accepts_newer_generation() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-newer-generation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let (newer_checkpoint, newer_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 1);
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &newer_checkpoint, &newer_guard)
+            .expect("a newer lifecycle should recreate its guard atomically"),
+        SuspendedCheckpointPersistOutcome::Updated
+    );
+    let loaded = load_suspended_session_bundle(&persistence, &newer_checkpoint.session_key)
+        .expect("the newer checkpoint should load")
+        .expect("the newer guard should be present");
+    assert_eq!(loaded.checkpoint, newer_checkpoint);
+    assert_eq!(loaded.reconnect_guard, newer_guard);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_write_rejects_stale_version_without_replacing_guard() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-stale");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 7);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("initial checkpoint should commit");
+    let (stale_checkpoint, stale_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 6);
+
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &stale_checkpoint, &stale_guard)
+            .expect("stale writes should be ignored cleanly"),
+        SuspendedCheckpointPersistOutcome::IgnoredStale
+    );
+    let loaded = load_suspended_session_bundle(&persistence, "craft:azure")
+        .expect("checkpoint should load")
+        .expect("guard should remain present");
+    assert_eq!(loaded.reconnect_guard.phase_revision, 7);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_guard_compare_and_swap_preserves_newer_lifecycle() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-guard-cas");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 7);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("initial checkpoint should commit");
+
+    let mut conflicting_guard = guard.clone();
+    conflicting_guard.restore_token = "ConflictingToken_0123456789abcdefghijkl".to_string();
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &conflicting_guard)
+        .expect_err("a different token at the same lifecycle version must fail closed");
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    let loaded = load_suspended_session_bundle(&persistence, &checkpoint.session_key)
+        .expect("the original guard should remain readable")
+        .expect("the original guard should remain present");
+    assert_eq!(loaded.reconnect_guard.restore_token, guard.restore_token);
+
+    let mut newer_guard = suspended_checkpoint_fixture("player:Azure", "craft:azure", 5, 1).1;
+    newer_guard.restore_token = "LaterToken_0123456789abcdefghijklmnop".to_string();
+    let newer_frame = serde_json::to_string(&CraftRestoreGuard::from(&newer_guard))
+        .expect("newer guard frame should serialize");
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "
+            UPDATE craft_restore_guards
+            SET owner_key = ?1,
+                generation = ?2,
+                phase_revision = ?3,
+                restore_token = ?4,
+                frame_json = ?5
+            WHERE session_key = ?6
+            ",
+            params![
+                &newer_guard.owner_key,
+                newer_guard.generation as i64,
+                newer_guard.phase_revision as i64,
+                &newer_guard.restore_token,
+                &newer_frame,
+                &newer_guard.session_key,
+            ],
+        )
+        .expect("newer guard fixture should be installed");
+
+    let (stale_checkpoint, stale_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 8);
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &stale_checkpoint, &stale_guard)
+            .expect("a write behind the newer guard should be ignored"),
+        SuspendedCheckpointPersistOutcome::IgnoredStale
+    );
+    let stored_guard: (i64, i64, String) = connection
+        .query_row(
+            "
+            SELECT generation, phase_revision, restore_token
+            FROM craft_restore_guards
+            WHERE session_key = ?1
+            ",
+            params!["craft:azure"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("newer guard should remain stored");
+    assert_eq!(
+        stored_guard,
+        (
+            newer_guard.generation as i64,
+            newer_guard.phase_revision as i64,
+            newer_guard.restore_token,
+        )
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_and_guard_roll_back_together_when_frame_write_fails() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-rollback");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER fail_restore_guard_insert
+            BEFORE INSERT ON craft_restore_guards
+            BEGIN
+                SELECT RAISE(FAIL, 'forced restore guard failure');
+            END;
+            ",
+        )
+        .expect("failure trigger should install");
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 1, 1);
+
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect_err("frame failure must abort the whole checkpoint transaction");
+    assert!(error.to_string().contains("forced restore guard failure"));
+    let counts: (i64, i64) = connection
+        .query_row(
+            "
+            SELECT
+                (SELECT COUNT(*) FROM suspended_session_checkpoints),
+                (SELECT COUNT(*) FROM craft_restore_guards)
+            ",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("rollback count query should work");
+    assert_eq!(counts, (0, 0));
+    std::fs::remove_dir_all(root).ok();
+}
+
 fn heartbeat_pseudo_vein_record(zone_id: &str) -> HeartbeatPseudoVeinRecord {
     HeartbeatPseudoVeinRecord {
         zone_id: zone_id.to_string(),
