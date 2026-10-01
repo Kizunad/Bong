@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+ash_bed = [62, 61, 54]
+ash_edge = [103, 97, 78]
+soot = [31, 32, 30]
+lichen = [78, 87, 60]
+dry_highlight = [138, 126, 84]
+
+[features]
+ash_plate = { elements = ["ash_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+soot_crust = { elements = ["soot_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 1 }
+lichen_rosette = { elements = ["lichen_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+dry_highlight = { elements = ["dry_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

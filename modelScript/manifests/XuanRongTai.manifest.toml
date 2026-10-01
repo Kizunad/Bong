@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+velvet_bed = [18, 19, 24]
+velvet_mid = [29, 31, 39]
+velvet_edge = [47, 43, 51]
+silver_glint = [159, 165, 151]
+cold_shadow = [12, 13, 18]
+
+[features]
+velvet_bed = { elements = ["velvet_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+velvet_lobe = { elements = ["lobe_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+silver_hair = { elements = ["silver_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+cold_shadow = { elements = ["shadow_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

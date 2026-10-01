@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+null_bed = [19, 24, 22]
+null_moss = [26, 42, 37]
+siphon_black = [12, 17, 16]
+wet_teal = [47, 85, 74]
+dead_tip = [70, 67, 48]
+
+[features]
+null_bed = { elements = ["null_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+siphon_tuft = { elements = ["tuft_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+siphon_spine = { elements = ["siphon_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+wet_tip = { elements = ["wet_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

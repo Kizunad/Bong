@@ -20,7 +20,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class PlantModelRegistryTest {
     private static final List<String> MODELED_PLANTS = List.of(
         "chi_sui_cao", "gu_yuan_gen", "hei_gu_jun", "ling_yan_shi_zhi", "xue_po_lian",
-        "tui_gu_teng", "shou_xin_cao", "long_lin_tai", "xu_yuan_rui", "hua_xing_gen");
+        "tui_gu_teng", "shou_xin_cao", "long_lin_tai", "xu_yuan_rui", "hua_xing_gen",
+        "hui_jin_tai", "lie_yuan_tai", "shi_ling_xian", "xuan_rong_tai", "yang_jing_tai",
+        "jing_xin_zao");
 
     @AfterEach
     void clearCatalog() {

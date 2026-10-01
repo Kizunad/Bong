@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+well_water = [38, 92, 83]
+algae_deep = [29, 76, 59]
+algae_green = [68, 130, 76]
+algae_lit = [125, 168, 87]
+well_stone = [71, 82, 70]
+
+[features]
+well_ring = { elements = ["well_ring_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+water_heart = { elements = ["water_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+algae_frond = { elements = ["frond_", "inner_stem_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+algae_lit = { elements = ["lit_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
