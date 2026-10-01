@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+ash_bed = [55, 54, 50]
+bone_dark = [73, 72, 68]
+bone_pale = [125, 120, 108]
+edge_high = [177, 169, 148]
+void_scar = [83, 43, 51]
+
+[features]
+ash_bed = { elements = ["ash_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+bone_arc = { elements = ["arc_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+bone_fragments = { elements = ["fragment_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+void_scars = { elements = ["scar_"], must_show_in = ["FRONT"], min_px = 1 }
