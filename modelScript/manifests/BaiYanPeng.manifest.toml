@@ -5,12 +5,13 @@ size = 280
 [materials]
 dry_soil = [90, 83, 73]
 stem_dark = [63, 69, 65]
-leaf_gray = [170, 178, 166]
-leaf_white = [220, 225, 212]
-salt_crystal = [248, 244, 220]
+leaf_gray = [216, 220, 224]
+leaf_white = [240, 243, 244]
+salt_crystal = [255, 255, 255]
 
 [features]
 dry_soil = { elements = ["soil_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 fine_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+feather_leaves = { elements = ["feather_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 leaf_highlights = { elements = ["highlight_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
 salt_crystals = { elements = ["salt_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

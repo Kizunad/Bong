@@ -5,9 +5,10 @@ size = 280
 [materials]
 ruin_stone = [62, 72, 72]
 stone_high = [114, 132, 130]
-cap_gray = [132, 151, 148]
-purple_vein = [108, 54, 132]
-purple_glint = [184, 105, 190]
+cap_gray = [90, 96, 112]
+cap_shadow = [66, 72, 86]
+purple_vein = [138, 90, 200]
+purple_glint = [198, 140, 232]
 
 [features]
 ruin_stone = { elements = ["stone_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }

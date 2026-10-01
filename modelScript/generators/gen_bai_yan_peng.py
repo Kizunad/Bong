@@ -12,9 +12,9 @@ from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # 
 MATS = {
     "dry_soil": (90, 83, 73),
     "stem_dark": (63, 69, 65),
-    "leaf_gray": (170, 178, 166),
-    "leaf_white": (220, 225, 212),
-    "salt_crystal": (248, 244, 220),
+    "leaf_gray": (216, 220, 224),
+    "leaf_white": (240, 243, 244),
+    "salt_crystal": (255, 255, 255),
 }
 
 
@@ -46,6 +46,39 @@ def part_fine_leaves(rig):
         strand(rig, "fine_leaves", f"leaf_tip_{index}", end, tip, 0.22, "leaf_white")
 
 
+def _branch_point(index: int, ratio: float) -> tuple[float, float, float]:
+    start, end = _leaf_end(index)
+    return tuple(start[axis] + (end[axis] - start[axis]) * ratio for axis in range(3))
+
+
+def part_feather_leaves(rig):
+    rig.bone("feather_leaves", (0.0, 0.0, 0.0))
+    for index in range(8):
+        start, end = _leaf_end(index)
+        horizontal = math.hypot(end[0] - start[0], end[2] - start[2])
+        perp_x = -(end[2] - start[2]) / horizontal
+        perp_z = (end[0] - start[0]) / horizontal
+        for level, ratio in enumerate((0.3, 0.48, 0.66, 0.82)):
+            point = _branch_point(index, ratio)
+            length = 0.52 - level * 0.07
+            for side, label in ((-1.0, "l"), (1.0, "r")):
+                leaf_start = (point[0], point[1] + 0.04, point[2])
+                leaf_end = (
+                    point[0] + perp_x * length * side,
+                    point[1] + 0.18 + (level % 2) * 0.04,
+                    point[2] + perp_z * length * side,
+                )
+                strand(
+                    rig,
+                    "feather_leaves",
+                    f"feather_{index}_{level}_{label}",
+                    leaf_start,
+                    leaf_end,
+                    0.14,
+                    "leaf_gray" if level % 2 else "leaf_white",
+                )
+
+
 def part_leaf_highlights(rig):
     rig.bone("leaf_highlights", (0.0, 0.0, 0.0))
     for index in (0, 2, 4, 6):
@@ -65,7 +98,7 @@ def part_salt_crystals(rig):
 
 
 def build():
-    return build_rig(MATS, (part_dry_soil, part_fine_leaves, part_leaf_highlights, part_salt_crystals))
+    return build_rig(MATS, (part_dry_soil, part_fine_leaves, part_feather_leaves, part_leaf_highlights, part_salt_crystals))
 
 
 GATES = PlantGates("白盐蓬 / bai_yan_peng")

@@ -11,9 +11,10 @@ from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # 
 MATS = {
     "ruin_stone": (62, 72, 72),
     "stone_high": (114, 132, 130),
-    "cap_gray": (132, 151, 148),
-    "purple_vein": (108, 54, 132),
-    "purple_glint": (184, 105, 190),
+    "cap_gray": (90, 96, 112),
+    "cap_shadow": (66, 72, 86),
+    "purple_vein": (138, 90, 200),
+    "purple_glint": (198, 140, 232),
 }
 
 
@@ -31,9 +32,9 @@ def part_ruin_stone(rig):
 def part_stems(rig):
     rig.bone("stems", (0.0, 0.0, 0.0))
     for name, start, end, radius in (
-        ("stem_main", (-0.35, 1.3, -0.1), (-0.25, 6.2, -0.15), 0.46),
-        ("stem_left", (-1.8, 1.45, 0.2), (-1.95, 4.9, 0.15), 0.34),
-        ("stem_right", (1.25, 1.25, -0.15), (1.65, 4.55, -0.25), 0.32),
+        ("stem_main", (-0.15, 1.35, -0.1), (-0.05, 4.55, -0.1), 0.58),
+        ("stem_left", (-1.1, 1.45, 0.2), (-1.05, 4.35, 0.15), 0.42),
+        ("stem_right", (1.0, 1.4, -0.15), (1.05, 4.25, -0.2), 0.4),
     ):
         strand(rig, "stems", name, start, end, radius, "stone_high")
 
@@ -41,11 +42,11 @@ def part_stems(rig):
 def part_caps(rig):
     rig.bone("caps", (0.0, 0.0, 0.0))
     for name, x, z, w, h, d, y, mat in (
-        ("cap_main_lower", -0.25, -0.15, 5.2, 0.95, 2.45, 6.05, "cap_gray"),
-        ("cap_main_top", -0.25, -0.15, 4.35, 0.7, 2.0, 6.85, "stone_high"),
-        ("cap_left_lower", -1.95, 0.15, 3.0, 0.65, 1.75, 4.75, "cap_gray"),
-        ("cap_left_top", -1.95, 0.15, 2.35, 0.5, 1.4, 5.3, "stone_high"),
-        ("cap_right_lower", 1.65, -0.25, 2.55, 0.6, 1.6, 4.45, "cap_gray"),
+        ("cap_cloud_lower", 0.0, -0.1, 6.5, 0.7, 3.7, 4.35, "cap_shadow"),
+        ("cap_cloud", 0.0, -0.1, 6.2, 0.65, 3.4, 4.95, "cap_gray"),
+        ("cap_cloud_top", 0.0, -0.1, 5.4, 0.45, 2.9, 5.6, "stone_high"),
+        ("cap_left_drop", -2.65, 0.0, 1.5, 0.45, 2.8, 4.55, "cap_gray"),
+        ("cap_right_drop", 2.65, 0.0, 1.5, 0.45, 2.8, 4.55, "cap_gray"),
     ):
         pad(rig, "caps", name, (x, y, z), (w, h, d), mat)
 
@@ -53,10 +54,12 @@ def part_caps(rig):
 def part_inscription_veins(rig):
     rig.bone("inscription_veins", (0.0, 0.0, 0.0))
     for name, start, end, radius, mat in (
-        ("inscription_main", (-2.1, 7.72, 0.45), (1.65, 7.72, -0.35), 0.2, "purple_vein"),
-        ("inscription_branch_l", (-0.8, 7.74, 0.2), (-1.9, 7.75, -0.85), 0.18, "purple_vein"),
-        ("inscription_branch_r", (0.35, 7.74, 0.0), (1.45, 7.75, 0.7), 0.18, "purple_glint"),
-        ("inscription_left", (-2.5, 5.48, 0.15), (-1.2, 5.55, 0.15), 0.2, "purple_glint"),
+        ("inscription_main", (-2.5, 6.08, 0.95), (2.5, 6.08, 0.95), 0.2, "purple_vein"),
+        ("inscription_mid", (-2.35, 6.1, -0.55), (2.25, 6.1, -0.55), 0.18, "purple_glint"),
+        ("inscription_branch_l", (-1.65, 6.1, 0.95), (-2.2, 6.1, -0.45), 0.18, "purple_vein"),
+        ("inscription_branch_r", (-0.25, 6.1, -0.55), (0.65, 6.1, 0.95), 0.18, "purple_glint"),
+        ("inscription_front_l", (-2.7, 4.72, 1.82), (-1.0, 4.92, 1.82), 0.2, "purple_glint"),
+        ("inscription_front_r", (0.35, 4.92, 1.82), (2.6, 4.72, 1.82), 0.18, "purple_vein"),
     ):
         strand(rig, "inscription_veins", name, start, end, radius, mat)
 

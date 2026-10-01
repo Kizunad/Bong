@@ -3,11 +3,11 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-cave_stone = [31, 26, 25]
+cave_stone = [42, 38, 36]
 stalk_rust = [106, 52, 30]
 amber_cap = [191, 83, 27]
 orange_glow = [255, 144, 45]
-glow_hot = [255, 196, 80]
+glow_hot = [255, 160, 64]
 
 [features]
 cave_bed = { elements = ["cave_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
