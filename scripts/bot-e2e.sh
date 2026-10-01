@@ -94,6 +94,7 @@ BOT_E2E_OPERATOR_TAGS=(
   Rein Term NewCh CoEn CoEnB CoLv CoLvB BR1 BR2 RW1 RW2 OO1 OO2 NRift
   GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux FoCj
   FoSc AlScene
+  DuxL DuxP DuxO ChatA ChatB
   TA TB DA DB SA
   Charge Throw Switch
 )
