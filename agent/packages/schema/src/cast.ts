@@ -11,7 +11,7 @@ import { Value } from "@sinclair/typebox/value";
 // TypeBox Value.Check 不默认注册 format registry，因此用 canonical UUID pattern 让
 // malformed UUID 在 schema 层也 fail-closed，而不是只在某个 bridge 自定义校验。
 const UUID = Type.String({
-  pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+  pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
 });
 const UINT64_PATTERN = "^[1-9][0-9]*$";
 
@@ -106,9 +106,9 @@ export const CastTargetRefV1 = Type.Union([CastTargetEntityV1, CastTargetBlockV1
 export type CastTargetRefV1 = Static<typeof CastTargetRefV1>;
 
 const CastSessionBeginCommon = {
-  v: Type.Literal(1),
-  caster: CastCasterRefV1,
-  target_entity_id: Type.Integer(),
+    v: Type.Literal(1),
+    caster: CastCasterRefV1,
+    target_entity_id: Type.Integer({ minimum: -2_147_483_648, maximum: 2_147_483_647 }),
   session_id: UUID,
   session_generation: CanonicalUint64String,
 };
@@ -145,6 +145,16 @@ export const CastSessionBeginV1 = Type.Union([
   CastSessionBeginExhaustedActive,
 ]);
 export type CastSessionBeginV1 = Static<typeof CastSessionBeginV1>;
+
+/** P-05 的跨字段约束：schema union 约束字段组合，此 helper 再核对 active 与 floor 相等。 */
+export function isCastSessionBeginV1(value: unknown): value is CastSessionBeginV1 {
+  if (!Value.Check(CastSessionBeginV1, value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.active_cast_instance_id === undefined) {
+    return candidate.minimum_cast_instance_id === undefined;
+  }
+  return candidate.active_cast_instance_id === candidate.minimum_cast_instance_id;
+}
 
 export const CastQuickSlotV1 = Type.Object(
   { kind: Type.Literal("quick_slot"), index: Type.Integer({ minimum: 0, maximum: 8 }) },

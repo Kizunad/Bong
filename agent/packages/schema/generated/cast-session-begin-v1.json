@@ -26,7 +26,7 @@
               ],
               "properties": {
                 "player_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -39,7 +39,7 @@
               ],
               "properties": {
                 "npc_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -47,10 +47,12 @@
           ]
         },
         "target_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         },
         "session_id": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "session_generation": {
@@ -92,7 +94,7 @@
               ],
               "properties": {
                 "player_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -105,7 +107,7 @@
               ],
               "properties": {
                 "npc_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -113,10 +115,12 @@
           ]
         },
         "target_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         },
         "session_id": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "session_generation": {
@@ -166,7 +170,7 @@
               ],
               "properties": {
                 "player_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -179,7 +183,7 @@
               ],
               "properties": {
                 "npc_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -187,10 +191,12 @@
           ]
         },
         "target_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         },
         "session_id": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "session_generation": {
@@ -232,7 +238,7 @@
               ],
               "properties": {
                 "player_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -245,7 +251,7 @@
               ],
               "properties": {
                 "npc_uuid": {
-                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
                   "type": "string"
                 }
               }
@@ -253,10 +259,12 @@
           ]
         },
         "target_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         },
         "session_id": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "session_generation": {
@@ -281,6 +289,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "a79316031a56fae50cc4aa828439ede17e0d44a00b7c3dbe2560799bd5f55acf",
+  "x-bong-typebox-source-sha256": "4fa1ebf4bc7e27e690d5d0c95739b5f5f8abe222d9a32c35d2ef5fb593162f4d",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }

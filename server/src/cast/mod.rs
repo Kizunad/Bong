@@ -16,7 +16,8 @@ pub mod identity;
 pub mod reducer;
 
 pub use identity::{
-    AllocationError, CastAttempt, CastCaster, CastIdentity, CastSession, CastSessionId,
+    AllocationError, CastAttempt, CastCaster, CastGenerationAllocator, CastIdentity, CastSession,
+    CastSessionId,
 };
 pub use reducer::{
     AvOwner, AvTombstone, CastBegin, CastEffect, CastLifecycle, CastMessage, CastOutcome,

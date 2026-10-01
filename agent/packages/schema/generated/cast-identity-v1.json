@@ -8,7 +8,7 @@
   ],
   "properties": {
     "session_id": {
-      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
       "type": "string"
     },
     "session_generation": {
@@ -22,6 +22,6 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "805d203b1361c46d23fb742541c890c6dc6b876d38e0677e113be027bd74e3ae",
+  "x-bong-typebox-source-sha256": "9e85e61cdd07e16d70dcc6f918c593a2f1e4ba638d4c06cf5e116c74d976aa08",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }

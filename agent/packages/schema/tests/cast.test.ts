@@ -7,6 +7,8 @@ import {
   CastSessionBeginV1,
   CastSyncV1,
   isCanonicalUint64String,
+  isCastSessionBeginV1,
+  isCastSyncV1,
 } from "../src/cast.js";
 
 const UUID = "00000000-0000-4000-8000-000000000001";
@@ -51,6 +53,7 @@ describe("R9 P1 cast canonical contract", () => {
     expect(Value.Check(CastIdentityV1, { ...identity, session_generation: "01" })).toBe(false);
     expect(Value.Check(CastIdentityV1, { ...identity, extra: true })).toBe(false);
     expect(Value.Check(CastIdentityV1, { ...identity, cast_instance_id: 7 })).toBe(false);
+    expect(isCanonicalUint64String({ toString: () => "1" })).toBe(false);
   });
 
   test("accepted source arms pin source, npc, skill, slot, phase, and outcome together", () => {
@@ -138,5 +141,32 @@ describe("R9 P1 cast canonical contract", () => {
       }),
     ).toBe(false);
     expect(Value.Check(CastSessionBeginV1, { ...common, allocator_exhausted: true })).toBe(true);
+    expect(
+      isCastSessionBeginV1({
+        ...common,
+        allocator_exhausted: false,
+        active_cast_instance_id: "7",
+        minimum_cast_instance_id: "8",
+      }),
+    ).toBe(false);
+    expect(isCastSessionBeginV1({ ...common, allocator_exhausted: false })).toBe(true);
+  });
+
+  test("CastSync contract helper rejects canonical integer overflow and malformed UUID", () => {
+    expect(isCastSyncV1(castSync())).toBe(true);
+    expect(
+      isCastSyncV1(
+        castSync({
+          identity: { ...identity, cast_instance_id: "18446744073709551616" },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isCastSyncV1(
+        castSync({
+          identity: { ...identity, session_id: "not-a-uuid" },
+        }),
+      ),
+    ).toBe(false);
   });
 });

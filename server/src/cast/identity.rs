@@ -4,6 +4,7 @@
 //! `CastIdentity` 的完整三元组在后续 reducer、AV 事件和 wire mirror 中都必须原样传递。
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -102,6 +103,34 @@ pub enum AllocationError {
     Exhausted,
 }
 
+/// 进程级 session generation 分配器。实例放在 server 生命周期根部即可保证全进程单调。
+#[derive(Debug)]
+pub struct CastGenerationAllocator {
+    next_generation: AtomicU64,
+}
+
+impl Default for CastGenerationAllocator {
+    fn default() -> Self {
+        Self::new(1)
+    }
+}
+
+impl CastGenerationAllocator {
+    pub const fn new(first_generation: u64) -> Self {
+        Self {
+            next_generation: AtomicU64::new(first_generation),
+        }
+    }
+
+    pub fn allocate(&self) -> Result<u64, AllocationError> {
+        self.next_generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current != 0 && current != u64::MAX).then_some(current + 1)
+            })
+            .map_err(|_| AllocationError::Exhausted)
+    }
+}
+
 /// 身份字段的 fail-closed 错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityError {
@@ -198,5 +227,16 @@ mod tests {
         assert_eq!(final_attempt.identity.cast_instance_id, u64::MAX);
         assert!(session.exhausted());
         assert_eq!(session.allocate_attempt(), Err(AllocationError::Exhausted));
+    }
+
+    #[test]
+    fn generation_allocator_is_monotonic_and_fails_closed_at_exhaustion() {
+        let allocator = CastGenerationAllocator::default();
+        assert_eq!(allocator.allocate(), Ok(1));
+        assert_eq!(allocator.allocate(), Ok(2));
+
+        let exhausted = CastGenerationAllocator::new(u64::MAX);
+        assert_eq!(exhausted.allocate(), Err(AllocationError::Exhausted));
+        assert_eq!(exhausted.allocate(), Err(AllocationError::Exhausted));
     }
 }

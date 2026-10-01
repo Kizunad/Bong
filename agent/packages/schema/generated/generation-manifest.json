@@ -497,7 +497,7 @@
       "registry_keys": [
         "castIdentityV1"
       ],
-      "source_sha256": "805d203b1361c46d23fb742541c890c6dc6b876d38e0677e113be027bd74e3ae",
+      "source_sha256": "9e85e61cdd07e16d70dcc6f918c593a2f1e4ba638d4c06cf5e116c74d976aa08",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -530,7 +530,7 @@
       "registry_keys": [
         "castPlayAnimV1"
       ],
-      "source_sha256": "294bb4be9880cba4f2330e97f5521957e39f834f3c6b5418a401439f851a3943",
+      "source_sha256": "53bbbda788fb765ec66aa80b2ad3257f2aae86a7379aaca96fc1672b27b4d22d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -541,7 +541,7 @@
       "registry_keys": [
         "castSessionBeginV1"
       ],
-      "source_sha256": "a79316031a56fae50cc4aa828439ede17e0d44a00b7c3dbe2560799bd5f55acf",
+      "source_sha256": "4fa1ebf4bc7e27e690d5d0c95739b5f5f8abe222d9a32c35d2ef5fb593162f4d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -563,7 +563,7 @@
       "registry_keys": [
         "castStopAnimV1"
       ],
-      "source_sha256": "294bb4be9880cba4f2330e97f5521957e39f834f3c6b5418a401439f851a3943",
+      "source_sha256": "53bbbda788fb765ec66aa80b2ad3257f2aae86a7379aaca96fc1672b27b4d22d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -574,7 +574,7 @@
       "registry_keys": [
         "castSyncV1"
       ],
-      "source_sha256": "908a5cced66c4348bfa43cf71b504d5ff1f00a272c6713283d80e14077bb9010",
+      "source_sha256": "94cbd23a913b9bee19cf83f680f53abc25371333e7a4b09b4ce6421b9a4bd773",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -3687,7 +3687,7 @@
       "registry_keys": [
         "serverDataV1"
       ],
-      "source_sha256": "b19a13a40f2bfab97e04d2fab60e4be8c935fa10882fed72bafba42aaa9f8a43",
+      "source_sha256": "92d9f8820a2217ab6b292324afc5b1809ad1215c9a42f3c016a6a377ee508c3d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",

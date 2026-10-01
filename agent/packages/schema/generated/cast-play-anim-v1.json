@@ -22,7 +22,7 @@
       ],
       "properties": {
         "session_id": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "session_generation": {
@@ -46,6 +46,6 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "294bb4be9880cba4f2330e97f5521957e39f834f3c6b5418a401439f851a3943",
+  "x-bong-typebox-source-sha256": "53bbbda788fb765ec66aa80b2ad3257f2aae86a7379aaca96fc1672b27b4d22d",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }
