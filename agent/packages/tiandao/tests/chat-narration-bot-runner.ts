@@ -26,7 +26,10 @@ const delay = (milliseconds: number) =>
 
 function appendSuppressedFailure(primaryFailure: unknown, cleanupFailure: unknown): void {
   if (!(primaryFailure instanceof Error)) {
-    return;
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      "清理失败且主异常不可附加 suppressed 信息",
+    );
   }
 
   const withSuppressed = primaryFailure as Error & { suppressed?: unknown[] };
