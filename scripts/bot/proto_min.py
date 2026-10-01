@@ -43,6 +43,7 @@ SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
 # proto/bong/envelope.proto ServerDataPayload oneof（与 server/src/schema/server_data.rs 对应）
 SERVER_DATA_SPARRING_INVITE_FIELD = 64
 SERVER_DATA_TRADE_OFFER_FIELD = 65
+SERVER_DATA_TRIBULATION_BROADCAST_FIELD = 67
 SERVER_DATA_QUICKSLOT_CONFIG_FIELD = 35
 
 # QuickSlotConfigV1 内部字段（proto/bong/envelope.proto QuickSlotConfig）——
@@ -2006,6 +2007,27 @@ def _tribulation_state(data: bytes) -> dict[str, Any]:
     }
 
 
+def _tribulation_broadcast(data: bytes) -> dict[str, Any]:
+    """渡劫公开广播（server_data oneof field 67）。
+
+    该 payload 同时给 Bot 提供事件阶段和按客户端位置计算的观礼邀请；
+    场景据此区分近处 observer 与远处 observer，而不读取 server 内部状态。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "tribulation_broadcast",
+        "active": bool(_varint(fields, 1)),
+        "actor_name": _string(fields, 2),
+        "stage": _string(fields, 3),
+        "world_x": _double(fields, 4),
+        "world_z": _double(fields, 5),
+        "expires_at_ms": _varint(fields, 6),
+        "spectate_invite": bool(_varint(fields, 7)),
+        "spectate_distance": _double(fields, 8),
+    }
+
+
 def _insight_offer(data: bytes) -> dict[str, Any]:
     """DONE-W6-HEADLESSAUDIT §5 P0-4：顿悟邀约（envelope.proto:131）。
 
@@ -2119,6 +2141,7 @@ SERVER_DATA_PAYLOAD_DECODERS.update(
         SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
         SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
         66: _tribulation_state,
+        SERVER_DATA_TRIBULATION_BROADCAST_FIELD: _tribulation_broadcast,
         69: _heart_demon_offer,
         SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
         72: _death_screen,
