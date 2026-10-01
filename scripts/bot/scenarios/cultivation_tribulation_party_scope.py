@@ -124,17 +124,24 @@ def run(env) -> None:
                 leader_character_id = env.lookup_character_id(leader.username)
                 participant_character_id = env.lookup_character_id(participant.username)
 
-                request_sent_at = leader.events[-1].t if leader.events else 0.0
+                # 每条 Bot 的 Event.t 都以各自连接建立时刻为零点，不能跨连接比较。
+                # 在发请求前分别建立本地水位，避免 participant/observer 因零点不同漏掉
+                # 同一轮广播。
+                leader_request_after = leader.events[-1].t if leader.events else 0.0
+                participant_request_after = (
+                    participant.events[-1].t if participant.events else 0.0
+                )
+                observer_request_after = observer.events[-1].t if observer.events else 0.0
                 leader.intent(START_DU_XU)
                 _wait_tribulation_phase(
-                    leader, "omen", request_sent_at, DUXU_OMEN_WAIT_SECONDS
+                    leader, "omen", leader_request_after, DUXU_OMEN_WAIT_SECONDS
                 )
                 _wait_tribulation_phase(
-                    participant, "omen", request_sent_at, DUXU_OMEN_WAIT_SECONDS
+                    participant, "omen", participant_request_after, DUXU_OMEN_WAIT_SECONDS
                 )
 
                 near_broadcast = _wait_broadcast(
-                    observer, "warn", request_sent_at, timeout=15.0
+                    observer, "warn", observer_request_after, timeout=15.0
                 )
                 near_payload = near_broadcast.data["payload"]
                 if not near_payload.get("active") or not near_payload.get("spectate_invite"):
@@ -155,15 +162,16 @@ def run(env) -> None:
                 far_x = observer_position[0] + OBSERVER_FAR_OFFSET_BLOCKS
                 far_z = observer_position[2]
                 observer.move_to(far_x, observer_position[1], far_z)
+                observer_lock_after = observer.events[-1].t if observer.events else 0.0
 
                 lock = _wait_tribulation_phase(
                     leader,
                     "lock",
-                    request_sent_at,
+                    leader_request_after,
                     timeout=DUXU_OMEN_WAIT_SECONDS,
                 )
                 lock_broadcast = _wait_broadcast(
-                    observer, "locked", request_sent_at, timeout=10.0
+                    observer, "locked", observer_lock_after, timeout=10.0
                 )
                 lock_payload = lock_broadcast.data["payload"]
                 if lock_payload.get("spectate_invite"):
@@ -178,6 +186,7 @@ def run(env) -> None:
                     )
 
                 leader_entity = int(leader_for_participant.data["entity_id"])
+                participant_wave_after = participant.events[-1].t if participant.events else 0.0
                 for _attempt in range(PARTICIPANT_ATTACK_ATTEMPTS):
                     participant.attack_entity(leader_entity)
                     time.sleep(PARTICIPANT_ATTACK_INTERVAL_SECONDS)
@@ -186,7 +195,7 @@ def run(env) -> None:
                     leader, "wave", lock.t, timeout=DUXU_LOCK_WAIT_SECONDS
                 )
                 participant_wave = _wait_tribulation_phase(
-                    participant, "wave", lock.t, timeout=5.0
+                    participant, "wave", participant_wave_after, timeout=5.0
                 )
                 participants = wave.data["payload"].get("participants", [])
                 if leader_character_id not in participants:
