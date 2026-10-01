@@ -30,6 +30,7 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
+import { PlantCatalogV1 } from "./plant-catalog.js";
 import { FaunaEcologySnapshotV1 } from "./fauna.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
@@ -209,7 +210,7 @@ import {
   WeatherEventDataV1,
   WeatherEventKindV1,
   WeatherEventUpdateV1,
-} from "./lingtian-weather.js";
+} from "./weather.js";
 import {
   BoneCoinTickV1,
   PriceIndexV1,
@@ -542,7 +543,6 @@ import {
   EnvironmentEffectV1,
   ZoneEnvironmentStateV1,
 } from "./zone-environment.js";
-import { ZonePressureCrossedV1, ZonePressureLevelV1 } from "./zone-pressure.js";
 
 export const SCHEMA_REGISTRY = {
   worldStateV1: WorldStateV1,
@@ -562,8 +562,6 @@ export const SCHEMA_REGISTRY = {
   narrationV1: NarrationV1,
   tiandaoHuntResponseLevelV1: TiandaoHuntResponseLevelV1,
   tiandaoHuntNarrationRequestV1: TiandaoHuntNarrationRequestV1,
-  zonePressureLevelV1: ZonePressureLevelV1,
-  zonePressureCrossedV1: ZonePressureCrossedV1,
   ratPhaseV1: RatPhaseV1,
   ratPhaseChangeEventV1: RatPhaseChangeEventV1,
   npcArchetypeV1: NpcArchetypeV1,
@@ -840,6 +838,7 @@ export const SCHEMA_REGISTRY = {
   coffinStateV1: CoffinStateV1,
   serverDataCoffinStateV1: ServerDataCoffinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
+  plantCatalogV1: PlantCatalogV1,
   faunaEcologySnapshotV1: FaunaEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -914,7 +913,7 @@ export const SCHEMA_REGISTRY = {
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
-  // 灵田加工 (plan-lingtian-process-v1 §5.3)
+  // 作物加工（种植来源将在重构后接入）
   processingKindV1: ProcessingKindV1,
   processingSessionDataV1: ProcessingSessionDataV1,
   freshnessUpdateV1: FreshnessUpdateV1,
@@ -1040,8 +1039,6 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.tiandaoHuntResponseLevelV1,
   "tiandao-hunt-narration-request-v1.json":
     SCHEMA_REGISTRY.tiandaoHuntNarrationRequestV1,
-  "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
-  "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "rat-phase-v1.json": SCHEMA_REGISTRY.ratPhaseV1,
   "rat-phase-change-event-v1.json": SCHEMA_REGISTRY.ratPhaseChangeEventV1,
   "npc-archetype-v1.json": SCHEMA_REGISTRY.npcArchetypeV1,
@@ -1381,6 +1378,7 @@ export const GENERATED_SCHEMA_FILES = {
   "coffin-state-v1.json": SCHEMA_REGISTRY.coffinStateV1,
   "server-data-coffin-state-v1.json": SCHEMA_REGISTRY.serverDataCoffinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
+  "plant-catalog-v1.json": SCHEMA_REGISTRY.plantCatalogV1,
   "fauna-ecology-snapshot-v1.json": SCHEMA_REGISTRY.faunaEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7

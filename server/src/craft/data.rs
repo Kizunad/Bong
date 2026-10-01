@@ -1148,13 +1148,22 @@ station = "none"
     #[test]
     fn default_assets_match_committed_pre_migration_fixture_field_for_field() {
         let baseline = fixture();
-        let mut expected = baseline.recipes;
+        let mut expected: Vec<_> = baseline
+            .recipes
+            .into_iter()
+            .filter(|recipe| recipe.id != "workbench.cultivation.incense_plain")
+            .collect();
         expected.sort_by(|left, right| left.id.cmp(&right.id));
 
         let mut registry = CraftRegistry::new();
         load_default_craft_recipes_for_parity(&mut registry)
             .expect("default P0 craft assets must parse for canonical parity");
-        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        // 草木香是迁移完成后的新增配方，另由制作契约测试验证。
+        let mut actual: Vec<_> = registry
+            .iter()
+            .filter(|recipe| recipe.id.as_str() != "workbench.cultivation.incense_plain")
+            .map(canonical)
+            .collect();
         actual.sort_by(|left, right| left.id.cmp(&right.id));
 
         assert_eq!(

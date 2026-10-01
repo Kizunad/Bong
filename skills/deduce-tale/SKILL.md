@@ -98,7 +98,7 @@ allowed-tools: Read Write Bash Glob Grep
 
 | 回合类型 | 时间跨度 | 适用场景 | 推演粒度 |
 |----------|---------|---------|---------|
-| **大回合** | 数日～数月 | 闭关修炼、跨域旅行、灵田种植、墟市蹲守、养伤恢复 | 概要：一次推演覆盖整段时期的转折点 |
+| **大回合** | 数日～数月 | 闭关修炼、跨域旅行、墟市蹲守、养伤恢复 | 概要：一次推演覆盖整段时期的转折点 |
 | **小回合** | 数息～数个时辰 | 战斗、妖兽遭遇、讨价还价、炼丹、突破、逃命 | 细密：一次推演只覆盖一个关键动作 |
 
 **理性判断原则**：
@@ -416,17 +416,6 @@ Edit docs/tales/<故事标题>.md — 在文件末尾追加新段落
 
 **丹炉**: 凡铁炉(tier1) / 灵铁炉(tier2) / 稀铁炉(tier3)
 
-### 灵田与植物（botany/plants.toml）
-
-| ID | 可种植 | 生长耗时 | 灵气消耗 |
-|----|--------|---------|----------|
-| ci_she_hao | ✅ | 8h (480 ticks) | low |
-| ning_mai_cao | ✅ | 16h (960 ticks) | mid |
-| ling_mu_miao | ✅ | 20d (28800 ticks) | high |
-| shi_mai_gen | ❌ 野生 only | — | — |
-
-植物稀有度种子掉率: Common 30% / Region 20% / Rare 10%
-
 ### 噬元鼠群机制（fauna/rat_phase.rs）
 
 - 三种状态: Solitary(独居) → Transitioning(转换中 600 ticks) → Gregarious(群居)
@@ -586,5 +575,5 @@ C. 先服半瓶凝脉散再进——药力护脉，但只剩半瓶，不值
 - `server/src/cultivation/components.rs` — 修炼体系定义
 - `server/src/combat/components.rs` — 战斗/重生数值
 - `server/assets/items/` — 物品数据 (core.toml / pills.toml / weapons.toml / fauna.toml / botany_v2.toml)
-- `server/assets/botany/plants.toml` — 植物生长数据
+- `server/src/botany/registry.rs` — 野生植物物种与生态数据
 - `docs/tales/` — 输出目录

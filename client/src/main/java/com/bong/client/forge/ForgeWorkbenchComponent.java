@@ -38,9 +38,11 @@ public final class ForgeWorkbenchComponent extends ModelPreviewComponent {
         String nextItem = outcome.weaponItem() != null && outcome.sessionId() > 0 ? outcome.weaponItem()
             : blueprint == null ? "" : blueprint.outputItem();
         if (!nextItem.equals(itemId)) {
-            itemId = nextItem;
-            option(new ModelPreviewCatalog.Entry(itemId, itemId, ModelPreviewCatalog.Category.ITEM, null,
-                () -> ItemInspectModel.find(itemId).orElseThrow(() -> new IllegalStateException("此装备尚无模型：" + itemId))));
+            String previewItem = nextItem;
+            itemId = previewItem;
+            option(new ModelPreviewCatalog.Entry(previewItem, previewItem, ModelPreviewCatalog.Category.ITEM, null,
+                () -> ItemInspectModel.find(previewItem).orElseThrow(
+                    () -> new IllegalStateException("此装备尚无模型：" + previewItem))));
         }
         String nextPhase = outcome.sessionId() > 0 ? outcome.bucket()
             : model.session().active() ? model.session().currentStep() : "prepare";

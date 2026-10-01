@@ -84,10 +84,6 @@
                 "type": "string"
               },
               {
-                "const": "npc_farm_pressure",
-                "type": "string"
-              },
-              {
                 "const": "scattered_cultivator",
                 "type": "string"
               },
@@ -125,6 +121,6 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "c975a24c1fd110d34f1e1ca14306eee0f385f10e6d0eec1a40fae953dbe5bf5e",
+  "x-bong-typebox-source-sha256": "4d6b8c0992fc3d63f60231df900ad8c47062569453759b833b4ee749db31e774",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }

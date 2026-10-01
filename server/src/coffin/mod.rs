@@ -330,7 +330,7 @@ pub fn register(app: &mut App) {
             .after(crate::network::client_request_handler::handle_client_request_payloads)
             .before(crate::network::audio_event_emit::emit_audio_play_payloads)
             // fix-spec-1901-v2 §4.2 — 进棺/出棺/破棺/回收会直接写玩家 `Position`，
-            // 纳入统一移动 commit set（在灵田 post-transfer validation 之前落地）。
+            // 纳入统一移动 commit set，保证传送后的交互校验读取新位置。
             .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
     );
     app.add_systems(

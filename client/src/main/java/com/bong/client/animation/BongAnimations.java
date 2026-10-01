@@ -93,7 +93,6 @@ public final class BongAnimations {
     public static final Identifier NPC_FLEE_RUN = new Identifier(MOD_ID, "npc_flee_run");
     public static final Identifier FORGE_HAMMER = new Identifier(MOD_ID, "forge_hammer");
     public static final Identifier ALCHEMY_STIR = new Identifier(MOD_ID, "alchemy_stir");
-    public static final Identifier LINGTIAN_TILL = new Identifier(MOD_ID, "lingtian_till");
     public static final Identifier INVENTORY_REACH = new Identifier(MOD_ID, "inventory_reach");
     public static final Identifier STANCE_BAOMAI = new Identifier(MOD_ID, "stance_baomai");
     public static final Identifier STANCE_DUGU = new Identifier(MOD_ID, "stance_dugu");
@@ -169,7 +168,6 @@ public final class BongAnimations {
         NPC_FLEE_RUN,
         FORGE_HAMMER,
         ALCHEMY_STIR,
-        LINGTIAN_TILL,
         INVENTORY_REACH,
         STANCE_BAOMAI,
         STANCE_DUGU,

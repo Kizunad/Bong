@@ -144,10 +144,8 @@ export const CHANNELS = {
   /** Server → Agent: 玩家 active identity 声名跨 100/500/1000 阈值 */
   HIGH_RENOWN_MILESTONE: "bong:high_renown_milestone",
 
-  /** Server → Agent: 灵田 zone pressure 跨档事件（plan-lingtian-npc-v1 P5） */
-  ZONE_PRESSURE_CROSSED: "bong:zone/pressure_crossed",
 
-  /** Server → Agent / Client: 天气事件起 / 落（plan-lingtian-weather-v1 §3 / §4.4）
+  /** Server → Agent / Client: 天气事件起 / 落
    *
    * payload 形态：`WeatherEventUpdateV1`（kind: started / expired / cleared）。
    * 单 zone MVP 用 zone_id="default"，未来扩展时按 zone 分发。 */
@@ -453,7 +451,6 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SOCIAL_RENOWN_DELTA,
   CHANNELS.SOCIAL_NICHE_INTRUSION,
   CHANNELS.HIGH_RENOWN_MILESTONE,
-  CHANNELS.ZONE_PRESSURE_CROSSED,
   CHANNELS.WEATHER_EVENT_UPDATE,
   CHANNELS.ZONE_ENVIRONMENT_UPDATE,
   CHANNELS.RAT_PHASE_EVENT,

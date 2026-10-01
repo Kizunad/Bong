@@ -24,7 +24,6 @@ public final class HudWidgetWindows {
         ATTRIBUTES("战斗属性", HudRenderLayer.DERIVED_ATTR),
         BOTANY("草木辨识", HudRenderLayer.BOTANY),
         PROCESSING("制作进度", HudRenderLayer.PROCESSING_HUD),
-        LINGTIAN("灵田", HudRenderLayer.LINGTIAN_OVERLAY),
         SEARCH("搜寻进度", HudRenderLayer.SEARCH_PROGRESS),
         FLIGHT("飞行", HudRenderLayer.FLIGHT_HUD),
         COFFIN("棺木状态", HudRenderLayer.COFFIN),

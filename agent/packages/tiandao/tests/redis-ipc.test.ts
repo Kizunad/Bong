@@ -15,7 +15,6 @@ const {
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
   DEATH_CINEMATIC,
-  ZONE_PRESSURE_CROSSED,
   PSEUDO_VEIN_ACTIVE,
   PSEUDO_VEIN_DISSIPATE,
   FORGE_OUTCOME,
@@ -1120,8 +1119,8 @@ describe("redis-ipc", () => {
           v: 1,
           zone_id: "blood_valley_east_scorch",
           kind: "thunderstorm",
-          started_at_lingtian_tick: 1440,
-          expires_at_lingtian_tick: 1620,
+          started_at_minute: 1440,
+          expires_at_minute: 1620,
           remaining_ticks: 180,
         },
       }),
@@ -1147,43 +1146,6 @@ describe("redis-ipc", () => {
     warn.mockRestore();
   });
 
-  it("observes zone pressure crossed events from the dedicated channel", async () => {
-    const pub = new FakeRedisListClient();
-    const sub = new FakeRedisListClient();
-
-    const createClient = vi
-      .fn<(url: string) => FakeRedisListClient>()
-      .mockReturnValueOnce(sub)
-      .mockReturnValueOnce(pub);
-
-    const ipc = new RedisIpc(
-      { url: "redis://fake" },
-      {
-        createClient,
-      },
-    );
-    const callback = vi.fn();
-    ipc.onZonePressureCrossed(callback);
-
-    await ipc.connect();
-    await sub.publish(
-      ZONE_PRESSURE_CROSSED,
-      JSON.stringify({
-        v: 1,
-        kind: "zone_pressure_crossed",
-        zone: "starter_zone",
-        level: "high",
-        raw_pressure: 1.1,
-        at_tick: 1440,
-      }),
-    );
-
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(ipc.drainZonePressureCrossedEvents()).toEqual([
-      expect.objectContaining({ zone: "starter_zone", level: "high", raw_pressure: 1.1 }),
-    ]);
-    expect(ipc.drainZonePressureCrossedEvents()).toEqual([]);
-  });
 
   it("observes novice POI events for narration triggers", async () => {
     const pub = new FakeRedisListClient();
@@ -1260,7 +1222,6 @@ describe("redis-ipc", () => {
     expect(sub.getSubscribedChannels()).toEqual(
       expect.arrayContaining([
         BOTANY_ECOLOGY,
-        ZONE_PRESSURE_CROSSED,
         CHANNELS.ZONE_ENVIRONMENT_UPDATE,
         AGING,
         BREAKTHROUGH_EVENT,

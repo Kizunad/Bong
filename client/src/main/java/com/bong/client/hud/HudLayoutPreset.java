@@ -29,7 +29,6 @@ public enum HudLayoutPreset {
         Widget.EVENT_STREAM,
         Widget.PROCESSING,
         Widget.MERIDIAN,
-        Widget.LINGTIAN,
         Widget.CRITICAL
     ));
 
@@ -131,7 +130,6 @@ public enum HudLayoutPreset {
             case NICHE_GUARDIAN -> Widget.TARGET;
             case EVENT_STREAM, TOAST -> Widget.EVENT_STREAM;
             case BOTANY -> Widget.BOTANY;
-            case LINGTIAN_OVERLAY -> Widget.LINGTIAN;
             case PROCESSING_HUD, SEARCH_PROGRESS, TSY_EXTRACT, HOME_SEQUENCE, REALM_COLLAPSE, GATHERING -> Widget.PROCESSING;
             case MERIDIAN_OPEN -> Widget.MERIDIAN;
             case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS,
@@ -165,7 +163,6 @@ public enum HudLayoutPreset {
         TARGET,
         EVENT_STREAM,
         BOTANY,
-        LINGTIAN,
         PROCESSING,
         MERIDIAN,
         CRITICAL

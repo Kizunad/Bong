@@ -1,5 +1,7 @@
 # Bong · plan-lingtian-v1
 
+> 2026-09-29：旧实现已整体删除，本页仅为历史设计记录。新的种植实现尚未开始；接入点统一索引 `//TODO:lingtian_refactor`。
+
 **灵田专项**（人工种植）。与 `plan-botany-v1`（野生生态）职责分离，共用 `PlantKindRegistry`。作为长线经营循环：开垦 → 种植 → 补灵 → 收获 → 翻新。
 
 **世界观锚点**：

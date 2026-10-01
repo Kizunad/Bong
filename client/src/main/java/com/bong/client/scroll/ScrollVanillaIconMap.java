@@ -12,7 +12,7 @@ import net.minecraft.item.Items;
  * plan-scroll-reading-v1 P2 — 可阅读残卷 template_id → vanilla {@link Item}（白嫖
  * {@link Items#PAPER} 走 vanilla HeldItemRenderer 管线，不做 OBJ 模型）。
  *
- * <p>照抄 {@link com.bong.client.lingtian.HoeVanillaIconMap} 的惰性
+ * <p>复用 {@link com.bong.client.weapon.HoeVanillaIconMap} 的惰性
  * {@code Supplier<Item>} 模式：headless 单测环境没有 MC Bootstrap，{@code Items}
  * 类字段若在静态初始化时直接求值会 panic。{@link #isReadableScroll} 只查 key、不触发
  * {@code Items} 求值；{@link #createStackFor} 仅在命中已知残卷 id 时才求值。

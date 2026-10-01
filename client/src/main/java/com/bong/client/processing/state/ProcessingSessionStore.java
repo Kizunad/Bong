@@ -2,7 +2,7 @@ package com.bong.client.processing.state;
 
 import java.util.Locale;
 
-/** plan-lingtian-process-v1 P3 — 当前加工 session 的本地覆盖式 store。 */
+/** 当前加工 session 的本地覆盖式 store；种植来源由后续重构接入。 */
 public final class ProcessingSessionStore {
     public enum Kind {
         DRYING,

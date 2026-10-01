@@ -5,8 +5,8 @@
 
 use crate::cultivation::components::QiColor;
 use crate::cultivation::style_modifier;
-use crate::lingtian::weather::WeatherEvent;
-use crate::lingtian::weather_profile::ZoneWeatherProfile;
+use crate::world::weather::WeatherEvent;
+use crate::world::weather_profile::ZoneWeatherProfile;
 
 pub const TRIBULATION_SCORCH_QI_LEAK_MULTIPLIER: f32 = 1.3;
 

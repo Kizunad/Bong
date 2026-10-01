@@ -722,10 +722,10 @@ fn orphan_detection_true_for_pack_container_when_owner_nested_in_pack_grid() {
 }
 
 // Bug A（真机回归核心）— 真机 v1 旧档（旧 default.toml 形态：chest=fake_spirit_hide、
-// main_hand=iron_sword、back_pack=worn_grass_pouch + 同名 back_pack 容器装 7 件），
+// main_hand=iron_sword、back_pack=worn_grass_pouch + 同名 back_pack 容器装 5 件），
 // 走完整 sqlite 加载链路（schema_version=1 → migrate → 反序列化）。
 // 必须：equipped 非空 + chest.worn==[worn_grass_pouch, fake_spirit_hide] + main_hand.held==iron_sword
-// + back_pack 容器改名到 pack_<worn_grass_pouch instance_id> 且 7 件原样保留 + body_pocket 不动。
+// + back_pack 容器改名到 pack_<worn_grass_pouch instance_id> 且 5 件原样保留 + body_pocket 不动。
 // 这把真机 join 加载路径整条锁死，任何回归（迁空 / 错置 / 丢件 / 孤儿容器）立即撞红。
 #[test]
 fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
@@ -746,9 +746,7 @@ fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
                     { "row": 0, "col": 1, "instance": v1_equip_item(5, "ningmai_powder") },
                     { "row": 0, "col": 2, "instance": v1_equip_item(6, "guyuan_pill") },
                     { "row": 1, "col": 0, "instance": v1_equip_item(7, "bone_spike") },
-                    { "row": 1, "col": 1, "instance": v1_equip_item(8, "ash_spider_silk") },
-                    { "row": 2, "col": 1, "instance": v1_equip_item(9, "ci_she_hao_seed") },
-                    { "row": 2, "col": 2, "instance": v1_equip_item(10, "ning_mai_cao_seed") }
+                    { "row": 1, "col": 1, "instance": v1_equip_item(8, "ash_spider_silk") }
                 ]
             }
         ],
@@ -791,7 +789,7 @@ fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
         "iron_sword 必须迁入 main_hand.held（真机数据丢失尤其严重，必锁死）"
     );
 
-    // back_pack 容器改名到 pack_<worn_grass_pouch instance_id=13>，7 件原样保留。
+    // back_pack 容器改名到 pack_<worn_grass_pouch instance_id=13>，5 件原样保留。
     let expected_pack_id = crate::inventory::container_id_for_worn_pack(13);
     let pack = inventory
         .containers
@@ -809,8 +807,8 @@ fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
         });
     assert_eq!(
         pack.items.len(),
-        7,
-        "改名后 pack 容器内 7 件原样保留（不丢数据）"
+        5,
+        "改名后 pack 容器内 5 件原样保留（不丢数据）"
     );
     assert!(
         !inventory.containers.iter().any(|c| c.id == "back_pack"),

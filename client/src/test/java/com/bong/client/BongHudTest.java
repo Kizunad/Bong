@@ -14,7 +14,6 @@ import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.hud.SearchHudState;
 import com.bong.client.hud.SearchProgressHudPlanner;
-import com.bong.client.lingtian.state.LingtianSessionStore;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +36,6 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
-        LingtianSessionStore.clearOnDisconnect();
         BaomaiV3HudStateStore.clear();
         AgentUiVfxStore.clear();
         HudImmersionMode.resetForTests();
@@ -49,7 +47,6 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
-        LingtianSessionStore.clearOnDisconnect();
         BaomaiV3HudStateStore.clear();
         AgentUiVfxStore.clear();
         HudImmersionMode.resetForTests();

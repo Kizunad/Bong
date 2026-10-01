@@ -524,8 +524,9 @@ STALK_PALETTE = {
 
 
 def create_texture() -> Image.Image:
-    """生成 64x64 UV Atlas 高清黑骨菌贴图。"""
-    img = Image.new("RGBA", (TEXTURE_RES, TEXTURE_RES), (0, 0, 0, 0))
+    """按 64x64 像素稿绘制黑骨菌图集，再放大到 UV 使用的分辨率。"""
+    # 下方绘图坐标属于原始像素稿，不能直接在 128x128 画布上绘制。
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
 
     # ─────────────────────────────────────────────────────────────
     # 1. 风化发黑残骨面 (bone_decayed: 0,0~32,24)

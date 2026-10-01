@@ -94,7 +94,7 @@
       "note": "只登记控制帧的 owner/字段边界；真实 frame→Restore→Store cutover 由 M-10 放行。"
     }
   ],
-  "artifact_count": 419,
+  "artifact_count": 418,
   "artifacts": [
     {
       "file": "agent-command-v1.json",
@@ -123,7 +123,7 @@
       "registry_keys": [
         "agentWorldModelEnvelopeV1"
       ],
-      "source_sha256": "d613c7875f6a0b4eef6be021c9741f64394559ba1b00ea39da782ddbdf457901",
+      "source_sha256": "145a21cf77724095cbc074440e5b9900b55ee41461bbb4be8a5fb291253a9b9e",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -134,7 +134,7 @@
       "registry_keys": [
         "agentWorldModelSnapshotV1"
       ],
-      "source_sha256": "e271863871b99271d86ab5ded5e21d0777512b63a942bc5b5dbdac764aa3cc71",
+      "source_sha256": "bae948a3f267d3940976e982224d10b319f08fdf26868a7db14aefff498d980f",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -640,7 +640,7 @@
       "registry_keys": [
         "clientPayloadNarrationV1"
       ],
-      "source_sha256": "a5d4eeb3043a9811d71024e03ee84d27813c44ed17e5cbf4857439aebf56348c",
+      "source_sha256": "61a4f5be440e0ed4335486a7b26549ce5e839ea697e90103e564a2ef9a0d2f0e",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -662,7 +662,7 @@
       "registry_keys": [
         "clientPayloadV1"
       ],
-      "source_sha256": "73d57100d8e4960f5781030b659eba12c3027f0b24fb34626a46879af3293dac",
+      "source_sha256": "8177c481ce08e69de77fd814f1b470453ec80abc7f3ae4592dfe41b399a7329b",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -1344,7 +1344,7 @@
       "registry_keys": [
         "clientRequestV1"
       ],
-      "source_sha256": "9f3aace0c74e85dae362cf80505cfa2fc77ef0270b6d9e943cce4f5b76ad197d",
+      "source_sha256": "8f99124baa58fc7290d9654e7cc40d510753642f40c9eb2c76f81d5d182e4305",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -2356,7 +2356,7 @@
       "registry_keys": [
         "narrationV1"
       ],
-      "source_sha256": "c975a24c1fd110d34f1e1ca14306eee0f385f10e6d0eec1a40fae953dbe5bf5e",
+      "source_sha256": "4d6b8c0992fc3d63f60231df900ad8c47062569453759b833b4ee749db31e774",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -2445,6 +2445,17 @@
         "npcSpawnedV1"
       ],
       "source_sha256": "803767dd92d350b544661e834d2ed37f4f4fb14bded994edb35eee13e7e95dbe",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "plant-catalog-v1.json",
+      "registry_keys": [
+        "plantCatalogV1"
+      ],
+      "source_sha256": "4b9209d9764769792b2e770a11cfd91a6004c1159d73d2e4e9be508c8a2998e1",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -2576,7 +2587,7 @@
       "registry_keys": [
         "processingKindV1"
       ],
-      "source_sha256": "2f0dc1f3447c998a9f61b8555e22535b02b1e99c5241235800196f778431c289",
+      "source_sha256": "ae6e05816eef4eab247e36b6a5c4e94e6ea427c404246401ee0c8a652a0d0920",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -2587,7 +2598,7 @@
       "registry_keys": [
         "processingSessionDataV1"
       ],
-      "source_sha256": "1871ea4a9762f30ac36fc08b862725b1b23449607a4d7a2155a7baa122a70739",
+      "source_sha256": "6f1c589f7900e000942e7c8463520c99a0b13d1c93f29129c9408c8ff7dba7a8",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -3346,7 +3357,7 @@
       "registry_keys": [
         "serverDataProcessingSessionV1"
       ],
-      "source_sha256": "6df1684c6e7997e6116086d2c25bb9dc47d479e82c665c00ab8b150ade3db5ef",
+      "source_sha256": "6cb420358a16a3fa4570a6cdd07bfd9d165157701553ff62163e1585c7118ab5",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -3687,7 +3698,7 @@
       "registry_keys": [
         "serverDataV1"
       ],
-      "source_sha256": "92d9f8820a2217ab6b292324afc5b1809ad1215c9a42f3c016a6a377ee508c3d",
+      "source_sha256": "c2050c9e0e92d0ce53f0eb1433e833eb4d7c734283c2eb298edbc5b8087f6d5d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -4545,7 +4556,7 @@
       "registry_keys": [
         "weatherEventDataV1"
       ],
-      "source_sha256": "c7e931518d8f160d9f147ae1087373705b307a5314aa13f87cdec0d21e4f2c38",
+      "source_sha256": "8e1c817a582a45e2b6154662577b62f4c2bf07cc275ade8be64aac3b0b0c2bd3",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -4567,7 +4578,7 @@
       "registry_keys": [
         "weatherEventUpdateV1"
       ],
-      "source_sha256": "ebc1d7e8d0b092745d667dd85d5172ad58791a5b508cfbec4601829dd9eb74db",
+      "source_sha256": "e46d98f85b79437b20d4e814ce726903159b1486a486a16004e985059b13cc85",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -4656,28 +4667,6 @@
         "zoneEnvironmentStateV1"
       ],
       "source_sha256": "7817a41ceb60dc20394a252d6274f0cd2e1541595297c2c7be10c8f1e6c1c0cc",
-      "generation_version": "r6-p1-v1",
-      "contract_version": "v1",
-      "status": "declared",
-      "production_reachable": false
-    },
-    {
-      "file": "zone-pressure-crossed-v1.json",
-      "registry_keys": [
-        "zonePressureCrossedV1"
-      ],
-      "source_sha256": "42303d805077cd435d7c245d4a9aefc92141332fb7a8cc5d7b9827a7f21c2a15",
-      "generation_version": "r6-p1-v1",
-      "contract_version": "v1",
-      "status": "declared",
-      "production_reachable": false
-    },
-    {
-      "file": "zone-pressure-level-v1.json",
-      "registry_keys": [
-        "zonePressureLevelV1"
-      ],
-      "source_sha256": "f2ede5749f31ea95f53a6b2a24ae0497a3593a24077ab5f5969ec96bff799ca7",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",

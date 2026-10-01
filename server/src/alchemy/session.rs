@@ -20,6 +20,8 @@ use super::outcome::{
 use super::recipe::{Recipe, RecipeId};
 use super::skill_hook::tolerance_scale;
 
+const MAX_INCENSE_BURNS: usize = 64;
+
 /// 玩家介入事件（plan §1.3）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Intervention {
@@ -140,6 +142,9 @@ impl AlchemySession {
     pub fn place_incense(&mut self, kind: String, effect: IncenseEffect) -> Result<(), String> {
         if self.finished {
             return Err("本炉已经结束".into());
+        }
+        if self.incense_burns.len() >= MAX_INCENSE_BURNS {
+            return Err("香料燃烧记录已达到上限".into());
         }
         if self.incense_active().is_some() {
             return Err("香座上仍有未燃尽的香".into());
@@ -573,6 +578,22 @@ mod tests {
             "停炉等待收取期间香仍应燃尽"
         );
         assert_eq!(session.elapsed_ticks, 1, "香料计时不能延长炼制时长");
+    }
+
+    #[test]
+    fn incense_burn_history_has_a_bounded_capacity() {
+        let recipe = simple_single_stage_recipe();
+        let mut session = AlchemySession::new(recipe.id.clone(), "alice".into());
+        let effect = super::super::incense::effect_for_item("incense_plain").unwrap();
+        for _ in 0..super::MAX_INCENSE_BURNS {
+            session
+                .place_incense("incense_plain".into(), effect.clone())
+                .unwrap();
+            session.incense = None;
+        }
+        let rejected = session.place_incense("incense_plain".into(), effect);
+        assert!(rejected.is_err(), "超过上限的香料记录必须被拒绝");
+        assert_eq!(session.incense_burns.len(), super::MAX_INCENSE_BURNS);
     }
 
     #[test]

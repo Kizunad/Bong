@@ -95,8 +95,6 @@ public final class ServerDataRouter {
         ContainerInteractionHandler containerInteractionHandler = new ContainerInteractionHandler();
         SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
         IdentityPanelStateHandler identityPanelStateHandler = new IdentityPanelStateHandler();
-        com.bong.client.network.lingtian.LingtianSessionHandler lingtianSessionHandler =
-            new com.bong.client.network.lingtian.LingtianSessionHandler();
         com.bong.client.network.processing.ProcessingServerDataHandler processingServerDataHandler =
             new com.bong.client.network.processing.ProcessingServerDataHandler();
         com.bong.client.yidao.YidaoServerDataHandler yidaoServerDataHandler =
@@ -197,7 +195,6 @@ public final class ServerDataRouter {
         handlers.put("search_progress", containerInteractionHandler);
         handlers.put("search_completed", containerInteractionHandler);
         handlers.put("search_aborted", containerInteractionHandler);
-        handlers.put("lingtian_session", lingtianSessionHandler);
         handlers.put("processing_session", processingServerDataHandler);
         handlers.put("freshness_update", processingServerDataHandler);
         handlers.put("healer_npc_ai_state", yidaoServerDataHandler);

@@ -122,20 +122,6 @@ public enum BongEntityModelKind {
         "active",
         "exhausted"
     ),
-    LINGTIAN_PLOT(
-        "lingtian_plot",
-        "LingtianPlot.bbmodel",
-        155,
-        0.9f,
-        0.2f,
-        64,
-        10,
-        0.05f,
-        "wild",
-        "tilled",
-        "planted",
-        "mature"
-    ),
     DRY_CORPSE(
         "dry_corpse",
         "DryCorpse.bbmodel",

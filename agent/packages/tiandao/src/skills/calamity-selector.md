@@ -21,7 +21,7 @@
 | daoxiang_wave | 30 | 无 | pressure | 消耗战，风险和掉落并存 |
 | heavenly_fire | 35 | 仅夏季 | tribulation | 永久焦土、断资源根 |
 | pressure_invert | 40 | 仅汐转 | tribulation | 针对通灵/化虚，低境少害 |
-| all_wither | 25 | 仅冬季 | pressure | 断灵草和灵田链 |
+| all_wither | 25 | 仅冬季 | pressure | 断灵草链 |
 | realm_collapse | 60 | 无 | annihilate | 终极手段，灭区域 |
 
 ## 决策原则

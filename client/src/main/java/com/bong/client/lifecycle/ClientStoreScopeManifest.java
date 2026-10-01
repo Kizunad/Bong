@@ -95,7 +95,6 @@ public final class ClientStoreScopeManifest {
         "com.bong.client.inventory.state.PlayerRaceIdentityStore",
         "com.bong.client.inventory.state.RaceGateMetaStore",
         "com.bong.client.inventory.state.RemainsStore",
-        "com.bong.client.lingtian.state.LingtianSessionStore",
         "com.bong.client.movement.MovementStateStore",
         "com.bong.client.npc.NpcInteractionLogStore",
         "com.bong.client.npc.NpcLodStore",

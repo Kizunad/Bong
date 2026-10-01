@@ -11,7 +11,6 @@ identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	SCREE
 insight/InsightOfferScreen.java	InsightOfferScreen	OWO	CODE	SCREEN_SCOPE
 inventory/InspectScreen.java	InspectScreen	OWO	CODE	SCREEN_SCOPE
 inventory/LootContainerScreen.java	LootContainerScreen	OWO	CODE	SCREEN_SCOPE
-lingtian/LingtianActionScreen.java	LingtianActionScreen	OWO	CODE	SCREEN_SCOPE
 menu/MainMenuScreen.java	MainMenuScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 npc/NpcDialogueScreen.java	NpcDialogueScreen	OWO	CODE	SCREEN_SCOPE
 npc/NpcInspectScreen.java	NpcInspectScreen	OWO	CODE	SCREEN_SCOPE

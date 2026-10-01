@@ -59,7 +59,7 @@ public final class JuiceControls {
             client.currentScreen != null,
             message -> {
                 if (client.player != null) {
-                    // true = 动作栏瞬态回显（先例 InspectScreenBootstrap / LingtianActionScreen）。
+                    // true = 动作栏瞬态回显（先例 InspectScreenBootstrap）。
                     client.player.sendMessage(message, true);
                 }
             }

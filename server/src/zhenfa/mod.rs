@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, bevy_ecs::system::SystemParam, App, BlockPos, BlockState, ChunkLayer, Client,
     Commands, Component, DVec3, Entity, Event, EventReader, EventWriter, Events, IntoSystemConfigs,
-    Mut, Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, UniqueId, Update,
+    Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, UniqueId, Update,
     Username, With, Without,
 };
 
@@ -27,14 +27,11 @@ use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, inventory_item_by_instance_borrow,
     InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
-use crate::lingtian::{LingtianPlot, PLOT_QI_CAP_MAX, QI_LINGJU_ARRAY_CAP_BONUS};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::DecoyTarget;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::constants::{
-    QI_EPSILON, QI_NETWORK_ARRAY_LINGJU_CAP_BONUS, QI_SCATTER_BEAD_CAPACITY, QI_ZONE_UNIT_CAPACITY,
-};
+use crate::qi_physics::constants::{QI_EPSILON, QI_SCATTER_BEAD_CAPACITY, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     qi_excretion, qi_release_to_zone, CarrierGrade, ContainerKind, EnvField, MediumKind,
     QiAccountId, QiTransfer, QiTransferReason, StyleAttack, StyleDefense, WorldQiAccount,
@@ -535,12 +532,6 @@ enum NetworkArrayPlaceItem {
     Eye,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum PlotCapSource {
-    Lingju(u64),
-    NetworkArray(u64),
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct ActiveNetworkArray {
     id: u64,
@@ -577,8 +568,6 @@ pub struct ZhenfaRegistry {
     slow_inside: HashSet<(u64, Entity)>,
     network_inside: HashSet<(u64, Entity)>,
     network_arrays: NetworkArrayRegistry,
-    plot_cap_sources: HashMap<BlockPos, HashMap<PlotCapSource, f32>>,
-    plot_cap_base_caps: HashMap<BlockPos, f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -961,160 +950,7 @@ impl ZhenfaRegistry {
     }
 }
 
-fn apply_lingju_effect(
-    instance: &ZhenfaInstance,
-    registry: &mut ZhenfaRegistry,
-    plot_env_writer: &mut Query<&mut LingtianPlot>,
-) {
-    apply_plot_cap_source(
-        PlotCapSource::Lingju(instance.id),
-        QI_LINGJU_ARRAY_CAP_BONUS,
-        |pos| lingju_covers_plot(instance, pos),
-        registry,
-        plot_env_writer.iter_mut(),
-    );
-}
-
-fn clear_lingju_effect(
-    instance: &ZhenfaInstance,
-    registry: &mut ZhenfaRegistry,
-    plot_env_writer: &mut Query<&mut LingtianPlot>,
-) {
-    clear_lingju_effect_for_plots(instance, registry, plot_env_writer.iter_mut());
-}
-
-fn clear_lingju_effect_for_plots<'a>(
-    instance: &ZhenfaInstance,
-    registry: &mut ZhenfaRegistry,
-    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
-) {
-    clear_plot_cap_source(PlotCapSource::Lingju(instance.id), registry, plots);
-}
-
-fn lingju_covers_plot(instance: &ZhenfaInstance, pos: BlockPos) -> bool {
-    in_horizontal_radius(
-        DVec3::new(
-            f64::from(pos.x) + 0.5,
-            f64::from(pos.y),
-            f64::from(pos.z) + 0.5,
-        ),
-        instance.pos,
-        instance.effect_radius,
-    )
-}
-
-fn apply_network_array_effect(
-    network: &ActiveNetworkArray,
-    registry: &mut ZhenfaRegistry,
-    plot_env_writer: &mut Query<&mut LingtianPlot>,
-) {
-    apply_plot_cap_source(
-        PlotCapSource::NetworkArray(network.id),
-        QI_NETWORK_ARRAY_LINGJU_CAP_BONUS,
-        |pos| network_array_covers_plot(network, pos),
-        registry,
-        plot_env_writer.iter_mut(),
-    );
-}
-
-fn clear_network_array_effect(
-    network: &ActiveNetworkArray,
-    registry: &mut ZhenfaRegistry,
-    plot_env_writer: &mut Query<&mut LingtianPlot>,
-) {
-    clear_plot_cap_source(
-        PlotCapSource::NetworkArray(network.id),
-        registry,
-        plot_env_writer.iter_mut(),
-    );
-}
-
-fn apply_plot_cap_source<'a>(
-    source: PlotCapSource,
-    bonus: f32,
-    covers: impl Fn(BlockPos) -> bool,
-    registry: &mut ZhenfaRegistry,
-    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
-) {
-    for mut plot in plots {
-        if !covers(plot.pos) {
-            continue;
-        }
-        {
-            let sources = registry.plot_cap_sources.entry(plot.pos).or_default();
-            if sources.is_empty() {
-                registry
-                    .plot_cap_base_caps
-                    .entry(plot.pos)
-                    .or_insert(plot.plot_qi_cap);
-            }
-            sources.insert(source, bonus);
-        }
-        recompute_plot_cap(&mut plot, registry);
-    }
-}
-
-fn clear_plot_cap_source<'a>(
-    source: PlotCapSource,
-    registry: &mut ZhenfaRegistry,
-    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
-) {
-    let mut touched = Vec::new();
-    for (pos, sources) in &mut registry.plot_cap_sources {
-        if sources.remove(&source).is_some() {
-            touched.push(*pos);
-        }
-    }
-    for pos in touched {
-        if registry
-            .plot_cap_sources
-            .get(&pos)
-            .is_some_and(|sources| sources.is_empty())
-        {
-            registry.plot_cap_sources.remove(&pos);
-        }
-    }
-
-    for mut plot in plots {
-        if !registry.plot_cap_sources.contains_key(&plot.pos)
-            && !registry.plot_cap_base_caps.contains_key(&plot.pos)
-        {
-            continue;
-        }
-        recompute_plot_cap(&mut plot, registry);
-    }
-}
-
-fn recompute_plot_cap(plot: &mut LingtianPlot, registry: &mut ZhenfaRegistry) {
-    let Some(base_cap) = registry.plot_cap_base_caps.get(&plot.pos).copied() else {
-        return;
-    };
-    let Some(sources) = registry.plot_cap_sources.get(&plot.pos) else {
-        plot.plot_qi_cap = base_cap;
-        plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
-        registry.plot_cap_base_caps.remove(&plot.pos);
-        return;
-    };
-    if sources.is_empty() {
-        plot.plot_qi_cap = base_cap;
-        plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
-        registry.plot_cap_base_caps.remove(&plot.pos);
-        return;
-    }
-    let bonus = sources
-        .values()
-        .copied()
-        .fold(0.0_f32, |max_bonus, source_bonus| {
-            max_bonus.max(source_bonus)
-        });
-    plot.plot_qi_cap = (base_cap + bonus).min(PLOT_QI_CAP_MAX);
-    plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
-}
-
-fn network_array_covers_plot(network: &ActiveNetworkArray, pos: BlockPos) -> bool {
-    network_array::point_inside_hull_xz([pos.x, pos.y, pos.z], &network.hull)
-        && (pos.y - network.eye_pos[1]).abs() <= 3
-}
+//TODO:lingtian_refactor 聚灵阵和连阵的田块增益在新实现中接入。
 
 fn network_array_covers_position(network: &ActiveNetworkArray, position: DVec3) -> bool {
     network_array::point_inside_hull_xz_f64(position.x, position.z, &network.hull)
@@ -2836,7 +2672,6 @@ fn tick_zhenfa_registry(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
-    mut plots: Query<&mut LingtianPlot>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
@@ -2851,9 +2686,6 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
-        if instance.kind == ZhenfaKind::Lingju {
-            clear_lingju_effect(instance, &mut registry, &mut plots);
-        }
         if should_release_sealed_qi_to_zone(instance.kind) {
             release_zhenfa_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
         }
@@ -2879,7 +2711,6 @@ fn tick_zhenfa_registry(
     }
     let dissolved_networks = registry.drain_network_dissolutions();
     for network in &dissolved_networks {
-        clear_network_array_effect(network, &mut registry, &mut plots);
         emit_network_array_break_feedback(
             network,
             pending_narrations.as_deref_mut(),
@@ -2896,7 +2727,6 @@ fn tick_zhenfa_registry(
     let mut ward_alerts = Vec::new();
     let mut network_alerts = Vec::new();
     let mut deceived_exposed = Vec::new();
-    let mut lingju_instances = Vec::new();
     let mut current_ward_inside = HashSet::new();
     let mut current_slow_inside = HashSet::new();
     let mut current_network_inside = HashSet::new();
@@ -3093,9 +2923,7 @@ fn tick_zhenfa_registry(
                     &mut events.status_effects,
                 );
             }
-            ZhenfaKind::Lingju => {
-                lingju_instances.push(instance.clone());
-            }
+            ZhenfaKind::Lingju => {}
             ZhenfaKind::DeceiveHeaven => {
                 if deceive_heaven_detected(instance, now) {
                     deceived_exposed.push((
@@ -3110,15 +2938,11 @@ fn tick_zhenfa_registry(
             ZhenfaKind::NetworkArray => {}
         }
     }
-    for instance in &lingju_instances {
-        apply_lingju_effect(instance, &mut registry, &mut plots);
-    }
     let active_networks = registry
         .active_network_arrays()
         .cloned()
         .collect::<Vec<_>>();
     for network in &active_networks {
-        apply_network_array_effect(network, &mut registry, &mut plots);
         network_warning_tick(
             network,
             now,
@@ -3381,7 +3205,6 @@ fn handle_zhenfa_disarm_requests(
     mut commands: Commands,
     mut players: Query<ZhenfaDisarmPlayer<'_>>,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
-    mut plots: Query<&mut LingtianPlot>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
@@ -3417,9 +3240,6 @@ fn handle_zhenfa_disarm_requests(
         let Some(instance) = registry.remove(instance_id) else {
             continue;
         };
-        if instance.kind == ZhenfaKind::Lingju {
-            clear_lingju_effect(&instance, &mut registry, &mut plots);
-        }
         remove_zhenfa_anchor_block(&mut layers, instance.pos);
         commands.entity(instance.anchor_entity).despawn();
         breakthrough_events.send(ArrayBreakthroughEvent {
@@ -3476,7 +3296,6 @@ fn handle_zhenfa_disarm_requests(
         }
         let dissolved_networks = registry.drain_network_dissolutions();
         for network in &dissolved_networks {
-            clear_network_array_effect(network, &mut registry, &mut plots);
             emit_network_array_break_feedback(
                 network,
                 pending_narrations.as_deref_mut(),

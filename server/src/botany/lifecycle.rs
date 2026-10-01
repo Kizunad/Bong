@@ -102,7 +102,7 @@ fn splitmix(seed: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-fn spawn_seed(now_tick: u64, kind: BotanyPlantId, spawn_idx: u32) -> u64 {
+fn spawn_seed(now_tick: u64, kind: &BotanyPlantId, spawn_idx: u32) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -156,7 +156,7 @@ fn spawn_v2_plants_for_zone(
             continue;
         };
         let Some((position, growth_score)) =
-            v2_candidate_position(kind.id, spec.survival_mode, zone, terrain, now_tick)
+            v2_candidate_position(&kind.id, spec.survival_mode, zone, terrain, now_tick)
         else {
             continue;
         };
@@ -177,12 +177,12 @@ fn spawn_v2_plants_for_zone(
         if target_count == 0 {
             continue;
         }
-        let count_key = (zone.name.clone(), kind.id);
+        let count_key = (zone.name.clone(), kind.id.clone());
         let current_count = active_counts.get(&count_key).copied().unwrap_or(0);
         for spawn_idx in current_count..target_count {
-            let seed = spawn_seed(now_tick, kind.id, spawn_idx);
+            let seed = spawn_seed(now_tick, &kind.id, spawn_idx);
             commands.spawn(Plant {
-                id: kind.id,
+                id: kind.id.clone(),
                 zone_name: zone.name.clone(),
                 position,
                 planted_at_tick: now_tick,
@@ -203,7 +203,7 @@ fn spawn_v2_plants_for_zone(
 }
 
 fn v2_candidate_position(
-    kind: BotanyPlantId,
+    kind: &BotanyPlantId,
     survival_mode: SurvivalMode,
     zone: &Zone,
     terrain: &crate::world::terrain::TerrainProvider,
@@ -302,6 +302,7 @@ pub fn initialize_static_points_from_zones(
     mut static_points: ResMut<PlantStaticPointStore>,
     registry: Res<BotanyKindRegistry>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
 ) {
     if static_points.is_initialized() {
         return;
@@ -314,7 +315,7 @@ pub fn initialize_static_points_from_zones(
     let mut next_id = 1_u64;
     for zone in &zone_registry.zones {
         for mut point in spawn_static_points_for_zone(zone) {
-            let Some(kind) = registry.get(point.preferred_plant) else {
+            let Some(kind) = registry.get(&point.preferred_plant) else {
                 continue;
             };
             if kind.spawn_mode != BotanySpawnMode::StaticPoint || !zone_supports(kind, zone) {
@@ -326,6 +327,44 @@ pub fn initialize_static_points_from_zones(
             point.last_spawn_tick = None;
             point.bound_entity = None;
             static_points.upsert(point);
+            next_id = next_id.saturating_add(1);
+        }
+    }
+
+    // BongWorldGen 的稀疏 sidecar 是 gameplay 刷新锚点，不参与视觉 flora
+    // 装饰。只接纳 StaticPoint 植物，保证它们继续走既有再生、收获和真元账本。
+    if let Some(providers) = terrain_providers.as_deref() {
+        for raw in providers.overworld.wild_plant_points() {
+            let Some(kind) = registry.get(&raw.plant_id) else {
+                continue;
+            };
+            if kind.spawn_mode != BotanySpawnMode::StaticPoint {
+                continue;
+            }
+            let [x, y, z] = raw.position;
+            let Some(zone) = zone_registry.find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                valence::prelude::DVec3::new(f64::from(x), f64::from(y), f64::from(z)),
+            ) else {
+                continue;
+            };
+            if zone.name != raw.zone_name || !zone_supports(kind, zone) {
+                continue;
+            }
+
+            static_points.upsert(PlantStaticPoint {
+                id: next_id,
+                zone_name: zone.name.clone(),
+                position: [f64::from(x), f64::from(y), f64::from(z)],
+                preferred_plant: kind.id.clone(),
+                last_spawn_tick: None,
+                regen_ticks: if raw.regen_ticks == 0 {
+                    kind.regen_ticks
+                } else {
+                    raw.regen_ticks
+                },
+                bound_entity: None,
+            });
             next_id = next_id.saturating_add(1);
         }
     }
@@ -384,7 +423,7 @@ pub fn run_botany_lifecycle_tick(
             wither_targets.push(entity);
             continue;
         }
-        let Some(kind) = registry.get(plant.id) else {
+        let Some(kind) = registry.get(&plant.id) else {
             continue;
         };
 
@@ -447,7 +486,7 @@ pub fn run_botany_lifecycle_tick(
         }
 
         *active_counts
-            .entry((plant.zone_name.clone(), plant.id))
+            .entry((plant.zone_name.clone(), plant.id.clone()))
             .or_default() += 1;
     }
 
@@ -500,14 +539,14 @@ pub fn run_botany_lifecycle_tick(
                 continue;
             }
 
-            let count_key = (zone.name.clone(), kind.id);
+            let count_key = (zone.name.clone(), kind.id.clone());
             let current_count = active_counts.get(&count_key).copied().unwrap_or(0);
             for spawn_idx in current_count..target_count {
                 if zone.spirit_qi < spawn_threshold {
                     break;
                 }
 
-                let seed = spawn_seed(now_tick, kind.id, spawn_idx);
+                let seed = spawn_seed(now_tick, &kind.id, spawn_idx);
                 let position = zone_sampled_position(seed, zone);
                 let variant = roll_variant_for_zone(
                     zone,
@@ -515,7 +554,7 @@ pub fn run_botany_lifecycle_tick(
                     variant_roll.as_ref(),
                 );
                 commands.spawn(Plant {
-                    id: kind.id,
+                    id: kind.id.clone(),
                     zone_name: zone.name.clone(),
                     position,
                     planted_at_tick: now_tick,
@@ -541,7 +580,7 @@ pub fn run_botany_lifecycle_tick(
         if is_ephemeral_pseudo_vein_zone(zone) {
             continue;
         }
-        let Some(kind) = registry.get(point.preferred_plant) else {
+        let Some(kind) = registry.get(&point.preferred_plant) else {
             continue;
         };
         if kind.spawn_mode != BotanySpawnMode::StaticPoint || !zone_supports(kind, zone) {
@@ -566,7 +605,7 @@ pub fn run_botany_lifecycle_tick(
         );
         let entity = commands
             .spawn(Plant {
-                id: point.preferred_plant,
+                id: point.preferred_plant.clone(),
                 zone_name: point.zone_name.clone(),
                 position: point.position,
                 planted_at_tick: now_tick,
@@ -608,16 +647,16 @@ fn plant_spirit_quality(
     item_registry: Option<&ItemRegistry>,
 ) -> f32 {
     let base = item_registry
-        .and_then(|registry| registry.get(kind.item_id))
+        .and_then(|registry| registry.get(&kind.item_id))
         .map(|template| template.spirit_quality_initial)
         .unwrap_or_else(|| f64::from(kind.survive_threshold.max(0.5)));
     (base + variant.quality_modifier()).clamp(0.0, 1.0) as f32
 }
 
-fn botany_stage_event_id(plant_id: BotanyPlantId, stage: PlantGrowthStage) -> String {
+fn botany_stage_event_id(plant_id: impl AsRef<str>, stage: PlantGrowthStage) -> String {
     format!(
         "{BOTANY_PLANT_STAGE_EVENT_PREFIX}__{}__{}",
-        plant_id.as_str(),
+        plant_id.as_ref(),
         stage.as_wire_name()
     )
 }
@@ -632,7 +671,7 @@ fn emit_botany_plant_stage_vfx(
     vfx_events.send(VfxEventRequest::new(
         valence::prelude::DVec3::new(origin[0], origin[1], origin[2]),
         VfxEventPayloadV1::SpawnParticle {
-            event_id: botany_stage_event_id(plant.id, stage),
+            event_id: botany_stage_event_id(&plant.id, stage),
             origin,
             direction: None,
             color: Some(botany_quality_color(spirit_quality).to_string()),
@@ -1224,6 +1263,54 @@ mod tests {
             .expect("one static point should seed");
         assert_eq!(point.zone_name, "lingquan_marsh");
         assert_eq!(point.preferred_plant, BotanyPlantId::GuYuanGen);
+    }
+
+    #[test]
+    fn worldgen_wild_plant_points_join_static_refresh_store() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(TerrainProviders {
+            overworld: crate::world::terrain::TerrainProvider::with_wild_plant_points_for_tests(
+                vec![crate::world::terrain::WildPlantSpawnPoint {
+                    id: 42,
+                    plant_id: "gu_yuan_gen".to_string(),
+                    zone_name: "lingquan_marsh".to_string(),
+                    position: [2, 1, 2],
+                    regen_ticks: 1234,
+                }],
+            ),
+            tsy: None,
+        });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![Zone {
+                name: "lingquan_marsh".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([4.0, 4.0, 4.0]).get(),
+                ),
+                spirit_qi: 0.9,
+                danger_level: 2,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        app.add_systems(Update, initialize_static_points_from_zones);
+
+        app.update();
+
+        let points = app.world().resource::<PlantStaticPointStore>();
+        let point = points
+            .iter()
+            .find(|point| point.position == [2.0, 1.0, 2.0])
+            .expect("worldgen point should become a static refresh point");
+        assert_eq!(point.preferred_plant, BotanyPlantId::GuYuanGen);
+        assert_eq!(point.regen_ticks, 1234);
     }
 
     #[test]

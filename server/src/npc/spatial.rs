@@ -1,6 +1,6 @@
 //! NPC 空间索引。
 //!
-//! 本模块只索引 `NpcMarker` 实体。玩家 / 灵田 / ore 等非 NPC 查询暂不纳入，
+//! 本模块只索引 `NpcMarker` 实体。玩家、采集目标和矿石等非 NPC 查询暂不纳入，
 //! 避免把本 plan 的性能修复扩成通用空间库。
 
 use std::collections::HashMap;

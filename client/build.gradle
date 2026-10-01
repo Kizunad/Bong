@@ -211,6 +211,13 @@ tasks.withType(Test) {
     useJUnitPlatform()
 }
 
+tasks.named('processResources') {
+    from('../shared/botany') {
+        include 'plants.json'
+        into 'assets/bong-client/botany'
+    }
+}
+
 tasks.named('runGametest') {
     doFirst {
         // Dedicated GameTest servers require an explicit EULA acceptance even on a fresh CI runner.

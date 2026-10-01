@@ -12,7 +12,7 @@ import net.minecraft.util.Identifier;
  * <p>视觉为 vanilla {@link ParticleTypes#HAPPY_VILLAGER}（绿色心叶星点），围绕练习者头部上方
  * 小范围散开。复用 vanilla 粒子贴图，无净新资产。
  *
- * <p>架构对齐：与 woliu / anqi / baomai / lingtian 等所有 gameplay 粒子一致，走 {@code bong:}
+ * <p>架构对齐：与 woliu / anqi / baomai 等 gameplay 粒子一致，走 {@code bong:}
  * 命名空间事件 + {@code bong:vfx_event} JSON 通道（{@link VfxRegistry} 查表），从而统一享受
  * 服务端的半径过滤 / 合批 / 优先级限流。服务端 {@code emit_guangbo_ticao_visual_triggers} 引用
  * 此 event id；{@link VfxBootstrap#registerDefaults()} 完成注册。

@@ -37,14 +37,6 @@ inventory/InspectScreen.java	6	526	LEGAL	NONE	skillTabContent = Containers.verti
 inventory/InspectScreen.java	7	710	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 inventory/InspectScreen.java	8	994	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 inventory/component/EquipmentPanel.java	1	35	COMMENT	NONE	* 层数角标 y-2，均落在 PANEL_HEIGHT=168 内。绝对定位避免 owo Sizing.fill(100) 顶飞兄弟节点
-lingtian/LingtianActionScreen.java	1	104	LEGAL	NONE	FlowLayout h = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	2	111	LEGAL	NONE	FlowLayout h = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	3	121	LEGAL	NONE	FlowLayout col = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	4	124	LEGAL	NONE	FlowLayout seedRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	5	137	LEGAL	NONE	FlowLayout col = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	6	141	LEGAL	NONE	FlowLayout srcRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	7	156	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-lingtian/LingtianActionScreen.java	8	165	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
 npc/NpcTradeScreen.java	1	90	LEGAL	NONE	FlowLayout headerRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
 processing/ProcessingActionScreen.java	1	61	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
 scroll/ScrollReadScreen.java	1	34	COMMENT	NONE	*   <li>viewport 高度用 {@code Sizing.fixed(VIEWPORT_HEIGHT_PX)}——{@code Sizing.fill(100)}

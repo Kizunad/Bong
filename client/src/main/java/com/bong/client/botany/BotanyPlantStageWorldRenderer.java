@@ -66,23 +66,41 @@ public final class BotanyPlantStageWorldRenderer {
                 .orElse(BotanyPlantRenderProfile.fallback(entry.plantId()));
             BotanyPlantVisualState visual = BotanyPlantVisualState.forStage(
                 entry.stage(),
-                entry.tintRgb(),
+                PlantModelRegistry.tint(entry.plantId()).present()
+                    ? PlantModelRegistry.tint(entry.plantId()).value()
+                    : entry.tintRgb(),
                 (int) worldTime,
                 tickDelta
             );
-            Identifier texture = textureFor(client, entry, profile);
+            PlantModelRegistry.PlantStageModel model = PlantModelRegistry.stage(entry.plantId(), entry.stage()).orElse(null);
             BlockPos lightPos = BlockPos.ofFloored(entry.x(), entry.y() + 0.5, entry.z());
             int light = WorldRenderer.getLightmapCoordinates(world, lightPos);
 
             matrices.push();
-            matrices.translate(dx, dy + 0.02, dz);
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - cameraYaw));
-            matrices.scale(visual.scale(), visual.scale(), visual.scale());
-            if (visual.swayRadians() != 0.0f) {
-                matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
+            try {
+                matrices.translate(
+                    dx + (model == null ? 0.0 : model.offsetX()),
+                    dy + 0.02 + (model == null ? 0.0 : model.offsetY()),
+                    dz + (model == null ? 0.0 : model.offsetZ())
+                );
+                float modelScale = model == null ? 1.0f : model.scale();
+                matrices.scale(visual.scale() * modelScale, visual.scale() * modelScale, visual.scale() * modelScale);
+                if (visual.swayRadians() != 0.0f) {
+                    matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
+                }
+                boolean emissive = entry.stage() != PlantGrowthStage.WILTED
+                    && profile.overlay() == BotanyPlantRenderProfile.ModelOverlay.EMISSIVE;
+                boolean rendered = model != null && model.isGeo() && PlantGeoRenderer.render(
+                    "world:" + entry.key(), model, visual, worldTime, tickDelta,
+                    matrices, consumers, emissive ? 0x00F000F0 : light);
+                if (!rendered) {
+                    matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - cameraYaw));
+                    drawPlantQuad(consumers, matrices, textureFor(client, entry, profile),
+                        visual.tintRgb(), light, visual.alpha());
+                }
+            } finally {
+                matrices.pop();
             }
-            drawPlantQuad(consumers, matrices, texture, visual.tintRgb(), light, visual.alpha());
-            matrices.pop();
         }
     }
 
@@ -92,16 +110,22 @@ public final class BotanyPlantStageWorldRenderer {
         BotanyPlantRenderProfile profile
     ) {
         if (entry.stage() == PlantGrowthStage.SEEDLING || entry.stage() == PlantGrowthStage.GROWING) {
-            Identifier stageTexture = new Identifier(
-                "bong-client",
-                "textures/gui/botany/stages/" + entry.plantId() + "_" + entry.stage().wireName() + ".png"
-            );
+            Identifier stageTexture = PlantModelRegistry.stage(entry.plantId(), entry.stage())
+                .filter(model -> !model.isGeo())
+                .map(PlantModelRegistry.PlantStageModel::texture)
+                .orElse(null);
+            if (stageTexture == null) {
+                stageTexture = new Identifier(
+                    "bong-client",
+                    "textures/gui/botany/stages/" + entry.plantId() + "_" + entry.stage().wireName() + ".png"
+                );
+            }
             if (client.getResourceManager().getResource(stageTexture).isPresent()) {
                 return stageTexture;
             }
             return FALLBACK_STAGE_TEXTURE;
         }
-        return BotanyPlantEntityRenderer.textureFor(profile.baseMeshRef());
+        return BotanyPlantEntityRenderer.textureFor(entry.plantId(), entry.stage(), profile.baseMeshRef());
     }
 
     private static void drawPlantQuad(

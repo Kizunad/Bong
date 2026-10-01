@@ -137,10 +137,6 @@
                     "type": "string"
                   },
                   {
-                    "const": "npc_farm_pressure",
-                    "type": "string"
-                  },
-                  {
                     "const": "scattered_cultivator",
                     "type": "string"
                   },
@@ -14669,7 +14665,7 @@
           "type": "string"
         },
         "kind": {
-          "description": "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺",
+          "description": "四类作物二级加工工艺；种植来源由后续重构接入",
           "anyOf": [
             {
               "const": "drying",
@@ -22216,6 +22212,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "92d9f8820a2217ab6b292324afc5b1809ad1215c9a42f3c016a6a377ee508c3d",
+  "x-bong-typebox-source-sha256": "c2050c9e0e92d0ce53f0eb1433e833eb4d7c734283c2eb298edbc5b8087f6d5d",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }
