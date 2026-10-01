@@ -222,6 +222,18 @@ SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
     "protocol_identity",
     "combat_attack_hit",
 )
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[3] = (
+    "protocol_identity",
+    "agent_chat_narration_roundtrip",
+)
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[66] = (
+    "protocol_identity",
+    "cultivation_tribulation_party_scope",
+)
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[67] = (
+    "protocol_identity",
+    "cultivation_tribulation_party_scope",
+)
 SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[143] = ("protocol_identity",)
 
 

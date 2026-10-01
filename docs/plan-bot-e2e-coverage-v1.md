@@ -23,7 +23,7 @@ RF-45 已在总纲 §9.9（2026-09-30）将 `scripts/bot/` 定位为正式支持
 | P2 | 战斗模块：attack NPC → typed combat/death；skill cast intent → cast/VFX/SFX | ✅ 2026-07-29（PR #980、#1314） |
 | P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ✅ 2026-07-29（PR #983、#1314） |
 | P4 | 生产系统：炼丹 / 锻造 / 制作 / 灵田 / 采集 | ✅ 2026-07-29（PR #982、#1314） |
-| P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离与双人交易已落地；组队渡劫/Agent 回流待补 | ⏳ |
+| P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离、双人交易、组队渡劫与 Agent 回流 | ✅ 2026-10-01 |
 | P6 | `bong:server_data` 零依赖 protobuf 深解码与 oneof identity 覆盖 | ✅ 2026-09-10（PR #2212） |
 
 ## P0 — 框架 + 首批场景（本 PR）
@@ -73,7 +73,7 @@ RF-45 已在总纲 §9.9（2026-09-30）将 `scripts/bot/` 定位为正式支持
 - **合入证据（PR #982、#1314）**：`scripts/bot/scenarios/production_alchemy_brew_pill.py`、`production_alchemy_forge_intents.py`、`production_craft_disconnect_resume.py`、`production_lingtian_gathering_intents.py`、`server/src/inventory/mod.rs`、`server/src/network/alchemy_snapshot_emit.rs`；炼丹、锻造、制作、灵田和采集场景均已合入。
 - **冻结边界（灵田）**：`production_lingtian_gathering_intents.py` 只作为既有场景验收证据；灵田玩法与数据语义 **冻结，待整体重构**，不在本 plan 中扩展。
 
-## P5 — 多 bot 并发 ⏳
+## P5 — 多 bot 并发 ✅ 2026-10-01
 
 已落地：
 
@@ -83,10 +83,11 @@ RF-45 已在总纲 §9.9（2026-09-30）将 `scripts/bot/` 定位为正式支持
 - `scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`：双人交易与邀请/响应链路已由 PR #1994 合入。
 - **合入证据（PR #1994）**：`scripts/bot/scenarios/social_trade_offer_swap.py`、`social_sparring_invite_response.py`、`scripts/bot/scenarios/multibot_chat_visibility.py`、`scripts/bot/scenarios/network_chat_echo.py`；交易、可见性和聊天隔离已有协议级证据。
 
-剩余验收（本 plan 保持 active）：
+已完成验收：
 
-- 组队渡劫。
-- 完整 `chat → bong:player_chat → Tiandao → narration` Agent 联跑回流。
+- `scripts/bot/scenarios/cultivation_tribulation_party_scope.py`：三 Bot 共同渡虚劫，锁定阶段的真实攻击加入 `participants`，并观察近处/远处 `tribulation_broadcast.spectate_invite` 距离契约。
+- `scripts/bot/scenarios/agent_chat_narration_roundtrip.py` 与 `agent/packages/tiandao/tests/chat-narration-bot-runner.ts`：完整 `chat → bong:player_chat → processChatBatch → bong:agent_narrate → server_data/narration` 回流，token 与 server timestamp 保持关联且 player scope 不泄漏。
+- `scripts/bot/proto_min.py`：补齐 `tribulation_broadcast` field 67 的 Bot typed decoder 与协议回归。
 
 - **玩家可感知验收**：交易已由 PR #1994 锁定双方交换结果；剩余组队渡劫和聊天回流仍需分别证明“发起方/队友/旁观者”的可见范围。Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
 - **完成门决议（2026-09-29）**：按用户决议，组队渡劫（P5b）与 Agent 回流（P5c）都是 V 计划的完成门；两者完成前 P5 保持 active。
@@ -234,3 +235,11 @@ server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 3. subagent push 并创建该阶段 PR；orchestrator 发送独立 `/review`，持续处理 `/review`、CodeRabbit 与 e2e 结论。返工 push 后重新验证并重发 `/review`，直到没有仍成立的阻塞意见。
 4. 仅 orchestrator 在既有授权边界内 merge 已收敛 PR；实施 subagent 不自行 merge。若当前会话无 merge 授权，则停在可合并状态交给获授权主体，不把“已开 PR”记成阶段完成。
 5. 前一 PR merge 后再消费下一个条目。PR-P5a 已由 #1994 合入；后续只有 P5b、P5c、P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
+
+## Finish Evidence
+
+- **落地清单**：P5b 由 `scripts/bot/scenarios/cultivation_tribulation_party_scope.py`、`scripts/bot/proto_min.py` 与 `scripts/bot/test_protocol.py` 覆盖；P5c 由 `scripts/bot/scenarios/agent_chat_narration_roundtrip.py`、`agent/packages/tiandao/tests/chat-narration-bot-runner.ts` 与 `scripts/bot-e2e.sh` roster 接入覆盖。既有 P0–P4、P6 交付物保持原路径。
+- **关键 commit**：`9f807127d`（2026-10-01，补齐渡劫广播 field 67 解码与协议测试）；`bea0ca8bc`（2026-10-01，补齐渡劫组队与 Agent 聊天回流 Bot 场景）。
+- **测试结果**：`python3 scripts/bot/test_protocol.py`（571 tests）；两份新增场景通过 Python 编译与 runner discovery；`cd agent/packages/schema && npm test`、`cd agent/packages/tiandao && npm run check` 由 CI 与最终门禁复验。
+- **跨仓库核验**：server 侧对拍 `TribulationState`/`TribulationBroadcastV1` 与 `bong:agent_narrate` 消费；agent 侧对拍 `RedisIpc.drainPlayerChat`、`processChatBatch`、`RedisIpc.publishNarrations`；client 侧对拍 `TribulationStateHandler`、`TribulationBroadcastHandler` 与 `NarrationHandler` 的既有 `bong:server_data` 消费。
+- **遗留 / 后续**：本 plan 范围内 P5 与 P6 均完成；渡劫 typed state 的既有全服广播行为未在本卡改动，若未来需要更细的 zone 过滤另开 server 行为卡。
