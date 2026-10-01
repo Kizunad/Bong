@@ -35,6 +35,16 @@ import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { BreakthroughCinematicEventV1 } from "./breakthrough-cinematic.js";
 import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
+import {
+  CastIdentityV1,
+  CastOutcomeV1,
+  CastPhaseV1,
+  CastPlayAnimV1,
+  CastSessionBeginV1,
+  CastSourceV1,
+  CastStopAnimV1,
+  CastSyncV1,
+} from "./cast.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
   ClientNarrationPayloadV1,
@@ -541,6 +551,14 @@ export const SCHEMA_REGISTRY = {
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
   calamityKindV1: CalamityKindV1,
   calamityIntentV1: CalamityIntentV1,
+  castSourceV1: CastSourceV1,
+  castPhaseV1: CastPhaseV1,
+  castOutcomeV1: CastOutcomeV1,
+  castIdentityV1: CastIdentityV1,
+  castSessionBeginV1: CastSessionBeginV1,
+  castSyncV1: CastSyncV1,
+  castPlayAnimV1: CastPlayAnimV1,
+  castStopAnimV1: CastStopAnimV1,
   narrationV1: NarrationV1,
   tiandaoHuntResponseLevelV1: TiandaoHuntResponseLevelV1,
   tiandaoHuntNarrationRequestV1: TiandaoHuntNarrationRequestV1,
@@ -1009,6 +1027,14 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
   "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
   "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
+  "cast-source-v1.json": SCHEMA_REGISTRY.castSourceV1,
+  "cast-phase-v1.json": SCHEMA_REGISTRY.castPhaseV1,
+  "cast-outcome-v1.json": SCHEMA_REGISTRY.castOutcomeV1,
+  "cast-identity-v1.json": SCHEMA_REGISTRY.castIdentityV1,
+  "cast-session-begin-v1.json": SCHEMA_REGISTRY.castSessionBeginV1,
+  "cast-sync-v1.json": SCHEMA_REGISTRY.castSyncV1,
+  "cast-play-anim-v1.json": SCHEMA_REGISTRY.castPlayAnimV1,
+  "cast-stop-anim-v1.json": SCHEMA_REGISTRY.castStopAnimV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "tiandao-hunt-response-level-v1.json":
     SCHEMA_REGISTRY.tiandaoHuntResponseLevelV1,

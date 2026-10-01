@@ -15,6 +15,7 @@ export * from "./baomai-v4.js";
 export * from "./botany.js";
 export * from "./fauna.js";
 export * from "./calamity.js";
+export * from "./cast.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";

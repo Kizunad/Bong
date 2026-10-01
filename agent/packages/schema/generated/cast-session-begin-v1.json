@@ -1,0 +1,286 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "caster",
+        "target_entity_id",
+        "session_id",
+        "session_generation",
+        "allocator_exhausted"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "caster": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "player_uuid"
+              ],
+              "properties": {
+                "player_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "npc_uuid"
+              ],
+              "properties": {
+                "npc_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "target_entity_id": {
+          "type": "integer"
+        },
+        "session_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "session_generation": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "allocator_exhausted": {
+          "const": false,
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "caster",
+        "target_entity_id",
+        "session_id",
+        "session_generation",
+        "allocator_exhausted",
+        "active_cast_instance_id",
+        "minimum_cast_instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "caster": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "player_uuid"
+              ],
+              "properties": {
+                "player_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "npc_uuid"
+              ],
+              "properties": {
+                "npc_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "target_entity_id": {
+          "type": "integer"
+        },
+        "session_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "session_generation": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "allocator_exhausted": {
+          "const": false,
+          "type": "boolean"
+        },
+        "active_cast_instance_id": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "minimum_cast_instance_id": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "caster",
+        "target_entity_id",
+        "session_id",
+        "session_generation",
+        "allocator_exhausted"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "caster": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "player_uuid"
+              ],
+              "properties": {
+                "player_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "npc_uuid"
+              ],
+              "properties": {
+                "npc_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "target_entity_id": {
+          "type": "integer"
+        },
+        "session_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "session_generation": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "allocator_exhausted": {
+          "const": true,
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "caster",
+        "target_entity_id",
+        "session_id",
+        "session_generation",
+        "allocator_exhausted",
+        "active_cast_instance_id",
+        "minimum_cast_instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "caster": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "player_uuid"
+              ],
+              "properties": {
+                "player_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "npc_uuid"
+              ],
+              "properties": {
+                "npc_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "target_entity_id": {
+          "type": "integer"
+        },
+        "session_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "session_generation": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "allocator_exhausted": {
+          "const": true,
+          "type": "boolean"
+        },
+        "active_cast_instance_id": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        },
+        "minimum_cast_instance_id": {
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20,
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "x-bong-typebox-source-sha256": "a79316031a56fae50cc4aa828439ede17e0d44a00b7c3dbe2560799bd5f55acf",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}
