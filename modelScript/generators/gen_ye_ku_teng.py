@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
+from plant_geo_common import (  # noqa: E402
+    PlantGates,
+    build_rig,
+    curved_vine_chain,
+    pad,
+    strand,
+    write_model,
+)
 
 MATS = {
     "cave_bed": (36, 34, 38),
@@ -30,18 +38,29 @@ def part_cave_bed(rig):
 
 def part_dry_vines(rig):
     rig.bone("dry_vines", (0.0, 0.0, 0.0))
-    segments = (
-        ("vine_main_0", (-2.0, 0.85, 0.15), (-1.15, 2.45, 0.2), 0.4),
-        ("vine_main_1", (-1.15, 2.45, 0.2), (0.2, 4.05, 0.0), 0.36),
-        ("vine_main_2", (0.2, 4.05, 0.0), (1.6, 5.15, 0.35), 0.32),
-        ("vine_drop_0", (-0.95, 2.2, 0.55), (-2.25, 3.65, 0.7), 0.3),
-        ("vine_drop_1", (-2.25, 3.65, 0.7), (-2.75, 5.1, 0.5), 0.26),
-        ("vine_drop_2", (-2.75, 5.1, 0.5), (-2.35, 6.45, 0.7), 0.25),
-        ("vine_right_0", (0.7, 3.0, -0.45), (2.35, 3.9, -0.65), 0.3),
-        ("vine_right_1", (2.35, 3.9, -0.65), (2.65, 5.55, -0.45), 0.26),
-    )
-    for name, start, end, radius in segments:
-        strand(rig, "dry_vines", name, start, end, radius, "dry_vine")
+    for vine_index in range(10):
+        phase = math.tau * vine_index / 10.0
+        points = []
+        for step in range(9):
+            t = step / 8.0
+            angle = phase + math.tau * 1.15 * t
+            radius = 2.35 - 1.55 * t + 0.18 * math.sin(math.pi * t)
+            points.append(
+                (
+                    radius * math.cos(angle),
+                    0.82 + 4.8 * t + 0.25 * math.sin(angle * 2.0),
+                    radius * math.sin(angle),
+                )
+            )
+        curved_vine_chain(
+            rig,
+            "dry_vines",
+            f"vine_vortex_{vine_index}",
+            points,
+            0.5,
+            0.28,
+            "dry_vine",
+        )
 
 
 def part_siphon_tendrils(rig):

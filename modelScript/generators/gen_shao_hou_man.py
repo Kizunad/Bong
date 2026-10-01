@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
+from plant_geo_common import (  # noqa: E402
+    PlantGates,
+    build_rig,
+    curved_vine_chain,
+    pad,
+    strand,
+    write_model,
+)
 
 MATS = {
     "cave_wall": (38, 35, 34),
@@ -21,52 +29,73 @@ MATS = {
 def part_cave_wall(rig):
     rig.bone("cave_wall", (0.0, 0.0, 0.0))
     for name, x, z, w, h, d, y, mat in (
-        ("wall_main", 0.0, -1.55, 6.8, 6.3, 1.35, 0.35, "cave_wall"),
-        ("wall_left", -3.0, -0.95, 1.1, 4.3, 1.0, 0.35, "wall_high"),
-        ("wall_right", 3.0, -1.0, 1.1, 4.8, 1.0, 0.35, "cave_wall"),
+        ("wall_anchor", 0.0, -0.45, 7.0, 0.85, 1.6, 6.35, "wall_high"),
+        ("wall_back", 0.0, -1.8, 5.8, 1.1, 0.9, 0.35, "cave_wall"),
+        ("wall_left", -3.0, -0.95, 1.0, 4.4, 1.0, 0.35, "wall_high"),
+        ("wall_right", 3.0, -1.0, 1.0, 4.4, 1.0, 0.35, "cave_wall"),
         ("wall_floor", 0.0, 0.0, 7.2, 0.8, 5.6, 0.1, "cave_wall"),
     ):
         pad(rig, "cave_wall", name, (x, y, z), (w, h, d), mat)
 
 
+def _hanging_path(vine_index: int, count: int = 10):
+    anchors = (-2.55, -1.55, -0.55, 0.45, 1.45, 2.45)
+    anchor_x = anchors[vine_index]
+    points = []
+    for step in range(count):
+        t = step / (count - 1)
+        points.append(
+            (
+                anchor_x + 0.42 * math.sin(math.pi * t + vine_index * 0.55),
+                6.55 - (5.55 - 0.35 * math.sin(math.pi * t)) * t,
+                0.15 * math.cos(math.pi * t + vine_index),
+            )
+        )
+    return points
+
+
 def part_hanging_vines(rig):
     rig.bone("hanging_vines", (0.0, 0.0, 0.0))
-    segments = (
-        ("vine_left_0", (-2.2, 6.25, -0.25), (-2.0, 4.7, 0.2), 0.34),
-        ("vine_left_1", (-2.0, 4.7, 0.2), (-2.55, 3.0, 0.15), 0.3),
-        ("vine_left_2", (-2.55, 3.0, 0.15), (-2.1, 1.15, 0.35), 0.27),
-        ("vine_mid_0", (-0.55, 6.45, 0.1), (-0.35, 4.85, 0.55), 0.38),
-        ("vine_mid_1", (-0.35, 4.85, 0.55), (0.4, 3.3, 0.5), 0.32),
-        ("vine_mid_2", (0.4, 3.3, 0.5), (0.0, 1.0, 0.75), 0.27),
-        ("vine_right_0", (1.45, 6.1, -0.15), (1.35, 4.55, 0.35), 0.32),
-        ("vine_right_1", (1.35, 4.55, 0.35), (2.05, 2.9, 0.25), 0.28),
-        ("vine_right_2", (2.05, 2.9, 0.25), (1.65, 1.35, 0.55), 0.24),
-    )
-    for name, start, end, radius in segments:
-        strand(rig, "hanging_vines", name, start, end, radius, "throat_vine")
+    for vine_index in range(6):
+        curved_vine_chain(
+            rig,
+            "hanging_vines",
+            f"vine_hang_{vine_index}",
+            _hanging_path(vine_index),
+            0.52,
+            0.28,
+            "throat_vine",
+        )
 
 
 def part_ember_segments(rig):
     rig.bone("ember_segments", (0.0, 0.0, 0.0))
-    for name, center, size, mat in (
-        ("ember_left", (-2.2, 4.2, 0.48), (0.35, 0.8, 0.3), "ember_orange"),
-        ("ember_left_low", (-2.3, 2.25, 0.45), (0.3, 0.65, 0.28), "glow_hot"),
-        ("ember_mid", (-0.1, 4.25, 0.85), (0.38, 0.85, 0.32), "glow_hot"),
-        ("ember_mid_low", (0.18, 2.05, 1.05), (0.3, 0.68, 0.28), "ember_orange"),
-        ("ember_right", (1.4, 4.1, 0.62), (0.32, 0.75, 0.3), "ember_orange"),
-        ("ember_right_low", (1.9, 2.2, 0.52), (0.3, 0.62, 0.28), "glow_hot"),
-    ):
-        pad(rig, "ember_segments", name, center, size, mat)
+    for vine_index in range(6):
+        points = _hanging_path(vine_index)
+        for leaf_index in (2, 5, 8):
+            x, y, z = points[leaf_index]
+            pad(
+                rig,
+                "ember_segments",
+                f"ember_leaf_{vine_index}_{leaf_index}",
+                (x + 0.18, y, z + 0.06),
+                (0.62, 0.46, 0.28),
+                "glow_hot" if (vine_index + leaf_index) % 2 else "ember_orange",
+            )
 
 
 def part_burn_leaves(rig):
     rig.bone("burn_leaves", (0.0, 0.0, 0.0))
-    for name, center, size in (
-        ("leaf_left", (-2.45, 3.45, 0.3), (0.85, 0.3, 0.45)),
-        ("leaf_mid", (0.45, 3.05, 0.7), (0.8, 0.28, 0.42)),
-        ("leaf_right", (2.0, 3.0, 0.45), (0.8, 0.3, 0.45)),
-    ):
-        pad(rig, "burn_leaves", name, center, size, "burn_leaf")
+    for vine_index in range(6):
+        x, y, z = _hanging_path(vine_index)[-1]
+        pad(
+            rig,
+            "burn_leaves",
+            f"leaf_tail_{vine_index}",
+            (x, y + 0.18, z + 0.08),
+            (0.78, 0.32, 0.42),
+            "burn_leaf",
+        )
 
 
 def build():

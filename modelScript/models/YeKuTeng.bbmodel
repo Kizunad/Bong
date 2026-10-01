@@ -19,7 +19,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4d4fdb7c-7d0d-4e3b-93de-e49801e64696",
+      "uuid": "468458c4-ec58-4e31-a0ae-49e2045540ae",
       "from": [
         4.5,
         0.1,
@@ -107,7 +107,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c3e1ed19-13a0-40c9-8979-dce97bde589b",
+      "uuid": "c130632f-18ad-4baa-9986-93938ff8c9c9",
       "from": [
         4.65,
         0.35,
@@ -195,7 +195,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4b9e5efd-3832-4851-adcd-e5e77353db88",
+      "uuid": "b4313bc5-b8ae-4ed5-99f9-4053494009b0",
       "from": [
         9.2,
         0.35,
@@ -283,7 +283,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "da9dfdf8-719c-4b75-b877-e05b12e8770f",
+      "uuid": "4e1d7883-760c-4388-986a-30bc5c078791",
       "from": [
         5.6,
         0.35,
@@ -364,34 +364,34 @@
       }
     },
     {
-      "name": "vine_main_0",
+      "name": "vine_vortex_0_00",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5a4dda99-e604-46b4-8802-dcf2307c3fd3",
+      "uuid": "bfbdc7a2-ade8-4b75-ae75-db794cd023fc",
       "from": [
-        6.025,
-        0.744,
-        7.855
+        9.364,
+        0.156,
+        8.474
       ],
       "to": [
-        6.825,
-        2.556,
-        8.495
+        10.364,
+        2.327,
+        9.274000000000001
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        6.425,
-        1.65,
-        8.175
+        9.864,
+        1.242,
+        8.874
       ],
       "rotation": [
-        28.02,
-        86.634,
+        67.14,
+        -29.096,
         0.0
       ],
       "faces": {
@@ -452,34 +452,4610 @@
       }
     },
     {
-      "name": "vine_main_1",
+      "name": "vine_vortex_0_01",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d0f8832f-0533-42fb-b6ba-c6e36e9d2a84",
+      "uuid": "26649619-8a01-4f52-8f70-c216787266c6",
       "from": [
-        7.165,
-        2.199,
-        7.812
+        7.976,
+        0.833,
+        9.515
       ],
       "to": [
-        7.885,
-        4.301,
+        8.913,
+        2.736,
+        10.265
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.445,
+        1.785,
+        9.89
+      ],
+      "rotation": [
+        82.65,
+        -81.325,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0775a498-cfe8-4c08-b448-1c71de470221",
+      "from": [
+        6.4399999999999995,
+        1.249,
+        9.071
+      ],
+      "to": [
+        7.3149999999999995,
+        3.087,
+        9.771
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.877,
+        2.168,
+        9.421
+      ],
+      "rotation": [
+        73.456,
+        -133.907,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f2c985d5-416b-423d-8e7f-3fcaf4e426ef",
+      "from": [
+        5.934,
+        1.977,
+        7.682
+      ],
+      "to": [
+        6.745,
+        3.875,
+        8.331
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.339,
+        2.926,
+        8.007
+      ],
+      "rotation": [
+        58.486,
+        173.131,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "216463cb-48d0-4239-b66f-1efd5d4a4aa8",
+      "from": [
+        6.693,
+        2.902,
+        6.543
+      ],
+      "to": [
+        7.441,
+        4.436,
+        7.142
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.067,
+        3.669,
+        6.843
+      ],
+      "rotation": [
+        71.247,
+        119.746,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "18ee6265-d905-4e64-95b8-9441ac6345e6",
+      "from": [
+        7.933,
+        3.398,
+        6.4670000000000005
+      ],
+      "to": [
+        8.619,
+        4.691,
+        7.015
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.276,
+        4.044,
+        6.741
+      ],
+      "rotation": [
+        78.512,
+        65.857,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8637f1a1-91dd-4719-97e1-12c5a6d16bd7",
+      "from": [
+        8.646,
+        3.921,
+        7.272
+      ],
+      "to": [
+        9.269,
+        5.292,
+        7.77
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.958,
+        4.606,
+        7.521
+      ],
+      "rotation": [
+        50.788,
+        11.291,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_0_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "be48a887-59b8-4ba8-8e3c-701787d1003c",
+      "from": [
+        8.486,
+        4.86,
+        8.12
+      ],
+      "to": [
+        9.046,
+        6.037,
+        8.568
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.766,
+        5.449,
+        8.344
+      ],
+      "rotation": [
+        45.976,
+        -44.334,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a493ddeb-5800-4821-8ab6-8c315e329c7f",
+      "from": [
+        8.494,
+        0.231,
+        9.402
+      ],
+      "to": [
+        9.494,
+        2.267,
+        10.202
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.994,
+        1.249,
+        9.802
+      ],
+      "rotation": [
+        79.19,
+        -65.096,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "53286f76-340e-4ba2-9bf3-aee85a9e7c34",
+      "from": [
+        6.781,
+        0.648,
+        9.415
+      ],
+      "to": [
+        7.718,
+        2.564,
+        10.165
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.249,
+        1.606,
+        9.79
+      ],
+      "rotation": [
+        79.978,
+        -117.325,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5105af58-54b3-40a8-b43c-db3e2e3faa96",
+      "from": [
+        5.819,
+        1.245,
+        8.14
+      ],
+      "to": [
+        6.694,
+        3.244,
+        8.84
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.257,
+        2.244,
+        8.49
+      ],
+      "rotation": [
+        61.855,
+        -169.907,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "354b3d0f-ff98-4883-9e77-fbffd61c34be",
+      "from": [
+        6.247,
+        2.186,
+        6.705
+      ],
+      "to": [
+        7.058,
+        3.952,
+        7.354
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.6530000000000005,
+        3.069,
+        7.029
+      ],
+      "rotation": [
+        66.416,
+        137.131,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b4eef84a-d5c1-4f57-8629-9541d1c5a310",
+      "from": [
+        7.551,
+        2.792,
+        6.216
+      ],
+      "to": [
+        8.3,
+        4.26,
+        6.8149999999999995
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.926,
+        3.526,
+        6.515
+      ],
+      "rotation": [
+        81.869,
+        83.746,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c775eb77-59dc-4437-adc9-043aab2a8371",
+      "from": [
+        8.62,
+        3.25,
+        6.87
+      ],
+      "to": [
+        9.306000000000001,
+        4.686,
+        7.418
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.963,
+        3.968,
+        7.144
+      ],
+      "rotation": [
+        61.889,
+        29.857,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e9953f38-2513-4bc1-8cf4-280b9fa158dc",
+      "from": [
+        8.745,
+        4.07,
+        7.926
+      ],
+      "to": [
+        9.368,
+        5.499,
+        8.425
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.056000000000001,
+        4.785,
+        8.175
+      ],
+      "rotation": [
+        47.99,
+        -24.709,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_1_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "92f13ad3-4178-42dc-a16f-55503224554b",
+      "from": [
+        8.137,
+        4.982,
+        8.505
+      ],
+      "to": [
+        8.697,
+        5.901,
+        8.953
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.417,
+        5.442,
+        8.729
+      ],
+      "rotation": [
+        67.139,
+        -80.334,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5633b551-50e9-4524-a758-9761f3f10126",
+      "from": [
+        7.245,
+        0.072,
+        9.643
+      ],
+      "to": [
+        8.245,
+        2.084,
+        10.443
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.745,
+        1.078,
+        10.043
+      ],
+      "rotation": [
+        83.663,
+        -101.096,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5679f007-7079-4d3f-8a9c-b08d41300053",
+      "from": [
+        5.872,
+        0.562,
+        8.632
+      ],
+      "to": [
+        6.809,
+        2.608,
+        9.382
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.34,
+        1.585,
+        9.007
+      ],
+      "rotation": [
+        67.235,
+        -153.325,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5e12f8f1-a59e-4171-87e1-3f924aba5401",
+      "from": [
+        5.864,
+        1.438,
+        7.022
+      ],
+      "to": [
+        6.739,
+        3.412,
+        7.721
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.302,
+        2.425,
+        7.372
+      ],
+      "rotation": [
+        63.244,
+        154.093,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3c107b76-48a0-4a80-9a1a-002d7d333b11",
+      "from": [
+        7.075,
+        2.185,
+        6.098
+      ],
+      "to": [
+        7.886,
+        3.827,
+        6.747
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.481,
+        3.006,
+        6.423
+      ],
+      "rotation": [
+        80.408,
+        101.131,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "653ef369-0cba-4f9b-a63e-c8acce09edb9",
+      "from": [
+        8.438,
+        2.612,
+        6.4559999999999995
+      ],
+      "to": [
+        9.187,
+        4.138,
+        7.055
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.812,
+        3.375,
+        6.755
+      ],
+      "rotation": [
+        72.29,
+        47.746,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c8dfbe7f-e40d-45ce-b6d9-a68245ea3ab8",
+      "from": [
+        8.94,
+        3.298,
+        7.599
+      ],
+      "to": [
+        9.625,
+        4.906,
+        8.148
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.282,
+        4.102,
+        7.873
+      ],
+      "rotation": [
+        51.989,
+        -6.143,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9dd6c43e-c48d-4736-890b-bc2aae86e2b3",
+      "from": [
+        8.44,
+        4.275,
+        8.514
+      ],
+      "to": [
+        9.063,
+        5.473,
+        9.012
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.752,
+        4.874,
+        8.763
+      ],
+      "rotation": [
+        62.458,
+        -60.709,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_2_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "efd2202b-7f2f-48bc-8e33-ea4cdfa53c73",
+      "from": [
+        7.629,
+        4.828,
+        8.611
+      ],
+      "to": [
+        8.189,
+        5.705,
+        9.059
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.909,
+        5.266,
+        8.835
+      ],
+      "rotation": [
+        74.698,
+        -116.334,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "029c29b5-61f1-4f48-96f9-3b964ffd99cd",
+      "from": [
+        6.093,
+        -0.076,
+        9.103
+      ],
+      "to": [
+        7.093,
+        2.007,
+        9.903
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.593,
+        0.965,
+        9.503
+      ],
+      "rotation": [
+        73.705,
+        -137.096,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6df54ae4-aa5b-42a9-a2c0-2456c7cab9a1",
+      "from": [
+        5.5969999999999995,
+        0.686,
+        7.464
+      ],
+      "to": [
+        6.534,
+        2.815,
+        8.214
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.0649999999999995,
+        1.75,
+        7.839
+      ],
+      "rotation": [
+        62.433,
+        170.675,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "daeea84f-cac6-4671-a2bc-e99d2339afeb",
+      "from": [
+        6.558,
+        1.553,
+        6.144
+      ],
+      "to": [
+        7.433,
+        3.368,
+        6.843
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.995,
+        2.461,
+        6.493
+      ],
+      "rotation": [
+        76.113,
+        118.093,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "085d86f7-953b-429b-b560-5116b291eecb",
+      "from": [
+        8.101,
+        2.002,
+        6.094
+      ],
+      "to": [
+        8.912,
+        3.646,
+        6.743
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.507,
+        2.824,
+        6.4190000000000005
+      ],
+      "rotation": [
+        79.785,
+        65.131,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9ad28dca-bb20-4d36-9363-0a4fa839fafd",
+      "from": [
+        9.015,
+        2.567,
+        7.171
+      ],
+      "to": [
+        9.763,
+        4.281,
+        7.77
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.389,
+        3.424,
+        7.47
+      ],
+      "rotation": [
+        57.993,
+        11.746,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "656897ab-2f06-4d8f-bd5f-e5432712e2de",
+      "from": [
+        8.769,
+        3.521,
+        8.377
+      ],
+      "to": [
+        9.455,
+        5.0,
+        8.926
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.112,
+        4.261,
+        8.651
+      ],
+      "rotation": [
+        58.889,
+        -42.143,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d3d1f6d3-69bb-494a-9e16-74fe7e400704",
+      "from": [
+        7.848,
+        4.208,
+        8.81
+      ],
+      "to": [
+        8.471,
+        5.292,
+        9.308
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.16,
+        4.75,
+        9.059
+      ],
+      "rotation": [
+        78.562,
+        -96.709,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_3_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "ba42ac94-d16a-4b15-b2e9-d32e19482eb6",
+      "from": [
+        7.156,
+        4.642,
+        8.398
+      ],
+      "to": [
+        7.716,
+        5.689,
+        8.846
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.436,
+        5.165,
+        8.622
+      ],
+      "rotation": [
+        53.983,
+        -152.334,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "15e76b2d-353b-40e6-94c6-414da1df896e",
+      "from": [
+        5.479,
+        -0.045,
+        7.989
+      ],
+      "to": [
+        6.479,
+        2.177,
+        8.789
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        5.979,
+        1.066,
+        8.389
+      ],
+      "rotation": [
+        64.162,
+        -173.096,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "eab207f1-e557-435a-8c5b-3c0e4f8eaa74",
+      "from": [
+        6.061,
+        0.876,
+        6.3580000000000005
+      ],
+      "to": [
+        6.998,
+        2.871,
+        7.108
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.529,
+        1.874,
+        6.7330000000000005
+      ],
+      "rotation": [
+        71.098,
+        134.675,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d8d04b33-3b43-41e3-af05-d785f549edcd",
+      "from": [
+        7.636,
+        1.415,
+        5.841
+      ],
+      "to": [
+        8.51,
+        3.189,
+        6.54
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.073,
+        2.302,
+        6.1899999999999995
+      ],
+      "rotation": [
+        83.201,
+        82.093,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3bce5908-a1d6-40ea-bc77-b5ed6a907c7e",
+      "from": [
+        8.934,
+        1.886,
+        6.694
+      ],
+      "to": [
+        9.745000000000001,
+        3.664,
+        7.343
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.339,
+        2.775,
+        7.019
+      ],
+      "rotation": [
+        65.549,
+        29.131,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7e327b0c-ef5e-4506-b8d8-77058eb5f382",
+      "from": [
+        9.061,
+        2.744,
+        8.089
+      ],
+      "to": [
+        9.809,
+        4.468,
+        8.687
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.435,
+        3.606,
         8.388
       ],
+      "rotation": [
+        57.482,
+        -24.254,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b2ccf5c2-b1c7-4ffd-bb6e-91e48c77a0f5",
+      "from": [
+        8.174,
+        3.573,
+        8.906
+      ],
+      "to": [
+        8.859,
+        4.877,
+        9.455
+      ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        7.525,
+        8.517,
+        4.225,
+        9.181000000000001
+      ],
+      "rotation": [
+        76.176,
+        -78.143,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4ff34817-5487-4d03-8a9a-00b2e9c29ccb",
+      "from": [
+        7.195,
+        4.016,
+        8.701
+      ],
+      "to": [
+        7.818,
+        5.154,
+        9.2
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.507,
+        4.585,
+        8.951
+      ],
+      "rotation": [
+        68.978,
+        -132.709,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_4_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "53b5f637-28fd-4f2d-9398-80ceacd0d3d6",
+      "from": [
+        6.898,
+        4.631,
+        7.948
+      ],
+      "to": [
+        7.458,
+        5.925,
+        8.396
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.178,
+        5.278,
+        8.172
+      ],
+      "rotation": [
+        40.881,
+        171.666,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e565c295-df1a-4c07-bc07-93f8bdb8c714",
+      "from": [
+        5.636,
+        0.156,
+        6.726
+      ],
+      "to": [
+        6.636,
+        2.327,
+        7.526
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.136,
+        1.242,
+        7.126
+      ],
+      "rotation": [
+        67.14,
+        150.904,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "26076805-4528-49d6-8f38-2267787c0e7d",
+      "from": [
+        7.087,
+        0.833,
+        5.734999999999999
+      ],
+      "to": [
+        8.024,
+        2.736,
+        6.485
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.555,
+        1.785,
+        6.11
+      ],
+      "rotation": [
+        82.65,
+        98.675,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0ddce32a-b2f1-4d33-8bc6-352e72af8d9f",
+      "from": [
+        8.685,
+        1.249,
+        6.229
+      ],
+      "to": [
+        9.56,
+        3.087,
+        6.929
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.123,
+        2.168,
+        6.579
+      ],
+      "rotation": [
+        73.456,
+        46.093,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c210f954-e553-4fef-98f4-5479cab46960",
+      "from": [
+        9.254999999999999,
+        1.977,
+        7.669
+      ],
+      "to": [
+        10.065999999999999,
+        3.875,
+        8.318
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.661,
+        2.926,
+        7.993
+      ],
+      "rotation": [
+        58.486,
+        -6.869,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f00849a6-9842-4204-9b73-3a4caa1355af",
+      "from": [
+        8.559,
+        2.902,
+        8.858
+      ],
+      "to": [
+        9.307,
+        4.436,
+        9.457
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.933,
+        3.669,
+        9.157
+      ],
+      "rotation": [
+        71.247,
+        -60.254,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1bdd6aa7-e6b1-4871-8c1f-8a4777e15564",
+      "from": [
+        7.381,
+        3.398,
+        8.985
+      ],
+      "to": [
+        8.067,
+        4.691,
+        9.533
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.724,
+        4.044,
+        9.259
+      ],
+      "rotation": [
+        78.512,
+        -114.143,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cdde6ce5-9c8f-4d4c-8e15-0e88ecf556e2",
+      "from": [
+        6.731,
+        3.921,
+        8.23
+      ],
+      "to": [
+        7.354,
+        5.292,
+        8.728
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.042,
+        4.606,
+        8.479
+      ],
+      "rotation": [
+        50.788,
+        -168.709,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_5_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c0f8237c-3909-4f2e-a862-6c7055456d12",
+      "from": [
+        6.954,
+        4.86,
+        7.432
+      ],
+      "to": [
+        7.514,
+        6.037,
+        7.88
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.234,
+        5.449,
+        7.656
+      ],
+      "rotation": [
+        45.976,
+        135.666,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6f6c341b-1b89-4d07-99c6-1534bafddb38",
+      "from": [
+        6.506,
+        0.231,
+        5.798
+      ],
+      "to": [
+        7.506,
+        2.267,
+        6.598
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.006,
+        1.249,
+        6.198
+      ],
+      "rotation": [
+        79.19,
+        114.904,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "948361ad-cb7b-4302-a2e7-d7cf6b4ee0d4",
+      "from": [
+        8.282,
+        0.648,
+        5.835
+      ],
+      "to": [
+        9.219,
+        2.564,
+        6.585
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.751,
+        1.606,
+        6.21
+      ],
+      "rotation": [
+        79.978,
+        62.675,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c5f0b777-dfd0-4b20-b1e1-0846c2cb542c",
+      "from": [
+        9.306000000000001,
+        1.245,
+        7.16
+      ],
+      "to": [
+        10.181000000000001,
+        3.244,
+        7.86
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.743,
+        2.244,
+        7.51
+      ],
+      "rotation": [
+        61.855,
+        10.093,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "836b05fc-b8e3-41d9-a06a-6bd019a145ea",
+      "from": [
+        8.942,
+        2.186,
+        8.646
+      ],
+      "to": [
+        9.753,
+        3.952,
+        9.295
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.347,
+        3.069,
+        8.971
+      ],
+      "rotation": [
+        66.416,
+        -42.869,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f5f90c9e-b12b-4344-82b4-11cb1bf68732",
+      "from": [
+        7.7,
+        2.792,
+        9.185
+      ],
+      "to": [
+        8.449,
+        4.26,
+        9.784
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.074,
+        3.526,
+        9.485
+      ],
+      "rotation": [
+        81.869,
+        -96.254,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_6_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3a4fc24f-d714-4cb6-814c-8da1b48b93bb",
+      "from": [
+        6.694,
         3.25,
-        8.1
+        8.582
+      ],
+      "to": [
+        7.38,
+        4.686,
+        9.129999999999999
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.037,
+        3.968,
+        8.856
       ],
       "rotation": [
-        40.463,
-        98.427,
+        61.889,
+        -150.143,
         0.0
       ],
       "faces": {
@@ -540,34 +5116,34 @@
       }
     },
     {
-      "name": "vine_main_2",
+      "name": "vine_vortex_6_06",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "eea104ab-65d1-4beb-b813-8cdfc665bfa5",
+      "uuid": "3ffeebf6-c1de-4f8e-a3bf-d980579e76c5",
       "from": [
-        8.58,
-        3.693,
-        7.919
+        6.632,
+        4.07,
+        7.575
       ],
       "to": [
-        9.22,
-        5.507,
-        8.431
+        7.255,
+        5.499,
+        8.074
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        8.9,
-        4.6,
-        8.175
+        6.944,
+        4.785,
+        7.825
       ],
       "rotation": [
-        52.683,
-        75.964,
+        47.99,
+        155.291,
         0.0
       ],
       "faces": {
@@ -628,34 +5204,34 @@
       }
     },
     {
-      "name": "vine_drop_0",
+      "name": "vine_vortex_6_07",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "02c31983-0fd1-4f95-9171-4e1d73916988",
+      "uuid": "61bcdc47-80a5-415e-ab6f-e1340d49636d",
       "from": [
-        6.1,
-        1.948,
-        8.385
+        7.303,
+        4.982,
+        7.047
       ],
       "to": [
-        6.7,
-        3.902,
-        8.865
+        7.8629999999999995,
+        5.901,
+        7.495
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        6.4,
-        2.925,
-        8.625
+        7.583,
+        5.442,
+        7.271
       ],
       "rotation": [
-        42.066,
-        -83.418,
+        67.139,
+        99.666,
         0.0
       ],
       "faces": {
@@ -716,34 +5292,34 @@
       }
     },
     {
-      "name": "vine_drop_1",
+      "name": "vine_vortex_7_00",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3bcb2736-8554-4b06-a612-36471671af6b",
+      "uuid": "835da1b5-0f4b-4552-9b14-73adbc515803",
       "from": [
-        5.24,
-        3.602,
-        8.392
+        7.755,
+        0.072,
+        5.557
       ],
       "to": [
-        5.76,
-        5.148,
-        8.808
+        8.755,
+        2.084,
+        6.357
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        5.5,
-        4.375,
-        8.6
+        8.255,
+        1.078,
+        5.957
       ],
       "rotation": [
-        20.375,
-        -111.801,
+        83.663,
+        78.904,
         0.0
       ],
       "faces": {
@@ -804,34 +5380,34 @@
       }
     },
     {
-      "name": "vine_drop_2",
+      "name": "vine_vortex_7_01",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a92177b2-8f6e-4624-8437-488567468c78",
+      "uuid": "51a479cb-cd43-4c11-9d58-eafcea490596",
       "from": [
-        5.2,
-        5.064,
-        8.4
+        9.191,
+        0.562,
+        6.618
       ],
       "to": [
-        5.7,
-        6.486,
-        8.8
+        10.128,
+        2.608,
+        7.368
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        5.45,
-        5.775,
-        8.6
+        9.66,
+        1.585,
+        6.993
       ],
       "rotation": [
-        18.328,
-        63.435,
+        67.235,
+        26.675,
         0.0
       ],
       "faces": {
@@ -892,34 +5468,34 @@
       }
     },
     {
-      "name": "vine_right_0",
+      "name": "vine_vortex_7_02",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4738ad2d-db53-41cc-9e3f-707e95ddf589",
+      "uuid": "79cba31f-7949-4912-a24b-b36d373d3142",
       "from": [
-        9.225,
-        2.505,
-        7.21
+        9.261,
+        1.438,
+        8.279
       ],
       "to": [
-        9.825,
-        4.395,
-        7.69
+        10.136,
+        3.412,
+        8.978
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        9.525,
-        3.45,
-        7.45
+        9.698,
+        2.425,
+        8.628
       ],
       "rotation": [
-        61.565,
-        96.911,
+        63.244,
+        -25.907,
         0.0
       ],
       "faces": {
@@ -980,34 +5556,1794 @@
       }
     },
     {
-      "name": "vine_right_1",
+      "name": "vine_vortex_7_03",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6f4fee0f-3bb9-40c3-9dae-9aa2cad928b6",
+      "uuid": "d7e24392-cab4-478b-986e-fabf0cdd46bb",
       "from": [
-        10.24,
-        3.881,
-        7.242
+        8.114,
+        2.185,
+        9.253
       ],
       "to": [
-        10.76,
-        5.569,
-        7.658
+        8.925,
+        3.827,
+        9.902
       ],
       "autouv": 0,
       "color": 1,
       "origin": [
-        10.5,
-        4.725,
-        7.45
+        8.519,
+        3.006,
+        9.577
       ],
       "rotation": [
-        12.326,
-        56.31,
+        80.408,
+        -78.869,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_7_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "484ab744-f276-4ec8-9cb6-72279021f5cf",
+      "from": [
+        6.813,
+        2.612,
+        8.945
+      ],
+      "to": [
+        7.562,
+        4.138,
+        9.544
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.188,
+        3.375,
+        9.245000000000001
+      ],
+      "rotation": [
+        72.29,
+        -132.254,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_7_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c8796e01-5849-421f-8599-075e7be8f4d4",
+      "from": [
+        6.375,
+        3.298,
+        7.852
+      ],
+      "to": [
+        7.0600000000000005,
+        4.906,
+        8.401
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.718,
+        4.102,
+        8.127
+      ],
+      "rotation": [
+        51.989,
+        173.857,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_7_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d612e68b-0369-4c54-9a43-8b707c2aa57f",
+      "from": [
+        6.937,
+        4.275,
+        6.9879999999999995
+      ],
+      "to": [
+        7.56,
+        5.473,
+        7.486
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.248,
+        4.874,
+        7.237
+      ],
+      "rotation": [
+        62.458,
+        119.291,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_7_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "ab14eabb-0c4c-4cce-b33c-fe647922d2c8",
+      "from": [
+        7.811,
+        4.828,
+        6.941
+      ],
+      "to": [
+        8.371,
+        5.705,
+        7.389
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.091,
+        5.266,
+        7.165
+      ],
+      "rotation": [
+        74.698,
+        63.666,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5e517a35-e90f-43a9-860f-10f8d20a1090",
+      "from": [
+        8.907,
+        -0.076,
+        6.0969999999999995
+      ],
+      "to": [
+        9.907,
+        2.007,
+        6.897
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.407,
+        0.965,
+        6.497
+      ],
+      "rotation": [
+        73.705,
+        42.904,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "74acb92e-ceb3-4ff1-b568-db5dc754e78c",
+      "from": [
+        9.466,
+        0.686,
+        7.786
+      ],
+      "to": [
+        10.403,
+        2.815,
+        8.536
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.935,
+        1.75,
+        8.161
+      ],
+      "rotation": [
+        62.433,
+        -9.325,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a596ea81-7655-4df3-9bca-6587eb79e8cd",
+      "from": [
+        8.567,
+        1.553,
+        9.157
+      ],
+      "to": [
+        9.442,
+        3.368,
+        9.856
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.004999999999999,
+        2.461,
+        9.507
+      ],
+      "rotation": [
+        76.113,
+        -61.907,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b11423a6-24a5-41c0-ab34-6c8f5cd59d5f",
+      "from": [
+        7.088,
+        2.002,
+        9.257
+      ],
+      "to": [
+        7.899,
+        3.646,
+        9.906
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.493,
+        2.824,
+        9.581
+      ],
+      "rotation": [
+        79.785,
+        -114.869,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "2d476ee1-891d-4173-85cb-19a10397b6eb",
+      "from": [
+        6.237,
+        2.567,
+        8.23
+      ],
+      "to": [
+        6.985,
+        4.281,
+        8.829
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.611,
+        3.424,
+        8.53
+      ],
+      "rotation": [
+        57.993,
+        -168.254,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f833634f-1f7d-4bff-8dd6-2be9c4be3bc4",
+      "from": [
+        6.545,
+        3.521,
+        7.074
+      ],
+      "to": [
+        7.231,
+        5.0,
+        7.623
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.888,
+        4.261,
+        7.349
+      ],
+      "rotation": [
+        58.889,
+        137.857,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6031f5bf-baaa-4b14-8d36-80efbae52a0b",
+      "from": [
+        7.529,
+        4.208,
+        6.692
+      ],
+      "to": [
+        8.152,
+        5.292,
+        7.1899999999999995
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.84,
+        4.75,
+        6.941
+      ],
+      "rotation": [
+        78.562,
+        83.291,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_8_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6440d610-e7e0-418b-9cff-f2b61ec60d39",
+      "from": [
+        8.284,
+        4.642,
+        7.154
+      ],
+      "to": [
+        8.844,
+        5.689,
+        7.602
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.564,
+        5.165,
+        7.378
+      ],
+      "rotation": [
+        53.983,
+        27.666,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "af284eab-7fa0-435d-a991-b00aac179da0",
+      "from": [
+        9.521,
+        -0.045,
+        7.211
+      ],
+      "to": [
+        10.521,
+        2.177,
+        8.011
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        10.021,
+        1.066,
+        7.611
+      ],
+      "rotation": [
+        64.162,
+        6.904,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7e778a18-e837-4171-9211-8136f113a71d",
+      "from": [
+        9.002,
+        0.876,
+        8.892
+      ],
+      "to": [
+        9.939,
+        2.871,
+        9.642
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        9.471,
+        1.874,
+        9.267
+      ],
+      "rotation": [
+        71.098,
+        -45.325,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f7323aa4-a478-4e2a-89d0-4798e500dc67",
+      "from": [
+        7.49,
+        1.415,
+        9.46
+      ],
+      "to": [
+        8.364,
+        3.189,
+        10.158999999999999
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.927,
+        2.302,
+        9.81
+      ],
+      "rotation": [
+        83.201,
+        -97.907,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "bc2b9bdf-a7e3-474f-8a25-99eab9860e5c",
+      "from": [
+        6.255,
+        1.886,
+        8.657
+      ],
+      "to": [
+        7.066,
+        3.664,
+        9.306000000000001
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.661,
+        2.775,
+        8.981
+      ],
+      "rotation": [
+        65.549,
+        -150.869,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "2309f46c-219a-4ee3-80ee-bf82c1088a00",
+      "from": [
+        6.191,
+        2.744,
+        7.313
+      ],
+      "to": [
+        6.939,
+        4.468,
+        7.911
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        6.5649999999999995,
+        3.606,
+        7.612
+      ],
+      "rotation": [
+        57.482,
+        155.746,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1f679b43-e97e-4f4e-bae7-86ccebb3a0a4",
+      "from": [
+        7.141,
+        3.573,
+        6.545
+      ],
+      "to": [
+        7.826,
+        4.877,
+        7.094
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        7.483,
+        4.225,
+        6.819
+      ],
+      "rotation": [
+        76.176,
+        101.857,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "179524d6-78af-4fc6-8c75-ef16d48f3ed2",
+      "from": [
+        8.182,
+        4.016,
+        6.8
+      ],
+      "to": [
+        8.805,
+        5.154,
+        7.299
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.493,
+        4.585,
+        7.049
+      ],
+      "rotation": [
+        68.978,
+        47.291,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_vortex_9_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cf719a29-b9ed-4093-a0de-ddf70f4529a2",
+      "from": [
+        8.542,
+        4.631,
+        7.604
+      ],
+      "to": [
+        9.102,
+        5.925,
+        8.052
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.822,
+        5.278,
+        7.828
+      ],
+      "rotation": [
+        40.881,
+        -8.334,
         0.0
       ],
       "faces": {
@@ -1075,7 +7411,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "77d19cd0-cbeb-4b25-baad-9b4ac9e88889",
+      "uuid": "bccfdebd-7a19-4d33-aa7b-b42c2b3b2d7b",
       "from": [
         5.015000000000001,
         2.058,
@@ -1163,7 +7499,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "51d2992f-bf19-4e8e-a575-5ea0038e4429",
+      "uuid": "914c7629-d46b-4917-8e47-8980cfaad96b",
       "from": [
         7.14,
         0.837,
@@ -1251,7 +7587,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f25f0875-0e6a-4c0e-9933-ebdc92478443",
+      "uuid": "19a06e1d-98bb-4587-ab4a-4231edae1840",
       "from": [
         10.39,
         2.36,
@@ -1339,7 +7675,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d4830e5f-9825-45d9-a7e1-d00fa6ebab1f",
+      "uuid": "3c5a9e7f-5b53-4289-9412-8c13de6b0a53",
       "from": [
         9.59,
         4.757,
@@ -1427,7 +7763,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a8606843-d7d2-42ea-ba33-01a5069d3a27",
+      "uuid": "298fba37-14e8-47f4-a108-7aa829a62401",
       "from": [
         4.79,
         1.95,
@@ -1515,7 +7851,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "88b434b4-9039-4697-9be2-fd75eaabc69e",
+      "uuid": "51bf0d31-3434-4c77-a611-e8bebc35f3aa",
       "from": [
         7.79,
         0.9,
@@ -1603,7 +7939,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4a911605-9371-47ce-ae62-9cb46d3251ab",
+      "uuid": "1be49650-437f-4abc-a254-b189b7bc8645",
       "from": [
         10.84,
         2.3,
@@ -1691,7 +8027,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "65230060-5135-4894-bb7e-91b01d3f4a69",
+      "uuid": "fa5e6c55-f7c2-4c4f-b94b-85875507bb8a",
       "from": [
         10.24,
         6.15,
@@ -1779,7 +8115,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "99cf245a-53e0-48bf-a1e7-ef6e0e493d89",
+      "uuid": "3ff0c2c9-b4a0-4cd4-a6c5-ff155d7e67a2",
       "from": [
         8.475,
         4.55,
@@ -1867,7 +8203,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2245e3da-49b0-46fa-84b8-8a2232a31a6c",
+      "uuid": "89049caa-29ee-46e9-b4bc-02533078536c",
       "from": [
         5.15,
         5.95,
@@ -1955,7 +8291,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6715b842-968b-4088-bb6f-1e1e64e5ab8c",
+      "uuid": "b1e5d36b-d840-463a-89be-7a6ff655011e",
       "from": [
         10.075,
         5.2,
@@ -2049,7 +8385,7 @@
         0.0,
         0.0
       ],
-      "uuid": "48694826-18be-4fe2-88f8-d20a3f016c3b",
+      "uuid": "5d5e67fd-226c-41e8-a74f-ac98df0203fb",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2057,10 +8393,10 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "4d4fdb7c-7d0d-4e3b-93de-e49801e64696",
-        "c3e1ed19-13a0-40c9-8979-dce97bde589b",
-        "4b9e5efd-3832-4851-adcd-e5e77353db88",
-        "da9dfdf8-719c-4b75-b877-e05b12e8770f"
+        "468458c4-ec58-4e31-a0ae-49e2045540ae",
+        "c130632f-18ad-4baa-9986-93938ff8c9c9",
+        "b4313bc5-b8ae-4ed5-99f9-4053494009b0",
+        "4e1d7883-760c-4388-986a-30bc5c078791"
       ]
     },
     {
@@ -2075,7 +8411,7 @@
         0.0,
         0.0
       ],
-      "uuid": "c199100a-6a66-4f4d-bb18-5bf521cb87ad",
+      "uuid": "515c67cc-ea39-49da-8cf4-9d96ff0b78ac",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2083,14 +8419,86 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "5a4dda99-e604-46b4-8802-dcf2307c3fd3",
-        "d0f8832f-0533-42fb-b6ba-c6e36e9d2a84",
-        "eea104ab-65d1-4beb-b813-8cdfc665bfa5",
-        "02c31983-0fd1-4f95-9171-4e1d73916988",
-        "3bcb2736-8554-4b06-a612-36471671af6b",
-        "a92177b2-8f6e-4624-8437-488567468c78",
-        "4738ad2d-db53-41cc-9e3f-707e95ddf589",
-        "6f4fee0f-3bb9-40c3-9dae-9aa2cad928b6"
+        "bfbdc7a2-ade8-4b75-ae75-db794cd023fc",
+        "26649619-8a01-4f52-8f70-c216787266c6",
+        "0775a498-cfe8-4c08-b448-1c71de470221",
+        "f2c985d5-416b-423d-8e7f-3fcaf4e426ef",
+        "216463cb-48d0-4239-b66f-1efd5d4a4aa8",
+        "18ee6265-d905-4e64-95b8-9441ac6345e6",
+        "8637f1a1-91dd-4719-97e1-12c5a6d16bd7",
+        "be48a887-59b8-4ba8-8e3c-701787d1003c",
+        "a493ddeb-5800-4821-8ab6-8c315e329c7f",
+        "53286f76-340e-4ba2-9bf3-aee85a9e7c34",
+        "5105af58-54b3-40a8-b43c-db3e2e3faa96",
+        "354b3d0f-ff98-4883-9e77-fbffd61c34be",
+        "b4eef84a-d5c1-4f57-8629-9541d1c5a310",
+        "c775eb77-59dc-4437-adc9-043aab2a8371",
+        "e9953f38-2513-4bc1-8cf4-280b9fa158dc",
+        "92f13ad3-4178-42dc-a16f-55503224554b",
+        "5633b551-50e9-4524-a758-9761f3f10126",
+        "5679f007-7079-4d3f-8a9c-b08d41300053",
+        "5e12f8f1-a59e-4171-87e1-3f924aba5401",
+        "3c107b76-48a0-4a80-9a1a-002d7d333b11",
+        "653ef369-0cba-4f9b-a63e-c8acce09edb9",
+        "c8dfbe7f-e40d-45ce-b6d9-a68245ea3ab8",
+        "9dd6c43e-c48d-4736-890b-bc2aae86e2b3",
+        "efd2202b-7f2f-48bc-8e33-ea4cdfa53c73",
+        "029c29b5-61f1-4f48-96f9-3b964ffd99cd",
+        "6df54ae4-aa5b-42a9-a2c0-2456c7cab9a1",
+        "daeea84f-cac6-4671-a2bc-e99d2339afeb",
+        "085d86f7-953b-429b-b560-5116b291eecb",
+        "9ad28dca-bb20-4d36-9363-0a4fa839fafd",
+        "656897ab-2f06-4d8f-bd5f-e5432712e2de",
+        "d3d1f6d3-69bb-494a-9e16-74fe7e400704",
+        "ba42ac94-d16a-4b15-b2e9-d32e19482eb6",
+        "15e76b2d-353b-40e6-94c6-414da1df896e",
+        "eab207f1-e557-435a-8c5b-3c0e4f8eaa74",
+        "d8d04b33-3b43-41e3-af05-d785f549edcd",
+        "3bce5908-a1d6-40ea-bc77-b5ed6a907c7e",
+        "7e327b0c-ef5e-4506-b8d8-77058eb5f382",
+        "b2ccf5c2-b1c7-4ffd-bb6e-91e48c77a0f5",
+        "4ff34817-5487-4d03-8a9a-00b2e9c29ccb",
+        "53b5f637-28fd-4f2d-9398-80ceacd0d3d6",
+        "e565c295-df1a-4c07-bc07-93f8bdb8c714",
+        "26076805-4528-49d6-8f38-2267787c0e7d",
+        "0ddce32a-b2f1-4d33-8bc6-352e72af8d9f",
+        "c210f954-e553-4fef-98f4-5479cab46960",
+        "f00849a6-9842-4204-9b73-3a4caa1355af",
+        "1bdd6aa7-e6b1-4871-8c1f-8a4777e15564",
+        "cdde6ce5-9c8f-4d4c-8e15-0e88ecf556e2",
+        "c0f8237c-3909-4f2e-a862-6c7055456d12",
+        "6f6c341b-1b89-4d07-99c6-1534bafddb38",
+        "948361ad-cb7b-4302-a2e7-d7cf6b4ee0d4",
+        "c5f0b777-dfd0-4b20-b1e1-0846c2cb542c",
+        "836b05fc-b8e3-41d9-a06a-6bd019a145ea",
+        "f5f90c9e-b12b-4344-82b4-11cb1bf68732",
+        "3a4fc24f-d714-4cb6-814c-8da1b48b93bb",
+        "3ffeebf6-c1de-4f8e-a3bf-d980579e76c5",
+        "61bcdc47-80a5-415e-ab6f-e1340d49636d",
+        "835da1b5-0f4b-4552-9b14-73adbc515803",
+        "51a479cb-cd43-4c11-9d58-eafcea490596",
+        "79cba31f-7949-4912-a24b-b36d373d3142",
+        "d7e24392-cab4-478b-986e-fabf0cdd46bb",
+        "484ab744-f276-4ec8-9cb6-72279021f5cf",
+        "c8796e01-5849-421f-8599-075e7be8f4d4",
+        "d612e68b-0369-4c54-9a43-8b707c2aa57f",
+        "ab14eabb-0c4c-4cce-b33c-fe647922d2c8",
+        "5e517a35-e90f-43a9-860f-10f8d20a1090",
+        "74acb92e-ceb3-4ff1-b568-db5dc754e78c",
+        "a596ea81-7655-4df3-9bca-6587eb79e8cd",
+        "b11423a6-24a5-41c0-ab34-6c8f5cd59d5f",
+        "2d476ee1-891d-4173-85cb-19a10397b6eb",
+        "f833634f-1f7d-4bff-8dd6-2be9c4be3bc4",
+        "6031f5bf-baaa-4b14-8d36-80efbae52a0b",
+        "6440d610-e7e0-418b-9cff-f2b61ec60d39",
+        "af284eab-7fa0-435d-a991-b00aac179da0",
+        "7e778a18-e837-4171-9211-8136f113a71d",
+        "f7323aa4-a478-4e2a-89d0-4798e500dc67",
+        "bc2b9bdf-a7e3-474f-8a25-99eab9860e5c",
+        "2309f46c-219a-4ee3-80ee-bf82c1088a00",
+        "1f679b43-e97e-4f4e-bae7-86ccebb3a0a4",
+        "179524d6-78af-4fc6-8c75-ef16d48f3ed2",
+        "cf719a29-b9ed-4093-a0de-ddf70f4529a2"
       ]
     },
     {
@@ -2105,7 +8513,7 @@
         0.0,
         0.0
       ],
-      "uuid": "a25b8084-53d6-4983-bbf8-7244361e8265",
+      "uuid": "15c4599f-4654-42ad-a5bb-c499c11000af",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2113,14 +8521,14 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "77d19cd0-cbeb-4b25-baad-9b4ac9e88889",
-        "51d2992f-bf19-4e8e-a575-5ea0038e4429",
-        "f25f0875-0e6a-4c0e-9933-ebdc92478443",
-        "d4830e5f-9825-45d9-a7e1-d00fa6ebab1f",
-        "a8606843-d7d2-42ea-ba33-01a5069d3a27",
-        "88b434b4-9039-4697-9be2-fd75eaabc69e",
-        "4a911605-9371-47ce-ae62-9cb46d3251ab",
-        "65230060-5135-4894-bb7e-91b01d3f4a69"
+        "bccfdebd-7a19-4d33-aa7b-b42c2b3b2d7b",
+        "914c7629-d46b-4917-8e47-8980cfaad96b",
+        "19a06e1d-98bb-4587-ab4a-4231edae1840",
+        "3c5a9e7f-5b53-4289-9412-8c13de6b0a53",
+        "298fba37-14e8-47f4-a108-7aa829a62401",
+        "51bf0d31-3434-4c77-a611-e8bebc35f3aa",
+        "1be49650-437f-4abc-a254-b189b7bc8645",
+        "fa5e6c55-f7c2-4c4f-b94b-85875507bb8a"
       ]
     },
     {
@@ -2135,7 +8543,7 @@
         0.0,
         0.0
       ],
-      "uuid": "ba5769f9-ff81-449f-a545-5ec6aea6921d",
+      "uuid": "2c0231c0-9ed7-4b68-8191-691a4de2adc6",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2143,9 +8551,9 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "99cf245a-53e0-48bf-a1e7-ef6e0e493d89",
-        "2245e3da-49b0-46fa-84b8-8a2232a31a6c",
-        "6715b842-968b-4088-bb6f-1e1e64e5ab8c"
+        "3ff0c2c9-b4a0-4cd4-a6c5-ff155d7e67a2",
+        "89049caa-29ee-46e9-b4bc-02533078536c",
+        "b1e5d36b-d840-463a-89be-7a6ff655011e"
       ]
     }
   ],
@@ -2161,7 +8569,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": false,
-      "uuid": "1f8bf652-b3e8-4309-a0fc-3f0bd4b9a813",
+      "uuid": "9f14911f-6489-4297-b081-05e0518848d8",
       "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAiklEQVR4nO3TMQoCMRAF0OwMHsDWRoS18P6XsBQsPIFHWNBF0MpG3HTBIO9Vn0BCZuAPu+34zIySGWWeH+UzT9Pt6/k7j5vD4t3MKOvVfvFuZpTr/Vh9/3w5DaWhqH2uh9xa9DBkLTdfQA9D1nLzBfQwpAqogAr8rAIAAAAAAAAAAAAAAAAAwP94ATjQRScanFK+AAAAAElFTkSuQmCC"
     }
   ]

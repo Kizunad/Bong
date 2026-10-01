@@ -10,12 +10,15 @@ from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # 
 
 MATS = {
     "warm_soil": (82, 73, 61),
+    "stone_seat": (58, 58, 62),
+    "stone_edge": (92, 92, 96),
+    "qi_cyan": (74, 216, 208),
     "branch_bark": (102, 69, 49),
     "branch_high": (153, 111, 69),
     "leaf_sage": (116, 158, 92),
     "leaf_fresh": (175, 205, 112),
-    "sap_gold": (244, 199, 90),
-    "sap_glint": (255, 235, 164),
+    "lantern_fruit": (218, 210, 154),
+    "lantern_glint": (255, 244, 198),
 }
 
 
@@ -28,6 +31,17 @@ def part_warm_soil(rig):
         ("soil_right", 2.25, -0.2, 1.6, 1.05, 2.55, 0.35, "warm_soil"),
     ):
         pad(rig, "warm_soil", name, (x, y, z), (w, h, d), mat)
+
+
+def part_stone_seat(rig):
+    rig.bone("stone_seat", (0.0, 0.0, 0.0))
+    for name, center, size, mat in (
+        ("seat_main", (0.0, 0.28, 0.0), (4.8, 0.68, 4.2), "stone_seat"),
+        ("seat_left", (-2.0, 0.5, 0.0), (0.8, 0.75, 3.0), "stone_edge"),
+        ("seat_back", (0.0, 0.52, -1.65), (3.4, 0.78, 0.7), "stone_edge"),
+        ("qi_well", (0.0, 0.86, 0.0), (1.25, 0.24, 1.25), "qi_cyan"),
+    ):
+        pad(rig, "stone_seat", name, center, size, mat)
 
 
 def part_upright_branches(rig):
@@ -65,8 +79,8 @@ def part_sage_leaves(rig):
         )
 
 
-def part_sap_drops(rig):
-    rig.bone("sap_drops", (0.0, 0.0, 0.0))
+def part_lantern_fruits(rig):
+    rig.bone("lantern_fruits", (0.0, 0.0, 0.0))
     for index, (x, y, z) in enumerate(
         (
             (0.1, 4.0, 0.45),
@@ -76,19 +90,38 @@ def part_sap_drops(rig):
             (0.85, 5.8, 0.25),
         )
     ):
-        pad(rig, "sap_drops", f"sap_drop_{index}", (x, y, z), (0.34, 0.52, 0.34), "sap_gold")
+        strand(
+            rig,
+            "lantern_fruits",
+            f"lantern_stem_{index}",
+            (x, y - 0.35, z),
+            (x, y, z),
+            0.14,
+            "branch_high",
+        )
         pad(
             rig,
-            "sap_drops",
-            f"sap_glint_{index}",
-            (x - 0.08, y + 0.12, z + 0.08),
-            (0.24, 0.28, 0.24),
-            "sap_glint",
+            "lantern_fruits",
+            f"lantern_body_{index}",
+            (x, y + 0.22, z),
+            (0.72, 0.82, 0.72),
+            "lantern_fruit",
+        )
+        pad(
+            rig,
+            "lantern_fruits",
+            f"lantern_glint_{index}",
+            (x - 0.12, y + 0.42, z + 0.1),
+            (0.26, 0.32, 0.26),
+            "lantern_glint",
         )
 
 
 def build():
-    return build_rig(MATS, (part_warm_soil, part_upright_branches, part_sage_leaves, part_sap_drops))
+    return build_rig(
+        MATS,
+        (part_warm_soil, part_stone_seat, part_upright_branches, part_sage_leaves, part_lantern_fruits),
+    )
 
 
 GATES = PlantGates("回元枝 / hui_yuan_zhi")

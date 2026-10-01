@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
+from plant_geo_common import (  # noqa: E402
+    PlantGates,
+    build_rig,
+    curved_vine_chain,
+    pad,
+    strand,
+    write_model,
+)
 
 MATS = {
     "scorch_bed": (52, 45, 40),
@@ -31,17 +39,29 @@ def part_scorched_bed(rig):
 
 def part_charred_vines(rig):
     rig.bone("charred_vines", (0.0, 0.0, 0.0))
-    segments = (
-        ("vine_main_0", (-2.2, 0.85, 0.0), (-1.25, 2.35, 0.05), 0.42),
-        ("vine_main_1", (-1.25, 2.35, 0.05), (0.15, 3.65, -0.1), 0.38),
-        ("vine_main_2", (0.15, 3.65, -0.1), (1.75, 4.75, 0.2), 0.36),
-        ("vine_side_0", (-1.55, 1.55, 0.45), (-2.45, 3.15, 0.55), 0.3),
-        ("vine_side_1", (-2.45, 3.15, 0.55), (-1.85, 4.85, 0.7), 0.28),
-        ("vine_right_0", (0.75, 2.65, -0.4), (2.35, 3.55, -0.65), 0.31),
-        ("vine_right_1", (2.35, 3.55, -0.65), (2.65, 5.55, -0.45), 0.28),
-    )
-    for name, start, end, radius in segments:
-        strand(rig, "charred_vines", name, start, end, radius, "char_black")
+    for vine_index in range(10):
+        phase = math.tau * vine_index / 10.0
+        points = []
+        for step in range(10):
+            t = step / 9.0
+            angle = phase + math.tau * 1.35 * t
+            radius = 0.65 + 0.72 * math.sin(math.pi * t)
+            points.append(
+                (
+                    radius * math.cos(angle),
+                    0.78 + 5.2 * t,
+                    radius * math.sin(angle),
+                )
+            )
+        curved_vine_chain(
+            rig,
+            "charred_vines",
+            f"vine_spiral_{vine_index}",
+            points,
+            0.62,
+            0.38,
+            "char_black",
+        )
 
 
 def part_ember_core(rig):

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
+from plant_geo_common import (  # noqa: E402
+    PlantGates,
+    build_rig,
+    curved_vine_chain,
+    pad,
+    strand,
+    write_model,
+)
 
 MATS = {
     "island_rock": (68, 78, 70),
@@ -14,55 +22,87 @@ MATS = {
     "root_green": (42, 112, 62),
     "leaf_green": (88, 168, 78),
     "leaf_high": (142, 204, 98),
-    "siphon_crystal": (92, 205, 214),
-    "crystal_glint": (178, 246, 236),
+    "siphon_crystal": (106, 224, 106),
+    "crystal_glint": (178, 246, 140),
 }
 
 
 def part_island_underside(rig):
     rig.bone("island_underside", (0.0, 0.0, 0.0))
     for name, x, z, w, h, d, y, mat in (
-        ("island_floor", 0.0, 0.0, 7.2, 0.85, 5.8, 0.1, "island_rock"),
-        ("island_left", -2.45, 0.1, 2.2, 1.5, 3.2, 0.4, "rock_high"),
-        ("island_back", 0.1, -1.75, 4.8, 1.25, 1.25, 0.45, "island_rock"),
-        ("island_right", 2.35, -0.2, 1.7, 1.15, 2.6, 0.35, "island_rock"),
+        ("island_floor", 0.0, 0.0, 7.2, 0.9, 5.8, 6.35, "island_rock"),
+        ("island_left", -2.45, 0.1, 2.2, 1.45, 3.2, 6.4, "rock_high"),
+        ("island_back", 0.1, -1.75, 4.8, 1.25, 1.25, 6.45, "island_rock"),
+        ("island_right", 2.35, -0.2, 1.7, 1.15, 2.6, 6.4, "island_rock"),
     ):
         pad(rig, "island_underside", name, (x, y, z), (w, h, d), mat)
 
 
+def _root_path(root_index: int, count: int = 10):
+    phase = math.tau * root_index / 12.0
+    points = []
+    for step in range(count):
+        t = step / (count - 1)
+        angle = phase + math.tau * 0.85 * t
+        radius = 0.55 + 1.8 * math.sin(math.pi * t)
+        points.append(
+            (
+                radius * math.cos(angle),
+                6.5 - 5.55 * t,
+                radius * math.sin(angle),
+            )
+        )
+    return points
+
+
 def part_hanging_roots(rig):
     rig.bone("hanging_roots", (0.0, 0.0, 0.0))
-    roots = (
-        ("root_center", (0.0, 1.0, 0.0), (0.15, 5.9, 0.1), (0.38, 0.3)),
-        ("root_left", (-1.25, 0.9, 0.25), (-2.3, 5.45, 0.55), (0.32, 0.24)),
-        ("root_right", (1.25, 0.85, -0.25), (2.35, 5.3, -0.5), (0.34, 0.24)),
-        ("root_back", (0.4, 0.8, -1.0), (1.05, 4.9, -2.35), (0.3, 0.22)),
-        ("root_front", (-0.45, 0.75, 0.8), (-1.05, 4.7, 2.25), (0.3, 0.22)),
-    )
-    for name, start, end, (base_radius, tip_radius) in roots:
-        strand(rig, "hanging_roots", f"{name}_lower", start, end, base_radius, "root_green")
-        tip = (end[0] * 1.06, end[1] + 0.55, end[2] * 1.06)
-        strand(rig, "hanging_roots", f"{name}_tip", end, tip, tip_radius, "leaf_green")
+    for root_index in range(12):
+        points = _root_path(root_index)
+        curved_vine_chain(
+            rig,
+            "hanging_roots",
+            f"root_vine_{root_index}",
+            points,
+            0.48,
+            0.26,
+            "root_green",
+        )
+        end = points[-1]
+        crystal_base = (end[0], end[1] - 0.05, end[2])
+        crystal_tip = (end[0], end[1] - 0.62, end[2])
+        strand(
+            rig,
+            "hanging_roots",
+            f"root_crystal_stem_{root_index}",
+            crystal_base,
+            crystal_tip,
+            0.2,
+            "siphon_crystal",
+        )
+        pad(
+            rig,
+            "hanging_roots",
+            f"root_crystal_tip_{root_index}",
+            (crystal_tip[0], crystal_tip[1] - 0.18, crystal_tip[2]),
+            (0.5, 0.72, 0.5),
+            "crystal_glint",
+        )
 
 
 def part_root_leaves(rig):
     rig.bone("root_leaves", (0.0, 0.0, 0.0))
-    for index, (x, y, z, dx, dz) in enumerate(
-        (
-            (-1.15, 3.0, 0.45, -0.95, 0.2),
-            (1.1, 3.15, -0.45, 0.9, -0.25),
-            (-0.35, 4.0, 0.3, -0.7, 0.65),
-            (0.75, 4.15, -0.25, 0.8, 0.5),
-            (-1.85, 4.25, 0.65, -0.55, 0.65),
-            (1.85, 4.35, -0.7, 0.55, -0.65),
-        )
-    ):
+    for index in range(6):
+        points = _root_path(index * 2)
+        x, y, z = points[3 + index % 2]
+        angle = math.tau * index / 6.0
+        dx, dz = math.cos(angle), math.sin(angle)
         strand(
             rig,
             "root_leaves",
             f"leaf_stem_{index}",
             (x, y, z),
-            (x + dx * 0.9, y + 0.7, z + dz * 0.9),
+            (x + dx * 0.85, y - 0.2, z + dz * 0.85),
             0.18,
             "leaf_green",
         )
@@ -70,7 +110,7 @@ def part_root_leaves(rig):
             rig,
             "root_leaves",
             f"leaf_blade_{index}",
-            (x + dx, y + 1.0, z + dz),
+            (x + dx, y - 0.45, z + dz),
             (0.75, 0.28, 0.48),
             "leaf_high",
         )

@@ -12,30 +12,118 @@
   },
   "elements": [
     {
-      "name": "wall_main",
+      "name": "wall_anchor",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "81a0a7c9-6b35-4007-ae06-d492aeb0fa0b",
+      "uuid": "515d4f36-d15d-45a0-8f4e-0e2f3fcf18ea",
       "from": [
-        4.6,
-        0.35,
-        5.775
+        4.5,
+        6.35,
+        6.75
       ],
       "to": [
-        11.4,
-        6.65,
-        7.125
+        11.5,
+        7.2,
+        8.35
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        8.0,
+        6.35,
+        7.55
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            9.0,
+            1.0,
+            15.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "wall_back",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0a2071c3-c2ff-4d35-8f2d-7a34ade7cdba",
+      "from": [
+        5.1,
+        0.35,
+        5.75
+      ],
+      "to": [
+        10.9,
+        1.45,
+        6.65
       ],
       "autouv": 0,
       "color": 0,
       "origin": [
         8.0,
         0.35,
-        6.45
+        6.2
       ],
       "rotation": [
         0.0,
@@ -107,15 +195,15 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "25202795-25ac-43ca-aa97-ac1b50aff043",
+      "uuid": "b8620d9b-b923-4052-a4c0-a38bcf1ff5d5",
       "from": [
-        4.45,
+        4.5,
         0.35,
         6.55
       ],
       "to": [
-        5.55,
-        4.65,
+        5.5,
+        4.75,
         7.55
       ],
       "autouv": 0,
@@ -195,15 +283,15 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3e053f17-ee39-4ff1-9879-d1a6b093c0f0",
+      "uuid": "60da865e-925d-444d-b3c1-af249eff0da0",
       "from": [
-        10.45,
+        10.5,
         0.35,
         6.5
       ],
       "to": [
-        11.55,
-        5.15,
+        11.5,
+        4.75,
         7.5
       ],
       "autouv": 0,
@@ -283,7 +371,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2e18ee94-6096-44fa-8a80-82b30a51fa40",
+      "uuid": "0f9806c5-7cf8-416a-b06f-b6e3b8f07101",
       "from": [
         4.4,
         0.1,
@@ -364,34 +452,34 @@
       }
     },
     {
-      "name": "vine_left_0",
+      "name": "vine_hang_0_00",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e67cdef8-68af-4694-8665-168f7cde2aa8",
+      "uuid": "14e54a40-b839-4503-8715-7584aa098cde",
       "from": [
-        5.5600000000000005,
-        4.662,
-        7.703
+        5.002,
+        5.938,
+        7.729
       ],
       "to": [
-        6.24,
-        6.288,
-        8.247
+        6.042,
+        6.558,
+        8.561
       ],
       "autouv": 0,
       "color": 2,
       "origin": [
-        5.9,
-        5.475,
-        7.975
+        5.522,
+        6.248,
+        8.145
       ],
       "rotation": [
-        162.375,
-        23.962,
+        166.583,
+        93.603,
         0.0
       ],
       "faces": {
@@ -452,87 +540,4751 @@
       }
     },
     {
-      "name": "vine_left_1",
+      "name": "vine_hang_0_01",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "36137e76-5dbc-43e9-8356-b4782c86c15e",
+      "uuid": "3d7bb159-f274-4b3e-9e9d-024554f336fa",
       "from": [
-        5.425,
-        2.956,
-        7.935
+        5.167,
+        5.36,
+        7.736
       ],
       "to": [
-        6.025,
-        4.744,
+        6.147,
+        5.954,
+        8.52
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.657,
+        5.657,
+        8.128
+      ],
+      "rotation": [
+        167.462,
+        101.651,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "57ff1fac-db42-4e91-8f1f-a450acaf9640",
+      "from": [
+        5.307,
+        4.796,
+        7.727
+      ],
+      "to": [
+        6.227,
+        5.371,
+        8.463
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.7669999999999995,
+        5.084,
+        8.095
+      ],
+      "rotation": [
+        169.788,
+        113.056,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8f28e2ba-d70e-4435-b8bb-35f4caa92b14",
+      "from": [
+        5.409,
+        4.234,
+        7.707
+      ],
+      "to": [
+        6.269,
+        4.803,
+        8.395
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.839,
+        4.519,
+        8.051
+      ],
+      "rotation": [
+        172.942,
+        134.458,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "65ebaad4-b0ba-4c59-acdc-815d59fba3d7",
+      "from": [
+        5.464,
+        3.657,
+        7.68
+      ],
+      "to": [
+        6.264,
+        4.238,
+        8.32
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.864,
+        3.947,
+        8.0
+      ],
+      "rotation": [
+        174.853,
+        180.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a7025080-1622-4a6d-908b-b75eb2bb72bf",
+      "from": [
+        5.468999999999999,
+        3.05,
+        7.6530000000000005
+      ],
+      "to": [
+        6.209,
+        3.66,
+        8.245
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.839,
+        3.355,
+        7.949
+      ],
+      "rotation": [
+        173.422,
+        -134.458,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8a29d931-ca45-4936-843a-faf38f2ae9fa",
+      "from": [
+        5.427,
+        2.404,
+        7.633
+      ],
+      "to": [
+        6.107,
+        3.056,
+        8.177
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.7669999999999995,
+        2.73,
+        7.905
+      ],
+      "rotation": [
+        171.005,
+        -113.056,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0de0a8e7-0918-4105-a580-871c12f91fcb",
+      "from": [
+        5.3469999999999995,
+        1.717,
+        7.624
+      ],
+      "to": [
+        5.9670000000000005,
+        2.414,
+        8.12
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.657,
+        2.066,
+        7.872
+      ],
+      "rotation": [
+        169.34,
+        -101.651,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_0_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "384d599e-4b60-4762-abe4-bf71406ad14f",
+      "from": [
+        5.242,
+        0.993,
+        7.631
+      ],
+      "to": [
+        5.802,
+        1.73,
+        8.079
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        5.522,
+        1.362,
+        7.855
+      ],
+      "rotation": [
+        168.742,
+        -93.603,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5b8519e6-5102-4799-9752-a66bfe294279",
+      "from": [
+        6.204,
+        5.941,
+        7.641
+      ],
+      "to": [
+        7.244,
+        6.556,
+        8.473
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.724,
+        6.248,
+        8.057
+      ],
+      "rotation": [
+        168.813,
+        113.749,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a885b576-ddc6-4785-881a-36ca1f2c4617",
+      "from": [
+        6.324,
+        5.363,
+        7.615
+      ],
+      "to": [
+        7.304,
+        5.95,
+        8.399000000000001
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.814,
+        5.657,
+        8.007
+      ],
+      "rotation": [
+        171.48,
+        126.795,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "619216dd-dce9-4f90-973b-a4151a2d945a",
+      "from": [
+        6.399,
+        4.8,
+        7.588
+      ],
+      "to": [
+        7.319,
+        5.368,
+        8.324
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.859,
+        5.084,
+        7.956
+      ],
+      "rotation": [
+        174.527,
+        156.596,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "02b07e2a-54f3-41ab-ae60-dd11484d4def",
+      "from": [
+        6.425,
+        4.235,
+        7.566
+      ],
+      "to": [
+        7.285,
+        4.802,
+        8.254
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.855,
+        4.519,
+        7.91
+      ],
+      "rotation": [
+        174.873,
+        -144.913,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7b7ad5f6-6a4c-494c-9407-701f1461e6bb",
+      "from": [
+        6.4030000000000005,
+        3.655,
+        7.556
+      ],
+      "to": [
+        7.203,
+        4.239,
+        8.196
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.803,
+        3.947,
+        7.876
+      ],
+      "rotation": [
+        172.001,
+        -110.263,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "530be462-b4ef-452d-9f1e-0ab0a70a7ff5",
+      "from": [
+        6.337,
+        3.047,
+        7.56
+      ],
+      "to": [
+        7.077,
+        3.664,
+        8.152
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.707,
+        3.355,
+        7.856
+      ],
+      "rotation": [
+        169.279,
+        -95.73,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d9f4b020-8945-4c39-88c7-625ce6eac238",
+      "from": [
+        6.241,
+        2.401,
+        7.581
+      ],
+      "to": [
+        6.921,
+        3.059,
+        8.125
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.5809999999999995,
+        2.73,
+        7.853
+      ],
+      "rotation": [
+        167.859,
+        -87.262,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3c9d2726-a79e-44bd-b0a5-51e60ce989c4",
+      "from": [
+        6.129,
+        1.715,
+        7.621
+      ],
+      "to": [
+        6.7490000000000006,
+        2.416,
+        8.117
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.439,
+        2.066,
+        7.869
+      ],
+      "rotation": [
+        167.832,
+        -80.695,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_1_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7f25b186-7d68-4815-90d0-4053057de78c",
+      "from": [
+        6.018,
+        0.993,
+        7.676
+      ],
+      "to": [
+        6.578,
+        1.73,
+        8.124
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        6.298,
+        1.362,
+        7.9
+      ],
+      "rotation": [
+        168.966,
+        -74.246,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6fb72174-d783-4a48-a770-75029e98539f",
+      "from": [
+        7.326,
+        5.945,
+        7.5
+      ],
+      "to": [
+        8.366,
+        6.552,
+        8.332
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.846,
+        6.248,
+        7.916
+      ],
+      "rotation": [
+        174.28,
+        135.201,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "64dbfd15-dd3f-48a2-a0aa-1d3e597b6a79",
+      "from": [
+        7.373,
+        5.366,
+        7.4879999999999995
+      ],
+      "to": [
+        8.353,
+        5.947,
+        8.272
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.8629999999999995,
+        5.657,
+        7.88
+      ],
+      "rotation": [
+        176.926,
+        -165.692,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "86871c50-1170-46ea-a60c-306fc35c07b4",
+      "from": [
+        7.371,
+        4.8,
+        7.49
+      ],
+      "to": [
+        8.291,
+        5.368,
+        8.226
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.831,
+        5.084,
+        7.858
+      ],
+      "rotation": [
+        174.074,
+        -103.637,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9ae535b7-61cb-4a18-be30-64963d1544e1",
+      "from": [
+        7.322,
+        4.232,
+        7.509
+      ],
+      "to": [
+        8.182,
+        4.805,
+        8.197
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.752,
+        4.519,
+        7.853
+      ],
+      "rotation": [
+        169.993,
+        -87.601,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b9394c06-6fd7-4d30-93c7-4f5e030e5dd4",
+      "from": [
+        7.2379999999999995,
+        3.651,
+        7.546
+      ],
+      "to": [
+        8.038,
+        4.244,
+        8.186
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.638,
+        3.947,
+        7.866
+      ],
+      "rotation": [
+        167.163,
+        -80.532,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1c33b2c9-30cb-4853-832c-e199f330b469",
+      "from": [
+        7.13,
+        3.043,
+        7.599
+      ],
+      "to": [
+        7.87,
+        3.667,
+        8.191
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.5,
+        3.355,
+        7.895
+      ],
+      "rotation": [
+        166.159,
+        -75.824,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7c24777b-d97a-44ec-9cdf-308b50280763",
+      "from": [
+        7.017,
+        2.4,
+        7.665
+      ],
+      "to": [
+        7.697,
+        3.061,
+        8.209
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.357,
+        2.73,
+        7.937
+      ],
+      "rotation": [
+        166.909,
+        -71.679,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e7f980fa-7994-49dd-a7f6-3b5969d8e2eb",
+      "from": [
+        6.915,
+        1.717,
+        7.7379999999999995
+      ],
+      "to": [
+        7.535,
+        2.415,
+        8.234
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.225,
+        2.066,
+        7.986
+      ],
+      "rotation": [
+        169.029,
+        -67.02,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_2_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d13aa6bf-0c7b-440e-9c51-b55b60b11f45",
+      "from": [
+        6.84,
+        0.996,
+        7.813
+      ],
+      "to": [
+        7.4,
+        1.727,
+        8.261
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        7.12,
+        1.362,
+        8.037
+      ],
+      "rotation": [
+        172.034,
+        -60.117,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "10a4be02-e400-4e10-8f5f-80454e5565cb",
+      "from": [
+        8.33,
+        5.946,
+        7.436
+      ],
+      "to": [
+        9.370000000000001,
+        6.551,
+        8.268
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.85,
+        6.248,
+        7.852
+      ],
+      "rotation": [
+        176.523,
+        -87.317,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5d13db6e-6a80-4ad3-87c1-3b888a46ee97",
+      "from": [
+        8.301,
+        5.364,
+        7.471
+      ],
+      "to": [
+        9.281,
+        5.95,
+        8.255
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.791,
+        5.657,
+        7.8629999999999995
+      ],
+      "rotation": [
+        171.667,
+        -76.785,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "66c775c0-26db-4877-9e70-da0785c5b9c4",
+      "from": [
+        8.23,
+        4.794,
+        7.522
+      ],
+      "to": [
+        9.15,
+        5.373,
+        8.258
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.69,
+        5.084,
+        7.89
+      ],
+      "rotation": [
+        167.655,
+        -73.682,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "dfc1aaf9-4055-4ae7-a94a-25881abbde55",
+      "from": [
+        8.13,
+        4.227,
+        7.586
+      ],
+      "to": [
+        8.99,
+        4.811,
+        8.274000000000001
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.56,
+        4.519,
+        7.93
+      ],
+      "rotation": [
+        165.318,
+        -71.901,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1478c921-2dca-4f90-bcb8-a81f49fca568",
+      "from": [
+        8.017,
+        3.648,
+        7.659
+      ],
+      "to": [
+        8.817,
+        4.247,
+        8.299
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.417,
+        3.947,
+        7.979
+      ],
+      "rotation": [
+        165.064,
+        -70.471,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4f707723-2e90-4ea7-b609-9a085c476977",
+      "from": [
+        7.908,
+        3.044,
+        7.734
+      ],
+      "to": [
+        8.648,
+        3.666,
+        8.326
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.278,
+        3.355,
+        8.03
+      ],
+      "rotation": [
+        166.801,
+        -68.984,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a4ade53d-ce7e-4027-8648-4d7474e503ee",
+      "from": [
+        7.82,
+        2.403,
+        7.806
+      ],
+      "to": [
+        8.5,
+        3.057,
+        8.35
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.16,
+        2.73,
+        8.078
+      ],
+      "rotation": [
+        170.045,
+        -66.953,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d9f8fad7-0c0c-4ea9-8856-f06f1b7839f9",
+      "from": [
+        7.767,
+        1.721,
+        7.868
+      ],
+      "to": [
+        8.387,
+        2.41,
+        8.364
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.077,
+        2.066,
+        8.116
+      ],
+      "rotation": [
+        174.128,
+        -62.854,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_3_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5f5ec0c4-470d-497c-ae55-21f6fec3d9a0",
+      "from": [
+        7.758,
+        1.0,
+        7.916
+      ],
+      "to": [
+        8.318,
+        1.723,
+        8.364
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        8.038,
+        1.362,
+        8.14
+      ],
+      "rotation": [
+        178.31,
+        -40.606,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3886f21f-080b-4348-9463-5d40e7366b57",
+      "from": [
+        9.217,
+        5.941,
+        7.508
+      ],
+      "to": [
+        10.257,
+        6.555,
+        8.34
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.737,
+        6.248,
+        7.924
+      ],
+      "rotation": [
+        169.287,
+        -66.925,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9036cda3-a094-4593-988c-a5ba5c5967bf",
+      "from": [
+        9.128,
+        5.358,
+        7.58
+      ],
+      "to": [
+        10.108,
+        5.955,
+        8.364
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.618,
+        5.657,
+        7.972
+      ],
+      "rotation": [
+        166.169,
+        -69.001,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cf0d55fa-6c42-49d1-8d24-7d257174b330",
+      "from": [
+        9.018,
+        4.791,
+        7.656
+      ],
+      "to": [
+        9.938,
+        5.377,
+        8.392
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.478,
+        5.084,
+        8.024
+      ],
+      "rotation": [
+        164.738,
+        -70.536,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7fcad013-32ba-4a0f-8d95-2896ff4ece2e",
+      "from": [
+        8.906,
+        4.227,
+        7.728
+      ],
+      "to": [
+        9.766,
+        4.81,
+        8.416
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.336,
+        4.519,
+        8.072
+      ],
+      "rotation": [
+        165.369,
+        -72.024,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "556aa7d1-5884-4d24-aacc-f72aebe2cb12",
+      "from": [
+        8.807,
+        3.652,
+        7.792
+      ],
+      "to": [
+        9.607,
+        4.243,
+        8.432
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.207,
+        3.947,
+        8.112
+      ],
+      "rotation": [
+        168.018,
+        -73.895,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f06caca4-fbf4-4c33-a908-b1bdf4af31fc",
+      "from": [
+        8.737,
+        3.049,
+        7.842
+      ],
+      "to": [
+        9.477,
+        3.661,
+        8.434
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.107,
+        3.355,
+        8.138
+      ],
+      "rotation": [
+        172.152,
+        -77.196,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7cc1c83f-9f1b-4720-a280-3ee71179e825",
+      "from": [
+        8.709,
+        2.408,
+        7.876
+      ],
+      "to": [
+        9.389,
+        3.053,
+        8.42
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.049,
+        2.73,
+        8.148
+      ],
+      "rotation": [
+        176.873,
+        -88.79,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7d677c63-7566-4d2b-9814-3d0f2c318ab3",
+      "from": [
+        8.729,
+        1.723,
+        7.892
+      ],
+      "to": [
+        9.349,
+        2.409,
+        8.388
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.039,
+        2.066,
+        8.14
+      ],
+      "rotation": [
+        178.077,
+        138.069,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_4_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4af0fdbf-f91d-4bc6-942f-87b0ab89d048",
+      "from": [
+        8.798,
+        0.998,
+        7.891
+      ],
+      "to": [
+        9.358,
+        1.725,
+        8.339
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        9.078,
+        1.362,
+        8.115
+      ],
+      "rotation": [
+        174.312,
+        117.194,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_00",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3d5c1284-205a-4c35-b53b-75861b19cbce",
+      "from": [
+        10.019,
+        5.937,
+        7.65
+      ],
+      "to": [
+        11.059000000000001,
+        6.559,
+        8.482
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.539,
+        6.248,
+        8.066
+      ],
+      "rotation": [
+        166.05,
+        -71.874,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_01",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "eb2db115-5b14-41b8-86cb-8567ce01d67e",
+      "from": [
+        9.906,
+        5.357,
+        7.715
+      ],
+      "to": [
+        10.886,
+        5.956,
+        8.499
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.396,
+        5.657,
+        8.107
+      ],
+      "rotation": [
+        165.594,
+        -76.067,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_02",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0ed0c23d-dacc-4828-919a-781870cc7e1e",
+      "from": [
+        9.799,
+        4.794,
+        7.767
+      ],
+      "to": [
+        10.719,
+        5.374,
+        8.503
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.259,
+        5.084,
+        8.135
+      ],
+      "rotation": [
+        166.963,
+        -80.866,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_03",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "ad49bb79-ed6c-4437-a505-a6fabd797cae",
+      "from": [
+        9.715,
+        4.232,
+        7.803
+      ],
+      "to": [
+        10.575,
+        4.805,
+        8.491
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.145,
+        4.519,
+        8.147
+      ],
+      "rotation": [
+        170.104,
+        -88.138,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_04",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "17a862f2-bb56-4117-87b7-12cb01869c75",
+      "from": [
+        9.668,
+        3.657,
+        7.822
+      ],
+      "to": [
+        10.468,
+        4.238,
+        8.462
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.068,
+        3.947,
+        8.142
+      ],
+      "rotation": [
+        174.313,
+        -104.866,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_05",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5c069f0a-60d1-45ed-b3aa-93d090d67f2d",
+      "from": [
+        9.667,
+        3.052,
+        7.823
+      ],
+      "to": [
+        10.407,
+        3.659,
         8.415
       ],
       "autouv": 0,
       "color": 2,
       "origin": [
-        5.725,
-        3.85,
+        10.036999999999999,
+        3.355,
+        8.119
+      ],
+      "rotation": [
+        177.017,
+        -168.678,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_06",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e006f3ec-be1e-4433-be8a-f16d6b2f3e6c",
+      "from": [
+        9.716,
+        2.407,
+        7.81
+      ],
+      "to": [
+        10.396,
+        3.054,
+        8.354
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.056000000000001,
+        2.73,
+        8.082
+      ],
+      "rotation": [
+        174.513,
+        134.616,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_07",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "2bf11305-81bd-41a3-adc8-2210b7d2cf63",
+      "from": [
+        9.812,
+        1.719,
+        7.787
+      ],
+      "to": [
+        10.432,
+        2.412,
+        8.283
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.122,
+        2.066,
+        8.035
+      ],
+      "rotation": [
+        171.506,
+        119.665,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "vine_hang_5_08",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "dea1310f-7818-4ef6-89bb-72e96b52d72f",
+      "from": [
+        9.948,
+        0.994,
+        7.759
+      ],
+      "to": [
+        10.508,
+        1.729,
+        8.207
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        10.228,
+        1.362,
+        7.983
+      ],
+      "rotation": [
+        169.536,
+        112.805,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            23.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_0_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c629c026-341d-42da-a550-6f87a9ab6e63",
+      "from": [
+        5.59,
+        5.367,
+        8.035
+      ],
+      "to": [
+        6.21,
+        5.827,
+        8.315
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        5.9,
+        5.367,
         8.175
       ],
       "rotation": [
-        162.003,
-        -95.194,
+        0.0,
+        0.0,
         0.0
       ],
       "faces": {
         "north": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            17.0,
+            25.0,
             1.0,
-            23.0,
+            31.0,
             7.0
           ],
           "texture": 0
@@ -540,87 +5292,87 @@
       }
     },
     {
-      "name": "vine_left_2",
+      "name": "ember_leaf_0_5",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c3781ed4-5788-4145-8cc5-f172820f897c",
+      "uuid": "0ac16e39-fafa-47e2-915a-35faeb137502",
       "from": [
-        5.404999999999999,
-        1.118,
+        5.734,
+        3.658,
+        7.894
+      ],
+      "to": [
+        6.354,
+        4.118,
+        8.174
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.0440000000000005,
+        3.658,
         8.034
       ],
-      "to": [
-        5.945,
-        3.032,
-        8.466
-      ],
-      "autouv": 0,
-      "color": 2,
-      "origin": [
-        5.675,
-        2.075,
-        8.25
-      ],
       "rotation": [
-        165.094,
-        66.038,
+        0.0,
+        0.0,
         0.0
       ],
       "faces": {
         "north": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
@@ -628,175 +5380,1231 @@
       }
     },
     {
-      "name": "vine_mid_0",
+      "name": "ember_leaf_0_8",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dc186bec-ccfa-4ead-bbe7-1fbb42321ea1",
+      "uuid": "594d0b86-48db-42da-9fce-2c772068d1ca",
       "from": [
-        7.17,
-        4.813,
-        8.021
+        5.464,
+        1.723,
+        7.779
       ],
       "to": [
-        7.93,
-        6.487,
-        8.629
+        6.084,
+        2.183,
+        8.059
       ],
       "autouv": 0,
-      "color": 2,
+      "color": 3,
       "origin": [
-        7.55,
-        5.65,
+        5.774,
+        1.723,
+        7.919
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_1_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "543bd328-5486-45a1-9f3d-360108864449",
+      "from": [
+        6.718,
+        5.367,
+        7.901
+      ],
+      "to": [
+        7.338,
+        5.827,
+        8.181
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        7.0280000000000005,
+        5.367,
+        8.041
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_1_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5b750f94-200a-4392-b707-6a57173e5d0d",
+      "from": [
+        6.634,
+        3.658,
+        7.782
+      ],
+      "to": [
+        7.254,
+        4.118,
+        8.062
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        6.944,
+        3.658,
+        7.922
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_1_8",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "2da6aa1e-8c4c-43ab-9d1c-413f1cdff12d",
+      "from": [
+        6.236,
+        1.723,
+        7.801
+      ],
+      "to": [
+        6.856,
+        2.183,
+        8.081
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.546,
+        1.723,
+        7.941
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_2_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4babb4b9-2337-4e7a-98d8-21c64bbe9d8c",
+      "from": [
+        7.729,
+        5.367,
+        7.785
+      ],
+      "to": [
+        8.349,
+        5.827,
+        8.065
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        8.039,
+        5.367,
+        7.925
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_2_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e4ab59e9-9ce2-4dff-b966-7c84ab0195c8",
+      "from": [
+        7.443,
+        3.658,
+        7.797
+      ],
+      "to": [
+        8.063,
+        4.118,
+        8.077
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        7.753,
+        3.658,
+        7.937
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_2_8",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "2a24e2d5-fc1d-4eab-9077-069946511a15",
+      "from": [
+        7.033,
+        1.723,
+        7.932
+      ],
+      "to": [
+        7.6530000000000005,
+        2.183,
+        8.212
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        7.343,
+        1.723,
+        8.072
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_3_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c23b0006-e9dc-4b0a-b54b-a61dc8095184",
+      "from": [
+        8.619,
+        5.367,
+        7.793
+      ],
+      "to": [
+        9.239,
+        5.827,
+        8.073
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        8.929,
+        5.367,
+        7.933
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_3_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "edfd5246-a3ee-4a11-892c-af73e104b36d",
+      "from": [
+        8.215,
+        3.658,
+        7.925
+      ],
+      "to": [
+        8.835,
+        4.118,
+        8.205
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        8.525,
+        3.658,
+        8.065
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_3_8",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "78cd55d0-8220-4aaf-b61b-c0e920807176",
+      "from": [
+        7.915,
+        1.723,
+        8.052
+      ],
+      "to": [
+        8.535,
+        2.183,
+        8.332
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        8.225,
+        1.723,
+        8.192
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_4_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cd63fd0a-2c66-4484-b4de-c28520e6dee8",
+      "from": [
+        9.421,
+        5.367,
+        7.918
+      ],
+      "to": [
+        10.041,
+        5.827,
+        8.198
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        9.731,
+        5.367,
+        8.058
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_4_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "15d0060c-3a7d-4d4e-b708-1c94e89627d6",
+      "from": [
+        9.018,
+        3.658,
+        8.049
+      ],
+      "to": [
+        9.638,
+        4.118,
+        8.329
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        9.328,
+        3.658,
+        8.189
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            39.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_4_8",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c6df7dda-b049-4369-9abb-797d57f1524d",
+      "from": [
+        8.916,
+        1.723,
+        8.051
+      ],
+      "to": [
+        9.536,
+        2.183,
+        8.331
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        9.225999999999999,
+        1.723,
+        8.191
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            25.0,
+            1.0,
+            31.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "ember_leaf_5_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d7b138a8-ebd0-45b7-a9b2-903e546ca66c",
+      "from": [
+        10.193,
+        5.367,
+        8.045
+      ],
+      "to": [
+        10.813,
+        5.827,
         8.325
       ],
-      "rotation": [
-        162.893,
-        23.962,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "vine_mid_1",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "049a6a6d-7220-44fc-b3fc-5223e81bf80b",
-      "from": [
-        7.705,
-        3.214,
-        8.269
-      ],
-      "to": [
-        8.345,
-        4.936,
-        8.781
-      ],
       "autouv": 0,
-      "color": 2,
+      "color": 4,
       "origin": [
-        8.025,
-        4.075,
-        8.525
+        10.503,
+        5.367,
+        8.185
       ],
       "rotation": [
-        154.129,
-        93.814,
+        0.0,
+        0.0,
         0.0
       ],
       "faces": {
         "north": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            17.0,
+            33.0,
             1.0,
-            23.0,
+            39.0,
             7.0
           ],
           "texture": 0
@@ -804,382 +6612,30 @@
       }
     },
     {
-      "name": "vine_mid_2",
+      "name": "ember_leaf_5_5",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "34ba625c-e7d1-46a5-9244-e7e9ad8347bc",
+      "uuid": "4d17660c-5779-4cdc-a39f-0aa65775da88",
       "from": [
-        7.93,
-        0.976,
-        8.409
+        9.91,
+        3.658,
+        8.054
       ],
       "to": [
-        8.47,
-        3.324,
-        8.841
-      ],
-      "autouv": 0,
-      "color": 2,
-      "origin": [
-        8.2,
-        2.15,
-        8.625
-      ],
-      "rotation": [
-        168.41,
-        -57.995,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "vine_right_0",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "ee2e33ac-6d67-4c1a-8728-471f2c00dbdd",
-      "from": [
-        9.08,
-        4.509,
-        7.844
-      ],
-      "to": [
-        9.72,
-        6.141,
-        8.356
-      ],
-      "autouv": 0,
-      "color": 2,
-      "origin": [
-        9.4,
-        5.325,
-        8.1
-      ],
-      "rotation": [
-        161.79,
-        -11.31,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "vine_right_1",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "def8577b-8615-474c-b5a0-3d009ccb00f9",
-      "from": [
-        9.42,
-        2.827,
-        8.076
-      ],
-      "to": [
-        9.98,
-        4.623,
-        8.524000000000001
-      ],
-      "autouv": 0,
-      "color": 2,
-      "origin": [
-        9.7,
-        3.725,
-        8.3
-      ],
-      "rotation": [
-        156.802,
-        98.13,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "vine_right_2",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "8af6884b-0559-4bb4-afbe-1ba431295cf9",
-      "from": [
-        9.61,
-        1.311,
-        8.208
-      ],
-      "to": [
-        10.09,
-        2.939,
-        8.592
-      ],
-      "autouv": 0,
-      "color": 2,
-      "origin": [
-        9.85,
-        2.125,
-        8.4
-      ],
-      "rotation": [
-        162.121,
-        -53.13,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17.0,
-            1.0,
-            23.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "ember_left",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "dfd9a1a6-f6bb-468d-9737-cf7ca0c6ddd8",
-      "from": [
-        5.625,
-        4.2,
-        8.33
-      ],
-      "to": [
-        5.975,
-        5.0,
-        8.63
+        10.53,
+        4.118,
+        8.334
       ],
       "autouv": 0,
       "color": 3,
       "origin": [
-        5.8,
-        4.2,
-        8.48
+        10.22,
+        3.658,
+        8.194
       ],
       "rotation": [
         0.0,
@@ -1244,30 +6700,30 @@
       }
     },
     {
-      "name": "ember_left_low",
+      "name": "ember_leaf_5_8",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "356c558e-5412-4a6a-9e89-b33a24758050",
+      "uuid": "a8b92d89-a587-4d94-bbbf-7df3b308d938",
       "from": [
-        5.55,
-        2.25,
-        8.31
+        10.036999999999999,
+        1.723,
+        7.929
       ],
       "to": [
-        5.85,
-        2.9,
-        8.59
+        10.657,
+        2.183,
+        8.209
       ],
       "autouv": 0,
       "color": 4,
       "origin": [
-        5.7,
-        2.25,
-        8.45
+        10.347,
+        1.723,
+        8.069
       ],
       "rotation": [
         0.0,
@@ -1332,30 +6788,30 @@
       }
     },
     {
-      "name": "ember_mid",
+      "name": "leaf_tail_0",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "88d6a68c-2151-4b24-951c-d674c05e1ac0",
+      "uuid": "5e688ad2-7785-4c9b-818c-61212eb0df85",
       "from": [
-        7.71,
-        4.25,
-        8.69
+        5.0600000000000005,
+        1.18,
+        7.72
       ],
       "to": [
-        8.09,
-        5.1,
-        9.01
+        5.84,
+        1.5,
+        8.14
       ],
       "autouv": 0,
-      "color": 4,
+      "color": 5,
       "origin": [
-        7.9,
-        4.25,
-        8.85
+        5.45,
+        1.18,
+        7.93
       ],
       "rotation": [
         0.0,
@@ -1365,54 +6821,54 @@
       "faces": {
         "north": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            33.0,
+            41.0,
             1.0,
-            39.0,
+            47.0,
             7.0
           ],
           "texture": 0
@@ -1420,30 +6876,30 @@
       }
     },
     {
-      "name": "ember_mid_low",
+      "name": "leaf_tail_1",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f7aa23f4-102a-4c5a-a84e-08f8c9c64ba7",
+      "uuid": "8219068c-69f7-4427-881a-eb5008e016d9",
       "from": [
-        8.03,
-        2.05,
-        8.91
+        5.84,
+        1.18,
+        7.789
       ],
       "to": [
-        8.33,
-        2.73,
-        9.19
+        6.62,
+        1.5,
+        8.209
       ],
       "autouv": 0,
-      "color": 3,
+      "color": 5,
       "origin": [
-        8.18,
-        2.05,
-        9.05
+        6.23,
+        1.18,
+        7.999
       ],
       "rotation": [
         0.0,
@@ -1453,54 +6909,54 @@
       "faces": {
         "north": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
@@ -1508,30 +6964,30 @@
       }
     },
     {
-      "name": "ember_right",
+      "name": "leaf_tail_2",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1a3fb087-3495-48ff-819f-d3a97a94e44a",
+      "uuid": "5a167270-52e7-4d31-8d00-534237009bd7",
       "from": [
-        9.24,
-        4.1,
-        8.47
+        6.686,
+        1.18,
+        7.932
       ],
       "to": [
-        9.56,
-        4.85,
-        8.77
+        7.466,
+        1.5,
+        8.352
       ],
       "autouv": 0,
-      "color": 3,
+      "color": 5,
       "origin": [
-        9.4,
-        4.1,
-        8.62
+        7.076,
+        1.18,
+        8.142
       ],
       "rotation": [
         0.0,
@@ -1541,54 +6997,54 @@
       "faces": {
         "north": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            25.0,
+            41.0,
             1.0,
-            31.0,
+            47.0,
             7.0
           ],
           "texture": 0
@@ -1596,294 +7052,206 @@
       }
     },
     {
-      "name": "ember_right_low",
+      "name": "leaf_tail_3",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f544eaa1-362b-4099-b4e9-0bb6b55d0a75",
+      "uuid": "e0e52174-67f2-4d96-a80c-9d8acb6fc980",
       "from": [
-        9.75,
-        2.2,
-        8.38
+        7.641,
+        1.18,
+        8.018
       ],
       "to": [
-        10.05,
-        2.82,
-        8.66
+        8.421,
+        1.5,
+        8.438
       ],
       "autouv": 0,
-      "color": 4,
+      "color": 5,
       "origin": [
+        8.031,
+        1.18,
+        8.228
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "leaf_tail_4",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b3b0dafd-b2cc-478e-b6d3-6fe221393e10",
+      "from": [
+        8.72,
+        1.18,
+        7.968
+      ],
+      "to": [
+        9.5,
+        1.5,
+        8.388
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        9.11,
+        1.18,
+        8.178
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            41.0,
+            1.0,
+            47.0,
+            7.0
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "leaf_tail_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f7c7f2d7-c82d-4d9e-b1c3-2992773e6ae5",
+      "from": [
         9.9,
-        2.2,
-        8.52
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33.0,
-            1.0,
-            39.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "leaf_left",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "932abc17-3ec2-4f41-9265-4f36dc6aca2e",
-      "from": [
-        5.125,
-        3.45,
-        8.075
+        1.18,
+        7.827
       ],
       "to": [
-        5.975,
-        3.75,
-        8.525
+        10.68,
+        1.5,
+        8.247
       ],
       "autouv": 0,
       "color": 5,
       "origin": [
-        5.55,
-        3.45,
-        8.3
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "leaf_mid",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "f6cd4f29-3e06-4612-bf89-90f2efd34290",
-      "from": [
-        8.05,
-        3.05,
-        8.49
-      ],
-      "to": [
-        8.85,
-        3.33,
-        8.91
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        8.45,
-        3.05,
-        8.7
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            41.0,
-            1.0,
-            47.0,
-            7.0
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "leaf_right",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "b1c1c43b-7476-4520-8645-e461c883c94a",
-      "from": [
-        9.6,
-        3.0,
-        8.225
-      ],
-      "to": [
-        10.4,
-        3.3,
-        8.675
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        10.0,
-        3.0,
-        8.45
+        10.29,
+        1.18,
+        8.037
       ],
       "rotation": [
         0.0,
@@ -1961,7 +7329,7 @@
         0.0,
         0.0
       ],
-      "uuid": "7337826a-f023-4b05-9b84-1432cdfc08b5",
+      "uuid": "72bae091-5ffd-46a5-a7b1-75e23b3e8f70",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -1969,10 +7337,11 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "81a0a7c9-6b35-4007-ae06-d492aeb0fa0b",
-        "25202795-25ac-43ca-aa97-ac1b50aff043",
-        "3e053f17-ee39-4ff1-9879-d1a6b093c0f0",
-        "2e18ee94-6096-44fa-8a80-82b30a51fa40"
+        "515d4f36-d15d-45a0-8f4e-0e2f3fcf18ea",
+        "0a2071c3-c2ff-4d35-8f2d-7a34ade7cdba",
+        "b8620d9b-b923-4052-a4c0-a38bcf1ff5d5",
+        "60da865e-925d-444d-b3c1-af249eff0da0",
+        "0f9806c5-7cf8-416a-b06f-b6e3b8f07101"
       ]
     },
     {
@@ -1987,7 +7356,7 @@
         0.0,
         0.0
       ],
-      "uuid": "6f983c96-0a95-46d4-a3e5-5ff4b41e61b2",
+      "uuid": "cfe3072b-504a-4487-a2a6-336f72d4a04a",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -1995,15 +7364,60 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "e67cdef8-68af-4694-8665-168f7cde2aa8",
-        "36137e76-5dbc-43e9-8356-b4782c86c15e",
-        "c3781ed4-5788-4145-8cc5-f172820f897c",
-        "dc186bec-ccfa-4ead-bbe7-1fbb42321ea1",
-        "049a6a6d-7220-44fc-b3fc-5223e81bf80b",
-        "34ba625c-e7d1-46a5-9244-e7e9ad8347bc",
-        "ee2e33ac-6d67-4c1a-8728-471f2c00dbdd",
-        "def8577b-8615-474c-b5a0-3d009ccb00f9",
-        "8af6884b-0559-4bb4-afbe-1ba431295cf9"
+        "14e54a40-b839-4503-8715-7584aa098cde",
+        "3d7bb159-f274-4b3e-9e9d-024554f336fa",
+        "57ff1fac-db42-4e91-8f1f-a450acaf9640",
+        "8f28e2ba-d70e-4435-b8bb-35f4caa92b14",
+        "65ebaad4-b0ba-4c59-acdc-815d59fba3d7",
+        "a7025080-1622-4a6d-908b-b75eb2bb72bf",
+        "8a29d931-ca45-4936-843a-faf38f2ae9fa",
+        "0de0a8e7-0918-4105-a580-871c12f91fcb",
+        "384d599e-4b60-4762-abe4-bf71406ad14f",
+        "5b8519e6-5102-4799-9752-a66bfe294279",
+        "a885b576-ddc6-4785-881a-36ca1f2c4617",
+        "619216dd-dce9-4f90-973b-a4151a2d945a",
+        "02b07e2a-54f3-41ab-ae60-dd11484d4def",
+        "7b7ad5f6-6a4c-494c-9407-701f1461e6bb",
+        "530be462-b4ef-452d-9f1e-0ab0a70a7ff5",
+        "d9f4b020-8945-4c39-88c7-625ce6eac238",
+        "3c9d2726-a79e-44bd-b0a5-51e60ce989c4",
+        "7f25b186-7d68-4815-90d0-4053057de78c",
+        "6fb72174-d783-4a48-a770-75029e98539f",
+        "64dbfd15-dd3f-48a2-a0aa-1d3e597b6a79",
+        "86871c50-1170-46ea-a60c-306fc35c07b4",
+        "9ae535b7-61cb-4a18-be30-64963d1544e1",
+        "b9394c06-6fd7-4d30-93c7-4f5e030e5dd4",
+        "1c33b2c9-30cb-4853-832c-e199f330b469",
+        "7c24777b-d97a-44ec-9cdf-308b50280763",
+        "e7f980fa-7994-49dd-a7f6-3b5969d8e2eb",
+        "d13aa6bf-0c7b-440e-9c51-b55b60b11f45",
+        "10a4be02-e400-4e10-8f5f-80454e5565cb",
+        "5d13db6e-6a80-4ad3-87c1-3b888a46ee97",
+        "66c775c0-26db-4877-9e70-da0785c5b9c4",
+        "dfc1aaf9-4055-4ae7-a94a-25881abbde55",
+        "1478c921-2dca-4f90-bcb8-a81f49fca568",
+        "4f707723-2e90-4ea7-b609-9a085c476977",
+        "a4ade53d-ce7e-4027-8648-4d7474e503ee",
+        "d9f8fad7-0c0c-4ea9-8856-f06f1b7839f9",
+        "5f5ec0c4-470d-497c-ae55-21f6fec3d9a0",
+        "3886f21f-080b-4348-9463-5d40e7366b57",
+        "9036cda3-a094-4593-988c-a5ba5c5967bf",
+        "cf0d55fa-6c42-49d1-8d24-7d257174b330",
+        "7fcad013-32ba-4a0f-8d95-2896ff4ece2e",
+        "556aa7d1-5884-4d24-aacc-f72aebe2cb12",
+        "f06caca4-fbf4-4c33-a908-b1bdf4af31fc",
+        "7cc1c83f-9f1b-4720-a280-3ee71179e825",
+        "7d677c63-7566-4d2b-9814-3d0f2c318ab3",
+        "4af0fdbf-f91d-4bc6-942f-87b0ab89d048",
+        "3d5c1284-205a-4c35-b53b-75861b19cbce",
+        "eb2db115-5b14-41b8-86cb-8567ce01d67e",
+        "0ed0c23d-dacc-4828-919a-781870cc7e1e",
+        "ad49bb79-ed6c-4437-a505-a6fabd797cae",
+        "17a862f2-bb56-4117-87b7-12cb01869c75",
+        "5c069f0a-60d1-45ed-b3aa-93d090d67f2d",
+        "e006f3ec-be1e-4433-be8a-f16d6b2f3e6c",
+        "2bf11305-81bd-41a3-adc8-2210b7d2cf63",
+        "dea1310f-7818-4ef6-89bb-72e96b52d72f"
       ]
     },
     {
@@ -2018,7 +7432,7 @@
         0.0,
         0.0
       ],
-      "uuid": "8c80a176-5a16-4069-9b2d-7ed1ecfda1fa",
+      "uuid": "b48f5bcb-8912-4041-83b5-6a2fbe3fca71",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2026,12 +7440,24 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "dfd9a1a6-f6bb-468d-9737-cf7ca0c6ddd8",
-        "356c558e-5412-4a6a-9e89-b33a24758050",
-        "88d6a68c-2151-4b24-951c-d674c05e1ac0",
-        "f7aa23f4-102a-4c5a-a84e-08f8c9c64ba7",
-        "1a3fb087-3495-48ff-819f-d3a97a94e44a",
-        "f544eaa1-362b-4099-b4e9-0bb6b55d0a75"
+        "c629c026-341d-42da-a550-6f87a9ab6e63",
+        "0ac16e39-fafa-47e2-915a-35faeb137502",
+        "594d0b86-48db-42da-9fce-2c772068d1ca",
+        "543bd328-5486-45a1-9f3d-360108864449",
+        "5b750f94-200a-4392-b707-6a57173e5d0d",
+        "2da6aa1e-8c4c-43ab-9d1c-413f1cdff12d",
+        "4babb4b9-2337-4e7a-98d8-21c64bbe9d8c",
+        "e4ab59e9-9ce2-4dff-b966-7c84ab0195c8",
+        "2a24e2d5-fc1d-4eab-9077-069946511a15",
+        "c23b0006-e9dc-4b0a-b54b-a61dc8095184",
+        "edfd5246-a3ee-4a11-892c-af73e104b36d",
+        "78cd55d0-8220-4aaf-b61b-c0e920807176",
+        "cd63fd0a-2c66-4484-b4de-c28520e6dee8",
+        "15d0060c-3a7d-4d4e-b708-1c94e89627d6",
+        "c6df7dda-b049-4369-9abb-797d57f1524d",
+        "d7b138a8-ebd0-45b7-a9b2-903e546ca66c",
+        "4d17660c-5779-4cdc-a39f-0aa65775da88",
+        "a8b92d89-a587-4d94-bbbf-7df3b308d938"
       ]
     },
     {
@@ -2046,7 +7472,7 @@
         0.0,
         0.0
       ],
-      "uuid": "10ec5b84-7891-44ef-b719-791fee188b95",
+      "uuid": "35b6c947-a4ff-490c-a2f4-cbf2c16f1d2c",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -2054,9 +7480,12 @@
       "visibility": true,
       "autouv": 0,
       "children": [
-        "932abc17-3ec2-4f41-9265-4f36dc6aca2e",
-        "f6cd4f29-3e06-4612-bf89-90f2efd34290",
-        "b1c1c43b-7476-4520-8645-e461c883c94a"
+        "5e688ad2-7785-4c9b-818c-61212eb0df85",
+        "8219068c-69f7-4427-881a-eb5008e016d9",
+        "5a167270-52e7-4d31-8d00-534237009bd7",
+        "e0e52174-67f2-4d96-a80c-9d8acb6fc980",
+        "b3b0dafd-b2cc-478e-b6d3-6fe221393e10",
+        "f7c7f2d7-c82d-4d9e-b1c3-2992773e6ae5"
       ]
     }
   ],
@@ -2072,7 +7501,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": false,
-      "uuid": "7772cb54-a8d0-4f30-9263-5aac96b5bcfc",
+      "uuid": "9bc6aa2b-3643-4568-9df6-9f370db3a150",
       "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAApElEQVR4nO3TuwkCQRAG4HGnBE3MDqzAGqzHbgQrsRYDYwMzQzkUTTTxcR6cL+T7op+FWXaWmd6oqo6ZJTJL1PU+rnM1HNw9v+TtevOwNrPEYnx4WJtZYjDpx+GcI8tNns53jffPlqtedFCaHveJ3NR8m3u6Kt9svn7SfLSp7foBv9x8myl4yQRYgR+eAitgBd67AgAAAAAAAAAAAAAAAADA/zgBXoiFIvGjLgAAAAAASUVORK5CYII="
     }
   ]

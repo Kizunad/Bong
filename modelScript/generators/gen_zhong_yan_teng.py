@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
+from plant_geo_common import (  # noqa: E402
+    PlantGates,
+    build_rig,
+    curved_vine_chain,
+    pad,
+    strand,
+    write_model,
+)
 
 MATS = {
     "ash_bed": (48, 42, 40),
@@ -29,20 +37,35 @@ def part_ash_bed(rig):
         pad(rig, "ash_bed", name, (x, y, z), (w, h, d), mat)
 
 
+def _tower_path(vine_index: int, count: int = 9):
+    phase = math.tau * vine_index / 12.0
+    points = []
+    for step in range(count):
+        t = step / (count - 1)
+        angle = phase + math.tau * 1.05 * t
+        radius = 0.55 + 2.25 * (1.0 - t) ** 0.62
+        points.append(
+            (
+                radius * math.cos(angle),
+                0.82 + 5.65 * t,
+                radius * math.sin(angle),
+            )
+        )
+    return points
+
+
 def part_terminal_vines(rig):
     rig.bone("terminal_vines", (0.0, 0.0, 0.0))
-    segments = (
-        ("vine_center_0", (-0.5, 0.9, 0.0), (-1.0, 2.65, 0.05), 0.46),
-        ("vine_center_1", (-1.0, 2.65, 0.05), (0.15, 4.15, 0.0), 0.42),
-        ("vine_center_2", (0.15, 4.15, 0.0), (-0.55, 5.75, 0.2), 0.38),
-        ("vine_left_0", (-1.55, 1.15, 0.4), (-2.35, 2.95, 0.5), 0.34),
-        ("vine_left_1", (-2.35, 2.95, 0.5), (-1.75, 4.85, 0.65), 0.3),
-        ("vine_right_0", (0.7, 1.3, -0.35), (2.0, 3.05, -0.35), 0.36),
-        ("vine_right_1", (2.0, 3.05, -0.35), (2.45, 5.15, -0.1), 0.3),
-        ("vine_reach", (0.05, 3.9, 0.0), (1.45, 5.7, 0.3), 0.28),
-    )
-    for name, start, end, radius in segments:
-        strand(rig, "terminal_vines", name, start, end, radius, "charcoal_vine")
+    for vine_index in range(12):
+        curved_vine_chain(
+            rig,
+            "terminal_vines",
+            f"vine_tower_{vine_index}",
+            _tower_path(vine_index),
+            0.56,
+            0.34,
+            "charcoal_vine",
+        )
 
 
 def part_toxin_veins(rig):
@@ -58,17 +81,23 @@ def part_toxin_veins(rig):
 
 def part_poison_thorns(rig):
     rig.bone("poison_thorns", (0.0, 0.0, 0.0))
-    for index, (x, y, z, dx, dz) in enumerate(
-        (
-            (-1.25, 2.3, 0.35, -0.7, 0.2),
-            (-2.05, 3.75, 0.65, -0.55, 0.35),
-            (-1.0, 4.95, 0.8, -0.65, 0.15),
-            (1.2, 2.45, -0.3, 0.7, -0.2),
-            (2.15, 4.05, -0.05, 0.65, -0.3),
-            (1.0, 5.1, 0.45, 0.7, 0.2),
-        )
-    ):
-        strand(rig, "poison_thorns", f"thorn_{index}", (x, y, z), (x + dx, y + 0.35, z + dz), 0.22, "bone_thorn")
+    thorn_index = 0
+    for vine_index in range(12):
+        points = _tower_path(vine_index)
+        for point_index in (2, 5, 7):
+            x, y, z = points[point_index]
+            radial = math.hypot(x, z) or 1.0
+            dx, dz = x / radial * 0.62, z / radial * 0.62
+            strand(
+                rig,
+                "poison_thorns",
+                f"thorn_{thorn_index}",
+                (x, y, z),
+                (x + dx, y + 0.32, z + dz),
+                0.18,
+                "bone_thorn",
+            )
+            thorn_index += 1
 
 
 def build():
