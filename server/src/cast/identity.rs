@@ -125,7 +125,11 @@ impl CastGenerationAllocator {
     pub fn allocate(&self) -> Result<u64, AllocationError> {
         self.next_generation
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                (current != 0 && current != u64::MAX).then_some(current + 1)
+                if current == 0 || current == u64::MAX {
+                    None
+                } else {
+                    Some(current + 1)
+                }
             })
             .map_err(|_| AllocationError::Exhausted)
     }
