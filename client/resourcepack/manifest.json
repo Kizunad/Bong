@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "6391560e0468ff6c2b2cfdd1aaa624d9df7f25d1",
-  "size": 73109018,
+  "sha1": "e6a0c951da47969247caf95ecf11e5381bc4895e",
+  "size": 73124915,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -19,7 +19,7 @@
         "bong/blockstates",
         "bong/textures/block"
       ],
-      "file_count": 70
+      "file_count": 71
     },
     {
       "id": "entity-model",
@@ -31,7 +31,7 @@
         "bong/textures/item",
         "bong/textures/armor"
       ],
-      "file_count": 477
+      "file_count": 480
     },
     {
       "id": "vfx",
