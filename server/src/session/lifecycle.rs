@@ -688,12 +688,28 @@ pub fn reduce_session_with_context(
             if !matches!(state.state, SessionState::Running | SessionState::Paused) {
                 return SessionDecision::rejected(state.state, SessionRejection::InvalidState);
             }
-            state.generation = state.generation.saturating_add(1);
+            if guard.session_key != state.session_key.as_str()
+                || guard.owner_key != state.owner_key.as_str()
+                || guard.generation != state.generation
+                || guard.phase_revision > state.phase_revision
+                || guard.restore_token.trim().is_empty()
+            {
+                return SessionDecision::rejected(state.state, SessionRejection::InvalidRestore);
+            }
+            let Some(next_generation) = state.generation.checked_add(1) else {
+                return SessionDecision::rejected(state.state, SessionRejection::InvalidRestore);
+            };
+            state.generation = next_generation;
             state.state = SessionState::Suspended;
-            state.restore_token = Some(guard.restore_token.clone());
             state.bump_revision();
+            let normalized_guard = ReconnectGuard {
+                generation: state.generation,
+                phase_revision: state.phase_revision,
+                ..guard
+            };
+            state.restore_token = Some(normalized_guard.restore_token.clone());
             let mut decision = SessionDecision::accepted(state.state);
-            decision.checkpoint_effect = CheckpointEffect::NormalizeSuspended(guard);
+            decision.checkpoint_effect = CheckpointEffect::NormalizeSuspended(normalized_guard);
             decision.claim_effect = ClaimEffect::Retain;
             decision
         }
@@ -1201,6 +1217,71 @@ mod tests {
             },
         );
         assert_eq!(late.rejection, Some(SessionRejection::InvalidState));
+    }
+
+    #[test]
+    fn startup_epoch_rebases_guard_before_suspension_restore() {
+        let mut record = SessionRecord::new(
+            "craft-1",
+            "offline:alice",
+            SessionDurability::Checkpointed,
+            BusyClaim::player("offline:alice"),
+        );
+        record.phase_revision = 3;
+        let identity = record.identity();
+        let old_guard = guard(&record);
+        let decision = reduce_session(
+            &mut record,
+            SessionEvent::StartupEpochDetected {
+                identity,
+                guard: old_guard.clone(),
+            },
+        );
+        assert!(decision.accepted);
+        assert_eq!(record.state, SessionState::Suspended);
+        assert_eq!(record.generation, 1);
+        let CheckpointEffect::NormalizeSuspended(normalized_guard) = decision.checkpoint_effect
+        else {
+            panic!("startup normalization must persist a rebased reconnect guard");
+        };
+        assert_eq!(normalized_guard.generation, record.generation);
+        assert_eq!(normalized_guard.phase_revision, record.phase_revision);
+        assert_eq!(normalized_guard.restore_token, old_guard.restore_token);
+
+        let restore_identity = record.identity();
+        let restore_revision = record.phase_revision;
+        let restored = reduce_session(
+            &mut record,
+            SessionEvent::Restore {
+                identity: restore_identity,
+                guard: normalized_guard,
+                phase_revision: restore_revision + 1,
+            },
+        );
+        assert!(restored.accepted);
+        assert_eq!(record.state, SessionState::Paused);
+    }
+
+    #[test]
+    fn startup_epoch_rejects_a_guard_from_another_generation_without_mutation() {
+        let mut record = SessionRecord::new(
+            "craft-1",
+            "offline:alice",
+            SessionDurability::Checkpointed,
+            BusyClaim::player("offline:alice"),
+        );
+        let before = record.clone();
+        let mut mismatched_guard = guard(&record);
+        mismatched_guard.generation = 4;
+        let decision = reduce_session(
+            &mut record,
+            SessionEvent::StartupEpochDetected {
+                identity: before.identity(),
+                guard: mismatched_guard,
+            },
+        );
+        assert_eq!(decision.rejection, Some(SessionRejection::InvalidRestore));
+        assert_eq!(record, before);
     }
 
     #[test]
