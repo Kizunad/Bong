@@ -12,6 +12,24 @@ use std::fmt;
 use crate::cultivation::known_techniques::{parse_required_realm, TechniqueDefinition};
 use crate::cultivation::skill_registry::SkillFn;
 
+pub mod identity;
+pub mod reducer;
+
+pub use identity::{
+    AllocationError, CastAttempt, CastCaster, CastIdentity, CastSession, CastSessionId,
+};
+pub use reducer::{
+    AvOwner, AvTombstone, CastBegin, CastEffect, CastLifecycle, CastMessage, CastOutcome,
+    CastPhase, CastSource, CastState, ReduceDisposition, ReduceResult, SessionGate,
+    AV_TOMBSTONE_CAPACITY, TERMINAL_RECORD_CAPACITY,
+};
+
+/// Rust domain aliases mirror the TypeBox `V1` names without touching the legacy live schema
+/// module.  They remain inert until RF-31 installs the generated conversion layer.
+pub type CastSourceV1 = CastSource;
+pub type CastPhaseV1 = CastPhase;
+pub type CastOutcomeV1 = CastOutcome;
+
 /// The two disjoint identities accepted by the canonical registration lookup.
 ///
 /// A quick-slot cast is represented by [`RegistrationKey::ItemCast`], never by a skill id.  The
