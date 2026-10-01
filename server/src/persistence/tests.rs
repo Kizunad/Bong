@@ -1222,6 +1222,32 @@ fn suspended_checkpoint_write_rejects_replay_after_guard_consumed() {
 }
 
 #[test]
+fn suspended_checkpoint_after_consumed_guard_accepts_newer_generation() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-newer-generation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let (newer_checkpoint, newer_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 1);
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &newer_checkpoint, &newer_guard)
+            .expect("a newer lifecycle should recreate its guard atomically"),
+        SuspendedCheckpointPersistOutcome::Updated
+    );
+    let loaded = load_suspended_session_bundle(&persistence, &newer_checkpoint.session_key)
+        .expect("the newer checkpoint should load")
+        .expect("the newer guard should be present");
+    assert_eq!(loaded.checkpoint, newer_checkpoint);
+    assert_eq!(loaded.reconnect_guard, newer_guard);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn suspended_checkpoint_write_rejects_stale_version_without_replacing_guard() {
     let (settings, root) = persistence_settings("suspended-checkpoint-stale");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
