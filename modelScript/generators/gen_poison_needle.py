@@ -163,19 +163,27 @@ def part_tail() -> list[tuple]:
 def part_grip() -> list[tuple]:
     """生成木质握柄与底端小收口 (grip)。
 
-    位于红丝线下方，比针身粗一圈 (hw: 0.46)，深棕与浅棕相间的横向环纹（缠绳/刻槽），底端一个深色小收口。
+    落实调度 Round 3 终轮要求（握柄环纹更规整，其余保持）：
+    - 位于红丝线下方，比针身粗一圈 (hw: 0.49)；
+    - 4 圈整齐均称、严格等距的凸起横向环带，配合深浅相间的阴刻环槽；
+    - 底端深色平整小收口端头。
     """
     cubes = []
-    # 1. 内部木柄轴芯 (y: 0.35 -> 3.20, hw: 0.42)
-    cubes.extend(octagon("grip", "wooden_grip", "grip_wood_core", 0.42, 0.35, GRIP_Y1, hz=0.42))
+    # 1. 内部木柄轴芯 (hw=0.40)
+    cubes.extend(octagon("grip", "wooden_grip", "grip_wood_core", 0.40, 0.36, GRIP_Y1, hz=0.40))
 
-    # 2. 3 圈凸起的横向刻槽环纹 (深棕与浅棕相间, hw: 0.50)
-    groove_ys = [(0.50, 1.15), (1.45, 2.10), (2.40, 3.05)]
-    for i, (y0, y1) in enumerate(groove_ys):
-        cubes.extend(octagon("grip", "wooden_grip", f"grip_band_{i}", 0.50, y0, y1, hz=0.50))
+    # 2. 4 圈规整均称的横向凸起环带 (hw=0.49, 严格等距排布)
+    bands = [
+        (0.46, 0.94),
+        (1.16, 1.64),
+        (1.86, 2.34),
+        (2.56, 3.04),
+    ]
+    for i, (y0, y1) in enumerate(bands):
+        cubes.extend(octagon("grip", "wooden_grip", f"grip_band_{i}", 0.49, y0, y1, hz=0.49))
 
-    # 3. 底端深色小收口端头 (y: 0.00 -> 0.35, hw: 0.38)
-    cubes.extend(octagon("grip", "wooden_grip", "grip_butt_cap", 0.38, 0.00, 0.35, hz=0.38))
+    # 3. 底端深色小收口端头 (hw=0.35, y: 0.00 -> 0.36)
+    cubes.extend(octagon("grip", "wooden_grip", "grip_butt_cap", 0.35, 0.00, 0.36, hz=0.35))
 
     return cubes
 
@@ -255,20 +263,27 @@ def make_texture_atlas() -> Image.Image:
     img.paste(Image.fromarray(thread_arr, "RGBA"), (0, 32))
 
     # 4. 木质握柄 (Q4: 32..64, 32..64)
-    # 深棕 #3b2a1e (RGB 59,42,30) 与浅棕 #6b4a30 (RGB 107,74,48) 相间环纹
+    # 深棕 #3b2a1e (RGB 59,42,30) 与浅棕 #6b4a30 (RGB 107,74,48) 相间规整环纹
     grip_arr = np.zeros((32, 32, 4), dtype=np.uint8)
     for y in range(32):
         for x in range(32):
-            if (y % 6) < 3:
-                # 浅棕色环纹
-                r = rng.integers(100, 115)
-                g = rng.integers(68, 80)
-                b = rng.integers(42, 54)
+            period = 8
+            phase = y % period
+            if phase < 4:
+                # 浅棕色凸起环带
+                r = int(107 + rng.integers(-5, 6))
+                g = int(74 + rng.integers(-4, 5))
+                b = int(48 + rng.integers(-3, 4))
             else:
-                # 深棕色沟槽
-                r = rng.integers(54, 66)
-                g = rng.integers(38, 48)
-                b = rng.integers(26, 36)
+                # 深棕色收窄沟槽
+                r = int(59 + rng.integers(-4, 5))
+                g = int(42 + rng.integers(-3, 4))
+                b = int(30 + rng.integers(-3, 4))
+            # 环带边缘高光/阴影
+            if phase == 0:
+                r, g, b = min(255, r + 16), min(255, g + 12), min(255, b + 10)
+            elif phase == 3:
+                r, g, b = max(0, r - 16), max(0, g - 12), max(0, b - 10)
             grip_arr[y, x] = [r, g, b, 255]
     img.paste(Image.fromarray(grip_arr, "RGBA"), (32, 32))
 
