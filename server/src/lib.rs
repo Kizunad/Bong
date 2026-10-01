@@ -103,6 +103,8 @@ pub mod reach;
 #[allow(dead_code)]
 pub mod schema;
 pub mod server_readiness;
+#[allow(dead_code)]
+pub mod session;
 pub mod shader;
 pub mod shutdown;
 pub mod skin;
