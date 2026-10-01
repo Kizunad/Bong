@@ -1,5 +1,9 @@
 # plan-bughunt-perception-edge-session-leak-v1
 
+## Status Overview
+
+状态：已完成（2026-10-01）。`PerceptionEdgeStateStore` 已纳入 R2 registry，重连首包验收见 `reconnect_state_freshness`。
+
 > BugHunt client-ui r09。仅新增 plan 文档，不修代码。主题：`PerceptionEdgeStateStore` 是 `spiritual_sense_targets` 的 client 本地静态快照，但断线 / 切服清理路径没有 reset；同一 Minecraft 进程进入新 session 后，旧神识 / 灵觉边缘 marker 与通灵+ 威胁边框可能继续渲染，直到新 session 发出下一份有效 `spiritual_sense_targets` 覆盖。
 
 ## Bug 摘要
@@ -71,3 +75,11 @@
 - 清理时机应只在 disconnect 触发，不要在 join 后异步清空，避免吞掉新 session 已先到达的 `spiritual_sense_targets`。
 - 该 store 同时服务探索感知、灵龛痕迹、垂死大能 spirit-eye 派生和通灵+ 威胁边框；修复应保证只清跨 session 旧快照，不改变在线感知聚合语义。
 - 如果后续决定让 server 在 join 时显式推空包，也仍建议保留 client disconnect reset；session 生命周期不应依赖服务端用空包兜底。
+
+## Finish Evidence
+
+- **落地清单**：`PerceptionEdgeStateStore.clearOnDisconnect()` 通过 `SessionScopedStoreRegistry` 统一调用，旧 session token 失效后迟到感知 payload 在 bridge 前丢弃。
+- **关键 commit**：`c015e0ee8`（R2 P2，感知相关裸 Store 接入，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`HudImmersionMatrixTest` 与 registry adapter pin；`BongServerDataThreadingTest` 锁住迟到 payload 不得恢复旧 session；client 完整门禁和 bot 场景在本 PR 验收。
+- **跨仓库核验**：感知 payload/schema 与 server 广播保持不变，R2 只处理 client 生命周期。
+- **遗留 / 后续**：在线感知聚合与玩法范围过滤不在本计划内。

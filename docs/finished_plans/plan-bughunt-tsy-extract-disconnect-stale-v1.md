@@ -1,5 +1,7 @@
 # BugHunt: TSY 撤离 HUD 断线残留
 
+> 状态：已完成（2026-10-01）。`ExtractStateStore` 已纳入 R2 registry；本 PR 不改变 TSY 服务端会话或冻结玩法语义。
+
 > Active plan。BugHunt worker：client-ui r08。范围限定 Fabric client 非战斗 UI / HUD / keybind / local session。本文只记录候选，不实际修代码。
 
 ## P0 — TSY 撤离状态断线不清，重连后沿用旧裂口与撤离忙态
@@ -32,3 +34,11 @@
 
 - Round 1 subagent：确认 `ExtractStateStore` 是高置信断线残留候选；同时提出 TSY 搜刮容器和灵宝面板候选。灵宝已被 #969 覆盖，搜刮容器与 #947/#951/#1032 重复风险高，均不采用。
 - Round 2 subagent：专门攻击 TSY 撤离候选后裁决为成立。它确认 `BongHud.java` 每帧 tick 只会收尾 timed message / collapse / flash，不会清 portal 列表或 active extracting；`ExtractProgressHudPlanner` 仍会用旧 snapshot 渲染撤离进度、坍缩倒计时、红屏和裂口列表；`ExtractInteractionBootstrap` 的 Y/U 键仍会按旧 `nearestPortal()` / `extracting()` 派发请求。重复性裁决：不撞 #1032（搜刮与撤离并发）、#951（搜刮 HUD 终态）、#947（server 容器锁）、#914（server `TsyPresence` 重登丢失）；仅与历史“client session store 漏 reset”模式相同，题目和玩家体验面不同。
+
+## Finish Evidence
+
+- **落地清单**：`ExtractStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 显式登记，断线后旧 portal/extracting/collapse 状态不会进入下一连接。
+- **关键 commit**：`c015e0ee8`（R2 P2，TSY Store 接入，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`ExtractServerDataHandlerTest`、R7 keybind contract 与 registry adapter pin；client 完整门禁和 bot `reconnect_state_freshness` 在本 PR 验收。
+- **跨仓库核验**：TSY wire、server presence 与撤离结算保持不变；本 PR 只清 client session 状态。
+- **遗留 / 后续**：TSY 玩法状态机与服务端重连语义另由对应轨道负责。

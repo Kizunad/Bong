@@ -1,5 +1,7 @@
 # plan-bughunt-poison-trait-hud-disconnect-v1
 
+> 状态：已完成（2026-10-01）。`PoisonTraitHudStateStore` 已纳入 R2 registry，断线后新 session 从空态开始。
+
 > **活跃定稿 BugHunt plan**。一句话主题：`PoisonTraitHudStateStore` 是跨 session 静态 HUD store，生产断线清理没有调用 `clear()`；玩家断线 / 切服 / 重连后，到首个权威 `poison_trait_state` 抵达前，上一 session 的毒性真元 HUD 会短窗口残留。
 
 > 立项边界：这不是“永久残留”。服务端 hydrate 会给玩家插入默认 `PoisonToxicity` / `DigestionLoad`，并每 20 tick 推一次 `poison_trait_state`，正常同服重连通常约 1 秒内自愈。本 plan 只锁定首帧到首个权威包之间的 client session hygiene 缺口。
@@ -80,3 +82,11 @@ Combat HUD 的边界失败点在于两条断线清理链都没有认领这个 st
 ## 对抗结论
 
 对抗子 agent 结论：**保留，置信度 0.78**。候选不是永久串档，但属于明确的 session-bound HUD 清理遗漏；建议以局部 fix PR 收口。
+
+## Finish Evidence
+
+- **落地清单**：`PoisonTraitHudStateStore.clearOnDisconnect()` 由 `SessionScopedStoreRegistry` 登记，旧 token 失效后清理 active/backfire/turbulence 派生 HUD 状态。
+- **关键 commit**：`c015e0ee8`（R2 P2，补齐 HUD Store 清理，2026-07-29）、`d5dfd668a`（R2 P3，全量登记与 source-scan，2026-08-06）、`387dfa4d1`（R2 P4，重连首包验收场景，2026-10-01）。
+- **测试结果**：`PoisonTraitHudPlannerTest`、`PoisonTraitServerDataHandlerTest` 与 registry adapter pin；client 完整门禁和 bot 场景在本 PR 验收。
+- **跨仓库核验**：poison trait payload 形状和 server 结算未改；新 session 的首个权威 payload 仍可正常写入。
+- **遗留 / 后续**：毒性真元玩法与 A/V 数值不在 R2 范围内。
