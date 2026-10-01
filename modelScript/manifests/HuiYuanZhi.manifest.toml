@@ -1,0 +1,18 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+warm_soil = [82, 73, 61]
+branch_bark = [102, 69, 49]
+branch_high = [153, 111, 69]
+leaf_sage = [116, 158, 92]
+leaf_fresh = [175, 205, 112]
+sap_gold = [244, 199, 90]
+sap_glint = [255, 235, 164]
+
+[features]
+warm_soil = { elements = ["soil_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+upright_branches = { elements = ["branch_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+sage_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+sap_drops = { elements = ["sap_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

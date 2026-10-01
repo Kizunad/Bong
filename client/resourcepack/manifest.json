@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "e2dca3f01c2d0dcb07254d87c4a642e1855eaf3d",
-  "size": 73148505,
+  "sha1": "bd58c665a3322acc6a859e40dc61999392047980",
+  "size": 73160429,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -31,7 +31,7 @@
         "bong/textures/item",
         "bong/textures/armor"
       ],
-      "file_count": 504
+      "file_count": 516
     },
     {
       "id": "vfx",

@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+cave_bed = [36, 34, 38]
+dry_vine = [22, 20, 28]
+vine_high = [55, 43, 67]
+siphon_void = [78, 54, 108]
+dead_leaf = [48, 44, 50]
+
+[features]
+cave_bed = { elements = ["bed_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+dry_vines = { elements = ["vine_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+siphon_tendrils = { elements = ["siphon_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+dead_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
