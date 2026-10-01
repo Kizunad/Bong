@@ -688,6 +688,9 @@ pub fn reduce_session_with_context(
             if !matches!(state.state, SessionState::Running | SessionState::Paused) {
                 return SessionDecision::rejected(state.state, SessionRejection::InvalidState);
             }
+            if state.durability != SessionDurability::Checkpointed {
+                return SessionDecision::rejected(state.state, SessionRejection::InvalidRestore);
+            }
             if guard.session_key != state.session_key.as_str()
                 || guard.owner_key != state.owner_key.as_str()
                 || guard.generation != state.generation
@@ -1282,6 +1285,30 @@ mod tests {
         );
         assert_eq!(decision.rejection, Some(SessionRejection::InvalidRestore));
         assert_eq!(record, before);
+    }
+
+    #[test]
+    fn startup_epoch_rejects_volatile_session_without_restore_or_handoff() {
+        let mut record = SessionRecord::new(
+            "craft-volatile",
+            "offline:alice",
+            SessionDurability::Volatile,
+            BusyClaim::player("offline:alice"),
+        );
+        let before = record.clone();
+        let decision = reduce_session(
+            &mut record,
+            SessionEvent::StartupEpochDetected {
+                identity: before.identity(),
+                guard: guard(&before),
+            },
+        );
+
+        assert_eq!(decision.rejection, Some(SessionRejection::InvalidRestore));
+        assert_eq!(decision.checkpoint_effect, CheckpointEffect::None);
+        assert_eq!(decision.handoff, HandoffEffect::None);
+        assert_eq!(record, before);
+        assert!(record.restore_token.is_none());
     }
 
     #[test]
