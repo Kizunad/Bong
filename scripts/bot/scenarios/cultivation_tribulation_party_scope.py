@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 
 from bot.bot import BotAssertionError
+from bot.scenarios._combat_helpers import last_event_time, wait_for_skill_binding
 
 
 DESCRIPTION = "三 Bot 渡虚劫：队友加入 participants，近处/远处 observer 的观礼邀请按距离变化"
@@ -19,8 +20,9 @@ MODULES = ["cultivation", "network", "multibot"]
 START_DU_XU = {"type": "start_du_xu", "v": 1}
 DUXU_OMEN_WAIT_SECONDS = 75.0
 DUXU_LOCK_WAIT_SECONDS = 40.0
-PARTICIPANT_ATTACK_ATTEMPTS = 6
-PARTICIPANT_ATTACK_INTERVAL_SECONDS = 0.6
+PARTICIPANT_CAST_ATTEMPTS = 6
+PARTICIPANT_CAST_INTERVAL_SECONDS = 0.6
+PARTICIPANT_SKILL_ID = "dugu.shoot_needle"
 OBSERVER_FAR_OFFSET_BLOCKS = 60.0
 
 
@@ -186,10 +188,41 @@ def run(env) -> None:
                     )
 
                 leader_entity = int(leader_for_participant.data["entity_id"])
-                participant_wave_after = participant.events[-1].t if participant.events else 0.0
-                for _attempt in range(PARTICIPANT_ATTACK_ATTEMPTS):
-                    participant.attack_entity(leader_entity)
-                    time.sleep(PARTICIPANT_ATTACK_INTERVAL_SECONDS)
+                # 服务端近战输入只把 NPC 作为可攻击目标；玩家互击不会产生
+                # CombatEvent，无法进入渡劫拦截器。使用现有凝针定向技能走正式的
+                # player target → AttackIntent 链路，不改服务端行为或伪造事件。
+                participant.cmd("realm set induce")
+                participant.expect_chat("[dev] realm set", timeout=10.0)
+                participant.cmd("qi max 20")
+                participant.expect_chat("[dev] qi max", timeout=10.0)
+                participant.cmd("qi set 20")
+                participant.expect_chat("[dev] qi set", timeout=10.0)
+                participant.cmd(f"technique give {PARTICIPANT_SKILL_ID}")
+                participant.expect_chat(
+                    f"[dev] technique give `{PARTICIPANT_SKILL_ID}`", timeout=10.0
+                )
+                bind_after = last_event_time(participant)
+                participant.intent(
+                    {
+                        "type": "skill_bar_bind",
+                        "v": 1,
+                        "slot": 0,
+                        "binding": {"kind": "skill", "skill_id": PARTICIPANT_SKILL_ID},
+                    }
+                )
+                wait_for_skill_binding(participant, bind_after, 0, PARTICIPANT_SKILL_ID)
+
+                participant_wave_after = last_event_time(participant)
+                for _attempt in range(PARTICIPANT_CAST_ATTEMPTS):
+                    participant.intent(
+                        {
+                            "type": "skill_bar_cast",
+                            "v": 1,
+                            "slot": 0,
+                            "target": f"entity:{leader_entity}",
+                        }
+                    )
+                    time.sleep(PARTICIPANT_CAST_INTERVAL_SECONDS)
 
                 wave = _wait_tribulation_phase(
                     leader, "wave", lock.t, timeout=DUXU_LOCK_WAIT_SECONDS
