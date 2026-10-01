@@ -3,14 +3,14 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-well_water = [38, 92, 83]
-algae_deep = [29, 76, 59]
-algae_green = [68, 130, 76]
-algae_lit = [125, 168, 87]
-well_stone = [71, 82, 70]
+deep_teal = [12, 50, 52]
+outer_teal = [26, 126, 120]
+inner_teal = [47, 214, 200]
+center_glow = [116, 255, 240]
+shadow_teal = [18, 70, 68]
 
 [features]
-well_ring = { elements = ["well_ring_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-water_heart = { elements = ["water_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-algae_frond = { elements = ["frond_", "inner_stem_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
-algae_lit = { elements = ["lit_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
+lotus_base = { elements = ["deep_", "outer_base_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+outer_leaf = { elements = ["outer_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+inner_leaf = { elements = ["inner_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+center_glow = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

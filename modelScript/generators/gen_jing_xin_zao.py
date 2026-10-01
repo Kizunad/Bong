@@ -1,64 +1,71 @@
-"""井心藻：灵泉眼中心的翠青藻环和向水心舒展的叶片。"""
+"""井心藻：暗青外圈与翠青内圈组成的发光莲座。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, leaf, pad, strand, write_model  # noqa: E402
+from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "well_water": (38, 92, 83),
-    "algae_deep": (29, 76, 59),
-    "algae_green": (68, 130, 76),
-    "algae_lit": (125, 168, 87),
-    "well_stone": (71, 82, 70),
+    "deep_teal": (12, 50, 52),
+    "outer_teal": (26, 126, 120),
+    "inner_teal": (47, 214, 200),
+    "center_glow": (116, 255, 240),
+    "shadow_teal": (18, 70, 68),
 }
 
 
-def part_well_stone(rig):
-    rig.bone("well_stone", (0.0, 0.0, 0.0))
+def part_lotus_base(rig):
+    rig.bone("lotus_base", (0.0, 0.0, 0.0))
+    pad(rig, "lotus_base", "deep_center", (0.0, 0.18, 0.0), (4.8, 1.15, 4.8), "deep_teal")
     for name, x, z, w, d in (
-        ("well_ring_front", 0.0, 2.2, 5.3, 1.0),
-        ("well_ring_back", 0.0, -2.2, 5.3, 1.0),
-        ("well_ring_l", -2.25, 0.0, 1.0, 3.5),
-        ("well_ring_r", 2.25, 0.0, 1.0, 3.5),
+        ("outer_base_front", 0.0, 1.95, 4.9, 1.45),
+        ("outer_base_back", 0.0, -1.95, 4.9, 1.45),
+        ("outer_base_left", -1.95, 0.0, 1.45, 3.8),
+        ("outer_base_right", 1.95, 0.0, 1.45, 3.8),
     ):
-        pad(rig, "well_stone", name, (x, 0.16, z), (w, 0.34, d), "well_stone")
+        pad(rig, "lotus_base", name, (x, 0.48, z), (w, 0.72, d), "shadow_teal")
 
 
-def part_water_heart(rig):
-    rig.bone("water_heart", (0.0, 0.0, 0.0))
-    pad(rig, "water_heart", "water_core", (0.0, 0.18, 0.0), (3.7, 0.28, 3.7), "well_water")
-    pad(rig, "water_heart", "water_deep", (0.0, 0.42, 0.0), (2.5, 0.24, 2.5), "algae_deep")
+def _ring_point(index: int, radius: float, height: float) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    angle = math.radians(index * 45.0)
+    dx, dz = math.cos(angle), math.sin(angle)
+    start = (dx * 0.6, height, dz * 0.6)
+    end = (dx * radius, height + 2.55, dz * radius)
+    return start, end
 
 
-def part_algae_fronds(rig):
-    rig.bone("algae_fronds", (0.0, 0.0, 0.0))
-    fronds = (
-        ("front", 0.0, 1.45, 0.0, 0.0, 0.42),
-        ("back", 0.0, -1.45, 0.0, 180.0, -0.42),
-        ("left", -1.45, 0.0, -90.0, 0.0, 0.0),
-        ("right", 1.45, 0.0, 90.0, 0.0, 0.0),
-    )
-    for name, x, z, yaw, _unused, dz in fronds:
-        start = (x, 0.45, z)
-        end = (x * 0.68, 1.65, z + dz)
-        strand(rig, "algae_fronds", f"frond_{name}_stem", start, end, 0.16, "algae_green")
-        leaf(rig, "algae_fronds", f"frond_{name}_blade", (end[0], 1.45, end[2]), 0.58, 1.25, 0.34, "algae_lit", tilt=(0.0, yaw, 0.0))
-    for index, (x, z) in enumerate(((-0.8, 0.85), (0.8, 0.85), (-0.8, -0.85), (0.8, -0.85))):
-        strand(rig, "algae_fronds", f"inner_stem_{index}", (x, 0.42, z), (x * 0.55, 1.2, z * 0.55), 0.12, "algae_deep")
+def part_outer_leaves(rig):
+    rig.bone("outer_leaves", (0.0, 0.0, 0.0))
+    for index in range(8):
+        start, end = _ring_point(index, 3.05, 0.95)
+        strand(rig, "outer_leaves", f"outer_stem_{index}", start, end, 0.39, "outer_teal")
+        pad(rig, "outer_leaves", f"outer_blade_{index}", end, (0.72, 0.72, 1.15), "outer_teal")
 
 
-def part_algae_lit(rig):
-    rig.bone("algae_lit", (0.0, 0.0, 0.0))
-    for name, x, z in (("lit_front", 0.0, 1.85), ("lit_left", -1.85, 0.0), ("lit_right", 1.85, 0.0)):
-        pad(rig, "algae_lit", name, (x, 1.05, z), (0.32, 0.3, 0.62), "algae_lit")
+def part_inner_leaves(rig):
+    rig.bone("inner_leaves", (0.0, 0.0, 0.0))
+    for index in range(8):
+        angle = math.radians(index * 45.0 + 22.5)
+        dx, dz = math.cos(angle), math.sin(angle)
+        start = (dx * 0.18, 1.65, dz * 0.18)
+        end = (dx * 1.8, 5.55, dz * 1.8)
+        strand(rig, "inner_leaves", f"inner_stem_{index}", start, end, 0.36, "inner_teal")
+        pad(rig, "inner_leaves", f"inner_blade_{index}", end, (0.65, 0.8, 1.1), "inner_teal")
+
+
+def part_center_glow(rig):
+    rig.bone("center_glow", (0.0, 0.0, 0.0))
+    pad(rig, "center_glow", "glow_base", (0.0, 2.25, 0.0), (2.0, 1.3, 2.0), "center_glow")
+    pad(rig, "center_glow", "glow_core", (0.0, 3.5, 0.0), (1.25, 1.1, 1.25), "center_glow")
+    strand(rig, "center_glow", "glow_spire", (0.0, 3.9, 0.0), (0.0, 5.15, 0.0), 0.23, "center_glow")
 
 
 def build():
-    return build_rig(MATS, (part_well_stone, part_water_heart, part_algae_fronds, part_algae_lit))
+    return build_rig(MATS, (part_lotus_base, part_outer_leaves, part_inner_leaves, part_center_glow))
 
 
 GATES = PlantGates("井心藻 / jing_xin_zao")

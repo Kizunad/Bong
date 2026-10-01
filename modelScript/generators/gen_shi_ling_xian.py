@@ -1,67 +1,73 @@
-"""噬灵藓：负灵域的黑藓垫与向上吸附的短刺。"""
+"""噬灵藓：黑色苔垫上向外放射、带暗红叶脉的尖叶莲座。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, leaf, pad, strand, write_model  # noqa: E402
+from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "null_bed": (19, 24, 22),
-    "null_moss": (26, 42, 37),
-    "siphon_black": (12, 17, 16),
-    "wet_teal": (47, 85, 74),
-    "dead_tip": (70, 67, 48),
+    "root_bed": (26, 20, 20),
+    "root_mid": (48, 29, 31),
+    "leaf_black": (26, 20, 20),
+    "leaf_shadow": (14, 11, 13),
+    "vein_red": (138, 28, 28),
 }
 
 
-def part_null_bed(rig):
-    rig.bone("null_bed", (0.0, 0.0, 0.0))
-    for name, x, z, w, d in (
-        ("null_center", 0.0, 0.0, 5.8, 4.9),
-        ("null_l", -2.55, 0.2, 1.35, 2.5),
-        ("null_r", 2.48, -0.2, 1.3, 2.7),
-        ("null_front", 0.0, 2.2, 4.4, 1.0),
+def part_root_bed(rig):
+    rig.bone("root_bed", (0.0, 0.0, 0.0))
+    for name, x, z, w, h, d, y, mat in (
+        ("root_center", 0.0, 0.0, 5.6, 1.55, 4.8, 0.16, "root_bed"),
+        ("root_front", 0.0, 1.9, 4.5, 1.05, 1.35, 0.35, "root_mid"),
+        ("root_left", -2.35, 0.2, 1.45, 1.2, 2.6, 0.28, "root_mid"),
+        ("root_right", 2.3, -0.25, 1.4, 1.3, 2.55, 0.25, "root_bed"),
+        ("root_back", 0.15, -1.8, 3.8, 1.1, 1.15, 0.38, "root_shadow"),
     ):
-        pad(rig, "null_bed", name, (x, 0.14, z), (w, 0.36, d), "null_bed")
+        if mat == "root_shadow":
+            mat = "leaf_shadow"
+        pad(rig, "root_bed", name, (x, y, z), (w, h, d), mat)
 
 
-def part_siphon_tufts(rig):
-    rig.bone("siphon_tufts", (0.0, 0.0, 0.0))
-    for suffix, x, z in (("c", 0.0, 0.0), ("l", -1.9, 0.3), ("r", 1.9, -0.25)):
-        for index, dx in enumerate((-0.52, 0.0, 0.52)):
-            leaf(
-                rig,
-                "siphon_tufts",
-                f"tuft_{suffix}_{index}",
-                (x + dx, 0.47, z + (index - 1) * 0.12),
-                0.64,
-                0.9,
-                0.34,
-                "null_moss",
-                tilt=(0.0, (index - 1) * 9.0, (index - 1) * 8.0),
-            )
+def _leaf_points(index: int) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    angle = math.radians(index * 36.0 + 9.0)
+    dx, dz = math.cos(angle), math.sin(angle)
+    return (dx * 0.35, 1.15, dz * 0.35), (dx * 3.05, 5.25, dz * 3.05)
 
 
-def part_siphon_spines(rig):
-    rig.bone("siphon_spines", (0.0, 0.0, 0.0))
-    for side, x in (("l", -1.85), ("r", 1.85)):
-        for index, z in enumerate((-0.9, 0.0, 0.9)):
-            strand(rig, "siphon_spines", f"siphon_{side}_{index}", (x, 0.38, z), (x * 0.84, 1.28, z + 0.12), 0.14, "siphon_black")
-    strand(rig, "siphon_spines", "siphon_center", (0.0, 0.4, 0.0), (0.0, 1.42, 0.0), 0.17, "siphon_black")
+def part_pointed_rosette(rig):
+    rig.bone("pointed_rosette", (0.0, 0.0, 0.0))
+    for index in range(10):
+        start, tip = _leaf_points(index)
+        end = (tip[0] * 0.88, 4.48, tip[2] * 0.88)
+        strand(rig, "pointed_rosette", f"leaf_{index}", start, end, 0.46, "leaf_black")
+        strand(rig, "pointed_rosette", f"leaf_tip_{index}", end, tip, 0.24, "leaf_shadow")
 
 
-def part_wet_tips(rig):
-    rig.bone("wet_tips", (0.0, 0.0, 0.0))
-    for name, x, z in (("wet_l", -2.0, -0.75), ("wet_r", 2.0, 0.75), ("wet_front", 0.0, 2.02)):
-        pad(rig, "wet_tips", name, (x, 0.72, z), (0.34, 0.26, 0.48), "wet_teal")
-        pad(rig, "wet_tips", f"{name}_dead", (x, 0.97, z), (0.22, 0.24, 0.3), "dead_tip")
+def part_leaf_veins(rig):
+    rig.bone("leaf_veins", (0.0, 0.0, 0.0))
+    for index in range(10):
+        start, tip = _leaf_points(index)
+        vein_start = (start[0], start[1] + 0.46, start[2])
+        vein_end = (tip[0] * 0.86, tip[1] - 0.3, tip[2] * 0.86)
+        strand(rig, "leaf_veins", f"vein_{index}", vein_start, vein_end, 0.11, "vein_red")
+
+
+def part_root_shadows(rig):
+    rig.bone("root_shadows", (0.0, 0.0, 0.0))
+    for name, x, z, w, d in (
+        ("shadow_front", 0.0, 2.35, 1.0, 0.45),
+        ("shadow_left", -2.5, -0.35, 0.55, 1.25),
+        ("shadow_right", 2.45, 0.5, 0.55, 1.2),
+    ):
+        pad(rig, "root_shadows", name, (x, 1.0, z), (w, 0.32, d), "leaf_shadow")
 
 
 def build():
-    return build_rig(MATS, (part_null_bed, part_siphon_tufts, part_siphon_spines, part_wet_tips))
+    return build_rig(MATS, (part_root_bed, part_pointed_rosette, part_leaf_veins, part_root_shadows))
 
 
 GATES = PlantGates("噬灵藓 / shi_ling_xian")

@@ -1,4 +1,4 @@
-"""灰烬苔：残灰方块上的低矮灰黑苔层。"""
+"""灰烬苔：灰黑碎岩隆起团块上的橙红余烬裂纹。"""
 
 from __future__ import annotations
 
@@ -6,73 +6,76 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, leaf, pad, write_model  # noqa: E402
+from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "ash_bed": (62, 61, 54),
-    "ash_edge": (103, 97, 78),
-    "soot": (31, 32, 30),
-    "lichen": (78, 87, 60),
-    "dry_highlight": (138, 126, 84),
+    "ash_bed": (43, 42, 40),
+    "ash_edge": (85, 82, 78),
+    "soot": (27, 26, 24),
+    "ember_crack": (224, 88, 42),
+    "ember_hot": (255, 150, 64),
 }
 
 
 def part_ash_bed(rig):
     rig.bone("ash_bed", (0.0, 0.0, 0.0))
     for name, x, z, w, d in (
-        ("ash_center", 0.0, 0.0, 5.8, 4.8),
-        ("ash_front", 0.0, 2.25, 4.6, 1.55),
-        ("ash_back", 0.0, -2.15, 4.9, 1.35),
-        ("ash_left", -2.65, 0.15, 1.45, 3.1),
-        ("ash_right", 2.6, -0.25, 1.35, 2.8),
+        ("ash_floor", 0.0, 0.0, 6.8, 5.2),
+        ("ash_lump_left", -2.0, 0.25, 2.7, 3.3),
+        ("ash_lump_center", 0.0, -0.1, 3.8, 3.4),
+        ("ash_lump_right", 2.05, -0.15, 2.6, 3.1),
+        ("ash_lump_back", 0.0, -1.85, 3.5, 1.25),
+        ("ash_lump_front", -0.65, 1.65, 2.4, 1.05),
     ):
-        pad(rig, "ash_bed", name, (x, 0.15, z), (w, 0.42, d), "ash_bed")
+        height = {
+            "ash_floor": 0.8,
+            "ash_lump_left": 3.4,
+            "ash_lump_center": 4.6,
+            "ash_lump_right": 3.8,
+            "ash_lump_back": 5.4,
+            "ash_lump_front": 2.2,
+        }[name]
+        bottom = 0.1 if name == "ash_floor" else 0.65
+        pad(rig, "ash_bed", name, (x, bottom, z), (w, height, d), "ash_bed")
     for name, x, z, w, d in (
-        ("ash_edge_front", 0.0, 2.45, 4.0, 0.24),
-        ("ash_edge_left", -2.85, 0.05, 0.24, 2.2),
-        ("ash_edge_right", 2.8, -0.15, 0.24, 2.0),
+        ("ash_edge_front", 0.0, 2.35, 4.3, 0.32),
+        ("ash_edge_left", -2.55, 0.2, 0.32, 2.2),
+        ("ash_edge_right", 2.55, -0.1, 0.32, 2.2),
     ):
-        pad(rig, "ash_bed", name, (x, 0.58, z), (w, 0.24, d), "ash_edge")
+        pad(rig, "ash_bed", name, (x, 1.0, z), (w, 0.55, d), "ash_edge")
 
 
 def part_soot_crust(rig):
     rig.bone("soot_crust", (0.0, 0.0, 0.0))
     for name, x, z, w, d in (
-        ("soot_core", 0.0, 0.0, 3.8, 2.7),
-        ("soot_l", -1.65, 0.65, 1.4, 1.3),
-        ("soot_r", 1.6, -0.55, 1.25, 1.2),
+        ("soot_core", 0.0, 0.0, 3.4, 2.5),
+        ("soot_l", -1.55, 0.6, 1.3, 1.2),
+        ("soot_r", 1.55, -0.55, 1.2, 1.1),
+        ("soot_front", 0.15, 1.35, 1.9, 0.72),
     ):
-        pad(rig, "soot_crust", name, (x, 0.52, z), (w, 0.38, d), "soot")
+        pad(rig, "soot_crust", name, (x, 4.95, z), (w, 0.36, d), "soot")
 
 
-def part_lichen_rosettes(rig):
-    rig.bone("lichen_rosettes", (0.0, 0.0, 0.0))
-    for suffix, x, z in (("c", 0.0, 0.0), ("l", -2.2, 0.45), ("r", 2.15, -0.25)):
-        for index, (dx, dz, tilt) in enumerate(
-            ((-0.7, 0.0, (-8.0, 0.0, -10.0)), (0.0, 0.2, (0.0, 0.0, 0.0)),
-             (0.7, -0.05, (8.0, 0.0, 10.0)))
-        ):
-            leaf(
-                rig,
-                "lichen_rosettes",
-                f"lichen_{suffix}_{index}",
-                (x + dx, 0.7, z + dz),
-                0.72,
-                1.35,
-                0.32,
-                "lichen",
-                tilt=tilt,
-            )
+def part_ember_cracks(rig):
+    rig.bone("ember_cracks", (0.0, 0.0, 0.0))
+    cracks = (
+        ("ember_main", (-1.8, 5.55, 0.15), (0.0, 5.85, 0.45), 0.18),
+        ("ember_branch_l", (-1.0, 5.7, 0.3), (-1.9, 5.85, 1.25), 0.14),
+        ("ember_branch_r", (0.0, 5.85, 0.45), (1.75, 5.35, -0.25), 0.16),
+        ("ember_front", (-0.5, 5.35, 1.45), (1.2, 5.1, 1.45), 0.13),
+    )
+    for name, start, end, radius in cracks:
+        strand(rig, "ember_cracks", name, start, end, radius, "ember_crack")
 
 
-def part_dry_highlights(rig):
-    rig.bone("dry_highlights", (0.0, 0.0, 0.0))
-    for name, x, z in (("dry_l", -1.25, 1.1), ("dry_r", 1.35, -1.0), ("dry_front", 0.1, 2.0)):
-        pad(rig, "dry_highlights", name, (x, 0.98, z), (0.38, 0.26, 0.7), "dry_highlight")
+def part_ember_hot(rig):
+    rig.bone("ember_hot", (0.0, 0.0, 0.0))
+    for name, x, z in (("ember_hot_l", -1.55, 0.3), ("ember_hot_r", 0.85, -0.1), ("ember_hot_front", 0.25, 1.55)):
+        pad(rig, "ember_hot", name, (x, 5.82, z), (0.28, 0.22, 0.42), "ember_hot")
 
 
 def build():
-    return build_rig(MATS, (part_ash_bed, part_soot_crust, part_lichen_rosettes, part_dry_highlights))
+    return build_rig(MATS, (part_ash_bed, part_soot_crust, part_ember_cracks, part_ember_hot))
 
 
 GATES = PlantGates("灰烬苔 / hui_jin_tai")

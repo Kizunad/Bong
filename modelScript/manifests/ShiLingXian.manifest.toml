@@ -3,14 +3,13 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-null_bed = [19, 24, 22]
-null_moss = [26, 42, 37]
-siphon_black = [12, 17, 16]
-wet_teal = [47, 85, 74]
-dead_tip = [70, 67, 48]
+root_mid = [48, 29, 31]
+leaf_black = [26, 20, 20]
+leaf_shadow = [14, 11, 13]
+vein_red = [138, 28, 28]
 
 [features]
-null_bed = { elements = ["null_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-siphon_tuft = { elements = ["tuft_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-siphon_spine = { elements = ["siphon_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-wet_tip = { elements = ["wet_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
+root_bed = { elements = ["root_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pointed_rosette = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+leaf_vein = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+root_shadow = { elements = ["shadow_"], must_show_in = ["FRONT"], min_px = 1 }

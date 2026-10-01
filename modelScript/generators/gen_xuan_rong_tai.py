@@ -1,4 +1,4 @@
-"""玄绒苔：深渊温差带的漆黑绒面与银色近手高光。"""
+"""玄绒苔：漆黑隆起绒垫中央斜插冰蓝晶体。"""
 
 from __future__ import annotations
 
@@ -6,56 +6,65 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant_geo_common import PlantGates, build_rig, leaf, pad, strand, write_model  # noqa: E402
+from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "velvet_bed": (18, 19, 24),
-    "velvet_mid": (29, 31, 39),
-    "velvet_edge": (47, 43, 51),
-    "silver_glint": (159, 165, 151),
-    "cold_shadow": (12, 13, 18),
+    "velvet_black": (20, 20, 22),
+    "velvet_mid": (35, 35, 39),
+    "velvet_edge": (49, 47, 53),
+    "ice_crystal": (159, 216, 255),
+    "blue_glow": (74, 184, 255),
 }
 
 
-def part_velvet_bed(rig):
-    rig.bone("velvet_bed", (0.0, 0.0, 0.0))
-    for name, x, z, w, d, h in (
-        ("velvet_center", 0.0, 0.0, 6.0, 4.8, 0.42),
-        ("velvet_front", 0.0, 2.2, 4.8, 1.3, 0.35),
-        ("velvet_back", 0.0, -2.1, 4.7, 1.15, 0.38),
-        ("velvet_l", -2.55, 0.1, 1.2, 2.9, 0.4),
-        ("velvet_r", 2.55, -0.15, 1.2, 2.9, 0.4),
+def part_velvet_pad(rig):
+    rig.bone("velvet_pad", (0.0, 0.0, 0.0))
+    for name, x, z, w, h, d, y, mat in (
+        ("pad_floor", 0.0, 0.0, 7.0, 0.9, 5.7, 0.12, "velvet_black"),
+        ("pad_front", 0.0, 2.05, 5.5, 1.35, 1.45, 0.38, "velvet_mid"),
+        ("pad_back", 0.0, -1.95, 5.5, 1.45, 1.35, 0.45, "velvet_mid"),
+        ("pad_left", -2.45, 0.05, 1.55, 1.5, 3.4, 0.42, "velvet_edge"),
+        ("pad_right", 2.45, -0.08, 1.55, 1.6, 3.35, 0.4, "velvet_edge"),
+        ("pad_center", 0.0, -0.05, 4.8, 2.55, 3.9, 1.15, "velvet_mid"),
+        ("pad_top", 0.05, -0.12, 3.7, 1.2, 3.0, 3.45, "velvet_black"),
     ):
-        pad(rig, "velvet_bed", name, (x, 0.16, z), (w, h, d), "velvet_bed")
+        pad(rig, "velvet_pad", name, (x, y, z), (w, h, d), mat)
 
 
-def part_velvet_lobes(rig):
-    rig.bone("velvet_lobes", (0.0, 0.0, 0.0))
-    for suffix, x, z, tilt in (
-        ("c", 0.0, 0.0, (0.0, 0.0, 0.0)),
-        ("l", -1.55, 0.25, (0.0, 0.0, -8.0)),
-        ("r", 1.55, -0.25, (0.0, 0.0, 8.0)),
+def part_velvet_tufts(rig):
+    rig.bone("velvet_tufts", (0.0, 0.0, 0.0))
+    for name, start, end in (
+        ("tuft_front", (0.0, 2.0, 1.0), (0.0, 4.8, 1.35)),
+        ("tuft_left", (-1.5, 2.4, 0.2), (-2.15, 4.6, 0.35)),
+        ("tuft_right", (1.45, 2.35, -0.25), (2.1, 4.5, -0.4)),
+        ("tuft_back", (0.0, 2.4, -1.0), (0.0, 4.95, -1.35)),
     ):
-        leaf(rig, "velvet_lobes", f"lobe_{suffix}_base", (x, 0.52, z), 2.0, 1.55, 0.44, "velvet_mid", tilt=tilt)
-        leaf(rig, "velvet_lobes", f"lobe_{suffix}_edge", (x, 0.83, z + 0.1), 1.45, 1.25, 0.36, "velvet_edge", tilt=tilt)
+        strand(rig, "velvet_tufts", name, start, end, 0.25, "velvet_black")
 
 
-def part_silver_hairs(rig):
-    rig.bone("silver_hairs", (0.0, 0.0, 0.0))
-    for side, x in (("l", -1.35), ("r", 1.35)):
-        for index, z in enumerate((-0.72, 0.0, 0.72)):
-            strand(rig, "silver_hairs", f"silver_{side}_{index}", (x, 0.72, z), (x * 0.75, 1.62, z + 0.08), 0.12, "silver_glint")
-    strand(rig, "silver_hairs", "silver_center", (0.0, 0.84, -0.15), (0.0, 1.75, 0.15), 0.12, "silver_glint")
+def part_ice_crystals(rig):
+    rig.bone("ice_crystals", (0.0, 0.0, 0.0))
+    for name, start, end in (
+        ("crystal_center", (0.0, 3.9, 0.0), (-0.45, 8.0, 0.25)),
+        ("crystal_left", (-0.55, 3.85, -0.1), (-1.55, 7.0, -0.4)),
+        ("crystal_right", (0.55, 3.82, 0.05), (1.65, 6.8, 0.15)),
+        ("crystal_back", (0.1, 3.8, -0.6), (0.45, 6.55, -1.75)),
+    ):
+        strand(rig, "ice_crystals", name, start, end, 0.34, "ice_crystal")
 
 
-def part_cold_shadow(rig):
-    rig.bone("cold_shadow", (0.0, 0.0, 0.0))
-    for name, x, z in (("shadow_l", -2.0, 1.15), ("shadow_r", 2.0, -1.1)):
-        pad(rig, "cold_shadow", name, (x, 0.66, z), (0.46, 0.32, 0.8), "cold_shadow")
+def part_blue_cracks(rig):
+    rig.bone("blue_cracks", (0.0, 0.0, 0.0))
+    for name, start, end in (
+        ("glow_center", (-0.05, 4.15, 0.15), (-0.35, 6.65, 0.3)),
+        ("glow_left", (-0.7, 3.85, -0.05), (-1.3, 5.85, -0.3)),
+        ("glow_right", (0.6, 3.95, 0.05), (1.35, 5.7, 0.12)),
+    ):
+        strand(rig, "blue_cracks", name, start, end, 0.22, "blue_glow")
 
 
 def build():
-    return build_rig(MATS, (part_velvet_bed, part_velvet_lobes, part_silver_hairs, part_cold_shadow))
+    return build_rig(MATS, (part_velvet_pad, part_velvet_tufts, part_ice_crystals, part_blue_cracks))
 
 
 GATES = PlantGates("玄绒苔 / xuan_rong_tai")

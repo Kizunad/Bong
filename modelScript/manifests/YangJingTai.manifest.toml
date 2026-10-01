@@ -3,14 +3,14 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-rust_bed = [82, 57, 37]
-rust_edge = [125, 77, 42]
-meridian_green = [83, 111, 50]
-meridian_light = [132, 145, 61]
-scar_dark = [44, 42, 30]
+stone_base = [177, 181, 178]
+stone_shadow = [123, 128, 126]
+stone_high = [208, 211, 205]
+moss = [107, 122, 42]
+rust_spot = [160, 96, 42]
 
 [features]
-rust_bed = { elements = ["rust_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-meridian_vein = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-meridian_leaf = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-scar_dark = { elements = ["scar_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
+stone_steps = { elements = ["stone_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+moss_pad = { elements = ["moss_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+moss_strand = { elements = ["sprout_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+rust_spot = { elements = ["spot_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
