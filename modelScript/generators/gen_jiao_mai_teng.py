@@ -1,4 +1,4 @@
-"""焦脉藤：焦黑藤蔓与未熄的橙红炭线。"""
+"""焦脉藤：焦黑藤蔓与未熄的橙红炭线 (Round 3 终轮)。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""终焉藤：毒蛊师的焦黑终极藤材。"""
+"""终焉藤：毒蛊师的焦黑终极藤材 (Round 3 终轮)。"""
 
 from __future__ import annotations
 

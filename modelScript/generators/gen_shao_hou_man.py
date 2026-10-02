@@ -1,4 +1,4 @@
-"""烧喉蔓：洞壁上的发光垂挂藤蔓。"""
+"""烧喉蔓：洞壁上的发光垂挂藤蔓 (Round 3 终轮)。"""
 
 from __future__ import annotations
 

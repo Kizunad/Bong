@@ -1,4 +1,4 @@
-"""夜枯藤：幽穴里吸取真元的干枯暗藤。"""
+"""夜枯藤：幽穴里吸取真元的干枯暗藤 (Round 3 终轮)。"""
 
 from __future__ import annotations
 
