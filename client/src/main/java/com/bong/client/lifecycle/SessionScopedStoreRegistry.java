@@ -75,7 +75,6 @@ import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.inventory.state.PlayerRaceIdentityStore;
 import com.bong.client.inventory.state.RaceGateMetaStore;
 import com.bong.client.inventory.state.RemainsStore;
-import com.bong.client.lingtian.state.LingtianSessionStore;
 import com.bong.client.movement.MovementStateStore;
 import com.bong.client.npc.NpcInteractionLogStore;
 import com.bong.client.npc.NpcLodStore;
@@ -224,7 +223,6 @@ public final class SessionScopedStoreRegistry {
         ),
         SessionStoreHandle.forStore(RaceGateMetaStore.class, RaceGateMetaStore::clearOnDisconnect),
         SessionStoreHandle.forStore(RemainsStore.class, RemainsStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(LingtianSessionStore.class, LingtianSessionStore::clearOnDisconnect),
         SessionStoreHandle.forStore(MovementStateStore.class, MovementStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(NpcInteractionLogStore.class, NpcInteractionLogStore::clearOnDisconnect),
         SessionStoreHandle.forStore(NpcLodStore.class, NpcLodStore::clearOnDisconnect),

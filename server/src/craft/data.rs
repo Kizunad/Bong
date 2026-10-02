@@ -1042,6 +1042,37 @@ station = "none"
         }
     }
 
+    fn plain_incense_baseline() -> BaselineRecipe {
+        BaselineRecipe {
+            id: "workbench.cultivation.incense_plain".to_owned(),
+            category: "misc".to_owned(),
+            display_name: "草木香".to_owned(),
+            materials: vec![
+                BaselineItemStack {
+                    template_id: "dried_grass".to_owned(),
+                    count: 2,
+                },
+                BaselineItemStack {
+                    template_id: "wood_plank".to_owned(),
+                    count: 1,
+                },
+            ],
+            qi_cost: 0.0,
+            time_ticks: 200,
+            output: BaselineItemStack {
+                template_id: "incense_plain".to_owned(),
+                count: 4,
+            },
+            requirements: BaselineRequirements {
+                realm_min: None,
+                qi_color_min: None,
+                skill_lv_min: None,
+            },
+            unlock_sources: Vec::new(),
+            station: "workbench".to_owned(),
+        }
+    }
+
     fn realm_name(realm: Realm) -> &'static str {
         match realm {
             Realm::Awaken => "awaken",
@@ -1117,13 +1148,22 @@ station = "none"
     #[test]
     fn default_assets_match_committed_pre_migration_fixture_field_for_field() {
         let baseline = fixture();
-        let mut expected = baseline.recipes;
+        let mut expected: Vec<_> = baseline
+            .recipes
+            .into_iter()
+            .filter(|recipe| recipe.id != "workbench.cultivation.incense_plain")
+            .collect();
         expected.sort_by(|left, right| left.id.cmp(&right.id));
 
         let mut registry = CraftRegistry::new();
         load_default_craft_recipes_for_parity(&mut registry)
             .expect("default P0 craft assets must parse for canonical parity");
-        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        // 草木香是迁移完成后的新增配方，另由制作契约测试验证。
+        let mut actual: Vec<_> = registry
+            .iter()
+            .filter(|recipe| recipe.id.as_str() != "workbench.cultivation.incense_plain")
+            .map(canonical)
+            .collect();
         actual.sort_by(|left, right| left.id.cmp(&right.id));
 
         assert_eq!(
@@ -1137,15 +1177,15 @@ station = "none"
         // major #10 修复：baseline fixture 与 TOML 同批产生，不能充当独立迁移
         // oracle。这里用迁移前真实 Rust registrar 的程序化副本（fixtures/
         // legacy_p0_registrar.rs，来源 commit 6a6a262cecf9）独立重建 95 条
-        // canonical 配方，逐字段对拍 TOML loader 输出 —— fixture 与 TOML 一起
-        // 同批误改时也会撞红。
+        // canonical 配方，并显式加入新增草木香契约，逐字段对拍完整 registry。
         let oracle = crate::craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_registry();
         let mut expected: Vec<_> = oracle.iter().map(canonical).collect();
+        expected.push(plain_incense_baseline());
         expected.sort_by(|left, right| left.id.cmp(&right.id));
         assert_eq!(
             expected.len(),
-            95,
-            "pre-migration registrar must rebuild exactly 95 canonical recipes"
+            96,
+            "pre-migration registrar plus the explicit post-migration incense contract must rebuild exactly 96 canonical recipes"
         );
         // 文档化例外：verdict-1906-r2 major #9 —— coffin.stone_coffin 的展示名
         // 已从旧 registrar 的 "玄石棺" 改为正典合规的 "乌石棺"（末法禁词"玄"）。

@@ -12,7 +12,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::persistence::bootstrap_sqlite;
 use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
 use crate::qi_physics::{QiTransfer, WorldQiAccount, WorldQiBudget};
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{App, Entity, Events, Position, Update};
@@ -230,7 +230,7 @@ fn all_meridians_open() -> MeridianSystem {
 fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
     let mut app = App::new();
     app.insert_resource(WorldQiAccount::default());
-    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     let mut meridians = MeridianSystem {
         regular: (0..17)
             .map(|index| Meridian::new(format!("tail_core_{index}").into()))
@@ -253,8 +253,8 @@ fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
 
     let before = summarize_world_qi(app.world_mut());
     assert_eq!(
-        before.budget_initial_total, SPIRIT_QI_TOTAL,
-        "守恒快照必须锚定 schema 的 SPIRIT_QI_TOTAL"
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须锚定 schema 的 TEST_QI_FIXTURE_TOTAL"
     );
 
     let mut cultivation = app.world().get::<Cultivation>(entity).unwrap().clone();
@@ -295,8 +295,8 @@ fn failure_penalty_closes_non_humanoid_channel_without_legacy_event() {
     let after = summarize_world_qi(app.world_mut());
     let era_decay = 0.0;
     assert_eq!(
-        after.budget_initial_total, SPIRIT_QI_TOTAL,
-        "守恒快照必须锚定 schema 的 SPIRIT_QI_TOTAL"
+        after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "守恒快照必须锚定 schema 的 TEST_QI_FIXTURE_TOTAL"
     );
     assert_conservation(&before, &after, era_decay).unwrap_or_else(|error| {
         panic!(

@@ -542,59 +542,6 @@ fn despawning_woken_npc_does_not_panic_big_brain_attach_b0003() {
 }
 
 #[test]
-fn spawn_scattered_cultivator_at_attaches_farming_brain_components() {
-    let mut app = App::new();
-    app.add_systems(
-        valence::prelude::Startup,
-        (
-            setup_test_layer,
-            spawn_test_scattered_cultivator.after(setup_test_layer),
-        ),
-    );
-
-    app.update();
-    app.update();
-
-    let npc = only_spawned_npc(&mut app);
-
-    assert_eq!(
-        *app.world().get::<NpcArchetype>(npc).unwrap(),
-        NpcArchetype::Rogue
-    );
-    let scattered = app
-        .world()
-        .get::<crate::npc::scattered_cultivator::ScatteredCultivator>(npc)
-        .expect("scattered cultivator should mark seeded Rogue NPCs");
-    assert_eq!(scattered.home_plot, None);
-    assert_eq!(scattered.fail_streak, 0);
-    assert!(matches!(
-        scattered.temperament,
-        crate::npc::scattered_cultivator::FarmingTemperament::Patient
-            | crate::npc::scattered_cultivator::FarmingTemperament::Greedy
-            | crate::npc::scattered_cultivator::FarmingTemperament::Anxious
-            | crate::npc::scattered_cultivator::FarmingTemperament::Aggressive
-    ));
-    assert!(
-        app.world().get::<ThinkerBuilder>(npc).is_some(),
-        "scattered cultivator should carry a live farming thinker"
-    );
-    assert!(
-        app.world()
-            .get::<crate::npc::brain::CultivateState>(npc)
-            .is_some(),
-        "scattered cultivator remains a cultivating Rogue"
-    );
-    let trade = app
-        .world()
-        .get::<crate::npc::trade::NpcTradeInventory>(npc)
-        .expect("scattered Rogue must expose the same trade inventory as seeded Rogue");
-    assert!(
-        !trade.offers.is_empty(),
-        "Awaken Rogue fixture should have trade offers"
-    );
-}
-
-#[test]
 fn rogue_commoner_visual_kind_uses_player_only_for_real_skin() {
     assert_eq!(
         fallback_rogue_commoner_kind(&None),
@@ -627,20 +574,6 @@ fn spawn_test_rogue(
         DEFAULT_SPAWN_ZONE_NAME,
         DVec3::new(18.0, 66.0, 18.0),
         DVec3::new(18.0, 66.0, 18.0),
-        Realm::Awaken,
-        0.0,
-    );
-}
-
-fn spawn_test_scattered_cultivator(mut commands: Commands, layer: Res<TestLayer>) {
-    rogue::spawn_scattered_cultivator_at(
-        &mut commands,
-        NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
-        layer.0,
-        DEFAULT_SPAWN_ZONE_NAME,
-        DVec3::new(19.0, 66.0, 19.0),
-        DVec3::new(19.0, 66.0, 19.0),
-        0.9,
         Realm::Awaken,
         0.0,
     );

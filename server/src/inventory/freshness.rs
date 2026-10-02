@@ -1,4 +1,4 @@
-//! plan-lingtian-process-v1 P1 — 作物 / 加工产物 freshness game-tick 衰减。
+//! 作物 / 加工产物 freshness game-tick 衰减。
 //!
 //! 这里提供运行时 Component 与纯函数计算。真正的 inventory NBT 仍由
 //! `crate::shelflife::Freshness` 负责持久化；本组件是在线 tick 缓存层，按
@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Query, Res, Resource};
 
-use crate::lingtian::{LingtianClock, BEVY_TICKS_PER_LINGTIAN_TICK};
+use crate::world::clock::{MinuteClock, TICKS_PER_MINUTE};
 
 pub const GAME_DAY_TICKS: u64 = 24_000;
 pub const FRESH_HERB_TOTAL_TICKS: u64 = GAME_DAY_TICKS * 3;
@@ -158,7 +158,7 @@ pub enum FreshnessTransition {
 }
 
 pub fn freshness_tick_system(
-    clock: Option<Res<LingtianClock>>,
+    clock: Option<Res<MinuteClock>>,
     environment: Option<Res<FreshnessEnvironment>>,
     mut trackers: Query<&mut FreshnessTracker>,
 ) {
@@ -166,9 +166,7 @@ pub fn freshness_tick_system(
         return;
     };
     let environment = environment.as_deref().copied().unwrap_or_default();
-    let now_tick = clock
-        .lingtian_tick
-        .saturating_mul(BEVY_TICKS_PER_LINGTIAN_TICK as u64);
+    let now_tick = clock.minute.saturating_mul(TICKS_PER_MINUTE as u64);
     for mut tracker in &mut trackers {
         let in_anqi = tracker.in_anqi;
         advance_tracker_to_tick(

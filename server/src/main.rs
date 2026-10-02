@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
-    death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-    movement, network, npc, persistence, player, preview, qi_physics, server_readiness, shader,
+    death_lifecycle, economy, fauna, forge, gathering, identity, inventory, mineral, movement,
+    network, npc, persistence, player, preview, processing, qi_physics, server_readiness, shader,
     shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools, world,
     zhenfa,
 };
@@ -43,19 +43,28 @@ fn main() {
     let _ = dotenvy::dotenv();
     init_tracing();
 
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if let Err(code) = run_cli(arguments.iter().cloned()) {
+        std::process::exit(code);
+    }
+    let spirit_qi_total = match qi_physics::WorldQiTotalConfig::from_args(arguments.iter().skip(1))
+    {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("服务器启动失败：{error}");
+            std::process::exit(2);
+        }
+    };
+
     if shutdown_signal_probe_enabled() {
-        run_shutdown_signal_probe();
+        run_shutdown_signal_probe(spirit_qi_total);
         return;
     }
 
-    if let Err(code) = run_cli(std::env::args()) {
-        std::process::exit(code);
-    }
-
     if full_app_startup_smoke_enabled() {
-        run_full_app_startup_smoke();
+        run_full_app_startup_smoke(spirit_qi_total);
     } else {
-        run_server();
+        run_server(spirit_qi_total);
     }
 }
 
@@ -78,8 +87,8 @@ fn is_truthy_env_value(value: &str) -> bool {
     )
 }
 
-fn run_server() {
-    let mut app = build_server_app();
+fn run_server(spirit_qi_total: qi_physics::WorldQiTotalConfig) {
+    let mut app = build_server_app(spirit_qi_total);
     app.run();
 }
 
@@ -107,7 +116,7 @@ fn parse_server_port(raw: &str) -> u16 {
     port
 }
 
-fn build_server_app() -> App {
+fn build_server_app(spirit_qi_total: qi_physics::WorldQiTotalConfig) -> App {
     let (tx_to_game, rx_from_agent) = unbounded::<AgentCommand>();
     let (tx_to_agent, rx_from_game) = unbounded::<GameEvent>();
 
@@ -126,7 +135,7 @@ fn build_server_app() -> App {
 
     world::register(&mut app);
     player::register(&mut app);
-    qi_physics::register(&mut app);
+    qi_physics::register_with_total(&mut app, spirit_qi_total);
     body_plan::register(&mut app);
     skin::register(&mut app);
     inventory::register(&mut app);
@@ -148,7 +157,7 @@ fn build_server_app() -> App {
     spiritwood::register(&mut app);
     forge::register(&mut app);
     gathering::register(&mut app);
-    lingtian::register(&mut app);
+    processing::register(&mut app);
     mineral::register(&mut app);
     shelflife::register(&mut app);
     economy::register(&mut app);
@@ -166,7 +175,7 @@ fn build_server_app() -> App {
     app
 }
 
-fn run_shutdown_signal_probe() {
+fn run_shutdown_signal_probe(spirit_qi_total: qi_physics::WorldQiTotalConfig) {
     let unlock_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH")
         .expect("BONG_SHUTDOWN_SIGNAL_PROBE_UNLOCK_PATH is required for the signal probe");
     let ready_path = std::env::var_os("BONG_SHUTDOWN_SIGNAL_PROBE_READY_PATH")
@@ -181,7 +190,7 @@ fn run_shutdown_signal_probe() {
         "fresh shutdown probe state must become dirty before waiting for a real OS signal"
     );
 
-    let mut app = build_server_app();
+    let mut app = build_server_app(spirit_qi_total);
     app.insert_resource(unlock_state);
 
     // The first update runs PreStartup/Startup/PostStartup before PreUpdate. Do
@@ -212,8 +221,8 @@ fn run_shutdown_signal_probe() {
     }
 }
 
-fn run_full_app_startup_smoke() {
-    let mut app = build_server_app();
+fn run_full_app_startup_smoke(spirit_qi_total: qi_physics::WorldQiTotalConfig) {
+    let mut app = build_server_app(spirit_qi_total);
     let db_root = std::env::temp_dir().join(format!(
         "bong-full-app-startup-smoke-{}",
         std::process::id()

@@ -62,6 +62,8 @@ final class UiPreviewScenes {
         Map.entry("item-windows-hud", new UiWindowPreviewScene("pickaxe_iron", "hud")),
         Map.entry("craft", new CraftScene()),
         Map.entry("forge-window", new UiForgeWindowPreviewScene()),
+        Map.entry("alchemy-window", new UiAlchemyWindowPreviewScene()),
+        Map.entry("alchemy-runtime", new UiAlchemyRuntimePreviewScene()),
         Map.entry("terminate", new TerminateScene(0)),
         Map.entry("terminate-kind", new TerminateScene(1)),
         Map.entry("terminate-hungry", new TerminateScene(2)),
@@ -252,7 +254,9 @@ final class UiPreviewScenes {
             renderCraft(screen);
             UiWindowRuntime.openCraft(CraftContext.HANDCRAFT);
             renderCraft(screen);
-            if (state.minimized() || state.scope().isClosed() || !manager.snapshot().contains(state)) {
+            var restored = manager.snapshot().stream()
+                .filter(window -> window.definition().equals(CraftWindows.DEFINITION)).findFirst().orElseThrow();
+            if (restored.minimized() || restored.scope().isClosed() || !manager.snapshot().contains(restored)) {
                 throw new IllegalStateException("最小化恢复必须保留制作窗口及其订阅");
             }
         }

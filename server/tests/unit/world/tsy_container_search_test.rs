@@ -14,13 +14,16 @@ use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use bong_server::qi_physics::ledger::{QiAccountId, QiTransfer, WorldQiAccount};
 use bong_server::qi_physics::{assert_conservation, WorldQiSnapshot};
-use bong_server::schema::common::SPIRIT_QI_TOTAL;
 use bong_server::world::loot_pool::{LootEntry, LootPool, LootPoolRegistry};
 use bong_server::world::tsy_container::{ContainerKind, KeyKind, LootContainer, SearchProgress};
 use bong_server::world::tsy_container_search::*;
 use bong_server::world::zone::ZoneRegistry;
 use valence::prelude::{App, Entity, Events, Position, Update, Username};
 use valence::testing::ScenarioSingleClient;
+
+// 这些集成用例刻意模拟小规模世界，便于回读磨损转移和 overflow 账本；这是测试夹具总量，
+// 不是生产启动预算。
+const TEST_QI_FIXTURE_TOTAL: f64 = 100.0;
 
 fn make_inv() -> PlayerInventory {
     PlayerInventory {
@@ -703,8 +706,8 @@ fn apply_search_attrition_records_overflow_in_world_qi_account() {
         container_qi: item_qi_before,
         ledger_qi: app.world().resource::<WorldQiAccount>().total(),
         era_decay_accum: 0.0,
-        budget_initial_total: SPIRIT_QI_TOTAL,
-        budget_current_total: SPIRIT_QI_TOTAL,
+        budget_initial_total: TEST_QI_FIXTURE_TOTAL,
+        budget_current_total: TEST_QI_FIXTURE_TOTAL,
     };
     inv.containers[0].items.push(PlacedItemState {
         row: 0,
@@ -760,8 +763,8 @@ fn apply_search_attrition_records_overflow_in_world_qi_account() {
         container_qi: item_after.spirit_quality * item_after.stack_count.max(1) as f64,
         ledger_qi: ledger.total(),
         era_decay_accum: 0.0,
-        budget_initial_total: SPIRIT_QI_TOTAL,
-        budget_current_total: SPIRIT_QI_TOTAL,
+        budget_initial_total: TEST_QI_FIXTURE_TOTAL,
+        budget_current_total: TEST_QI_FIXTURE_TOTAL,
     };
     assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
         panic!(

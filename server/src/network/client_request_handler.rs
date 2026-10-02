@@ -16,12 +16,15 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, BlockPos, ChunkLayer, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
-    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
-    UniqueId, Username, With, Without,
+    bevy_ecs, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager, EventReader,
+    EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource, UniqueId,
+    Username, With, Without,
 };
 
-use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
+use crate::alchemy::residue::{
+    residue_alchemy_data, residue_kind_for_recyclable_outcome, PillResidueKind,
+};
+use crate::alchemy::world_effects::{AlchemyWorldAction, AlchemyWorldEffect};
 use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemyQiReservationBook, AlchemySession,
     AlchemyTakeBackRequest, InjectQiRequest, Intervention, LearnedRecipes, PlaceFurnaceRequest,
@@ -34,7 +37,7 @@ use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
     CastSource, Casting, Lifecycle, LifecycleState, QiSettledCast, QuickSlotBindings,
-    SkillBarBindings, SkillSlot, Stamina, Wounds,
+    SkillBarBindings, SkillSlot, Stamina, Wound, WoundKind, Wounds,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
@@ -82,9 +85,6 @@ use crate::inventory::{
     InventoryMoveRejectReason, ItemInstance, PlayerInventory,
 };
 use crate::inventory::{AlchemyItemData, ItemEffect, ItemRegistry};
-use crate::lingtian::requests::PendingLingtianRequest;
-use crate::lingtian::session::{ReplenishSource, SessionMode};
-use crate::lingtian::LingtianPlot;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
 use crate::movement::{MovementAction, MovementActionIntent};
@@ -386,6 +386,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub meridians: Query<'w, 's, &'static mut crate::cultivation::components::MeridianSystem>,
     pub contaminations: Query<'w, 's, &'static mut crate::cultivation::components::Contamination>,
     pub wounds: Query<'w, 's, &'static mut Wounds>,
+    pub game_modes: Query<'w, 's, &'static valence::prelude::GameMode>,
+    pub death_tx: Option<ResMut<'w, Events<crate::combat::events::DeathEvent>>>,
     pub staminas: Query<'w, 's, &'static mut Stamina>,
     pub spoil_warnings: Option<ResMut<'w, Events<SpoilConsumeWarning>>>,
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
@@ -421,18 +423,6 @@ pub struct DroppedLootRequestParams<'w, 's> {
     pub remains_loot_tx: EventWriter<'w, crate::inventory::RemainsLootIntent>,
 }
 
-/// plan-lingtian-v1 §1.2-§1.7 + fix-spec-1901-v2 §4.1 — 6 类 intent 的 ingress
-/// 队列写入包，避开 SystemParam 16 上限。
-///
-/// v2 起 producer 不再读取 `Position` / `CurrentDimension`，也不再直接写
-/// `Start*Request` event：只把已解析请求 push 进 `PendingLingtianRequests`，
-/// 由 `LingtianPostTransferValidationSet` 的唯一 validator 在权威移动写入后
-/// dispatch（terrain / environment 的 chunk 读取也移到那里）。
-#[derive(SystemParam)]
-pub struct LingtianRequestParams<'w> {
-    pub pending: ResMut<'w, crate::lingtian::requests::PendingLingtianRequests>,
-}
-
 /// Runtime owner of the C2S ingress budget.  The pure token and aggregation
 /// accounting remains in [`BudgetStore`]; this wrapper only binds it to the
 /// lifetime of a connected ECS client and forgets state when a role generation
@@ -441,28 +431,6 @@ pub struct LingtianRequestParams<'w> {
 pub struct ClientRequestBudget {
     pub store: BudgetStore<Entity>,
     character_ids: HashMap<Entity, String>,
-}
-
-/// O(1) lookup surface for authoritative lingtian plot positions.  The
-/// snapshot is refreshed once per update; individual C2S requests do not
-/// rescan every plot.
-#[derive(Debug, Default, Resource)]
-pub struct LingtianPlotIndex {
-    positions: HashSet<BlockPos>,
-}
-
-impl LingtianPlotIndex {
-    fn contains(&self, position: &BlockPos) -> bool {
-        self.positions.contains(position)
-    }
-}
-
-pub fn refresh_lingtian_plot_index(
-    mut index: ResMut<LingtianPlotIndex>,
-    plots: Query<&LingtianPlot>,
-) {
-    index.positions.clear();
-    index.positions.extend(plots.iter().map(|plot| plot.pos));
 }
 
 impl ClientRequestBudget {
@@ -547,9 +515,6 @@ pub struct ClientRequestIngressParams<'w, 's> {
     pub quick_slot_prefs_writes: Option<ResMut<'w, QuickSlotPrefsWriteQueue>>,
     pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
     pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
-    pub lingtian_plot_index: Option<Res<'w, LingtianPlotIndex>>,
-    pub chunk_layers:
-        Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     pub dimension_layers: Option<Res<'w, DimensionLayers>>,
 }
 
@@ -574,6 +539,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     /// plan-qi-handling-attrition-v1 P3：死坍缩渊 family 禁止磨损结算。
     pub tsy_lifecycle: Option<Res<'w, TsyZoneStateRegistry>>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    /// 成功的炼丹动作统一交给世界表现层，避免 UI 与旁观者各播一份声音。
+    pub world_effects: Option<ResMut<'w, Events<AlchemyWorldEffect>>>,
     /// plan-qi-handling-attrition-v1 P0/P1：AttritionTax 审计转账事件队列。
     pub attrition_qi_transfers: Option<ResMut<'w, Events<crate::qi_physics::ledger::QiTransfer>>>,
     /// AttritionTax 的真实余额账本；事件只保留同一笔 transfer 的审计副本。
@@ -762,7 +729,6 @@ fn meridian_label(id: &MeridianChannelId) -> &'static str {
 fn live_gate_request_kind(request: &ClientRequestV1) -> Option<&'static str> {
     match request {
         ClientRequestV1::GiveDanToElder { .. } => Some("give_dan_to_elder"),
-        ClientRequestV1::LingtianStartTill { .. } => Some("lingtian_start_till"),
         ClientRequestV1::CraftStart { .. } => Some("craft_start"),
         ClientRequestV1::MaterialMove { .. } => Some("material_move"),
         ClientRequestV1::WorkbenchOpen { .. } => Some("workbench_open"),
@@ -838,7 +804,6 @@ fn evaluate_live_gate(
     request: &ClientRequestV1,
     client: Entity,
     ingress: &ClientRequestIngressParams<'_, '_>,
-    lingtian_plot_index: Option<&LingtianPlotIndex>,
     dispatch: &ClientRequestDispatchParams<'_>,
     combat_params: &CombatRequestParams<'_, '_>,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -853,25 +818,6 @@ fn evaluate_live_gate(
             if inventories.get_mut(client).is_err() {
                 return Err(GateDenialReason::InvalidState);
             }
-        }
-        ClientRequestV1::LingtianStartTill { x, y, z, .. } => {
-            let target_block = BlockPos::new(*x, *y, *z);
-            let target_exists = lingtian_plot_index
-                .is_some_and(|index| index.contains(&target_block))
-                || ingress
-                    .chunk_layers
-                    .iter()
-                    .any(|layer| layer.block(target_block).is_some());
-            if !target_exists {
-                return Err(GateDenialReason::TargetNotFound);
-            }
-            let target = [
-                f64::from(*x) + 0.5,
-                f64::from(*y) + 0.5,
-                f64::from(*z) + 0.5,
-            ];
-            let context = requester.with_target(Some(target), Some(DimensionKind::Overworld), None);
-            gate.check(&context)?;
         }
         ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
             let entity_manager = combat_params
@@ -1093,9 +1039,6 @@ fn live_gate_feedback(
                 _ => LiveGateFeedback::Silent,
             }
         }
-        // Till has always been rejected without a client-facing response; its
-        // existing post-transfer validator remains the domain-level authority.
-        ClientRequestV1::LingtianStartTill { .. } => LiveGateFeedback::Silent,
         _ => LiveGateFeedback::EventAlert,
     }
 }
@@ -1224,7 +1167,6 @@ pub fn handle_client_request_payloads(
     mut durability_changed_tx: Option<ResMut<Events<InventoryDurabilityChangedEvent>>>,
     mut combat_params: CombatRequestParams,
     mut dropped_loot_params: DroppedLootRequestParams,
-    mut lingtian_tx: LingtianRequestParams,
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
@@ -1334,6 +1276,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipeFragment { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
+            | ClientRequestV1::AlchemyPlaceIncense { v, .. }
             | ClientRequestV1::CoffinOpen { v, .. }
             | ClientRequestV1::CoffinPlace { v, .. }
             | ClientRequestV1::BlockPlace { v, .. }
@@ -1389,12 +1332,6 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CancelExtractRequest { v }
             | ClientRequestV1::StartSearch { v, .. }
             | ClientRequestV1::CancelSearch { v }
-            | ClientRequestV1::LingtianStartTill { v, .. }
-            | ClientRequestV1::LingtianStartRenew { v, .. }
-            | ClientRequestV1::LingtianStartPlanting { v, .. }
-            | ClientRequestV1::LingtianStartHarvest { v, .. }
-            | ClientRequestV1::LingtianStartReplenish { v, .. }
-            | ClientRequestV1::LingtianStartDrainQi { v, .. }
             | ClientRequestV1::ForgeStartSession { v, .. }
             | ClientRequestV1::ForgeTemperingHit { v, .. }
             | ClientRequestV1::ForgeInscriptionScroll { v, .. }
@@ -1436,7 +1373,6 @@ pub fn handle_client_request_payloads(
                 &request,
                 ev.client,
                 &ingress,
-                ingress.lingtian_plot_index.as_deref(),
                 &dispatch,
                 &combat_params,
                 &mut inventories,
@@ -1651,7 +1587,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyLearnRecipe { .. }
             | ClientRequestV1::AlchemyLearnRecipeFragment { .. }
             | ClientRequestV1::AlchemyTakePill { .. }
-            | ClientRequestV1::AlchemyFurnacePlace { .. } => {
+            | ClientRequestV1::AlchemyFurnacePlace { .. }
+            | ClientRequestV1::AlchemyPlaceIncense { .. } => {
                 unreachable!(
                     "Production requests are dispatched by the typed Production dispatcher"
                 )
@@ -2153,6 +2090,8 @@ pub fn handle_client_request_payloads(
                     },
                     // 伪皮装备走 equip 目标，非网格落位，旋转标志天然不适用。
                     false,
+                    None,
+                    None,
                     &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
@@ -2589,99 +2528,6 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                 );
             }
-            // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
-            ClientRequestV1::LingtianStartTill {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                mode,
-                ..
-            } => {
-                // fix-spec-1901-v2 §4.1 — producer 只入队：不读位置/维度，不读
-                // chunk/terrain，不写 Start*Request；gate + terrain 派生都在
-                // post-transfer validator（LingtianPostTransferValidationSet）做。
-                lingtian_tx.pending.push(PendingLingtianRequest::Till {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    hoe_instance_id,
-                    mode: parse_session_mode(&mode),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartRenew {
-                x,
-                y,
-                z,
-                hoe_instance_id,
-                ..
-            } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Renew {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    hoe_instance_id,
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartPlanting {
-                x, y, z, plant_id, ..
-            } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Planting {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    plant_id: plant_id.clone(),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::Harvest {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    mode: parse_session_mode(&mode),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartReplenish {
-                x, y, z, source, ..
-            } => {
-                let Some(parsed) = parse_replenish_source(&source) else {
-                    tracing::warn!(
-                        "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
-                    );
-                    continue;
-                };
-                lingtian_tx.pending.push(PendingLingtianRequest::Replenish {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    source: parsed,
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source} queued",
-                    ev.client
-                );
-            }
-            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
-                lingtian_tx.pending.push(PendingLingtianRequest::DrainQi {
-                    actor: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                });
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}] queued",
-                    ev.client
-                );
-            }
             // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
             ClientRequestV1::CraftStart {
                 recipe_id,
@@ -2774,37 +2620,6 @@ pub fn handle_client_request_payloads(
                 "session-domain request must be consumed before the legacy dispatch match"
             ),
         }
-    }
-}
-
-fn parse_session_mode(raw: &str) -> SessionMode {
-    match raw.to_ascii_lowercase().as_str() {
-        "auto" => SessionMode::Auto,
-        _ => SessionMode::Manual,
-    }
-}
-
-fn parse_replenish_source(raw: &str) -> Option<ReplenishSource> {
-    match raw.to_ascii_lowercase().as_str() {
-        "zone" => Some(ReplenishSource::Zone),
-        "bone_coin" => Some(ReplenishSource::BoneCoin),
-        "beast_core" => Some(ReplenishSource::BeastCore),
-        "ling_shui" => Some(ReplenishSource::LingShui),
-        "pill_residue_failed_pill" | "failed_pill" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::FailedPill,
-        }),
-        "pill_residue_flawed_pill" | "flawed_pill" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::FlawedPill,
-        }),
-        "pill_residue_processing_dregs" | "processing_dregs" => {
-            Some(ReplenishSource::PillResidue {
-                residue_kind: crate::alchemy::residue::PillResidueKind::ProcessingDregs,
-            })
-        }
-        "pill_residue_aging_scraps" | "aging_scraps" => Some(ReplenishSource::PillResidue {
-            residue_kind: crate::alchemy::residue::PillResidueKind::AgingScraps,
-        }),
-        _ => None,
     }
 }
 
@@ -4266,11 +4081,13 @@ fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_inventory_move(
     entity: valence::prelude::Entity,
-    instance_id: u64,
+    mut instance_id: u64,
     from: InventoryLocationV1,
     to: InventoryLocationV1,
     // plan-rotate-v1 — 拖拽落位前是否先旋转该 instance（互换 grid_w/grid_h）。
     rotated: bool,
+    count: Option<u32>,
+    instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
     item_registry: &ItemRegistry,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -4300,7 +4117,7 @@ pub(crate) fn handle_inventory_move(
     // 权威真源（见下方 `form_race_id` 修复注释）。
     morph_states: &Query<Option<&crate::body_plan::MorphState>>,
 ) {
-    let item_before_move = inventories
+    let mut item_before_move = inventories
         .get(entity)
         .ok()
         .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id).cloned());
@@ -4380,16 +4197,47 @@ pub(crate) fn handle_inventory_move(
     )
     .is_humanoid;
 
-    match apply_inventory_move_with_race(
-        &mut inventory,
-        item_registry,
-        instance_id,
-        &from,
-        &to,
-        rotated,
-        &form_race_id,
-        form_is_humanoid,
-    ) {
+    let split_count = count.filter(|count| {
+        item_before_move
+            .as_ref()
+            .is_none_or(|item| *count != item.stack_count)
+    });
+    let result = if let Some(count) = split_count {
+        instance_allocator
+            .ok_or(InventoryMoveRejectReason::InstanceAllocationFailed)
+            .and_then(|allocator| {
+                crate::inventory::apply_inventory_split(
+                    &mut inventory,
+                    item_registry,
+                    allocator,
+                    instance_id,
+                    &from,
+                    &to,
+                    count,
+                    rotated,
+                )
+            })
+            .map(|split_id| {
+                // 共用搬运磨损路径，但只作用于拆出并实际移动的那一堆。
+                instance_id = split_id;
+                item_before_move = inventory_item_by_instance_borrow(&inventory, split_id).cloned();
+                InventoryMoveOutcome::Moved {
+                    revision: inventory.revision,
+                }
+            })
+    } else {
+        apply_inventory_move_with_race(
+            &mut inventory,
+            item_registry,
+            instance_id,
+            &from,
+            &to,
+            rotated,
+            &form_race_id,
+            form_is_humanoid,
+        )
+    };
+    match result {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(
                 entity,
@@ -4546,7 +4394,19 @@ pub(crate) fn handle_inventory_move(
                 "[bong][network][inventory] moved instance={instance_id} {from:?} -> {to:?} revision={}",
                 revision.0
             );
-            send_moved_event(entity, clients, instance_id, from, to, revision.0);
+            if split_count.is_some() {
+                // Moved delta 无法同时表达源数量变化与新实例创建，必须一起下发。
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "split",
+                );
+            } else {
+                send_moved_event(entity, clients, instance_id, from, to, revision.0);
+            }
         }
         Ok(InventoryMoveOutcome::Swapped {
             revision,
@@ -5182,6 +5042,8 @@ pub(crate) fn handle_alchemy_turn_page(
     clients: &mut Query<(&Username, &mut Client)>,
     learned_q: &mut Query<&mut LearnedRecipes>,
     alchemy_state: &mut AlchemyMockState,
+    recipes: &RecipeRegistry,
+    items: &ItemRegistry,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -5206,7 +5068,13 @@ pub(crate) fn handle_alchemy_turn_page(
                 learned.current_index,
                 learned.ids.len()
             );
-            alchemy_snapshot_emit::send_recipe_book_from_learned(&mut client, &player_id, &learned);
+            alchemy_snapshot_emit::send_recipe_book_from_learned(
+                &mut client,
+                &player_id,
+                &learned,
+                recipes,
+                items,
+            );
             return;
         }
     }
@@ -5226,6 +5094,7 @@ pub(crate) fn handle_alchemy_learn(
     clients: &mut Query<(&Username, &mut Client)>,
     learned_q: &mut Query<&mut LearnedRecipes>,
     registry: &RecipeRegistry,
+    items: &ItemRegistry,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -5250,7 +5119,13 @@ pub(crate) fn handle_alchemy_learn(
                 "[bong][network][alchemy] `{player_id}` merged fragment while learning `{recipe_id}`"
             ),
         }
-        alchemy_snapshot_emit::send_recipe_book_from_learned(&mut client, &player_id, &learned);
+        alchemy_snapshot_emit::send_recipe_book_from_learned(
+            &mut client,
+            &player_id,
+            &learned,
+            registry,
+            items,
+        );
     }
 }
 
@@ -5261,6 +5136,7 @@ pub(crate) fn handle_alchemy_open_furnace(
     furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
     learned_q: &mut Query<&mut LearnedRecipes>,
     registry: &RecipeRegistry,
+    items: &ItemRegistry,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -5281,6 +5157,8 @@ pub(crate) fn handle_alchemy_open_furnace(
                     &mut client,
                     &player_id,
                     learned,
+                    registry,
+                    items,
                 );
             }
             tracing::info!(
@@ -5316,6 +5194,7 @@ pub(crate) fn handle_alchemy_intervention(
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
+    world_effects: Option<&mut Events<AlchemyWorldEffect>>,
     inject_qi_events: Option<&mut Events<InjectQiRequest>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
@@ -5343,6 +5222,10 @@ pub(crate) fn handle_alchemy_intervention(
                     return;
                 }
             };
+            if session.finished {
+                send_alchemy_error(&mut client, &player_id, "本炉已结束，请收取结果".into());
+                return;
+            }
             if let Intervention::InjectQi(amount) = intervention {
                 let Some(events) = inject_qi_events else {
                     send_alchemy_error(
@@ -5367,7 +5250,18 @@ pub(crate) fn handle_alchemy_intervention(
                 });
                 return;
             }
+            let previous_temp = session.temp_current;
             session.apply_intervention(intervention.clone());
+            if let Intervention::AdjustTemp(_) = intervention {
+                if (session.temp_current - previous_temp).abs() > f64::EPSILON {
+                    let action = if session.temp_current >= 0.5 {
+                        AlchemyWorldAction::FireRaise
+                    } else {
+                        AlchemyWorldAction::FireLower
+                    };
+                    AlchemyWorldEffect::emit(world_effects, furnace_pos, Some(session), action);
+                }
+            }
             if let Some(events) = vfx_events {
                 let (event_id, color, strength, count) = match intervention {
                     Intervention::AdjustTemp(temp) if temp >= 0.85 => {
@@ -5451,6 +5345,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
     mut reservations: ResMut<AlchemyQiReservationBook>,
     redis: Option<Res<RedisBridgeResource>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut world_effects: Option<ResMut<Events<AlchemyWorldEffect>>>,
     unique_ids: Query<&UniqueId>,
 ) {
     for request in requests.read() {
@@ -5481,6 +5376,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             send_alchemy_error(&mut client, &player_id, "坍缩区域无法注灵".to_string());
             continue;
         }
+        let furnace_pos = furnace.pos.unwrap_or_default();
         let Some(session) = furnace.session.as_mut() else {
             send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
             continue;
@@ -5532,12 +5428,24 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             session.qi_injected,
         );
         let intervention = Intervention::InjectQi(request.amount);
+        AlchemyWorldEffect::emit(
+            world_effects.as_deref_mut(),
+            furnace_pos,
+            Some(session),
+            AlchemyWorldAction::InjectQi {
+                source: [
+                    f64::from(furnace_pos.0) + 0.5,
+                    f64::from(furnace_pos.1) + 1.0,
+                    f64::from(furnace_pos.2) + 0.5,
+                ],
+            },
+        );
         if let Some(events) = vfx_events.as_deref_mut() {
             gameplay_vfx::send_spawn(
                 events,
                 gameplay_vfx::spawn_request(
                     gameplay_vfx::ALCHEMY_BREW_VAPOR,
-                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    alchemy_furnace_origin(furnace_pos),
                     Some([0.0, 0.6, 0.0]),
                     "#AA66FF",
                     0.65,
@@ -5547,7 +5455,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
             );
             if let Ok(unique_id) = unique_ids.get(request.player) {
                 events.send(VfxEventRequest::new(
-                    alchemy_furnace_origin(furnace.pos.unwrap_or_default()),
+                    alchemy_furnace_origin(furnace_pos),
                     crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
                         target_player: unique_id.0.to_string(),
                         anim_id: crate::network::vfx_animation_trigger::ANIM_ALCHEMY_STIR
@@ -5560,7 +5468,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
         }
         publish_alchemy_intervention_result(
             redis.as_deref(),
-            furnace.pos.unwrap_or_default(),
+            furnace_pos,
             recipe_id.as_str(),
             player_id.as_str(),
             &intervention,
@@ -5592,9 +5500,12 @@ pub(crate) fn dispatch_alchemy_take_back_requests(
     mut inventories: Query<&mut PlayerInventory>,
     player_states: Query<&PlayerState>,
     cultivations: Query<&Cultivation>,
+    mut wounds: Query<&mut Wounds>,
+    game_modes: Query<&valence::prelude::GameMode>,
+    mut deaths: Option<ResMut<Events<crate::combat::events::DeathEvent>>>,
     item_registry: Res<ItemRegistry>,
     mut instance_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
-    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut world_effects: Option<ResMut<Events<AlchemyWorldEffect>>>,
 ) {
     for request in requests.read() {
         handle_alchemy_take_back(
@@ -5609,9 +5520,12 @@ pub(crate) fn dispatch_alchemy_take_back_requests(
             &mut inventories,
             &player_states,
             &cultivations,
+            &mut wounds,
+            &game_modes,
+            deaths.as_deref_mut(),
             &item_registry,
             instance_allocator.as_deref_mut(),
-            vfx_events.as_deref_mut(),
+            world_effects.as_deref_mut(),
         );
     }
 }
@@ -5632,11 +5546,11 @@ pub(crate) fn settle_finished_alchemy_furnace_qi(
         if ledger.balance(&account) <= 0.0 {
             continue;
         }
-        let session_finished = furnace
-            .session
-            .as_ref()
-            .is_none_or(|session| session.finished);
-        if !session_finished {
+        // 完成的 session 仍需保留到玩家收取结果；在这里提前退款会把
+        // `qi_injected` 清成零，随后 take_back 会错误地判定 qi_deficit。
+        // session 被 take_back 移除后，或炉体本来就没有 session，才进入
+        // 结算路径；断线/移除炉体则由各自的清理系统处理。
+        if furnace.session.is_some() {
             continue;
         }
         let owner = reservations.owner(furnace_entity).map(str::to_owned);
@@ -5822,7 +5736,7 @@ pub(crate) fn handle_alchemy_ignite(
     registry: &RecipeRegistry,
     zones: Option<&ZoneRegistry>,
     redis: Option<&RedisBridgeResource>,
-    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    world_effects: Option<&mut Events<AlchemyWorldEffect>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -5857,20 +5771,12 @@ pub(crate) fn handle_alchemy_ignite(
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` ignite `{recipe_id}` at pos={furnace_pos:?}"
         );
-        if let Some(events) = vfx_events {
-            gameplay_vfx::send_spawn(
-                events,
-                gameplay_vfx::spawn_request(
-                    gameplay_vfx::ALCHEMY_BREW_VAPOR,
-                    alchemy_furnace_origin(furnace_pos),
-                    Some([0.0, 0.5, 0.0]),
-                    "#88CCFF",
-                    0.55,
-                    8,
-                    40,
-                ),
-            );
-        }
+        AlchemyWorldEffect::emit(
+            world_effects,
+            furnace_pos,
+            furnace.session.as_ref(),
+            AlchemyWorldAction::Ignite,
+        );
         publish_alchemy_session_start(
             redis,
             furnace_pos,
@@ -5925,6 +5831,37 @@ fn alchemy_furnace_origin(furnace_pos: (i32, i32, i32)) -> DVec3 {
     )
 }
 
+fn alchemy_material_audio_recipe(material: &str, items: &ItemRegistry) -> &'static str {
+    if items
+        .get(material)
+        .is_some_and(|item| item.category == crate::inventory::ItemCategory::Herb)
+    {
+        return "alchemy_material_herb";
+    }
+    let material = material.to_ascii_lowercase();
+    if material.contains("water")
+        || material.contains("moisture")
+        || material.contains("shui")
+        || material.contains("ling_shui")
+    {
+        "alchemy_material_liquid"
+    } else if material.contains("charcoal")
+        || material.contains("coal")
+        || material.contains("tan_mu")
+        || material.contains("wood")
+    {
+        "alchemy_material_fuel"
+    } else if material.contains("herb")
+        || material.contains("zhi")
+        || material.contains("cao")
+        || material.contains("hua")
+    {
+        "alchemy_material_herb"
+    } else {
+        "alchemy_material_insert"
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_alchemy_feed_slot(
     entity: valence::prelude::Entity,
@@ -5943,6 +5880,8 @@ pub(crate) fn handle_alchemy_feed_slot(
     mut qi_ledger: Option<&mut WorldQiAccount>,
     mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
+    world_effects: Option<&mut Events<AlchemyWorldEffect>>,
+    items: &ItemRegistry,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -5953,6 +5892,10 @@ pub(crate) fn handle_alchemy_feed_slot(
             send_alchemy_error(&mut client, &player_id, "尚未起炉".to_string());
             return;
         };
+        if session.finished {
+            send_alchemy_error(&mut client, &player_id, "本炉已结束，请收取结果".into());
+            return;
+        }
         let Some(recipe) = registry.get(&session.recipe) else {
             send_alchemy_error(
                 &mut client,
@@ -5969,11 +5912,16 @@ pub(crate) fn handle_alchemy_feed_slot(
             send_alchemy_error(&mut client, &player_id, format!("此槽不收 {material}"));
             return;
         };
-        if count != expected.count {
+        let remaining = expected.count.saturating_sub(session.stage_material_count(
+            recipe,
+            slot_idx as usize,
+            &material,
+        ));
+        if count == 0 || count > remaining {
             send_alchemy_error(
                 &mut client,
                 &player_id,
-                format!("投料数量不符：需要 {}，收到 {count}", expected.count),
+                format!("这一味尚缺 {remaining} 份，本次不能投入 {count} 份"),
             );
             return;
         }
@@ -6072,6 +6020,16 @@ pub(crate) fn handle_alchemy_feed_slot(
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` feed pos={furnace_pos:?} slot={slot_idx} {material}×{count}"
         );
+        AlchemyWorldEffect::emit(
+            world_effects,
+            furnace_pos,
+            Some(session),
+            AlchemyWorldAction::Feed {
+                item: material.clone(),
+                count,
+                sound: alchemy_material_audio_recipe(&material, items).into(),
+            },
+        );
         alchemy_snapshot_emit::send_session_from_furnace(
             &mut client,
             &player_id,
@@ -6095,6 +6053,107 @@ pub(crate) fn handle_alchemy_feed_slot(
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "feed_slot");
 }
 
+/// 将背包中的香料实例投入香座，并在同一条权威路径中扣除库存。
+///
+/// 香料效果只由服务端模板 ID 决定；客户端传入的实例 ID 只用于定位和原子消耗。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_alchemy_place_incense(
+    entity: valence::prelude::Entity,
+    furnace_pos: (i32, i32, i32),
+    item_instance_id: u64,
+    clients: &mut Query<(&Username, &mut Client)>,
+    furnaces: &mut Query<(Entity, &mut AlchemyFurnace)>,
+    registry: &RecipeRegistry,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    world_effects: Option<&mut Events<AlchemyWorldEffect>>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
+        let Some((kind, effect)) = inventories
+            .get(entity)
+            .ok()
+            .and_then(|inventory| inventory_item_by_instance_borrow(inventory, item_instance_id))
+            .and_then(|item| {
+                crate::alchemy::incense::effect_for_item(&item.template_id)
+                    .map(|effect| (item.template_id.clone(), effect))
+            })
+        else {
+            send_alchemy_error(
+                &mut client,
+                &player_id,
+                "这件物品不是可用香料，或已不在背包中".into(),
+            );
+            return;
+        };
+        let Some(session) = furnace.session.as_mut() else {
+            send_alchemy_error(&mut client, &player_id, "尚未起炉，香料无处可燃".into());
+            return;
+        };
+        if session.finished {
+            send_alchemy_error(&mut client, &player_id, "本炉已经结束，请先收取结果".into());
+            return;
+        }
+        if session.incense_active().is_some() {
+            send_alchemy_error(&mut client, &player_id, "香座上仍有未燃尽的香".into());
+            return;
+        }
+        let mut inventory = match inventories.get_mut(entity) {
+            Ok(inventory) => inventory,
+            Err(_) => {
+                send_alchemy_error(&mut client, &player_id, "未找到背包".into());
+                return;
+            }
+        };
+        if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
+            send_alchemy_error(&mut client, &player_id, format!("投香扣除失败：{error}"));
+            return;
+        }
+        session
+            .place_incense(kind.clone(), effect)
+            .expect("已在同一可变借用中校验炉次及香座状态");
+        tracing::info!(
+            "[bong][network][alchemy] `{player_id}` placed incense `{kind}` pos={furnace_pos:?} instance={item_instance_id}"
+        );
+        AlchemyWorldEffect::emit(
+            world_effects,
+            furnace_pos,
+            Some(session),
+            AlchemyWorldAction::Incense,
+        );
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            furnace,
+            registry,
+        );
+        if let (Ok(player_state), Ok(cultivation)) =
+            (player_states.get(entity), cultivations.get(entity))
+        {
+            send_inventory_snapshot_to_client(
+                entity,
+                &mut client,
+                username.0.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "alchemy_place_incense",
+            );
+        }
+    });
+    log_or_send_route_error(
+        result,
+        &mut client,
+        &player_id,
+        furnace_pos,
+        "place_incense",
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_alchemy_take_back(
     entity: valence::prelude::Entity,
@@ -6108,9 +6167,12 @@ pub(crate) fn handle_alchemy_take_back(
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
+    wounds: &mut Query<&mut Wounds>,
+    game_modes: &Query<&valence::prelude::GameMode>,
+    deaths: Option<&mut Events<crate::combat::events::DeathEvent>>,
     item_registry: &ItemRegistry,
     mut instance_allocator: Option<&mut InventoryInstanceIdAllocator>,
-    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    world_effects: Option<&mut Events<AlchemyWorldEffect>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -6134,50 +6196,95 @@ pub(crate) fn handle_alchemy_take_back(
                 );
                 return;
             };
-            let remaining = recipe
-                .fire_profile
-                .target_duration_ticks
-                .saturating_sub(session.elapsed_ticks);
-            for _ in 0..remaining {
-                session.tick();
-            }
+            let target_ticks = recipe.fire_profile.target_duration_ticks;
+            let early_take = session.elapsed_ticks < target_ticks;
+            let early_progress = if target_ticks == 0 {
+                1.0
+            } else {
+                (session.elapsed_ticks as f32 / target_ticks as f32).clamp(0.0, 1.0)
+            };
+            let early_burn_damage =
+                (early_take && crate::combat::is_damageable(entity, game_modes)).then(|| {
+                    early_take_burn_damage(
+                        session.temp_current,
+                        recipe.fire_profile.target_temp,
+                        recipe.fire_profile.tolerance.temp_band,
+                    )
+                });
             session.finished = true;
             let Some(ended) = furnace.end_session() else {
                 return;
             };
             let elapsed_ticks = ended.elapsed_ticks;
-            // P3 — 催化炉加成：透传炉 tier 给 resolver，对变异丹配方叠加成功率加成。
-            let resolved = crate::alchemy::resolver::resolve_with_meta_and_furnace(
-                &ended,
-                recipe,
-                registry,
-                0,
-                furnace.tier,
-            );
-            let bucket = resolved.bucket;
-            let outcome = resolved.outcome;
+            let deviation = ended.summarize_with_alchemy_effective_lv(recipe, 0);
+            let outcome_reason = if early_take {
+                "early_take"
+            } else if deviation.severe_overheat {
+                "severe_overheat"
+            } else if deviation.qi_deficit {
+                "qi_deficit"
+            } else if deviation.missed_stage {
+                "missed_stage"
+            } else if deviation.temp_deviation > 3.0 {
+                "temperature_deviation"
+            } else if deviation.duration_deviation > 3.0 {
+                "duration_deviation"
+            } else {
+                "quality_bucket"
+            };
+            let (bucket, outcome, forced_residue) = if early_take {
+                (
+                    crate::alchemy::outcome::OutcomeBucket::Waste,
+                    crate::alchemy::ResolvedOutcome::Waste {
+                        recipe_id: Some(recipe.id.clone()),
+                    },
+                    Some(PillResidueKind::ProcessingDregs),
+                )
+            } else {
+                // P3 — 催化炉加成：透传炉 tier 给 resolver，对变异丹配方叠加成功率加成。
+                let resolved = crate::alchemy::resolver::resolve_with_meta_and_furnace(
+                    &ended,
+                    recipe,
+                    registry,
+                    0,
+                    furnace.tier,
+                );
+                (resolved.bucket, resolved.outcome, None)
+            };
             let event_recipe_id = Some(recipe.id.clone());
-            // end_session 已成功：无论产物入袋成败，都必须继续推送 finished/空炉终态，
-            // 避免客户端残留 active HUD。奖励/VFX/outcome 事件仅在非 explode 且 grant 成功时触发。
+            let result_item = forced_residue
+                .or_else(|| residue_kind_for_recyclable_outcome(&outcome))
+                .map(|kind| kind.spec().template_id.to_string())
+                .unwrap_or_else(|| match &outcome {
+                    crate::alchemy::ResolvedOutcome::Pill { pill, .. } => pill.clone(),
+                    _ => String::new(),
+                });
+            let result_action = AlchemyWorldAction::Collect {
+                result: if early_take {
+                    "early_take".into()
+                } else {
+                    match bucket {
+                        crate::alchemy::outcome::OutcomeBucket::Perfect => "perfect",
+                        crate::alchemy::outcome::OutcomeBucket::Good => "good",
+                        crate::alchemy::outcome::OutcomeBucket::Flawed => "flawed",
+                        crate::alchemy::outcome::OutcomeBucket::Waste => "waste",
+                        crate::alchemy::outcome::OutcomeBucket::Explode => "explode",
+                    }
+                    .into()
+                },
+                name: item_registry
+                    .get(&result_item)
+                    .map_or_else(|| "炼制残渣".to_string(), |item| item.display_name.clone()),
+                item: result_item,
+            };
+            // 入袋失败时保留已停止的炉次，清理背包后可重试；只有成功收取才移除结果。
+            let mut retain_result = false;
             match &outcome {
                 crate::alchemy::ResolvedOutcome::Explode {
                     damage,
                     meridian_crack,
                 } => {
-                    if let Some(events) = vfx_events {
-                        gameplay_vfx::send_spawn(
-                            events,
-                            gameplay_vfx::spawn_request(
-                                gameplay_vfx::ALCHEMY_EXPLODE,
-                                alchemy_furnace_origin(furnace_pos),
-                                Some([0.0, 0.8, 0.0]),
-                                "#FF5533",
-                                1.0,
-                                18,
-                                30,
-                            ),
-                        );
-                    }
+                    AlchemyWorldEffect::emit(world_effects, furnace_pos, None, result_action);
                     let scaled_damage = scale_alchemy_explosion_damage(*damage, furnace.tier);
                     let scaled_meridian_crack =
                         scale_alchemy_explosion_crack(*meridian_crack, furnace.tier);
@@ -6195,6 +6302,7 @@ pub(crate) fn handle_alchemy_take_back(
                             cultivations,
                             item_registry,
                             instance_allocator,
+                            forced_residue,
                         );
                     }
                     if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
@@ -6228,6 +6336,7 @@ pub(crate) fn handle_alchemy_take_back(
                             cultivations,
                             item_registry,
                             instance_allocator,
+                            forced_residue,
                         ),
                         None => {
                             send_alchemy_error(
@@ -6239,20 +6348,14 @@ pub(crate) fn handle_alchemy_take_back(
                         }
                     };
                     if granted {
-                        if let Some(events) = vfx_events {
-                            gameplay_vfx::send_spawn(
-                                events,
-                                gameplay_vfx::spawn_request(
-                                    gameplay_vfx::ALCHEMY_COMPLETE,
-                                    alchemy_furnace_origin(furnace_pos),
-                                    Some([0.0, 0.8, 0.0]),
-                                    "#FFD700",
-                                    0.9,
-                                    10,
-                                    40,
-                                ),
-                            );
+                        if let Some(damage) = early_burn_damage {
+                            apply_early_take_burn(entity, wounds, deaths, damage, tick);
+                            client.send_chat_message(format!(
+                                "§6[炼丹] 炉火未停便收取：得到炮制药渣（进度 {:.0}%），余热灼伤 -{damage:.1}",
+                                early_progress * 100.0
+                            ));
                         }
+                        AlchemyWorldEffect::emit(world_effects, furnace_pos, None, result_action);
                         if let Some(outcome_tx) = outcome_tx.as_deref_mut() {
                             outcome_tx.send(crate::alchemy::AlchemyOutcomeEvent {
                                 furnace: furnace_entity,
@@ -6263,11 +6366,22 @@ pub(crate) fn handle_alchemy_take_back(
                                 elapsed_ticks,
                             });
                         }
+                    } else {
+                        retain_result = true;
                     }
                 }
             }
+            if retain_result {
+                furnace.session = Some(ended.clone());
+            }
             tracing::info!(
-                "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?}"
+                "[bong][network][alchemy] `{player_id}` take_back pos={furnace_pos:?} slot={slot_idx} resolved bucket={bucket:?} reason={outcome_reason} elapsed={elapsed_ticks} temp={:.3} qi={:.2} temp_dev={:.3} duration_dev={:.3} missed_stage={} qi_deficit={}",
+                ended.temp_current,
+                ended.qi_injected,
+                deviation.temp_deviation,
+                deviation.duration_deviation,
+                deviation.missed_stage,
+                deviation.qi_deficit
             );
             alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
             alchemy_snapshot_emit::send_session_from_completed_session(
@@ -6279,6 +6393,52 @@ pub(crate) fn handle_alchemy_take_back(
         },
     );
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "take_back");
+}
+
+/// 提前收取时的余热伤害。温度越高，打开炉口时越容易被蒸汽和药渣灼伤；
+/// 伤害刻意保持在小额范围，严重的炸炉仍由正常结算路径负责。
+fn early_take_burn_damage(temp_current: f64, target_temp: f64, temp_band: f64) -> f32 {
+    let lower_bound = target_temp - temp_band;
+    let denominator = (1.0 - lower_bound).max(0.1);
+    let heat = ((temp_current - lower_bound).max(0.0) / denominator).clamp(0.0, 1.0);
+    (heat * 8.0) as f32
+}
+
+fn apply_early_take_burn(
+    entity: Entity,
+    wounds: &mut Query<&mut Wounds>,
+    deaths: Option<&mut Events<crate::combat::events::DeathEvent>>,
+    damage: f32,
+    tick: u64,
+) {
+    let Some(deaths) = deaths else { return };
+    let Ok(mut wounds) = wounds.get_mut(entity) else {
+        return;
+    };
+    let damage = damage.clamp(0.0, 8.0);
+    if damage <= f32::EPSILON || wounds.health_current <= 0.0 {
+        return;
+    }
+    wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+    wounds.entries.push(Wound {
+        location: crate::body_plan::legacy_body_part_to_id(
+            crate::combat::components::BodyPart::Chest,
+        ),
+        kind: WoundKind::Burn,
+        severity: damage,
+        bleeding_per_sec: 0.0,
+        created_at_tick: tick,
+        inflicted_by: Some("alchemy_early_take".to_string()),
+    });
+    if wounds.health_current <= 0.0 {
+        deaths.send(crate::combat::events::DeathEvent {
+            target: entity,
+            cause: "alchemy_early_take".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: tick,
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6294,38 +6454,40 @@ fn grant_alchemy_outcome_item(
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     instance_allocator: &mut InventoryInstanceIdAllocator,
+    forced_residue: Option<PillResidueKind>,
 ) -> bool {
-    let (template_id, alchemy, reason) =
-        if let Some(residue_kind) = residue_kind_for_recyclable_outcome(outcome) {
-            (
-                residue_kind.spec().template_id,
-                Some(residue_alchemy_data(residue_kind, tick)),
-                "alchemy_residue_grant",
-            )
-        } else if let crate::alchemy::ResolvedOutcome::Pill {
-            pill,
-            recipe_id,
-            quality_tier,
-            effect_multiplier,
-            consecrated,
-            side_effect,
-            ..
-        } = outcome
-        {
-            (
-                pill.as_str(),
-                Some(AlchemyItemData::Pill {
-                    recipe_id: recipe_id.clone(),
-                    quality_tier: *quality_tier,
-                    effect_multiplier: *effect_multiplier,
-                    consecrated: *consecrated,
-                    side_effect: side_effect.clone(),
-                }),
-                "alchemy_outcome_grant",
-            )
-        } else {
-            return false;
-        };
+    let (template_id, alchemy, reason) = if let Some(residue_kind) =
+        forced_residue.or_else(|| residue_kind_for_recyclable_outcome(outcome))
+    {
+        (
+            residue_kind.spec().template_id,
+            Some(residue_alchemy_data(residue_kind, tick)),
+            "alchemy_residue_grant",
+        )
+    } else if let crate::alchemy::ResolvedOutcome::Pill {
+        pill,
+        recipe_id,
+        quality_tier,
+        effect_multiplier,
+        consecrated,
+        side_effect,
+        ..
+    } = outcome
+    {
+        (
+            pill.as_str(),
+            Some(AlchemyItemData::Pill {
+                recipe_id: recipe_id.clone(),
+                quality_tier: *quality_tier,
+                effect_multiplier: *effect_multiplier,
+                consecrated: *consecrated,
+                side_effect: side_effect.clone(),
+            }),
+            "alchemy_outcome_grant",
+        )
+    } else {
+        return false;
+    };
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         send_alchemy_error(
             client,
@@ -6393,13 +6555,7 @@ fn with_owned_furnace_mut_with_entity<R>(
     else {
         return Err(AlchemyFurnaceRouteError::Missing);
     };
-    let owner_ok = match furnace.owner.as_deref() {
-        None | Some("") => true,
-        Some(owner) => {
-            owner == player_id || owner == player_id.strip_prefix("offline:").unwrap_or(player_id)
-        }
-    };
-    if !owner_ok {
+    if !furnace.can_access(player_id) {
         return Err(AlchemyFurnaceRouteError::Forbidden {
             owner: furnace.owner.clone(),
         });
@@ -6460,7 +6616,7 @@ fn publish_alchemy_session_start(
         .send(RedisOutbound::AlchemySessionStart(payload));
 }
 
-fn publish_alchemy_intervention_result(
+pub(crate) fn publish_alchemy_intervention_result(
     redis: Option<&RedisBridgeResource>,
     furnace_pos: (i32, i32, i32),
     recipe_id: &str,

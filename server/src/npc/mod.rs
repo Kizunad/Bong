@@ -12,7 +12,6 @@ pub mod dying_master;
 #[allow(dead_code)]
 pub mod equipment;
 pub mod faction;
-pub mod farming_brain;
 pub mod heiwushi;
 pub mod heiwushi_spawn;
 pub mod hunger;
@@ -23,7 +22,6 @@ pub mod intel;
 pub mod interaction_memory;
 pub mod intrusion_npc;
 pub mod lifecycle;
-pub mod lingtian_pressure;
 pub mod lod;
 pub mod loot;
 pub mod movement;
@@ -35,7 +33,6 @@ pub mod poi_rogue_village;
 pub mod possession;
 pub mod realm_perception_narration;
 pub mod relic;
-pub mod scattered_cultivator;
 pub mod scenario;
 pub mod schedule;
 pub mod seasonal_behavior;
@@ -64,7 +61,7 @@ use valence::prelude::{App, Update};
 
 pub fn register(app: &mut App) {
     tracing::info!(
-        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/seasonal/patrol/sync/brain/farming/movement/navigator/scenario/schedule/lingtian_pressure/territory/dormant systems"
+        "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/seasonal/patrol/sync/brain/movement/navigator/scenario/schedule/territory/dormant systems"
     );
     spawn::ambient_scheduler::configure_terminal_schedule(app);
     perf::register(app);
@@ -87,7 +84,6 @@ pub fn register(app: &mut App) {
     spawn::ambient_scheduler::register(app);
     whale_narration::register(app);
     dormant::register(app);
-    farming_brain::register(app);
     skull_fiend::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
@@ -95,9 +91,7 @@ pub fn register(app: &mut App) {
     navigator::register(app);
     scenario::register(app);
     schedule::register(app);
-    lingtian_pressure::register(app);
     territory::register(app);
-    scattered_cultivator::register(app);
     social::register(app);
     intrusion_npc::register(app);
     interaction_memory::register(app);

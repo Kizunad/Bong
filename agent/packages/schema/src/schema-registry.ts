@@ -30,11 +30,22 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
+import { PlantCatalogV1 } from "./plant-catalog.js";
 import { FaunaEcologySnapshotV1 } from "./fauna.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { BreakthroughCinematicEventV1 } from "./breakthrough-cinematic.js";
 import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
+import {
+  CastIdentityV1,
+  CastOutcomeV1,
+  CastPhaseV1,
+  CastPlayAnimV1,
+  CastSessionBeginV1,
+  CastSourceV1,
+  CastStopAnimV1,
+  CastSyncV1,
+} from "./cast.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
   ClientNarrationPayloadV1,
@@ -53,6 +64,8 @@ import {
   AlchemyInterventionRequestV1,
   AlchemyLearnRecipeRequestV1,
   AlchemyOpenFurnaceRequestV1,
+  AlchemyFurnacePlaceRequestV1,
+  AlchemyPlaceIncenseRequestV1,
   AlchemyTakeBackRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyTurnPageRequestV1,
@@ -197,7 +210,7 @@ import {
   WeatherEventDataV1,
   WeatherEventKindV1,
   WeatherEventUpdateV1,
-} from "./lingtian-weather.js";
+} from "./weather.js";
 import {
   BoneCoinTickV1,
   PriceIndexV1,
@@ -279,6 +292,7 @@ import { FogShapeV1, RealmVisionParamsV1 } from "./realm-vision.js";
 import {
   ServerDataAlchemyContaminationV1,
   ServerDataAlchemyFurnaceV1,
+  ServerDataAlchemyWorldV1,
   ServerDataAlchemyOutcomeForecastV1,
   ServerDataAlchemyOutcomeResolvedV1,
   ServerDataAlchemyRecipeBookV1,
@@ -529,7 +543,6 @@ import {
   EnvironmentEffectV1,
   ZoneEnvironmentStateV1,
 } from "./zone-environment.js";
-import { ZonePressureCrossedV1, ZonePressureLevelV1 } from "./zone-pressure.js";
 
 export const SCHEMA_REGISTRY = {
   worldStateV1: WorldStateV1,
@@ -538,11 +551,17 @@ export const SCHEMA_REGISTRY = {
   agentWorldModelSnapshotV1: AgentWorldModelSnapshotV1,
   calamityKindV1: CalamityKindV1,
   calamityIntentV1: CalamityIntentV1,
+  castSourceV1: CastSourceV1,
+  castPhaseV1: CastPhaseV1,
+  castOutcomeV1: CastOutcomeV1,
+  castIdentityV1: CastIdentityV1,
+  castSessionBeginV1: CastSessionBeginV1,
+  castSyncV1: CastSyncV1,
+  castPlayAnimV1: CastPlayAnimV1,
+  castStopAnimV1: CastStopAnimV1,
   narrationV1: NarrationV1,
   tiandaoHuntResponseLevelV1: TiandaoHuntResponseLevelV1,
   tiandaoHuntNarrationRequestV1: TiandaoHuntNarrationRequestV1,
-  zonePressureLevelV1: ZonePressureLevelV1,
-  zonePressureCrossedV1: ZonePressureCrossedV1,
   ratPhaseV1: RatPhaseV1,
   ratPhaseChangeEventV1: RatPhaseChangeEventV1,
   npcArchetypeV1: NpcArchetypeV1,
@@ -819,6 +838,7 @@ export const SCHEMA_REGISTRY = {
   coffinStateV1: CoffinStateV1,
   serverDataCoffinStateV1: ServerDataCoffinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
+  plantCatalogV1: PlantCatalogV1,
   faunaEcologySnapshotV1: FaunaEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
@@ -893,7 +913,7 @@ export const SCHEMA_REGISTRY = {
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
-  // 灵田加工 (plan-lingtian-process-v1 §5.3)
+  // 作物加工（种植来源将在重构后接入）
   processingKindV1: ProcessingKindV1,
   processingSessionDataV1: ProcessingSessionDataV1,
   freshnessUpdateV1: FreshnessUpdateV1,
@@ -910,12 +930,15 @@ export const SCHEMA_REGISTRY = {
   alchemyInterventionResultV1: AlchemyInterventionResultV1,
   alchemyInsightV1: AlchemyInsightV1,
   serverDataAlchemyFurnaceV1: ServerDataAlchemyFurnaceV1,
+  serverDataAlchemyWorldV1: ServerDataAlchemyWorldV1,
   serverDataAlchemySessionV1: ServerDataAlchemySessionV1,
   serverDataAlchemyOutcomeForecastV1: ServerDataAlchemyOutcomeForecastV1,
   serverDataAlchemyOutcomeResolvedV1: ServerDataAlchemyOutcomeResolvedV1,
   serverDataAlchemyRecipeBookV1: ServerDataAlchemyRecipeBookV1,
   serverDataAlchemyContaminationV1: ServerDataAlchemyContaminationV1,
   clientRequestAlchemyOpenFurnaceV1: AlchemyOpenFurnaceRequestV1,
+  clientRequestAlchemyFurnacePlaceV1: AlchemyFurnacePlaceRequestV1,
+  clientRequestAlchemyPlaceIncenseV1: AlchemyPlaceIncenseRequestV1,
   clientRequestAlchemyFeedSlotV1: AlchemyFeedSlotRequestV1,
   clientRequestAlchemyTakeBackV1: AlchemyTakeBackRequestV1,
   clientRequestAlchemyIgniteV1: AlchemyIgniteRequestV1,
@@ -1003,13 +1026,19 @@ export const GENERATED_SCHEMA_FILES = {
   "agent-world-model-snapshot-v1.json": SCHEMA_REGISTRY.agentWorldModelSnapshotV1,
   "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
   "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
+  "cast-source-v1.json": SCHEMA_REGISTRY.castSourceV1,
+  "cast-phase-v1.json": SCHEMA_REGISTRY.castPhaseV1,
+  "cast-outcome-v1.json": SCHEMA_REGISTRY.castOutcomeV1,
+  "cast-identity-v1.json": SCHEMA_REGISTRY.castIdentityV1,
+  "cast-session-begin-v1.json": SCHEMA_REGISTRY.castSessionBeginV1,
+  "cast-sync-v1.json": SCHEMA_REGISTRY.castSyncV1,
+  "cast-play-anim-v1.json": SCHEMA_REGISTRY.castPlayAnimV1,
+  "cast-stop-anim-v1.json": SCHEMA_REGISTRY.castStopAnimV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
   "tiandao-hunt-response-level-v1.json":
     SCHEMA_REGISTRY.tiandaoHuntResponseLevelV1,
   "tiandao-hunt-narration-request-v1.json":
     SCHEMA_REGISTRY.tiandaoHuntNarrationRequestV1,
-  "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
-  "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "rat-phase-v1.json": SCHEMA_REGISTRY.ratPhaseV1,
   "rat-phase-change-event-v1.json": SCHEMA_REGISTRY.ratPhaseChangeEventV1,
   "npc-archetype-v1.json": SCHEMA_REGISTRY.npcArchetypeV1,
@@ -1349,6 +1378,7 @@ export const GENERATED_SCHEMA_FILES = {
   "coffin-state-v1.json": SCHEMA_REGISTRY.coffinStateV1,
   "server-data-coffin-state-v1.json": SCHEMA_REGISTRY.serverDataCoffinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
+  "plant-catalog-v1.json": SCHEMA_REGISTRY.plantCatalogV1,
   "fauna-ecology-snapshot-v1.json": SCHEMA_REGISTRY.faunaEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
@@ -1441,6 +1471,7 @@ export const GENERATED_SCHEMA_FILES = {
   "alchemy-insight-v1.json": SCHEMA_REGISTRY.alchemyInsightV1,
   "server-data-alchemy-furnace-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemyFurnaceV1,
+  "server-data-alchemy-world-v1.json": SCHEMA_REGISTRY.serverDataAlchemyWorldV1,
   "server-data-alchemy-session-v1.json":
     SCHEMA_REGISTRY.serverDataAlchemySessionV1,
   "server-data-alchemy-outcome-forecast-v1.json":
@@ -1453,6 +1484,10 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataAlchemyContaminationV1,
   "client-request-alchemy-open-furnace-v1.json":
     SCHEMA_REGISTRY.clientRequestAlchemyOpenFurnaceV1,
+  "client-request-alchemy-furnace-place-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyFurnacePlaceV1,
+  "client-request-alchemy-place-incense-v1.json":
+    SCHEMA_REGISTRY.clientRequestAlchemyPlaceIncenseV1,
   "client-request-alchemy-feed-slot-v1.json":
     SCHEMA_REGISTRY.clientRequestAlchemyFeedSlotV1,
   "client-request-alchemy-take-back-v1.json":

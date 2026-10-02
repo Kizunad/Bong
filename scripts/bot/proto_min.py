@@ -43,6 +43,7 @@ SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
 # proto/bong/envelope.proto ServerDataPayload oneof（与 server/src/schema/server_data.rs 对应）
 SERVER_DATA_SPARRING_INVITE_FIELD = 64
 SERVER_DATA_TRADE_OFFER_FIELD = 65
+SERVER_DATA_TRIBULATION_BROADCAST_FIELD = 67
 SERVER_DATA_QUICKSLOT_CONFIG_FIELD = 35
 
 # QuickSlotConfigV1 内部字段（proto/bong/envelope.proto QuickSlotConfig）——
@@ -103,7 +104,6 @@ SERVER_DATA_PAYLOAD_NAMES = {
     28: "mining_progress",
     29: "lumber_progress",
     30: "gathering_session",
-    31: "lingtian_session",
     32: "wounds_snapshot",
     33: "defense_window",
     34: "cast_sync",
@@ -215,6 +215,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     140: "body_plan_layout",
     141: "race_gate_meta",
     142: "morph_state",
+    143: "alchemy_world",
 }
 
 # These are deliberate compatibility labels, not a second wire registry.  The
@@ -1081,34 +1082,6 @@ def _gathering_session(data: bytes) -> dict[str, Any]:
     }
 
 
-LINGTIAN_SESSION_KIND_NAMES = {
-    0: "unspecified",
-    1: "till",
-    2: "renew",
-    3: "planting",
-    4: "harvest",
-    5: "replenish",
-    6: "drain_qi",
-}
-
-
-def _lingtian_session(data: bytes) -> dict[str, Any]:
-    fields = _fields(data)
-    return {
-        "v": 1,
-        "type": "lingtian_session",
-        "active": bool(_varint(fields, 1)),
-        "kind": _enum_name(LINGTIAN_SESSION_KIND_NAMES, _varint(fields, 2)),
-        "pos": [_int32(fields, 3), _int32(fields, 4), _int32(fields, 5)],
-        "elapsed_ticks": _varint(fields, 6),
-        "target_ticks": _varint(fields, 7),
-        "plant_id": _optional_string(fields, 8),
-        "source": _optional_string(fields, 9),
-        "dye_contamination": _optional_float32(fields, 10),
-        "dye_contamination_warning": bool(_varint(fields, 11)),
-    }
-
-
 def _lumber_progress(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -1341,9 +1314,8 @@ def _alchemy_furnace(data: bytes) -> dict[str, Any]:
         "v": 1,
         "type": "alchemy_furnace",
         "pos": [
-            _optional_varint(fields, 1),
-            _optional_varint(fields, 2),
-            _optional_varint(fields, 3),
+            _int32(fields, axis) if _has(fields, axis) else None
+            for axis in (1, 2, 3)
         ],
         "tier": _varint(fields, 4),
         "integrity": _double(fields, 5),
@@ -1361,6 +1333,14 @@ def _alchemy_stage_hint(data: bytes) -> dict[str, Any]:
         "summary": _string(fields, 3),
         "completed": bool(_varint(fields, 4)),
         "missed": bool(_varint(fields, 5)),
+        "ingredients": [
+            {
+                "material": _string(_fields(raw), 1),
+                "required": _varint(_fields(raw), 2),
+                "inserted": _varint(_fields(raw), 3),
+            }
+            for raw in _messages(fields, 6)
+        ],
     }
 
 
@@ -1998,6 +1978,27 @@ def _tribulation_state(data: bytes) -> dict[str, Any]:
     }
 
 
+def _tribulation_broadcast(data: bytes) -> dict[str, Any]:
+    """渡劫公开广播（server_data oneof field 67）。
+
+    该 payload 同时给 Bot 提供事件阶段和按客户端位置计算的观礼邀请；
+    场景据此区分近处 observer 与远处 observer，而不读取 server 内部状态。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "tribulation_broadcast",
+        "active": bool(_varint(fields, 1)),
+        "actor_name": _string(fields, 2),
+        "stage": _string(fields, 3),
+        "world_x": _double(fields, 4),
+        "world_z": _double(fields, 5),
+        "expires_at_ms": _varint(fields, 6),
+        "spectate_invite": bool(_varint(fields, 7)),
+        "spectate_distance": _double(fields, 8),
+    }
+
+
 def _insight_offer(data: bytes) -> dict[str, Any]:
     """DONE-W6-HEADLESSAUDIT §5 P0-4：顿悟邀约（envelope.proto:131）。
 
@@ -2096,7 +2097,6 @@ SERVER_DATA_PAYLOAD_DECODERS.update(
         25: _botany_harvest_progress,
         29: _lumber_progress,
         30: _gathering_session,
-        31: _lingtian_session,
         34: _cast_sync,
         SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
         36: _skill_bar_config,
@@ -2111,6 +2111,7 @@ SERVER_DATA_PAYLOAD_DECODERS.update(
         SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
         SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
         66: _tribulation_state,
+        SERVER_DATA_TRIBULATION_BROADCAST_FIELD: _tribulation_broadcast,
         69: _heart_demon_offer,
         SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
         72: _death_screen,

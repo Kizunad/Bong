@@ -8,10 +8,10 @@
 - 丹方 `ling_xi_wan_v1`（assets/alchemy/recipes/）：stage0 spirit_grass×3，
   fire 80 tick，qi_cost 5；zone 灵气门 MIN_ZONE_QI_TO_ALCHEMY=0.3
   （dev `/zone_qi set` 抬高保证过闸）。
-- 数量必须精确：count≠required 回 chat「投料数量不符：需要 3，收到 2」。
+- 可分次投料；count 超过阶段尚缺数量时回 chat 拒绝且不扣料。
 - 投料后必须**火候干预**：`alchemy_intervention{kind:adjust_temp/inject_qi}`
   ——不调温不注真元 resolver 判 Waste 出渣（负→正对照的物理）。
-- **结算触发 = `alchemy_take_back`（收丹）**：handler 快进剩余 fire tick、
+- **结算触发 = `alchemy_take_back`（收丹）**：等待服务端完成炉次后，
   end_session 并 resolve → `alchemy_outcome_resolved` 只发给施术者，随后丹经
   alchemy_outcome_grant 入包（干预到位时 bucket=Perfect）。
 """
@@ -66,12 +66,22 @@ def _assert_recipe_guidance(
         f"ling_xi_wan_v1 应保留唯一投料 stage，实际 {payload}"
     )
     stage = payload["stages"][0]
+    assert stage["ingredients"] == [{
+        "material": "spirit_grass",
+        "required": 3,
+        "inserted": 3 if stage_completed else 0,
+    }], f"逐味投入数量必须随 session 下发，实际 {stage}"
     assert stage == {
         "at_tick": 0,
         "window": 0,
         "summary": "spirit_grass×3",
         "completed": stage_completed,
         "missed": False,
+        "ingredients": [{
+            "material": "spirit_grass",
+            "required": 3,
+            "inserted": 3 if stage_completed else 0,
+        }],
     }, f"投料 stage 必须完整且状态准确，实际 {stage}"
 
 
@@ -232,14 +242,14 @@ def run(env) -> None:
         _assert_recipe_guidance(
             ignite_session.data["payload"],
             active=True,
-            status_label="炼制中",
+            status_label="待投首料",
             stage_completed=False,
         )
         assert ignite_session.data["payload"]["elapsed_ticks"] == 0
         assert math.isclose(ignite_session.data["payload"]["temp_current"], 0.0)
         assert math.isclose(ignite_session.data["payload"]["qi_injected"], 0.0)
 
-        # 负分支：数量不符（需要 3 投 2）
+        # 负分支：超过剩余需求，不得扣料。
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -248,15 +258,14 @@ def run(env) -> None:
                 "furnace_pos": list(fpos),
                 "slot_idx": 0,
                 "material": "spirit_grass",
-                "count": 2,
+                "count": 4,
             }
         )
         bot.wait_for(
-            lambda e: e.kind == "chat" and e.t > anchor and "投料数量不符" in e.data["text"],
+            lambda e: e.kind == "chat" and e.t > anchor and "尚缺" in e.data["text"],
             timeout=10.0,
             description=(
-                "count=2≠required 3 应回 chat「投料数量不符」——数量校验分支丢失"
-                "会让配比玩法退化"
+                "需要 3 份却投入 4 份时，服务端必须拒绝超额投料"
             ),
         )
 
@@ -334,8 +343,17 @@ def run(env) -> None:
             wait_join_and_inventory(bystander)
             bystander_anchor = last_event_time(bystander)
 
-            # 收丹 = 结算触发：handle_alchemy_take_back 快进剩余 fire tick、
-            # end_session 并 resolve（丹成不靠墙钟等待）
+            # 只依据服务端完成快照收取；提前收取现在产出药渣，不能拿来跳过炼制。
+            bot.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "alchemy_session"
+                and e.data["payload"]["recipe_id"] == RECIPE_ID
+                and e.data["payload"]["elapsed_ticks"] >= 80
+                and e.data["payload"]["active"] is False
+                and e.t > intervention_session.t,
+                timeout=15.0,
+                description="服务端炉次到时，停止计时并保留结果",
+            )
             anchor = last_event_time(bot)
             bot.intent(
                 {

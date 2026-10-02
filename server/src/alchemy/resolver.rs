@@ -135,6 +135,7 @@ pub fn resolve_with_meta_and_furnace(
         furnace_tier,
     );
     let outcome = apply_quality_factor(outcome, session.staged.quality_factor);
+    let outcome = apply_incense_qi_gain_scale(outcome, session.incense_qi_gain_scale());
     ResolvedAlchemyResult {
         bucket,
         xp: xp_for_bucket(bucket),
@@ -318,10 +319,45 @@ fn apply_quality_factor(outcome: ResolvedOutcome, factor: f32) -> ResolvedOutcom
         } => ResolvedOutcome::Pill {
             recipe_id,
             pill,
+            toxin_amount,
+            toxin_color,
+            quality: (quality * factor as f64).clamp(0.0, 1.0),
+            qi_gain: qi_gain.map(|q| q * factor as f64),
+            quality_tier,
+            effect_multiplier: effect_multiplier * factor as f64,
+            consecrated,
+            side_effect,
+            flawed_path,
+        },
+        other => other,
+    }
+}
+
+/// 香料只改变成丹携带的真元收益，不改变成色、品质或药效倍率。
+fn apply_incense_qi_gain_scale(outcome: ResolvedOutcome, factor: f64) -> ResolvedOutcome {
+    if (factor - 1.0).abs() < f64::EPSILON {
+        return outcome;
+    }
+    match outcome {
+        ResolvedOutcome::Pill {
+            recipe_id,
+            pill,
             quality,
             toxin_amount,
             toxin_color,
-            qi_gain: qi_gain.map(|q| q * factor as f64),
+            qi_gain,
+            quality_tier,
+            effect_multiplier,
+            consecrated,
+            side_effect,
+            flawed_path,
+        } => ResolvedOutcome::Pill {
+            recipe_id,
+            pill,
+            quality,
+            toxin_amount,
+            toxin_color,
+            qi_gain: qi_gain.map(|q| q * factor),
             quality_tier,
             effect_multiplier,
             consecrated,
@@ -886,6 +922,37 @@ mod tests {
         let s = AlchemySession::new("r".into(), "alice".into());
         assert_eq!(s.staged.quality_factor, 1.0);
         assert_eq!(s.staged.quality_total_count, 0);
+    }
+
+    #[test]
+    fn incense_gain_scale_changes_only_pill_qi_gain() {
+        let outcome = ResolvedOutcome::Pill {
+            recipe_id: "r".into(),
+            pill: "p".into(),
+            quality: 0.8,
+            toxin_amount: 0.2,
+            toxin_color: ColorKind::Mellow,
+            qi_gain: Some(20.0),
+            quality_tier: 3,
+            effect_multiplier: 1.4,
+            consecrated: false,
+            side_effect: None,
+            flawed_path: false,
+        };
+        let scaled = apply_incense_qi_gain_scale(outcome, 1.1);
+        match scaled {
+            ResolvedOutcome::Pill {
+                quality,
+                qi_gain,
+                effect_multiplier,
+                ..
+            } => {
+                assert_eq!(quality, 0.8);
+                assert_eq!(qi_gain, Some(22.0));
+                assert_eq!(effect_multiplier, 1.4);
+            }
+            other => panic!("expected pill, got {other:?}"),
+        }
     }
 
     #[test]

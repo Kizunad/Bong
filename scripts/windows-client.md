@@ -1,17 +1,18 @@
-# Bong Windows Client · Quick Notes
+# Bong Windows Native Client · Quick Notes
 
 ## 常规流程
 
 1. 启动服务端 / Agent
-   在 WSL 中运行：`bash scripts/start.sh`
+   在 WSL 中启动服务端。
 
 2. 同步 Bong 客户端 mod
    在 WSL 中运行：`bash scripts/windows-client.sh --sync-only`
 
-3. 打开 Windows 启动器
-   双击：`D:\Minecraft\Open-Bong-HMCL.bat`
+3. 启动 Windows Native Fabric 客户端
+   在 PowerShell 中运行：
+   `powershell -ExecutionPolicy Bypass -File D:\Minecraft\.minecraft\Fabric_Bang_Test\bong-native\forge-interact-launch.ps1`
 
-4. 在 HMCL 中使用这个实例目录
+4. Native 使用这个实例目录
    `D:\Minecraft\.minecraft\Fabric_Bang_Test`
 
 5. 目标版本
@@ -23,14 +24,13 @@
 7. 如果更新了 client 代码
    再次执行：`bash scripts/windows-client.sh --sync-only`
 
-## 一键同步并打开 HMCL
+## Windows Native 启动链
 
-合并步骤 2 + 3：
+`scripts/windows-client.sh` 只用 Java 17 构建并同步 jar，不再启动 HMCL。同步完成后，
+通过 `bong-native/forge-interact-launch.ps1` 直接读取 `launch.args` 启动 Fabric；该参数文件
+已经包含 `127.0.0.1:25565` 的 quick play 连接地址。
 
-```bash
-bash scripts/windows-client.sh --launch
-```
-
-该命令会先 `scripts/build-token.sh gradle build` → 拷贝最新 jar 到 `mods/` → 调用
-`cmd.exe /c start "" "D:\Minecraft\Open-Bong-HMCL.bat"` 把启动器拉起来。
-后续仍在 HMCL 里选 `Fabric_Bang_Test` 实例进游戏即可。
+Java 17 在 Windows 上按系统代码页读取 `@argfile`。`launch.args` 保持 UTF-8，
+原生启动脚本先用 `Encoding.UTF8` 读取，再以 `Encoding.Default` 写入
+`launch-native.args` 后启动；直接读取 UTF-8 文件会让中文离线用户名变成乱码，
+导致实际登录名与服务端 OP 名单不一致。

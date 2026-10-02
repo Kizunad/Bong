@@ -44,7 +44,9 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
             .orElse(BotanyPlantRenderProfile.fallback(entity.plantId()));
         BotanyPlantVisualState visual = BotanyPlantVisualState.forStage(
             entity.growthStage(),
-            profile.tintAt(entity.getWorld().getTime()),
+            PlantModelRegistry.tint(entity.plantId()).present()
+                ? PlantModelRegistry.tint(entity.plantId()).value()
+                : profile.tintAt(entity.getWorld().getTime()),
             entity.age,
             tickDelta
         );
@@ -57,26 +59,26 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
 
         matrices.push();
         try {
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - dispatcher.camera.getYaw()));
-            matrices.translate(0.0, 0.02, 0.0);
-            matrices.scale(visual.scale(), visual.scale(), visual.scale());
+            PlantModelRegistry.PlantStageModel model = PlantModelRegistry.stage(entity.plantId(), entity.growthStage()).orElse(null);
+            matrices.translate(model == null ? 0.0 : model.offsetX(), 0.02 + (model == null ? 0.0 : model.offsetY()), model == null ? 0.0 : model.offsetZ());
+            float modelScale = model == null ? 1.0f : model.scale();
+            matrices.scale(visual.scale() * modelScale, visual.scale() * modelScale, visual.scale() * modelScale);
             if (visual.swayRadians() != 0.0f) {
                 matrices.multiply(RotationAxis.POSITIVE_Z.rotation(visual.swayRadians()));
             }
-            Identifier texture = textureFor(profile.baseMeshRef());
-            drawPlantQuad(
-                consumers,
-                matrices,
-                texture,
-                visual.tintRgb(),
-                light,
-                visual.alpha()
-            );
-            if (
-                entity.growthStage() != PlantGrowthStage.WILTED
-                    && profile.overlay() == BotanyPlantRenderProfile.ModelOverlay.EMISSIVE
-            ) {
-                drawPlantQuad(consumers, matrices, texture, visual.tintRgb(), 0x00F000F0, 96);
+            boolean emissive = entity.growthStage() != PlantGrowthStage.WILTED
+                && profile.overlay() == BotanyPlantRenderProfile.ModelOverlay.EMISSIVE;
+            boolean rendered = model != null && model.isGeo() && PlantGeoRenderer.render(
+                "entity:" + entity.getUuidAsString(), model, visual, entity.age, tickDelta,
+                matrices, consumers, emissive ? 0x00F000F0 : light);
+            if (!rendered) {
+                // 只有平面阶段贴图跟随镜头，立体植物保持世界朝向。
+                matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0f - dispatcher.camera.getYaw()));
+                Identifier texture = textureFor(entity.plantId(), entity.growthStage(), profile.baseMeshRef());
+                drawPlantQuad(consumers, matrices, texture, visual.tintRgb(), light, visual.alpha());
+                if (emissive) {
+                    drawPlantQuad(consumers, matrices, texture, visual.tintRgb(), 0x00F000F0, 96);
+                }
             }
         } finally {
             matrices.pop();
@@ -138,14 +140,24 @@ public final class BotanyPlantEntityRenderer extends EntityRenderer<BotanyPlantV
         Block block = blockFor(baseMeshRef);
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getBlockRenderManager() != null) {
-            return client
+            Identifier sprite = client
                 .getBlockRenderManager()
                 .getModel(block.getDefaultState())
                 .getParticleSprite()
                 .getContents()
                 .getId();
+            return new Identifier(sprite.getNamespace(), "textures/" + sprite.getPath() + ".png");
         }
         return new Identifier("minecraft", "textures/block/grass.png");
+    }
+
+    static Identifier textureFor(String plantId, PlantGrowthStage stage, String baseMeshRef) {
+        return PlantModelRegistry.stage(plantId, stage)
+            .filter(model -> !model.isGeo())
+            .or(() -> PlantModelRegistry.stage(plantId, PlantGrowthStage.GROWING)
+                .filter(model -> !model.isGeo()))
+            .map(PlantModelRegistry.PlantStageModel::texture)
+            .orElseGet(() -> textureFor(baseMeshRef));
     }
 
     private static Block blockFor(String baseMeshRef) {

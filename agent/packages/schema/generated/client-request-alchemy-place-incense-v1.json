@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "furnace_pos",
+    "item_instance_id"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "alchemy_place_incense",
+      "type": "string"
+    },
+    "furnace_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "item_instance_id": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  },
+  "x-bong-typebox-source-sha256": "530fd45b2ef6cad3a413363e789ed8722f7b9d8e354adb688baf4daf4de87af5",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}

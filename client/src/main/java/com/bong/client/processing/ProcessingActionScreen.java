@@ -19,7 +19,7 @@ import net.minecraft.text.Text;
 import java.util.List;
 
 /**
- * plan-lingtian-process-v1 P3 — 四类加工统合浮窗。
+ * 四类加工统合浮窗；种植来源由后续重构接入。
  *
  * <p>屏幕只展示当前可选工艺和 active session 进度。启动 intent 的网络协议留给
  * 后续 inventory/forge 操作切片补齐；本 plan 先把 UI 结构和进度数据面固定。</p>

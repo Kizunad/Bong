@@ -1,9 +1,9 @@
-//! plan-lingtian-process-v1 P4 — 加工产物投料加成。
+//! 加工产物投料加成。
 //!
 //! 炼丹配方仍按原 material 匹配；本 helper 只根据 inventory item id + quality
 //! 计算“加工后投料”的品质 / 成功率修饰，避免改动 alchemy recipe JSON 结构。
 
-use crate::lingtian::processing::processed_input_quality_bonus;
+use crate::processing::processed_input_quality_bonus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessedIngredientKind {

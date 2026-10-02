@@ -1,7 +1,5 @@
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
-use valence::prelude::{
-    bevy_ecs, Bundle, Commands, DVec3, Entity, EventWriter, Res, ResMut, Resource,
-};
+use valence::prelude::{bevy_ecs, Commands, DVec3, Entity, EventWriter, Res, ResMut, Resource};
 
 use crate::cultivation::components::Realm;
 use crate::npc::brain::{
@@ -11,13 +9,9 @@ use crate::npc::brain::{
     ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer, StallAction,
     StartDuXuAction, TradeStallScorer, TribulationReadyScorer, WanderScorer, WanderState,
 };
-use crate::npc::farming_brain::{
-    HarvestAction, LingtianFarmingScorer, MigrateAction, PlantAction, ReplenishAction, TillAction,
-};
 use crate::npc::lifecycle::{
     npc_runtime_bundle_with_age, NpcArchetype, NpcRegistry, NpcSpawnNotice, NpcSpawnSource,
 };
-use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::technique::{
     assign_npc_techniques, NpcHealAction, NpcHealScorer, NpcLastTechniqueTick, NpcTechniqueAction,
     NpcTechniqueScorer,
@@ -28,8 +22,8 @@ use crate::world::mob_spawn::{MobSpawnFilter, NaturalMobKind};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 use super::common::{
-    attach_player_skin, draw_npc_skin, skin_salt, spawn_notice, spawn_rogue_commoner_base,
-    DeferredNpcBrain, NpcCombatLoadout, NpcSkinSpawnContext,
+    attach_player_skin, draw_npc_skin, spawn_notice, spawn_rogue_commoner_base, DeferredNpcBrain,
+    NpcCombatLoadout, NpcSkinSpawnContext,
 };
 use super::PoissonSpawnSampler;
 
@@ -170,16 +164,12 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
 }
 
 pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
+    //TODO:lingtian_refactor 新耕作行为在重写后接入散修的决策链。
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
-        .when(LingtianFarmingScorer::migrate(), MigrateAction)
-        .when(LingtianFarmingScorer::harvest(), HarvestAction)
-        .when(LingtianFarmingScorer::replenish(), ReplenishAction)
-        .when(LingtianFarmingScorer::plant(), PlantAction)
-        .when(LingtianFarmingScorer::till(), TillAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
         // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
@@ -192,31 +182,6 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(CuriosityScorer, GoToPoiAction::default())
         .when(WanderScorer, GoToPoiAction::default())
-}
-
-// ---------------------------------------------------------------------------
-// ScatteredCultivatorBundle
-// ---------------------------------------------------------------------------
-
-#[derive(Bundle)]
-pub struct ScatteredCultivatorBundle {
-    pub scattered: ScatteredCultivator,
-    pub wander: WanderState,
-    pub cultivate: CultivateState,
-    pub drive_history: CultivationDriveHistory,
-    pub thinker: ThinkerBuilder,
-}
-
-impl ScatteredCultivatorBundle {
-    pub fn new(temperament: FarmingTemperament) -> Self {
-        Self {
-            scattered: ScatteredCultivator::new(temperament),
-            wander: WanderState::default(),
-            cultivate: CultivateState::default(),
-            drive_history: CultivationDriveHistory::default(),
-            thinker: scattered_cultivator_thinker(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +264,7 @@ pub fn spawn_rogue_npc_at(
     entity
 }
 
-/// Spawn a Rogue-based scattered cultivator that owns a farming brain.
+/// Spawn a Rogue NPC through the legacy scattered-cultivator entry point.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_scattered_cultivator_at(
     commands: &mut Commands,
@@ -308,7 +273,7 @@ pub fn spawn_scattered_cultivator_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_target: DVec3,
-    qi_density: f64,
+    _qi_density: f64,
     realm: Realm,
     initial_age_ticks: f64,
 ) -> Entity {
@@ -337,10 +302,11 @@ pub fn spawn_scattered_cultivator_at(
         attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
     }
 
-    let seed = skin_salt(spawn_position) ^ qi_density.to_bits();
-    let temperament = FarmingTemperament::deterministic(seed);
     commands.entity(entity).insert((
-        ScatteredCultivatorBundle::new(temperament),
+        WanderState::default(),
+        CultivateState::default(),
+        CultivationDriveHistory::default(),
+        scattered_cultivator_thinker(),
         assign_npc_trade_inventory(NpcArchetype::Rogue, realm, entity.index() as u64),
     ));
 

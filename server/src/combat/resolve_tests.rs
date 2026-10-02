@@ -2,20 +2,20 @@ use super::*;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{assert_conservation, QiAccountId, QiTransfer};
 use crate::qi_physics::{summarize_world_qi, WorldQiAccount, WorldQiBudget, WorldQiSnapshot};
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 
 fn qi_test_app() -> App {
     let mut app = App::new();
     app.insert_resource(WorldQiAccount::default());
-    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app
 }
 
 fn authoritative_qi_snapshot(world: &mut World) -> WorldQiSnapshot {
     let snapshot = summarize_world_qi(world);
     assert_eq!(
-        snapshot.budget_initial_total, SPIRIT_QI_TOTAL,
-        "qi conservation snapshots must use the SPIRIT_QI_TOTAL authority"
+        snapshot.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "qi conservation snapshots must use the TEST_QI_FIXTURE_TOTAL authority"
     );
     snapshot
 }
@@ -26,12 +26,12 @@ fn assert_full_qi_conservation(
     context: &str,
 ) {
     assert_eq!(
-        before.budget_initial_total, SPIRIT_QI_TOTAL,
-        "{context}: before snapshot must use the SPIRIT_QI_TOTAL budget anchor"
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "{context}: before snapshot must use the TEST_QI_FIXTURE_TOTAL budget anchor"
     );
     assert_eq!(
-        after.budget_initial_total, SPIRIT_QI_TOTAL,
-        "{context}: after snapshot must use the SPIRIT_QI_TOTAL budget anchor"
+        after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "{context}: after snapshot must use the TEST_QI_FIXTURE_TOTAL budget anchor"
     );
     assert_conservation(before, after, 0.0).unwrap_or_else(|error| {
         panic!(

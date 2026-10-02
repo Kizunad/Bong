@@ -62,8 +62,9 @@ pub mod external_container;
 pub mod corpse;
 // plan-food-v1 P2 — 灵食消费路径（consume_food + FoodRegen 临时修炼加速）。
 pub mod food;
-// plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
+// 在线 tick freshness cache + season/anqi multiplier；种植来源由后续重构接入。
 pub mod freshness;
+pub(crate) mod operator;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
 pub mod poi_loot;
 pub mod spirit_treasure;
@@ -921,6 +922,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(DroppedLootRegistry::default());
     app.insert_resource(freshness::FreshnessEnvironment::default());
     app.insert_resource(spirit_treasure::SpiritTreasureRegistry::default());
+    operator::register(app);
     // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
     app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
     app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
@@ -1461,16 +1463,23 @@ pub(crate) fn attach_inventory_to_joined_clients(
     mut allocator: valence::prelude::ResMut<InventoryInstanceIdAllocator>,
     default_loadout: valence::prelude::Res<DefaultLoadout>,
     item_registry: valence::prelude::Res<ItemRegistry>,
-    joined_clients: Query<Entity, JoinedClientsWithoutInventoryFilter>,
+    permissions: Option<Res<crate::cmd::dev::DevCommandPermissions>>,
+    joined_clients: Query<(Entity, Option<&Username>), JoinedClientsWithoutInventoryFilter>,
 ) {
-    for entity in &joined_clients {
-        let player_inventory =
+    for (entity, username) in &joined_clients {
+        let mut player_inventory =
             instantiate_inventory_from_loadout(&default_loadout.0, &mut allocator, &item_registry)
                 .unwrap_or_else(|error| {
                 panic!(
                     "[bong][inventory] failed to instantiate default loadout for joined client {entity:?}: {error}"
                 )
             });
+
+        if permissions.as_ref().is_some_and(|permissions| {
+            username.is_some_and(|username| permissions.is_operator(&username.0))
+        }) {
+            operator::expand_pocket(&mut player_inventory, &item_registry);
+        }
 
         commands.entity(entity).insert(player_inventory);
         // plan-HUD-v1 §1.3 默认全解锁（v1 演示）。后续接入修炼系统按真实条件 mutate。
@@ -3593,6 +3602,12 @@ pub enum InventoryMoveRejectReason {
     FromLocationMismatch,
     /// instance_id 在 inventory 里彻底找不到。
     InstanceNotFound,
+    /// 分堆数量非法、超过库存或物品不可堆叠。
+    InvalidStackCount,
+    /// 部分堆叠只支持普通容器之间移动。
+    SplitRequiresContainer,
+    /// 无法为拆出的堆叠分配实例 id。
+    InstanceAllocationFailed,
     /// container_id 未知（幽灵容器 / 客户端过期状态）。
     UnknownContainerId,
     /// 落位越界（行列超出容器边界，或 row/col 转换失败）。
@@ -3655,6 +3670,9 @@ impl InventoryMoveRejectReason {
         match self {
             Self::FromLocationMismatch => "from_location_mismatch",
             Self::InstanceNotFound => "instance_not_found",
+            Self::InvalidStackCount => "invalid_stack_count",
+            Self::SplitRequiresContainer => "split_requires_container",
+            Self::InstanceAllocationFailed => "instance_allocation_failed",
             Self::UnknownContainerId => "unknown_container_id",
             Self::TargetOutOfBounds => "target_out_of_bounds",
             Self::TargetOccupied { .. } => "target_occupied",
@@ -3714,6 +3732,9 @@ impl InventoryMoveRejectReason {
         match self {
             Self::FromLocationMismatch => "from-location does not hold instance".to_string(),
             Self::InstanceNotFound => "instance not found in inventory".to_string(),
+            Self::InvalidStackCount => "分堆数量无效或库存不足".to_string(),
+            Self::SplitRequiresContainer => "分堆需要放入背包空格".to_string(),
+            Self::InstanceAllocationFailed => "无法分配分堆物品实例".to_string(),
             Self::UnknownContainerId => "unknown container_id".to_string(),
             Self::TargetOutOfBounds => "target rectangle exceeds container bounds".to_string(),
             Self::TargetOccupied { instance_id } => {
@@ -4030,6 +4051,64 @@ pub fn apply_inventory_move_with_race(
             })
         }
     }
+}
+
+/// 从容器堆叠拆出部分数量放入空格。源堆叠继续占格，不参与交换；
+/// 校验、实例分配与落位全部成功后才提交，拒绝时库存及 revision 不变。
+#[allow(clippy::too_many_arguments)]
+pub fn apply_inventory_split(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    to: &crate::schema::inventory::InventoryLocationV1,
+    count: u32,
+    rotated: bool,
+) -> Result<u64, InventoryMoveRejectReason> {
+    use crate::schema::inventory::InventoryLocationV1;
+
+    if !matches!(from, InventoryLocationV1::Container { .. })
+        || !matches!(to, InventoryLocationV1::Container { .. })
+    {
+        return Err(InventoryMoveRejectReason::SplitRequiresContainer);
+    }
+    if !location_holds_instance(inventory, instance_id, from) {
+        return Err(InventoryMoveRejectReason::FromLocationMismatch);
+    }
+    let mut split =
+        clone_item_at(inventory, instance_id).ok_or(InventoryMoveRejectReason::InstanceNotFound)?;
+    let template = registry
+        .get(&split.template_id)
+        .ok_or(InventoryMoveRejectReason::UnknownItemTemplate)?;
+    if count == 0
+        || count >= split.stack_count
+        || count > template.max_stack_count
+        || template.max_stack_count <= 1
+        || template.container_spec.is_some()
+    {
+        return Err(InventoryMoveRejectReason::InvalidStackCount);
+    }
+    split.stack_count = count;
+    if rotated {
+        std::mem::swap(&mut split.grid_w, &mut split.grid_h);
+    }
+    validate_move_semantics(registry, inventory, &split, from, to)?;
+    // 不排除来源实例：剩余物品仍在原位，分出的堆叠不得与它重叠。
+    validate_attach_fits(inventory, &split, to)?;
+
+    split.instance_id = allocator
+        .next_id()
+        .map_err(|_| InventoryMoveRejectReason::InstanceAllocationFailed)?;
+    let split_id = split.instance_id;
+    let mut next = inventory.clone();
+    inventory_item_by_instance_mut(&mut next, instance_id)
+        .ok_or(InventoryMoveRejectReason::InstanceNotFound)?
+        .stack_count -= count;
+    attach_at_location(&mut next, split, to)?;
+    bump_revision(&mut next);
+    *inventory = next;
+    Ok(split_id)
 }
 
 pub fn exchange_inventory_items(
@@ -4858,20 +4937,20 @@ fn find_pack_instances_anywhere<'a>(
 /// plan-layered-equip-v1 P0.2 / §11.1 #17 — 根据已装备背包重算 `max_weight`。
 ///
 /// 公式：`BASE_CARRY_CAPACITY + Σ(所有身体槽 worn 层里带 container_spec 的件的 weight_capacity)`。
-/// 暗袋（body_pocket）不提供额外负重，始终使用 BASE_CARRY_CAPACITY 作为基础。
+/// 普通暗袋不提供额外负重；经服务端权限校准的 OP 背包使用测试负重上限。
 #[allow(dead_code)]
 pub fn compute_max_weight(inventory: &PlayerInventory, registry: &ItemRegistry) -> f64 {
     let backpack_bonus: f64 = worn_container_items(inventory, registry)
         .map(|(_, spec)| spec.weight_capacity)
         .sum();
 
-    BASE_CARRY_CAPACITY + backpack_bonus
+    operator::base_carry_capacity(inventory) + backpack_bonus
 }
 
 /// plan-layered-equip-v1 P0.2 / §11.1 #13.5 #17 — 根据身体槽 worn 层背包件重建动态容器列表。
 ///
 /// 规则（决议 #17，背包专属槽取消）：
-/// 1. `body_pocket`（2×3）始终存在；不存在时创建空容器。
+/// 1. `body_pocket` 始终存在；保留权限入口已校准的容量，不存在时创建普通 2×3 空容器。
 /// 2. 扫所有身体槽 worn 层里带 `container_spec` 的背包件：容器 id = `pack_<instance_id>`；
 ///    存在则更新 rows/cols（升级换品），否则 push 新空容器。
 /// 3. 移除已不再对应任何穿戴背包件的孤儿 `pack_*` 容器。**孤儿容器若非空，先把其物品
@@ -5838,8 +5917,7 @@ fn validate_equip_to(
         | EquipSlotV1::ExtraHand1 => {
             // 类型校验：武器 / 工具 / 锄头。off_hand 另接受 Treasure / Shield。
             let is_weapon = template.weapon_spec.is_some();
-            let is_tool = matches!(template.category, ItemCategory::Tool)
-                || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some();
+            let is_tool = matches!(template.category, ItemCategory::Tool);
             let off_hand_extra = matches!(slot, EquipSlotV1::OffHand)
                 && matches!(
                     template.category,

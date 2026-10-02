@@ -27,7 +27,7 @@ groups:
   description: 战斗 ECS、流派、HUD、粒子、动画、Iris
 - id: cultivation-economy
   title: 修炼 / 经济
-  description: 六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期
+  description: 六境修炼、天劫、炼丹/炼器、矿物、天气、保质期
 - id: gameplay-npc
   title: 玩法 / NPC / 世界
   description: 背包、NPC AI、感知、社交、技艺、死亡周期
@@ -250,29 +250,14 @@ plans:
   summary: LifespanComponent、extension ledger、Frailty、aging tick、natural_end、DuoShe/UseLifeCore schema 与 client 请求均存在。
 - file: finished_plans/plan-lingtian-process-v1.md
   group: cultivation-economy
-  title: 灵田作物二级加工
+  title: 作物加工与保鲜
   state: merged
   percent: 100
   last_updated: '2026-06-08'
   pr_refs:
   - 134
   blocking_on: []
-  summary: server lingtian processing、schema processing、client ProcessingActionScreen/FreshnessStore 与 freshness_update 链路存在。
-- file: finished_plans/plan-lingtian-v1.md
-  group: cultivation-economy
-  title: 灵田专项
-  state: merged
-  percent: 88
-  last_updated: '2026-06-08'
-  pr_refs:
-  - 26
-  - 127
-  - 115
-  blocking_on:
-  - plot 主动拆除回收动作未实现
-  - 玩家主动防护仍属 v2+
-  - 种子/作物图标与独立交互浮窗仍是 UI 遗留
-  summary: plot/growth/hoe/seed/session/qi_account/pressure/weather_profile 与 LingtianActionScreen 覆盖主体；拆除、防护和 UI 保真未满。
+  summary: 公共加工逻辑迁至 server/src/processing.rs；保鲜、加工 schema 与客户端消费端保留，种植来源等待重写。
 - file: finished_plans/plan-mineral-v1.md
   group: cultivation-economy
   title: 矿物材料正典
@@ -327,14 +312,14 @@ plans:
   summary: VoidQuotaConfig/check_void_quota、绝壁劫 reason、AscensionQuota 扩展字段、client inspect 展示和 agent 叙事均有代码证据。
 - file: finished_plans/plan-alchemy-recycle-v1.md
   group: cultivation-economy
-  title: 炼丹废料反哺灵田
+  title: 炼丹废料
   state: merged
   percent: 100
   last_updated: '2026-06-08'
   pr_refs:
   - 139
   blocking_on: []
-  summary: PillResidue、dye_contamination、废料 item、schema 与客户端补灵入口均在 server/agent/client 落地。
+  summary: 保留 PillResidue 产物、废料模板与保鲜元数据；旧田块补灵和杂染规则已删除。
 - file: finished_plans/plan-economy-v1.md
   group: cultivation-economy
   title: 骨币价格指数与经济叙事
@@ -349,7 +334,7 @@ plans:
   summary: 骨币、价格指数、IPC、天道叙事和骨币 tooltip 已落地；economy server/schema/agent analyzer/client tooltip 均存在。
 - file: finished_plans/plan-lingtian-weather-v1.md
   group: cultivation-economy
-  title: 灵田季节天气消费层
+  title: 季节天气
   state: merged
   percent: 85
   last_updated: '2026-06-08'
@@ -357,9 +342,7 @@ plans:
   - 154
   blocking_on:
   - client 粒子/天空效果未交付
-  - plot 侧 active_weather 未实时注入生产路径
-  - plot_qi_cap 跨年动态重算未落地
-  summary: WeatherEvent、ActiveWeather、schema/Redis bridge、pressure 修饰、tribulation/narrative hook 存在；plot 玩法闭环仍未满。
+  summary: WeatherEvent、ActiveWeather 与概率配置迁至 world；天气 schema/Redis bridge、环境与渡劫查询继续使用公共实现。
 - file: finished_plans/plan-qi-physics-v1.md
   group: cultivation-economy
   title: 真元物理守恒底盘
@@ -426,16 +409,6 @@ plans:
   - 114
   blocking_on: []
   summary: docs/library/peoples/index.md 已列 16 本馆藏，七宗志条目、fragments 与 crossRefs 都在位。
-- file: finished_plans/plan-lingtian-npc-v1.md
-  group: gameplay-npc
-  title: 散修灵田与天道叙事
-  state: merged
-  percent: 100
-  last_updated: '2026-06-08'
-  pr_refs:
-  - 137
-  blocking_on: []
-  summary: ScatteredCultivator、LingtianFarmingScorer、ZonePressureCrossed 与 tiandao narration 均在 server/agent 落地。
 - file: finished_plans/plan-multi-style-v1.md
   group: gameplay-npc
   title: 混元多流派修炼路径

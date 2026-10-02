@@ -45,10 +45,6 @@ use crate::cultivation::tribulation::{
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted, TemperingHit};
 use crate::forge::session::{ForgeSessions, ForgeStep};
-use crate::lingtian::events::{
-    DrainQiCompleted, HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted,
-    TillCompleted,
-};
 use crate::network::audio_event_emit::{
     recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, StopSoundRecipeRequest,
     AUDIO_BROADCAST_RADIUS,
@@ -88,7 +84,6 @@ pub fn register(app: &mut App) {
             emit_alchemy_audio_triggers,
             emit_forge_audio_triggers,
             emit_botany_audio_triggers,
-            emit_lingtian_audio_triggers,
             emit_woliu_v2_audio_triggers,
             // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
             emit_woliu_v1_vortex_audio_triggers,
@@ -508,10 +503,18 @@ pub fn emit_alchemy_audio_triggers(
     mut starts: EventReader<StartAlchemyRequest>,
     mut outcomes: EventReader<AlchemyOutcomeEvent>,
     positions: Query<&Position>,
+    furnaces: Query<&crate::alchemy::AlchemyFurnace>,
     mut audio: AudioEmitWriter,
 ) {
     let mut audio = audio.context();
     for event in starts.read() {
+        // 已放置丹炉由 world_effects 在成功事务后统一发声，避免重复或请求被拒仍播声。
+        if furnaces
+            .get(event.furnace)
+            .is_ok_and(|furnace| furnace.pos.is_some())
+        {
+            continue;
+        }
         let origin = positions
             .get(event.furnace)
             .map(|position| position.get())
@@ -528,6 +531,12 @@ pub fn emit_alchemy_audio_triggers(
     }
 
     for event in outcomes.read() {
+        if furnaces
+            .get(event.furnace)
+            .is_ok_and(|furnace| furnace.pos.is_some())
+        {
+            continue;
+        }
         let origin = positions
             .get(event.furnace)
             .map(|position| position.get())
@@ -671,54 +680,6 @@ pub fn emit_botany_audio_triggers(
                 0.0,
             );
         }
-    }
-}
-
-pub fn emit_lingtian_audio_triggers(
-    mut tills: EventReader<TillCompleted>,
-    mut plantings: EventReader<PlantingCompleted>,
-    mut harvests: EventReader<HarvestCompleted>,
-    mut replenishes: EventReader<ReplenishCompleted>,
-    mut drains: EventReader<DrainQiCompleted>,
-    mut renews: EventReader<RenewCompleted>,
-    mut audio: AudioEmitWriter,
-) {
-    let mut audio = audio.context();
-    for event in tills.read() {
-        emit_play_at_block(&mut audio, "lingtian_till", event.player, event.pos, 1.0);
-    }
-    for event in plantings.read() {
-        emit_play_at_block(
-            &mut audio,
-            "lingtian_plant_seed",
-            event.player,
-            event.pos,
-            0.9,
-        );
-    }
-    for event in harvests.read() {
-        emit_play_at_block(&mut audio, "lingtian_harvest", event.player, event.pos, 1.0);
-    }
-    for event in replenishes.read() {
-        emit_play_at_block(
-            &mut audio,
-            "lingtian_replenish",
-            event.player,
-            event.pos,
-            1.0,
-        );
-    }
-    for event in drains.read() {
-        emit_play_at_block(&mut audio, "lingtian_drain", event.player, event.pos, 0.85);
-    }
-    for event in renews.read() {
-        emit_play_at_block(
-            &mut audio,
-            "lingtian_replenish",
-            event.player,
-            event.pos,
-            1.0,
-        );
     }
 }
 
@@ -1427,30 +1388,6 @@ fn emit_play_inner(
         flag,
         volume_mul,
         pitch_shift,
-        recipient,
-    });
-}
-
-fn emit_play_at_block(
-    audio: &mut AudioEmitContext<'_, '_>,
-    recipe_id: impl Into<String>,
-    entity: Entity,
-    pos: valence::prelude::BlockPos,
-    volume_mul: f32,
-) {
-    let origin = DVec3::new(f64::from(pos.x), f64::from(pos.y), f64::from(pos.z));
-    let recipe_id = recipe_id.into();
-    if !audio.should_emit(entity, &recipe_id) {
-        return;
-    }
-    let recipient = audio.recipient(&recipe_id, entity, origin);
-    audio.send(PlaySoundRecipeRequest {
-        recipe_id,
-        instance_id: 0,
-        pos: Some([pos.x, pos.y, pos.z]),
-        flag: None,
-        volume_mul,
-        pitch_shift: 0.0,
         recipient,
     });
 }

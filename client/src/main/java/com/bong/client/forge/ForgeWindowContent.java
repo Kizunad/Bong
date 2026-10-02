@@ -3,7 +3,7 @@ package com.bong.client.forge;
 import com.bong.client.forge.screen.ConsecrationPanelComponent;
 import com.bong.client.forge.screen.InscriptionPanelComponent;
 import com.bong.client.forge.screen.TemperingTrackComponent;
-import com.bong.client.network.ClientRequestProtocol.TemperBeat;
+import com.bong.client.forge.ForgeIntent.TemperBeat;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.ui.window.UiWindowManager;
 import io.wispforest.owo.ui.component.ButtonComponent;

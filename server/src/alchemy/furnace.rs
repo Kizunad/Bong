@@ -3,10 +3,26 @@
 //! MVP：Component + 炉阶（tier）+ integrity（炸炉会扣）+ session 句柄。
 //! 方块实体持久化留待 plan-persistence-v1 对接（本模块先在内存中表现）。
 
+use crate::world::dimension::DimensionKind;
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, BlockPos, Component, Entity};
+use valence::prelude::{bevy_ecs, BlockPos, Component, DVec3, Entity};
 
 use super::session::AlchemySession;
+
+/// 当前世界炉只生成在主世界；坐标请求不得跨维度或隔空控制工位。
+pub(crate) fn within_reach(
+    position: DVec3,
+    dimension: DimensionKind,
+    pos: (i32, i32, i32),
+) -> bool {
+    let center = DVec3::new(
+        f64::from(pos.0) + 0.5,
+        f64::from(pos.1),
+        f64::from(pos.2) + 0.5,
+    );
+    dimension == DimensionKind::Overworld
+        && crate::reach::DistanceRule::NEARBY_INTERACT.allows(position, center)
+}
 
 /// 炉体组件。
 /// - `tier` 决定可开火候精度 + 最高配方
@@ -45,6 +61,21 @@ impl Default for AlchemyFurnace {
 }
 
 impl AlchemyFurnace {
+    /// 公共炉允许使用，但正在炼制或等待收取的炉次只属于原施术者。
+    pub fn can_access(&self, player_id: &str) -> bool {
+        let same_player = |id: &str| {
+            id.strip_prefix("offline:").unwrap_or(id)
+                == player_id.strip_prefix("offline:").unwrap_or(player_id)
+        };
+        self.owner
+            .as_deref()
+            .is_none_or(|owner| owner.is_empty() || same_player(owner))
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|session| same_player(&session.caster_id))
+    }
+
     pub fn new(tier: u8) -> Self {
         Self {
             tier,
@@ -75,8 +106,8 @@ impl AlchemyFurnace {
     }
 
     pub fn start_session(&mut self, session: AlchemySession) -> Result<(), String> {
-        if self.is_busy() {
-            return Err("furnace is busy with an ongoing session".into());
+        if self.session.is_some() {
+            return Err("请先收取上一炉结果".into());
         }
         self.session = Some(session);
         Ok(())

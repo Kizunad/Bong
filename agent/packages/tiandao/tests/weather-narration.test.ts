@@ -15,8 +15,8 @@ function weather(overrides: Partial<WeatherEventUpdateV1> = {}): WeatherEventUpd
       v: 1,
       zone_id: "blood_valley_east_scorch",
       kind: "thunderstorm",
-      started_at_lingtian_tick: 1440,
-      expires_at_lingtian_tick: 1620,
+      started_at_minute: 1440,
+      expires_at_minute: 1620,
       remaining_ticks: 180,
     },
     ...overrides,
@@ -87,14 +87,14 @@ describe("zone weather narration", () => {
         weather({
           data: {
             ...weather().data,
-            started_at_lingtian_tick: 123,
+            started_at_minute: 123,
           },
         }),
         weather({
           kind: "expired",
           data: {
             ...weather().data,
-            started_at_lingtian_tick: 999,
+            started_at_minute: 999,
           },
         }),
       ]),

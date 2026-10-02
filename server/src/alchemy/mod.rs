@@ -26,7 +26,9 @@
 pub mod auto_profile;
 pub mod danxin;
 pub mod furnace;
+pub mod incense;
 pub mod learned;
+pub mod manual_qi;
 pub mod outcome;
 pub mod pill;
 pub mod processed_input;
@@ -39,12 +41,13 @@ pub mod resolver;
 pub mod session;
 pub mod side_effect_apply;
 pub mod skill_hook;
+pub mod world_effects;
 
 use std::collections::HashSet;
 
 use valence::prelude::{
-    bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Or, Query, Res, Update, Username, With, Without,
+    bevy_ecs, Added, App, BlockPos, Client, Commands, Entity, Event, EventReader, EventWriter,
+    IntoSystemConfigs, Or, Query, Res, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -56,6 +59,7 @@ use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, AlchemyItemData, ItemInstance,
     PlayerInventory,
 };
+use crate::network::alchemy_snapshot_emit;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::skill::components::SkillId;
@@ -135,7 +139,7 @@ pub struct AlchemyOutcomeEvent {
 
 /// plan §1.2 — 玩家手持炉类物品右键地面，客户端发 `AlchemyFurnacePlace` 后
 /// server 转译为本事件，由 `handle_alchemy_furnace_place` 消费：消耗 1 个物品
-/// → spawn `AlchemyFurnace` entity → 刷方块。
+/// → spawn `AlchemyFurnace` entity；视觉桥随后生成自定义丹炉模型实体。
 #[derive(Debug, Clone, Event)]
 pub struct PlaceFurnaceRequest {
     pub player: Entity,
@@ -171,22 +175,93 @@ pub fn register(app: &mut App) {
     app.add_event::<AlchemyTakeBackRequest>();
     app.init_resource::<AlchemyQiReservationBook>();
     app.add_event::<auto_profile::InjectQiIntent>();
+    app.add_event::<manual_qi::ManualQiInject>();
+    app.add_event::<world_effects::AlchemyWorldEffect>();
     app.add_event::<danxin::DanxinIdentifyIntent>();
     app.add_event::<danxin::AlchemyInsightEvent>();
+    app.add_systems(
+        Update,
+        (
+            world_effects::emit_world_states
+                .after(tick_alchemy_sessions)
+                .after(manual_qi::handle_manual_qi_injections)
+                .after(auto_profile::tick_auto_profiles),
+            world_effects::emit_world_effects
+                .after(world_effects::emit_world_states)
+                .before(crate::network::audio_event_emit::emit_audio_play_payloads),
+        ),
+    );
     app.add_systems(
         Update,
         (
             attach_alchemy_to_joined_clients
                 .after(crate::player::attach_player_state_to_joined_clients),
             handle_start_alchemy_requests,
+            tick_alchemy_sessions
+                .before(crate::network::client_request_handler::handle_client_request_payloads),
             handle_recipe_fragment_learning,
             auto_profile::inject_qi_to_furnace_reserve,
+            manual_qi::handle_manual_qi_injections
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
             auto_profile::tick_auto_profiles,
             danxin::handle_danxin_identify_intents,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
         ),
     );
+}
+
+/// 炉次的时间由服务端推进，客户端只展示快照。
+/// 每秒向炉主回推一次 session，确保悬浮信息不会停在打开窗口时的旧进度。
+fn tick_alchemy_sessions(
+    mut furnaces: Query<&mut AlchemyFurnace>,
+    mut clients: Query<(&Username, &mut Client)>,
+    registry: Res<RecipeRegistry>,
+) {
+    for mut furnace in furnaces.iter_mut() {
+        let Some(session) = furnace.session.as_mut() else {
+            continue;
+        };
+        // 第 0 刻的首料窗口必须留给玩家操作；投齐后才计时，避免起炉下一 tick 就错过。
+        let Some(recipe) = registry.get(&session.recipe) else {
+            continue;
+        };
+        let heating = !session.finished && session.ready_to_heat(recipe);
+        let incense_was_burning = session.incense_active().is_some();
+        if heating {
+            session.tick();
+        } else {
+            session.tick_incense();
+        }
+        if registry.get(&session.recipe).is_some_and(|recipe| {
+            session.elapsed_ticks >= recipe.fire_profile.target_duration_ticks
+        }) {
+            session.finished = true;
+        }
+        let incense_updated = incense_was_burning
+            && session
+                .incense
+                .as_ref()
+                .is_some_and(|incense| incense.remaining_ticks % 20 == 0);
+        let heating_updated = heating && (session.finished || session.elapsed_ticks % 20 == 0);
+        if !incense_updated && !heating_updated {
+            continue;
+        }
+        let caster = session.caster_id.clone();
+        let Some((username, mut client)) = clients.iter_mut().find(|(username, _)| {
+            let current = canonical_player_id(username.0.as_str());
+            caster == username.0.as_str() || caster == current
+        }) else {
+            continue;
+        };
+        let player_id = canonical_player_id(username.0.as_str());
+        alchemy_snapshot_emit::send_session_from_furnace(
+            &mut client,
+            &player_id,
+            &furnace,
+            &registry,
+        );
+    }
 }
 
 fn handle_recipe_fragment_learning(
@@ -451,7 +526,7 @@ pub(crate) fn apply_alchemy_explode_outcomes(
 ///   2. 按 `item_instance_id` 查背包物品、按 `furnace_tier_from_item_id` 决定 tier
 ///   3. 消耗一个物品（`consume_item_instance_once`）
 ///   4. `commands.spawn(AlchemyFurnace::placed(pos, tier))`（玩家多炉并行）
-///   5. 把目标方块刷成 `FURNACE`
+///   5. 只生成自定义丹炉模型实体，不再刷原版 `FURNACE` 方块
 ///   6. 推一次 inventory snapshot 让 client UI 同步
 ///
 /// 纯内存：炉状态不落盘，服务器重启 = 炉丢失（见 reminder.md）。
@@ -460,7 +535,6 @@ pub fn handle_alchemy_furnace_place(
     mut events: EventReader<PlaceFurnaceRequest>,
     mut commands: Commands,
     mut inventories: Query<&mut PlayerInventory>,
-    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     existing: Query<&AlchemyFurnace>,
     mut clients: Query<(&Username, &mut Client, &PlayerState)>,
 ) {
@@ -514,9 +588,6 @@ pub fn handle_alchemy_furnace_place(
         furnace.owner = owner_name;
         commands.spawn(furnace);
         placed_this_tick.insert(pos_key);
-        if let Ok(mut layer) = layers.get_single_mut() {
-            layer.set_block(req.pos, BlockState::FURNACE);
-        }
         // Codex P2 — 消耗物品后立即回推 snapshot，避免客户端 UI 残留旧物品导致
         // 二次误发相同 instance_id 的请求。`inv` 已 bump_revision，取最新快照即可。
         if let Ok((username, mut client, player_state)) = clients.get_mut(req.player) {
@@ -600,6 +671,88 @@ mod integration_tests {
     use crate::skill::events::SkillXpGain;
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
+
+    #[test]
+    fn server_tick_advances_active_alchemy_session() {
+        let registry = recipe::load_recipe_registry().unwrap();
+        let recipe_id = "hui_yuan_pill_v0";
+        let mut furnace = AlchemyFurnace::placed(BlockPos::new(4, 64, 4), 1);
+        furnace.owner = Some("offline:Azure".into());
+        furnace
+            .start_session(AlchemySession::new(
+                recipe_id.into(),
+                "offline:Azure".into(),
+            ))
+            .unwrap();
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        app.world_mut().spawn(client_bundle);
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.add_systems(Update, tick_alchemy_sessions);
+
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .get::<AlchemyFurnace>(furnace_entity)
+                .unwrap()
+                .session
+                .as_ref()
+                .unwrap()
+                .elapsed_ticks,
+            0,
+            "首料未齐时必须保留第 0 刻窗口"
+        );
+        let recipe = app
+            .world()
+            .resource::<RecipeRegistry>()
+            .get(recipe_id)
+            .unwrap()
+            .clone();
+        let materials = recipe.stages[0]
+            .required
+            .iter()
+            .map(|item| (item.material.clone(), item.count, 1.0))
+            .collect::<Vec<_>>();
+        app.world_mut()
+            .get_mut::<AlchemyFurnace>(furnace_entity)
+            .unwrap()
+            .session
+            .as_mut()
+            .unwrap()
+            .feed_stage(&recipe, 0, &materials)
+            .unwrap();
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<AlchemyFurnace>(furnace_entity)
+                .and_then(|furnace| furnace.session.as_ref())
+                .map(|session| session.elapsed_ticks),
+            Some(1),
+            "active furnace sessions must advance on the server tick"
+        );
+        let target = app
+            .world()
+            .resource::<RecipeRegistry>()
+            .get(recipe_id)
+            .unwrap()
+            .fire_profile
+            .target_duration_ticks;
+        for _ in 0..target + 20 {
+            app.update();
+        }
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        let session = furnace.session.as_ref().expect("到时后结果应保留在炉内");
+        assert!(session.finished);
+        assert_eq!(
+            session.elapsed_ticks, target,
+            "等待收取期间不再延长炉次或累积轨迹"
+        );
+    }
 
     #[test]
     fn full_loop_perfect_hui_yuan_then_contamination_purge() {

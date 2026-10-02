@@ -1,0 +1,45 @@
+# 炼丹香料：投入香座后由服务端按 template_id 读取效果，并消耗一个物品实例。
+
+[[item]]
+id = "incense_plain"
+name = "草木香"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "枯草与木屑揉成的细香，一支约燃一分钟。只记时，不改药性。"
+
+[[item]]
+id = "incense_clear_mind"
+name = "清心香"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "气息清淡，能让火候容差变宽。"
+
+[[item]]
+id = "incense_warm_ash"
+name = "暖灰香"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 1.0
+description = "余温绵长，降低炼丹所需真元并提高回元收益，但火候更难守。"
+
+[[item]]
+id = "incense_damp_wood"
+name = "湿木香"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 1.0
+description = "烟气持久，适合长炉次，但会增加真元消耗。"

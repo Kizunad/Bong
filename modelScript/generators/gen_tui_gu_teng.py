@@ -578,8 +578,9 @@ def all_cubes() -> list[Cube]:
 
 
 def create_texture() -> Image.Image:
-    """生成 64x64 UV Atlas 贴图。"""
-    img = Image.new("RGBA", (TEXTURE_RES, TEXTURE_RES), (0, 0, 0, 0))
+    """按 64x64 像素稿绘制蜕骨藤图集，再放大到 UV 使用的分辨率。"""
+    # 下方绘图坐标属于原始像素稿，不能直接在 128x128 画布上绘制。
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
 
     # 1. 骨骼纯净/风化面 (0,0)~(32,20)
     for x in range(32):

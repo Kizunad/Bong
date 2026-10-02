@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "session_id",
+    "session_generation",
+    "cast_instance_id"
+  ],
+  "properties": {
+    "session_id": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    },
+    "session_generation": {
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 20,
+      "type": "string"
+    },
+    "cast_instance_id": {
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 20,
+      "type": "string"
+    }
+  },
+  "x-bong-typebox-source-sha256": "9e85e61cdd07e16d70dcc6f918c593a2f1e4ba638d4c06cf5e116c74d976aa08",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}

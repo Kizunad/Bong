@@ -27,7 +27,7 @@
       "type": "string"
     },
     "kind": {
-      "description": "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺",
+      "description": "四类作物二级加工工艺；种植来源由后续重构接入",
       "anyOf": [
         {
           "const": "drying",
@@ -62,5 +62,6 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "6df1684c6e7997e6116086d2c25bb9dc47d479e82c665c00ab8b150ade3db5ef"
+  "x-bong-typebox-source-sha256": "6cb420358a16a3fa4570a6cdd07bfd9d165157701553ff62163e1585c7118ab5",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

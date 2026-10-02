@@ -3,6 +3,7 @@ pub mod block_drop;
 pub mod block_place;
 pub mod bong_blocks;
 pub mod calamity;
+pub mod clock;
 pub mod container_block;
 pub mod container_open;
 pub mod dimension;
@@ -55,7 +56,9 @@ pub mod tsy_poi_consumer;
 pub mod tsy_portal;
 #[allow(dead_code)]
 pub mod wangyintai_atmosphere;
+pub mod weather;
 pub mod weather_physics;
+pub mod weather_profile;
 pub mod weather_to_environment;
 pub mod zone;
 
@@ -138,6 +141,8 @@ struct AnvilBootstrapConfig {
 }
 
 pub fn register(app: &mut App) {
+    clock::register(app);
+    weather::register(app);
     tracing::info!("[bong][world] registering world setup systems");
     dimension::register(app);
     dimension_transfer::register(app);

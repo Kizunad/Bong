@@ -324,8 +324,6 @@ mod tests {
         assert!(registry.get("zhenmai_sever_crack").is_some());
         assert!(registry.get("vortex_low_hum").is_some());
         assert!(registry.get("vortex_qi_siphon").is_some());
-        assert!(registry.get("lingtian_plant_seed").is_some());
-        assert!(registry.get("lingtian_drain").is_some());
         assert!(registry.get("don_skin_low_thud").is_some());
         assert!(registry.get("shed_skin_burst").is_some());
         assert!(registry.get("contam_transfer_hum").is_some());
@@ -470,7 +468,6 @@ mod tests {
         assert!(registry.get("breakthrough_guyuan").is_some());
         assert!(registry.get("forge_hammer_heavy").is_some());
         assert!(registry.get("alchemy_bubble").is_some());
-        assert!(registry.get("lingtian_till").is_some());
         assert!(registry.get("pact_bind").is_some());
         assert!(registry.get("npc_footstep_water").is_some());
         assert!(registry.get("ambient_detail_tsy_metal_echo").is_some());

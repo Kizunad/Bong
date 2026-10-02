@@ -284,7 +284,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ## 真元/灵气守恒律（最高优先级硬约束，吞真元 = 阻塞合并）
 
-全服灵气总量 `SPIRIT_QI_TOTAL` 恒定（const 当前 100.0；**测试断言取 const 引用，不写字面 100**）。所有真元/灵气流动**必须**走 `qi_physics::ledger::QiTransfer { from, to, amount, reason }`。
+全服真元总量由服务器启动时注入的 `WorldQiBudget.initial_total` 权威决定（命令行 `--spirit-qi-total` > 环境变量 `BONG_SPIRIT_QI_TOTAL` > 默认 `qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL = 2_000_000.0`；**测试断言读取测试 world 注入的预算，不写死总量**）。所有真元/灵气流动**必须**走 `qi_physics::ledger::QiTransfer { from, to, amount, reason }`。
 
 **红旗（出现就停下重设计）**：
 - `cultivation.qi_current += X`（无对应 zone 减）、`zone.spirit_qi -= Y`（无对应玩家增）、容器/衰变把真元"凭空消失"不归还 zone、招式释放只扣攻方不写入环境 —— 全是守恒律红旗。

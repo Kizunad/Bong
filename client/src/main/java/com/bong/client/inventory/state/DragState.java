@@ -48,6 +48,33 @@ public final class DragState {
         this.sourceHotbarIndex = -1;
     }
 
+    /**
+     * 从一个完整堆叠中分出数量投影。取消拖拽必须还原 {@code fullItem}，
+     * 而投料路径读取 {@code draggedItem} 的数量。
+     */
+    public void pickupSplit(InventoryItem fullItem, InventoryItem draggedItem,
+                            String containerId, int gridRow, int gridCol) {
+        Objects.requireNonNull(fullItem, "fullItem");
+        Objects.requireNonNull(draggedItem, "draggedItem");
+        if (draggedItem.instanceId() != fullItem.instanceId()
+            || draggedItem.stackCount() > fullItem.stackCount()) {
+            throw new IllegalArgumentException("split drag must keep the source instance and not exceed it");
+        }
+        this.phase = Phase.DRAGGING;
+        this.draggedItem = draggedItem;
+        this.originalDraggedItem = fullItem;
+        this.draggedRotated = false;
+        this.sourceKind = SourceKind.GRID;
+        this.sourceRow = gridRow;
+        this.sourceCol = gridCol;
+        this.sourceContainerId = containerId;
+        this.sourceEquipSlot = null;
+        this.sourceHotbarIndex = -1;
+        this.sourceQuickUseIndex = -1;
+        this.sourceMeridianChannel = null;
+        this.sourceBodyPart = null;
+    }
+
     public void pickupFromEquip(InventoryItem item, EquipSlotType slot) {
         Objects.requireNonNull(item, "item");
         Objects.requireNonNull(slot, "slot");
@@ -168,6 +195,13 @@ public final class DragState {
     /** plan-rotate-v1 — 当前拖拽物相对拾起时是否处于旋转朝向（发 move intent 时透传）。 */
     public boolean draggedRotated() {
         return draggedRotated;
+    }
+
+    public boolean isSplitStack() {
+        return isDragging()
+            && originalDraggedItem != null
+            && draggedItem != null
+            && originalDraggedItem.stackCount() != draggedItem.stackCount();
     }
 
     /** plan-rotate-v1 — 拾起时的原朝向物品；非拖拽阶段为 null。 */

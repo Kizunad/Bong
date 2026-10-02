@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::qi_physics::{assert_conservation, summarize_world_qi, WorldQiBudget};
-use crate::schema::common::SPIRIT_QI_TOTAL;
+use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
 use crate::world::dimension::DimensionKind;
 use crate::worldgen::pseudo_vein::{decay_rate_per_tick, PSEUDO_VEIN_INITIAL_QI};
 use valence::prelude::{App, DVec3};
@@ -208,12 +208,12 @@ fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
     let mut active_events = ActiveEventsResource::default();
     let mut qi_ledger = WorldQiAccount::default();
     let mut qi_world = App::new();
-    qi_world.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+    qi_world.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     qi_world.insert_resource(qi_ledger.clone());
     qi_world.insert_resource(zones.clone());
     let before = summarize_world_qi(qi_world.world_mut());
     assert_eq!(
-        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
         "conservation snapshots must use the configured world qi total"
     );
     let omen = WorldEventOmen {
@@ -259,7 +259,7 @@ fn pseudo_vein_omen_rejects_spawn_when_pending_pool_is_unfunded() {
     qi_world.insert_resource(zones);
     let after = summarize_world_qi(qi_world.world_mut());
     assert_eq!(
-        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        after.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
         "conservation snapshots must retain the configured world qi total"
     );
     assert_conservation(&before, &after, 0.0)

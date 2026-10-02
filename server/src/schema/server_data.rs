@@ -5,6 +5,7 @@ use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
 use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
+    AlchemyWorldDataV1,
 };
 use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_carrier::CarrierStateV1;
@@ -23,7 +24,6 @@ use super::forge::{
 };
 use super::identity::IdentityPanelStateV1;
 use super::inventory::{InventoryEventV1, InventoryItemViewV1, InventorySnapshotV1};
-use super::lingtian::LingtianSessionDataV1;
 use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
@@ -184,6 +184,7 @@ pub enum ServerDataType {
     GatheringSession,
     BotanySkill,
     AlchemyFurnace,
+    AlchemyWorld,
     AlchemySession,
     AlchemyOutcomeForecast,
     AlchemyOutcomeResolved,
@@ -213,7 +214,6 @@ pub enum ServerDataType {
     PoisonTraitState,
     CarrierState,
     FalseSkinState,
-    LingtianSession,
     DeathScreen,
     TerminateScreen,
     RiftPortalState,
@@ -483,6 +483,7 @@ pub enum ServerDataPayloadV1 {
         auto_unlock_level: u64,
     },
     AlchemyFurnace(Box<AlchemyFurnaceDataV1>),
+    AlchemyWorld(Box<AlchemyWorldDataV1>),
     AlchemySession(Box<AlchemySessionDataV1>),
     AlchemyOutcomeForecast(Box<AlchemyOutcomeForecastDataV1>),
     AlchemyOutcomeResolved(Box<AlchemyOutcomeResolvedDataV1>),
@@ -513,7 +514,6 @@ pub enum ServerDataPayloadV1 {
     PoisonTraitState(PoisonTraitStateV1),
     CarrierState(CarrierStateV1),
     FalseSkinState(FalseSkinStateV1),
-    LingtianSession(Box<LingtianSessionDataV1>),
     DeathScreen {
         visible: bool,
         cause: String,
@@ -1744,6 +1744,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: Box<AlchemyFurnaceDataV1>,
     },
+    AlchemyWorld {
+        #[serde(flatten)]
+        data: Box<AlchemyWorldDataV1>,
+    },
     AlchemySession {
         #[serde(flatten)]
         data: Box<AlchemySessionDataV1>,
@@ -1859,10 +1863,6 @@ enum ServerDataPayloadWireV1 {
     FalseSkinState {
         #[serde(flatten)]
         state: FalseSkinStateV1,
-    },
-    LingtianSession {
-        #[serde(flatten)]
-        lingtian_session: LingtianSessionDataV1,
     },
     DeathScreen {
         visible: bool,
@@ -3018,6 +3018,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 auto_unlock_level,
             }),
             ServerDataPayloadWireV1::AlchemyFurnace { data } => Ok(Self::AlchemyFurnace(data)),
+            ServerDataPayloadWireV1::AlchemyWorld { data } => Ok(Self::AlchemyWorld(data)),
             ServerDataPayloadWireV1::AlchemySession { data } => Ok(Self::AlchemySession(data)),
             ServerDataPayloadWireV1::AlchemyOutcomeForecast { data } => {
                 Ok(Self::AlchemyOutcomeForecast(data))
@@ -3078,9 +3079,6 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::CarrierState { state } => Ok(Self::CarrierState(state)),
             ServerDataPayloadWireV1::FalseSkinState { state } => Ok(Self::FalseSkinState(state)),
-            ServerDataPayloadWireV1::LingtianSession { lingtian_session } => {
-                Ok(Self::LingtianSession(Box::new(lingtian_session)))
-            }
             ServerDataPayloadWireV1::DeathScreen {
                 visible,
                 cause,
@@ -3643,6 +3641,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::AlchemyFurnace(data) => {
                 Self::AlchemyFurnace { data: data.clone() }
             }
+            ServerDataPayloadV1::AlchemyWorld(data) => Self::AlchemyWorld { data: data.clone() },
             ServerDataPayloadV1::AlchemySession(data) => {
                 Self::AlchemySession { data: data.clone() }
             }
@@ -3718,9 +3717,6 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::FalseSkinState(state) => Self::FalseSkinState {
                 state: state.clone(),
-            },
-            ServerDataPayloadV1::LingtianSession(s) => Self::LingtianSession {
-                lingtian_session: (**s).clone(),
             },
             ServerDataPayloadV1::DeathScreen {
                 visible,
@@ -4251,6 +4247,7 @@ impl ServerDataPayloadV1 {
             Self::GatheringSession { .. } => ServerDataType::GatheringSession,
             Self::BotanySkill { .. } => ServerDataType::BotanySkill,
             Self::AlchemyFurnace(..) => ServerDataType::AlchemyFurnace,
+            Self::AlchemyWorld(..) => ServerDataType::AlchemyWorld,
             Self::AlchemySession(..) => ServerDataType::AlchemySession,
             Self::AlchemyOutcomeForecast(..) => ServerDataType::AlchemyOutcomeForecast,
             Self::AlchemyOutcomeResolved(..) => ServerDataType::AlchemyOutcomeResolved,
@@ -4279,7 +4276,6 @@ impl ServerDataPayloadV1 {
             Self::PoisonTraitState(..) => ServerDataType::PoisonTraitState,
             Self::CarrierState(..) => ServerDataType::CarrierState,
             Self::FalseSkinState(..) => ServerDataType::FalseSkinState,
-            Self::LingtianSession(..) => ServerDataType::LingtianSession,
             Self::DeathScreen { .. } => ServerDataType::DeathScreen,
             Self::TerminateScreen { .. } => ServerDataType::TerminateScreen,
             Self::RiftPortalState(..) => ServerDataType::RiftPortalState,
@@ -4417,6 +4413,7 @@ impl ServerDataPayloadV1 {
             Self::GatheringSession { .. } => false,
             Self::BotanySkill { .. } => false,
             Self::AlchemyFurnace(..) => false,
+            Self::AlchemyWorld(..) => false,
             Self::AlchemySession(..) => false,
             Self::AlchemyOutcomeForecast(..) => false,
             Self::AlchemyOutcomeResolved(..) => false,
@@ -4445,7 +4442,6 @@ impl ServerDataPayloadV1 {
             Self::PoisonTraitState(..) => false,
             Self::CarrierState(..) => false,
             Self::FalseSkinState(..) => false,
-            Self::LingtianSession(..) => false,
             Self::DeathScreen { .. } => false,
             Self::TerminateScreen { .. } => false,
             Self::RiftPortalState(..) => false,

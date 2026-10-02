@@ -74,7 +74,6 @@ export const NarrationKind = Type.Union([
   Type.Literal("death_insight"),
   Type.Literal("niche_intrusion"),
   Type.Literal("niche_intrusion_by_npc"),
-  Type.Literal("npc_farm_pressure"),
   Type.Literal("scattered_cultivator"),
   Type.Literal("political_jianghu"),
   /** plan-offscreen-war-v1 P9：战事结算匿名叙事（reframe b，无具名宗门）。 */

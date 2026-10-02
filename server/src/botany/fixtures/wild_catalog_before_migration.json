@@ -1,0 +1,1066 @@
+[
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.003,
+    "id": "an_shen_guo",
+    "item_id": "an_shen_guo",
+    "max_age_ticks": 9000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.3,
+    "v2": null,
+    "zone_tags": [
+      "mountain"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.002,
+    "id": "bai_yan_peng",
+    "item_id": "bai_yan_peng",
+    "max_age_ticks": 8000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "dead_bush",
+      "env_locks": [],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.6
+          }
+        },
+        {
+          "attracts_mobs": {
+            "max_count": 5,
+            "min_count": 2,
+            "mob_kind": "spirit_mice"
+          }
+        }
+      ],
+      "icon_prompt": "white saltbush with tiny spirit salt crystals, dry wasteland herb icon",
+      "model_overlay": "none",
+      "survival_mode": "spirit_crystallize",
+      "tint_rgb": 16316648,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "bei_wen_zhi",
+    "item_id": "bei_wen_zhi",
+    "max_age_ticks": 13000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "red_mushroom",
+      "env_locks": [
+        {
+          "ruin_density": {
+            "min": 0.3
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": "array_disc_remnant",
+            "radius": 2
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.5
+          }
+        }
+      ],
+      "icon_prompt": "gray-blue ganoderma with purple inscription veins, ruined sect herb icon",
+      "model_overlay": "none",
+      "survival_mode": "ruin_resonance",
+      "tint_rgb": 8423568,
+      "tint_rgb_secondary": 6299808
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.005,
+    "id": "chi_sui_cao",
+    "item_id": "chi_sui_cao",
+    "max_age_ticks": 8500,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.25,
+    "v2": null,
+    "zone_tags": [
+      "blood_valley"
+    ]
+  },
+  {
+    "density_factor": 4.0,
+    "growth_cost": 0.002,
+    "id": "ci_she_hao",
+    "item_id": "ci_she_hao",
+    "max_age_ticks": 6000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.2,
+    "v2": null,
+    "zone_tags": [
+      "plains"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "duan_ji_ci",
+    "item_id": "duan_ji_ci",
+    "max_age_ticks": 12000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "sweet_berry_bush",
+      "env_locks": [
+        {
+          "ruin_density": {
+            "min": 0.3
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": [
+              "broken_spear_tree",
+              "war_banner_post"
+            ],
+            "radius": 1
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "resonance_vision": {
+            "composure_loss": 0.05,
+            "duration_secs": 3
+          }
+        },
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "CaoLian",
+            "wound": "laceration"
+          }
+        }
+      ],
+      "icon_prompt": "blood-dark thorn growing around broken spear fragments, battlefield herb icon",
+      "model_overlay": "none",
+      "survival_mode": "ruin_resonance",
+      "tint_rgb": 6037007,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.5,
+    "growth_cost": 0.003,
+    "id": "food.spirit_fruit.ling_guo",
+    "item_id": "food.spirit_fruit.ling_guo",
+    "max_age_ticks": 8000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "sweet_berry_bush",
+      "env_locks": [],
+      "harvest_hazards": [],
+      "icon_prompt": "round luminous spirit fruit on mountain shrub, rare food item icon, jade-green glow",
+      "model_overlay": "none",
+      "survival_mode": "qi_absorb",
+      "tint_rgb": 10543200,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": [
+      "mountain",
+      "plains"
+    ]
+  },
+  {
+    "density_factor": 0.2,
+    "growth_cost": 0.002,
+    "id": "fu_chen_cao",
+    "item_id": "fu_chen_cao",
+    "max_age_ticks": 10000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.0,
+    "v2": null,
+    "zone_tags": [
+      "negative_field",
+      "wastes"
+    ]
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.002,
+    "id": "fu_you_hua",
+    "item_id": "fu_you_hua",
+    "max_age_ticks": 6000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.2,
+    "v2": null,
+    "zone_tags": [
+      "plains"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "fu_yuan_jue",
+    "item_id": "fu_yuan_jue",
+    "max_age_ticks": 14400,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "large_fern",
+      "env_locks": [
+        {
+          "neg_pressure": {
+            "min": 0.3
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "qi_drain_on_approach": {
+            "drain_per_sec": 0.4,
+            "radius_blocks": 5
+          }
+        }
+      ],
+      "icon_prompt": "dark purple reverse-breathing fern, salt-dry wasteland herb icon",
+      "model_overlay": "none",
+      "survival_mode": "neg_pressure_feed",
+      "tint_rgb": 4861530,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.01,
+    "id": "gu_yuan_gen",
+    "item_id": "gu_yuan_gen",
+    "max_age_ticks": 10000,
+    "regen_ticks": 7200,
+    "restore_ratio": 0.8,
+    "spawn_mode": "static_point",
+    "survive_threshold": 0.6,
+    "v2": null,
+    "zone_tags": [
+      "marsh",
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "hei_gu_jun",
+    "item_id": "hei_gu_jun",
+    "max_age_ticks": 20000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "hui_jin_tai",
+    "item_id": "hui_jin_tai",
+    "max_age_ticks": 10000,
+    "regen_ticks": 2400,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.5,
+    "growth_cost": 0.003,
+    "id": "hui_yuan_zhi",
+    "item_id": "hui_yuan_zhi",
+    "max_age_ticks": 8000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.35,
+    "v2": null,
+    "zone_tags": [
+      "marsh"
+    ]
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.004,
+    "id": "jiao_mai_teng",
+    "item_id": "jiao_mai_teng",
+    "max_age_ticks": 12000,
+    "regen_ticks": 3600,
+    "restore_ratio": 0.8,
+    "spawn_mode": "static_point",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "weeping_vines",
+      "env_locks": [
+        {
+          "fracture_mask": {
+            "min": 0.4
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": "fire_vein_cactus",
+            "radius": 3
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "DunQiJia",
+            "wound": "fracture"
+          }
+        }
+      ],
+      "icon_prompt": "charred vein vine with orange ember core, rift valley herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "pressure_differential",
+      "tint_rgb": 3149840,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": [
+      "blood_valley"
+    ]
+  },
+  {
+    "density_factor": 0.8,
+    "growth_cost": 0.004,
+    "id": "jie_gu_rui",
+    "item_id": "jie_gu_rui",
+    "max_age_ticks": 7500,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.4,
+    "v2": null,
+    "zone_tags": [
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.005,
+    "id": "jing_xin_zao",
+    "item_id": "jing_xin_zao",
+    "max_age_ticks": 14000,
+    "regen_ticks": 14400,
+    "restore_ratio": 0.8,
+    "spawn_mode": "static_point",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "seagrass",
+      "env_locks": [
+        {
+          "qi_vein_flow": {
+            "min": 0.6
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": [
+              "ling_yun_mangrove",
+              "spirit_willow"
+            ],
+            "radius": 8
+          }
+        },
+        {
+          "time_phase": "open"
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "season_required": {
+            "phase": "open"
+          }
+        }
+      ],
+      "icon_prompt": "cyan algae from spirit well heart, soft luminous water herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "water_pulse",
+      "tint_rgb": 4235424,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": [
+      "marsh"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "kong_shou_hen",
+    "item_id": "kong_shou_hen",
+    "max_age_ticks": 20000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.003,
+    "id": "lie_yuan_tai",
+    "item_id": "lie_yuan_tai",
+    "max_age_ticks": 9000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "glow_lichen",
+      "env_locks": [
+        "portal_rift_active"
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.4
+          }
+        }
+      ],
+      "icon_prompt": "purple-black moss clinging to a dimensional rift, abyss portal herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "portal_siphon",
+      "tint_rgb": 4202592,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "ling_jing_xu",
+    "item_id": "ling_jing_xu",
+    "max_age_ticks": 13000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "twisting_vines",
+      "env_locks": [
+        {
+          "adjacent_decoration": {
+            "kind": "qi_crystal_pillar",
+            "radius": 3
+          }
+        },
+        {
+          "qi_vein_flow": {
+            "min": 0.5
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "GuaDao",
+            "wound": "abrasion"
+          }
+        },
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.6
+          }
+        }
+      ],
+      "icon_prompt": "purple crystal tendrils around ancient qi pillar, TSY crater herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "pressure_differential",
+      "tint_rgb": 10510591,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "ling_yan_shi_zhi",
+    "item_id": "ling_yan_shi_zhi",
+    "max_age_ticks": 30000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.002,
+    "id": "mao_xin_wei",
+    "item_id": "mao_xin_wei",
+    "max_age_ticks": 9000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "wheat",
+      "env_locks": [
+        {
+          "adjacent_decoration": {
+            "kind": [
+              "thatched_hermitage",
+              "lone_grave_mound",
+              "daily_artifact_cache"
+            ],
+            "radius": 2
+          }
+        }
+      ],
+      "harvest_hazards": [],
+      "icon_prompt": "warm yellow thatch-heart vetch, hermitage remnant herb icon",
+      "model_overlay": "none",
+      "survival_mode": "ruin_resonance",
+      "tint_rgb": 15253568,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "ming_gu_gu",
+    "item_id": "ming_gu_gu",
+    "max_age_ticks": 14000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "brown_mushroom",
+      "env_locks": [
+        {
+          "ruin_density": {
+            "min": 0.4
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": "bone_mountain",
+            "radius": 3
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "resonance_vision": {
+            "composure_loss": 0.08,
+            "duration_secs": 5
+          }
+        },
+        {
+          "attracts_mobs": {
+            "max_count": 3,
+            "min_count": 1,
+            "mob_kind": "mimic_spider"
+          }
+        }
+      ],
+      "icon_prompt": "bone-white mushroom growing from silent battlefield bones, TSY herb icon",
+      "model_overlay": "none",
+      "survival_mode": "ruin_resonance",
+      "tint_rgb": 15261904,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 3.0,
+    "growth_cost": 0.003,
+    "id": "ning_mai_cao",
+    "item_id": "ning_mai_cao",
+    "max_age_ticks": 7200,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.4,
+    "v2": null,
+    "zone_tags": [
+      "plains"
+    ]
+  },
+  {
+    "density_factor": 1.2,
+    "growth_cost": 0.003,
+    "id": "qing_zhuo_cao",
+    "item_id": "qing_zhuo_cao",
+    "max_age_ticks": 7000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.3,
+    "v2": null,
+    "zone_tags": [
+      "plains",
+      "negative_field"
+    ]
+  },
+  {
+    "density_factor": 0.4,
+    "growth_cost": 0.008,
+    "id": "shao_hou_man",
+    "item_id": "shao_hou_man",
+    "max_age_ticks": 9000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.4,
+    "v2": null,
+    "zone_tags": [
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "shi_ling_xian",
+    "item_id": "shi_ling_xian",
+    "max_age_ticks": 1200,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "spread_by_crawl",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": [
+      "negative_field"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "shi_mai_gen",
+    "item_id": "shi_mai_gen",
+    "max_age_ticks": 25000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": [
+      "negative_field"
+    ]
+  },
+  {
+    "density_factor": 20.0,
+    "growth_cost": 0.002,
+    "id": "spirit_grass",
+    "item_id": "spirit_grass",
+    "max_age_ticks": 4000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.2,
+    "v2": null,
+    "zone_tags": [
+      "plains"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "tian_nu_jiao",
+    "item_id": "tian_nu_jiao",
+    "max_age_ticks": 1200,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.002,
+    "id": "wu_yan_guo",
+    "item_id": "wu_yan_guo",
+    "max_age_ticks": 8000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.25,
+    "v2": null,
+    "zone_tags": [
+      "mountain"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.004,
+    "id": "xuan_gen_wei",
+    "item_id": "xuan_gen_wei",
+    "max_age_ticks": 11000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "vine",
+      "env_locks": [
+        {
+          "sky_island_mask": {
+            "min": 0.2,
+            "surface": "bottom"
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "DunQiJia",
+            "wound": "laceration"
+          }
+        }
+      ],
+      "icon_prompt": "hanging green root vine with crystal tips, floating island underside herb icon",
+      "model_overlay": "none",
+      "survival_mode": "pressure_differential",
+      "tint_rgb": 6344832,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.3,
+    "growth_cost": 0.004,
+    "id": "xuan_rong_tai",
+    "item_id": "xuan_rong_tai",
+    "max_age_ticks": 12000,
+    "regen_ticks": 7200,
+    "restore_ratio": 0.8,
+    "spawn_mode": "static_point",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "moss_carpet",
+      "env_locks": [
+        {
+          "underground_tier": {
+            "tier": 2
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "GuaDao",
+            "wound": "abrasion"
+          }
+        }
+      ],
+      "icon_prompt": "black velvet moss with faint silver glow, abyss middle-tier herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "thermal_convection",
+      "tint_rgb": 1052693,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": [
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.006,
+    "id": "xue_po_lian",
+    "item_id": "xue_po_lian",
+    "max_age_ticks": 16000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "lily_of_the_valley",
+      "env_locks": [
+        "snow_surface",
+        {
+          "qi_vein_flow": {
+            "min": 0.3
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "BingJiaShouTao",
+            "wound": "laceration"
+          }
+        }
+      ],
+      "icon_prompt": "snow-white lotus with frost-blue rim, high snowline herb icon",
+      "model_overlay": "none",
+      "survival_mode": "spirit_crystallize",
+      "tint_rgb": 15792383,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.5,
+    "growth_cost": 0.008,
+    "id": "xue_se_mai_cao",
+    "item_id": "xue_se_mai_cao",
+    "max_age_ticks": 10000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "tall_grass",
+      "env_locks": [
+        {
+          "ruin_density": {
+            "min": 0.2
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.4
+          }
+        },
+        {
+          "wound_on_bare_hand": {
+            "required_tool": "CaoLian",
+            "wound": "laceration"
+          }
+        }
+      ],
+      "icon_prompt": "two-phase vein grass, red day leaf and blue-green night leaf, toxic battlefield herb icon",
+      "model_overlay": "dual_phase",
+      "survival_mode": "dual_metabolism",
+      "tint_rgb": 12595232,
+      "tint_rgb_secondary": 2117696
+    },
+    "zone_tags": [
+      "blood_valley"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "yang_jing_tai",
+    "item_id": "yang_jing_tai",
+    "max_age_ticks": 15000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.2,
+    "growth_cost": 0.01,
+    "id": "ye_ku_teng",
+    "item_id": "ye_ku_teng",
+    "max_age_ticks": 12000,
+    "regen_ticks": 9000,
+    "restore_ratio": 0.8,
+    "spawn_mode": "static_point",
+    "survive_threshold": 0.5,
+    "v2": null,
+    "zone_tags": [
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 2.5,
+    "growth_cost": 0.005,
+    "id": "ying_yuan_gu",
+    "item_id": "ying_yuan_gu",
+    "max_age_ticks": 10000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "red_mushroom",
+      "env_locks": [
+        {
+          "underground_tier": {
+            "tier": 1
+          }
+        },
+        {
+          "adjacent_light_block": {
+            "radius": 2
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.3
+          }
+        },
+        {
+          "attracts_mobs": {
+            "max_count": 2,
+            "min_count": 1,
+            "mob_kind": "mimic_spider"
+          }
+        }
+      ],
+      "icon_prompt": "warm orange glowing abyss mushroom, emissive cave herb icon",
+      "model_overlay": "emissive",
+      "survival_mode": "photo_luminance",
+      "tint_rgb": 16752704,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": [
+      "cave"
+    ]
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.008,
+    "id": "yuan_ni_hong_yu",
+    "item_id": "yuan_ni_hong_yu",
+    "max_age_ticks": 18000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "large_fern",
+      "env_locks": [
+        {
+          "underground_tier": {
+            "tier": 3
+          }
+        },
+        {
+          "adjacent_decoration": {
+            "kind": "yuan_ni_ebony",
+            "radius": 5
+          }
+        },
+        {
+          "qi_vein_flow": {
+            "min": 0.5
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.5
+          }
+        }
+      ],
+      "icon_prompt": "red jade fern under black abyss mud tree, precious herb icon",
+      "model_overlay": "none",
+      "survival_mode": "pressure_differential",
+      "tint_rgb": 12591168,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 1.0,
+    "growth_cost": 0.003,
+    "id": "yun_ding_lan",
+    "item_id": "yun_ding_lan",
+    "max_age_ticks": 9000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": -1.0,
+    "v2": {
+      "base_mesh_ref": "lily_of_the_valley",
+      "env_locks": [
+        {
+          "sky_island_mask": {
+            "min": 0.2,
+            "surface": "top"
+          }
+        }
+      ],
+      "harvest_hazards": [
+        {
+          "dispersal_on_fail": {
+            "dispersal_chance": 0.7
+          }
+        }
+      ],
+      "icon_prompt": "silver-white orchid from floating cloud peak, light airy herb icon",
+      "model_overlay": "none",
+      "survival_mode": "qi_absorb",
+      "tint_rgb": 15267071,
+      "tint_rgb_secondary": null
+    },
+    "zone_tags": []
+  },
+  {
+    "density_factor": 0.6,
+    "growth_cost": 0.005,
+    "id": "zhen_jie_zi",
+    "item_id": "zhen_jie_zi",
+    "max_age_ticks": 8000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.8,
+    "spawn_mode": "zone_refresh",
+    "survive_threshold": 0.3,
+    "v2": null,
+    "zone_tags": [
+      "mountain",
+      "marsh"
+    ]
+  },
+  {
+    "density_factor": 0.0,
+    "growth_cost": 0.0,
+    "id": "zhong_yan_teng",
+    "item_id": "zhong_yan_teng",
+    "max_age_ticks": 30000,
+    "regen_ticks": 0,
+    "restore_ratio": 0.0,
+    "spawn_mode": "event_triggered",
+    "survive_threshold": -1.0,
+    "v2": null,
+    "zone_tags": [
+      "negative_field"
+    ]
+  }
+]

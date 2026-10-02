@@ -2,7 +2,13 @@ use serde::{Deserialize, Serialize};
 
 // ─── 常量 ───────────────────────────────────────────────
 
-pub const SPIRIT_QI_TOTAL: f64 = 100.0;
+/// 小规模守恒回归测试使用的夹具，不是生产全服总量。
+///
+/// 生产总量只有 `qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL` 这一份默认常量，
+/// 起服后再由 `WorldQiBudget` 注入；测试保留 100.0 只是避免把每个局部行为夹具
+/// 的成本和容量一起放大。
+#[cfg(test)]
+pub const TEST_QI_FIXTURE_TOTAL: f64 = 100.0;
 pub const INTENSITY_MIN: f64 = 0.0;
 pub const INTENSITY_MAX: f64 = 1.0;
 pub const COOLDOWN_SAME_TARGET_MS: u64 = 600_000;
@@ -66,7 +72,6 @@ pub enum NarrationKind {
     DeathInsight,
     NicheIntrusion,
     NicheIntrusionByNpc,
-    NpcFarmPressure,
     ScatteredCultivator,
     PoliticalJianghu,
     // bug-hunt-1: agent 端 TypeBox（agent/packages/schema/src/common.ts:81-87）有这 6 个

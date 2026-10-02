@@ -22,7 +22,6 @@ public final class BongEntityRenderBootstrap {
         new RendererBinding(BongEntityModelKind.FORGE_STATION, ForgeStationRenderer.class, ForgeStationRenderer::new),
         new RendererBinding(BongEntityModelKind.ALCHEMY_FURNACE, AlchemyFurnaceRenderer.class, AlchemyFurnaceRenderer::new),
         new RendererBinding(BongEntityModelKind.FORMATION_CORE, FormationCoreRenderer.class, FormationCoreRenderer::new),
-        new RendererBinding(BongEntityModelKind.LINGTIAN_PLOT, LingtianPlotRenderer.class, LingtianPlotRenderer::new),
         new RendererBinding(BongEntityModelKind.DRY_CORPSE, DryCorpseRenderer.class, DryCorpseRenderer::new),
         new RendererBinding(BongEntityModelKind.BONE_SKELETON, BoneSkeletonRenderer.class, BoneSkeletonRenderer::new),
         new RendererBinding(BongEntityModelKind.STORAGE_POUCH, StoragePouchRenderer.class, StoragePouchRenderer::new),
@@ -54,7 +53,6 @@ public final class BongEntityRenderBootstrap {
     private BongEntityRenderBootstrap() {}
 
     public static void register() {
-        LingtianPlotBlock.register();
         BongEntityRegistry.register();
         registerBindings(BASE_BINDINGS);
     }

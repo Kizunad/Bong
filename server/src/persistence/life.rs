@@ -514,11 +514,6 @@ pub(super) fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::DuoShePerformed { .. } => "duoshe_performed",
         BiographyEntry::PossessedBy { .. } => "possessed_by",
         BiographyEntry::AlchemyAttempt { .. } => "alchemy_attempt",
-        BiographyEntry::PlotHarvestedByOther { .. } => "plot_harvested_by_other",
-        BiographyEntry::PlotHarvestedFromOther { .. } => "plot_harvested_from_other",
-        BiographyEntry::PlotQiDrainedByOther { .. } => "plot_qi_drained_by_other",
-        BiographyEntry::PlotQiDrainedFromOther { .. } => "plot_qi_drained_from_other",
-        BiographyEntry::PlotDestroyedByOther { .. } => "plot_destroyed_by_other",
         BiographyEntry::TribulationIntercepted { .. } => "tribulation_intercepted",
         BiographyEntry::TribulationFled { .. } => "tribulation_fled",
         BiographyEntry::HeartDemonRecord { .. } => "heart_demon_record",
@@ -605,11 +600,6 @@ pub(super) fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::DuoShePerformed { tick, .. }
         | BiographyEntry::PossessedBy { tick, .. }
         | BiographyEntry::AlchemyAttempt { tick, .. }
-        | BiographyEntry::PlotHarvestedByOther { tick, .. }
-        | BiographyEntry::PlotHarvestedFromOther { tick, .. }
-        | BiographyEntry::PlotQiDrainedByOther { tick, .. }
-        | BiographyEntry::PlotQiDrainedFromOther { tick, .. }
-        | BiographyEntry::PlotDestroyedByOther { tick, .. }
         | BiographyEntry::TribulationIntercepted { tick, .. }
         | BiographyEntry::TribulationFled { tick, .. }
         | BiographyEntry::HeartDemonRecord { tick, .. }

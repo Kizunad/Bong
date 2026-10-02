@@ -83,7 +83,7 @@ impl DecorationManifest {
         self.by_name.get(name)
     }
 
-    fn matches_global_id(&self, lock: DecorationLock, global_id: u8) -> bool {
+    fn matches_global_id(&self, lock: &DecorationLock, global_id: u8) -> bool {
         let Some(name) = self.name_by_global_id.get(&global_id) else {
             return false;
         };
@@ -116,11 +116,11 @@ pub fn check_env_locks(
     let manifest = DecorationManifest::from_terrain_provider(terrain);
     spec.env_locks
         .iter()
-        .all(|lock| check_env_lock(*lock, world_x, world_z, terrain, zone, &manifest))
+        .all(|lock| check_env_lock(lock, world_x, world_z, terrain, zone, &manifest))
 }
 
 pub fn check_env_lock(
-    lock: EnvLock,
+    lock: &EnvLock,
     world_x: i32,
     world_z: i32,
     terrain: &impl EnvLayerSampler,
@@ -129,19 +129,19 @@ pub fn check_env_lock(
 ) -> bool {
     match lock {
         EnvLock::NegPressure { min } => {
-            sample_at_least(terrain, world_x, world_z, "neg_pressure", min)
+            sample_at_least(terrain, world_x, world_z, "neg_pressure", *min)
         }
         EnvLock::QiVeinFlow { min } => {
-            sample_at_least(terrain, world_x, world_z, "qi_vein_flow", min)
+            sample_at_least(terrain, world_x, world_z, "qi_vein_flow", *min)
         }
         EnvLock::FractureMask { min } => {
-            sample_at_least(terrain, world_x, world_z, "fracture_mask", min)
+            sample_at_least(terrain, world_x, world_z, "fracture_mask", *min)
         }
         EnvLock::RuinDensity { min } => {
-            sample_at_least(terrain, world_x, world_z, "ruin_density", min)
+            sample_at_least(terrain, world_x, world_z, "ruin_density", *min)
         }
         EnvLock::SkyIslandMask { min, surface } => {
-            if !sample_at_least(terrain, world_x, world_z, "sky_island_mask", min) {
+            if !sample_at_least(terrain, world_x, world_z, "sky_island_mask", *min) {
                 return false;
             }
             let Some((base_y, thickness)) = terrain.env_sky_island(world_x, world_z) else {
@@ -154,16 +154,16 @@ pub fn check_env_lock(
         }
         EnvLock::UndergroundTier { tier } => terrain
             .env_sample_layer(world_x, world_z, "underground_tier")
-            .is_some_and(|actual| actual.round() as u8 == tier),
+            .is_some_and(|actual| actual.round() as u8 == *tier),
         EnvLock::PortalRiftActive => zone
             .active_events
             .iter()
             .any(|event| event == "portal_rift" || event == "tsy_entry"),
         EnvLock::AdjacentDecoration { kind, radius } => {
-            adjacent_decoration(terrain, manifest, world_x, world_z, kind, radius)
+            adjacent_decoration(terrain, manifest, world_x, world_z, kind, *radius)
         }
         EnvLock::AdjacentLightBlock { radius } => {
-            adjacent_light_block(terrain, manifest, world_x, world_z, radius)
+            adjacent_light_block(terrain, manifest, world_x, world_z, *radius)
         }
         EnvLock::SnowSurface => {
             terrain.env_query_surface_y(world_x, world_z)
@@ -196,7 +196,7 @@ fn adjacent_decoration(
     manifest: &DecorationManifest,
     world_x: i32,
     world_z: i32,
-    lock: DecorationLock,
+    lock: &DecorationLock,
     radius: u8,
 ) -> bool {
     any_column_in_radius(world_x, world_z, radius, |x, z| {
@@ -377,7 +377,7 @@ mod tests {
         let terrain = mock_terrain("neg_pressure", 0.0);
         let manifest = DecorationManifest::default();
         assert!(check_env_lock(
-            EnvLock::PortalRiftActive,
+            &EnvLock::PortalRiftActive,
             0,
             0,
             &terrain,
@@ -385,7 +385,7 @@ mod tests {
             &manifest
         ));
         assert!(!check_env_lock(
-            EnvLock::PortalRiftActive,
+            &EnvLock::PortalRiftActive,
             0,
             0,
             &terrain,
@@ -407,7 +407,7 @@ mod tests {
     fn neg_pressure_lock_reads_strict_layer_value() {
         let manifest = DecorationManifest::default();
         assert!(check_env_lock(
-            EnvLock::NegPressure { min: 0.3 },
+            &EnvLock::NegPressure { min: 0.3 },
             0,
             0,
             &mock_terrain("neg_pressure", 0.31),
@@ -415,7 +415,7 @@ mod tests {
             &manifest
         ));
         assert!(!check_env_lock(
-            EnvLock::NegPressure { min: 0.3 },
+            &EnvLock::NegPressure { min: 0.3 },
             0,
             0,
             &mock_terrain("neg_pressure", 0.29),
@@ -435,7 +435,7 @@ mod tests {
             surface_by_pos: StdHashMap::new(),
         };
         assert!(check_env_lock(
-            EnvLock::AdjacentLightBlock { radius: 2 },
+            &EnvLock::AdjacentLightBlock { radius: 2 },
             0,
             0,
             &terrain,
@@ -452,8 +452,8 @@ mod tests {
             manifest_with_decorations(&[(7, "array_disc_remnant", vec![BlockState::ANDESITE])]);
 
         assert!(check_env_lock(
-            EnvLock::AdjacentDecoration {
-                kind: DecorationLock::One("array_disc_remnant"),
+            &EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant".into()),
                 radius: 2,
             },
             0,
@@ -463,8 +463,8 @@ mod tests {
             &manifest
         ));
         assert!(!check_env_lock(
-            EnvLock::AdjacentDecoration {
-                kind: DecorationLock::One("array_disc_remnant"),
+            &EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant".into()),
                 radius: 1,
             },
             0,
@@ -482,8 +482,8 @@ mod tests {
             manifest_with_decorations(&[(7, "array_disc_remnant", vec![BlockState::ANDESITE])]);
 
         assert!(!check_env_lock(
-            EnvLock::AdjacentDecoration {
-                kind: DecorationLock::One("array_disc_remnant"),
+            &EnvLock::AdjacentDecoration {
+                kind: DecorationLock::One("array_disc_remnant".into()),
                 radius: 8,
             },
             0,
@@ -502,7 +502,7 @@ mod tests {
             .insert((0, 2), BlockState::SHROOMLIGHT);
 
         assert!(check_env_lock(
-            EnvLock::AdjacentLightBlock { radius: 2 },
+            &EnvLock::AdjacentLightBlock { radius: 2 },
             0,
             0,
             &terrain,
@@ -510,7 +510,7 @@ mod tests {
             &DecorationManifest::default()
         ));
         assert!(!check_env_lock(
-            EnvLock::AdjacentLightBlock { radius: 1 },
+            &EnvLock::AdjacentLightBlock { radius: 1 },
             0,
             0,
             &terrain,
@@ -527,7 +527,7 @@ mod tests {
             manifest_with_decorations(&[(9, "glowcap_cluster", vec![BlockState::SHROOMLIGHT])]);
 
         assert!(check_env_lock(
-            EnvLock::AdjacentLightBlock { radius: 1 },
+            &EnvLock::AdjacentLightBlock { radius: 1 },
             0,
             0,
             &terrain,

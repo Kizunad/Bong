@@ -9,5 +9,6 @@
       "type": "string"
     }
   ],
-  "x-bong-typebox-source-sha256": "87acc5da30fffc872a2c604bf0e4cd3447792edf99c8e8acb36e8fc4909c8959"
+  "x-bong-typebox-source-sha256": "87acc5da30fffc872a2c604bf0e4cd3447792edf99c8e8acb36e8fc4909c8959",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

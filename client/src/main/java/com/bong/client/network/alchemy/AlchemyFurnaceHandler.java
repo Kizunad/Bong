@@ -30,7 +30,8 @@ public final class AlchemyFurnaceHandler implements ServerDataHandler {
                     && p.get("pos_z").isJsonPrimitive() && p.get("pos_z").getAsJsonPrimitive().isNumber()) {
                 pos = new BlockPos(p.get("pos_x").getAsInt(), p.get("pos_y").getAsInt(), p.get("pos_z").getAsInt());
             }
-            AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession));
+            var next = new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession);
+            AlchemyFurnaceStore.replace(next);
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied alchemy_furnace snapshot to AlchemyFurnaceStore (tier=" + tier + ")");
         } catch (RuntimeException e) {

@@ -1,6 +1,7 @@
 package com.bong.client.network.alchemy;
 
 import com.bong.client.alchemy.state.AlchemySessionStore;
+import com.bong.client.alchemy.AlchemyIncenseTimer;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
@@ -36,12 +37,21 @@ public final class AlchemySessionHandler implements ServerDataHandler {
                 for (JsonElement el : stagesArr) {
                     if (!el.isJsonObject()) continue;
                     JsonObject s = el.getAsJsonObject();
+                    var ingredients = new ArrayList<AlchemySessionStore.IngredientHint>();
+                    if (s.has("ingredients") && s.get("ingredients").isJsonArray()) {
+                        for (var value : s.getAsJsonArray("ingredients")) {
+                            var ingredient = value.getAsJsonObject();
+                            ingredients.add(new AlchemySessionStore.IngredientHint(
+                                readString(ingredient, "material", ""), Math.max(0, readInt(ingredient, "required", 0)),
+                                Math.max(0, readInt(ingredient, "inserted", 0))));
+                        }
+                    }
                     stages.add(new AlchemySessionStore.StageHint(
                         readInt(s, "at_tick", 0),
                         readInt(s, "window", 0),
                         readString(s, "summary", ""),
                         s.has("completed") && s.get("completed").getAsBoolean(),
-                        s.has("missed") && s.get("missed").getAsBoolean()
+                        s.has("missed") && s.get("missed").getAsBoolean(), ingredients
                     ));
                 }
             }
@@ -54,7 +64,7 @@ public final class AlchemySessionHandler implements ServerDataHandler {
             boolean active = requestedActive && hasUsableActiveGuidance(recipeId, target);
             AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
                 recipeId, active, elapsed, target, tempCur, tempTgt, tempBand, qiInj, qiTgt,
-                status, List.copyOf(stages), List.copyOf(log)));
+                status, List.copyOf(stages), List.copyOf(log), readIncense(p)));
             String compatibilityNote = requestedActive && !active
                 ? ", downgraded incomplete active guidance"
                 : "";
@@ -65,6 +75,22 @@ public final class AlchemySessionHandler implements ServerDataHandler {
             return ServerDataDispatch.noOp(envelope.type(),
                 "alchemy_session payload malformed: " + e.getMessage());
         }
+    }
+
+    private static AlchemyIncenseTimer.Snapshot readIncense(JsonObject payload) {
+        if (!payload.has("incense") || !payload.get("incense").isJsonObject()) {
+            return AlchemyIncenseTimer.Snapshot.empty();
+        }
+        var incense = payload.getAsJsonObject("incense");
+        long remaining = Math.max(0, readInt(incense, "remaining_ticks", 0));
+        int duration = Math.max(1, readInt(incense, "duration_ticks", 1));
+        String color = readString(incense, "smoke_color", "#9DAF9E");
+        if (!color.matches("#[0-9a-fA-F]{6}")) color = "#9DAF9E";
+        return new AlchemyIncenseTimer.Snapshot(
+            remaining > 0 ? AlchemyIncenseTimer.State.BURNING : AlchemyIncenseTimer.State.SPENT,
+            Math.min(remaining, duration) * 50L, (int) ((duration + 19L) / 20),
+            readString(incense, "kind", ""), readDouble(incense, "temp_band_scale", 1),
+            readDouble(incense, "qi_cost_scale", 1), color);
     }
 
     private static String readString(JsonObject obj, String key, String fallback) {

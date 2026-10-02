@@ -200,14 +200,14 @@ mod tests {
     use super::*;
     use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
     use crate::qi_physics::WorldQiBudget;
-    use crate::schema::common::SPIRIT_QI_TOTAL;
+    use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
     use crate::world::dimension::DimensionKind;
     use valence::prelude::App;
 
     fn test_app() -> App {
         let mut app = App::new();
         app.insert_resource(WorldQiAccount::default());
-        app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<QiTransfer>();
         app
@@ -218,7 +218,7 @@ mod tests {
             .spawn((
                 Cultivation {
                     qi_current: qi,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 LifeRecord::new(crate::player::state::canonical_player_id("GenericCost")),
@@ -233,7 +233,7 @@ mod tests {
         let mut app = test_app();
         let entity = caster(&mut app, 10.0);
         let before = summarize_world_qi(app.world_mut());
-        assert_eq!(before.budget_initial_total, SPIRIT_QI_TOTAL);
+        assert_eq!(before.budget_initial_total, TEST_QI_FIXTURE_TOTAL);
 
         assert!(spend_qi_conserved(
             app.world_mut(),
@@ -243,7 +243,7 @@ mod tests {
         ));
 
         let after = summarize_world_qi(app.world_mut());
-        assert_eq!(after.budget_initial_total, SPIRIT_QI_TOTAL);
+        assert_eq!(after.budget_initial_total, TEST_QI_FIXTURE_TOTAL);
         assert_conservation(&before, &after, 0.0)
             .expect("generic cast qi must move through the ledger without world loss");
         let transfers = app

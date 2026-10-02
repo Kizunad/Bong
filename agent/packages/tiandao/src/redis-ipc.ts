@@ -22,7 +22,6 @@ import {
   validateTsyExitEventV1Contract,
   validateTsyZoneActivatedV1Contract,
   validateWeatherEventUpdateV1Contract,
-  validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 import type {
   AgentWorldModelEnvelopeV1,
@@ -49,7 +48,6 @@ import type {
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
-  ZonePressureCrossedV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
@@ -71,7 +69,6 @@ const {
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   RAT_PHASE_EVENT,
   WEATHER_EVENT_UPDATE,
@@ -162,7 +159,6 @@ export interface CrossSystemRuntimeEventV1 {
 const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   AGING,
   LIFESPAN_EVENT,
@@ -208,6 +204,24 @@ redis.call('rename', ARGV[1], drainKey)
 local result = redis.call('lrange', drainKey, 0, -1)
 redis.call('del', drainKey)
 return result
+`;
+
+// Selective consumption keeps other consumers' chat messages in the shared list.
+// The scan and removal run in one Redis script, so a second consumer cannot take
+// the same matching message between the two operations.
+const TAKE_MATCHING_PLAYER_CHAT_SCRIPT = `
+local items = redis.call('lrange', KEYS[1], 0, -1)
+for _, item in ipairs(items) do
+  local ok, message = pcall(cjson.decode, item)
+  if ok and type(message) == 'table'
+      and message.player == ARGV[1]
+      and type(message.raw) == 'string'
+      and string.find(message.raw, ARGV[2], 1, true) then
+    redis.call('lrem', KEYS[1], 1, item)
+    return item
+  end
+end
+return false
 `;
 
 interface MultiExecResult<T = unknown> {
@@ -266,7 +280,6 @@ export class RedisIpc {
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
-  private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
   private pendingTsyRuntimeOverflowDropped = 0;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
@@ -281,7 +294,6 @@ export class RedisIpc {
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private faunaEcologyCallbacks: Array<(event: FaunaEcologySnapshotV1) => void> = [];
-  private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -316,11 +328,6 @@ export class RedisIpc {
 
     if (channel === FAUNA_ECOLOGY) {
       this.handleFaunaEcologyMessage(message);
-      return;
-    }
-
-    if (channel === ZONE_PRESSURE_CROSSED) {
-      this.handleZonePressureCrossedMessage(message);
       return;
     }
 
@@ -617,32 +624,6 @@ export class RedisIpc {
         this.latestBotanyEcologyEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
     }
     for (const cb of this.botanyEcologyCallbacks) {
-      cb(event);
-    }
-  }
-
-  private handleZonePressureCrossedMessage(message: string): void {
-    try {
-      const data = JSON.parse(message) as unknown;
-      const result = validateZonePressureCrossedV1Contract(data);
-      if (!result.ok) {
-        console.warn("[redis-ipc] invalid zone pressure crossed event:", result.errors.join("; "));
-        return;
-      }
-      this.recordZonePressureCrossedEvent(data as ZonePressureCrossedV1);
-      this.recordCrossSystemEvent({ channel: ZONE_PRESSURE_CROSSED, payload: data });
-    } catch (e) {
-      console.warn("[redis-ipc] failed to parse zone pressure crossed event:", e);
-    }
-  }
-
-  private recordZonePressureCrossedEvent(event: ZonePressureCrossedV1): void {
-    this.latestZonePressureCrossedEvents.push(event);
-    if (this.latestZonePressureCrossedEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
-      this.latestZonePressureCrossedEvents =
-        this.latestZonePressureCrossedEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
-    }
-    for (const cb of this.zonePressureCrossedCallbacks) {
       cb(event);
     }
   }
@@ -964,16 +945,6 @@ export class RedisIpc {
     this.faunaEcologyCallbacks.push(cb);
   }
 
-  drainZonePressureCrossedEvents(): ZonePressureCrossedV1[] {
-    const events = [...this.latestZonePressureCrossedEvents];
-    this.latestZonePressureCrossedEvents = [];
-    return events;
-  }
-
-  onZonePressureCrossed(cb: (event: ZonePressureCrossedV1) => void): void {
-    this.zonePressureCrossedCallbacks.push(cb);
-  }
-
   async publishCommands(request: CommandPublishRequest): Promise<void> {
     const { source, commands, metadata } = request;
     if (commands.length === 0) return;
@@ -1056,6 +1027,30 @@ export class RedisIpc {
       return [];
     }
     return parseChatMessages(raw, logger);
+  }
+
+  async takeMatchingPlayerChat(options: {
+    player: string;
+    token: string;
+    logger?: Pick<typeof console, "warn">;
+  }): Promise<ChatMessageV1 | undefined> {
+    if (!this.pub.eval || options.player.length === 0 || options.token.length === 0) {
+      return undefined;
+    }
+
+    const logger = options.logger ?? console;
+    const result = await this.pub.eval(
+      TAKE_MATCHING_PLAYER_CHAT_SCRIPT,
+      1,
+      PLAYER_CHAT,
+      options.player,
+      options.token,
+    );
+    if (typeof result !== "string") {
+      return undefined;
+    }
+
+    return parseChatMessages([result], logger)[0];
   }
 
   async drainPlayerChatRaw(): Promise<string[]> {

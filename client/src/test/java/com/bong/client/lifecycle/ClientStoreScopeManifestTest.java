@@ -43,14 +43,14 @@ class ClientStoreScopeManifestTest {
     @Test
     void p0BaselineKeepsTheVerifiedThreeWayClassification() {
         assertEquals(
-            106,
+            105,
             ClientStoreScopeManifest.sessionScopedStores().size(),
-            "P0 验真基线应有 106 个 session-scoped Store；数量变化时必须连同逐 FQCN source 对拍一起显式复核"
+            "P0 验真基线应有 105 个 session-scoped Store；数量变化时必须连同逐 FQCN source 对拍一起显式复核"
         );
         assertEquals(
-            109,
+            108,
             ClientStoreScopeManifest.allClassifiedStores().size(),
-            "当前应有 109 个业务 *Store.java（106 session + 2 persistent + 1 constant）"
+            "当前应有 108 个业务 *Store.java（105 session + 2 persistent + 1 constant）"
         );
     }
 

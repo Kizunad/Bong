@@ -61,6 +61,7 @@ public class ServerDataRouterTest {
             "knockback_sync",
             // Alchemy handlers (plan-alchemy-v1 §4).
             "alchemy_furnace",
+            "alchemy_world",
             "alchemy_session",
             "alchemy_outcome_forecast",
             "alchemy_recipe_book",
@@ -120,9 +121,7 @@ public class ServerDataRouterTest {
             "search_progress",
             "search_completed",
             "search_aborted",
-            // plan-lingtian-v1 §4 active session 推送。
-            "lingtian_session",
-            // plan-lingtian-process-v1 P3 — 加工进度 / freshness UI tag 推送。
+            // 加工进度 / freshness UI tag 推送。
             "processing_session",
             "freshness_update",
             // plan-yidao-v1 — 医者 NPC AI / 医道 HUD 状态推送。

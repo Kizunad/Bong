@@ -3,7 +3,6 @@ package com.bong.client.forge;
 import com.bong.client.forge.screen.ConsecrationPanelComponent;
 import com.bong.client.forge.screen.InscriptionPanelComponent;
 import com.bong.client.forge.state.ForgeOutcomeStore;
-import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.ui.contract.UiStateSource;
 import com.bong.client.ui.intent.UiIntentResult;
 import com.bong.client.ui.intent.UiIntentSink;
@@ -30,6 +29,8 @@ public final class ForgeWindows {
     private ForgeViewModel model;
     private ForgeViewModel pendingSnapshot;
     private long pendingUntil;
+    private ForgeViewModel closingSnapshot;
+    private long closingUntil;
     private String feedback = "";
     private boolean injecting;
     private ForgeOutcomeStore.Snapshot outcome = ForgeOutcomeStore.Snapshot.empty();
@@ -72,6 +73,16 @@ public final class ForgeWindows {
 
     public void refresh() {
         var next = source.snapshot();
+        if (closingSnapshot != null) {
+            boolean refundObserved = !next.preparedMaterials().equals(closingSnapshot.preparedMaterials())
+                || next.inventoryRevision() != closingSnapshot.inventoryRevision();
+            if (refundObserved) {
+                closingSnapshot = null;
+                feedback = "";
+            } else if (clock.getAsLong() >= closingUntil && !feedback.contains("超时")) {
+                feedback = "返还确认超时，请重新连接后核对工位材料。";
+            }
+        }
         // 制坯失败可以直接回 outcome 而不创建 session；只归属本窗口发出的起炉请求。
         boolean outcomeChanged = !next.outcome().equals(model.outcome());
         if (outcomeChanged && pendingSnapshot != null
@@ -97,8 +108,9 @@ public final class ForgeWindows {
 
     public ForgeViewModel model() { return model; }
     public boolean pending() { return pendingSnapshot != null; }
+    public boolean closingPending() { return closingSnapshot != null; }
     public boolean available() {
-        return window != null && !window.closed() && station.equals(model.station().pos())
+        return !closingPending() && window != null && !window.closed() && station.equals(model.station().pos())
             && reachable.test(station) && model.station().integrity() > 0;
     }
     public String feedback() { return feedback; }
@@ -118,11 +130,19 @@ public final class ForgeWindows {
     public void close(UiWindowManager.WindowState expected) {
         if (window != expected || window == null || window.closed()) return;
         refresh();
+        ForgeViewModel refundBaseline = model;
+        UiIntentResult refundResult = UiIntentResult.rejected("没有需要返还的材料");
         if (!model.session().active() && model.blueprint() != null
             && (!model.preparedMaterials().isEmpty() || pendingSnapshot != null)) {
-            sink.dispatch(new ForgeIntent.Material(station, model.blueprint().id(), null, true, model.inventoryRevision()));
+            refundResult = sink.dispatch(new ForgeIntent.Material(
+                station, model.blueprint().id(), null, true, model.inventoryRevision()));
         }
         manager.close(window.key());
+        if (refundResult.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+            closingSnapshot = refundBaseline;
+            closingUntil = clock.getAsLong() + 5_000;
+            feedback = "等待材料返还确认…";
+        }
     }
 
     public void beginInjection() {
@@ -155,7 +175,7 @@ public final class ForgeWindows {
         }
         if (materials.isEmpty()) return UiIntentResult.rejected("所选材料已不可用");
         return send(new ForgeIntent.Start(station, model.blueprint().id(), materials.entrySet().stream()
-            .map(entry -> new ClientRequestProtocol.ForgeMaterial(entry.getKey(), entry.getValue())).toList()));
+            .map(entry -> new ForgeIntent.MaterialAmount(entry.getKey(), entry.getValue())).toList()));
     }
 
     public UiIntentResult turnPage(int delta) {
@@ -165,7 +185,7 @@ public final class ForgeWindows {
     }
 
     public UiIntentResult advance() { return act("", new ForgeIntent.Advance(model.session().sessionId())); }
-    public UiIntentResult hit(ClientRequestProtocol.TemperBeat beat) {
+    public UiIntentResult hit(ForgeIntent.TemperBeat beat) {
         return act("tempering", new ForgeIntent.Hit(model.session().sessionId(), beat));
     }
     public UiIntentResult inscribe(long itemId) {

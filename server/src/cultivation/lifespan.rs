@@ -981,7 +981,7 @@ mod tests {
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiAccountId, QiTransfer, WorldQiAccount};
     use crate::qi_physics::QiTransferReason;
-    use crate::schema::common::SPIRIT_QI_TOTAL;
+    use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -1308,8 +1308,8 @@ mod tests {
                 lifespan,
                 LifespanExtensionLedger::default(),
                 Cultivation {
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 LifeRecord::new("offline:Azure"),
@@ -1416,8 +1416,8 @@ mod tests {
                 },
                 Cultivation {
                     realm: Realm::Induce,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 PlayerState::default(),
@@ -1427,7 +1427,7 @@ mod tests {
             ))
             .id();
         let before = summarize_world_qi(app.world_mut());
-        assert_eq!(before.total_observed(), SPIRIT_QI_TOTAL);
+        assert_eq!(before.total_observed(), TEST_QI_FIXTURE_TOTAL);
 
         app.world_mut()
             .resource_mut::<Events<LifespanExtensionIntent>>()
@@ -1440,7 +1440,7 @@ mod tests {
 
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         let pressure = lifespan_extension_cost_pressure(100.0, LifespanCapTable::INDUCE);
-        let expected_qi_max = SPIRIT_QI_TOTAL
+        let expected_qi_max = TEST_QI_FIXTURE_TOTAL
             * (1.0 - 10.0 * LIFESPAN_EXTENSION_PILL_QI_MAX_COST_PER_YEAR * pressure);
         assert!((cultivation.qi_max - expected_qi_max).abs() < 1e-9);
         assert!(
@@ -1454,7 +1454,7 @@ mod tests {
             .resource::<ZoneRegistry>()
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
             .expect("the player's zone should receive released excess qi");
-        let released = SPIRIT_QI_TOTAL - expected_qi_max;
+        let released = TEST_QI_FIXTURE_TOTAL - expected_qi_max;
         assert!((zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - released).abs() < 1e-9);
 
         let transfers = app.world().resource::<Events<QiTransfer>>();
@@ -1495,8 +1495,8 @@ mod tests {
                 },
                 Cultivation {
                     realm: Realm::Induce,
-                    qi_current: SPIRIT_QI_TOTAL,
-                    qi_max: SPIRIT_QI_TOTAL,
+                    qi_current: TEST_QI_FIXTURE_TOTAL,
+                    qi_max: TEST_QI_FIXTURE_TOTAL,
                     ..Default::default()
                 },
                 PlayerState::default(),
@@ -1527,8 +1527,8 @@ mod tests {
         app.update();
 
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
-        assert_eq!(cultivation.qi_max, SPIRIT_QI_TOTAL);
-        assert_eq!(cultivation.qi_current, SPIRIT_QI_TOTAL);
+        assert_eq!(cultivation.qi_max, TEST_QI_FIXTURE_TOTAL);
+        assert_eq!(cultivation.qi_current, TEST_QI_FIXTURE_TOTAL);
         assert_eq!(
             app.world()
                 .entity(entity)

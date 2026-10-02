@@ -501,11 +501,11 @@ mod tests {
     }
 
     #[test]
-    fn outcome_with_default_runtime_pack_without_main_pack_is_not_lost() {
+    fn outcome_with_full_runtime_pack_without_main_pack_is_not_lost() {
         let item_registry = load_item_registry().expect("item registry should load");
         let loadout = load_default_loadout(&item_registry).expect("default loadout should load");
         let mut loadout_allocator = InventoryInstanceIdAllocator::new(3_000);
-        let inventory =
+        let mut inventory =
             instantiate_inventory_from_loadout(&loadout, &mut loadout_allocator, &item_registry)
                 .expect("default loadout should instantiate");
         let runtime_pack_id = inventory
@@ -531,6 +531,23 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
+        // 显式填满背包，兜底契约不能依赖默认赠送物品恰好占满哪些格子。
+        let runtime_pack = inventory
+            .containers
+            .iter_mut()
+            .find(|container| container.id == runtime_pack_id)
+            .unwrap();
+        runtime_pack.items.clear();
+        for row in 0..runtime_pack.rows {
+            for col in 0..runtime_pack.cols {
+                runtime_pack.items.push(PlacedItemState {
+                    row,
+                    col,
+                    instance: filler_instance(loadout_allocator.next_id().unwrap(), "spirit_grass"),
+                });
+            }
+        }
+
         let mut app = app_with_registry(item_registry);
         let caster = app.world_mut().spawn(inventory).id();
 
@@ -551,7 +568,7 @@ mod tests {
             .expect("forged weapon should be granted into some carried container");
         assert_eq!(
             target_container.id, BODY_POCKET_CONTAINER_ID,
-            "默认 `{runtime_pack_id}` 已碎片化到放不下 1x2 forged weapon 时，应落入 body_pocket 兜底而不是丢失"
+            "`{runtime_pack_id}` 已满时，锻造产物应落入 body_pocket 兜底而不是丢失"
         );
         assert!(
             target_container

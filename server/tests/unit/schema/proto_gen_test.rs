@@ -659,7 +659,6 @@ mod tests {
             "death_insight",
             "niche_intrusion",
             "niche_intrusion_by_npc",
-            "npc_farm_pressure",
             "scattered_cultivator",
             "political_jianghu",
         ];
@@ -1088,7 +1087,7 @@ mod tests {
             skill: SkillId::Herbalism as i32,
             amount: 50,
             source: Some(skill_xp_gain::Source::ActionSource(XpGainSourceAction {
-                plan_id: "lingtian".to_string(),
+                plan_id: "botany".to_string(),
                 action: "harvest_auto".to_string(),
             })),
             source_realm_breakthrough: false,
@@ -1101,7 +1100,7 @@ mod tests {
         assert_eq!(decoded.amount, 50);
         match decoded.source {
             Some(skill_xp_gain::Source::ActionSource(a)) => {
-                assert_eq!(a.plan_id, "lingtian", "plan_id 不匹配");
+                assert_eq!(a.plan_id, "botany", "plan_id 不匹配");
                 assert_eq!(a.action, "harvest_auto", "action 不匹配");
             }
             other => panic!("期望 SourceAction，实际 {other:?}"),
@@ -1856,6 +1855,14 @@ mod tests {
 
     fn alchemy_session_roundtrip() {
         let msg = AlchemySession {
+            incense: Some(AlchemyIncense {
+                kind: "incense_clear_mind".into(),
+                remaining_ticks: 239,
+                duration_ticks: 240,
+                temp_band_scale: 1.25,
+                qi_cost_scale: 1.0,
+                smoke_color: "#A8D7C5".into(),
+            }),
             recipe_id: Some("kai_mai_pill_v0".to_string()),
             active: true,
             elapsed_ticks: 80,
@@ -1867,6 +1874,7 @@ mod tests {
             qi_target: 10.0,
             status_label: "heating".to_string(),
             stages: vec![AlchemyStageHint {
+                ingredients: vec![],
                 at_tick: 80,
                 window: 20,
                 summary: "hui_yuan_zhi x1".to_string(),
@@ -1877,6 +1885,10 @@ mod tests {
         };
         let bytes = msg.encode_to_vec();
         let decoded = AlchemySession::decode(bytes.as_slice()).expect("AlchemySession decode 失败");
+        assert_eq!(
+            decoded.incense, msg.incense,
+            "香状态必须随 session 跨协议保留"
+        );
         assert_eq!(decoded.recipe_id.as_deref(), Some("kai_mai_pill_v0"));
         assert!(decoded.active);
         assert_eq!(decoded.elapsed_ticks, 80);
@@ -1887,6 +1899,7 @@ mod tests {
 
     fn alchemy_session_empty_stages_roundtrip() {
         let msg = AlchemySession {
+            incense: None,
             recipe_id: None,
             active: false,
             elapsed_ticks: 0,
@@ -3276,204 +3289,6 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // P2 B1 — 灵田 roundtrip
-    // ═══════════════════════════════════════════════════════════════
-
-    #[test]
-    fn lingtian_session_kind_enum_pin() {
-        let expected = [
-            (LingtianSessionKind::Unspecified, 0),
-            (LingtianSessionKind::Till, 1),
-            (LingtianSessionKind::Renew, 2),
-            (LingtianSessionKind::Planting, 3),
-            (LingtianSessionKind::Harvest, 4),
-            (LingtianSessionKind::Replenish, 5),
-            (LingtianSessionKind::DrainQi, 6),
-        ];
-        for (variant, wire) in expected {
-            assert_eq!(
-                variant as i32, wire,
-                "LingtianSessionKind::{variant:?} wire 值应为 {wire}"
-            );
-        }
-    }
-
-    fn lingtian_session_data_active_roundtrip() {
-        let msg = LingtianSessionData {
-            active: true,
-            kind: LingtianSessionKind::Planting as i32,
-            pos_x: 10,
-            pos_y: 64,
-            pos_z: 20,
-            elapsed_ticks: 30,
-            target_ticks: 100,
-            plant_id: Some("ning_mai_cao".to_string()),
-            source: None,
-            dye_contamination: Some(0.15),
-            dye_contamination_warning: false,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianSessionData::decode(bytes.as_slice())
-            .expect("LingtianSessionData (planting) decode 失败");
-        assert!(decoded.active);
-        assert_eq!(decoded.kind, LingtianSessionKind::Planting as i32);
-        assert_eq!(decoded.pos_x, 10);
-        assert_eq!(decoded.pos_y, 64);
-        assert_eq!(decoded.pos_z, 20);
-        assert_eq!(decoded.plant_id.as_deref(), Some("ning_mai_cao"));
-        assert!(decoded.source.is_none());
-        assert!((decoded.dye_contamination.unwrap() - 0.15).abs() < 1e-6);
-        assert!(!decoded.dye_contamination_warning);
-    }
-
-    fn lingtian_session_data_replenish_roundtrip() {
-        let msg = LingtianSessionData {
-            active: true,
-            kind: LingtianSessionKind::Replenish as i32,
-            pos_x: 0,
-            pos_y: 64,
-            pos_z: 0,
-            elapsed_ticks: 0,
-            target_ticks: 200,
-            plant_id: None,
-            source: Some("bone_coin".to_string()),
-            dye_contamination: None,
-            dye_contamination_warning: false,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianSessionData::decode(bytes.as_slice())
-            .expect("LingtianSessionData (replenish) decode 失败");
-        assert_eq!(decoded.source.as_deref(), Some("bone_coin"));
-        assert!(decoded.plant_id.is_none());
-        assert!(decoded.dye_contamination.is_none());
-    }
-
-    fn lingtian_session_data_inactive_roundtrip() {
-        let msg = LingtianSessionData {
-            active: false,
-            kind: LingtianSessionKind::Till as i32,
-            pos_x: 0,
-            pos_y: 0,
-            pos_z: 0,
-            elapsed_ticks: 0,
-            target_ticks: 0,
-            plant_id: None,
-            source: None,
-            dye_contamination: None,
-            dye_contamination_warning: false,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianSessionData::decode(bytes.as_slice())
-            .expect("LingtianSessionData (inactive) decode 失败");
-        assert!(!decoded.active);
-    }
-
-    fn lingtian_session_dye_contamination_warning_roundtrip() {
-        let msg = LingtianSessionData {
-            active: true,
-            kind: LingtianSessionKind::Harvest as i32,
-            pos_x: 5,
-            pos_y: 65,
-            pos_z: 5,
-            elapsed_ticks: 50,
-            target_ticks: 60,
-            plant_id: Some("ci_she_hao".to_string()),
-            source: None,
-            dye_contamination: Some(0.35),
-            dye_contamination_warning: true,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianSessionData::decode(bytes.as_slice())
-            .expect("LingtianSessionData (dye warning) decode 失败");
-        assert!(decoded.dye_contamination_warning);
-        assert!((decoded.dye_contamination.unwrap() - 0.35).abs() < 1e-6);
-    }
-
-    // ─── 灵田 C2S roundtrip ─────────────────────────────────────
-
-    fn lingtian_start_till_roundtrip() {
-        let msg = LingtianStartTill {
-            x: 10,
-            y: 64,
-            z: 20,
-            hoe_instance_id: 4242,
-            mode: "manual".to_string(),
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded =
-            LingtianStartTill::decode(bytes.as_slice()).expect("LingtianStartTill decode 失败");
-        assert_eq!(decoded.x, 10);
-        assert_eq!(decoded.hoe_instance_id, 4242);
-        assert_eq!(decoded.mode, "manual");
-    }
-
-    fn lingtian_start_renew_roundtrip() {
-        let msg = LingtianStartRenew {
-            x: 10,
-            y: 64,
-            z: 20,
-            hoe_instance_id: 4242,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded =
-            LingtianStartRenew::decode(bytes.as_slice()).expect("LingtianStartRenew decode 失败");
-        assert_eq!(decoded.hoe_instance_id, 4242);
-    }
-
-    fn lingtian_start_planting_roundtrip() {
-        let msg = LingtianStartPlanting {
-            x: 10,
-            y: 64,
-            z: 20,
-            plant_id: "ning_mai_cao".to_string(),
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartPlanting::decode(bytes.as_slice())
-            .expect("LingtianStartPlanting decode 失败");
-        assert_eq!(decoded.plant_id, "ning_mai_cao");
-    }
-
-    fn lingtian_start_harvest_roundtrip() {
-        let msg = LingtianStartHarvest {
-            x: 10,
-            y: 64,
-            z: 20,
-            mode: "auto".to_string(),
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartHarvest::decode(bytes.as_slice())
-            .expect("LingtianStartHarvest decode 失败");
-        assert_eq!(decoded.mode, "auto");
-    }
-
-    fn lingtian_start_replenish_roundtrip() {
-        let msg = LingtianStartReplenish {
-            x: 10,
-            y: 64,
-            z: 20,
-            source: "bone_coin".to_string(),
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartReplenish::decode(bytes.as_slice())
-            .expect("LingtianStartReplenish decode 失败");
-        assert_eq!(decoded.source, "bone_coin");
-    }
-
-    fn lingtian_start_drain_qi_roundtrip() {
-        let msg = LingtianStartDrainQi {
-            x: 10,
-            y: 64,
-            z: 20,
-        };
-        let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartDrainQi::decode(bytes.as_slice())
-            .expect("LingtianStartDrainQi decode 失败");
-        assert_eq!(decoded.x, 10);
-        assert_eq!(decoded.y, 64);
-        assert_eq!(decoded.z, 20);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // P2 B1 — 矿石 C2S roundtrip
     // ═══════════════════════════════════════════════════════════════
 
@@ -3510,6 +3325,7 @@ mod tests {
             (
                 "AlchemySession",
                 server_data_envelope::Payload::AlchemySession(AlchemySession {
+                    incense: None,
                     recipe_id: None,
                     active: false,
                     elapsed_ticks: 0,
@@ -3729,22 +3545,6 @@ mod tests {
                     completed: false,
                 }),
             ),
-            (
-                "LingtianSession",
-                server_data_envelope::Payload::LingtianSession(LingtianSessionData {
-                    active: false,
-                    kind: 0,
-                    pos_x: 0,
-                    pos_y: 0,
-                    pos_z: 0,
-                    elapsed_ticks: 0,
-                    target_ticks: 0,
-                    plant_id: None,
-                    source: None,
-                    dye_contamination: None,
-                    dye_contamination_warning: false,
-                }),
-            ),
         ];
 
         for (name, payload) in variant_payloads {
@@ -3906,60 +3706,6 @@ mod tests {
                 client_request_envelope::Payload::BotanyHarvestRequest(BotanyHarvestRequest {
                     session_id: "s".to_string(),
                     mode: BotanyHarvestMode::Manual as i32,
-                }),
-            ),
-            (
-                "LingtianStartTill",
-                client_request_envelope::Payload::LingtianStartTill(LingtianStartTill {
-                    x: 0,
-                    y: 64,
-                    z: 0,
-                    hoe_instance_id: 1,
-                    mode: "manual".to_string(),
-                }),
-            ),
-            (
-                "LingtianStartRenew",
-                client_request_envelope::Payload::LingtianStartRenew(LingtianStartRenew {
-                    x: 0,
-                    y: 64,
-                    z: 0,
-                    hoe_instance_id: 1,
-                }),
-            ),
-            (
-                "LingtianStartPlanting",
-                client_request_envelope::Payload::LingtianStartPlanting(LingtianStartPlanting {
-                    x: 0,
-                    y: 64,
-                    z: 0,
-                    plant_id: "x".to_string(),
-                }),
-            ),
-            (
-                "LingtianStartHarvest",
-                client_request_envelope::Payload::LingtianStartHarvest(LingtianStartHarvest {
-                    x: 0,
-                    y: 64,
-                    z: 0,
-                    mode: "manual".to_string(),
-                }),
-            ),
-            (
-                "LingtianStartReplenish",
-                client_request_envelope::Payload::LingtianStartReplenish(LingtianStartReplenish {
-                    x: 0,
-                    y: 64,
-                    z: 0,
-                    source: "bone_coin".to_string(),
-                }),
-            ),
-            (
-                "LingtianStartDrainQi",
-                client_request_envelope::Payload::LingtianStartDrainQi(LingtianStartDrainQi {
-                    x: 0,
-                    y: 64,
-                    z: 0,
                 }),
             ),
             (
@@ -9806,6 +9552,7 @@ mod tests {
                     }),
                     // plan-rotate-v1 — 旋转标志随 wire roundtrip。
                     rotated: true,
+                    count: Some(3),
                 },
             )),
         };
@@ -9815,6 +9562,7 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::InventoryMoveIntent(m)) => {
                 assert_eq!(m.instance_id, 42);
+                assert_eq!(m.count, Some(3), "分离数量必须随协议保留");
                 assert!(
                     m.rotated,
                     "InventoryMoveIntent.rotated 应随 proto roundtrip 保留 true（plan-rotate-v1 字段 4）"
@@ -10589,6 +10337,7 @@ mod tests {
                     from: None,
                     to: None,
                     rotated: false,
+                    count: None,
                 }),
                 "InventoryMoveIntent",
             ),
@@ -12532,46 +12281,6 @@ mod tests {
             (
                 "gathering_session_no_tool_roundtrip",
                 gathering_session_no_tool_roundtrip,
-            ),
-            (
-                "lingtian_session_data_active_roundtrip",
-                lingtian_session_data_active_roundtrip,
-            ),
-            (
-                "lingtian_session_data_replenish_roundtrip",
-                lingtian_session_data_replenish_roundtrip,
-            ),
-            (
-                "lingtian_session_data_inactive_roundtrip",
-                lingtian_session_data_inactive_roundtrip,
-            ),
-            (
-                "lingtian_session_dye_contamination_warning_roundtrip",
-                lingtian_session_dye_contamination_warning_roundtrip,
-            ),
-            (
-                "lingtian_start_till_roundtrip",
-                lingtian_start_till_roundtrip,
-            ),
-            (
-                "lingtian_start_renew_roundtrip",
-                lingtian_start_renew_roundtrip,
-            ),
-            (
-                "lingtian_start_planting_roundtrip",
-                lingtian_start_planting_roundtrip,
-            ),
-            (
-                "lingtian_start_harvest_roundtrip",
-                lingtian_start_harvest_roundtrip,
-            ),
-            (
-                "lingtian_start_replenish_roundtrip",
-                lingtian_start_replenish_roundtrip,
-            ),
-            (
-                "lingtian_start_drain_qi_roundtrip",
-                lingtian_start_drain_qi_roundtrip,
             ),
             ("mineral_probe_roundtrip", mineral_probe_roundtrip),
             (

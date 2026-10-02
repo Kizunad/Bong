@@ -371,8 +371,9 @@ public class ClientRequestSenderTest {
         ClientRequestSender.sendAlchemyOpenFurnace(pos);
         ClientRequestSender.sendAlchemyFurnacePlace(pos, 4242L);
         ClientRequestSender.sendAlchemyFeedSlot(pos, 0, "ci_she_hao", 3);
+        ClientRequestSender.sendAlchemyPlaceIncense(pos, 4242L);
 
-        assertEquals(3, sent.size());
+        assertEquals(4, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"alchemy_open_furnace\",\"v\":1,\"furnace_pos\":[-12,64,38]}",
@@ -385,6 +386,10 @@ public class ClientRequestSenderTest {
         assertEquals(
             "{\"type\":\"alchemy_feed_slot\",\"v\":1,\"furnace_pos\":[-12,64,38],\"slot_idx\":0,\"material\":\"ci_she_hao\",\"count\":3}",
             sent.get(2).body()
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_place_incense\",\"v\":1,\"furnace_pos\":[-12,64,38],\"item_instance_id\":4242}",
+            sent.get(3).body()
         );
     }
 

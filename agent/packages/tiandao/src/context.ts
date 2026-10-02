@@ -15,6 +15,7 @@ import {
   describeRegion,
 } from "./offscreen-war-narration.js";
 import type { WorldModel, TrendDirection } from "./world-model.js";
+import { loadPlantCatalog } from "@bong/schema/plants";
 
 export type TsyRuntimeEventV1 = TsyEnterEventV1 | TsyExitEventV1;
 
@@ -409,6 +410,26 @@ export const worldTrendBlock: ContextBlock = {
   },
 };
 
+/** 仅给快照里实际存在的植物补充定义，避免将整个目录塞进每轮上下文。 */
+export const plantDefinitionsBlock: ContextBlock = {
+  name: "plant_definitions",
+  priority: 4,
+  required: false,
+  render({ worldModel }) {
+    const ecology = worldModel?.botany_ecology;
+    if (!ecology) return "";
+    const ids = new Set(ecology.zones.flatMap(zone =>
+      zone.plant_counts.filter(entry => entry.count > 0).map(entry => entry.kind),
+    ));
+    const catalog = loadPlantCatalog();
+    const definitions = [...ids].sort().flatMap(id => {
+      const plant = catalog.get(id);
+      return plant ? [`- ${plant.id}（${plant.name}）：${plant.description}`] : [];
+    });
+    return definitions.length > 0 ? `## 当前植物定义\n${definitions.join("\n")}` : "";
+  },
+};
+
 export const balanceBlock: ContextBlock = {
   name: "balance",
   priority: 3,
@@ -494,6 +515,7 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进灾劫推演
     { ...buttonClickBlock, priority: 9, required: false },
     { ...worldSnapshotBlock, priority: 10, required: false },
+    { ...plantDefinitionsBlock, priority: 11, required: false },
   ],
 };
 
@@ -514,6 +536,7 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...recentEventsBlock, priority: 8, required: false },
     // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进变化推演
     { ...buttonClickBlock, priority: 9, required: false },
+    { ...plantDefinitionsBlock, priority: 10, required: false },
   ],
 };
 
@@ -536,6 +559,7 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...chatSignalsBlock, priority: 10, required: false },
     // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进演绎推演
     { ...buttonClickBlock, priority: 11, required: false },
+    { ...plantDefinitionsBlock, priority: 12, required: false },
   ],
 };
 

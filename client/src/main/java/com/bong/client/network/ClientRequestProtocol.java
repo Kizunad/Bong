@@ -453,6 +453,13 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeAlchemyPlaceIncense(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("alchemy_place_incense");
+        addBlockPos(obj, pos);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeCoffinOpen(BlockPos pos) {
         JsonObject obj = envelope("coffin_open");
         obj.addProperty("x", pos.getX());
@@ -626,12 +633,25 @@ public final class ClientRequestProtocol {
         InvLocation to,
         boolean rotated
     ) {
+        return encodeInventoryMove(instanceId, from, to, rotated, null);
+    }
+
+    /** count 缺省移动整堆；指定时只移动所选数量，由服务端分配新实例。 */
+    public static String encodeInventoryMove(
+        long instanceId, InvLocation from, InvLocation to, boolean rotated, Integer count
+    ) {
+        if (count != null && count <= 0) {
+            throw new IllegalArgumentException("inventory move count must be positive");
+        }
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
         if (rotated) {
             obj.addProperty("rotated", true);
+        }
+        if (count != null) {
+            obj.addProperty("count", count);
         }
         return obj.toString();
     }
@@ -1324,67 +1344,7 @@ public final class ClientRequestProtocol {
         return envelope("cancel_search").toString();
     }
 
-    // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
-
-    /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */
-    public static String encodeLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
-        JsonObject obj = envelope("lingtian_start_till");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("hoe_instance_id", hoeInstanceId);
-        obj.addProperty("mode", mode);
-        return obj.toString();
-    }
-
-    /** plan §1.6 — 起翻新 session。 */
-    public static String encodeLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
-        JsonObject obj = envelope("lingtian_start_renew");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("hoe_instance_id", hoeInstanceId);
-        return obj.toString();
-    }
-
-    /** plan §1.2.3 — 起种植 session（背包内须有该 plant_id 的种子）。 */
-    public static String encodeLingtianStartPlanting(int x, int y, int z, String plantId) {
-        JsonObject obj = envelope("lingtian_start_planting");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("plant_id", plantId);
-        return obj.toString();
-    }
-
-    /** plan §1.5 — 起收获 session。{@code mode} = "manual" | "auto"。 */
-    public static String encodeLingtianStartHarvest(int x, int y, int z, String mode) {
-        JsonObject obj = envelope("lingtian_start_harvest");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("mode", mode);
-        return obj.toString();
-    }
-
-    /** plan §1.4 + plan-alchemy-recycle-v1 — 起补灵 session。 */
-    public static String encodeLingtianStartReplenish(int x, int y, int z, String source) {
-        JsonObject obj = envelope("lingtian_start_replenish");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("source", source);
-        return obj.toString();
-    }
-
-    /** plan §1.7 — 起偷灵 session。 */
-    public static String encodeLingtianStartDrainQi(int x, int y, int z) {
-        JsonObject obj = envelope("lingtian_start_drain_qi");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        return obj.toString();
-    }
+    //TODO:lingtian_refactor 新请求编码在玩法重写后定义。
 
     // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
 

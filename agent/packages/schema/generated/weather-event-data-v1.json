@@ -5,8 +5,8 @@
     "v",
     "zone_id",
     "kind",
-    "started_at_lingtian_tick",
-    "expires_at_lingtian_tick",
+    "started_at_minute",
+    "expires_at_minute",
     "remaining_ticks"
   ],
   "properties": {
@@ -42,11 +42,11 @@
         }
       ]
     },
-    "started_at_lingtian_tick": {
+    "started_at_minute": {
       "minimum": 0,
       "type": "integer"
     },
-    "expires_at_lingtian_tick": {
+    "expires_at_minute": {
       "minimum": 0,
       "type": "integer"
     },
@@ -55,5 +55,6 @@
       "type": "integer"
     }
   },
-  "x-bong-typebox-source-sha256": "c7e931518d8f160d9f147ae1087373705b307a5314aa13f87cdec0d21e4f2c38"
+  "x-bong-typebox-source-sha256": "8e1c817a582a45e2b6154662577b62f4c2bf07cc275ade8be64aac3b0b0c2bd3",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

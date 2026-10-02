@@ -36,7 +36,10 @@ import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -67,7 +70,6 @@ class ProtoServerDataBridgeTest {
         com.bong.client.gathering.GatheringSessionStore.resetForTests();
         com.bong.client.insight.InsightOfferStore.resetForTests();
         com.bong.client.scroll.ScrollReadStore.resetForTests();
-        com.bong.client.lingtian.state.LingtianSessionStore.clearOnDisconnect();
     }
 
     @Test
@@ -535,7 +537,7 @@ class ProtoServerDataBridgeTest {
             );
 
     @Test
-    void everyMappedPayloadCaseRoundTripsIntoNonNoOpHandlerDispatch() {
+    void everyMappedPayloadCaseRoundTripsIntoNonNoOpHandlerDispatch() throws IOException {
         Descriptors.OneofDescriptor payloadOneof = payloadOneofDescriptor();
         ServerDataRouter router = ServerDataRouter.createDefault();
 
@@ -559,8 +561,12 @@ class ProtoServerDataBridgeTest {
                             .setField(field, inner.build())
                             .build();
 
-            ProtoServerDataBridge.BridgeResult result =
-                    ProtoServerDataBridge.bridge(envelope.toByteArray());
+            // 世界丹炉要求三维坐标、合法动作和 [0,1] 火候，通用随机值不满足契约。
+            // 用 Rust 生产字节进入同一个路由守卫，不能把新 handler 的 noOp 放入豁免表。
+            byte[] bytes = payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_WORLD
+                    ? Files.readAllBytes(Path.of("..", "proto", "fixtures", "alchemy_world_0_v1.pb"))
+                    : envelope.toByteArray();
+            ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(bytes);
 
             if (!result.isSuccess()) {
                 bridgeFailures.add(payloadCase.name() + " → bridge() failed: " + result.errorMessage());
@@ -600,6 +606,10 @@ class ProtoServerDataBridgeTest {
         if (depth > 6) {
             return;
         }
+        if (builder.getDescriptorForType().getFullName().equals("bong.AlchemyWorld")) {
+            populateAlchemyWorld(builder);
+            return;
+        }
         for (Descriptors.FieldDescriptor field : builder.getDescriptorForType().getFields()) {
             if (field.isMapField()) {
                 continue;
@@ -610,6 +620,22 @@ class ProtoServerDataBridgeTest {
                 builder.setField(field, nonDefaultScalarOrMessage(field, depth));
             }
         }
+    }
+
+    /** 炼丹世界消息的字段之间有生产约束，构造一条合法的非默认消息再走同一桥接路径。 */
+    private static void populateAlchemyWorld(com.google.protobuf.Message.Builder builder) {
+        var descriptor = builder.getDescriptorForType();
+        var furnacePos = descriptor.findFieldByName("furnace_pos");
+        builder.addRepeatedField(furnacePos, 2);
+        builder.addRepeatedField(furnacePos, 64);
+        builder.addRepeatedField(furnacePos, 3);
+        builder.setField(descriptor.findFieldByName("heat"), 0.6d);
+        builder.setField(descriptor.findFieldByName("incense"), true);
+        builder.setField(descriptor.findFieldByName("action"), "inject_qi");
+        var source = descriptor.findFieldByName("source");
+        builder.addRepeatedField(source, 1.0d);
+        builder.addRepeatedField(source, 65.1d);
+        builder.addRepeatedField(source, 2.0d);
     }
 
     private static Object nonDefaultScalarOrMessage(Descriptors.FieldDescriptor field, int depth) {
@@ -2969,22 +2995,6 @@ class ProtoServerDataBridgeTest {
                 + "否则极品品质提示标签永不显示");
     }
 
-    @Test
-    void bridgeLingtianSessionStripsKindEnumPrefix() {
-        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-                .setLingtianSession(Envelope.LingtianSessionData.newBuilder()
-                        .setActive(true)
-                        .setKind(Envelope.LingtianSessionKind.LINGTIAN_SESSION_KIND_PLANTING)
-                        .setPosX(1)
-                        .setPosY(2)
-                        .setPosZ(3))
-                .build();
-
-        JsonObject json = bridgeAndParse(envelope);
-        assertEquals("planting", json.get("kind").getAsString(),
-                "kind 必须剥成 'planting'（LingtianSessionStore.Kind.fromWire switch），"
-                + "否则灵田 HUD 恒标 '开垦' 无论实际种植/收获/翻新/补灵/吸灵");
-    }
 
     @Test
     void bridgeCarrierStateStripsPhaseEnumPrefix() {

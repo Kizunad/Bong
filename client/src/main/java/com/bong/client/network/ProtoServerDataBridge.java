@@ -64,6 +64,7 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE, "combat_hud_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.KNOCKBACK_SYNC, "knockback_sync");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_FURNACE, "alchemy_furnace");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_WORLD, "alchemy_world");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_SESSION, "alchemy_session");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_FORECAST, "alchemy_outcome_forecast");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED, "alchemy_outcome_resolved");
@@ -83,7 +84,6 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.MINING_PROGRESS, "mining_progress");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LUMBER_PROGRESS, "lumber_progress");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.GATHERING_SESSION, "gathering_session");
-        m.put(Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION, "lingtian_session");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.WOUNDS_SNAPSHOT, "wounds_snapshot");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DEFENSE_WINDOW, "defense_window");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.CAST_SYNC, "cast_sync");
@@ -371,10 +371,6 @@ public final class ProtoServerDataBridge {
                     new String[] {"target_type", "GATHERING_TARGET_TYPE_"},
                     new String[] {"quality_hint", "GATHERING_QUALITY_HINT_"});
         }
-        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION) {
-            return bridgeStripEnums(envelope.getLingtianSession(), typeString,
-                    new String[] {"kind", "LINGTIAN_SESSION_KIND_"});
-        }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CARRIER_STATE) {
             return bridgeStripEnums(envelope.getCarrierState(), typeString,
                     new String[] {"phase", "CARRIER_CHARGE_PHASE_"});
@@ -479,6 +475,7 @@ public final class ProtoServerDataBridge {
             case COMBAT_HUD_STATE: return envelope.getCombatHudState();
             case KNOCKBACK_SYNC: return envelope.getKnockbackSync();
             case ALCHEMY_FURNACE: return envelope.getAlchemyFurnace();
+            case ALCHEMY_WORLD: return envelope.getAlchemyWorld();
             case ALCHEMY_SESSION: return envelope.getAlchemySession();
             case ALCHEMY_OUTCOME_FORECAST: return envelope.getAlchemyOutcomeForecast();
             case ALCHEMY_OUTCOME_RESOLVED: return envelope.getAlchemyOutcomeResolved();
@@ -498,7 +495,6 @@ public final class ProtoServerDataBridge {
             case MINING_PROGRESS: return envelope.getMiningProgress();
             case LUMBER_PROGRESS: return envelope.getLumberProgress();
             case GATHERING_SESSION: return envelope.getGatheringSession();
-            case LINGTIAN_SESSION: return envelope.getLingtianSession();
             case WOUNDS_SNAPSHOT: return envelope.getWoundsSnapshot();
             case DEFENSE_WINDOW: return envelope.getDefenseWindow();
             case CAST_SYNC: return envelope.getCastSync();

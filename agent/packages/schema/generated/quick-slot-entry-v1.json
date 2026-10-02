@@ -42,5 +42,6 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "e431c5dd600e3ffd0d3b0baf824e43803f27b1ed11feb499900a57abe687efd2"
+  "x-bong-typebox-source-sha256": "e431c5dd600e3ffd0d3b0baf824e43803f27b1ed11feb499900a57abe687efd2",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

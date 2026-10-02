@@ -57,8 +57,8 @@ use crate::schema::channels::{
     CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
     CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
     CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
-    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
-    ELDER_ENCOUNTER_DURABLE_REDIS_KEY, QI_LEDGER_REDIS_KEY,
+    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONG_CORE_ACTIVATED, ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+    QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -84,7 +84,6 @@ use crate::schema::elder_encounter::ElderEncounterEventV1;
 use crate::schema::fauna_ecology::FaunaEcologySnapshotV1;
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
-use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::meridian_severed::MeridianSeveredEventV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{
@@ -117,6 +116,7 @@ use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
 use crate::schema::tuike_v2::{TuikeAshDecayV1, TuikeSkillEventV1};
 use crate::schema::void_actions::VoidActionBroadcastV1;
+use crate::schema::weather::WeatherEventUpdateV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::woliu_erosion::VoidErosionEventV1;
 use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
@@ -125,7 +125,6 @@ use crate::schema::yidao::YidaoEventV1;
 use crate::schema::zhenfa_v2::ZhenfaV2EventV1;
 use crate::schema::zhenmai_v2::ZhenmaiSkillEventV1;
 use crate::schema::zone_environment::ZoneEnvironmentStateV1;
-use crate::schema::zone_pressure::ZonePressureCrossedV1;
 use crate::schema::zong_formation::ZongCoreActivationV1;
 
 const BRIDGE_LOOP_INTERVAL: Duration = Duration::from_millis(25);
@@ -223,7 +222,6 @@ pub enum RedisOutbound {
     NamedFactionState(NamedFactionStateV1),
     /// plan-offscreen-war-v1 P6：涌现冲突生命周期 telemetry（`bong:faction/war`，纯观测、零真元）。
     FactionWar(FactionWarEventV1),
-    ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
     BotanyEcology(BotanyEcologySnapshotV1),
     FaunaEcology(FaunaEcologySnapshotV1),
@@ -285,7 +283,7 @@ pub enum RedisOutbound {
     YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
-    /// plan-lingtian-weather-v1 §3 / §4.4 — 天气事件起 / 落
+    /// 天气事件起 / 落
     #[allow(dead_code)]
     WeatherEventUpdate(WeatherEventUpdateV1),
     ZoneEnvironmentUpdate(ZoneEnvironmentStateV1),
@@ -1136,17 +1134,6 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
-        RedisOutbound::ZonePressureCrossed(evt) => {
-            let payload = serde_json::to_string(&evt).map_err(|error| {
-                ValidationError::new(format!(
-                    "failed to serialize ZonePressureCrossedV1: {error}"
-                ))
-            })?;
-            Ok(RedisIoCommand::Publish {
-                channel: CH_ZONE_PRESSURE_CROSSED,
-                payload,
-            })
-        }
         RedisOutbound::RatPhaseEvent(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize RatPhaseChangeEvent: {error}"))
@@ -1768,7 +1755,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
-        // plan-territory-v1 P3 — 领地霸主变动叙事请求（照搬 ZonePressureCrossed arm）
+        // plan-territory-v1 P3 — 领地霸主变动叙事请求。
         RedisOutbound::TerritoryDominanceNarration(req) => {
             let payload = serde_json::to_string(&req).map_err(|error| {
                 ValidationError::new(format!(
@@ -2857,7 +2844,6 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
             "death_insight"
                 | "niche_intrusion"
                 | "niche_intrusion_by_npc"
-                | "npc_farm_pressure"
                 | "scattered_cultivator"
                 | "political_jianghu"
                 // bug-hunt-1: 与 NarrationKind enum（common.rs）+ agent TypeBox

@@ -1,0 +1,335 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_pos",
+        "heat",
+        "incense",
+        "materials",
+        "action"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_world",
+          "type": "string"
+        },
+        "furnace_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "heat": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "incense": {
+          "type": "boolean"
+        },
+        "materials": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "state",
+              "type": "string"
+            },
+            {
+              "const": "ignite",
+              "type": "string"
+            },
+            {
+              "const": "fire_raise",
+              "type": "string"
+            },
+            {
+              "const": "fire_lower",
+              "type": "string"
+            },
+            {
+              "const": "incense",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_pos",
+        "heat",
+        "incense",
+        "materials",
+        "action",
+        "source"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_world",
+          "type": "string"
+        },
+        "furnace_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "heat": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "incense": {
+          "type": "boolean"
+        },
+        "materials": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "action": {
+          "const": "inject_qi",
+          "type": "string"
+        },
+        "source": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_pos",
+        "heat",
+        "incense",
+        "materials",
+        "action",
+        "item",
+        "count"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_world",
+          "type": "string"
+        },
+        "furnace_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "heat": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "incense": {
+          "type": "boolean"
+        },
+        "materials": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "action": {
+          "const": "feed",
+          "type": "string"
+        },
+        "item": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "furnace_pos",
+        "heat",
+        "incense",
+        "materials",
+        "action",
+        "result",
+        "item",
+        "name"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_world",
+          "type": "string"
+        },
+        "furnace_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "heat": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "incense": {
+          "type": "boolean"
+        },
+        "materials": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        "action": {
+          "const": "collect",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "const": "perfect",
+              "type": "string"
+            },
+            {
+              "const": "good",
+              "type": "string"
+            },
+            {
+              "const": "flawed",
+              "type": "string"
+            },
+            {
+              "const": "waste",
+              "type": "string"
+            },
+            {
+              "const": "early_take",
+              "type": "string"
+            },
+            {
+              "const": "explode",
+              "type": "string"
+            }
+          ]
+        },
+        "item": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "x-bong-typebox-source-sha256": "2be2496ce4d6626eaf0a41bfe9a947a878b361eff9d83b63ac7d45f90a76d0f9",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}

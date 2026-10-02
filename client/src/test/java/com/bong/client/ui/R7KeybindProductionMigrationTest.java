@@ -42,7 +42,6 @@ class R7KeybindProductionMigrationTest {
         "identity/IdentityPanelScreenBootstrap.java",
         "cultivation/voidaction/VoidActionScreenBootstrap.java",
         "tsy/ExtractInteractionBootstrap.java",
-        "lingtian/LingtianActionScreenBootstrap.java",
         "spirittreasure/SpiritTreasureScreenBootstrap.java",
         "dying_elder/DyingElderInteractionKeybindings.java"
     );
@@ -51,7 +50,6 @@ class R7KeybindProductionMigrationTest {
         "void_action.open_screen",
         "tsy.extract_start",
         "tsy.extract_cancel",
-        "lingtian.open_action_screen",
         "spirittreasure.open_screen",
         "dying_elder.give_dan",
         "dying_elder.refuse",
@@ -64,7 +62,6 @@ class R7KeybindProductionMigrationTest {
             "identity/IdentityPanelScreenBootstrap.java", 1,
             "cultivation/voidaction/VoidActionScreenBootstrap.java", 1,
             "tsy/ExtractInteractionBootstrap.java", 2,
-            "lingtian/LingtianActionScreenBootstrap.java", 1,
             "spirittreasure/SpiritTreasureScreenBootstrap.java", 1,
             "dying_elder/DyingElderInteractionKeybindings.java", 3
         );

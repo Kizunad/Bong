@@ -70,7 +70,7 @@ def add_single_leg(rig: Rig, bone: str, prefix: str,
 
     # 3. 外撇斜支柱 (Leg Strut, 1.4W x 3.6H x 1.4D)
     rig.cube(bone, f"{prefix}_strut",
-             (cx - 0.7, 0.6, cz - 0.7), (cx + 0.7, 3.8, cz + 0.7),
+             (cx - 0.7, 0.2, cz - 0.7), (cx + 0.7, 3.8, cz + 0.7),
              rot=rot, org=org, mat="brass_base")
     # 支柱前侧加固金属棱条
     rig.cube(bone, f"{prefix}_strut_rib",
@@ -79,9 +79,13 @@ def add_single_leg(rig: Rig, bone: str, prefix: str,
              rot=rot, org=org, mat="brass_lit")
 
     # 4. 接地平稳蹄足 (Foot Pad, 2.0W x 0.8H x 2.0D)
+    # 脚掌放在斜撑下端的投影处，保持水平，四脚共用地平面。
+    rx, rz = math.radians(rot_x), math.radians(rot_z)
+    foot_x = cx + 4.0 * math.cos(rx) * math.sin(rz)
+    foot_z = cz - 4.0 * math.sin(rx)
     rig.cube(bone, f"{prefix}_foot_pad",
-             (cx - 1.0, 0.0, cz - 1.0), (cx + 1.0, 0.8, cz + 1.0),
-             rot=rot, org=org, mat="brass_lit")
+             (foot_x - 1.1, 0.0, foot_z - 1.1), (foot_x + 1.1, 0.9, foot_z + 1.1),
+             mat="brass_lit")
 
 
 def part_leg_assembly(rig: Rig):
@@ -100,13 +104,13 @@ def part_leg_assembly(rig: Rig):
     # 2. 四支对称向外撇出的鼎足（FL, FR, BL, BR）
     d = 3.6
     # 左前足 (FL: X-, Z+)
-    add_single_leg(rig, bone, "leg_fl", -d, d, rot_x=18.0, rot_z=-18.0, rivet_dx=-0.9, rivet_dz=0.9)
+    add_single_leg(rig, bone, "leg_fl", -d, d, rot_x=-18.0, rot_z=-18.0, rivet_dx=-0.9, rivet_dz=0.9)
     # 右前足 (FR: X+, Z+)
-    add_single_leg(rig, bone, "leg_fr", d, d, rot_x=18.0, rot_z=18.0, rivet_dx=0.9, rivet_dz=0.9)
+    add_single_leg(rig, bone, "leg_fr", d, d, rot_x=-18.0, rot_z=18.0, rivet_dx=0.9, rivet_dz=0.9)
     # 左后足 (BL: X-, Z-)
-    add_single_leg(rig, bone, "leg_bl", -d, -d, rot_x=-18.0, rot_z=-18.0, rivet_dx=-0.9, rivet_dz=-0.9)
+    add_single_leg(rig, bone, "leg_bl", -d, -d, rot_x=18.0, rot_z=-18.0, rivet_dx=-0.9, rivet_dz=-0.9)
     # 右后足 (BR: X+, Z-)
-    add_single_leg(rig, bone, "leg_br", d, -d, rot_x=-18.0, rot_z=18.0, rivet_dx=0.9, rivet_dz=-0.9)
+    add_single_leg(rig, bone, "leg_br", d, -d, rot_x=18.0, rot_z=18.0, rivet_dx=0.9, rivet_dz=-0.9)
 
 
 def part_lower_bowl(rig: Rig):

@@ -101,6 +101,31 @@
           },
           "missed": {
             "type": "boolean"
+          },
+          "ingredients": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "material",
+                "required",
+                "inserted"
+              ],
+              "properties": {
+                "material": {
+                  "type": "string"
+                },
+                "required": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "inserted": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
           }
         }
       }
@@ -111,7 +136,46 @@
       "items": {
         "type": "string"
       }
+    },
+    "incense": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "remaining_ticks",
+        "duration_ticks",
+        "temp_band_scale",
+        "qi_cost_scale",
+        "smoke_color"
+      ],
+      "properties": {
+        "kind": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "temp_band_scale": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "qi_cost_scale": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "smoke_color": {
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "type": "string"
+        }
+      }
     }
   },
-  "x-bong-typebox-source-sha256": "f37e674c7681dc1273a02a0e5533dd5182d2688ccf2d879c6a51bbe51ff56ee9"
+  "x-bong-typebox-source-sha256": "e5927c8f114a82e8ad13636c20a2069449a089ad502faeb818c3f129e2b93bb8",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

@@ -11,7 +11,8 @@ public sealed interface AlchemyIntent extends UiIntent permits
     AlchemyIntent.TakeBack,
     AlchemyIntent.InjectQi,
     AlchemyIntent.Ignite,
-    AlchemyIntent.AdjustTemp {
+    AlchemyIntent.AdjustTemp,
+    AlchemyIntent.PlaceIncense {
 
     record TurnPage(int delta) implements AlchemyIntent {}
 
@@ -26,4 +27,6 @@ public sealed interface AlchemyIntent extends UiIntent permits
     record Ignite(BlockPos furnacePos, String recipeId) implements AlchemyIntent {}
 
     record AdjustTemp(BlockPos furnacePos, double temperature) implements AlchemyIntent {}
+
+    record PlaceIncense(BlockPos furnacePos, long itemInstanceId) implements AlchemyIntent {}
 }

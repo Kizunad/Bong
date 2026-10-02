@@ -2453,6 +2453,30 @@
       "requirements": {},
       "unlock_sources": [],
       "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.incense_plain",
+      "category": "misc",
+      "display_name": "草木香",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 2
+        },
+        {
+          "template_id": "wood_plank",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 200,
+      "output": {
+        "template_id": "incense_plain",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
     }
   ]
 }

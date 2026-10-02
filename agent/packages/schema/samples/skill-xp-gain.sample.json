@@ -6,7 +6,7 @@
     "amount": 5,
     "source": {
       "type": "action",
-      "plan_id": "lingtian",
+      "plan_id": "botany",
       "action": "harvest_auto"
     }
   },

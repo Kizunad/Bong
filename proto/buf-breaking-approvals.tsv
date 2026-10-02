@@ -6,3 +6,18 @@ ENUM_VALUE_NO_DELETE	bong/envelope.proto	4f3e8684933f68425823db4ea5bce5571ac0b44
 ENUM_VALUE_NO_DELETE	bong/envelope.proto	7ee6173e788d06ac30ff0543f9cd2268f457b18da72eec9c90f2847573cf4664	按用户要求移除濒死阶段及碎屏演出，DeathCinematicPhase 编号 2 保留，不提供旧协议兼容。
 FIELD_NO_DELETE	bong/envelope.proto	db1fac29d080cffaf9b5ed2d490ea4a9001ede748df0b39fb90ca73d742ebaac	死亡直接进入复活裁决，删除 skip_predeath 开关并保留字段编号 15，不提供旧协议兼容。
 FIELD_NO_DELETE	bong/envelope.proto	5c83c771b3bfa6dba0de0d6bba80b8c18db814acb9f664aa4f6c12aa9b67136d	按用户要求将快捷槽改为库存实例使用链接、不保留旧兼容；删除 QuickSlotBind.item_id 并保留编号 2，改用 instance_id 编号 4，前后端同步升级。
+ENUM_NO_DELETE	bong/envelope.proto	bdc6b23dd76d3c0459164128b52eee9e76d2812557f0232afcef778988450588	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	45348760492daff3a62154c30ee3e5c9f3be3bc45aa81cbe27a75d54aa036649	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	8af2d52ab44a2faaed2d6d2609785d676caab63f53ed676c8a67013af82dea11	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	a897cc48039c992af3e44e21b4bef69ae36b7a628de5a4772c53b27f7be63279	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	d02c3b572d6cb06acbdb56d58e2ae1cb9cf2733c00ecb02aa0a4d340e779613d	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	4a97d8ebf81d25ca954004c976745881584b0cd6a44b9cbc34186c7fb76390ec	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	4ddc7b6607ee41fcef7057a1039f3e6a1ec43a6e21b76f1d0143d1e044a6b518	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+MESSAGE_NO_DELETE	bong/envelope.proto	522feb23732a4bf6b8482155823ee4973e727ca5a55901e9efe54688119f171f	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	22c4d9545b60460d13705f543a66ed76ed298134e05e861243f34bbdec45231d	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	f12ca822d6c2e8c7656fbc96736d5d419f85631f8b65d333e4b4ad7634685a1b	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	6e41199207dc43c5d65a55c603e0978b71f11f8c31ce1907a61d0b9a55a24eff	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	0467ffadc4890c5b78e217ebe06fa906bb2aea09b6e5715314cc8c5398e5fd61	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	c25b0aa1c6316b7c791aacb272ba372d43c1dc359e6637112b6980bcdee0117d	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	5ff3e21c2c8af74303280c3a169e6fc8ac281e6eaf2ead5b0ffcc37318831378	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。
+FIELD_NO_DELETE	bong/envelope.proto	04d64b1db7bc09915aba9e5b6322356e51aaff0914d17716cf1b4806adc23a19	PR #2364 按用户决议退役旧灵田运行时及其 wire 定义，字段编号保留为 reserved，禁止复用。

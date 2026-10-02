@@ -20,8 +20,8 @@ use super::components::{ScrollId, SkillId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum XpGainSource {
-    /// plan §3.1 做中学：`plan_id` 指向触发 plan 名（例 `"lingtian"`），`action` 是
-    /// 具体子动作（例 `"harvest_auto"`）。plan §7 汇总表 为 source of truth。
+    /// plan §3.1 做中学：`plan_id` 指向触发系统名（例 `"botany"`），`action` 是
+    /// 具体子动作（例 `"harvest_auto"`）。各系统的 XP 规则是 source of truth。
     Action {
         plan_id: &'static str,
         action: &'static str,
@@ -80,13 +80,13 @@ mod tests {
     #[test]
     fn xp_gain_source_action_serializes_with_type_tag() {
         let src = XpGainSource::Action {
-            plan_id: "lingtian",
+            plan_id: "botany",
             action: "harvest_auto",
         };
         let json = serde_json::to_string(&src).unwrap();
         assert_eq!(
             json,
-            r#"{"type":"action","plan_id":"lingtian","action":"harvest_auto"}"#
+            r#"{"type":"action","plan_id":"botany","action":"harvest_auto"}"#
         );
     }
 
