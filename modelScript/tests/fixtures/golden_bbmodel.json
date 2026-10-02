@@ -5,6 +5,12 @@
    "AlchemyFurnace.bbmodel": "2c562e82a35271074b151c9bae500ea9199f0a417c1c20c6bd2218b2d4c0075b"
   }
  },
+ "gen_an_shen_guo.py": {
+  "exit": 0,
+  "outputs": {
+   "AnShenGuo.bbmodel": "19b55bdf604b55ae062889fa54b14e3d2949e311f9a85c07d481ef76cca4ae00"
+  }
+ },
  "gen_anti_spirit_pressure_pill.py": {
   "exit": 0,
   "outputs": {
@@ -105,6 +111,12 @@
    "ChiSuiCao.bbmodel": "abc9d2cfa8886a4270e9979f605047456aa92c95da5586460f867550c18e7f12"
   }
  },
+ "gen_ci_she_hao.py": {
+  "exit": 0,
+  "outputs": {
+   "CiSheHao.bbmodel": "5219cdc4029d3b37619f19e3566202e76e5dfbf46596e7551b530f8ff34b64cd"
+  }
+ },
  "gen_club_player_anim.py": {
   "exit": 0,
   "outputs": {
@@ -150,6 +162,12 @@
    "DeadDropBox.bbmodel": "97dde7b09f5f9fa4d242301474d3e9824d2dfed81ba6dea15243687691aaebac"
   }
  },
+ "gen_duan_ji_ci.py": {
+  "exit": 0,
+  "outputs": {
+   "DuanJiCi.bbmodel": "66331204d190ce370196d8246873d2a5c7f113af5115dd29941c3cdabd0ef7b6"
+  }
+ },
  "gen_fan_tie.py": {
   "exit": 0,
   "outputs": {
@@ -159,6 +177,24 @@
  "gen_fan_tie_block.py": {
   "exit": 0,
   "outputs": {}
+ },
+ "gen_fu_chen_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "FuChenCao.bbmodel": "80778c08d4828b6276bb3a7f8e8e31972c63ef0e65a50de489c1b7c152b4e73e"
+  }
+ },
+ "gen_fu_you_hua.py": {
+  "exit": 0,
+  "outputs": {
+   "FuYouHua.bbmodel": "99f179c9f18b757ba32f2e7159873c29973b818c5097392148b9303e0e35df5e"
+  }
+ },
+ "gen_fu_yuan_jue.py": {
+  "exit": 0,
+  "outputs": {
+   "FuYuanJue.bbmodel": "0fbdac8ea5a97289f795828b0892ae8bd1d1e902aca0d95a1ce09ad47ca68fe9"
+  }
  },
  "gen_furniture.py": {
   "exit": 0,
@@ -327,6 +363,12 @@
    "JianPlayerAnim.bbmodel": "9e9dd92558156ffdf64cd188780d0a21f48dff56cbc179b2cbbe51d643b8f11c"
   }
  },
+ "gen_jie_gu_rui.py": {
+  "exit": 0,
+  "outputs": {
+   "JieGuRui.bbmodel": "c6af9afef74b790db9898d548f1d3ca5a5843fa0cbfeea2c063cddb51a1c1669"
+  }
+ },
  "gen_jin_zhong_dan.py": {
   "exit": 0,
   "outputs": {
@@ -378,6 +420,12 @@
    "armor/linen/textures/linen_leggings/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d"
   }
  },
+ "gen_ling_guo.py": {
+  "exit": 0,
+  "outputs": {
+   "LingGuo.bbmodel": "4c024a4a2f437201d64a42cd8fd1fdcf6bdfc095d80b713283acdbbe89181bd9"
+  }
+ },
  "gen_ling_jing.py": {
   "exit": 0,
   "outputs": {
@@ -426,6 +474,12 @@
    "lootcrate/LootCrateVineChest.bbmodel": "a53281684311983f81f19064b8e89db4e00e26e8caef8ddc30632323f7ea2f13"
   }
  },
+ "gen_mao_xin_wei.py": {
+  "exit": 0,
+  "outputs": {
+   "MaoXinWei.bbmodel": "39b366746e654a3619aefe7af8f1d5370f1586848e8e3c6c8276bdabbf0f5a94"
+  }
+ },
  "gen_ming_gu_gu.py": {
   "exit": 0,
   "outputs": {
@@ -453,6 +507,18 @@
    "armor/mutated_bone/textures/mutated_bone_chestplate/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
    "armor/mutated_bone/textures/mutated_bone_helmet/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
    "armor/mutated_bone/textures/mutated_bone_leggings/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042"
+  }
+ },
+ "gen_ning_mai_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "NingMaiCao.bbmodel": "389b08e57772a600269eb683ca05652a6064fccf3a5ac17d30e7ab5df6ddbdad"
+  }
+ },
+ "gen_qing_zhuo_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "QingZhuoCao.bbmodel": "4fab53c8fbbfe2a0e47a209dd5463a2a79fd70b55c8bcdc1f9bb111f316819b6"
   }
  },
  "gen_remnant_scroll.py": {
@@ -490,6 +556,12 @@
    "ShiLingXian.bbmodel": "858d226225c55de82d609e2491f81126781a40a8c2404af93480ccf430cf7b49"
   }
  },
+ "gen_shi_mai_gen.py": {
+  "exit": 0,
+  "outputs": {
+   "ShiMaiGen.bbmodel": "94c881ee9d1d9fe2bf6bd1f16c4e5c534946ece3e4a69b95c621e62bb3a1c08a"
+  }
+ },
  "gen_shou_xin_cao.py": {
   "exit": 0,
   "outputs": {
@@ -509,6 +581,12 @@
    "armor/spirit_cloth/textures/spirit_cloth_leggings/0.png": "01cb76e1f15dc4bfb2fbd3ef9008ff268e23a9475497475d0a72ade8b0e89061"
   }
  },
+ "gen_spirit_grass.py": {
+  "exit": 0,
+  "outputs": {
+   "SpiritGrass.bbmodel": "3566a66d229f5fbee0a07b7e0746d22639a122648e09f80051e92805cfc92d7b"
+  }
+ },
  "gen_stone_coffin.py": {
   "exit": 0,
   "outputs": {
@@ -526,6 +604,12 @@
    "armor/straw/textures/straw_chestplate/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
    "armor/straw/textures/straw_helmet/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
    "armor/straw/textures/straw_leggings/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e"
+  }
+ },
+ "gen_tian_nu_jiao.py": {
+  "exit": 0,
+  "outputs": {
+   "TianNuJiao.bbmodel": "5b128ef0e2814263a1271f83213b017dc1e6a0dc58b75870320d2b9a5b6959cf"
   }
  },
  "gen_trade_crate.py": {
@@ -556,6 +640,12 @@
   "exit": 0,
   "outputs": {
    "Workbench.bbmodel": "064f70eb9c99c30e580dd04fa5f7c34af1f649933b2b96b81ba25709e53550c9"
+  }
+ },
+ "gen_wu_yan_guo.py": {
+  "exit": 0,
+  "outputs": {
+   "WuYanGuo.bbmodel": "fc53a96558ac0179c5d8cb5f736f9dcc0356e1bd2eb18c82ec18caeb805fdea1"
   }
  },
  "gen_wu_yao.py": {
@@ -606,6 +696,12 @@
    "XuePoLian.bbmodel": "cd9b4e7a4c5c3e21a7ce9231325bfe7f26bea8e93d5844dac7e175f98e46fbed"
   }
  },
+ "gen_xue_se_mai_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "XueSeMaiCao.bbmodel": "62d628cc9adadc0527c6b0ab5a8ba44c4c8b7be07e52b7d5945226ccb5c01bcb"
+  }
+ },
  "gen_yang_jing_tai.py": {
   "exit": 0,
   "outputs": {
@@ -627,6 +723,24 @@
  "gen_yu_sui_block.py": {
   "exit": 0,
   "outputs": {}
+ },
+ "gen_yuan_ni_hong_yu.py": {
+  "exit": 0,
+  "outputs": {
+   "YuanNiHongYu.bbmodel": "b97ebfd2cda21c3594f508c86c8742d5516019b446d87021562f7326048bc25f"
+  }
+ },
+ "gen_yun_ding_lan.py": {
+  "exit": 0,
+  "outputs": {
+   "YunDingLan.bbmodel": "d87e3db803a71993a44d5adae89af53b289975975c7b7b6621ed69cf67be606b"
+  }
+ },
+ "gen_zhen_jie_zi.py": {
+  "exit": 0,
+  "outputs": {
+   "ZhenJieZi.bbmodel": "f2ffcb796385c0bcab8ce3fadfa2ad2b8f614ecac57085ca5035edd3af371b94"
+  }
  },
  "gen_zhenyuan_mine.py": {
   "exit": 0,
