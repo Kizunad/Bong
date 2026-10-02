@@ -38,18 +38,19 @@ def part_island_underside(rig):
         pad(rig, "island_underside", name, (x, y, z), (w, h, d), mat)
 
 
-def _root_path(root_index: int, count: int = 10):
-    phase = math.tau * root_index / 12.0
+def _root_path(root_index: int, count: int = 12):
+    phase = math.tau * root_index / 6.0
     points = []
     for step in range(count):
         t = step / (count - 1)
-        angle = phase + math.tau * 0.85 * t
-        radius = 0.55 + 1.8 * math.sin(math.pi * t)
+        angle = phase + math.tau * t
+        radius_x = 2.75 + 0.18 * math.sin(phase)
+        radius_y = 2.25 + 0.12 * math.cos(phase)
         points.append(
             (
-                radius * math.cos(angle),
-                6.5 - 5.55 * t,
-                radius * math.sin(angle),
+                radius_x * math.cos(angle),
+                3.45 + radius_y * math.sin(angle),
+                -0.85 + 0.3 * root_index + 0.12 * math.sin(angle),
             )
         )
     return points
@@ -57,52 +58,35 @@ def _root_path(root_index: int, count: int = 10):
 
 def part_hanging_roots(rig):
     rig.bone("hanging_roots", (0.0, 0.0, 0.0))
-    for root_index in range(12):
+    for root_index in range(6):
         points = _root_path(root_index)
         curved_vine_chain(
             rig,
             "hanging_roots",
             f"root_vine_{root_index}",
             points,
-            0.48,
-            0.26,
+            0.45,
+            0.28,
             "root_green",
-        )
-        end = points[-1]
-        crystal_base = (end[0], end[1] - 0.05, end[2])
-        crystal_tip = (end[0], end[1] - 0.62, end[2])
-        strand(
-            rig,
-            "hanging_roots",
-            f"root_crystal_stem_{root_index}",
-            crystal_base,
-            crystal_tip,
-            0.2,
-            "siphon_crystal",
-        )
-        pad(
-            rig,
-            "hanging_roots",
-            f"root_crystal_tip_{root_index}",
-            (crystal_tip[0], crystal_tip[1] - 0.18, crystal_tip[2]),
-            (0.5, 0.72, 0.5),
-            "crystal_glint",
         )
 
 
 def part_root_leaves(rig):
     rig.bone("root_leaves", (0.0, 0.0, 0.0))
-    for index in range(6):
-        points = _root_path(index * 2)
-        x, y, z = points[3 + index % 2]
-        angle = math.tau * index / 6.0
-        dx, dz = math.cos(angle), math.sin(angle)
+    for index, (x, y, z, dx, dz) in enumerate(
+        (
+            (2.7, 3.5, -0.55, 1.0, 0.0),
+            (-2.7, 3.35, -0.25, -1.0, 0.0),
+            (0.0, 5.7, 0.1, 0.0, 1.0),
+            (0.0, 1.2, 0.25, 0.0, -1.0),
+        )
+    ):
         strand(
             rig,
             "root_leaves",
             f"leaf_stem_{index}",
             (x, y, z),
-            (x + dx * 0.85, y - 0.2, z + dz * 0.85),
+            (x + dx * 0.75, y - 0.1, z + dz * 0.75),
             0.18,
             "leaf_green",
         )
@@ -110,7 +94,7 @@ def part_root_leaves(rig):
             rig,
             "root_leaves",
             f"leaf_blade_{index}",
-            (x + dx, y - 0.45, z + dz),
+            (x + dx * 0.9, y - 0.35, z + dz * 0.9),
             (0.75, 0.28, 0.48),
             "leaf_high",
         )
@@ -120,11 +104,10 @@ def part_siphon_crystals(rig):
     rig.bone("siphon_crystals", (0.0, 0.0, 0.0))
     for index, (x, y, z, dx, dz) in enumerate(
         (
-            (0.2, 0.85, 0.1, 0.25, 0.15),
-            (-2.3, 0.9, 0.55, -0.3, 0.15),
-            (2.35, 0.85, -0.5, 0.3, -0.2),
-            (1.05, 0.8, -2.35, 0.2, -0.3),
-            (-1.05, 0.75, 2.25, -0.15, 0.3),
+            (-1.75, 1.45, -0.55, -0.1, 0.0),
+            (-0.65, 1.12, -0.25, 0.0, 0.1),
+            (0.7, 1.1, 0.05, 0.1, 0.0),
+            (1.8, 1.45, 0.25, 0.0, -0.1),
         )
     ):
         strand(
@@ -132,7 +115,7 @@ def part_siphon_crystals(rig):
             "siphon_crystals",
             f"crystal_shard_{index}",
             (x, y, z),
-            (x + dx, y + 1.2, z + dz),
+            (x + dx, y - 0.58, z + dz),
             0.22,
             "siphon_crystal",
         )
@@ -140,7 +123,7 @@ def part_siphon_crystals(rig):
             rig,
             "siphon_crystals",
             f"crystal_tip_{index}",
-            (x + dx, y + 1.45, z + dz),
+            (x + dx, y - 0.86, z + dz),
             (0.42, 0.7, 0.42),
             "crystal_glint",
         )

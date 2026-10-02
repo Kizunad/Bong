@@ -22,7 +22,7 @@ MATS = {
     "bark_rust": (92, 45, 38),
     "toxin_red": (160, 36, 42),
     "ember_line": (236, 82, 34),
-    "bone_thorn": (170, 154, 126),
+    "bone_thorn": (106, 26, 16),
 }
 
 
@@ -38,12 +38,12 @@ def part_ash_bed(rig):
 
 
 def _tower_path(vine_index: int, count: int = 9):
-    phase = math.tau * vine_index / 12.0
+    phase = math.tau * vine_index / 6.0
     points = []
     for step in range(count):
         t = step / (count - 1)
         angle = phase + math.tau * 1.05 * t
-        radius = 0.55 + 2.25 * (1.0 - t) ** 0.62
+        radius = 0.6 + 2.6 * (1.0 - t) ** 0.75
         points.append(
             (
                 radius * math.cos(angle),
@@ -56,14 +56,14 @@ def _tower_path(vine_index: int, count: int = 9):
 
 def part_terminal_vines(rig):
     rig.bone("terminal_vines", (0.0, 0.0, 0.0))
-    for vine_index in range(12):
+    for vine_index in range(6):
         curved_vine_chain(
             rig,
             "terminal_vines",
             f"vine_tower_{vine_index}",
             _tower_path(vine_index),
-            0.56,
-            0.34,
+            0.46,
+            0.27,
             "charcoal_vine",
         )
 
@@ -82,9 +82,9 @@ def part_toxin_veins(rig):
 def part_poison_thorns(rig):
     rig.bone("poison_thorns", (0.0, 0.0, 0.0))
     thorn_index = 0
-    for vine_index in range(12):
+    for vine_index in range(6):
         points = _tower_path(vine_index)
-        for point_index in (2, 5, 7):
+        for point_index in (3, 6):
             x, y, z = points[point_index]
             radial = math.hypot(x, z) or 1.0
             dx, dz = x / radial * 0.62, z / radial * 0.62
@@ -94,14 +94,31 @@ def part_poison_thorns(rig):
                 f"thorn_{thorn_index}",
                 (x, y, z),
                 (x + dx, y + 0.32, z + dz),
-                0.18,
+                0.16,
                 "bone_thorn",
             )
             thorn_index += 1
 
 
+def part_ember_sparks(rig):
+    rig.bone("ember_sparks", (0.0, 0.0, 0.0))
+    for index, (x, y, z) in enumerate(
+        (
+            (-2.0, 2.35, 0.7),
+            (1.65, 2.95, -0.8),
+            (-1.25, 4.1, -1.2),
+            (0.95, 4.85, 0.7),
+            (0.0, 5.65, -0.35),
+        )
+    ):
+        pad(rig, "ember_sparks", f"ember_{index}", (x, y, z), (0.28, 0.28, 0.28), "ember_line")
+
+
 def build():
-    return build_rig(MATS, (part_ash_bed, part_terminal_vines, part_toxin_veins, part_poison_thorns))
+    return build_rig(
+        MATS,
+        (part_ash_bed, part_terminal_vines, part_toxin_veins, part_poison_thorns, part_ember_sparks),
+    )
 
 
 GATES = PlantGates("终焉藤 / zhong_yan_teng")

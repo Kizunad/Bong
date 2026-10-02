@@ -38,17 +38,17 @@ def part_cave_bed(rig):
 
 def part_dry_vines(rig):
     rig.bone("dry_vines", (0.0, 0.0, 0.0))
-    for vine_index in range(10):
-        phase = math.tau * vine_index / 10.0
+    for vine_index in range(6):
+        phase = math.tau * vine_index / 6.0
         points = []
-        for step in range(9):
-            t = step / 8.0
-            angle = phase + math.tau * 1.15 * t
-            radius = 2.35 - 1.55 * t + 0.18 * math.sin(math.pi * t)
+        for step in range(10):
+            t = step / 9.0
+            angle = phase + math.tau * 0.92 * t
+            radius = 1.45 + 0.31 * vine_index + 0.18 * t
             points.append(
                 (
                     radius * math.cos(angle),
-                    0.82 + 4.8 * t + 0.25 * math.sin(angle * 2.0),
+                    2.25 + 0.22 * math.sin(angle * 2.0 + phase),
                     radius * math.sin(angle),
                 )
             )
@@ -57,7 +57,7 @@ def part_dry_vines(rig):
             "dry_vines",
             f"vine_vortex_{vine_index}",
             points,
-            0.5,
+            0.46,
             0.28,
             "dry_vine",
         )
@@ -66,17 +66,17 @@ def part_dry_vines(rig):
 def part_siphon_tendrils(rig):
     rig.bone("siphon_tendrils", (0.0, 0.0, 0.0))
     for name, start, end in (
-        ("siphon_left", (-2.45, 3.9, 0.85), (-3.0, 2.1, 0.95)),
-        ("siphon_low", (-1.2, 2.55, 0.9), (0.0, 1.05, 1.05)),
-        ("siphon_right", (2.25, 4.15, -0.5), (3.05, 2.45, -0.55)),
-        ("siphon_high", (1.25, 5.0, 0.45), (2.45, 6.25, 0.55)),
+        ("siphon_left", (-2.65, 2.35, 0.85), (-3.15, 1.3, 0.95)),
+        ("siphon_low", (-1.2, 2.2, 0.9), (0.0, 1.05, 1.05)),
+        ("siphon_right", (2.6, 2.3, -0.5), (3.15, 1.35, -0.55)),
+        ("siphon_high", (1.4, 2.35, 0.45), (2.55, 3.3, 0.55)),
     ):
         strand(rig, "siphon_tendrils", name, start, end, 0.26, "siphon_void")
     for name, x, y, z in (
-        ("siphon_tip_left", -3.0, 1.95, 0.95),
-        ("siphon_tip_low", 0.0, 0.9, 1.05),
-        ("siphon_tip_right", 3.05, 2.3, -0.55),
-        ("siphon_tip_high", 2.45, 6.15, 0.55),
+        ("siphon_tip_left", -3.15, 1.15, 0.95),
+        ("siphon_tip_low", 0.0, 0.8, 1.05),
+        ("siphon_tip_right", 3.15, 1.2, -0.55),
+        ("siphon_tip_high", 2.55, 3.2, 0.55),
     ):
         pad(rig, "siphon_tendrils", name, (x, y, z), (0.42, 0.38, 0.42), "siphon_void")
 
@@ -84,9 +84,9 @@ def part_siphon_tendrils(rig):
 def part_dead_leaves(rig):
     rig.bone("dead_leaves", (0.0, 0.0, 0.0))
     for name, center, size in (
-        ("leaf_main", (0.95, 4.55, 0.2), (0.95, 0.3, 0.55)),
-        ("leaf_left", (-2.45, 5.95, 0.6), (0.8, 0.28, 0.5)),
-        ("leaf_right", (2.45, 5.2, -0.4), (0.75, 0.28, 0.46)),
+        ("leaf_main", (0.95, 2.65, 0.2), (0.95, 0.3, 0.55)),
+        ("leaf_left", (-2.45, 2.75, 0.6), (0.8, 0.28, 0.5)),
+        ("leaf_right", (2.45, 2.55, -0.4), (0.75, 0.28, 0.46)),
     ):
         pad(rig, "dead_leaves", name, center, size, "dead_leaf")
 
