@@ -7,7 +7,7 @@ scorch_bed = [52, 45, 40]
 char_black = [30, 27, 26]
 char_high = [68, 57, 50]
 ember_red = [184, 53, 25]
-ember_hot = [255, 113, 45]
+ember_hot = [255, 106, 26]
 ash_leaf = [78, 67, 58]
 
 [features]

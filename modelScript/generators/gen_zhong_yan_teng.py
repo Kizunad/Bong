@@ -21,33 +21,34 @@ MATS = {
     "charcoal_vine": (27, 24, 25),
     "bark_rust": (92, 45, 38),
     "toxin_red": (160, 36, 42),
-    "ember_line": (236, 82, 34),
-    "bone_thorn": (106, 26, 16),
+    "ember_line": (224, 88, 42),   # 橙色余烬 #e0582a
+    "bone_thorn": (106, 26, 16),   # 暗红毒刺 #6a1a10
 }
 
 
 def part_ash_bed(rig):
     rig.bone("ash_bed", (0.0, 0.0, 0.0))
     for name, x, z, w, h, d, y, mat in (
-        ("bed_floor", 0.0, 0.0, 7.2, 0.85, 5.7, 0.1, "ash_bed"),
-        ("bed_left", -2.3, 0.1, 2.1, 1.3, 3.0, 0.35, "ash_bed"),
-        ("bed_right", 2.2, -0.2, 2.0, 1.1, 2.6, 0.35, "charcoal_vine"),
-        ("bed_back", 0.0, -1.8, 4.8, 1.15, 1.2, 0.35, "bark_rust"),
+        ("bed_floor", 0.0, 0.0, 7.8, 0.85, 6.8, 0.1, "ash_bed"),
+        ("bed_left", -2.6, 0.1, 2.2, 1.25, 3.2, 0.35, "ash_bed"),
+        ("bed_right", 2.5, -0.2, 2.1, 1.1, 2.8, 0.35, "charcoal_vine"),
+        ("bed_back", 0.0, -2.1, 5.0, 1.15, 1.4, 0.35, "bark_rust"),
     ):
         pad(rig, "ash_bed", name, (x, y, z), (w, h, d), mat)
 
 
-def _tower_path(vine_index: int, count: int = 9):
+def _tower_path(vine_index: int, count: int = 12):
     phase = math.tau * vine_index / 6.0
     points = []
     for step in range(count):
         t = step / (count - 1)
-        angle = phase + math.tau * 1.05 * t
-        radius = 0.6 + 2.6 * (1.0 - t) ** 0.75
+        angle = phase + math.tau * 1.35 * t
+        # 稀疏尖塔状：底部半径 5.2px，顶部收敛至 1.1px，总高达到 11.8px
+        radius = 1.1 + 4.1 * (1.0 - t) ** 0.85
         points.append(
             (
                 radius * math.cos(angle),
-                0.82 + 5.65 * t,
+                0.8 + 10.8 * t,
                 radius * math.sin(angle),
             )
         )
@@ -55,6 +56,7 @@ def _tower_path(vine_index: int, count: int = 9):
 
 
 def part_terminal_vines(rig):
+    """6 根 1px 细黑藤螺旋上升成高约 12px 的尖塔状藤团，藤与藤之间留出 1~2px 空隙。"""
     rig.bone("terminal_vines", (0.0, 0.0, 0.0))
     for vine_index in range(6):
         curved_vine_chain(
@@ -62,62 +64,66 @@ def part_terminal_vines(rig):
             "terminal_vines",
             f"vine_tower_{vine_index}",
             _tower_path(vine_index),
-            0.46,
-            0.27,
+            0.45,
+            0.28,
             "charcoal_vine",
         )
 
 
 def part_toxin_veins(rig):
+    """藤身缝隙间穿插的暗红毒脉与点缀的橙色余烬。"""
     rig.bone("toxin_veins", (0.0, 0.0, 0.0))
     for name, start, end, mat in (
-        ("vein_center", (-0.9, 2.7, 0.45), (0.1, 4.1, 0.4), "toxin_red"),
-        ("vein_left", (-2.25, 3.0, 0.9), (-1.8, 4.75, 0.95), "ember_line"),
-        ("vein_right", (1.95, 3.1, 0.1), (2.4, 5.05, 0.25), "toxin_red"),
-        ("vein_reach", (0.15, 4.2, 0.4), (1.35, 5.65, 0.65), "ember_line"),
+        ("vein_center", (-0.9, 3.2, 0.5), (0.1, 5.5, 0.4), "toxin_red"),
+        ("vein_left", (-2.4, 3.8, 1.1), (-1.4, 6.8, 1.0), "ember_line"),
+        ("vein_right", (2.1, 4.0, 0.2), (2.2, 7.2, 0.3), "toxin_red"),
+        ("vein_reach", (0.2, 6.2, 0.4), (0.9, 9.4, 0.5), "ember_line"),
     ):
-        strand(rig, "toxin_veins", name, start, end, 0.25, mat)
+        strand(rig, "toxin_veins", name, start, end, 0.28, mat)
+    # 缝隙间点缀的橙色余烬火点
+    for name, center in (
+        ("ember_speck_1", (0.4, 2.5, -0.6)),
+        ("ember_speck_2", (-1.2, 5.2, -0.8)),
+        ("ember_speck_3", (1.1, 7.6, 0.2)),
+        ("ember_speck_4", (-0.3, 9.2, 0.6)),
+    ):
+        pad(rig, "toxin_veins", name, center, (0.55, 0.55, 0.55), "ember_line")
 
 
 def part_poison_thorns(rig):
+    """沿黑藤向外斜挑的暗红尖刺 #6a1a10。"""
     rig.bone("poison_thorns", (0.0, 0.0, 0.0))
     thorn_index = 0
     for vine_index in range(6):
         points = _tower_path(vine_index)
-        for point_index in (3, 6):
+        for point_index in (3, 7):
             x, y, z = points[point_index]
             radial = math.hypot(x, z) or 1.0
-            dx, dz = x / radial * 0.62, z / radial * 0.62
+            dx, dz = x / radial * 0.85, z / radial * 0.85
             strand(
                 rig,
                 "poison_thorns",
                 f"thorn_{thorn_index}",
                 (x, y, z),
-                (x + dx, y + 0.32, z + dz),
-                0.16,
+                (x + dx, y + 0.45, z + dz),
+                0.22,
+                "bone_thorn",
+            )
+            pad(
+                rig,
+                "poison_thorns",
+                f"thorn_tip_{thorn_index}",
+                (x + dx * 1.15, y + 0.55, z + dz * 1.15),
+                (0.35, 0.35, 0.35),
                 "bone_thorn",
             )
             thorn_index += 1
 
 
-def part_ember_sparks(rig):
-    rig.bone("ember_sparks", (0.0, 0.0, 0.0))
-    for index, (x, y, z) in enumerate(
-        (
-            (-2.0, 2.35, 0.7),
-            (1.65, 2.95, -0.8),
-            (-1.25, 4.1, -1.2),
-            (0.95, 4.85, 0.7),
-            (0.0, 5.65, -0.35),
-        )
-    ):
-        pad(rig, "ember_sparks", f"ember_{index}", (x, y, z), (0.28, 0.28, 0.28), "ember_line")
-
-
 def build():
     return build_rig(
         MATS,
-        (part_ash_bed, part_terminal_vines, part_toxin_veins, part_poison_thorns, part_ember_sparks),
+        (part_ash_bed, part_terminal_vines, part_toxin_veins, part_poison_thorns),
     )
 
 

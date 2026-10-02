@@ -8,8 +8,8 @@ rock_high = [104, 113, 94]
 root_green = [42, 112, 62]
 leaf_green = [88, 168, 78]
 leaf_high = [142, 204, 98]
-siphon_crystal = [92, 205, 214]
-crystal_glint = [178, 246, 236]
+siphon_crystal = [106, 224, 106]
+crystal_glint = [178, 246, 140]
 
 [features]
 island_underside = { elements = ["island_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }

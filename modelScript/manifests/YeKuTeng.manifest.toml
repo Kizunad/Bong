@@ -4,10 +4,10 @@ size = 280
 
 [materials]
 cave_bed = [36, 34, 38]
-dry_vine = [22, 20, 28]
-vine_high = [55, 43, 67]
-siphon_void = [78, 54, 108]
-dead_leaf = [48, 44, 50]
+dry_vine = [58, 42, 74]
+vine_high = [74, 70, 80]
+siphon_void = [102, 68, 138]
+dead_leaf = [54, 50, 56]
 
 [features]
 cave_bed = { elements = ["bed_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
