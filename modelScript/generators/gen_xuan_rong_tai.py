@@ -18,15 +18,22 @@ MATS = {
 
 
 def part_velvet_pad(rig):
+    """宽扁圆饼状漆黑绒垫 (Round 3 小修：改宽扁圆饼)。"""
     rig.bone("velvet_pad", (0.0, 0.0, 0.0))
+    # 采用圆饼交叉阶梯构建宽扁圆饼垫（总宽 8.2px，总高约 2.5px，形态扁圆）
     for name, x, z, w, h, d, y, mat in (
-        ("pad_floor", 0.0, 0.0, 7.0, 0.9, 5.7, 0.12, "velvet_black"),
-        ("pad_front", 0.0, 2.05, 5.5, 1.35, 1.45, 0.38, "velvet_mid"),
-        ("pad_back", 0.0, -1.95, 5.5, 1.45, 1.35, 0.45, "velvet_mid"),
-        ("pad_left", -2.45, 0.05, 1.55, 1.5, 3.4, 0.42, "velvet_edge"),
-        ("pad_right", 2.45, -0.08, 1.55, 1.6, 3.35, 0.4, "velvet_edge"),
-        ("pad_center", 0.0, -0.05, 4.8, 2.55, 3.9, 1.15, "velvet_mid"),
-        ("pad_top", 0.05, -0.12, 3.7, 1.2, 3.0, 3.45, "velvet_black"),
+        # 底层宽圆底 (y: 0.12 -> 0.87, 展宽 8.2px)
+        ("pad_floor_cross_x", 0.0, 0.0, 8.2, 0.75, 5.8, 0.12, "velvet_edge"),
+        ("pad_floor_cross_z", 0.0, 0.0, 5.8, 0.75, 8.2, 0.12, "velvet_edge"),
+        ("pad_floor_center", 0.0, 0.0, 7.2, 0.85, 7.2, 0.15, "velvet_black"),
+        # 中层圆饼腰身 (y: 0.85 -> 1.80)
+        ("pad_mid_cross_x", 0.0, 0.0, 7.6, 0.95, 5.2, 0.85, "velvet_mid"),
+        ("pad_mid_cross_z", 0.0, 0.0, 5.2, 0.95, 7.6, 0.85, "velvet_mid"),
+        ("pad_mid_center", 0.0, 0.0, 6.4, 0.95, 6.4, 0.85, "velvet_mid"),
+        # 顶层平坦圆饼面 (y: 1.75 -> 2.50)
+        ("pad_top_cross_x", 0.0, 0.0, 6.2, 0.75, 4.4, 1.75, "velvet_black"),
+        ("pad_top_cross_z", 0.0, 0.0, 4.4, 0.75, 6.2, 1.75, "velvet_black"),
+        ("pad_top_center", 0.0, 0.0, 5.2, 0.75, 5.2, 1.75, "velvet_black"),
     ):
         pad(rig, "velvet_pad", name, (x, y, z), (w, h, d), mat)
 
@@ -34,10 +41,10 @@ def part_velvet_pad(rig):
 def part_velvet_tufts(rig):
     rig.bone("velvet_tufts", (0.0, 0.0, 0.0))
     for name, start, end in (
-        ("tuft_front", (0.0, 2.0, 1.0), (0.0, 4.8, 1.35)),
-        ("tuft_left", (-1.5, 2.4, 0.2), (-2.15, 4.6, 0.35)),
-        ("tuft_right", (1.45, 2.35, -0.25), (2.1, 4.5, -0.4)),
-        ("tuft_back", (0.0, 2.4, -1.0), (0.0, 4.95, -1.35)),
+        ("tuft_front", (0.0, 1.8, 1.8), (0.0, 2.8, 2.4)),
+        ("tuft_left", (-1.8, 1.8, 0.0), (-2.4, 2.8, 0.0)),
+        ("tuft_right", (1.8, 1.8, 0.0), (2.4, 2.8, 0.0)),
+        ("tuft_back", (0.0, 1.8, -1.8), (0.0, 2.8, -2.4)),
     ):
         strand(rig, "velvet_tufts", name, start, end, 0.25, "velvet_black")
 
@@ -45,10 +52,10 @@ def part_velvet_tufts(rig):
 def part_ice_crystals(rig):
     rig.bone("ice_crystals", (0.0, 0.0, 0.0))
     for name, start, end in (
-        ("crystal_center", (0.0, 3.9, 0.0), (-0.45, 8.0, 0.25)),
-        ("crystal_left", (-0.55, 3.85, -0.1), (-1.55, 7.0, -0.4)),
-        ("crystal_right", (0.55, 3.82, 0.05), (1.65, 6.8, 0.15)),
-        ("crystal_back", (0.1, 3.8, -0.6), (0.45, 6.55, -1.75)),
+        ("crystal_center", (0.0, 2.2, 0.0), (-0.45, 7.2, 0.25)),
+        ("crystal_left", (-0.55, 2.2, -0.1), (-1.65, 6.2, -0.4)),
+        ("crystal_right", (0.55, 2.2, 0.05), (1.75, 6.0, 0.15)),
+        ("crystal_back", (0.1, 2.2, -0.6), (0.45, 5.8, -1.75)),
     ):
         strand(rig, "ice_crystals", name, start, end, 0.34, "ice_crystal")
 
@@ -56,9 +63,9 @@ def part_ice_crystals(rig):
 def part_blue_cracks(rig):
     rig.bone("blue_cracks", (0.0, 0.0, 0.0))
     for name, start, end in (
-        ("glow_center", (-0.05, 4.15, 0.15), (-0.35, 6.65, 0.3)),
-        ("glow_left", (-0.7, 3.85, -0.05), (-1.3, 5.85, -0.3)),
-        ("glow_right", (0.6, 3.95, 0.05), (1.35, 5.7, 0.12)),
+        ("glow_center", (-0.05, 2.4, 0.15), (-0.35, 5.8, 0.3)),
+        ("glow_left", (-0.7, 2.3, -0.05), (-1.4, 4.9, -0.3)),
+        ("glow_right", (0.6, 2.3, 0.25), (1.55, 4.8, 0.35)),
     ):
         strand(rig, "blue_cracks", name, start, end, 0.22, "blue_glow")
 
