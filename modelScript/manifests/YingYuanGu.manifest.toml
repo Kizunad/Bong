@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+cave_stone = [42, 38, 36]
+stalk_rust = [106, 52, 30]
+amber_cap = [191, 83, 27]
+orange_glow = [255, 144, 45]
+glow_hot = [255, 160, 64]
+
+[features]
+cave_bed = { elements = ["cave_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+warm_stalks = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+amber_caps = { elements = ["cap_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+glow_filaments = { elements = ["filament_", "hot_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

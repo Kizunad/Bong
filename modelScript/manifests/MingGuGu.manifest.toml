@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+bone_white = [218, 213, 198]
+bone_shadow = [124, 119, 108]
+soot = [36, 32, 30]
+cap_high = [238, 235, 220]
+spore_gray = [171, 163, 148]
+
+[features]
+bone_bed = { elements = ["bone_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+stalks = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+caps_and_gills = { elements = ["cap_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+spores = { elements = ["spore_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

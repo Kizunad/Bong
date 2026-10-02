@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+deep_teal = [12, 50, 52]
+outer_teal = [26, 126, 120]
+inner_teal = [47, 214, 200]
+center_glow = [116, 255, 240]
+shadow_teal = [18, 70, 68]
+
+[features]
+lotus_base = { elements = ["deep_", "outer_base_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+outer_leaf = { elements = ["outer_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+inner_leaf = { elements = ["inner_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+center_glow = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }
