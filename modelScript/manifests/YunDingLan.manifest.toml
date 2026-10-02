@@ -3,14 +3,14 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-floating_rock = [48, 52, 58]
-orchid_leaf = [75, 92, 105]       # 苍灰青叶基
-silver_petal = [205, 218, 228]     # 银白主花瓣
-pure_white_lip = [252, 252, 255]   # 纯白唇瓣
-blue_vein = [115, 175, 235]       # 冰蓝冷纹
+rock_dark = [42, 42, 46]           # #2a2a2e 灰黑碎岩底
+rock_mid = [74, 74, 80]            # #4a4a50 灰岩石块
+orchid_leaf = [65, 82, 90]         # 苍灰青基叶
+silver_petal = [205, 218, 228]     # #cbdbe4 银白大宽瓣
+pure_white_lip = [252, 252, 255]   # #fcfcff 纯白兜唇
 
 [features]
-floating_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+rock_base = { elements = ["rock_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
 orchid_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 silver_orchid_flower = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 orchid_lip = { elements = ["lip_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

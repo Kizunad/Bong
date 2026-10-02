@@ -3,13 +3,13 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-wet_soil = [30, 26, 36]
-stem_dark_violet = [58, 48, 85]
-petal_violet = [115, 82, 168]    # #7352a8 幽暗紫花瓣
-pistil_yellow_glow = [225, 210, 110] # 核心解毒金黄花蕊
-pistil_spark = [250, 245, 180]
+crystal_rock = [42, 46, 58]         # #2a2e3a 暗灰晶岩
+rock_vein = [122, 184, 255]         # #7ab8ff 蓝白细纹
+purple_bud_dark = [75, 42, 125]     # 暗紫底色
+purple_bud_mid = [106, 58, 176]     # #6a3ab0 主紫小苞
+purple_bud_light = [154, 106, 224]  # #9a6ae0 亮紫小苞
 
 [features]
-wet_ground = { elements = ["ground_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-violet_bell_petals = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-antidote_stamen = { elements = ["stamen_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+crystal_rock_base = { elements = ["rock_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+rock_blue_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+purple_bead_cluster = { elements = ["bead_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
