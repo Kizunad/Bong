@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+root_mid = [48, 29, 31]
+leaf_black = [26, 20, 20]
+leaf_shadow = [14, 11, 13]
+vein_red = [138, 28, 28]
+
+[features]
+root_bed = { elements = ["root_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pointed_rosette = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+leaf_vein = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+root_shadow = { elements = ["shadow_"], must_show_in = ["FRONT"], min_px = 1 }

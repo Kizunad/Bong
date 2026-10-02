@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+ash_bed = [43, 42, 40]
+ash_edge = [85, 82, 78]
+soot = [27, 26, 24]
+ember_crack = [224, 88, 42]
+ember_hot = [255, 150, 64]
+
+[features]
+ash_bed = { elements = ["ash_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+soot_crust = { elements = ["soot_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 1 }
+ember_crack = { elements = ["ember_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+ember_hot = { elements = ["ember_hot_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

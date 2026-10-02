@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+rift_stone = [43, 43, 46]
+rift_stone_light = [82, 80, 84]
+purple_moss = [106, 47, 160]
+dark_purple = [58, 26, 90]
+rift_glow = [192, 112, 255]
+
+[features]
+rift_stones = { elements = ["stone_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+purple_moss = { elements = ["moss_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+rift_crack = { elements = ["crack_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+dark_purple = { elements = ["dark_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

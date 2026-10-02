@@ -1,0 +1,17 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+ruin_stone = [62, 72, 72]
+stone_high = [114, 132, 130]
+cap_gray = [90, 96, 112]
+cap_shadow = [66, 72, 86]
+purple_vein = [138, 90, 200]
+purple_glint = [198, 140, 232]
+
+[features]
+ruin_stone = { elements = ["stone_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+stems = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+caps = { elements = ["cap_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+inscription_vein = { elements = ["inscription_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

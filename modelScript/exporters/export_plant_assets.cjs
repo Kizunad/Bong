@@ -21,6 +21,18 @@ const PLANTS = {
     long_lin_tai: "LongLinTai",
     xu_yuan_rui: "XuYuanRui",
     hua_xing_gen: "HuaXingGen",
+    hui_jin_tai: "HuiJinTai",
+    lie_yuan_tai: "LieYuanTai",
+    shi_ling_xian: "ShiLingXian",
+    xuan_rong_tai: "XuanRongTai",
+    yang_jing_tai: "YangJingTai",
+    jing_xin_zao: "JingXinZao",
+    bei_wen_zhi: "BeiWenZhi",
+    ming_gu_gu: "MingGuGu",
+    ying_yuan_gu: "YingYuanGu",
+    kong_shou_hen: "KongShouHen",
+    ling_jing_xu: "LingJingXu",
+    bai_yan_peng: "BaiYanPeng",
 };
 
 function centerModel(source) {
