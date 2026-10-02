@@ -3,14 +3,14 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-negative_soil = [36, 28, 42]        # 负灵域裂隙黑土
-root_flesh_dark = [68, 38, 55]      # #442637 肿胀紫黑根肉
-root_flesh_mid = [115, 62, 95]      # #733e5f 噬脉紫红根身
-root_tendril = [168, 92, 142]       # #a85c8e 蠕行须根
-toxic_pustule = [215, 160, 205]     # #d7a0cd 剧毒脓疱
+soil_chasm = [38, 30, 42]           # 负灵域裂隙土
+root_black_flesh = [26, 18, 20]     # #1a1214 黑红块根
+pulse_vein_red = [138, 26, 42]      # #8a1a2a 暗红脉络
+vein_glow = [210, 58, 80]           # 亮红脉结
+fine_rootlet = [55, 62, 50]         # 侧生细须根
 
 [features]
-chasm_soil = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-swollen_rhizome = { elements = ["rhizome_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-creeping_tendrils = { elements = ["tendril_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-toxic_nodes = { elements = ["node_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+chasm_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+twisted_root_trunk = { elements = ["root_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pulse_red_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+fine_rootlets = { elements = ["rootlet_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }

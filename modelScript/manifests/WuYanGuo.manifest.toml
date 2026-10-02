@@ -3,14 +3,14 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-decay_soil = [38, 38, 45]          # 毒蚀泥台
-toxic_leaf = [52, 58, 65]          # 哑光枯灰叶
-fruit_slate_dark = [95, 102, 115]  # #5f6673 灰蓝哑光果皮
-fruit_slate_light = [150, 160, 175]# #96a0af 顶端亮灰
-mute_venom_speck = [62, 54, 82]    # #3e3652 无言毒斑
+soil_base = [45, 38, 32]
+silver_leaf = [65, 80, 105]        # #4a4e58 暗银尖叶
+pedicel_green = [48, 75, 42]        # 果柄叶心
+pearl_body = [235, 225, 205]        # #e8e4d8 珍珠白圆球
+pearl_glow = [255, 255, 255]        # #ffffff 纯白高光
 
 [features]
-toxic_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-mute_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-smooth_fruit = { elements = ["fruit_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-mute_spots = { elements = ["spot_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+soil_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+silver_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pearl_sphere = { elements = ["pearl_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+white_highlight = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
