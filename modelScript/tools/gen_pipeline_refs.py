@@ -117,6 +117,9 @@ class TKImageClient:
 
     def text_to_image(self, prompt: str, size: str = "1024x1024") -> bytes:
         """纯文生图 (Generations)"""
+        if self.model.startswith("gemini"):
+            return self._gemini_chat_image(prompt)
+
         url = f"{self.base_url}/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -131,10 +134,42 @@ class TKImageClient:
         t0 = time.time()
         resp = requests.post(url, headers=headers, json=payload, timeout=180)
         elapsed = time.time() - t0
+        if resp.status_code == 429 and "cooldown" in resp.text:
+            print(f"    (模型 {self.model} 处于冷却中，自动回退到 gemini-3.1-flash-image)")
+            return self._gemini_chat_image(prompt)
         if resp.status_code != 200:
             raise RuntimeError(f"文生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
         print(f"    (耗时: {elapsed:.1f}s)")
         return self._extract_image_bytes(resp.json())
+
+    def _gemini_chat_image(self, prompt: str) -> bytes:
+        """调用 gemini 图像模型 (走 /v1/chat/completions)"""
+        url = f"{self.base_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "gemini-3.1-flash-image",
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }
+        t0 = time.time()
+        resp = requests.post(url, headers=headers, json=payload, timeout=180)
+        elapsed = time.time() - t0
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini 生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
+        d = resp.json()
+        print(f"    (耗时: {elapsed:.1f}s)")
+        choices = d.get("choices", [])
+        if choices and "message" in choices[0]:
+            images = choices[0]["message"].get("images", [])
+            if images and "image_url" in images[0]:
+                url_str = images[0]["image_url"].get("url", "")
+                if url_str.startswith("data:"):
+                    b64 = url_str.split(",", 1)[1]
+                    return base64.b64decode(b64)
+        raise RuntimeError(f"无法从 Gemini 响应中提取图像: {d}")
 
     def image_to_image(
         self,
@@ -143,12 +178,16 @@ class TKImageClient:
         size: str = "1024x1024",
     ) -> bytes:
         """图生图 (Edits，基于参考图)"""
+        raw_bytes = self._read_bytes(reference_image)
+        img_bytes = self._prepare_ref_image(raw_bytes)
+
+        if self.model.startswith("gemini"):
+            return self._gemini_image_to_image(prompt, img_bytes)
+
         url = f"{self.base_url}/v1/images/edits"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
         }
-        raw_bytes = self._read_bytes(reference_image)
-        img_bytes = self._prepare_ref_image(raw_bytes)
 
         files = {
             "image": ("reference.png", img_bytes, "image/png"),
@@ -162,10 +201,49 @@ class TKImageClient:
         t0 = time.time()
         resp = requests.post(url, headers=headers, files=files, data=data, timeout=180)
         elapsed = time.time() - t0
+        if resp.status_code == 429 and "cooldown" in resp.text:
+            print(f"    (模型 {self.model} 处于冷却中，自动回退到 gemini-3.1-flash-image)")
+            return self._gemini_image_to_image(prompt, img_bytes)
         if resp.status_code != 200:
             raise RuntimeError(f"图生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
         print(f"    (耗时: {elapsed:.1f}s)")
         return self._extract_image_bytes(resp.json())
+
+    def _gemini_image_to_image(self, prompt: str, img_bytes: bytes) -> bytes:
+        """调用 gemini 多模态图生图 (走 /v1/chat/completions)"""
+        url = f"{self.base_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        b64_in = base64.b64encode(img_bytes).decode("utf-8")
+        payload = {
+            "model": "gemini-3.1-flash-image",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_in}"}}
+                ]
+            }],
+            "stream": False,
+        }
+        t0 = time.time()
+        resp = requests.post(url, headers=headers, json=payload, timeout=180)
+        elapsed = time.time() - t0
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini 图生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
+        d = resp.json()
+        print(f"    (耗时: {elapsed:.1f}s)")
+        choices = d.get("choices", [])
+        if choices and "message" in choices[0]:
+            images = choices[0]["message"].get("images", [])
+            if images and "image_url" in images[0]:
+                url_str = images[0]["image_url"].get("url", "")
+                if url_str.startswith("data:"):
+                    b64 = url_str.split(",", 1)[1]
+                    return base64.b64decode(b64)
+        raise RuntimeError(f"无法从 Gemini 响应中提取图像: {d}")
 
     def _prepare_ref_image(self, raw_bytes: bytes, target_side: int = 512) -> bytes:
         """将参考图压缩为中等尺寸 PNG，加快传输并稳定图生图效果"""
@@ -226,7 +304,8 @@ def generate_single_step(
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.text_to_image(full_prompt)
         out_file.write_bytes(img_bytes)
-        print(f"  ✓ 概念图生成成功: {out_file.relative_to(REPO_ROOT)}")
+        rel = out_file.relative_to(REPO_ROOT) if out_file.is_relative_to(REPO_ROOT) else out_file
+        print(f"  ✓ 概念图生成成功: {rel}")
 
     elif step == "icon":
         if not ref_path or not ref_path.exists():
@@ -237,7 +316,8 @@ def generate_single_step(
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
-        print(f"  ✓ 物品图标生成成功: {out_file.relative_to(REPO_ROOT)}")
+        rel = out_file.relative_to(REPO_ROOT) if out_file.is_relative_to(REPO_ROOT) else out_file
+        print(f"  ✓ 物品图标生成成功: {rel}")
 
     elif step == "three_view":
         if not ref_path or not ref_path.exists():
@@ -260,7 +340,8 @@ def generate_single_step(
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
-        print(f"  ✓ 三视图生成成功: {out_file.relative_to(REPO_ROOT)}")
+        rel = out_file.relative_to(REPO_ROOT) if out_file.is_relative_to(REPO_ROOT) else out_file
+        print(f"  ✓ 三视图生成成功: {rel}")
 
     elif step == "exploded":
         if not ref_path or not ref_path.exists():
@@ -277,7 +358,8 @@ def generate_single_step(
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
-        print(f"  ✓ 爆炸分解图生成成功: {out_file.relative_to(REPO_ROOT)}")
+        rel = out_file.relative_to(REPO_ROOT) if out_file.is_relative_to(REPO_ROOT) else out_file
+        print(f"  ✓ 爆炸分解图生成成功: {rel}")
 
     return out_file
 
