@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+boundary_soil = [42, 40, 44]
+stem_neutral = [55, 62, 58]
+clear_cyan = [78, 155, 142]
+turbid_dark = [34, 32, 38]
+neutral_eye = [145, 195, 185]
+
+[features]
+soil_base = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+central_stem = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+five_petals = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+neutral_eye = { elements = ["core_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

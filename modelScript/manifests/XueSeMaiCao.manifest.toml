@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+blood_earth = [48, 32, 30]
+stem_knot = [56, 44, 42]
+blade_graygreen = [62, 70, 60]
+blood_vein_main = [168, 38, 32]
+blood_vein_sub = [215, 68, 55]
+
+[features]
+soil_base = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+pulse_stem = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+blade_leaves = { elements = ["blade_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+blood_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

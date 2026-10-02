@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+earth_mound = [48, 42, 38]
+deep_blue_stem = [22, 45, 62]
+leaf_indigo = [32, 68, 88]
+leaf_aquablue = [48, 102, 128]
+vein_cyan = [75, 155, 185]
+
+[features]
+root_node = { elements = ["root_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+main_stem = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+paired_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+condense_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

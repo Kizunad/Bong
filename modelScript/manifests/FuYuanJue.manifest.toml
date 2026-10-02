@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+negative_qi_soil = [38, 28, 45]
+fiddlehead_stalk = [52, 38, 65]
+fern_frond_deep = [65, 48, 85]
+negative_vein = [125, 75, 175]
+toxic_spores = [175, 115, 235]
+
+[features]
+rhizome_base = { elements = ["rhizome_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+curled_fiddlehead = { elements = ["fiddlehead_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+spread_fronds = { elements = ["frond_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+negative_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

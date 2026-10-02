@@ -33,6 +33,15 @@ const PLANTS = {
     kong_shou_hen: "KongShouHen",
     ling_jing_xu: "LingJingXu",
     bai_yan_peng: "BaiYanPeng",
+    // 第 4 批：草本 / 蕨
+    spirit_grass: "SpiritGrass",
+    ning_mai_cao: "NingMaiCao",
+    ci_she_hao: "CiSheHao",
+    qing_zhuo_cao: "QingZhuoCao",
+    xue_se_mai_cao: "XueSeMaiCao",
+    fu_chen_cao: "FuChenCao",
+    fu_yuan_jue: "FuYuanJue",
+    zhen_jie_zi: "ZhenJieZi",
 };
 
 function centerModel(source) {

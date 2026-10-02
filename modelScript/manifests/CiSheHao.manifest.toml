@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+dry_ground = [52, 46, 38]
+wormwood_stem = [48, 54, 40]
+serrated_leaf = [68, 75, 52]
+spiky_tongue = [110, 118, 65]
+toxic_buds = [168, 142, 58]
+
+[features]
+stem_base = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+feather_branches = { elements = ["branch_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+spiky_tongues = { elements = ["tongue_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+toxic_flower = { elements = ["flower_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

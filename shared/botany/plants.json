@@ -10,38 +10,38 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/an_shen_guo_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/an_shen_guo.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/an_shen_guo_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.003,
         "item_id": "an_shen_guo",
         "max_age_ticks": 9000,
@@ -65,46 +65,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/bai_yan_peng_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/bai_yan_peng.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/bai_yan_peng.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/bai_yan_peng_seedling.png"
           }
         },
         "tint_rgb": 16316648
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.002,
         "item_id": "bai_yan_peng",
         "max_age_ticks": 8000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "dead_bush",
           "env_locks": [],
@@ -141,46 +141,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/bei_wen_zhi_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/bei_wen_zhi.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/bei_wen_zhi.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/bei_wen_zhi_seedling.png"
           }
         },
         "tint_rgb": 8423568
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "bei_wen_zhi",
         "max_age_ticks": 13000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "red_mushroom",
           "env_locks": [
@@ -224,39 +224,39 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/chi_sui_cao_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/chi_sui_cao.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/chi_sui_cao.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/chi_sui_cao_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.005,
         "item_id": "chi_sui_cao",
         "max_age_ticks": 8500,
@@ -280,38 +280,39 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ci_she_hao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/ci_she_hao.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/ci_she_hao.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/ci_she_hao.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ci_she_hao_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 4.0,
+        "density_factor": 4,
         "growth_cost": 0.002,
         "item_id": "ci_she_hao",
         "max_age_ticks": 6000,
@@ -335,45 +336,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/duan_ji_ci_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/duan_ji_ci.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/duan_ji_ci_seedling.png"
           }
         },
         "tint_rgb": 6037007
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "duan_ji_ci",
         "max_age_ticks": 12000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "sweet_berry_bush",
           "env_locks": [
@@ -425,11 +426,11 @@
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "minecraft:textures/block/grass.png"
           }
         },
@@ -443,7 +444,7 @@
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "sweet_berry_bush",
           "env_locks": [],
@@ -470,31 +471,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_chen_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/fu_chen_cao.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/fu_chen_cao.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/fu_chen_cao.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_chen_cao_seedling.png"
           }
         },
@@ -508,7 +510,7 @@
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": 0.0,
+        "survive_threshold": 0,
         "v2": null,
         "zone_tags": [
           "negative_field",
@@ -526,31 +528,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_you_hua_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/fu_you_hua.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_you_hua_seedling.png"
           }
         },
@@ -581,45 +583,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_yuan_jue_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/fu_yuan_jue.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/fu_yuan_jue.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/fu_yuan_jue.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/fu_yuan_jue_seedling.png"
           }
         },
         "tint_rgb": 4861530
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "fu_yuan_jue",
         "max_age_ticks": 14400,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "large_fern",
           "env_locks": [
@@ -656,32 +659,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/gu_yuan_gen_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/gu_yuan_gen.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/gu_yuan_gen.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/gu_yuan_gen_seedling.png"
           }
         },
@@ -713,46 +716,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hei_gu_jun_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/hei_gu_jun.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/hei_gu_jun.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hei_gu_jun_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "hei_gu_jun",
         "max_age_ticks": 20000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -767,46 +770,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hui_jin_tai_growing.png"
           },
           "mature": {
             "kind": "geo",
             "geometry": "bong:geo/plants/hui_jin_tai.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/hui_jin_tai.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hui_jin_tai_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "hui_jin_tai",
         "max_age_ticks": 10000,
         "regen_ticks": 2400,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -823,31 +826,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hui_yuan_zhi_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/hui_yuan_zhi.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/hui_yuan_zhi_seedling.png"
           }
         },
@@ -878,31 +881,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jiao_mai_teng_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/jiao_mai_teng.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jiao_mai_teng_seedling.png"
           }
         },
@@ -916,7 +919,7 @@
         "regen_ticks": 3600,
         "restore_ratio": 0.8,
         "spawn_mode": "static_point",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "weeping_vines",
           "env_locks": [
@@ -961,31 +964,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jie_gu_rui_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/jie_gu_rui.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jie_gu_rui_seedling.png"
           }
         },
@@ -1016,32 +1019,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jing_xin_zao_growing.png"
           },
           "mature": {
             "kind": "geo",
             "geometry": "bong:geo/plants/jing_xin_zao.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/jing_xin_zao.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/jing_xin_zao_seedling.png"
           }
         },
@@ -1055,7 +1058,7 @@
         "regen_ticks": 14400,
         "restore_ratio": 0.8,
         "spawn_mode": "static_point",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "seagrass",
           "env_locks": [
@@ -1105,46 +1108,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/kong_shou_hen_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/kong_shou_hen.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/kong_shou_hen.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/kong_shou_hen_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "kong_shou_hen",
         "max_age_ticks": 20000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -1159,46 +1162,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/lie_yuan_tai_growing.png"
           },
           "mature": {
             "kind": "geo",
             "geometry": "bong:geo/plants/lie_yuan_tai.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/lie_yuan_tai.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/lie_yuan_tai_seedling.png"
           }
         },
         "tint_rgb": 4202592
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.003,
         "item_id": "lie_yuan_tai",
         "max_age_ticks": 9000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "glow_lichen",
           "env_locks": [
@@ -1230,46 +1233,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ling_jing_xu_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/ling_jing_xu.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/ling_jing_xu.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ling_jing_xu_seedling.png"
           }
         },
         "tint_rgb": 10510591
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "ling_jing_xu",
         "max_age_ticks": 13000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "twisting_vines",
           "env_locks": [
@@ -1317,46 +1320,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ling_yan_shi_zhi_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/ling_yan_shi_zhi.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/ling_yan_shi_zhi.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ling_yan_shi_zhi_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "ling_yan_shi_zhi",
         "max_age_ticks": 30000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -1371,45 +1374,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/mao_xin_wei_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/mao_xin_wei.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/mao_xin_wei_seedling.png"
           }
         },
         "tint_rgb": 15253568
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.002,
         "item_id": "mao_xin_wei",
         "max_age_ticks": 9000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "wheat",
           "env_locks": [
@@ -1444,46 +1447,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ming_gu_gu_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/ming_gu_gu.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/ming_gu_gu.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ming_gu_gu_seedling.png"
           }
         },
         "tint_rgb": 15261904
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "ming_gu_gu",
         "max_age_ticks": 14000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "brown_mushroom",
           "env_locks": [
@@ -1535,38 +1538,39 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ning_mai_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/ning_mai_cao.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/ning_mai_cao.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/ning_mai_cao.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ning_mai_cao_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 3.0,
+        "density_factor": 3,
         "growth_cost": 0.003,
         "item_id": "ning_mai_cao",
         "max_age_ticks": 7200,
@@ -1590,31 +1594,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/qing_zhuo_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/qing_zhuo_cao.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/qing_zhuo_cao.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/qing_zhuo_cao.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/qing_zhuo_cao_seedling.png"
           }
         },
@@ -1646,31 +1651,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/shao_hou_man_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/shao_hou_man.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/shao_hou_man_seedling.png"
           }
         },
@@ -1702,25 +1707,25 @@
             "kind": "geo",
             "geometry": "bong:geo/plants/shi_ling_xian.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/shi_ling_xian.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "shi_ling_xian",
         "max_age_ticks": 1200,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "spread_by_crawl",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": [
           "negative_field"
@@ -1737,45 +1742,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/shi_mai_gen_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/shi_mai_gen.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/shi_mai_gen_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "shi_mai_gen",
         "max_age_ticks": 25000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": [
           "negative_field"
@@ -1790,20 +1795,21 @@
       "visual": {
         "stages": {
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/spirit_grass.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/spirit_grass.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/spirit_grass.png"
+            "scale": 1
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 20.0,
+        "density_factor": 20,
         "growth_cost": 0.002,
         "item_id": "spirit_grass",
         "max_age_ticks": 4000,
@@ -1827,45 +1833,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/tian_nu_jiao_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/tian_nu_jiao.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/tian_nu_jiao_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "tian_nu_jiao",
         "max_age_ticks": 1200,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -1880,31 +1886,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/wu_yan_guo_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/wu_yan_guo.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/wu_yan_guo_seedling.png"
           }
         },
@@ -1935,45 +1941,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xuan_gen_wei_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/xuan_gen_wei.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xuan_gen_wei_seedling.png"
           }
         },
         "tint_rgb": 6344832
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.004,
         "item_id": "xuan_gen_wei",
         "max_age_ticks": 11000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "vine",
           "env_locks": [
@@ -2011,32 +2017,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xuan_rong_tai_growing.png"
           },
           "mature": {
             "kind": "geo",
             "geometry": "bong:geo/plants/xuan_rong_tai.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/xuan_rong_tai.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xuan_rong_tai_seedling.png"
           }
         },
@@ -2050,7 +2056,7 @@
         "regen_ticks": 7200,
         "restore_ratio": 0.8,
         "spawn_mode": "static_point",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "moss_carpet",
           "env_locks": [
@@ -2089,46 +2095,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xue_po_lian_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/xue_po_lian.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/xue_po_lian.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xue_po_lian_seedling.png"
           }
         },
         "tint_rgb": 15792383
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.006,
         "item_id": "xue_po_lian",
         "max_age_ticks": 16000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "lily_of_the_valley",
           "env_locks": [
@@ -2166,31 +2172,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xue_se_mai_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/xue_se_mai_cao.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/xue_se_mai_cao.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/xue_se_mai_cao.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/xue_se_mai_cao_seedling.png"
           }
         },
@@ -2204,7 +2211,7 @@
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "tall_grass",
           "env_locks": [
@@ -2248,46 +2255,46 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yang_jing_tai_growing.png"
           },
           "mature": {
             "kind": "geo",
             "geometry": "bong:geo/plants/yang_jing_tai.geo.json",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/yang_jing_tai.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yang_jing_tai_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "yang_jing_tai",
         "max_age_ticks": 15000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": []
       }
@@ -2302,31 +2309,31 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ye_ku_teng_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/ye_ku_teng.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ye_ku_teng_seedling.png"
           }
         },
@@ -2357,32 +2364,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ying_yuan_gu_growing.png"
           },
           "mature": {
             "geometry": "bong:geo/plants/ying_yuan_gu.geo.json",
             "kind": "geo",
             "offset": [
-              0.0,
-              0.0,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong:textures/entity/plants/ying_yuan_gu.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/ying_yuan_gu_seedling.png"
           }
         },
@@ -2396,7 +2403,7 @@
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "red_mushroom",
           "env_locks": [
@@ -2446,45 +2453,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yuan_ni_hong_yu_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/yuan_ni_hong_yu.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yuan_ni_hong_yu_seedling.png"
           }
         },
         "tint_rgb": 12591168
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.008,
         "item_id": "yuan_ni_hong_yu",
         "max_age_ticks": 18000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "large_fern",
           "env_locks": [
@@ -2531,45 +2538,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yun_ding_lan_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/items/yun_ding_lan.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/yun_ding_lan_seedling.png"
           }
         },
         "tint_rgb": 15267071
       },
       "wild": {
-        "density_factor": 1.0,
+        "density_factor": 1,
         "growth_cost": 0.003,
         "item_id": "yun_ding_lan",
         "max_age_ticks": 9000,
         "regen_ticks": 0,
         "restore_ratio": 0.8,
         "spawn_mode": "zone_refresh",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": {
           "base_mesh_ref": "lily_of_the_valley",
           "env_locks": [
@@ -2606,31 +2613,32 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/zhen_jie_zi_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "kind": "geo",
+            "geometry": "client/src/main/resources/assets/bong/geo/plants/zhen_jie_zi.geo.json",
+            "texture": "client/src/main/resources/assets/bong/textures/entity/plants/zhen_jie_zi.png",
             "offset": [
-              0.0,
-              0.02,
-              0.0
+              0,
+              0,
+              0
             ],
-            "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/zhen_jie_zi.png"
+            "scale": 1
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/zhen_jie_zi_seedling.png"
           }
         },
@@ -2662,45 +2670,45 @@
           "growing": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/zhong_yan_teng_growing.png"
           },
           "mature": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/zhong_yan_teng.png"
           },
           "seedling": {
             "kind": "billboard",
             "offset": [
-              0.0,
+              0,
               0.02,
-              0.0
+              0
             ],
-            "scale": 1.0,
+            "scale": 1,
             "texture": "bong-client:textures/gui/botany/stages/zhong_yan_teng_seedling.png"
           }
         },
         "tint_rgb": 16777215
       },
       "wild": {
-        "density_factor": 0.0,
-        "growth_cost": 0.0,
+        "density_factor": 0,
+        "growth_cost": 0,
         "item_id": "zhong_yan_teng",
         "max_age_ticks": 30000,
         "regen_ticks": 0,
-        "restore_ratio": 0.0,
+        "restore_ratio": 0,
         "spawn_mode": "event_triggered",
-        "survive_threshold": -1.0,
+        "survive_threshold": -1,
         "v2": null,
         "zone_tags": [
           "negative_field"
