@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+decay_soil = [38, 38, 45]          # 毒蚀泥台
+toxic_leaf = [52, 58, 65]          # 哑光枯灰叶
+fruit_slate_dark = [95, 102, 115]  # #5f6673 灰蓝哑光果皮
+fruit_slate_light = [150, 160, 175]# #96a0af 顶端亮灰
+mute_venom_speck = [62, 54, 82]    # #3e3652 无言毒斑
+
+[features]
+toxic_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+mute_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+smooth_fruit = { elements = ["fruit_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+mute_spots = { elements = ["spot_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

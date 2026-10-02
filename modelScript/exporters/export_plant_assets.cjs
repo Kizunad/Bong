@@ -49,6 +49,12 @@ const PLANTS = {
     yun_ding_lan: "YunDingLan",
     yuan_ni_hong_yu: "YuanNiHongYu",
     duan_ji_ci: "DuanJiCi",
+    // 第 6 批：果实 / 根
+    an_shen_guo: "AnShenGuo",
+    wu_yan_guo: "WuYanGuo",
+    "food.spirit_fruit.ling_guo": "LingGuo",
+    tian_nu_jiao: "TianNuJiao",
+    shi_mai_gen: "ShiMaiGen",
 };
 
 function centerModel(source) {

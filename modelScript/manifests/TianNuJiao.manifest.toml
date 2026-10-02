@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+scorched_earth = [40, 26, 26]       # 焦土碎岩座
+charred_stalk = [48, 32, 28]        # 焦黑木茎
+fiery_pepper_body = [185, 36, 24]   # #b92418 怒火红椒身
+fiery_pepper_tip = [240, 95, 30]    # #f05f1e 沸腾橙红椒尖
+flame_sparks = [255, 195, 55]       # #ffc337 炽烈火苗
+
+[features]
+scorched_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+charred_stalks = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+fiery_peppers = { elements = ["pepper_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+boiling_sparks = { elements = ["spark_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

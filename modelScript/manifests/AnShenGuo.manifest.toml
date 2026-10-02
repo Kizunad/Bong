@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+terrace_soil = [48, 42, 34]       # 梯田泥石台
+terrace_leaf = [58, 72, 45]       # 梯田基叶
+peach_yellow = [225, 195, 115]    # #e1c373 淡黄桃果
+peach_highlight = [248, 232, 165] # #f8e8a5 桃尖亮黄
+peach_groove = [175, 138, 75]     # 桃身脊棱
+
+[features]
+terrace_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+support_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+peach_fruit = { elements = ["peach_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+peach_groove = { elements = ["groove_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+mountain_stone = [45, 48, 44]       # 山间碎石座
+bush_twig = [52, 65, 48]            # 灌木短枝
+jade_fruit_deep = [64, 112, 48]     # #407030 深翠灵果
+jade_fruit_mid = [100, 140, 60]     # #648c3c 翠绿果皮
+spirit_glow_band = [130, 235, 140]  # #82eb8c 灵气流光纹
+
+[features]
+stone_base = { elements = ["stone_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+shrub_twigs = { elements = ["twig_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+round_spirit_fruit = { elements = ["fruit_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+glowing_bands = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
