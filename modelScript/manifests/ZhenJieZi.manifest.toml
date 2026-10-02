@@ -3,14 +3,13 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-crag_stone = [45, 48, 44]
-sinewy_stem = [52, 65, 48]
-mustard_leaf = [68, 88, 55]
-pungent_pods = [155, 172, 62]
-needle_spines = [210, 225, 115]
+crag_base = [45, 48, 44]
+urchin_body = [30, 42, 30]     # #1e2a1e 球形主体深墨绿
+needle_green = [106, 176, 74]   # #6ab04a 亮绿短刺
+needle_tip = [168, 224, 110]
+short_stem = [48, 62, 42]
 
 [features]
-stone_base = { elements = ["stone_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-sinewy_stalk = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-pinnate_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-needle_siliques = { elements = ["pod_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+crag_base = { elements = ["crag_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+urchin_body = { elements = ["urchin_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+radial_spikes = { elements = ["spike_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }

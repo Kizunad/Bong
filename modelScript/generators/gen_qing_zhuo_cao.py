@@ -1,4 +1,4 @@
-"""清浊草：叶五瓣，生于两界交界，半清青翠半浊灰黑，中央中和眼。"""
+"""清浊草返工版：五片大宽叶交替舒展（青翠 #2ac0b0 与 鲜橙 #e07a2a 交替），中心挺拔紫色茎（#7a4ac8）。"""
 
 from __future__ import annotations
 
@@ -10,68 +10,83 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "boundary_soil": (42, 40, 44),
-    "stem_neutral": (55, 62, 58),
-    "clear_cyan": (78, 155, 142),
-    "turbid_dark": (34, 32, 38),
-    "neutral_eye": (145, 195, 185),
+    "soil_plate": (42, 38, 45),
+    "stem_purple": (122, 74, 200),   # #7a4ac8 中心紫茎
+    "clear_teal": (42, 192, 176),    # #2ac0b0 青瓣
+    "turbid_orange": (224, 122, 42), # #e07a2a 橙瓣
+    "core_eye": (185, 235, 225),
 }
 
 
 def part_soil_base(rig):
     rig.bone("soil_base", (0.0, 0.0, 0.0))
-    # 交界处的杂色泥台
-    pad(rig, "soil_base", "soil_center", (0.0, 0.12, 0.0), (4.4, 0.75, 4.4), "boundary_soil")
-    pad(rig, "soil_base", "soil_f", (0.2, 0.12, 1.6), (2.8, 0.55, 1.2), "boundary_soil")
-    pad(rig, "soil_base", "soil_b", (-0.2, 0.12, -1.6), (2.8, 0.55, 1.2), "boundary_soil")
+    # 底部杂色土台
+    pad(rig, "soil_base", "soil_center", (0.0, 0.12, 0.0), (4.8, 0.85, 4.8), "soil_plate")
+    pad(rig, "soil_base", "soil_ring", (0.0, 0.85, 0.0), (3.4, 0.85, 3.4), "soil_plate")
 
 
-def part_central_stem(rig):
-    rig.bone("central_stem", (0.0, 0.0, 0.0))
-    # 短粗直立中央分瓣主轴 (y: 0.55 -> 4.50)
-    strand(rig, "central_stem", "stem_base", (0.0, 0.55, 0.0), (0.0, 2.50, 0.0), 0.38, "stem_neutral")
-    strand(rig, "central_stem", "stem_neck", (0.0, 2.50, 0.0), (0.0, 4.50, 0.0), 0.32, "stem_neutral")
+def part_purple_stalk(rig):
+    rig.bone("purple_stalk", (0.0, 0.0, 0.0))
+    # 中心直立向上挺拔的紫色粗主茎 (从地面 y=1.2 一直挺到 y=8.2，非常醒目)
+    strand(rig, "purple_stalk", "stalk_lower", (0.0, 1.20, 0.0), (0.0, 4.50, 0.0), 0.48, "stem_purple")
+    strand(rig, "purple_stalk", "stalk_upper", (0.0, 4.50, 0.0), (0.0, 7.80, 0.0), 0.38, "stem_purple")
+    pad(rig, "purple_stalk", "stalk_crown", (0.0, 7.80, 0.0), (1.4, 1.4, 1.4), "stem_purple")
 
 
-def part_five_petals(rig):
-    rig.bone("five_petals", (0.0, 0.0, 0.0))
-    # 严格 5 瓣放射舒展（72° 均布）
-    # 每瓣由清半边 (clear_cyan) 和浊半边 (turbid_dark) 双片合抱组成！
+def part_five_broad_petals(rig):
+    rig.bone("five_broad_petals", (0.0, 0.0, 0.0))
+    # 五片巨大厚实宽叶放射舒展，青 (#2ac0b0) 与橙 (#e07a2a) 交替！
+    # 72° 均布，每片由双层体素铺就（宽达 3.4px，向外伸展 5.2px，整体跨度 11.2px，高 7.0px）
     angles = [0.0, 72.0, 144.0, 216.0, 288.0]
-    petal_len = 3.6
+    # 交替色：0青, 1橙, 2青, 3橙, 4双色拼合
+    colors = ["clear_teal", "turbid_orange", "clear_teal", "turbid_orange", "clear_teal"]
+    alt_colors = ["clear_teal", "turbid_orange", "clear_teal", "turbid_orange", "turbid_orange"]
+
     for idx, deg in enumerate(angles):
         rad = math.radians(deg)
         cos_a = math.cos(rad)
         sin_a = math.sin(rad)
+        
+        ortho_x = -sin_a * 0.75
+        ortho_z = cos_a * 0.75
+        
+        mat1 = colors[idx]
+        mat2 = alt_colors[idx]
+        
+        # 宽叶基部连接点 (y=3.5)
+        p_base = (cos_a * 0.8, 3.5, sin_a * 0.8)
+        # 宽叶中部拱起处 (y=5.2)
+        p_mid = (cos_a * 3.4, 5.2, sin_a * 3.4)
+        # 宽叶尖端向外下垂展平 (y=4.5)
+        p_tip = (cos_a * 5.4, 4.5, sin_a * 5.4)
+        
+        # 铺出双排厚宽叶
+        # 左扇面
+        strand(rig, "five_broad_petals", f"petal_in_l_{idx}", 
+               (p_base[0] - ortho_x, p_base[1], p_base[2] - ortho_z),
+               (p_mid[0] - ortho_x * 0.9, p_mid[1], p_mid[2] - ortho_z * 0.9), 0.52, mat1)
+        strand(rig, "five_broad_petals", f"petal_out_l_{idx}", 
+               (p_mid[0] - ortho_x * 0.9, p_mid[1], p_mid[2] - ortho_z * 0.9),
+               (p_tip[0], p_tip[1], p_tip[2]), 0.44, mat1)
 
-        # 瓣基 (y=4.5)
-        p_base = (0.0, 4.5, 0.0)
-        # 瓣尖外展微拱起 (y=4.5 -> y=5.8 -> y=5.2)
-        p_mid = (cos_a * 1.9, 5.8, sin_a * 1.9)
-        p_tip = (cos_a * petal_len, 5.2, sin_a * petal_len)
-
-        # 清半边 (顺时针偏置微量角度)
-        strand(rig, "five_petals", f"petal_clear_in_{idx}", p_base, p_mid, 0.26, "clear_cyan")
-        strand(rig, "five_petals", f"petal_clear_out_{idx}", p_mid, p_tip, 0.22, "clear_cyan")
-
-        # 浊半边 (并排紧贴清半边)
-        ortho_x = -sin_a * 0.28
-        ortho_z = cos_a * 0.28
-        p_mid_t = (p_mid[0] + ortho_x, 5.75, p_mid[2] + ortho_z)
-        p_tip_t = (p_tip[0] + ortho_x * 0.8, 5.15, p_tip[2] + ortho_z * 0.8)
-        strand(rig, "five_petals", f"petal_turbid_in_{idx}", p_base, p_mid_t, 0.24, "turbid_dark")
-        strand(rig, "five_petals", f"petal_turbid_out_{idx}", p_mid_t, p_tip_t, 0.20, "turbid_dark")
+        # 右扇面
+        strand(rig, "five_broad_petals", f"petal_in_r_{idx}", 
+               (p_base[0] + ortho_x, p_base[1], p_base[2] + ortho_z),
+               (p_mid[0] + ortho_x * 0.9, p_mid[1], p_mid[2] + ortho_z * 0.9), 0.52, mat2)
+        strand(rig, "five_broad_petals", f"petal_out_r_{idx}", 
+               (p_mid[0] + ortho_x * 0.9, p_mid[1], p_mid[2] + ortho_z * 0.9),
+               (p_tip[0], p_tip[1], p_tip[2]), 0.44, mat2)
 
 
-def part_neutral_eye(rig):
-    rig.bone("neutral_eye", (0.0, 0.0, 0.0))
-    # 五瓣交汇处的两界中和核心晶眼 (y: 4.60 -> 5.60)
-    pad(rig, "neutral_eye", "core_eye_center", (0.0, 4.65, 0.0), (1.1, 0.95, 1.1), "neutral_eye")
-    pad(rig, "neutral_eye", "core_eye_apex", (0.0, 5.55, 0.0), (0.6, 0.55, 0.6), "clear_cyan")
+def part_central_eye(rig):
+    rig.bone("central_eye", (0.0, 0.0, 0.0))
+    # 紫茎顶端托着的中和清澈灵珠灵眼 (y: 8.2 -> 9.4)
+    pad(rig, "central_eye", "eye_core", (0.0, 8.4, 0.0), (1.2, 1.2, 1.2), "core_eye")
+    pad(rig, "central_eye", "eye_halo", (0.0, 8.8, 0.0), (0.7, 0.7, 0.7), "clear_teal")
 
 
 def build():
-    return build_rig(MATS, (part_soil_base, part_central_stem, part_five_petals, part_neutral_eye))
+    return build_rig(MATS, (part_soil_base, part_purple_stalk, part_five_broad_petals, part_central_eye))
 
 
 GATES = PlantGates("清浊草 / qing_zhuo_cao")

@@ -3,14 +3,13 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-earth_mound = [48, 42, 38]
-deep_blue_stem = [22, 45, 62]
-leaf_indigo = [32, 68, 88]
-leaf_aquablue = [48, 102, 128]
-vein_cyan = [75, 155, 185]
+soil_mound = [45, 38, 32]
+blue_leaf_dark = [42, 106, 168]  # #2a6aa8
+blue_leaf_light = [90, 168, 224] # #5aa8e0
+green_midvein = [106, 224, 74]   # #6ae04a
+center_bud = [140, 240, 100]
 
 [features]
-root_node = { elements = ["root_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-main_stem = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-paired_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-condense_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+soil_base = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+rhombus_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+bright_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

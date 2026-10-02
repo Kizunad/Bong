@@ -1,4 +1,4 @@
-"""浮尘草：看似无害，苍白纤细直茎顶着毛茸茸的膨大浮尘孢子球，四散飘零微尘。"""
+"""浮尘草返工版：底部暗色晶质叶丛底座（#2a2e34），顶上 3~5 个灰白孢子小球（#c8c8c8）悬浮成串。"""
 
 from __future__ import annotations
 
@@ -9,56 +9,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "dusty_mound": (48, 50, 52),
-    "pale_stem": (55, 68, 65),
-    "spore_core": (175, 185, 180),
-    "fluff_spore": (215, 225, 220),
-    "toxic_mote": (110, 168, 155),
+    "base_leaf_dark": (42, 46, 52),    # #2a2e34
+    "base_leaf_mid": (65, 72, 80),
+    "spore_ball": (200, 200, 200),     # #c8c8c8
+    "spore_halo": (225, 235, 230),
+    "stalk_pale": (85, 95, 100),
 }
 
 
-def part_soil_base(rig):
-    rig.bone("soil_base", (0.0, 0.0, 0.0))
-    # 灰白沙土台与基叶
-    pad(rig, "soil_base", "soil_center", (0.0, 0.12, 0.0), (3.8, 0.65, 3.8), "dusty_mound")
-    pad(rig, "soil_base", "soil_leaf_f", (0.0, 0.45, 1.4), (1.8, 0.28, 1.6), "pale_stem")
-    pad(rig, "soil_base", "soil_leaf_b", (0.0, 0.45, -1.4), (1.8, 0.28, 1.6), "pale_stem")
-
-
-def part_slender_stem(rig):
-    rig.bone("slender_stem", (0.0, 0.0, 0.0))
-    # 极细长直立轻微拱弯的灰绿草茎 (y: 0.50 -> 8.20)
-    strand(rig, "slender_stem", "stem_low", (0.0, 0.50, 0.0), (0.1, 4.20, 0.1), 0.28, "pale_stem")
-    strand(rig, "slender_stem", "stem_high", (0.1, 4.20, 0.1), (0.05, 8.20, -0.05), 0.24, "pale_stem")
-
-
-def part_spore_head(rig):
-    rig.bone("spore_head", (0.0, 0.0, 0.0))
-    # 顶端膨大的毛茸球形孢子囊 (y: 8.20 -> 11.80, 直径约 3.4px)
-    yc = 10.0
-    pad(rig, "spore_head", "spore_core_cube", (0.05, yc - 1.1, -0.05), (2.8, 2.2, 2.8), "spore_core")
-    # 交叉蓬松绒毛外壳 (fluff cross)
-    pad(rig, "spore_head", "spore_fluff_x", (0.05, yc - 0.8, -0.05), (3.5, 1.6, 2.2), "fluff_spore")
-    pad(rig, "spore_head", "spore_fluff_z", (0.05, yc - 0.8, -0.05), (2.2, 1.6, 3.5), "fluff_spore")
-    pad(rig, "spore_head", "spore_fluff_y", (0.05, yc - 1.5, -0.05), (2.2, 3.0, 2.2), "fluff_spore")
-
-
-def part_dust_motes(rig):
-    rig.bone("dust_motes", (0.0, 0.0, 0.0))
-    # 四周漂浮飘散的微粒毒孢子 (motes, y: 9.0..13.2)
-    motes = (
-        ("mote_top_l", (-0.95, 12.2, 0.4), (0.35, 0.35, 0.35), "toxic_mote"),
-        ("mote_top_r", (1.1, 12.5, -0.3), (0.32, 0.32, 0.32), "fluff_spore"),
-        ("mote_side_r", (1.95, 10.2, 0.8), (0.30, 0.30, 0.30), "toxic_mote"),
-        ("mote_side_l", (-1.85, 9.8, -0.9), (0.32, 0.32, 0.32), "fluff_spore"),
-        ("mote_front", (0.2, 11.2, 1.95), (0.28, 0.28, 0.28), "toxic_mote"),
+def part_crystal_leaves(rig):
+    rig.bone("crystal_leaves", (0.0, 0.0, 0.0))
+    # 底部暗灰晶质尖叶丛厚重底座（放射丛生，占据底面大部分，高 3.5px，展宽 8.6px）
+    pad(rig, "crystal_leaves", "leaf_base_soil", (0.0, 0.12, 0.0), (4.4, 0.85, 4.4), "base_leaf_dark")
+    
+    # 放射晶质尖叶（E, W, S, N, NE, NW, SE, SW）
+    leaves = (
+        ("leaf_e", (0.0, 0.6, 0.0), (3.8, 2.2, 0.0), 0.42, "base_leaf_dark"),
+        ("leaf_w", (0.0, 0.6, 0.0), (-3.8, 2.2, 0.0), 0.42, "base_leaf_dark"),
+        ("leaf_s", (0.0, 0.6, 0.0), (0.0, 2.2, 3.8), 0.42, "base_leaf_dark"),
+        ("leaf_n", (0.0, 0.6, 0.0), (0.0, 2.2, -3.8), 0.42, "base_leaf_dark"),
+        ("leaf_ne", (0.0, 0.8, 0.0), (2.8, 3.2, -2.8), 0.36, "base_leaf_mid"),
+        ("leaf_nw", (0.0, 0.8, 0.0), (-2.8, 3.2, -2.8), 0.36, "base_leaf_mid"),
+        ("leaf_se", (0.0, 0.8, 0.0), (2.8, 3.2, 2.8), 0.36, "base_leaf_mid"),
+        ("leaf_sw", (0.0, 0.8, 0.0), (-2.8, 3.2, 2.8), 0.36, "base_leaf_mid"),
     )
-    for name, pos, size, mat in motes:
-        pad(rig, "dust_motes", name, pos, size, mat)
+    for name, start, end, r, mat in leaves:
+        strand(rig, "crystal_leaves", name, start, end, r, mat)
+
+
+def part_connecting_stalks(rig):
+    rig.bone("connecting_stalks", (0.0, 0.0, 0.0))
+    # 支撑孢子球串的苍白微茎 (细如丝线，引导孢子上升)
+    strand(rig, "connecting_stalks", "stalk_main", (0.0, 1.8, 0.0), (0.1, 5.6, 0.1), 0.26, "stalk_pale")
+    strand(rig, "connecting_stalks", "stalk_branch_l", (0.1, 5.6, 0.1), (-1.4, 7.8, -0.6), 0.20, "stalk_pale")
+    strand(rig, "connecting_stalks", "stalk_branch_r", (0.1, 5.6, 0.1), (1.5, 8.4, 0.8), 0.20, "stalk_pale")
+
+
+def part_spore_chain(rig):
+    rig.bone("spore_chain", (0.0, 0.0, 0.0))
+    # 上方 4 个灰白孢子小球悬浮成串，有大有小（#c8c8c8 / #e1e1e1）
+    # 1. 主孢子大球 (居中偏上，直径 2.4px，y: 6.2)
+    pad(rig, "spore_chain", "spore_main_core", (0.1, 5.8, 0.1), (2.2, 2.2, 2.2), "spore_ball")
+    pad(rig, "spore_chain", "spore_main_halo", (0.1, 5.6, 0.1), (1.6, 2.6, 1.6), "spore_halo")
+
+    # 2. 顶端小球 (高位，直径 1.6px，y: 9.2)
+    pad(rig, "spore_chain", "spore_top_ball", (0.3, 8.8, 0.2), (1.6, 1.6, 1.6), "spore_ball")
+
+    # 3. 左侧悬浮球 (中高位，直径 1.8px，y: 7.6)
+    pad(rig, "spore_chain", "spore_left_ball", (-1.6, 7.4, -0.7), (1.8, 1.8, 1.8), "spore_ball")
+
+    # 4. 右侧悬浮球 (中位，直径 1.5px，y: 8.2)
+    pad(rig, "spore_chain", "spore_right_ball", (1.6, 8.0, 0.9), (1.5, 1.5, 1.5), "spore_ball")
 
 
 def build():
-    return build_rig(MATS, (part_soil_base, part_slender_stem, part_spore_head, part_dust_motes))
+    return build_rig(MATS, (part_crystal_leaves, part_connecting_stalks, part_spore_chain))
 
 
 GATES = PlantGates("浮尘草 / fu_chen_cao")

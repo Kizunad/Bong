@@ -1,7 +1,8 @@
-"""针芥子：烈辛草本，残峰湿地裂隙生，长出多条细长直立锐利如针的直立角果（siliques）。"""
+"""针芥子返工版：圆球形刺团（像海胆），深墨绿球形主体（#1e2a1e）+ 向外放射一圈亮绿短刺（#6ab04a），底部短茎。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -9,72 +10,77 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "crag_stone": (45, 48, 44),
-    "sinewy_stem": (52, 65, 48),
-    "mustard_leaf": (68, 88, 55),
-    "pungent_pods": (155, 172, 62),
-    "needle_spines": (210, 225, 115),
+    "crag_base": (45, 48, 44),
+    "urchin_body": (30, 42, 30),     # #1e2a1e 深墨绿球体
+    "needle_green": (106, 176, 74),   # #6ab04a 亮绿尖刺
+    "needle_tip": (168, 224, 110),
+    "short_stem": (48, 62, 42),
 }
 
 
-def part_stone_base(rig):
-    rig.bone("stone_base", (0.0, 0.0, 0.0))
-    # 坚硬残峰石隙基座与基生叶环
-    pad(rig, "stone_base", "stone_crag", (0.0, 0.12, 0.0), (3.8, 0.75, 3.8), "crag_stone")
-    pad(rig, "stone_base", "stone_side_l", (-1.3, 0.12, 0.3), (1.4, 0.55, 1.6), "crag_stone")
-    pad(rig, "stone_base", "stone_side_r", (1.3, 0.12, -0.3), (1.4, 0.55, 1.6), "crag_stone")
+def part_crag_base(rig):
+    rig.bone("crag_base", (0.0, 0.0, 0.0))
+    # 底部石隙与短粗茎基
+    pad(rig, "crag_base", "crag_stone_base", (0.0, 0.12, 0.0), (5.2, 0.85, 5.2), "crag_base")
+    pad(rig, "crag_base", "crag_rock_l", (-1.6, 0.12, 0.5), (2.4, 1.4, 2.2), "crag_base")
+    pad(rig, "crag_base", "crag_rock_r", (1.6, 0.12, -0.5), (2.4, 1.2, 2.2), "crag_base")
+    # 底部短茎 (高 1.6px，支撑海胆球体)
+    strand(rig, "crag_base", "crag_short_stem", (0.0, 0.85, 0.0), (0.0, 2.80, 0.0), 0.55, "short_stem")
 
 
-def part_sinewy_stalk(rig):
-    rig.bone("sinewy_stalk", (0.0, 0.0, 0.0))
-    # 劲健直立的主茎与上部分生花轴 (y: 0.50 -> 7.80)
-    strand(rig, "sinewy_stalk", "stalk_base", (0.0, 0.50, 0.0), (0.05, 3.60, 0.05), 0.36, "sinewy_stem")
-    strand(rig, "sinewy_stalk", "stalk_mid", (0.05, 3.60, 0.05), (0.0, 6.80, -0.05), 0.28, "sinewy_stem")
-    strand(rig, "sinewy_stalk", "stalk_apex", (0.0, 6.80, -0.05), (0.0, 8.40, 0.0), 0.22, "sinewy_stem")
+def part_urchin_body(rig):
+    rig.bone("urchin_body", (0.0, 0.0, 0.0))
+    # 海胆状饱满浑圆球形主体 (y: 2.4 -> 7.4，高 5.0px，直径 5.4px)
+    pad(rig, "urchin_body", "urchin_core_cube", (0.0, 2.8, 0.0), (4.8, 4.4, 4.8), "urchin_body")
+    pad(rig, "urchin_body", "urchin_bulge_x", (0.0, 3.2, 0.0), (5.6, 3.6, 4.2), "urchin_body")
+    pad(rig, "urchin_body", "urchin_bulge_z", (0.0, 3.2, 0.0), (4.2, 3.6, 5.6), "urchin_body")
+    pad(rig, "urchin_body", "urchin_top_dome", (0.0, 6.8, 0.0), (3.4, 1.2, 3.4), "urchin_body")
 
 
-def part_pinnate_leaves(rig):
-    rig.bone("pinnate_leaves", (0.0, 0.0, 0.0))
-    # 基部与下部琴状羽裂叶片
-    leaves = (
-        ("leaf_base_f", (0.0, 0.65, 0.5), (0.0, 1.60, 2.2), 0.24, "mustard_leaf"),
-        ("leaf_base_b", (0.0, 0.65, -0.5), (0.0, 1.60, -2.2), 0.24, "mustard_leaf"),
-        ("leaf_base_l", (-0.5, 0.65, 0.0), (-2.1, 1.50, 0.1), 0.24, "mustard_leaf"),
-        ("leaf_base_r", (0.5, 0.65, 0.0), (2.1, 1.50, -0.1), 0.24, "mustard_leaf"),
-        # 中茎部披针叶
-        ("leaf_stem_fl", (-0.1, 3.20, 0.2), (-1.2, 4.40, 1.1), 0.20, "mustard_leaf"),
-        ("leaf_stem_br", (0.1, 4.20, -0.2), (1.1, 5.20, -1.1), 0.18, "mustard_leaf"),
-    )
-    for name, start, end, r, mat in leaves:
-        strand(rig, "pinnate_leaves", name, start, end, r, mat)
+def part_radial_spikes(rig):
+    rig.bone("radial_spikes", (0.0, 0.0, 0.0))
+    # 向四周 360° 全方位立体放射的亮绿短刺 (#6ab04a & #a8e06e)，像极了绿海胆！
+    # 球心位置：(0.0, 5.0, 0.0)，半径约 2.6
+    
+    # 1. 赤道水平放射圈 (8 根刺，平伸)
+    for i in range(8):
+        deg = i * 45.0
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        p_base = (cos_a * 2.4, 5.0, sin_a * 2.4)
+        p_tip = (cos_a * 4.4, 5.0, sin_a * 4.4)
+        strand(rig, "radial_spikes", f"spike_eq_{i}", p_base, p_tip, 0.28, "needle_green")
+        pad(rig, "radial_spikes", f"spike_eq_tip_{i}", (p_tip[0], p_tip[1], p_tip[2]), (0.45, 0.45, 0.45), "needle_tip")
 
+    # 2. 北半球斜上放射圈 (6 根刺，45° 斜上)
+    for i in range(6):
+        deg = i * 60.0 + 30.0
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        p_base = (cos_a * 1.8, 6.2, sin_a * 1.8)
+        p_tip = (cos_a * 3.6, 7.8, sin_a * 3.6)
+        strand(rig, "radial_spikes", f"spike_up_{i}", p_base, p_tip, 0.26, "needle_green")
+        pad(rig, "radial_spikes", f"spike_up_tip_{i}", (p_tip[0], p_tip[1], p_tip[2]), (0.42, 0.42, 0.42), "needle_tip")
 
-def part_needle_siliques(rig):
-    rig.bone("needle_siliques", (0.0, 0.0, 0.0))
-    # 针状直立开裂的细长角果丛 (针芥子标志特征, 直指天空)
-    pods = (
-        # 顶心主针角果
-        ("pod_center_main", (0.0, 8.40, 0.0), (0.0, 11.60, 0.0), 0.22, "pungent_pods"),
-        ("pod_center_spine", (0.0, 11.60, 0.0), (0.0, 12.80, 0.0), 0.16, "needle_spines"),
-        # 前斜刺角果
-        ("pod_f_main", (0.0, 7.20, 0.15), (0.2, 10.20, 0.9), 0.20, "pungent_pods"),
-        ("pod_f_spine", (0.2, 10.20, 0.9), (0.3, 11.40, 1.25), 0.15, "needle_spines"),
-        # 后斜刺角果
-        ("pod_b_main", (0.0, 7.20, -0.15), (-0.2, 10.10, -0.85), 0.20, "pungent_pods"),
-        ("pod_b_spine", (-0.2, 10.10, -0.85), (-0.3, 11.30, -1.2), 0.15, "needle_spines"),
-        # 左斜刺角果
-        ("pod_l_main", (-0.15, 6.40, 0.0), (-0.95, 9.60, 0.15), 0.20, "pungent_pods"),
-        ("pod_l_spine", (-0.95, 9.60, 0.15), (-1.35, 10.80, 0.2), 0.15, "needle_spines"),
-        # 右斜刺角果
-        ("pod_r_main", (0.15, 6.50, 0.0), (0.95, 9.50, -0.15), 0.20, "pungent_pods"),
-        ("pod_r_spine", (0.95, 9.50, -0.15), (1.35, 10.70, -0.2), 0.15, "needle_spines"),
-    )
-    for name, start, end, r, mat in pods:
-        strand(rig, "needle_siliques", name, start, end, r, mat)
+    # 3. 顶极直立刺 (垂直向上)
+    strand(rig, "radial_spikes", "spike_top_polar", (0.0, 7.2, 0.0), (0.0, 9.4, 0.0), 0.28, "needle_green")
+    pad(rig, "radial_spikes", "spike_top_tip", (0.0, 9.5, 0.0), (0.45, 0.45, 0.45), "needle_tip")
+
+    # 4. 南半球斜下放射圈 (4 根刺，斜向下扎入石缝)
+    for i in range(4):
+        deg = i * 90.0 + 45.0
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        p_base = (cos_a * 2.1, 3.8, sin_a * 2.1)
+        p_tip = (cos_a * 3.8, 2.6, sin_a * 3.8)
+        strand(rig, "radial_spikes", f"spike_down_{i}", p_base, p_tip, 0.26, "needle_green")
 
 
 def build():
-    return build_rig(MATS, (part_stone_base, part_sinewy_stalk, part_pinnate_leaves, part_needle_siliques))
+    return build_rig(MATS, (part_crag_base, part_urchin_body, part_radial_spikes))
 
 
 GATES = PlantGates("针芥子 / zhen_jie_zi")

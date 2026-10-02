@@ -1,7 +1,8 @@
-"""负元蕨：北荒负灵域暗紫蕨叶，中央螺旋蜷曲拳卷幼叶，舒展羽叶带倒吸紫脉。"""
+"""负元蕨返工版：4~6片羽状蕨叶（主脉两侧多排小叶），叶尖卷成漩涡（#3a2a5a / #7a4ac8），成丛拱展。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -9,66 +10,88 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "negative_qi_soil": (38, 28, 45),
-    "fiddlehead_stalk": (52, 38, 65),
-    "fern_frond_deep": (65, 48, 85),
-    "negative_vein": (125, 75, 175),
-    "toxic_spores": (175, 115, 235),
+    "soil_plate": (38, 28, 42),
+    "fern_stalk": (58, 42, 90),       # #3a2a5a
+    "fern_frond": (90, 60, 145),
+    "fern_pinnule": (122, 74, 200),    # #7a4ac8 亮紫羽片
+    "spiral_tip": (175, 115, 245),
 }
 
 
-def part_rhizome_base(rig):
-    rig.bone("rhizome_base", (0.0, 0.0, 0.0))
-    # 负灵域侵蚀暗紫碎石土台
-    pad(rig, "rhizome_base", "rhizome_center", (0.0, 0.12, 0.0), (4.2, 0.75, 4.2), "negative_qi_soil")
-    pad(rig, "rhizome_base", "rhizome_scale_l", (-1.4, 0.12, 0.2), (1.4, 0.55, 1.8), "negative_qi_soil")
-    pad(rig, "rhizome_base", "rhizome_scale_r", (1.4, 0.12, -0.2), (1.4, 0.55, 1.8), "negative_qi_soil")
+def part_soil_base(rig):
+    rig.bone("soil_base", (0.0, 0.0, 0.0))
+    pad(rig, "soil_base", "soil_center", (0.0, 0.12, 0.0), (4.8, 0.85, 4.8), "soil_plate")
+    pad(rig, "soil_base", "soil_crown", (0.0, 0.85, 0.0), (3.2, 0.85, 3.2), "fern_stalk")
 
 
-def part_curled_fiddlehead(rig):
-    rig.bone("curled_fiddlehead", (0.0, 0.0, 0.0))
-    # 典型蕨类中央螺旋拳卷幼芽 (crozier / fiddlehead, y: 0.50 -> 6.80)
-    strand(rig, "curled_fiddlehead", "fiddlehead_stalk_low", (0.0, 0.50, 0.0), (0.05, 3.80, 0.1), 0.38, "fiddlehead_stalk")
-    strand(rig, "curled_fiddlehead", "fiddlehead_stalk_mid", (0.05, 3.80, 0.1), (0.1, 5.80, 0.25), 0.32, "fiddlehead_stalk")
-    # 向内卷回的拳头
-    pad(rig, "curled_fiddlehead", "fiddlehead_coil_back", (0.1, 6.20, -0.2), (0.75, 0.75, 0.6), "negative_vein")
-    pad(rig, "curled_fiddlehead", "fiddlehead_coil_tip", (0.1, 5.65, -0.45), (0.55, 0.55, 0.5), "toxic_spores")
+def part_pinnate_fronds(rig):
+    rig.bone("pinnate_fronds", (0.0, 0.0, 0.0))
+    # 5 根羽状蕨叶大幅拱展（角度：0, 72, 144, 216, 288 度）
+    # 每根蕨叶带主脉 + 两侧对称排布的小羽片 (pinnules)，极富质感与面积感
+    angles = [0.0, 72.0, 144.0, 216.0, 288.0]
+    lengths = [5.6, 5.8, 5.4, 5.8, 5.6]
+    
+    for idx, (deg, l) in enumerate(zip(angles, lengths)):
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        ortho_x = -sin_a * 0.65
+        ortho_z = cos_a * 0.65
+        
+        # 主脉从根部拔起至中部
+        p0 = (cos_a * 0.8, 1.4, sin_a * 0.8)
+        p1 = (cos_a * 2.8, 4.2, sin_a * 2.8)
+        p2 = (cos_a * 4.6, 5.8, sin_a * 4.6)
+        
+        strand(rig, "pinnate_fronds", f"frond_stalk_low_{idx}", p0, p1, 0.42, "fern_stalk")
+        strand(rig, "pinnate_fronds", f"frond_stalk_high_{idx}", p1, p2, 0.32, "fern_frond")
+        
+        # 两侧羽片 (小叶裂片，沿主脉两侧伸展)
+        # 第一对羽片 (低位)
+        strand(rig, "pinnate_fronds", f"frond_pin_low_l_{idx}", 
+               (p1[0] - ortho_x * 0.4, p1[1], p1[2] - ortho_z * 0.4),
+               (p1[0] - ortho_x * 1.8, p1[1] + 0.3, p1[2] - ortho_z * 1.8), 0.26, "fern_pinnule")
+        strand(rig, "pinnate_fronds", f"frond_pin_low_r_{idx}", 
+               (p1[0] + ortho_x * 0.4, p1[1], p1[2] + ortho_z * 0.4),
+               (p1[0] + ortho_x * 1.8, p1[1] + 0.3, p1[2] + ortho_z * 1.8), 0.26, "fern_pinnule")
+
+        # 第二对羽片 (高位)
+        strand(rig, "pinnate_fronds", f"frond_pin_high_l_{idx}", 
+               (p2[0] - ortho_x * 0.3, p2[1], p2[2] - ortho_z * 0.3),
+               (p2[0] - ortho_x * 1.4, p2[1] + 0.2, p2[2] - ortho_z * 1.4), 0.22, "fern_pinnule")
+        strand(rig, "pinnate_fronds", f"frond_pin_high_r_{idx}", 
+               (p2[0] + ortho_x * 0.3, p2[1], p2[2] + ortho_z * 0.3),
+               (p2[0] + ortho_x * 1.4, p2[1] + 0.2, p2[2] + ortho_z * 1.4), 0.22, "fern_pinnule")
 
 
-def part_spread_fronds(rig):
-    rig.bone("spread_fronds", (0.0, 0.0, 0.0))
-    # 左右与后方大幅舒展弯拱的羽状大蕨叶 (fronds)
-    # 1. 左羽叶 (大弧弓弯外展)
-    strand(rig, "spread_fronds", "frond_l_mid", (-0.3, 1.80, 0.1), (-1.9, 4.20, 0.5), 0.34, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_l_high", (-1.9, 4.20, 0.5), (-3.2, 5.80, 0.8), 0.26, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_l_arch", (-3.2, 5.80, 0.8), (-4.2, 5.20, 1.0), 0.18, "fern_frond_deep")
+def part_spiral_coils(rig):
+    rig.bone("spiral_coils", (0.0, 0.0, 0.0))
+    # 5 根蕨叶顶端向内卷回的漩涡卷芽（fiddlehead / spiral coil）
+    angles = [0.0, 72.0, 144.0, 216.0, 288.0]
+    for idx, deg in enumerate(angles):
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        # 卷尖起点 (p2)
+        p2 = (cos_a * 4.6, 5.8, sin_a * 4.6)
+        # 向内、向下卷成漩涡
+        p_loop1 = (cos_a * 5.2, 6.4, sin_a * 5.2)
+        p_loop2 = (cos_a * 4.8, 6.8, sin_a * 4.8)
+        p_center = (cos_a * 4.4, 6.4, sin_a * 4.4)
+        
+        strand(rig, "spiral_coils", f"coil_arch_{idx}", p2, p_loop1, 0.26, "fern_pinnule")
+        strand(rig, "spiral_coils", f"coil_back_{idx}", p_loop1, p_loop2, 0.22, "spiral_tip")
+        pad(rig, "spiral_coils", f"coil_eye_{idx}", (p_center[0], p_center[1], p_center[2]), (0.6, 0.6, 0.6), "spiral_tip")
 
-    # 2. 右羽叶
-    strand(rig, "spread_fronds", "frond_r_mid", (0.3, 1.80, -0.1), (1.9, 4.10, -0.5), 0.34, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_r_high", (1.9, 4.10, -0.5), (3.2, 5.70, -0.8), 0.26, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_r_arch", (3.2, 5.70, -0.8), (4.1, 5.10, -1.0), 0.18, "fern_frond_deep")
-
-    # 3. 后向羽叶
-    strand(rig, "spread_fronds", "frond_b_mid", (0.0, 1.60, -0.3), (0.0, 3.80, -1.9), 0.32, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_b_high", (0.0, 3.80, -1.9), (0.0, 5.20, -3.1), 0.24, "fern_frond_deep")
-    strand(rig, "spread_fronds", "frond_b_arch", (0.0, 5.20, -3.1), (0.0, 4.60, -3.9), 0.16, "fern_frond_deep")
-
-
-def part_negative_veins(rig):
-    rig.bone("negative_veins", (0.0, 0.0, 0.0))
-    # 倒吸天地灵气的荧紫脉线 (贴附在各蕨叶上表面)
-    strand(rig, "negative_veins", "vein_l_main", (-0.3, 2.00, 0.15), (-1.9, 4.35, 0.55), 0.18, "negative_vein")
-    strand(rig, "negative_veins", "vein_l_tip", (-1.9, 4.35, 0.55), (-3.2, 5.95, 0.85), 0.14, "negative_vein")
-
-    strand(rig, "negative_veins", "vein_r_main", (0.3, 2.00, -0.05), (1.9, 4.25, -0.45), 0.18, "negative_vein")
-    strand(rig, "negative_veins", "vein_r_tip", (1.9, 4.25, -0.45), (3.2, 5.85, -0.75), 0.14, "negative_vein")
-
-    strand(rig, "negative_veins", "vein_b_main", (0.0, 1.80, -0.3), (0.0, 3.95, -1.9), 0.16, "negative_vein")
-    strand(rig, "negative_veins", "vein_b_tip", (0.0, 3.95, -1.9), (0.0, 5.35, -3.1), 0.12, "negative_vein")
+    # 中央直立微卷的幼芽心 (高 7.2px)
+    strand(rig, "spiral_coils", "coil_center_crozier", (0.0, 1.4, 0.0), (0.1, 6.4, 0.1), 0.34, "fern_stalk")
+    pad(rig, "spiral_coils", "coil_center_head", (0.1, 6.7, -0.15), (0.9, 0.9, 0.8), "spiral_tip")
 
 
 def build():
-    return build_rig(MATS, (part_rhizome_base, part_curled_fiddlehead, part_spread_fronds, part_negative_veins))
+    return build_rig(MATS, (part_soil_base, part_pinnate_fronds, part_spiral_coils))
 
 
 GATES = PlantGates("负元蕨 / fu_yuan_jue")

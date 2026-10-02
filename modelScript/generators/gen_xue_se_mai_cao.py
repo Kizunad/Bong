@@ -1,7 +1,8 @@
-"""血色脉草：古战场暗红血土中生出的刀形立叶，贯穿凸起动脉血脉与脉节。"""
+"""血色脉草返工版：扇形一大簇尖叶（10片以上扇形展开），一侧赤红（#c02a1a）一侧青绿（#2aa8a0），成团占满格子。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -9,66 +10,70 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "blood_earth": (48, 32, 30),
-    "stem_knot": (56, 44, 42),
-    "blade_graygreen": (62, 70, 60),
-    "blood_vein_main": (168, 38, 32),
-    "blood_vein_sub": (215, 68, 55),
+    "soil_bloody": (45, 32, 34),
+    "stem_base": (55, 45, 48),
+    "leaf_red": (192, 42, 26),      # #c02a1a 鲜赤红
+    "leaf_cyan": (42, 168, 160),    # #2aa8a0 亮青绿
+    "vein_bright": (240, 85, 65),
 }
 
 
 def part_soil_base(rig):
     rig.bone("soil_base", (0.0, 0.0, 0.0))
-    # 浸血暗褐古战场土台
-    pad(rig, "soil_base", "soil_mound", (0.0, 0.12, 0.0), (4.2, 0.75, 4.2), "blood_earth")
-    pad(rig, "soil_base", "soil_clot_l", (-1.4, 0.12, 0.3), (1.5, 0.55, 1.8), "blood_earth")
-    pad(rig, "soil_base", "soil_clot_r", (1.4, 0.12, -0.2), (1.5, 0.55, 1.8), "blood_earth")
+    pad(rig, "soil_base", "soil_center", (0.0, 0.12, 0.0), (5.2, 0.85, 4.6), "soil_bloody")
+    pad(rig, "soil_base", "soil_fan_root", (0.0, 0.85, 0.0), (3.8, 1.2, 2.6), "stem_base")
 
 
-def part_pulse_stem(rig):
-    rig.bone("pulse_stem", (0.0, 0.0, 0.0))
-    # 粗短脉管主茎与脉冲结节
-    strand(rig, "pulse_stem", "stem_lower", (0.0, 0.45, 0.0), (0.0, 2.80, 0.0), 0.38, "stem_knot")
-    pad(rig, "pulse_stem", "stem_pulse_node", (0.0, 2.60, 0.0), (1.1, 0.85, 1.1), "blood_vein_main")
+def part_red_fan_leaves(rig):
+    rig.bone("red_fan_leaves", (0.0, 0.0, 0.0))
+    # 左侧扇形排布的 6 片长尖刀叶（赤红色 #c02a1a）
+    # 扇形展开角度覆盖 -65° 到 -6° (在 X-Y 平面内扇形展开，cos=X, sin=Z)
+    red_angles = [-62.0, -50.0, -38.0, -26.0, -16.0, -6.0]
+    lengths = [7.2, 8.2, 9.0, 9.4, 8.8, 8.0]
+    for i, (deg, l) in enumerate(zip(red_angles, lengths)):
+        rad = math.radians(deg)
+        # 让扇形左右展开在 X 轴上：x = sin(rad), z = cos(rad) 或反过来
+        # 这里 X 应该左右分：左为 -X, 右为 +X
+        # rad 为负时，sin(rad) 为负 (-X)
+        sin_x = math.sin(rad)
+        cos_z = math.cos(rad) * 0.35
+        
+        p_base = (sin_x * 0.8, 1.8, cos_z * 0.8)
+        p_mid = (sin_x * (l * 0.6), 1.8 + l * 0.5, cos_z * 1.2)
+        p_tip = (sin_x * l, 1.8 + l * 0.82, cos_z * 1.5)
+        
+        strand(rig, "red_fan_leaves", f"red_leaf_low_{i}", p_base, p_mid, 0.40, "leaf_red")
+        strand(rig, "red_fan_leaves", f"red_leaf_high_{i}", p_mid, p_tip, 0.30, "leaf_red")
 
 
-def part_blade_leaves(rig):
-    rig.bone("blade_leaves", (0.0, 0.0, 0.0))
-    # 直挺向上展开的 3 束刀形灰绿草叶
-    # 1. 主叶 (中央挺拔微向后弯, y: 3.20 -> 10.80)
-    strand(rig, "blade_leaves", "blade_c_low", (0.0, 3.20, 0.0), (0.1, 6.80, -0.3), 0.42, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_c_high", (0.1, 6.80, -0.3), (0.15, 10.20, -0.5), 0.32, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_c_tip", (0.15, 10.20, -0.5), (0.18, 11.60, -0.55), 0.20, "blade_graygreen")
+def part_cyan_fan_leaves(rig):
+    rig.bone("cyan_fan_leaves", (0.0, 0.0, 0.0))
+    # 右侧扇形排布的 6 片长尖刀叶（青绿色 #2aa8a0）
+    # 扇形展开角度覆盖 +6° 到 +62°
+    cyan_angles = [6.0, 16.0, 26.0, 38.0, 50.0, 62.0]
+    lengths = [8.0, 8.8, 9.4, 9.0, 8.2, 7.2]
+    for i, (deg, l) in enumerate(zip(cyan_angles, lengths)):
+        rad = math.radians(deg)
+        sin_x = math.sin(rad)
+        cos_z = math.cos(rad) * 0.35
+        
+        p_base = (sin_x * 0.8, 1.8, cos_z * 0.8)
+        p_mid = (sin_x * (l * 0.6), 1.8 + l * 0.5, cos_z * 1.2)
+        p_tip = (sin_x * l, 1.8 + l * 0.82, cos_z * 1.5)
+        
+        strand(rig, "cyan_fan_leaves", f"cyan_leaf_low_{i}", p_base, p_mid, 0.40, "leaf_cyan")
+        strand(rig, "cyan_fan_leaves", f"cyan_leaf_high_{i}", p_mid, p_tip, 0.30, "leaf_cyan")
 
-    # 2. 左侧刀叶 (向左前方展开, y: 3.00 -> 9.40)
-    strand(rig, "blade_leaves", "blade_l_low", (-0.3, 3.00, 0.1), (-1.6, 6.20, 0.6), 0.36, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_l_high", (-1.6, 6.20, 0.6), (-2.5, 8.80, 1.1), 0.26, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_l_tip", (-2.5, 8.80, 1.1), (-3.1, 10.10, 1.4), 0.18, "blade_graygreen")
 
-    # 3. 右侧刀叶 (向右后方展开, y: 3.00 -> 9.20)
-    strand(rig, "blade_leaves", "blade_r_low", (0.3, 3.00, -0.1), (1.6, 6.10, -0.6), 0.36, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_r_high", (1.6, 6.10, -0.6), (2.5, 8.60, -1.0), 0.26, "blade_graygreen")
-    strand(rig, "blade_leaves", "blade_r_tip", (2.5, 8.60, -1.0), (3.0, 9.80, -1.3), 0.18, "blade_graygreen")
-
-
-def part_blood_veins(rig):
-    rig.bone("blood_veins", (0.0, 0.0, 0.0))
-    # 贯穿叶面凸起的深红/亮红动脉血脉 (贴附在各叶脊正面上)
-    # 中央主脉
-    strand(rig, "blood_veins", "vein_c_main", (0.0, 3.35, 0.22), (0.1, 7.00, -0.08), 0.24, "blood_vein_main")
-    strand(rig, "blood_veins", "vein_c_upper", (0.1, 7.00, -0.08), (0.15, 10.40, -0.32), 0.18, "blood_vein_sub")
-
-    # 左侧主脉与分支
-    strand(rig, "blood_veins", "vein_l_main", (-0.3, 3.15, 0.32), (-1.6, 6.35, 0.82), 0.22, "blood_vein_main")
-    strand(rig, "blood_veins", "vein_l_upper", (-1.6, 6.35, 0.82), (-2.5, 8.95, 1.30), 0.16, "blood_vein_sub")
-
-    # 右侧主脉与分支
-    strand(rig, "blood_veins", "vein_r_main", (0.3, 3.15, 0.12), (1.6, 6.25, -0.42), 0.22, "blood_vein_main")
-    strand(rig, "blood_veins", "vein_r_upper", (1.6, 6.25, -0.42), (2.5, 8.75, -0.80), 0.16, "blood_vein_sub")
+def part_central_ridge(rig):
+    rig.bone("central_ridge", (0.0, 0.0, 0.0))
+    # 红青两相交汇处的直挺血色主脊脉线与中央大叶
+    strand(rig, "central_ridge", "ridge_main_stalk", (0.0, 1.8, 0.0), (0.0, 10.2, 0.0), 0.35, "vein_bright")
+    pad(rig, "central_ridge", "ridge_core_collar", (0.0, 2.2, 0.0), (1.6, 1.8, 1.6), "leaf_red")
 
 
 def build():
-    return build_rig(MATS, (part_soil_base, part_pulse_stem, part_blade_leaves, part_blood_veins))
+    return build_rig(MATS, (part_soil_base, part_red_fan_leaves, part_cyan_fan_leaves, part_central_ridge))
 
 
 GATES = PlantGates("血色脉草 / xue_se_mai_cao")

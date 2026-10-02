@@ -1,7 +1,8 @@
-"""灵草：末法残土常见的狭长微弧灵草，深青蓝渐变到浅青灵光草尖。"""
+"""灵草返工版：深蓝绿发光宽叶 + 底部圆球根，5~6片向外张开宽叶，叶面亮蓝裂纹。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -9,73 +10,82 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "soil_base": (45, 38, 32),
-    "grass_deep": (36, 58, 62),
-    "grass_mid": (48, 85, 92),
-    "spirit_light": (82, 142, 155),
-    "spirit_glow": (125, 205, 222),
+    "bulb_base": (30, 48, 45),
+    "leaf_dark": (30, 74, 90),     # #1e4a5a
+    "leaf_mid": (58, 138, 160),     # #3a8aa0
+    "leaf_light": (105, 195, 215),
+    "blue_crack": (138, 224, 255),  # #8ae0ff 亮蓝细纹
 }
 
 
-def part_root_base(rig):
-    rig.bone("root_base", (0.0, 0.0, 0.0))
-    # 根部湿润土丘与须根
-    pad(rig, "root_base", "root_soil_center", (0.0, 0.12, 0.0), (3.8, 0.75, 3.8), "soil_base")
-    pad(rig, "root_base", "root_soil_f", (0.2, 0.12, 1.45), (2.2, 0.55, 1.2), "soil_base")
-    pad(rig, "root_base", "root_soil_b", (-0.15, 0.12, -1.35), (2.4, 0.55, 1.3), "soil_base")
-    pad(rig, "root_base", "root_soil_l", (-1.4, 0.12, 0.15), (1.1, 0.45, 2.2), "soil_base")
-    pad(rig, "root_base", "root_soil_r", (1.45, 0.12, -0.1), (1.2, 0.45, 2.1), "soil_base")
+def part_bulb_root(rig):
+    rig.bone("bulb_root", (0.0, 0.0, 0.0))
+    # 底部饱满圆球根 (占据底部中心，宽约 5.5px，高约 3.8px)
+    pad(rig, "bulb_root", "bulb_core", (0.0, 0.12, 0.0), (5.2, 3.2, 5.2), "bulb_base")
+    pad(rig, "bulb_root", "bulb_waist_x", (0.0, 0.6, 0.0), (5.8, 2.2, 4.4), "bulb_base")
+    pad(rig, "bulb_root", "bulb_waist_z", (0.0, 0.6, 0.0), (4.4, 2.2, 5.8), "bulb_base")
+    pad(rig, "bulb_root", "bulb_neck", (0.0, 2.8, 0.0), (3.6, 1.2, 3.6), "leaf_dark")
 
 
-def part_stem_cluster(rig):
-    rig.bone("stem_cluster", (0.0, 0.0, 0.0))
-    # 4 根主茎从根部汇聚向上拔起
-    stems = (
-        ("stem_center", (0.0, 0.45, 0.0), (0.1, 3.6, -0.2), 0.32, "grass_deep"),
-        ("stem_left", (-0.5, 0.42, 0.2), (-1.4, 3.2, 0.6), 0.28, "grass_deep"),
-        ("stem_right", (0.5, 0.42, -0.1), (1.5, 3.1, -0.5), 0.28, "grass_deep"),
-        ("stem_front", (-0.1, 0.45, 0.4), (0.3, 2.8, 1.2), 0.26, "grass_deep"),
-    )
-    for name, start, end, r, mat in stems:
-        strand(rig, "stem_cluster", name, start, end, r, mat)
+def part_spread_broad_leaves(rig):
+    rig.bone("spread_broad_leaves", (0.0, 0.0, 0.0))
+    # 5 片向外大弧度舒展张开的厚实宽叶（成团，占满画面中心，全宽达 10.5px，高 8.5px）
+    # 角度均匀分布在四周：0, 72, 144, 216, 288 度
+    angles = [0.0, 72.0, 144.0, 216.0, 288.0]
+    for idx, deg in enumerate(angles):
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        # 宽叶内段 (从球根颈部拔出，厚 0.6px，宽 2.4px)
+        # 用两条并排 strand 铺成宽叶面
+        ortho_x = -sin_a * 0.75
+        ortho_z = cos_a * 0.75
+        
+        p_base = (cos_a * 0.8, 3.2, sin_a * 0.8)
+        p_mid = (cos_a * 3.4, 6.2, sin_a * 3.4)
+        p_tip = (cos_a * 5.2, 8.2, sin_a * 5.2)
+        
+        # 左半片
+        strand(rig, "spread_broad_leaves", f"leaf_in_l_{idx}", 
+               (p_base[0] - ortho_x, p_base[1], p_base[2] - ortho_z),
+               (p_mid[0] - ortho_x * 0.8, p_mid[1], p_mid[2] - ortho_z * 0.8), 0.55, "leaf_dark")
+        strand(rig, "spread_broad_leaves", f"leaf_out_l_{idx}", 
+               (p_mid[0] - ortho_x * 0.8, p_mid[1], p_mid[2] - ortho_z * 0.8),
+               (p_tip[0], p_tip[1], p_tip[2]), 0.42, "leaf_mid")
+               
+        # 右半片
+        strand(rig, "spread_broad_leaves", f"leaf_in_r_{idx}", 
+               (p_base[0] + ortho_x, p_base[1], p_base[2] + ortho_z),
+               (p_mid[0] + ortho_x * 0.8, p_mid[1], p_mid[2] + ortho_z * 0.8), 0.55, "leaf_dark")
+        strand(rig, "spread_broad_leaves", f"leaf_out_r_{idx}", 
+               (p_mid[0] + ortho_x * 0.8, p_mid[1], p_mid[2] + ortho_z * 0.8),
+               (p_tip[0], p_tip[1], p_tip[2]), 0.42, "leaf_mid")
+
+    # 中央挺立的幼心厚叶 (高耸至 y=9.2)
+    pad(rig, "spread_broad_leaves", "leaf_center_core", (0.0, 3.6, 0.0), (2.2, 5.0, 2.2), "leaf_mid")
+    pad(rig, "spread_broad_leaves", "leaf_center_tip", (0.0, 7.8, 0.0), (1.4, 1.4, 1.4), "leaf_light")
 
 
-def part_grass_blades(rig):
-    rig.bone("grass_blades", (0.0, 0.0, 0.0))
-    # 向上舒展的外展狭长灵草叶片 (分中段与高段展开)
-    blades = (
-        # 中央主叶 (高挺微后倾)
-        ("blade_c_mid", (0.1, 3.6, -0.2), (0.2, 6.8, -0.45), 0.30, "grass_mid"),
-        ("blade_c_high", (0.2, 6.8, -0.45), (0.15, 9.4, -0.2), 0.26, "spirit_light"),
-        # 左侧展开叶 (大弧外展)
-        ("blade_l_mid", (-1.4, 3.2, 0.6), (-2.6, 5.8, 1.1), 0.28, "grass_mid"),
-        ("blade_l_high", (-2.6, 5.8, 1.1), (-3.2, 8.2, 1.45), 0.24, "spirit_light"),
-        # 右侧展开叶
-        ("blade_r_mid", (1.5, 3.1, -0.5), (2.8, 5.6, -0.9), 0.28, "grass_mid"),
-        ("blade_r_high", (2.8, 5.6, -0.9), (3.4, 7.8, -1.2), 0.24, "spirit_light"),
-        # 前伸次叶
-        ("blade_f_mid", (0.3, 2.8, 1.2), (0.6, 5.2, 2.1), 0.26, "grass_mid"),
-        ("blade_f_high", (0.6, 5.2, 2.1), (0.8, 7.2, 2.6), 0.22, "spirit_light"),
-    )
-    for name, start, end, r, mat in blades:
-        strand(rig, "grass_blades", name, start, end, r, mat)
-
-
-def part_spirit_tips(rig):
-    rig.bone("spirit_tips", (0.0, 0.0, 0.0))
-    # 浅青灵光尖芒
-    tips = (
-        ("tip_center", (0.15, 9.4, -0.2), (0.1, 10.8, 0.0), 0.20),
-        ("tip_left", (-3.2, 8.2, 1.45), (-3.6, 9.5, 1.7), 0.18),
-        ("tip_right", (3.4, 7.8, -1.2), (3.9, 9.1, -1.45), 0.18),
-        ("tip_front", (0.8, 7.2, 2.6), (0.95, 8.3, 2.95), 0.16),
-    )
-    for name, start, end, r in tips:
-        strand(rig, "spirit_tips", name, start, end, r, "spirit_glow")
+def part_spirit_cracks(rig):
+    rig.bone("spirit_cracks", (0.0, 0.0, 0.0))
+    # 5 片大宽叶中央凸起的亮蓝发光裂纹与能量脉线 (#8ae0ff)
+    angles = [0.0, 72.0, 144.0, 216.0, 288.0]
+    for idx, deg in enumerate(angles):
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        p_base = (cos_a * 0.9, 3.6, sin_a * 0.9)
+        p_mid = (cos_a * 3.4, 6.55, sin_a * 3.4)
+        p_tip = (cos_a * 4.9, 8.45, sin_a * 4.9)
+        
+        strand(rig, "spirit_cracks", f"crack_in_{idx}", p_base, p_mid, 0.22, "blue_crack")
+        strand(rig, "spirit_cracks", f"crack_out_{idx}", p_mid, p_tip, 0.18, "blue_crack")
 
 
 def build():
-    return build_rig(MATS, (part_root_base, part_stem_cluster, part_grass_blades, part_spirit_tips))
+    return build_rig(MATS, (part_bulb_root, part_spread_broad_leaves, part_spirit_cracks))
 
 
 GATES = PlantGates("灵草 / spirit_grass")

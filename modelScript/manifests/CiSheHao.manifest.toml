@@ -3,14 +3,13 @@ mirror_x = 8.0
 size = 280
 
 [materials]
-dry_ground = [52, 46, 38]
-wormwood_stem = [48, 54, 40]
-serrated_leaf = [68, 75, 52]
-spiky_tongue = [110, 118, 65]
-toxic_buds = [168, 142, 58]
+base_rock = [48, 52, 50]
+leaf_dark = [42, 58, 40]    # #2a3a28
+leaf_mid = [74, 90, 58]     # #4a5a3a
+leaf_spine = [118, 142, 70]
+amber_drop = [224, 160, 32] # #e0a020 黄色垂滴
 
 [features]
-stem_base = { elements = ["stem_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
-feather_branches = { elements = ["branch_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
-spiky_tongues = { elements = ["tongue_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-toxic_flower = { elements = ["flower_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+rock_base = { elements = ["rock_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+spiky_sphere = { elements = ["spiky_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+hanging_drop = { elements = ["drop_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

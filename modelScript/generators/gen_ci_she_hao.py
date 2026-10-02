@@ -1,7 +1,8 @@
-"""刺舌蒿：辛苦微毒，干绿羽裂叶带尖锐刺舌小齿，顶端缀聚苦黄微毒穗蕾。"""
+"""刺舌蒿返工版：深绿尖叶簇成刺球状（#2a3a28 / #4a5a3a）、底座压着坚硬碎岩、一滴黄汁（#e0a020）下垂。"""
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -9,74 +10,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # noqa: E402
 
 MATS = {
-    "dry_ground": (52, 46, 38),
-    "wormwood_stem": (48, 54, 40),
-    "serrated_leaf": (68, 75, 52),
-    "spiky_tongue": (110, 118, 65),
-    "toxic_buds": (168, 142, 58),
+    "base_rock": (48, 52, 50),
+    "leaf_dark": (42, 58, 40),    # #2a3a28
+    "leaf_mid": (74, 90, 58),     # #4a5a3a
+    "leaf_spine": (118, 142, 70),
+    "amber_drop": (224, 160, 32), # #e0a020 垂滴
 }
 
 
-def part_stem_base(rig):
-    rig.bone("stem_base", (0.0, 0.0, 0.0))
-    # 干燥沙土基台
-    pad(rig, "stem_base", "stem_ground", (0.0, 0.12, 0.0), (3.6, 0.65, 3.6), "dry_ground")
-    # 主茎直立稍带微曲 (分 3 段上升)
-    strand(rig, "stem_base", "stem_seg_0", (0.0, 0.45, 0.0), (0.1, 4.0, 0.15), 0.35, "wormwood_stem")
-    strand(rig, "stem_base", "stem_seg_1", (0.1, 4.0, 0.15), (-0.1, 7.8, -0.1), 0.30, "wormwood_stem")
-    strand(rig, "stem_base", "stem_seg_2", (-0.1, 7.8, -0.1), (0.0, 10.6, 0.0), 0.24, "wormwood_stem")
+def part_rock_base(rig):
+    rig.bone("rock_base", (0.0, 0.0, 0.0))
+    # 底部压着的粗粝碎岩石块 (高 2.5px，宽 6.2px)
+    pad(rig, "rock_base", "rock_core", (0.0, 0.12, 0.0), (5.8, 2.0, 5.8), "base_rock")
+    pad(rig, "rock_base", "rock_ledge_l", (-1.8, 0.12, 0.6), (2.8, 2.4, 2.6), "base_rock")
+    pad(rig, "rock_base", "rock_ledge_r", (1.6, 0.12, -0.6), (2.6, 1.8, 2.8), "base_rock")
 
 
-def part_feather_branches(rig):
-    rig.bone("feather_branches", (0.0, 0.0, 0.0))
-    # 侧生羽状互生分枝
-    branches = (
-        ("branch_l1", (0.05, 3.2, 0.1), (-1.8, 5.2, 0.6), 0.22),
-        ("branch_r1", (0.08, 4.5, 0.12), (1.9, 6.4, -0.5), 0.22),
-        ("branch_l2", (-0.05, 6.2, 0.0), (-1.6, 8.2, -0.4), 0.20),
-        ("branch_r2", (-0.08, 7.5, -0.08), (1.5, 9.4, 0.5), 0.18),
-    )
-    for name, start, end, r in branches:
-        strand(rig, "feather_branches", name, start, end, r, "wormwood_stem")
+def part_spiky_sphere(rig):
+    rig.bone("spiky_sphere", (0.0, 0.0, 0.0))
+    # 密集放射尖叶簇成的厚重刺球团 (高耸至 8.8px，占据中心，像刺猬球)
+    # 球核体 (y: 2.2 -> 6.5)
+    pad(rig, "spiky_sphere", "spiky_core", (0.0, 2.2, 0.0), (4.4, 4.4, 4.4), "leaf_dark")
+    pad(rig, "spiky_sphere", "spiky_mid_c", (0.0, 2.8, 0.0), (5.2, 3.2, 5.2), "leaf_mid")
+    
+    # 放射刺状尖叶（多圈立体发散展开：下层下斜、中层平展、上层上挺）
+    # 1. 中层平展尖叶 (8 个方向)
+    for i in range(8):
+        deg = i * 45.0
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        p_base = (cos_a * 2.2, 4.4, sin_a * 2.2)
+        p_tip = (cos_a * 4.6, 4.2, sin_a * 4.6)
+        strand(rig, "spiky_sphere", f"spiky_mid_thorn_{i}", p_base, p_tip, 0.32, "leaf_spine")
+
+    # 2. 上层斜挺刺尖 (6 个方向，向上斜指，y: 4.8 -> 8.6)
+    for i in range(6):
+        deg = i * 60.0 + 15.0
+        rad = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        p_base = (cos_a * 1.6, 5.2, sin_a * 1.6)
+        p_tip = (cos_a * 3.8, 8.2, sin_a * 3.8)
+        strand(rig, "spiky_sphere", f"spiky_high_thorn_{i}", p_base, p_tip, 0.28, "leaf_spine")
+
+    # 3. 顶心直立长刺
+    strand(rig, "spiky_sphere", "spiky_top_spine", (0.0, 5.8, 0.0), (0.0, 8.8, 0.0), 0.30, "leaf_spine")
 
 
-def part_spiky_tongues(rig):
-    rig.bone("spiky_tongues", (0.0, 0.0, 0.0))
-    # 侧生尖利刺舌小齿叶片
-    leaves = (
-        # 左下分枝裂片
-        ("tongue_l1_a", (-1.8, 5.2, 0.6), (-2.8, 5.9, 1.0), 0.22, "serrated_leaf"),
-        ("tongue_l1_spike", (-2.8, 5.9, 1.0), (-3.6, 6.4, 1.3), 0.14, "spiky_tongue"),
-        ("tongue_l1_side", (-1.2, 4.6, 0.4), (-2.1, 4.8, 1.2), 0.15, "spiky_tongue"),
-        # 右下分枝裂片
-        ("tongue_r1_a", (1.9, 6.4, -0.5), (2.9, 7.1, -0.9), 0.22, "serrated_leaf"),
-        ("tongue_r1_spike", (2.9, 7.1, -0.9), (3.7, 7.5, -1.2), 0.14, "spiky_tongue"),
-        ("tongue_r1_side", (1.3, 5.8, -0.3), (2.2, 6.1, -1.1), 0.15, "spiky_tongue"),
-        # 左上分枝裂片
-        ("tongue_l2_a", (-1.6, 8.2, -0.4), (-2.4, 9.1, -0.7), 0.20, "serrated_leaf"),
-        ("tongue_l2_spike", (-2.4, 9.1, -0.7), (-3.1, 9.6, -0.9), 0.13, "spiky_tongue"),
-        # 右上分枝裂片
-        ("tongue_r2_a", (1.5, 9.4, 0.5), (2.3, 10.2, 0.8), 0.18, "serrated_leaf"),
-        ("tongue_r2_spike", (2.3, 10.2, 0.8), (2.9, 10.6, 1.0), 0.12, "spiky_tongue"),
-        # 靠近地面的基部刺舌叶
-        ("tongue_base_f", (0.0, 1.8, 1.2), (0.0, 2.4, 2.2), 0.16, "spiky_tongue"),
-        ("tongue_base_b", (0.0, 1.8, -1.2), (0.0, 2.4, -2.2), 0.16, "spiky_tongue"),
-    )
-    for name, start, end, r, mat in leaves:
-        strand(rig, "spiky_tongues", name, start, end, r, mat)
-
-
-def part_toxic_flower(rig):
-    rig.bone("toxic_flower", (0.0, 0.0, 0.0))
-    # 茎顶聚生的细碎苦黄小穗蕾
-    pad(rig, "toxic_flower", "flower_top_core", (0.0, 10.6, 0.0), (1.1, 1.2, 1.1), "toxic_buds")
-    pad(rig, "toxic_flower", "flower_top_l", (-0.45, 10.8, 0.15), (0.65, 0.8, 0.65), "toxic_buds")
-    pad(rig, "toxic_flower", "flower_top_r", (0.45, 10.9, -0.1), (0.65, 0.75, 0.65), "toxic_buds")
-    pad(rig, "toxic_flower", "flower_top_apex", (0.0, 11.6, 0.0), (0.6, 0.7, 0.6), "toxic_buds")
+def part_hanging_drop(rig):
+    rig.bone("hanging_drop", (0.0, 0.0, 0.0))
+    # 从右前方尖叶末端悬挂垂落的一滴晶莹鲜黄色药汁 (#e0a020)
+    # 挂在 x=3.4, z=1.8 的外伸尖刺下
+    strand(rig, "hanging_drop", "drop_filament", (3.2, 4.2, 1.6), (3.2, 2.6, 1.6), 0.16, "amber_drop")
+    pad(rig, "hanging_drop", "drop_bead", (3.2, 1.8, 1.6), (0.75, 0.95, 0.75), "amber_drop")
 
 
 def build():
-    return build_rig(MATS, (part_stem_base, part_feather_branches, part_spiky_tongues, part_toxic_flower))
+    return build_rig(MATS, (part_rock_base, part_spiky_sphere, part_hanging_drop))
 
 
 GATES = PlantGates("刺舌蒿 / ci_she_hao")
