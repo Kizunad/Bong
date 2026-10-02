@@ -1,0 +1,74 @@
+{
+  "anyOf": [
+    {
+      "const": "NONE",
+      "type": "string"
+    },
+    {
+      "const": "COMPLETED",
+      "type": "string"
+    },
+    {
+      "const": "INTERRUPT_MOVEMENT",
+      "type": "string"
+    },
+    {
+      "const": "INTERRUPT_CONTAM",
+      "type": "string"
+    },
+    {
+      "const": "INTERRUPT_CONTROL",
+      "type": "string"
+    },
+    {
+      "const": "USER_CANCEL",
+      "type": "string"
+    },
+    {
+      "const": "DEATH",
+      "type": "string"
+    },
+    {
+      "const": "MERIDIAN_GATED",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_QI_INSUFFICIENT",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_ON_COOLDOWN",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_INVALID_TARGET",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_IN_RECOVERY",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_REALM_TOO_LOW",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_NO_WEAPON",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_TECHNIQUE_INACTIVE",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_RACE_MISMATCH",
+      "type": "string"
+    },
+    {
+      "const": "REJECT_SKILL_CONFIG_INVALID",
+      "type": "string"
+    }
+  ],
+  "x-bong-typebox-source-sha256": "3c8437c371976e6c2b8697057bc07b7881f4f23e4fd23f9f3911c6253b797bb6",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}

@@ -16543,6 +16543,704 @@
       }
     },
     {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": false,
+              "type": "boolean"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "active_cast_instance_id",
+            "minimum_cast_instance_id",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": false,
+              "type": "boolean"
+            },
+            "active_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "minimum_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": true,
+              "type": "boolean"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "active_cast_instance_id",
+            "minimum_cast_instance_id",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": true,
+              "type": "boolean"
+            },
+            "active_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "minimum_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "type",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "cast_sync",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "const": "QUICK_SLOT",
+              "type": "string"
+            },
+            {
+              "const": "SKILL_BAR",
+              "type": "string"
+            },
+            {
+              "const": "DEDICATED",
+              "type": "string"
+            }
+          ]
+        },
+        "npc": {
+          "type": "boolean"
+        },
+        "skill_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "IDLE",
+              "type": "string"
+            },
+            {
+              "const": "CASTING",
+              "type": "string"
+            },
+            {
+              "const": "COMPLETE",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT",
+              "type": "string"
+            }
+          ]
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "quick_slot",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "skill_bar",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "dedicated",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "NONE",
+              "type": "string"
+            },
+            {
+              "const": "COMPLETED",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            },
+            {
+              "const": "MERIDIAN_GATED",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_QI_INSUFFICIENT",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_ON_COOLDOWN",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_INVALID_TARGET",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_IN_RECOVERY",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_REALM_TOO_LOW",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_NO_WEAPON",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_TECHNIQUE_INACTIVE",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_RACE_MISMATCH",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_SKILL_CONFIG_INVALID",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "av_binding_key",
+        "animation_id",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "animation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "cast_play_anim",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "av_binding_key",
+        "animation_id",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "animation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "cast_stop_anim",
+          "type": "string"
+        }
+      }
+    },
+    {
       "additionalProperties": false,
       "type": "object",
       "required": [
@@ -21514,6 +22212,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "c460f81dd6e0bcd070a2a42fdd5dac12def85bfe4bb2deb630b759dbc8b4e9dd",
+  "x-bong-typebox-source-sha256": "c2050c9e0e92d0ce53f0eb1433e833eb4d7c734283c2eb298edbc5b8087f6d5d",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }

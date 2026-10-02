@@ -63,6 +63,11 @@ def part_ember_cracks(rig):
         ("ember_branch_l", (-1.0, 5.7, 0.3), (-1.9, 5.85, 1.25), 0.14),
         ("ember_branch_r", (0.0, 5.85, 0.45), (1.75, 5.35, -0.25), 0.16),
         ("ember_front", (-0.5, 5.35, 1.45), (1.2, 5.1, 1.45), 0.13),
+        # 侧面余烬裂纹 (Round 3 小修：灰烬苔侧面也加橙红余烬裂纹)
+        ("ember_side_left", (-1.9, 5.2, 0.25), (-3.1, 1.6, 0.35), 0.14),
+        ("ember_side_right", (1.75, 5.1, -0.25), (3.0, 1.5, -0.2), 0.14),
+        ("ember_side_front", (-0.3, 4.8, 1.65), (-0.5, 1.8, 2.3), 0.13),
+        ("ember_side_back", (0.2, 5.2, -1.8), (0.3, 2.2, -2.4), 0.13),
     )
     for name, start, end, radius in cracks:
         strand(rig, "ember_cracks", name, start, end, radius, "ember_crack")

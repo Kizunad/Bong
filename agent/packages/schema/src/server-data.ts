@@ -104,6 +104,12 @@ import {
   AgentUiClosePayloadV1,
 } from "./payloads/agent-ui.js";
 import { TribulationKindV1 } from "./tribulation.js";
+import {
+  ServerDataCastPlayAnimV1,
+  ServerDataCastSessionBeginArmV1,
+  ServerDataCastStopAnimV1,
+  ServerDataCastSyncArmV1,
+} from "./cast.js";
 
 export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
 // Java HUD store consumes these fields as int/float after protobuf bridging.
@@ -230,6 +236,10 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_cap_changed"),
   Type.Literal("skill_scroll_used"),
   Type.Literal("skill_snapshot"),
+  Type.Literal("cast_session_begin"),
+  Type.Literal("cast_sync"),
+  Type.Literal("cast_play_anim"),
+  Type.Literal("cast_stop_anim"),
   Type.Literal("burst_meridian_event"),
   Type.Literal("breakthrough_cinematic"),
   Type.Literal("full_power_charging_state"),
@@ -2128,6 +2138,10 @@ export const ServerDataV1 = Type.Union([
   ServerDataSkillCapChangedV1,
   ServerDataSkillScrollUsedV1,
   ServerDataSkillSnapshotV1,
+  ServerDataCastSessionBeginArmV1,
+  ServerDataCastSyncArmV1,
+  ServerDataCastPlayAnimV1,
+  ServerDataCastStopAnimV1,
   BurstMeridianEventV1,
   ServerDataBreakthroughCinematicV1,
   ServerDataFullPowerChargingStateV1,

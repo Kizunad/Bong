@@ -253,7 +253,7 @@
  "gen_hui_jin_tai.py": {
   "exit": 0,
   "outputs": {
-   "HuiJinTai.bbmodel": "7a9f914bb197a90892d2bb24fb8e8c9c4287e639a3d7bbfb8ab0d3f38e3ddb35"
+   "HuiJinTai.bbmodel": "b5408730bc3a3bd95b07c32ae22589579f626c958383bd38db1b8db06ce3408e"
   }
  },
  "gen_hui_li_dan.py": {
@@ -621,7 +621,7 @@
  "gen_xuan_rong_tai.py": {
   "exit": 0,
   "outputs": {
-   "XuanRongTai.bbmodel": "86dc353f42ef69f67ab3663b3138f364e8abb36fa43389832d4f0a2228c08487"
+   "XuanRongTai.bbmodel": "88f03d8568a52d8c3e8b5b83bf29a9d2aeb4082e8e30c3a81f53ea92c092f0de"
   }
  },
  "gen_xue_po_lian.py": {

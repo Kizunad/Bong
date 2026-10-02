@@ -84,8 +84,6 @@ def curved_vine_chain(
             max(radius * 0.8, 0.12),
             mat=mat,
         )
-
-
 def leaf(
     rig: Rig,
     bone: str,

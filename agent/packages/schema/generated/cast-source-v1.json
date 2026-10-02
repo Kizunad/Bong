@@ -1,0 +1,18 @@
+{
+  "anyOf": [
+    {
+      "const": "QUICK_SLOT",
+      "type": "string"
+    },
+    {
+      "const": "SKILL_BAR",
+      "type": "string"
+    },
+    {
+      "const": "DEDICATED",
+      "type": "string"
+    }
+  ],
+  "x-bong-typebox-source-sha256": "d84137ddedad92022ebc42f94af98aeba5228350b548d93a59270ac2b7ecb329",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}
