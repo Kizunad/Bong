@@ -94,7 +94,7 @@
       "note": "只登记控制帧的 owner/字段边界；真实 frame→Restore→Store cutover 由 M-10 放行。"
     }
   ],
-  "artifact_count": 410,
+  "artifact_count": 418,
   "artifacts": [
     {
       "file": "agent-command-v1.json",
@@ -487,6 +487,94 @@
         "calamityKindV1"
       ],
       "source_sha256": "1ddb7e482de913c27b79db222973133672510b2cfa781c52edf8bf5121d462f3",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-identity-v1.json",
+      "registry_keys": [
+        "castIdentityV1"
+      ],
+      "source_sha256": "9e85e61cdd07e16d70dcc6f918c593a2f1e4ba638d4c06cf5e116c74d976aa08",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-outcome-v1.json",
+      "registry_keys": [
+        "castOutcomeV1"
+      ],
+      "source_sha256": "3c8437c371976e6c2b8697057bc07b7881f4f23e4fd23f9f3911c6253b797bb6",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-phase-v1.json",
+      "registry_keys": [
+        "castPhaseV1"
+      ],
+      "source_sha256": "f80f8c43c48ed2d0f381d6c6d3e1a607920f70c9979637d84f5cdb8a4d1445a5",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-play-anim-v1.json",
+      "registry_keys": [
+        "castPlayAnimV1"
+      ],
+      "source_sha256": "53bbbda788fb765ec66aa80b2ad3257f2aae86a7379aaca96fc1672b27b4d22d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-session-begin-v1.json",
+      "registry_keys": [
+        "castSessionBeginV1"
+      ],
+      "source_sha256": "4fa1ebf4bc7e27e690d5d0c95739b5f5f8abe222d9a32c35d2ef5fb593162f4d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-source-v1.json",
+      "registry_keys": [
+        "castSourceV1"
+      ],
+      "source_sha256": "d84137ddedad92022ebc42f94af98aeba5228350b548d93a59270ac2b7ecb329",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-stop-anim-v1.json",
+      "registry_keys": [
+        "castStopAnimV1"
+      ],
+      "source_sha256": "53bbbda788fb765ec66aa80b2ad3257f2aae86a7379aaca96fc1672b27b4d22d",
+      "generation_version": "r6-p1-v1",
+      "contract_version": "v1",
+      "status": "declared",
+      "production_reachable": false
+    },
+    {
+      "file": "cast-sync-v1.json",
+      "registry_keys": [
+        "castSyncV1"
+      ],
+      "source_sha256": "94cbd23a913b9bee19cf83f680f53abc25371333e7a4b09b4ce6421b9a4bd773",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",
@@ -3610,7 +3698,7 @@
       "registry_keys": [
         "serverDataV1"
       ],
-      "source_sha256": "c460f81dd6e0bcd070a2a42fdd5dac12def85bfe4bb2deb630b759dbc8b4e9dd",
+      "source_sha256": "c2050c9e0e92d0ce53f0eb1433e833eb4d7c734283c2eb298edbc5b8087f6d5d",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",

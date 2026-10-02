@@ -1,0 +1,1895 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "type": "null"
+        },
+        "av_binding_key": {
+          "pattern": "^cast\\.reject\\/(meridian_gated|reject_qi_insufficient|reject_on_cooldown|reject_invalid_target|reject_in_recovery|reject_realm_too_low|reject_no_weapon|reject_technique_inactive|reject_race_mismatch|reject_skill_config_invalid)$",
+          "type": "string"
+        },
+        "phase": {
+          "const": "IDLE",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "MERIDIAN_GATED",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_QI_INSUFFICIENT",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_ON_COOLDOWN",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_INVALID_TARGET",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_IN_RECOVERY",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_REALM_TOO_LOW",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_NO_WEAPON",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_TECHNIQUE_INACTIVE",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_RACE_MISMATCH",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_SKILL_CONFIG_INVALID",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "QUICK_SLOT",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "type": "null"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "CASTING",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "quick_slot",
+              "type": "string"
+            },
+            "index": {
+              "minimum": 0,
+              "maximum": 8,
+              "type": "integer"
+            }
+          }
+        },
+        "outcome": {
+          "const": "NONE",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "SKILL_BAR",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "CASTING",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "skill_bar",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "NONE",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "CASTING",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "NONE",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": true,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "CASTING",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "NONE",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "QUICK_SLOT",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "type": "null"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "COMPLETE",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "quick_slot",
+              "type": "string"
+            },
+            "index": {
+              "minimum": 0,
+              "maximum": 8,
+              "type": "integer"
+            }
+          }
+        },
+        "outcome": {
+          "const": "COMPLETED",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "SKILL_BAR",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "COMPLETE",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "skill_bar",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "COMPLETED",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "COMPLETE",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "COMPLETED",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": true,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "COMPLETE",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "const": "COMPLETED",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "QUICK_SLOT",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "type": "null"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "INTERRUPT",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "quick_slot",
+              "type": "string"
+            },
+            "index": {
+              "minimum": 0,
+              "maximum": 8,
+              "type": "integer"
+            }
+          }
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "SKILL_BAR",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "INTERRUPT",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "skill_bar",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": false,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "INTERRUPT",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "const": "DEDICATED",
+          "type": "string"
+        },
+        "npc": {
+          "const": true,
+          "type": "boolean"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "const": "INTERRUPT",
+          "type": "string"
+        },
+        "slot": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            }
+          }
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "x-bong-typebox-source-sha256": "94cbd23a913b9bee19cf83f680f53abc25371333e7a4b09b4ce6421b9a4bd773",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}
