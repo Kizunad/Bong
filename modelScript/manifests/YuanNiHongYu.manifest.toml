@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+black_mud = [32, 28, 30]
+ruby_deep = [135, 24, 28]        # 深玉红 #87181c
+ruby_bright = [215, 45, 52]      # 鲜玉红 #d72d34
+ruby_gem_tip = [252, 175, 185]   # 晶透红玉尖 #fcafb9
+fern_stalk_dark = [68, 20, 22]
+
+[features]
+mud_base = { elements = ["mud_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+ruby_fronds = { elements = ["frond_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+gem_tips = { elements = ["gem_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

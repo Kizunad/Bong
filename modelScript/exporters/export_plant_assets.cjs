@@ -42,6 +42,13 @@ const PLANTS = {
     fu_chen_cao: "FuChenCao",
     fu_yuan_jue: "FuYuanJue",
     zhen_jie_zi: "ZhenJieZi",
+    // 第 5 批：花 / 兰 / 蕊
+    fu_you_hua: "FuYouHua",
+    jie_gu_rui: "JieGuRui",
+    mao_xin_wei: "MaoXinWei",
+    yun_ding_lan: "YunDingLan",
+    yuan_ni_hong_yu: "YuanNiHongYu",
+    duan_ji_ci: "DuanJiCi",
 };
 
 function centerModel(source) {

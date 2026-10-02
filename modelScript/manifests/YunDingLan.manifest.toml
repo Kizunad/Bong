@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+floating_rock = [48, 52, 58]
+orchid_leaf = [75, 92, 105]       # 苍灰青叶基
+silver_petal = [205, 218, 228]     # 银白主花瓣
+pure_white_lip = [252, 252, 255]   # 纯白唇瓣
+blue_vein = [115, 175, 235]       # 冰蓝冷纹
+
+[features]
+floating_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+orchid_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+silver_orchid_flower = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+orchid_lip = { elements = ["lip_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

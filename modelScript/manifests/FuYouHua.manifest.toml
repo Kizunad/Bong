@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_decay = [36, 42, 48]
+stalk_translucent = [75, 95, 115]
+petal_pale_cyan = [145, 175, 205] # 清丽浅蓝白
+petal_edge_white = [220, 235, 248]
+toxic_stamen = [80, 50, 110]      # 隐秘暗紫毒蕊
+
+[features]
+decay_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+translucent_petals = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+toxic_pistil = { elements = ["stamen_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

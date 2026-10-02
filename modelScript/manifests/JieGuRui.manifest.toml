@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+wet_soil = [30, 26, 36]
+stem_dark_violet = [58, 48, 85]
+petal_violet = [115, 82, 168]    # #7352a8 幽暗紫花瓣
+pistil_yellow_glow = [225, 210, 110] # 核心解毒金黄花蕊
+pistil_spark = [250, 245, 180]
+
+[features]
+wet_ground = { elements = ["ground_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+violet_bell_petals = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+antidote_stamen = { elements = ["stamen_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

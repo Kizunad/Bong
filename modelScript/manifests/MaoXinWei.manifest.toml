@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+thatch_debris = [58, 48, 36]
+leaf_moss_green = [52, 68, 42]
+petal_warm_yellow = [238, 178, 45] # #eeb22d 暖黄花瓣
+petal_amber_glow = [252, 222, 110] # 亮黄光晕
+pistil_residual = [165, 95, 30]
+
+[features]
+thatch_base = { elements = ["thatch_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+green_bracts = { elements = ["bract_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+warm_yellow_flower = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+golden_core = { elements = ["core_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

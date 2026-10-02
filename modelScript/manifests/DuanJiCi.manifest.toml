@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+rusted_metal = [58, 48, 44]       # 古战场生锈金属残片
+thorn_dark_blood = [72, 28, 25]   # 暗血荆身
+thorn_sharp_red = [165, 42, 36]   # 锐利血刺
+metal_barb = [185, 160, 142]      # 锈铁断戟尖端白刃
+spite_aura = [135, 30, 45]
+
+[features]
+rusted_relic = { elements = ["relic_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+blood_brambles = { elements = ["bramble_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+barbed_spikes = { elements = ["spike_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
