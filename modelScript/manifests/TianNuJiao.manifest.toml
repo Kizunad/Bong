@@ -5,8 +5,8 @@ size = 280
 [materials]
 charred_soil = [42, 30, 30]          # 焦土碎石座
 green_calyx = [55, 85, 42]           # 绿梗与短茎
-pepper_dark_blood = [48, 14, 20]     # #3a0a08 焦黑血红椒基
-pepper_mid_red = [168, 32, 16]       # #8a1a10 鲜红弯椒身
+pepper_dark_blood = [58, 10, 8]      # #3a0a08 压暗焦黑红椒身
+pepper_ember = [148, 48, 18]         # 焦红过渡
 flame_crack = [255, 106, 26]         # #ff6a1a 橙红发光裂纹
 
 [features]

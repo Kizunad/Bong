@@ -11,8 +11,8 @@ from plant_geo_common import PlantGates, build_rig, pad, strand, write_model  # 
 MATS = {
     "charred_soil": (42, 30, 30),          # 焦土碎石座
     "green_calyx": (55, 85, 42),           # 绿梗与短茎
-    "pepper_dark_blood": (48, 14, 20),     # #3a0a08 焦黑血红椒基
-    "pepper_mid_red": (168, 32, 16),       # #8a1a10 鲜红弯椒身
+    "pepper_dark_blood": (58, 10, 8),      # #3a0a08 压暗焦黑红椒身
+    "pepper_ember": (148, 48, 18),         # 焦红过渡
     "flame_crack": (255, 106, 26),         # #ff6a1a 橙红发光裂纹
 }
 
@@ -37,28 +37,28 @@ def part_green_stem_calyx(rig):
 
 def part_curved_chili_pepper(rig):
     rig.bone("curved_chili_pepper", (0.0, 0.0, 0.0))
-    # 一根粗大倒挂的黑红弯辣椒（长约 8px，截面从 3.2px 逐级收缩到 0.9px，向右前方向大弯弧）
-    # 1. 椒头与上段 (最粗 3.2x3.2，焦黑深血红 #3a0a08，y: 6.2 -> 7.6)
-    pad(rig, "curved_chili_pepper", "pepper_seg_0_head", (0.6, 6.4, 0.4), (3.2, 1.4, 3.2), "pepper_dark_blood")
-    strand(rig, "curved_chili_pepper", "pepper_seg_1_upper", (0.6, 6.6, 0.4), (1.2, 5.2, 0.7), 0.52, "pepper_dark_blood")
+    # 一根粗大倒挂的黑红弯辣椒（长约 8px，截面从 3.6px 逐级收缩到 1.1px，加粗厚实，向右前方向大弯弧）
+    # 1. 椒头与上段 (加粗至 3.6x3.6，焦黑深血红 #3a0a08，y: 6.0 -> 7.6)
+    pad(rig, "curved_chili_pepper", "pepper_seg_0_head", (0.6, 6.2, 0.4), (3.6, 1.6, 3.6), "pepper_dark_blood")
+    strand(rig, "curved_chili_pepper", "pepper_seg_1_upper", (0.6, 6.6, 0.4), (1.2, 5.2, 0.7), 0.60, "pepper_dark_blood")
 
-    # 2. 弯曲中段 (截面 2.4x2.4，过渡至鲜红 #8a1a10，y: 4.0 -> 5.2)
-    strand(rig, "curved_chili_pepper", "pepper_seg_2_mid", (1.2, 5.2, 0.7), (2.1, 3.8, 1.2), 0.44, "pepper_mid_red")
+    # 2. 弯曲中段 (加粗至截面 2.8x2.8，黑红主体 #3a0a08，y: 3.8 -> 5.2)
+    strand(rig, "curved_chili_pepper", "pepper_seg_2_mid", (1.2, 5.2, 0.7), (2.2, 3.8, 1.3), 0.52, "pepper_dark_blood")
 
-    # 3. 弯曲下段 (截面 1.6x1.6，大幅向外侧弯挑，y: 2.6 -> 3.8)
-    strand(rig, "curved_chili_pepper", "pepper_seg_3_lower", (2.1, 3.8, 1.2), (3.2, 2.6, 1.8), 0.34, "pepper_mid_red")
+    # 3. 弯曲下段 (截面 2.0x2.0，微透焦红 #943012，大幅向外侧弯挑，y: 2.4 -> 3.8)
+    strand(rig, "curved_chili_pepper", "pepper_seg_3_lower", (2.2, 3.8, 1.3), (3.4, 2.6, 2.0), 0.40, "pepper_ember")
 
-    # 4. 尖锐尖端 (截面 0.9x0.9，向外上微翘，y: 1.8 -> 2.6)
-    strand(rig, "curved_chili_pepper", "pepper_seg_4_tip", (3.2, 2.6, 1.8), (4.2, 2.1, 2.2), 0.22, "pepper_mid_red")
+    # 4. 尖锐尖端 (截面 1.2x1.2，向外上微翘，y: 1.8 -> 2.6)
+    strand(rig, "curved_chili_pepper", "pepper_seg_4_tip", (3.4, 2.6, 2.0), (4.5, 2.1, 2.4), 0.28, "pepper_ember")
 
 
 def part_flame_cracks(rig):
     rig.bone("flame_cracks", (0.0, 0.0, 0.0))
     # 贯穿弯椒弧背凸面与椒尖的橙红发光裂纹 (#ff6a1a)
-    strand(rig, "flame_cracks", "crack_upper_back", (0.6, 7.2, 2.05), (1.2, 5.6, 2.3), 0.22, "flame_crack")
-    strand(rig, "flame_cracks", "crack_mid_curve", (1.2, 5.6, 2.3), (2.2, 4.0, 2.6), 0.20, "flame_crack")
-    strand(rig, "flame_cracks", "crack_tip_glow", (2.2, 4.0, 2.6), (3.6, 2.8, 2.7), 0.18, "flame_crack")
-    pad(rig, "flame_cracks", "crack_apex_spark", (4.2, 2.1, 2.3), (0.75, 0.75, 0.75), "flame_crack")
+    strand(rig, "flame_cracks", "crack_upper_back", (0.6, 7.2, 2.25), (1.2, 5.6, 2.5), 0.24, "flame_crack")
+    strand(rig, "flame_cracks", "crack_mid_curve", (1.2, 5.6, 2.5), (2.3, 4.0, 2.85), 0.22, "flame_crack")
+    strand(rig, "flame_cracks", "crack_tip_glow", (2.3, 4.0, 2.85), (3.8, 2.8, 2.9), 0.20, "flame_crack")
+    pad(rig, "flame_cracks", "crack_apex_spark", (4.5, 2.1, 2.5), (0.85, 0.85, 0.85), "flame_crack")
 
 
 def build():
