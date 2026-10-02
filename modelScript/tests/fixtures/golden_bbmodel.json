@@ -23,6 +23,12 @@
    "BackBasket.bbmodel": "8248c4e43fc8edcb9b6da4ea1e9c131fa3b48ba718c6c1d6b3b834299d19fc2b"
   }
  },
+ "gen_bai_yan_peng.py": {
+  "exit": 0,
+  "outputs": {
+   "BaiYanPeng.bbmodel": "9ea49c37c0e19cc49f7d730c1fb89493e87533c85969759b76ab51b2d8312fa0"
+  }
+ },
  "gen_bamboo_jian.py": {
   "exit": 0,
   "outputs": {
@@ -39,6 +45,12 @@
   "exit": 0,
   "outputs": {
    "BeastSpineSwordPlayerAnim.bbmodel": "772e40d93fe1755a548543d288137c5a1edee966dc0ff5d961f709bc52ef8685"
+  }
+ },
+ "gen_bei_wen_zhi.py": {
+  "exit": 0,
+  "outputs": {
+   "BeiWenZhi.bbmodel": "01fda7c40c8b8c3635be2e4c2165d542aac5e0596a7fd11ac7abd578c84e1a54"
   }
  },
  "gen_bone_armor.py": {
@@ -238,6 +250,12 @@
    "HuaXingGen.bbmodel": "2466478965570915188fd7c112ce9fcbf313147cfd37677ca922ffb6470f9249"
   }
  },
+ "gen_hui_jin_tai.py": {
+  "exit": 0,
+  "outputs": {
+   "HuiJinTai.bbmodel": "b5408730bc3a3bd95b07c32ae22589579f626c958383bd38db1b8db06ce3408e"
+  }
+ },
  "gen_hui_li_dan.py": {
   "exit": 0,
   "outputs": {
@@ -315,6 +333,12 @@
    "JinZhongDan.bbmodel": "49f2e9a21eb6845020112d844f9fc14b1801d6f66bdf8ffc6caeda42628f4db3"
   }
  },
+ "gen_jing_xin_zao.py": {
+  "exit": 0,
+  "outputs": {
+   "JingXinZao.bbmodel": "56c3a47042e8b693151a8b8a53e25e3c9ca254197a65cb31bbf406935c5bd792"
+  }
+ },
  "gen_kaimai_dan.py": {
   "exit": 0,
   "outputs": {
@@ -327,6 +351,18 @@
    "BoneSpike.bbmodel": "859856494d5fc07b72f7c715c83b75e7d9e96f102b9595afb14e6882055105d6",
    "IronDagger.bbmodel": "dcfcc894322340f66770824e8f1319f1df1387331e9dbc9b95dd58978a505c4d",
    "StoneKnife.bbmodel": "dd4ed4fc68f6bbad008c04e9708197c5d41ac72f7b1a91a6c3aa486adaa2c2d7"
+  }
+ },
+ "gen_kong_shou_hen.py": {
+  "exit": 0,
+  "outputs": {
+   "KongShouHen.bbmodel": "2540000a6a30478d84d9192a08bef033d7017cbbb62018f51bd385d5454bf210"
+  }
+ },
+ "gen_lie_yuan_tai.py": {
+  "exit": 0,
+  "outputs": {
+   "LieYuanTai.bbmodel": "f8a948f92c64b6f9d9759bc7b32e0c9aa8630a588acbfbc894e304214bf1a67d"
   }
  },
  "gen_linen_armor.py": {
@@ -351,6 +387,12 @@
  "gen_ling_jing_block.py": {
   "exit": 0,
   "outputs": {}
+ },
+ "gen_ling_jing_xu.py": {
+  "exit": 0,
+  "outputs": {
+   "LingJingXu.bbmodel": "1ba2972ecc91f3319143ad880b316eafec55ba1f8dbb4923dcc6e28df202fefa"
+  }
  },
  "gen_ling_tie.py": {
   "exit": 0,
@@ -382,6 +424,12 @@
    "lootcrate/LootCrateRustTrunk.bbmodel": "83a1edd7233d7775656a7c3cd31cd21c7e0216c11d7380ca3ef41215f52dee2f",
    "lootcrate/LootCrateTalisman.bbmodel": "0c0ab1a43342efa1379c324784f4f956e1cc3c1ac1c9c86e45f07749b34f6991",
    "lootcrate/LootCrateVineChest.bbmodel": "a53281684311983f81f19064b8e89db4e00e26e8caef8ddc30632323f7ea2f13"
+  }
+ },
+ "gen_ming_gu_gu.py": {
+  "exit": 0,
+  "outputs": {
+   "MingGuGu.bbmodel": "2a156b36f348062689e7ffff4b4c8992b592993449eed8a9fad99901daaa6733"
   }
  },
  "gen_mundane_coffin.py": {
@@ -434,6 +482,12 @@
    "armor/scroll_wrap/ScrollWrapHelmetOnPlayer.bbmodel": "1b11f5ab551c6d7aadfce1c0c2cb4b0429be07e1c66b164aedebcc56ce1fd968",
    "armor/scroll_wrap/ScrollWrapLeggings.bbmodel": "8afaf3491513f4ece48f14c6e2e4a12fdef14f79ecbbeae2eb0e291be3a6f3e7",
    "armor/scroll_wrap/ScrollWrapLeggingsOnPlayer.bbmodel": "fb6155e9e3c4667f65209aa736962bbffd2d55a58ebee9fbc0cf5438ab2507eb"
+  }
+ },
+ "gen_shi_ling_xian.py": {
+  "exit": 0,
+  "outputs": {
+   "ShiLingXian.bbmodel": "858d226225c55de82d609e2491f81126781a40a8c2404af93480ccf430cf7b49"
   }
  },
  "gen_shou_xin_cao.py": {
@@ -540,10 +594,28 @@
   "exit": 0,
   "outputs": {}
  },
+ "gen_xuan_rong_tai.py": {
+  "exit": 0,
+  "outputs": {
+   "XuanRongTai.bbmodel": "88f03d8568a52d8c3e8b5b83bf29a9d2aeb4082e8e30c3a81f53ea92c092f0de"
+  }
+ },
  "gen_xue_po_lian.py": {
   "exit": 0,
   "outputs": {
    "XuePoLian.bbmodel": "cd9b4e7a4c5c3e21a7ce9231325bfe7f26bea8e93d5844dac7e175f98e46fbed"
+  }
+ },
+ "gen_yang_jing_tai.py": {
+  "exit": 0,
+  "outputs": {
+   "YangJingTai.bbmodel": "7140514237b7ea38b84fb927688a651df4285853c4a46b9733e76c968f405e6a"
+  }
+ },
+ "gen_ying_yuan_gu.py": {
+  "exit": 0,
+  "outputs": {
+   "YingYuanGu.bbmodel": "86cbf3572f8383db1d0dd707670826e25cbcb9b256f3a12bb8c142604f232022"
   }
  },
  "gen_yu_sui.py": {
