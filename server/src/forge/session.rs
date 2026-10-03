@@ -185,7 +185,7 @@ impl ForgeSessions {
         id
     }
 
-    pub fn insert(&mut self, session: ForgeSession) {
+    pub fn insert(&mut self, session: ForgeSession) -> bool {
         let placed_id = session
             .station_pos
             .map(|(x, y, z)| {
@@ -202,12 +202,20 @@ impl ForgeSessions {
             owner_key,
             placed_id,
         );
-        self.insert_adapter(adapter);
+        self.insert_adapter(adapter)
     }
 
     /// 插入已经带有稳定工位身份的生产 adapter；生产起锻路径必须使用此入口。
-    pub fn insert_adapter(&mut self, adapter: ForgeSessionAdapter) {
-        self.sessions.insert(adapter.session.id, adapter);
+    ///
+    /// 会话 ID 是所有权键，重复发布必须拒绝而不能覆盖现有 adapter。返回 `true`
+    /// 表示发布成功，`false` 表示调用方仍保有传入 adapter 的所有权并应回滚外部事务。
+    pub fn insert_adapter(&mut self, adapter: ForgeSessionAdapter) -> bool {
+        let id = adapter.session.id;
+        if self.sessions.contains_key(&id) {
+            return false;
+        }
+        self.sessions.insert(id, adapter);
+        true
     }
 
     pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSessionAdapter> {
@@ -250,5 +258,46 @@ impl ForgeSessions {
             self.sessions.remove(id);
         }
         to_remove
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_adapter_refuses_to_overwrite_existing_session_owner() {
+        let id = ForgeSessionId(7);
+        let first = ForgeSessionAdapter::from_station(
+            ForgeSession::new(
+                id,
+                "iron_sword_v0".to_string(),
+                Entity::from_raw(1),
+                Entity::from_raw(2),
+            ),
+            "forge:session:first",
+            "offline:alice",
+            "forge:station:overworld:1:64:1",
+        );
+        let replacement = ForgeSessionAdapter::from_station(
+            ForgeSession::new(
+                id,
+                "iron_sword_v0".to_string(),
+                Entity::from_raw(3),
+                Entity::from_raw(4),
+            ),
+            "forge:session:replacement",
+            "offline:bob",
+            "forge:station:overworld:2:64:2",
+        );
+        let mut sessions = ForgeSessions::new();
+
+        assert!(sessions.insert_adapter(first));
+        assert!(!sessions.insert_adapter(replacement));
+        let stored = sessions
+            .get(id)
+            .expect("first adapter must remain registered");
+        assert_eq!(stored.record.owner_key.as_str(), "offline:alice");
+        assert_eq!(stored.durable_placed_id(), "forge:station:overworld:1:64:1");
     }
 }

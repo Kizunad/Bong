@@ -5365,6 +5365,13 @@ pub(crate) fn refund_alchemy_qi_on_disconnect(
             {
                 continue;
             }
+            if furnace.session.as_ref().is_some_and(|session| {
+                session.record.state == crate::session::SessionState::Suspended
+            }) {
+                // checkpointed session 已由 alchemy lifecycle reducer 落盘；保留炉体
+                // 账户，等待 guarded restore，不能在断线兜底里提前退款或进 overflow。
+                continue;
+            }
             let account = crate::alchemy::qi::furnace_qi_account(furnace_entity);
             if ledger.balance(&account) <= 0.0 {
                 reservations.forget(furnace_entity);

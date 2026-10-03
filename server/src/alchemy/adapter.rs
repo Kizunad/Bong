@@ -14,6 +14,7 @@ use crate::session::{
     SessionEvent, SessionKey, SessionLifecycleCtx, SessionRecord, SessionState,
 };
 use crate::world::dimension::DimensionKind;
+use uuid::Uuid;
 
 use super::session::AlchemySession;
 
@@ -98,6 +99,80 @@ impl AlchemySessionAdapter {
             self.record.runtime_binding = None;
         }
         decision
+    }
+
+    /// 在断线或关服前执行 checkpointed session 的 durable fence 前半段。
+    ///
+    /// 调用方必须把返回的 checkpoint 与 guard 写入同一持久化事务；事务失败时应恢复
+    /// 调用前的 adapter 副本。这样 reducer 的 Suspended 状态不会在 durable fence 之前
+    /// 对生产 tick 生效，也不会留下没有一次性恢复凭证的半份快照。
+    pub fn suspend_for_disconnect(
+        &mut self,
+        context: &mut SessionLifecycleCtx,
+    ) -> Result<(ReconnectGuard, SuspendedSessionCheckpoint), String> {
+        self.suspend_with_event(false, context)
+    }
+
+    /// 关服路径与断线共享同一 checkpoint/guard 事务，只在事件类型上区分审计原因。
+    pub fn suspend_for_shutdown(
+        &mut self,
+        context: &mut SessionLifecycleCtx,
+    ) -> Result<(ReconnectGuard, SuspendedSessionCheckpoint), String> {
+        self.suspend_with_event(true, context)
+    }
+
+    fn suspend_with_event(
+        &mut self,
+        shutdown: bool,
+        context: &mut SessionLifecycleCtx,
+    ) -> Result<(ReconnectGuard, SuspendedSessionCheckpoint), String> {
+        if !matches!(
+            self.record.state,
+            SessionState::Running | SessionState::Paused
+        ) {
+            return Err("alchemy session is not suspendable in its current state".to_string());
+        }
+        let previous = self.clone();
+        let phase_revision = self
+            .record
+            .phase_revision
+            .checked_add(1)
+            .ok_or_else(|| "alchemy session phase revision overflow".to_string())?;
+        let guard = ReconnectGuard {
+            owner_key: self.record.owner_key.as_str().to_string(),
+            session_key: self.record.session_key.as_str().to_string(),
+            generation: self.record.generation,
+            phase_revision,
+            restore_token: Uuid::now_v7().to_string(),
+        };
+        let identity = self.record.identity();
+        let event = if shutdown {
+            SessionEvent::Shutdown {
+                identity,
+                suspension: crate::session::SuspensionResult::Committed(guard.clone()),
+            }
+        } else {
+            SessionEvent::Disconnect {
+                identity,
+                suspension: crate::session::SuspensionResult::Committed(guard.clone()),
+            }
+        };
+        let decision = self.apply_event(event, context);
+        if !decision.accepted {
+            *self = previous;
+            return Err(format!(
+                "alchemy session suspension rejected: {:?}",
+                decision.rejection
+            ));
+        }
+        let checkpoint = match self.checkpoint() {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                *self = previous;
+                return Err(error);
+            }
+        };
+        Ok((guard, checkpoint))
     }
 
     /// 只有 Running 状态推进火候；Paused、Suspended 和终态都禁止后台 tick。
@@ -325,6 +400,28 @@ mod tests {
         adapter.record.runtime_binding = None;
         assert!(!adapter.tick());
         assert_eq!(adapter.session.elapsed_ticks, 0);
+    }
+
+    #[test]
+    fn suspend_helper_enters_suspended_with_durable_checkpoint_and_stops_tick() {
+        let mut adapter = adapter();
+        assert!(adapter.tick());
+        let elapsed_before_suspend = adapter.session.elapsed_ticks;
+        let mut context = SessionLifecycleCtx::default();
+
+        let (guard, checkpoint) = adapter
+            .suspend_for_disconnect(&mut context)
+            .expect("disconnect lifecycle must produce a durable checkpoint");
+
+        assert_eq!(adapter.record.state, SessionState::Suspended);
+        assert!(adapter.record.runtime_binding.is_none());
+        assert_eq!(guard.phase_revision, adapter.record.phase_revision);
+        assert_eq!(checkpoint.phase_revision, adapter.record.phase_revision);
+        assert!(
+            !adapter.tick(),
+            "suspended sessions must not advance fire ticks"
+        );
+        assert_eq!(adapter.session.elapsed_ticks, elapsed_before_suspend);
     }
 
     #[test]

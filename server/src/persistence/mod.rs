@@ -219,7 +219,8 @@ pub fn register(app: &mut App) {
         .add_systems(
             Last,
             (
-                crate::alchemy::qi::flush_furnace_qi_on_shutdown,
+                crate::alchemy::qi::flush_furnace_qi_on_shutdown
+                    .after(crate::alchemy::lifecycle::checkpoint_alchemy_sessions_on_shutdown),
                 dispatch_persistence_shutdown_flushes,
             )
                 .chain(),

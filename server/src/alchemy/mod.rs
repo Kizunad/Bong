@@ -29,6 +29,7 @@ pub mod danxin;
 pub mod furnace;
 pub mod incense;
 pub mod learned;
+pub(crate) mod lifecycle;
 pub mod manual_qi;
 pub mod outcome;
 pub mod pill;
@@ -48,7 +49,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, Client, Commands, Entity, Event, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Query, Res, Update, Username, With, Without,
+    IntoSystemConfigs, Last, Or, Query, Res, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -198,6 +199,9 @@ pub fn register(app: &mut App) {
         (
             attach_alchemy_to_joined_clients
                 .after(crate::player::attach_player_state_to_joined_clients),
+            lifecycle::restore_suspended_alchemy_sessions_on_join
+                .after(crate::player::attach_player_state_to_joined_clients)
+                .after(attach_alchemy_to_joined_clients),
             handle_start_alchemy_requests,
             tick_alchemy_sessions
                 .before(crate::network::client_request_handler::handle_client_request_payloads),
@@ -209,7 +213,15 @@ pub fn register(app: &mut App) {
             danxin::handle_danxin_identify_intents,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
+            lifecycle::checkpoint_alchemy_sessions_on_disconnect
+                .before(crate::network::client_request_handler::refund_alchemy_qi_on_disconnect)
+                .before(crate::player::despawn_disconnected_clients),
         ),
+    );
+    app.add_systems(
+        Last,
+        lifecycle::checkpoint_alchemy_sessions_on_shutdown
+            .before(crate::alchemy::qi::flush_furnace_qi_on_shutdown),
     );
 }
 
