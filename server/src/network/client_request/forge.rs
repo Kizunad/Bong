@@ -352,7 +352,8 @@ fn handle_forge_station_open(
     let session = station
         .session
         .and_then(|id| state.forge_sessions.as_deref()?.get(id))
-        .filter(|session| !session.is_done());
+        .filter(|session| !session.is_done())
+        .map(|session| session.domain_session());
     if session.is_some_and(|session| session.caster != player) {
         client.send_chat_message("[炼器] 这座工位正在被其他人使用。");
         return;
@@ -629,6 +630,13 @@ fn require_owned_active_step(
         );
         return false;
     };
+    if !session_state.can_process_step() {
+        tracing::warn!(
+            "[bong][network][forge] {request_label} rejected: session_id={} is not runtime-bound and running",
+            session.0
+        );
+        return false;
+    }
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
@@ -845,6 +853,13 @@ fn handle_forge_step_advance(
         );
         return None;
     };
+    if !session_state.can_process_step() {
+        tracing::warn!(
+            "[bong][network][forge] step_advance rejected: session_id={} is not runtime-bound and running",
+            session_id
+        );
+        return None;
+    }
     if session_state.caster != entity {
         tracing::warn!(
             "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",

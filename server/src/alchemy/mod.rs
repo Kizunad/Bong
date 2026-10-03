@@ -23,11 +23,13 @@
 //!   * Redis channel（bong:alchemy/*）+ agent schema 对齐
 //!   * 品阶 / 铭文 / 开光 / AutoProfile
 
+pub mod adapter;
 pub mod auto_profile;
 pub mod danxin;
 pub mod furnace;
 pub mod incense;
 pub mod learned;
+pub(crate) mod lifecycle;
 pub mod manual_qi;
 pub mod outcome;
 pub mod pill;
@@ -47,7 +49,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, Client, Commands, Entity, Event, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Query, Res, Update, Username, With, Without,
+    IntoSystemConfigs, Last, Or, Query, Res, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -78,6 +80,7 @@ type JoinedClientsWithoutRecipesFilter = (
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 
+pub use adapter::AlchemySessionAdapter;
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 #[allow(unused_imports)]
@@ -196,6 +199,9 @@ pub fn register(app: &mut App) {
         (
             attach_alchemy_to_joined_clients
                 .after(crate::player::attach_player_state_to_joined_clients),
+            lifecycle::restore_suspended_alchemy_sessions_on_join
+                .after(crate::player::attach_player_state_to_joined_clients)
+                .after(attach_alchemy_to_joined_clients),
             handle_start_alchemy_requests,
             tick_alchemy_sessions
                 .before(crate::network::client_request_handler::handle_client_request_payloads),
@@ -207,7 +213,15 @@ pub fn register(app: &mut App) {
             danxin::handle_danxin_identify_intents,
             handle_alchemy_furnace_place,
             emit_alchemy_skill_xp_from_outcomes,
+            lifecycle::checkpoint_alchemy_sessions_on_disconnect
+                .before(crate::network::client_request_handler::refund_alchemy_qi_on_disconnect)
+                .before(crate::player::despawn_disconnected_clients),
         ),
+    );
+    app.add_systems(
+        Last,
+        lifecycle::checkpoint_alchemy_sessions_on_shutdown
+            .before(crate::alchemy::qi::flush_furnace_qi_on_shutdown),
     );
 }
 
@@ -228,10 +242,8 @@ fn tick_alchemy_sessions(
         };
         let heating = !session.finished && session.ready_to_heat(recipe);
         let incense_was_burning = session.incense_active().is_some();
-        if heating {
-            session.tick();
-        } else {
-            session.tick_incense();
+        if !session.tick_mode(heating) {
+            continue;
         }
         if registry.get(&session.recipe).is_some_and(|recipe| {
             session.elapsed_ticks >= recipe.fire_profile.target_duration_ticks
@@ -357,7 +369,7 @@ fn handle_start_alchemy_requests(
     mut requests: EventReader<StartAlchemyRequest>,
     recipes: Res<RecipeRegistry>,
     zones: Option<Res<ZoneRegistry>>,
-    mut furnaces: Query<&mut AlchemyFurnace>,
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
 ) {
     for request in requests.read() {
         let Some(recipe) = recipes.get(&request.recipe_id) else {
@@ -387,7 +399,7 @@ fn handle_start_alchemy_requests(
             continue;
         }
 
-        let Ok(mut furnace) = furnaces.get_mut(request.furnace) else {
+        let Ok((furnace_entity, mut furnace)) = furnaces.get_mut(request.furnace) else {
             tracing::warn!(
                 "[bong][alchemy] start rejected: furnace {:?} missing",
                 request.furnace
@@ -403,7 +415,7 @@ fn handle_start_alchemy_requests(
             continue;
         }
         let session = AlchemySession::new(request.recipe_id.clone(), request.caster_id.clone());
-        if let Err(error) = furnace.start_session(session) {
+        if let Err(error) = furnace.start_session_at(furnace_entity, session) {
             tracing::warn!(
                 "[bong][alchemy] start rejected: furnace {:?} recipe `{}`: {error}",
                 request.furnace,

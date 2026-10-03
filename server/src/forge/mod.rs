@@ -14,6 +14,7 @@
 //! `ForgeSessions`（在炉进度）、`BlueprintRegistry`（图谱定义版本/校验）、
 //! `LearnedBlueprints`（玩家已学图谱）与 `WeaponForgeStation`（砧方块实体）。
 
+pub mod adapter;
 pub mod artifact_color;
 pub mod artifact_meridian;
 pub mod blueprint;
@@ -29,6 +30,8 @@ pub mod session;
 pub mod skill_hook;
 pub mod station;
 pub mod steps;
+
+pub use adapter::{ForgeSessionAdapter, ForgeSessionCheckpoint};
 
 use std::collections::HashMap;
 
@@ -65,7 +68,7 @@ use crate::network::{
     gameplay_vfx, inventory_snapshot_emit::send_inventory_snapshot_to_client,
     vfx_event_emit::VfxEventRequest,
 };
-use crate::player::state::PlayerState;
+use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
@@ -268,6 +271,15 @@ fn handle_start_forge_requests(
             );
             continue;
         }
+        let Some(placed_id) = station.pos.map(|(x, y, z)| {
+            format!(
+                "forge:station:{}:{x}:{y}:{z}",
+                station.dimension.ident_str()
+            )
+        }) else {
+            tracing::warn!("[bong][forge] start session rejected: station has no stable position");
+            continue;
+        };
 
         if let Err(error) = bp.validate_with(&minerals, station.tier) {
             match error {
@@ -312,6 +324,16 @@ fn handle_start_forge_requests(
             tracing::info!(
                 "[bong][forge] rejected blueprint {}: required material `{material}` {reason}",
                 bp.id
+            );
+            continue;
+        }
+
+        // 先分配并核验会话所有权键，再进入库存事务；重复 ID 必须在任何扣料前拒绝。
+        let id = sessions.allocate_id();
+        if sessions.get(id).is_some() {
+            tracing::error!(
+                "[bong][forge] session id collision before material commit: {:?}",
+                id
             );
             continue;
         }
@@ -437,7 +459,6 @@ fn handle_start_forge_requests(
                 .extend(refunds.into_iter().map(|entry| (entry.instance_id, entry)));
         }
 
-        let id = sessions.allocate_id();
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
         session.station_pos = station.pos;
         session.station_dimension = station.dimension;
@@ -447,15 +468,31 @@ fn handle_start_forge_requests(
         session.billet_carrier_cap = billet_res.state.resolved_tier_cap;
         session.flawed_marker = billet_res.flawed;
         session.achieved_tier = 1;
-        station.session = Some(id);
-
+        let owner_key = contexts
+            .get(req.caster)
+            .ok()
+            .map(|(username, _, _)| canonical_player_id(username.0.as_str()))
+            .unwrap_or_else(|| format!("forge:session-owner:{}", id.0));
+        let adapter = ForgeSessionAdapter::from_station(
+            session,
+            format!("forge:session:{placed_id}"),
+            owner_key,
+            placed_id,
+        );
         tracing::info!(
             "[bong][forge] start session {:?} blueprint={} carrier_cap={}",
             id,
             bp.id,
             billet_res.state.resolved_tier_cap
         );
-        sessions.insert(session);
+        if !sessions.insert_adapter(adapter) {
+            tracing::error!(
+                "[bong][forge] session id collision after material commit: {:?}",
+                id
+            );
+            continue;
+        }
+        station.session = Some(id);
         accepted.send(ForgeStartAccepted {
             session: id,
             station: req.station,
@@ -3094,6 +3131,46 @@ mod tests {
         assert!(
             inventory.containers[0].items.is_empty(),
             "fan_tie x3 应被真实扣光（消耗 3/3），而非仅记账 committed_materials"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_without_stable_station_rejects_before_material_commit() {
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 3)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app.world_mut().spawn(WeaponForgeStation::with_tier(1)).id();
+
+        stage_test_forge(&mut app, caster);
+        app.world_mut()
+            .get_mut::<PlayerInventory>(caster)
+            .expect("staging fixture must have inventory")
+            .material_preparation
+            .station_pos = None;
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        assert!(
+            app.world().resource::<ForgeSessions>().is_empty(),
+            "没有稳定工位身份时不得建立会话"
+        );
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.material_preparation.materials[0].item.stack_count, 3,
+            "稳定身份校验必须早于扣料与持久化，暂存材料不得丢失"
         );
     }
 

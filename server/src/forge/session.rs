@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{Entity, Resource};
 
+use super::adapter::ForgeSessionAdapter;
 use super::blueprint::{BlueprintId, StepKind};
 use super::steps::{ConsecrationResult, InscriptionResult, TemperingResult};
 use crate::cultivation::components::ColorKind;
@@ -165,7 +166,7 @@ pub const DONE_SESSION_RETENTION_TICKS: u32 = 3;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ForgeSessions {
     next_id: u64,
-    sessions: HashMap<ForgeSessionId, ForgeSession>,
+    sessions: HashMap<ForgeSessionId, ForgeSessionAdapter>,
 }
 
 impl Resource for ForgeSessions {}
@@ -184,19 +185,48 @@ impl ForgeSessions {
         id
     }
 
-    pub fn insert(&mut self, session: ForgeSession) {
-        self.sessions.insert(session.id, session);
+    pub fn insert(&mut self, session: ForgeSession) -> bool {
+        let placed_id = session
+            .station_pos
+            .map(|(x, y, z)| {
+                format!(
+                    "forge:station:{}:{x}:{y}:{z}",
+                    session.station_dimension.ident_str()
+                )
+            })
+            .unwrap_or_else(|| format!("forge:session:{}", session.id.0));
+        let owner_key = format!("forge:session-owner:{}", session.id.0);
+        let adapter = ForgeSessionAdapter::from_station(
+            session,
+            format!("forge:session:{}", placed_id),
+            owner_key,
+            placed_id,
+        );
+        self.insert_adapter(adapter)
     }
 
-    pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSession> {
+    /// 插入已经带有稳定工位身份的生产 adapter；生产起锻路径必须使用此入口。
+    ///
+    /// 会话 ID 是所有权键，重复发布必须拒绝而不能覆盖现有 adapter。返回 `true`
+    /// 表示发布成功，`false` 表示调用方仍保有传入 adapter 的所有权并应回滚外部事务。
+    pub fn insert_adapter(&mut self, adapter: ForgeSessionAdapter) -> bool {
+        let id = adapter.session.id;
+        if self.sessions.contains_key(&id) {
+            return false;
+        }
+        self.sessions.insert(id, adapter);
+        true
+    }
+
+    pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSessionAdapter> {
         self.sessions.get(&id)
     }
 
-    pub fn get_mut(&mut self, id: ForgeSessionId) -> Option<&mut ForgeSession> {
+    pub fn get_mut(&mut self, id: ForgeSessionId) -> Option<&mut ForgeSessionAdapter> {
         self.sessions.get_mut(&id)
     }
 
-    pub fn remove(&mut self, id: ForgeSessionId) -> Option<ForgeSession> {
+    pub fn remove(&mut self, id: ForgeSessionId) -> Option<ForgeSessionAdapter> {
         self.sessions.remove(&id)
     }
 
@@ -228,5 +258,46 @@ impl ForgeSessions {
             self.sessions.remove(id);
         }
         to_remove
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_adapter_refuses_to_overwrite_existing_session_owner() {
+        let id = ForgeSessionId(7);
+        let first = ForgeSessionAdapter::from_station(
+            ForgeSession::new(
+                id,
+                "iron_sword_v0".to_string(),
+                Entity::from_raw(1),
+                Entity::from_raw(2),
+            ),
+            "forge:session:first",
+            "offline:alice",
+            "forge:station:overworld:1:64:1",
+        );
+        let replacement = ForgeSessionAdapter::from_station(
+            ForgeSession::new(
+                id,
+                "iron_sword_v0".to_string(),
+                Entity::from_raw(3),
+                Entity::from_raw(4),
+            ),
+            "forge:session:replacement",
+            "offline:bob",
+            "forge:station:overworld:2:64:2",
+        );
+        let mut sessions = ForgeSessions::new();
+
+        assert!(sessions.insert_adapter(first));
+        assert!(!sessions.insert_adapter(replacement));
+        let stored = sessions
+            .get(id)
+            .expect("first adapter must remain registered");
+        assert_eq!(stored.record.owner_key.as_str(), "offline:alice");
+        assert_eq!(stored.durable_placed_id(), "forge:station:overworld:1:64:1");
     }
 }
