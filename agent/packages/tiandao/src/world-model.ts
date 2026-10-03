@@ -1,3 +1,10 @@
+/**
+ * 天道 world model：保存跨 tick 的世界摘要、趋势和持久化快照。
+ *
+ * 本模块只负责内存状态、快照复制与恢复，以及供 Agent 读取的摘要；Redis
+ * mirror 的 snake_case 编解码在 `redis-ipc.ts`，tick 调度和发布在 `runtime.ts`。
+ * 所有 getter 都返回副本，调用方不能通过展示数据反向修改模型。
+ */
 import type {
   BotanyEcologySnapshotV1,
   BotanyZoneEcologyV1,
@@ -31,8 +38,10 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   npc_producer: "NPC 推演器",
 };
 
+/** 由连续快照灵气变化计算出的趋势方向。 */
 export type TrendDirection = "rising" | "stable" | "falling";
 
+/** 单个 zone 的趋势摘要。 */
 export interface ZoneTrendSummary {
   name: string;
   previousSpiritQi: number;
@@ -41,6 +50,7 @@ export interface ZoneTrendSummary {
   trend: TrendDirection;
 }
 
+/** 全部 zone 汇总后的世界趋势。 */
 export interface WorldTrendSummary {
   zones: ZoneTrendSummary[];
   previousSpiritQi: number;
@@ -49,12 +59,14 @@ export interface WorldTrendSummary {
   trend: TrendDirection;
 }
 
+/** 天道当前时代的可持久化表示。 */
 export interface CurrentEra {
   name: string;
   sinceTick: number;
   globalEffect: string;
 }
 
+/** 供某个 Agent 读取的最近决策摘要。 */
 export interface PeerDecisionSummary {
   agentName: string;
   displayName: string;
@@ -64,6 +76,7 @@ export interface PeerDecisionSummary {
   narrationCount: number;
 }
 
+/** 最近一条叙事的展示摘要。 */
 export interface RecentNarrationSummary {
   agentName: string;
   displayName: string;
@@ -73,6 +86,7 @@ export interface RecentNarrationSummary {
   text: string;
 }
 
+/** 供 UI/叙事选择使用的关键玩家摘要。 */
 export interface KeyPlayerSummary {
   uuid: string;
   name: string;
@@ -85,6 +99,7 @@ export interface KeyPlayerSummary {
   note: string;
 }
 
+/** WorldModel 可持久化的内部 camelCase 快照。 */
 export interface WorldModelSnapshot {
   currentEra: CurrentEra | null;
   zoneHistory: Record<string, ZoneSnapshot[]>;
@@ -97,6 +112,7 @@ export interface WorldModelSnapshot {
   lastStateTs: number | null;
 }
 
+/** 负域中被抑制的劫数记录。 */
 export interface NegDomainPendingTribulation {
   playerUuid: string;
   playerName: string;
@@ -106,6 +122,7 @@ export interface NegDomainPendingTribulation {
   reason: "negative_domain_tribulation_exempt";
 }
 
+/** 负域逃逸遥测的持久化摘要。 */
 export interface NegDomainEscapeTelemetrySnapshot {
   escapeEntryCount: number;
   postEscapeRealmDropCount: number;
@@ -114,6 +131,7 @@ export interface NegDomainEscapeTelemetrySnapshot {
   postEscapeRealmDropRate: number;
 }
 
+/** 单个玩家的负域逃逸会话。 */
 export interface NegDomainEscapeSession {
   playerUuid: string;
   playerName: string;
@@ -122,6 +140,7 @@ export interface NegDomainEscapeSession {
   entryRealmRank: number;
 }
 
+/** 低灵气高密度植物区的压力标记。 */
 export interface ZoneStressFlag {
   zone: string;
   tick: number;
@@ -133,6 +152,7 @@ export interface ZoneStressFlag {
   reason: "low_qi_high_density";
 }
 
+/** 植物生态异常窗口中的统计记录。 */
 export interface ZoneAnomalyLog {
   zone: string;
   tick: number;
@@ -148,6 +168,7 @@ interface MutableKeyPlayerSummary {
   reasons: string[];
 }
 
+/** 跨 tick 保存世界摘要，并提供快照/恢复边界。 */
 export class WorldModel {
   private latestStateValue: WorldStateV1 | null = null;
   private currentEraValue: CurrentEra | null = null;
@@ -171,46 +192,56 @@ export class WorldModel {
   private newPlayersThisTick = new Set<string>();
   private suppressNewPlayersThisTickOnNextUpdate = false;
 
+  /** 用首个 server world state 初始化模型。 */
   static fromState(state: WorldStateV1): WorldModel {
     const model = new WorldModel();
     model.updateState(state);
     return model;
   }
 
+  /** 从可能不完整或来自旧版本的快照恢复模型。 */
   static fromJSON(snapshot: Partial<WorldModelSnapshot> | null | undefined): WorldModel {
     const model = new WorldModel();
     model.restoreFromJSON(snapshot);
     return model;
   }
 
+  /** 以宽容规则替换持久化状态；无效字段会被丢弃为安全默认值。 */
   restoreFromJSON(snapshot: Partial<WorldModelSnapshot> | null | undefined): void {
     this.applySnapshot(snapshot ?? {});
   }
 
+  /** 返回最近一次 server 状态的只读语义副本。 */
   get latestState(): WorldStateV1 | null {
     return this.latestStateValue;
   }
 
+  /** 返回当前时代副本；没有时代时返回 null。 */
   get currentEra(): CurrentEra | null {
     return cloneCurrentEra(this.currentEraValue);
   }
 
+  /** 返回模型最近状态的 tick。 */
   get lastTick(): number | null {
     return this.latestStateValue?.tick ?? null;
   }
 
+  /** 返回模型最近状态的 server 时间戳。 */
   get lastStateTs(): number | null {
     return this.lastStateTsValue;
   }
 
+  /** 返回最近植物生态快照副本，字段名保持既有 Agent context 契约。 */
   get botany_ecology(): BotanyEcologySnapshotV1 | null {
     return this.botanyEcologyValue ? cloneBotanyEcologySnapshot(this.botanyEcologyValue) : null;
   }
 
+  /** 返回最近凡兽生态快照副本，字段名保持既有 Agent context 契约。 */
   get fauna_ecology(): FaunaEcologySnapshotV1 | null {
     return this.faunaEcologyValue ? cloneFaunaEcologySnapshot(this.faunaEcologyValue) : null;
   }
 
+  /** 导出与 Redis/file mirror 解耦的内部 camelCase 快照副本。 */
   toJSON(): WorldModelSnapshot {
     const zoneHistory: Record<string, ZoneSnapshot[]> = {};
     for (const [zoneName, history] of this.zoneHistory.entries()) {
@@ -235,6 +266,7 @@ export class WorldModel {
     };
   }
 
+  /** 接收一个新的 server 快照并更新历史窗口与新玩家集合。 */
   updateState(state: WorldStateV1): void {
     const clonedState = cloneWorldState(state);
     const hadPreviousState = this.latestStateValue !== null;
@@ -282,10 +314,12 @@ export class WorldModel {
     }
   }
 
+  /** 记录 Agent 最近一次决策，供 peer context 和快照使用。 */
   recordDecision(agentName: string, decision: AgentDecision): void {
     this.lastDecisions.set(agentName, cloneDecision(decision));
   }
 
+  /** 记录植物生态快照，并更新压力/异常窗口。 */
   ingestBotanyEcology(snapshot: BotanyEcologySnapshotV1): void {
     const clonedSnapshot = cloneBotanyEcologySnapshot(snapshot);
     this.botanyEcologyValue = clonedSnapshot;
@@ -308,10 +342,12 @@ export class WorldModel {
     }
   }
 
+  /** 返回植物生态快照历史窗口副本。 */
   getRecentBotanyEcologySnapshots(): BotanyEcologySnapshotV1[] {
     return this.botanyEcologySnapshots.map(cloneBotanyEcologySnapshot);
   }
 
+  /** 返回指定 zone 的植物生态历史窗口副本。 */
   getBotanyEcologyHistory(zoneName: string): BotanyZoneEcologyV1[] {
     return (this.botanyEcologyHistory.get(zoneName) ?? []).map(cloneBotanyZoneEcology);
   }
@@ -319,6 +355,7 @@ export class WorldModel {
   // plan-mundane-fauna-v1 P3：凡兽生态快照存量 + 每 zone 历史（narration 信号，非决策输入）。
   // 只做 value/snapshots/history 三存量，不复用 botany 的 zoneStressFlag/zoneAnomaly 机制
   // （那是 botany variant tainted/thunder 专属）。
+  /** 记录凡兽生态快照；它不参与植物专属压力标记。 */
   ingestFaunaEcology(snapshot: FaunaEcologySnapshotV1): void {
     const clonedSnapshot = cloneFaunaEcologySnapshot(snapshot);
     this.faunaEcologyValue = clonedSnapshot;
@@ -337,38 +374,47 @@ export class WorldModel {
     }
   }
 
+  /** 返回凡兽生态快照历史窗口副本。 */
   getRecentFaunaEcologySnapshots(): FaunaEcologySnapshotV1[] {
     return this.faunaEcologySnapshots.map(cloneFaunaEcologySnapshot);
   }
 
+  /** 返回指定 zone 的凡兽生态历史窗口副本。 */
   getFaunaEcologyHistory(zoneName: string): FaunaZoneEcologyV1[] {
     return (this.faunaEcologyHistory.get(zoneName) ?? []).map(cloneFaunaZoneEcology);
   }
 
+  /** 返回当前仍处于压力阈值的 zone 标记副本。 */
   getZoneStressFlags(): ZoneStressFlag[] {
     return [...this.zoneStressFlags.values()].map((flag) => ({ ...flag }));
   }
 
+  /** 返回指定 zone 最近的植物异常窗口。 */
   getZoneAnomalyWindow(zoneName: string): ZoneAnomalyLog[] {
     return (this.zoneAnomalyHistory.get(zoneName) ?? []).map((entry) => ({ ...entry }));
   }
 
+  /** 由仲裁结果显式设置当前时代。 */
   setCurrentEra(currentEra: CurrentEra): void {
     this.currentEraValue = cloneCurrentEra(currentEra);
   }
 
+  /** 兼容旧调用方的时代记忆别名，语义等同于 setCurrentEra。 */
   rememberCurrentEra(currentEra: CurrentEra): void {
     this.setCurrentEra(currentEra);
   }
 
+  /** 返回指定 zone 的历史快照副本。 */
   getZoneHistory(zoneName: string): ZoneSnapshot[] {
     return (this.zoneHistory.get(zoneName) ?? []).map(cloneZoneSnapshot);
   }
 
+  /** 返回指定 zone 的趋势方向；没有历史时按 stable 处理。 */
   getZoneTrend(zoneName: string): TrendDirection {
     return this.getZoneTrendSummary(zoneName)?.trend ?? "stable";
   }
 
+  /** 返回指定 zone 的完整趋势摘要。 */
   getZoneTrendSummary(zoneName: string): ZoneTrendSummary | null {
     const history = this.zoneHistory.get(zoneName) ?? [];
     if (history.length === 0) {
@@ -388,6 +434,7 @@ export class WorldModel {
     };
   }
 
+  /** 汇总当前世界所有 zone 的趋势。 */
   getWorldTrendSummary(): WorldTrendSummary | null {
     const state = this.latestStateValue;
     if (!state || state.zones.length === 0) {
@@ -419,10 +466,12 @@ export class WorldModel {
     };
   }
 
+  /** 计算当前在线玩家的功德/力量分布摘要。 */
   getBalanceSummary(): BalanceSummary {
     return summarizeBalance(this.latestStateValue?.players ?? []);
   }
 
+  /** 记录负域中被抑制、等待后续处理的劫数。 */
   recordNegDomainPendingTribulation(args: {
     playerUuid: string;
     playerName: string;
@@ -441,25 +490,30 @@ export class WorldModel {
     });
   }
 
+  /** 判断玩家是否有待处理的负域劫数。 */
   hasNegDomainPendingTribulation(playerUuid: string): boolean {
     return this.negDomainPendingTribulations.has(playerUuid);
   }
 
+  /** 返回玩家待处理的负域劫数副本。 */
   getNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
     const pending = this.negDomainPendingTribulations.get(playerUuid);
     return pending ? { ...pending } : null;
   }
 
+  /** 清除玩家待处理的负域劫数。 */
   clearNegDomainPendingTribulation(playerUuid: string): void {
     this.negDomainPendingTribulations.delete(playerUuid);
   }
 
+  /** 读取并同时清除玩家待处理的负域劫数。 */
   consumeNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
     const pending = this.getNegDomainPendingTribulation(playerUuid);
     this.clearNegDomainPendingTribulation(playerUuid);
     return pending;
   }
 
+  /** 记录玩家进入负域并开启逃逸会话。 */
   recordNegDomainEscapeEntry(args: {
     playerUuid: string;
     playerName: string;
@@ -481,6 +535,7 @@ export class WorldModel {
     });
   }
 
+  /** 记录玩家离开负域，并统计境界下降。 */
   recordNegDomainEscapeExit(args: { playerUuid: string; exitRealmRank: number }): void {
     const session = this.negDomainEscapeSessions.get(args.playerUuid);
     if (!session) {
@@ -493,10 +548,12 @@ export class WorldModel {
     this.negDomainEscapeSessions.delete(args.playerUuid);
   }
 
+  /** 记录一次成功避免负域劫数的结果。 */
   recordSuccessfulNegDomainTribulationAvoidance(): void {
     this.negDomainSuccessfulTribulationAvoidanceCount += 1;
   }
 
+  /** 返回负域逃逸计数和比例的快照副本。 */
   getNegDomainEscapeTelemetrySnapshot(): NegDomainEscapeTelemetrySnapshot {
     return {
       escapeEntryCount: this.negDomainEscapeEntryCount,
@@ -510,6 +567,7 @@ export class WorldModel {
     };
   }
 
+  /** 按力量、因果和近期事件选出有限数量的关键玩家。 */
   getKeyPlayers(): KeyPlayerSummary[] {
     const state = this.latestStateValue;
     if (!state || state.players.length === 0) {
@@ -593,6 +651,7 @@ export class WorldModel {
       .slice(0, KEY_PLAYER_LIMIT);
   }
 
+  /** 返回除指定 Agent 外的最近决策摘要。 */
   getPeerDecisions(agentName?: string): PeerDecisionSummary[] {
     return [...this.lastDecisions.entries()]
       .filter(([name]) => name !== agentName)
@@ -607,6 +666,7 @@ export class WorldModel {
       }));
   }
 
+  /** 返回最近的叙事摘要，limit 会被规整为非负整数。 */
   getRecentNarrations(limit = 6): RecentNarrationSummary[] {
     const boundedLimit = Math.max(0, Math.trunc(limit));
     if (boundedLimit === 0) {
