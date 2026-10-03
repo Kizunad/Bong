@@ -46,6 +46,11 @@ pub enum DroppedLootMigrationError {
     InvalidOwner,
     /// visibility 只能是 `public` 或 `owner_only`。
     InvalidVisibility,
+    /// `public` 必须没有 owner，`owner_only` 必须有 owner。
+    InvalidMetadataCombination {
+        visibility: DroppedLootVisibility,
+        owner_present: bool,
+    },
 }
 
 /// 掉落物 metadata 当前能理解的最高 schema 版本。
@@ -53,8 +58,9 @@ pub const CURRENT_DROPPED_LOOT_SCHEMA_VERSION: i32 = 1;
 
 /// 对一条旧 dropped-loot JSON 做纯、幂等迁移。
 ///
-/// 缺少 `owner`/`visibility` 的历史行明确补成 `None`/`Public`；已有字段和值保持
-/// 原样。函数不执行 SQL、不分配实体、不写 registry，因此失败时可以安全重试。
+/// 两个字段都缺失的历史行明确补成 `None`/`Public`；已有字段和值保持原样，并要求
+/// 现存字段组成合法的 owner/visibility 对。函数不执行 SQL、不分配实体、不写 registry，
+/// 因此失败时可以安全重试。
 pub fn migrate_legacy_dropped_loot_entry(
     value: Value,
     schema_version: i32,
@@ -72,6 +78,13 @@ pub fn migrate_legacy_dropped_loot_entry(
 
     validate_owner(root.get("owner"))?;
     validate_visibility(root.get("visibility"))?;
+    let owner = root.get("owner").and_then(Value::as_str);
+    let visibility = match root.get("visibility").and_then(Value::as_str) {
+        None | Some("public") => DroppedLootVisibility::Public,
+        Some("owner_only") => DroppedLootVisibility::OwnerOnly,
+        Some(_) => unreachable!("validate_visibility checked persisted visibility"),
+    };
+    validate_metadata_combination(owner, visibility)?;
     root.entry("owner".to_string()).or_insert(Value::Null);
     root.entry("visibility".to_string())
         .or_insert(Value::String("public".to_string()));
@@ -80,6 +93,9 @@ pub fn migrate_legacy_dropped_loot_entry(
 
 /// 将 metadata 编码为 entry JSON 字段，供后续 hydration/provider 复用。
 pub fn apply_dropped_loot_metadata(value: &mut Value, metadata: &DroppedLootMetadata) -> bool {
+    if validate_metadata_combination(metadata.owner.as_deref(), metadata.visibility).is_err() {
+        return false;
+    }
     let Some(root) = value.as_object_mut() else {
         return false;
     };
@@ -107,7 +123,7 @@ fn validate_owner(value: Option<&Value>) -> Result<(), DroppedLootMigrationError
     let Some(value) = value else {
         return Ok(());
     };
-    if value.is_null() || value.as_str().is_some_and(|owner| !owner.trim().is_empty()) {
+    if value.is_null() || value.as_str().is_some_and(is_canonical_owner_id) {
         Ok(())
     } else {
         Err(DroppedLootMigrationError::InvalidOwner)
@@ -122,6 +138,34 @@ fn validate_visibility(value: Option<&Value>) -> Result<(), DroppedLootMigration
         Some("public") | Some("owner_only") => Ok(()),
         _ => Err(DroppedLootMigrationError::InvalidVisibility),
     }
+}
+
+fn validate_metadata_combination(
+    owner: Option<&str>,
+    visibility: DroppedLootVisibility,
+) -> Result<(), DroppedLootMigrationError> {
+    if owner.is_some_and(|owner| !is_canonical_owner_id(owner)) {
+        return Err(DroppedLootMigrationError::InvalidOwner);
+    }
+    let owner_present = owner.is_some();
+    let valid = match visibility {
+        DroppedLootVisibility::Public => !owner_present,
+        DroppedLootVisibility::OwnerOnly => owner_present,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(DroppedLootMigrationError::InvalidMetadataCombination {
+            visibility,
+            owner_present,
+        })
+    }
+}
+
+/// 当前身份层的 canonical id 至少必须是一个无空白的非空 token；具体前缀由身份 owner
+/// 生成（例如 `offline:<username>`），本层不猜测跨域身份格式。
+fn is_canonical_owner_id(owner: &str) -> bool {
+    !owner.is_empty() && owner == owner.trim() && !owner.chars().any(char::is_whitespace)
 }
 
 #[cfg(test)]
@@ -154,10 +198,69 @@ mod tests {
             migrate_legacy_dropped_loot_entry(invalid_owner, 1),
             Err(DroppedLootMigrationError::InvalidOwner)
         );
+        let blank_owner = json!({"owner": "   ", "visibility": "owner_only"});
+        assert_eq!(
+            migrate_legacy_dropped_loot_entry(blank_owner, 1),
+            Err(DroppedLootMigrationError::InvalidOwner)
+        );
         let invalid_visibility = json!({"visibility": "private"});
         assert_eq!(
             migrate_legacy_dropped_loot_entry(invalid_visibility, 1),
             Err(DroppedLootMigrationError::InvalidVisibility)
         );
+    }
+
+    #[test]
+    fn metadata_migration_rejects_inconsistent_owner_visibility_pairs() {
+        for (value, expected) in [
+            (
+                json!({"owner": "char:alice", "visibility": "public"}),
+                DroppedLootVisibility::Public,
+            ),
+            (
+                json!({"owner": null, "visibility": "owner_only"}),
+                DroppedLootVisibility::OwnerOnly,
+            ),
+        ] {
+            assert_eq!(
+                migrate_legacy_dropped_loot_entry(value, 1),
+                Err(DroppedLootMigrationError::InvalidMetadataCombination {
+                    visibility: expected,
+                    owner_present: expected == DroppedLootVisibility::Public,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn applying_invalid_metadata_does_not_mutate_the_entry() {
+        let mut value = json!({"instance_id": 7, "owner": null, "visibility": "public"});
+        let before = value.clone();
+        assert!(!apply_dropped_loot_metadata(
+            &mut value,
+            &DroppedLootMetadata {
+                owner: Some("char:alice".to_string()),
+                visibility: DroppedLootVisibility::Public,
+            }
+        ));
+        assert_eq!(value, before);
+
+        assert!(!apply_dropped_loot_metadata(
+            &mut value,
+            &DroppedLootMetadata {
+                owner: None,
+                visibility: DroppedLootVisibility::OwnerOnly,
+            }
+        ));
+        assert_eq!(value, before);
+
+        assert!(!apply_dropped_loot_metadata(
+            &mut value,
+            &DroppedLootMetadata {
+                owner: Some("   ".to_string()),
+                visibility: DroppedLootVisibility::OwnerOnly,
+            }
+        ));
+        assert_eq!(value, before);
     }
 }
