@@ -1,6 +1,7 @@
 use super::*;
 use crate::cultivation::components::{MeridianId, Realm};
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{assert_conservation, WorldQiSnapshot};
 use crate::qi_physics::QiAccountId;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
@@ -2620,7 +2621,7 @@ fn offscreen_war_conserves_physical_owner_total_without_actor_or_zone_shadows() 
     }
 
     let mut ledger = WorldQiAccount::default();
-    let before = physical_owner_total(&store, &zones, &ledger);
+    let before = physical_owner_snapshot(&store, &zones, &ledger);
     let initial_pop = store.len();
     let config = NpcVirtualizationConfig {
         max_combats_per_zone: 64,
@@ -2632,10 +2633,18 @@ fn offscreen_war_conserves_physical_owner_total_without_actor_or_zone_shadows() 
         let CombatTickEvents { deaths, .. } =
             run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, round + 1);
         total_deaths += deaths.len();
-        let mid = physical_owner_total(&store, &zones, &ledger);
+        let after = physical_owner_snapshot(&store, &zones, &ledger);
+        assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+            panic!(
+                "round {round} must preserve dormant actor, Zone, and stable-pool qi through terminal combat release; deaths={total_deaths}, before={before:?}, after={after:?}, error={error:?}"
+            )
+        });
         assert!(
-            (before - mid).abs() < 1e-9,
-            "round {round} changed dormant+zone+stable-owner qi: before={before}, after={mid}, deaths={total_deaths}"
+            ledger
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.reason == QiTransferReason::ReleaseToZone),
+            "off-screen combat may only move a defeated NPC's remaining qi through ReleaseToZone"
         );
         assert_no_dormant_or_zone_shadows(&store, &zones, &ledger);
     }
@@ -2649,7 +2658,12 @@ fn offscreen_war_conserves_physical_owner_total_without_actor_or_zone_shadows() 
         "removed dormant population cannot exceed declared combat deaths"
     );
     assert!(
-        (before - physical_owner_total(&store, &zones, &ledger)).abs() < 1e-9,
+        assert_conservation(
+            &before,
+            &physical_owner_snapshot(&store, &zones, &ledger),
+            0.0
+        )
+        .is_ok(),
         "final dormant+zone+stable-owner qi total drifted"
     );
 }
@@ -3108,11 +3122,11 @@ fn failed_pending_release_roundtrips_without_duplicate_events_then_finalizes_onc
     );
 }
 
-fn physical_owner_total(
+fn physical_owner_snapshot(
     store: &NpcDormantStore,
     zones: &ZoneRegistry,
     ledger: &WorldQiAccount,
-) -> f64 {
+) -> WorldQiSnapshot {
     let dormant_qi: f64 = store
         .snapshots
         .values()
@@ -3130,7 +3144,25 @@ fn physical_owner_total(
         .iter()
         .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
         .sum();
-    dormant_qi + zone_qi + ledger.total()
+    WorldQiSnapshot {
+        // `summarize_world_qi` includes all Cultivation components in this
+        // aggregate. Dormant snapshots are their persisted, off-screen form.
+        player_qi: dormant_qi,
+        zone_qi,
+        container_qi: 0.0,
+        ledger_qi: ledger.total(),
+        era_decay_accum: 0.0,
+        budget_initial_total: DEFAULT_SPIRIT_QI_TOTAL,
+        budget_current_total: DEFAULT_SPIRIT_QI_TOTAL,
+    }
+}
+
+fn physical_owner_total(
+    store: &NpcDormantStore,
+    zones: &ZoneRegistry,
+    ledger: &WorldQiAccount,
+) -> f64 {
+    physical_owner_snapshot(store, zones, ledger).total_observed()
 }
 
 fn assert_no_dormant_or_zone_shadows(
