@@ -230,10 +230,8 @@ fn tick_alchemy_sessions(
         };
         let heating = !session.finished && session.ready_to_heat(recipe);
         let incense_was_burning = session.incense_active().is_some();
-        if heating {
-            session.tick();
-        } else {
-            session.tick_incense();
+        if !session.tick_mode(heating) {
+            continue;
         }
         if registry.get(&session.recipe).is_some_and(|recipe| {
             session.elapsed_ticks >= recipe.fire_profile.target_duration_ticks
@@ -359,7 +357,7 @@ fn handle_start_alchemy_requests(
     mut requests: EventReader<StartAlchemyRequest>,
     recipes: Res<RecipeRegistry>,
     zones: Option<Res<ZoneRegistry>>,
-    mut furnaces: Query<&mut AlchemyFurnace>,
+    mut furnaces: Query<(Entity, &mut AlchemyFurnace)>,
 ) {
     for request in requests.read() {
         let Some(recipe) = recipes.get(&request.recipe_id) else {
@@ -389,7 +387,7 @@ fn handle_start_alchemy_requests(
             continue;
         }
 
-        let Ok(mut furnace) = furnaces.get_mut(request.furnace) else {
+        let Ok((furnace_entity, mut furnace)) = furnaces.get_mut(request.furnace) else {
             tracing::warn!(
                 "[bong][alchemy] start rejected: furnace {:?} missing",
                 request.furnace
@@ -405,7 +403,7 @@ fn handle_start_alchemy_requests(
             continue;
         }
         let session = AlchemySession::new(request.recipe_id.clone(), request.caster_id.clone());
-        if let Err(error) = furnace.start_session(session) {
+        if let Err(error) = furnace.start_session_at(furnace_entity, session) {
             tracing::warn!(
                 "[bong][alchemy] start rejected: furnace {:?} recipe `{}`: {error}",
                 request.furnace,

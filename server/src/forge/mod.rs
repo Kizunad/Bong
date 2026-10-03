@@ -68,7 +68,7 @@ use crate::network::{
     gameplay_vfx, inventory_snapshot_emit::send_inventory_snapshot_to_client,
     vfx_event_emit::VfxEventRequest,
 };
-use crate::player::state::PlayerState;
+use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
@@ -450,6 +450,26 @@ fn handle_start_forge_requests(
         session.billet_carrier_cap = billet_res.state.resolved_tier_cap;
         session.flawed_marker = billet_res.flawed;
         session.achieved_tier = 1;
+        let Some(placed_id) = station.pos.map(|(x, y, z)| {
+            format!(
+                "forge:station:{}:{x}:{y}:{z}",
+                station.dimension.ident_str()
+            )
+        }) else {
+            tracing::warn!("[bong][forge] start session rejected: station has no stable position");
+            continue;
+        };
+        let owner_key = contexts
+            .get(req.caster)
+            .ok()
+            .map(|(username, _, _)| canonical_player_id(username.0.as_str()))
+            .unwrap_or_else(|| format!("forge:session-owner:{}", id.0));
+        let adapter = ForgeSessionAdapter::from_station(
+            session,
+            format!("forge:session:{placed_id}"),
+            owner_key,
+            placed_id,
+        );
         station.session = Some(id);
 
         tracing::info!(
@@ -458,7 +478,7 @@ fn handle_start_forge_requests(
             bp.id,
             billet_res.state.resolved_tier_cap
         );
-        sessions.insert(session);
+        sessions.insert_adapter(adapter);
         accepted.send(ForgeStartAccepted {
             session: id,
             station: req.station,

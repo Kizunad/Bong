@@ -246,7 +246,14 @@ pub(crate) fn flush_furnace_qi_on_shutdown(
         if ledger.balance(&furnace_qi_account(furnace_entity)) <= 0.0 {
             continue;
         }
-        match release_furnace_qi_to_overflow(furnace_entity, furnace.session.as_mut(), ledger) {
+        match release_furnace_qi_to_overflow(
+            furnace_entity,
+            furnace
+                .session
+                .as_mut()
+                .map(|session| session.domain_session_mut()),
+            ledger,
+        ) {
             Ok(_) => {
                 if let Some(reservations) = reservations.as_deref_mut() {
                     reservations.forget(furnace_entity);
@@ -428,10 +435,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         let before = summarize_world_qi(app.world_mut());
         app.world_mut()
@@ -496,10 +505,12 @@ mod tests {
             })
             .id();
         let mut furnace = AlchemyFurnace::new(1);
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
             .resource_mut::<Events<InjectQiRequest>>()
@@ -569,7 +580,7 @@ mod tests {
             AlchemySession::new("hui_yuan_pill_v0".to_string(), "offline:Alice".to_string());
         session.record_paid_qi(20.0);
         session.finished = true;
-        furnace.session = Some(session);
+        furnace.start_session(session).unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
             .resource_mut::<WorldQiAccount>()
@@ -731,10 +742,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::new(1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(20.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
@@ -791,10 +804,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::new(1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(20.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
@@ -836,10 +851,12 @@ mod tests {
         app.add_systems(Last, flush_furnace_qi_on_shutdown);
 
         let mut furnace = AlchemyFurnace::new(1);
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(9.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()

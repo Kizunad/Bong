@@ -5,6 +5,7 @@
 //! `Cultivation.qi_current`，也不把运行期 Entity 写进 checkpoint。
 
 use serde::{Deserialize, Serialize};
+use std::ops::{Deref, DerefMut};
 use valence::prelude::Entity;
 
 use crate::persistence::{ReconnectGuard, SuspendedSessionCheckpoint};
@@ -28,8 +29,7 @@ pub struct AlchemySessionAdapter {
     /// 炼丹域自己的火候、投料和香座状态。
     pub session: AlchemySession,
     /// 炉的稳定放置身份；不随 ECS Entity 重建而改变。
-    #[serde(default)]
-    durable_placed_id: Option<String>,
+    durable_placed_id: String,
 }
 
 impl AlchemySessionAdapter {
@@ -37,19 +37,16 @@ impl AlchemySessionAdapter {
     pub fn new(
         record: SessionRecord,
         session: AlchemySession,
-        durable_placed_id: Option<String>,
-    ) -> Self {
-        let durable_placed_id = durable_placed_id.or_else(|| {
-            record
-                .runtime_binding
-                .as_ref()
-                .and_then(|binding| binding.placed_id.clone())
-        });
-        Self {
+        durable_placed_id: String,
+    ) -> Result<Self, String> {
+        if durable_placed_id.trim().is_empty() {
+            return Err("alchemy session requires a stable furnace placed_id".to_string());
+        }
+        Ok(Self {
             record,
             session,
             durable_placed_id,
-        }
+        })
     }
 
     /// 从一个当前挂在炉实体上的 session 建立标准 facility claim。
@@ -61,9 +58,12 @@ impl AlchemySessionAdapter {
         session_key: impl Into<SessionKey>,
         furnace_key: impl Into<String>,
         furnace_entity: Entity,
-        durable_placed_id: Option<String>,
+        durable_placed_id: String,
         dimension: DimensionKind,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        if durable_placed_id.trim().is_empty() {
+            return Err("alchemy session requires a stable furnace placed_id".to_string());
+        }
         let furnace_key = furnace_key.into();
         let mut record = SessionRecord::new(
             session_key,
@@ -73,7 +73,7 @@ impl AlchemySessionAdapter {
         );
         record.runtime_binding = Some(RuntimeBinding {
             entity_id: furnace_entity.to_bits(),
-            placed_id: durable_placed_id.clone(),
+            placed_id: Some(durable_placed_id.clone()),
             dimension: dimension.ident_str().to_string(),
         });
         Self::new(record, session, durable_placed_id)
@@ -102,10 +102,19 @@ impl AlchemySessionAdapter {
 
     /// 只有 Running 状态推进火候；Paused、Suspended 和终态都禁止后台 tick。
     pub fn tick(&mut self) -> bool {
-        if self.record.state != SessionState::Running {
+        self.tick_mode(true)
+    }
+
+    /// 按当前火候模式推进一次领域状态；生命周期和运行时绑定门禁仍由 adapter 统一执行。
+    pub fn tick_mode(&mut self, heating: bool) -> bool {
+        if self.record.state != SessionState::Running || self.record.runtime_binding.is_none() {
             return false;
         }
-        self.session.tick();
+        if heating {
+            self.session.tick();
+        } else {
+            self.session.tick_incense();
+        }
         true
     }
 
@@ -113,7 +122,7 @@ impl AlchemySessionAdapter {
     pub fn rebind_runtime(
         &mut self,
         furnace_entity: Entity,
-        durable_placed_id: Option<&str>,
+        durable_placed_id: &str,
         dimension: DimensionKind,
     ) -> Result<(), String> {
         if !matches!(
@@ -122,12 +131,12 @@ impl AlchemySessionAdapter {
         ) {
             return Err("alchemy session is not attachable in its current state".to_string());
         }
-        if self.durable_placed_id.as_deref() != durable_placed_id {
+        if self.durable_placed_id != durable_placed_id {
             return Err("alchemy placed_id does not match the suspended session".to_string());
         }
         self.record.runtime_binding = Some(RuntimeBinding {
             entity_id: furnace_entity.to_bits(),
-            placed_id: durable_placed_id.map(str::to_string),
+            placed_id: Some(durable_placed_id.to_string()),
             dimension: dimension.ident_str().to_string(),
         });
         Ok(())
@@ -138,9 +147,6 @@ impl AlchemySessionAdapter {
         if self.record.state != SessionState::Suspended {
             return Err("alchemy checkpoint requires a suspended session".to_string());
         }
-        if self.durable_placed_id.is_none() {
-            return Err("alchemy checkpoint requires a stable furnace placed_id".to_string());
-        }
         let checkpoint_json = serde_json::to_string(&self.session)
             .map_err(|error| format!("serialize alchemy checkpoint: {error}"))?;
         Ok(SuspendedSessionCheckpoint {
@@ -148,7 +154,7 @@ impl AlchemySessionAdapter {
             session_key: self.record.session_key.as_str().to_string(),
             generation: self.record.generation,
             phase_revision: self.record.phase_revision,
-            placed_id: self.durable_placed_id.clone(),
+            placed_id: Some(self.durable_placed_id.clone()),
             checkpoint_json,
         })
     }
@@ -168,8 +174,32 @@ impl AlchemySessionAdapter {
     }
 
     /// 稳定炉身份，供 restore/rebind 与 registry 对拍。
-    pub fn durable_placed_id(&self) -> Option<&str> {
-        self.durable_placed_id.as_deref()
+    pub fn durable_placed_id(&self) -> &str {
+        &self.durable_placed_id
+    }
+
+    /// 返回炼丹域状态的只读投影；所有生命周期权威字段仍由 `record` 管理。
+    pub fn domain_session(&self) -> &AlchemySession {
+        &self.session
+    }
+
+    /// 返回炼丹域状态的可变投影，供既有配方、注灵和结算算法复用。
+    pub fn domain_session_mut(&mut self) -> &mut AlchemySession {
+        &mut self.session
+    }
+}
+
+impl Deref for AlchemySessionAdapter {
+    type Target = AlchemySession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+
+impl DerefMut for AlchemySessionAdapter {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
     }
 }
 
@@ -212,9 +242,10 @@ mod tests {
             "alchemy-session-1",
             "placed-furnace-1",
             Entity::from_raw(7),
-            Some("placed-furnace-1".to_string()),
+            "placed-furnace-1".to_string(),
             DimensionKind::Overworld,
         )
+        .unwrap()
     }
 
     fn committed_guard(adapter: &AlchemySessionAdapter) -> ReconnectGuard {
@@ -276,7 +307,7 @@ mod tests {
         adapter
             .rebind_runtime(
                 Entity::from_raw(70),
-                Some("placed-furnace-1"),
+                "placed-furnace-1",
                 DimensionKind::Overworld,
             )
             .expect("restore should rebind a rebuilt furnace entity");
@@ -286,6 +317,27 @@ mod tests {
             !adapter.tick(),
             "restore remains paused until an explicit resume"
         );
+    }
+
+    #[test]
+    fn running_session_without_runtime_binding_cannot_tick() {
+        let mut adapter = adapter();
+        adapter.record.runtime_binding = None;
+        assert!(!adapter.tick());
+        assert_eq!(adapter.session.elapsed_ticks, 0);
+    }
+
+    #[test]
+    fn furnace_adapter_rejects_empty_stable_identity() {
+        let result = AlchemySessionAdapter::from_furnace(
+            AlchemySession::new("dan.tui".to_string(), "offline:alice".to_string()),
+            "alchemy-session-empty",
+            "",
+            Entity::from_raw(7),
+            String::new(),
+            DimensionKind::Overworld,
+        );
+        assert!(result.is_err(), "无稳定炉身份时必须拒绝创建会话");
     }
 
     #[test]

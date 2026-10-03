@@ -6,6 +6,7 @@
 //! 系统通过统一 ledger / delivery owner 处理。
 
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::Entity;
@@ -142,7 +143,9 @@ impl ForgeSessionAdapter {
 
     /// 锻造步骤是事件驱动的；只有 Running session 才能接受步骤输入。
     pub fn can_process_step(&self) -> bool {
-        self.record.state == SessionState::Running && !self.session.is_done()
+        self.record.state == SessionState::Running
+            && self.record.runtime_binding.is_some()
+            && !self.session.is_done()
     }
 
     /// 用新的 ECS 工位和施术者实体恢复 Suspended session。
@@ -206,6 +209,30 @@ impl ForgeSessionAdapter {
     /// 稳定工位身份，供 R3 checkpoint 与 runtime rebind 对拍。
     pub fn durable_placed_id(&self) -> &str {
         &self.durable_placed_id
+    }
+
+    /// 返回锻造域状态的只读投影；会话生命周期仍由 `record` 统一裁决。
+    pub fn domain_session(&self) -> &ForgeSession {
+        &self.session
+    }
+
+    /// 返回锻造域状态的可变投影，供步骤引擎和结算系统复用。
+    pub fn domain_session_mut(&mut self) -> &mut ForgeSession {
+        &mut self.session
+    }
+}
+
+impl Deref for ForgeSessionAdapter {
+    type Target = ForgeSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+
+impl DerefMut for ForgeSessionAdapter {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
     }
 }
 
@@ -346,6 +373,19 @@ mod tests {
         assert_eq!(adapter.record.state, SessionState::HandoffPreparing);
         assert!(!adapter.can_process_step());
         assert!(adapter.record.runtime_binding.is_none());
+    }
+
+    #[test]
+    fn running_session_without_runtime_binding_cannot_process_step() {
+        let mut adapter = adapter();
+        adapter.record.runtime_binding = None;
+        assert!(!adapter.can_process_step());
+        adapter.record.runtime_binding = Some(RuntimeBinding {
+            entity_id: 70,
+            placed_id: Some("forge-placed-9".to_string()),
+            dimension: DimensionKind::Overworld.ident_str().to_string(),
+        });
+        assert!(adapter.can_process_step());
     }
 
     #[test]

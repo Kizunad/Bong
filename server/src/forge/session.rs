@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{Entity, Resource};
 
+use super::adapter::ForgeSessionAdapter;
 use super::blueprint::{BlueprintId, StepKind};
 use super::steps::{ConsecrationResult, InscriptionResult, TemperingResult};
 use crate::cultivation::components::ColorKind;
@@ -165,7 +166,7 @@ pub const DONE_SESSION_RETENTION_TICKS: u32 = 3;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ForgeSessions {
     next_id: u64,
-    sessions: HashMap<ForgeSessionId, ForgeSession>,
+    sessions: HashMap<ForgeSessionId, ForgeSessionAdapter>,
 }
 
 impl Resource for ForgeSessions {}
@@ -185,18 +186,39 @@ impl ForgeSessions {
     }
 
     pub fn insert(&mut self, session: ForgeSession) {
-        self.sessions.insert(session.id, session);
+        let placed_id = session
+            .station_pos
+            .map(|(x, y, z)| {
+                format!(
+                    "forge:station:{}:{x}:{y}:{z}",
+                    session.station_dimension.ident_str()
+                )
+            })
+            .unwrap_or_else(|| format!("forge:session:{}", session.id.0));
+        let owner_key = format!("forge:session-owner:{}", session.id.0);
+        let adapter = ForgeSessionAdapter::from_station(
+            session,
+            format!("forge:session:{}", placed_id),
+            owner_key,
+            placed_id,
+        );
+        self.insert_adapter(adapter);
     }
 
-    pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSession> {
+    /// 插入已经带有稳定工位身份的生产 adapter；生产起锻路径必须使用此入口。
+    pub fn insert_adapter(&mut self, adapter: ForgeSessionAdapter) {
+        self.sessions.insert(adapter.session.id, adapter);
+    }
+
+    pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSessionAdapter> {
         self.sessions.get(&id)
     }
 
-    pub fn get_mut(&mut self, id: ForgeSessionId) -> Option<&mut ForgeSession> {
+    pub fn get_mut(&mut self, id: ForgeSessionId) -> Option<&mut ForgeSessionAdapter> {
         self.sessions.get_mut(&id)
     }
 
-    pub fn remove(&mut self, id: ForgeSessionId) -> Option<ForgeSession> {
+    pub fn remove(&mut self, id: ForgeSessionId) -> Option<ForgeSessionAdapter> {
         self.sessions.remove(&id)
     }
 

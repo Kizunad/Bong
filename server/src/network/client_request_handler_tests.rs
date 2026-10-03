@@ -3398,7 +3398,9 @@ mod external_ingress_tests {
                 1,
             );
             furnace.owner = Some(player_id.to_string());
-            furnace.session = session;
+            if let Some(session) = session {
+                furnace.start_session(session).unwrap();
+            }
             app.world_mut().spawn(furnace).id()
         }
 
@@ -3867,7 +3869,7 @@ mod external_ingress_tests {
                 1,
             );
             furnace.owner = Some("offline:Azure".into());
-            furnace.session = Some(session);
+            furnace.start_session(session).unwrap();
             app.world_mut().spawn(furnace);
 
             send_alchemy_snapshot_request(
@@ -6296,10 +6298,12 @@ mod external_ingress_tests {
             fund_alchemy_test_player(&mut app, entity, 5.0);
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
             furnace.owner = Some("offline:Azure".into());
-            furnace.session = Some(AlchemySession::new(
-                "kai_mai_pill_v0".into(),
-                "offline:Azure".into(),
-            ));
+            furnace
+                .start_session(AlchemySession::new(
+                    "kai_mai_pill_v0".into(),
+                    "offline:Azure".into(),
+                ))
+                .unwrap();
             let furnace_entity = app.world_mut().spawn(furnace).id();
             app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -6421,10 +6425,12 @@ mod external_ingress_tests {
             ));
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(6, 64, 7), 1);
             furnace.owner = Some("offline:Azure".into());
-            furnace.session = Some(AlchemySession::new(
-                "ling_xi_wan_v1".into(),
-                "offline:Azure".into(),
-            ));
+            furnace
+                .start_session(AlchemySession::new(
+                    "ling_xi_wan_v1".into(),
+                    "offline:Azure".into(),
+                ))
+                .unwrap();
             let furnace_entity = app.world_mut().spawn(furnace).id();
             for (count, consumed) in [(1, 1), (0, 1), (3, 1), (2, 3), (1, 3)] {
                 let request = serde_json::json!({
@@ -6492,10 +6498,12 @@ mod external_ingress_tests {
             let furnace_pos = valence::prelude::BlockPos::new(6, 64, 7);
             let mut furnace = AlchemyFurnace::placed(furnace_pos, 1);
             furnace.owner = Some("offline:Azure".into());
-            furnace.session = Some(AlchemySession::new(
-                "kai_mai_pill_v0".into(),
-                "offline:Azure".into(),
-            ));
+            furnace
+                .start_session(AlchemySession::new(
+                    "kai_mai_pill_v0".into(),
+                    "offline:Azure".into(),
+                ))
+                .unwrap();
             let furnace_entity = app.world_mut().spawn(furnace).id();
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -6744,7 +6752,9 @@ mod external_ingress_tests {
         ) -> valence::prelude::Entity {
             let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(8, 66, 8), 1);
             furnace.owner = Some(owner.into());
-            furnace.session = Some(AlchemySession::new("kai_mai_pill_v0".into(), owner.into()));
+            furnace
+                .start_session(AlchemySession::new("kai_mai_pill_v0".into(), owner.into()))
+                .unwrap();
             app.world_mut().spawn(furnace).id()
         }
 
