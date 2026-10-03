@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
-use crate::inventory::{DroppedLootEntry, PlayerInventory};
+use crate::inventory::{DroppedLootEntry, PlayerInventory, MAX_DURABLE_DROPPED_LOOT_ENTRIES};
 use crate::persistence::{ZoneRuntimeRecord, DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::player::spawn_selector::SpawnPurpose;
 use crate::qi_physics::ledger::WorldQiAccount;
@@ -531,7 +531,7 @@ fn load_player_slices_inner(
     load_known_techniques: bool,
 ) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
-    let connection = match open_player_connection(persistence) {
+    let mut connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(
@@ -578,7 +578,14 @@ fn load_player_slices_inner(
             )
         }
     };
-    let inventory = match load_player_inventory_from_sqlite(&connection, username) {
+    let inventory = match load_player_inventory_from_sqlite(
+        &mut connection,
+        username,
+        Some(LegacyInventorySpillContext {
+            world_pos: position,
+            dimension: last_dimension,
+        }),
+    ) {
         Ok(inventory) => inventory,
         Err(error) => {
             tracing::warn!(
@@ -1551,9 +1558,16 @@ fn backfill_owner_instance_ids(inventory: &mut PlayerInventory) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LegacyInventorySpillContext {
+    world_pos: [f64; 3],
+    dimension: DimensionKind,
+}
+
 fn load_player_inventory_from_sqlite(
-    connection: &Connection,
+    connection: &mut Connection,
     username: &str,
+    spill_context: Option<LegacyInventorySpillContext>,
 ) -> io::Result<Option<PlayerInventory>> {
     // plan-layered-equip-v1 P0.6（决议 #4）— 先读 schema_version 分流；旧版本走 v1→v2 迁移。
     let row: Option<(String, i32)> = connection
@@ -1606,13 +1620,115 @@ fn load_player_inventory_from_sqlite(
         return Ok(Some(inventory));
     }
 
-    // 旧版本（v1）：解析为 Value → 迁移 equipped 形态 → 反序列化。
-    let mut value: serde_json::Value = serde_json::from_str(&inventory_json)
+    // 旧版本（v1）：解析为 Value → 迁移完整 inventory layout → 反序列化。
+    let value: serde_json::Value = serde_json::from_str(&inventory_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    migrate_equipped_v1_to_v2(&mut value);
-    serde_json::from_value::<PlayerInventory>(value)
-        .map(Some)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let outcome = crate::inventory::migrate_legacy_inventory_layout(value, schema_version);
+    if let Some(error) = outcome.error {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("legacy inventory layout migration failed: {error:?}"),
+        ));
+    }
+    let mut inventory = serde_json::from_value::<PlayerInventory>(outcome.migrated_value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    backfill_owner_instance_ids(&mut inventory);
+
+    if !outcome.overflow.is_empty() {
+        let Some(spill_context) = spill_context else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legacy inventory overflow requires a position and dimension spill context",
+            ));
+        };
+        persist_legacy_inventory_migration(
+            connection,
+            username,
+            &inventory,
+            &outcome.overflow,
+            spill_context,
+        )?;
+    }
+
+    Ok(Some(inventory))
+}
+
+/// Commit a legacy layout migration and its overflow handoff together.
+///
+/// 旧库存行保持不变，直到所有 overflow 实例都写入 durable dropped-loot 表；写入失败时
+/// 原始 JSON 仍可重试，hydration 不会静默删除物品。
+fn persist_legacy_inventory_migration(
+    connection: &mut Connection,
+    username: &str,
+    inventory: &PlayerInventory,
+    overflow: &[crate::inventory::ItemInstance],
+    spill_context: LegacyInventorySpillContext,
+) -> io::Result<()> {
+    let entries = overflow
+        .iter()
+        .map(|item| crate::inventory::DroppedLootEntry {
+            instance_id: item.instance_id,
+            source_container_id: format!("legacy_inventory_overflow:{username}"),
+            source_row: 0,
+            source_col: 0,
+            world_pos: spill_context.world_pos,
+            dimension: spill_context.dimension,
+            item: item.clone(),
+        })
+        .collect::<Vec<_>>();
+    let inventory_json = serialize_inventory_json(Some(inventory))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    let current_count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM dropped_loot", [], |row| row.get(0))
+        .map_err(io::Error::other)?;
+    let current_count = usize::try_from(current_count).map_err(io::Error::other)?;
+    if entries.len() > MAX_DURABLE_DROPPED_LOOT_ENTRIES.saturating_sub(current_count) {
+        return Err(io::Error::other(format!(
+            "legacy inventory overflow exceeds dropped-loot capacity: current={current_count}, required={}, limit={MAX_DURABLE_DROPPED_LOOT_ENTRIES}",
+            entries.len()
+        )));
+    }
+
+    let mut instance_ids = HashSet::with_capacity(entries.len());
+    for entry in &entries {
+        if !instance_ids.insert(entry.instance_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "legacy inventory overflow contains duplicate instance {}",
+                    entry.instance_id
+                ),
+            ));
+        }
+        let existing: Option<i64> = transaction
+            .query_row(
+                "SELECT instance_id FROM dropped_loot WHERE instance_id = ?1",
+                params![i64::try_from(entry.instance_id).map_err(io::Error::other)?],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(io::Error::other)?;
+        if existing.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "legacy inventory overflow instance {} already exists in dropped_loot",
+                    entry.instance_id
+                ),
+            ));
+        }
+    }
+
+    crate::persistence::upsert_dropped_loot_entries(&transaction, &entries, last_updated_wall)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    transaction.commit().map_err(io::Error::other)
 }
 
 fn load_player_craft_session_from_sqlite(
@@ -1653,6 +1769,7 @@ fn load_player_craft_session_from_sqlite(
 /// - `extra_hand_0/1` → `<slot>.held`（武器落 held，不误塞多件）。
 /// - `head/chest/legs/feet` → `<slot>.worn`（盔甲穿戴层）。
 /// - `main_hand/off_hand` → `<slot>.held`（手持武器/工具）。
+#[cfg(test)]
 fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
     crate::inventory::layout::migrate_equipped_v1_to_v2(value);
 }

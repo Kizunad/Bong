@@ -344,7 +344,7 @@ fn load_inventory_row(
     inventory_json: &str,
 ) -> (Option<PlayerInventory>, PathBuf) {
     let (persistence, data_dir) = sqlite_persistence("load-inventory-row");
-    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let mut connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
     connection
         .execute(
             "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
@@ -352,7 +352,7 @@ fn load_inventory_row(
             params!["LoadProbe", inventory_json, schema_version],
         )
         .expect("insert inventory row");
-    let loaded = load_player_inventory_from_sqlite(&connection, "LoadProbe")
+    let loaded = load_player_inventory_from_sqlite(&mut connection, "LoadProbe", None)
         .expect("load_player_inventory_from_sqlite should not error");
     (loaded, data_dir)
 }
@@ -823,6 +823,72 @@ fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
         !inventory_has_orphan_pack_container(&inventory),
         "v1 迁移产物必须自洽：pack_<id> 容器与 chest.worn 背包件 instance_id 对齐，不得被误判孤儿"
     );
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn legacy_inventory_overflow_is_spilled_atomically_before_migration_is_persisted() {
+    let (persistence, data_dir) = sqlite_persistence("legacy-inventory-overflow-spill");
+    let v1_row = serde_json::json!({
+        "revision": 3,
+        "containers": [],
+        "equipped": {},
+        "overflow": [v1_equip_item(77, "spirit_grass")],
+        "hotbar": [null, null],
+        "bone_coins": 0,
+        "max_weight": 15.0
+    });
+    let mut connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute(
+            "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
+             VALUES (?1, ?2, ?3, 0)",
+            params!["LoadProbe", v1_row.to_string(), 1],
+        )
+        .expect("insert legacy inventory row");
+
+    let loaded = load_player_inventory_from_sqlite(
+        &mut connection,
+        "LoadProbe",
+        Some(LegacyInventorySpillContext {
+            world_pos: [12.0, 65.0, -4.0],
+            dimension: DimensionKind::Overworld,
+        }),
+    )
+    .expect("legacy inventory migration should spill overflow");
+    assert!(loaded.is_some(), "migrated inventory must remain loadable");
+
+    let (schema_version, inventory_json): (i32, String) = connection
+        .query_row(
+            "SELECT schema_version, inventory_json FROM inventories WHERE username = ?1",
+            params!["LoadProbe"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("migrated inventory row should be persisted");
+    assert_eq!(schema_version, INVENTORY_SCHEMA_VERSION);
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&inventory_json)
+            .expect("persisted inventory JSON")
+            .get("overflow")
+            .is_none(),
+        "overflow must have a durable dropped-loot destination before it is removed from inventory JSON"
+    );
+
+    let dropped: (i64, String) = connection
+        .query_row(
+            "SELECT instance_id, entry_json FROM dropped_loot WHERE instance_id = ?1",
+            params![77_i64],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("overflow item should be durable dropped loot");
+    let entry: DroppedLootEntry =
+        serde_json::from_str(&dropped.1).expect("dropped-loot entry should decode");
+    assert_eq!(dropped.0, 77);
+    assert_eq!(entry.instance_id, 77);
+    assert_eq!(entry.item.instance_id, 77);
+    assert_eq!(entry.world_pos, [12.0, 65.0, -4.0]);
+    assert_eq!(entry.dimension, DimensionKind::Overworld);
+
     let _ = fs::remove_dir_all(&data_dir);
 }
 

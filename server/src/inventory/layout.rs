@@ -103,7 +103,20 @@ pub fn migrate_legacy_inventory_layout(value: Value, schema_version: i32) -> Mig
 pub fn migrate_equipped_v1_to_v2(value: &mut Value) {
     let input = std::mem::replace(value, Value::Null);
     let outcome = migrate_legacy_inventory_layout(input, 1);
-    *value = outcome.migrated_value;
+    let mut migrated_value = outcome.migrated_value;
+    // 此兼容包装不能返回 `MigrationOutcome`，因此保留明确的 overflow 字段供调用方处理，
+    // 不再静默吞掉实例。player-state loader 使用完整 outcome，在从持久化 JSON 移除该字段
+    // 前先完成 durable spill。
+    if !outcome.overflow.is_empty() {
+        if let Some(root) = migrated_value.as_object_mut() {
+            root.insert(
+                "overflow".to_string(),
+                serde_json::to_value(outcome.overflow)
+                    .expect("ItemInstance overflow should always serialize"),
+            );
+        }
+    }
+    *value = migrated_value;
 }
 
 fn failed(value: Value, error: InventoryLayoutMigrationError) -> MigrationOutcome {
