@@ -65,6 +65,13 @@ pub struct PlayerIdentities {
     pub last_switch_tick: u64,
 }
 
+/// identity 切片无法读取或解码时保留的 marker。
+///
+/// 运行时 identity 仍可供只读展示，但 command、revealed、social writer 必须跳过 durable
+/// row，直到后续载入成功。
+#[derive(Debug, Clone, Copy, Component, Default)]
+pub struct IdentityPersistenceLoadFailed;
+
 impl Default for PlayerIdentities {
     fn default() -> Self {
         Self {
@@ -313,10 +320,16 @@ fn attach_identity_bundle_to_joined_clients(
         let username_str = username.as_str();
         let char_id = canonical_player_id(username_str);
 
-        let loaded = persistence.as_deref().and_then(|settings| {
-            identity_db::load_player_identities(settings, &char_id)
-                .ok()
-                .flatten()
+        let (loaded, load_failed) = persistence.as_deref().map_or((None, false), |settings| {
+            match identity_db::load_player_identities_for_username(settings, username_str) {
+                Ok(loaded) => (loaded, false),
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][identity] failed to load identities for `{username_str}` using `{char_id}`; using runtime default without write permission: {error}"
+                    );
+                    (None, true)
+                }
+            }
         });
 
         let identities = loaded.unwrap_or_else(|| {
@@ -336,7 +349,11 @@ fn attach_identity_bundle_to_joined_clients(
             );
         }
 
-        commands.entity(entity).insert(identities);
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert(identities);
+        if load_failed {
+            entity_commands.insert(IdentityPersistenceLoadFailed);
+        }
     }
 }
 

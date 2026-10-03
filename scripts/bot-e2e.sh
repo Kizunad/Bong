@@ -86,7 +86,7 @@ BOT_E2E_OPERATOR_TAGS=(
   Abrupt Stale Dup Idle
   QiH QiV FpH DhH MPH WbH
   Zlb Zre Alc Bob Ascend HdJue HdKeep HdSkip
-  Rein Term NewCh
+  Rein Term NewCh Slice Guard
   NpcIn NpcCh NpcTr
   FalseSkin InvGroup Quickslot Scrolls SkillCfg
   Zlb Zre Alc Bob CoPl Coffin FoRq

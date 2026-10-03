@@ -87,8 +87,8 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据；
 /// v45 持久化跨重启的共享运行时 tick，供保质期绝对 tick 继续单调推进；
 /// v46 将 R1 的 Suspended checkpoint、ReconnectGuard 与 R6/R2 的 CraftRestoreGuard
-/// control frame 纳入同一持久化 seam。
-const CURRENT_USER_VERSION: i32 = 46;
+/// control frame 纳入同一持久化 seam；v47 持久化玩家长期状态效果切片。
+const CURRENT_USER_VERSION: i32 = 47;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
