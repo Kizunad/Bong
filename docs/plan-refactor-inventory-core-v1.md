@@ -2,6 +2,10 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。P0 只冻结事实、失败边界、跨轨 owner 与审核要求的 pins；不把设计当实现。
 
+## Status Overview
+
+当前状态：P1 已于 2026-10-02 完成，P0、P2、P3、P4 尚未完成。
+
 ## 阶段
 
 - ⏳ P0 完整契约面重写 + absorption audit
