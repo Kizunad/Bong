@@ -82,6 +82,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
+from bot.scenarios import reconnect_state_freshness as reconnect_state_scenario  # noqa: E402
 from bot.scenarios import fauna_give_dan_to_elder_reject as fauna_reject_scenario  # noqa: E402
 from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
 from bot.scenarios import fauna_give_dan_to_elder_reject as elder_reject_scenario  # noqa: E402
@@ -4701,6 +4702,77 @@ class _FakeBot:
             if predicate(event):
                 return event
         raise AssertionError(f"未找到 {description}; events={self.events}")
+
+
+class ReconnectStateFreshnessContractTest(unittest.TestCase):
+    def test_join_collection_excludes_periodic_payloads_from_reconnect_set(self):
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot"},
+                ),
+                _FakeEvent(
+                    1.1,
+                    "server_data",
+                    {"payload_type": "techniques_snapshot"},
+                ),
+                _FakeEvent(
+                    1.2,
+                    "server_data",
+                    {"payload_type": "heartbeat"},
+                ),
+                _FakeEvent(
+                    1.3,
+                    "server_data",
+                    {"payload_type": "vortex_state"},
+                ),
+                _FakeEvent(
+                    1.4,
+                    "server_data",
+                    {"payload_type": "narration"},
+                ),
+                _FakeEvent(
+                    1.5,
+                    "server_data",
+                    {"payload_type": "derived_attrs_sync"},
+                ),
+                _FakeEvent(
+                    1.6,
+                    "server_data",
+                    {"payload_type": "morph_state"},
+                ),
+                _FakeEvent(
+                    1.7,
+                    "server_data",
+                    {"payload_type": "remains_sync"},
+                ),
+                _FakeEvent(
+                    1.8,
+                    "server_data",
+                    {"payload_type": "spiritual_sense_targets"},
+                ),
+            ]
+        )
+        with (
+            mock.patch.object(reconnect_state_scenario, "wait_join_and_inventory"),
+            mock.patch.object(reconnect_state_scenario, "drain_event_stream"),
+        ):
+            payload_types = reconnect_state_scenario._join_payload_types(bot, "测试")
+
+        self.assertEqual(
+            payload_types,
+            {
+                "inventory_snapshot",
+                "techniques_snapshot",
+                "derived_attrs_sync",
+                "morph_state",
+                "remains_sync",
+                "spiritual_sense_targets",
+            },
+            "重连集合保留 join 快照，周期心跳、涡流 HUD 和动态欢迎文案不得制造抖动",
+        )
 
 
 class NetworkScenarioHelperTest(unittest.TestCase):
