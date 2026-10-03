@@ -1447,9 +1447,7 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         let transaction = connection.transaction()?;
         let columns = table_columns(&transaction, "player_identities")?;
         if !columns.iter().any(|column| column == "username") {
-            transaction.execute_batch(
-                "ALTER TABLE player_identities ADD COLUMN username TEXT;",
-            )?;
+            transaction.execute_batch("ALTER TABLE player_identities ADD COLUMN username TEXT;")?;
         }
         transaction.execute_batch(
             "
