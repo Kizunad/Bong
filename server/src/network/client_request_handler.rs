@@ -32,7 +32,6 @@ use crate::alchemy::{
 };
 use crate::botany::components::HarvestSessionStore;
 use crate::botany::harvest::request_harvest_mode;
-use crate::coffin::{CoffinEnterRequest, CoffinLeaveRequest, CoffinPlaceRequest};
 use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
 use crate::combat::components::{
@@ -142,7 +141,6 @@ use crate::schema::inventory::{
     ContainerIdV1, EquipSlotV1, EquipStateV1, InventoryEventV1, InventoryLocationV1,
 };
 use crate::schema::server_data::{PillBuffStatusV1, ServerDataPayloadV1, ServerDataV1};
-use crate::schema::social::GuardianKindV1;
 use crate::shelflife::{
     age_peak_check_with_season, container_storage_multiplier, spoil_check_with_season,
     AgeBonusRoll, AgePeakCheck, ContainerFreshnessBehavior, DecayProfileRegistry,
@@ -156,10 +154,11 @@ use crate::skill::config::{
 use crate::skill::events::{SkillScrollUsed, SkillXpGain};
 #[cfg(test)]
 use crate::social::components::{FactionReputation, FactionReputationTier};
+#[cfg(test)]
 use crate::social::events::{
-    SpiritNicheActivateGuardianRequest, SpiritNicheCoordinateRevealRequest,
-    SpiritNichePlaceRequest, SpiritNicheRepairRequest, SpiritNicheRevealSource,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
 };
+#[cfg(test)]
 use crate::world::block_place::BlockPlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -169,6 +168,7 @@ use crate::world::extract_system::{
 };
 use crate::world::karma::KarmaWeightStore;
 use crate::world::season::{query_season, WorldSeasonState};
+#[cfg(test)]
 use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
@@ -348,7 +348,7 @@ pub fn flush_quick_slot_prefs_writes(
     }
 }
 
-type DyingElderTargetQuery<'w, 's> = Query<
+pub(crate) type DyingElderTargetQuery<'w, 's> = Query<
     'w,
     's,
     (
@@ -587,22 +587,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
-    pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
-    pub spirit_niche_repair_tx: Option<ResMut<'w, Events<SpiritNicheRepairRequest>>>,
-    pub spirit_niche_coordinate_reveal_tx:
-        Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
-    pub spirit_niche_activate_guardian_tx:
-        Option<ResMut<'w, Events<SpiritNicheActivateGuardianRequest>>>,
-    pub coffin_open_tx: Option<ResMut<'w, Events<CoffinOpenRequest>>>,
-    pub coffin_place_tx: Option<ResMut<'w, Events<CoffinPlaceRequest>>>,
-    pub coffin_enter_tx: Option<ResMut<'w, Events<CoffinEnterRequest>>>,
-    pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
-    pub coffin_break_tx: Option<ResMut<'w, Events<crate::coffin::CoffinBreakRequest>>>,
-    pub coffin_menu_reclaim_tx: Option<ResMut<'w, Events<crate::coffin::CoffinMenuReclaimRequest>>>,
-    pub block_place_tx: Option<ResMut<'w, Events<BlockPlaceRequest>>>,
     /// plan-worldgen-v4 P5 §8.1#5 — 画廊 dev-only give-block intent。
-    pub block_picker_give_tx:
-        Option<ResMut<'w, Events<crate::cmd::dev::block_picker::BlockPickerGiveIntent>>>,
     pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
     pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
@@ -1414,28 +1399,27 @@ pub fn handle_client_request_payloads(
             }
         }
 
-        if matches!(
-            &request,
-            ClientRequestV1::NpcInspectRequest { .. }
-                | ClientRequestV1::NpcDialogueChoice { .. }
-                | ClientRequestV1::NpcTradeRequest { .. }
-        ) {
-            npc::dispatch(
-                &request,
-                ev.client,
-                combat_clock.tick,
-                &combat_params,
-                &mut npc_engagement_params,
-                alchemy_params.zones.as_deref(),
-                &mut clients,
-                &mut inventories,
-                &player_states,
-                &skill_scroll_params.cultivations,
-                &alchemy_params.item_registry,
-                &mut alchemy_params.instance_allocator,
-            );
-            continue;
-        }
+        let request = match npc::try_into_npc_request(request) {
+            Ok(npc_request) => {
+                npc::dispatch(
+                    npc_request,
+                    ev.client,
+                    combat_clock.tick,
+                    &combat_params,
+                    &mut npc_engagement_params,
+                    alchemy_params.zones.as_deref(),
+                    &mut clients,
+                    &mut inventories,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    &alchemy_params.item_registry,
+                    &mut alchemy_params.instance_allocator,
+                    dispatch.give_dan_to_elder_tx.as_deref_mut(),
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
         let request = match combat::try_into_combat_request(request) {
             Ok(combat_request) => {
                 combat::dispatch_combat_request(
@@ -1464,6 +1448,19 @@ pub fn handle_client_request_payloads(
         let request = match world::try_into_world_formation_request(request) {
             Ok(world_request) => {
                 world::dispatch_world_formation_request(
+                    world_request,
+                    ev.client,
+                    combat_clock.tick,
+                    &mut dispatch.world,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
+
+        let request = match world::try_into_world_interaction_request(request) {
+            Ok(world_request) => {
+                world::dispatch_world_interaction_request(
                     world_request,
                     ev.client,
                     combat_clock.tick,
@@ -1575,7 +1572,12 @@ pub fn handle_client_request_payloads(
             }
             ClientRequestV1::SparringInviteResponse { .. }
             | ClientRequestV1::TradeOfferRequest { .. }
-            | ClientRequestV1::TradeOfferResponse { .. } => {
+            | ClientRequestV1::TradeOfferResponse { .. }
+            | ClientRequestV1::SpiritNichePlace { .. }
+            | ClientRequestV1::SpiritNicheRepair { .. }
+            | ClientRequestV1::SpiritNicheGaze { .. }
+            | ClientRequestV1::SpiritNicheMarkCoordinate { .. }
+            | ClientRequestV1::SpiritNicheActivateGuardian { .. } => {
                 unreachable!("Social requests are dispatched by the typed Social dispatcher")
             }
             ClientRequestV1::AlchemyOpenFurnace { .. }
@@ -1591,6 +1593,23 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyPlaceIncense { .. } => {
                 unreachable!(
                     "Production requests are dispatched by the typed Production dispatcher"
+                )
+            }
+            ClientRequestV1::CraftStart { .. }
+            | ClientRequestV1::MaterialMove { .. }
+            | ClientRequestV1::CraftCancel { .. } => {
+                unreachable!("Craft requests are dispatched by the typed Production dispatcher")
+            }
+            ClientRequestV1::CoffinOpen { .. }
+            | ClientRequestV1::CoffinPlace { .. }
+            | ClientRequestV1::BlockPlace { .. }
+            | ClientRequestV1::BlockPickerGive { .. }
+            | ClientRequestV1::CoffinEnter { .. }
+            | ClientRequestV1::CoffinLeave { .. }
+            | ClientRequestV1::CoffinBreak { .. }
+            | ClientRequestV1::CoffinMenuReclaim { .. } => {
+                unreachable!(
+                    "World interaction requests are dispatched by the typed world dispatcher"
                 )
             }
             ClientRequestV1::ForgeStartSession { .. }
@@ -1778,276 +1797,12 @@ pub fn handle_client_request_payloads(
                     );
                 }
             }
-            ClientRequestV1::CoffinOpen { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][spawn-tutorial] coffin_open entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(coffin_open_tx) = dispatch.coffin_open_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_open because CoffinOpenRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_open_tx.send(CoffinOpenRequest {
-                    player: ev.client,
-                    pos: [x, y, z],
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::CoffinPlace {
-                x,
-                y,
-                z,
-                item_instance_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][coffin] place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
-                    ev.client
-                );
-                let Some(coffin_place_tx) = dispatch.coffin_place_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_place because CoffinPlaceRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_place_tx.send(CoffinPlaceRequest {
-                    player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    item_instance_id,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::BlockPlace {
-                x,
-                y,
-                z,
-                item_instance_id,
-                target_face,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][block] dispatch block_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} target_face={target_face:?}",
-                    ev.client
-                );
-                let Some(block_place_tx) = dispatch.block_place_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped block_place because BlockPlaceRequest event resource is missing"
-                    );
-                    continue;
-                };
-                block_place_tx.send(BlockPlaceRequest {
-                    client: ev.client,
-                    x,
-                    y,
-                    z,
-                    item_instance_id,
-                    target_face,
-                });
-            }
-            ClientRequestV1::BlockPickerGive {
-                block_id, count, ..
-            } => {
-                tracing::info!(
-                    "[bong][network][dev] block_picker_give entity={:?} block_id={block_id} count={count}",
-                    ev.client
-                );
-                let Some(block_picker_give_tx) = dispatch.block_picker_give_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped block_picker_give because BlockPickerGiveIntent event resource is missing"
-                    );
-                    continue;
-                };
-                block_picker_give_tx.send(crate::cmd::dev::block_picker::BlockPickerGiveIntent {
-                    player: ev.client,
-                    block_id,
-                    count,
-                });
-            }
-            ClientRequestV1::CoffinEnter { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][coffin] enter entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(coffin_enter_tx) = dispatch.coffin_enter_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_enter because CoffinEnterRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_enter_tx.send(CoffinEnterRequest {
-                    player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::CoffinLeave { .. } => {
-                tracing::info!("[bong][network][coffin] leave entity={:?}", ev.client);
-                let Some(coffin_leave_tx) = dispatch.coffin_leave_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_leave because CoffinLeaveRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_leave_tx.send(CoffinLeaveRequest { player: ev.client });
-            }
-            ClientRequestV1::CoffinBreak { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][coffin] break entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(coffin_break_tx) = dispatch.coffin_break_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_break because CoffinBreakRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_break_tx.send(crate::coffin::CoffinBreakRequest {
-                    player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][coffin] menu_reclaim entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(coffin_menu_reclaim_tx) = dispatch.coffin_menu_reclaim_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped coffin_menu_reclaim because CoffinMenuReclaimRequest event resource is missing"
-                    );
-                    continue;
-                };
-                coffin_menu_reclaim_tx.send(crate::coffin::CoffinMenuReclaimRequest {
-                    player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SpiritNichePlace {
-                x,
-                y,
-                z,
-                item_instance_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][social] spirit_niche_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
-                    ev.client
-                );
-                let Some(spirit_niche_place_tx) = dispatch.spirit_niche_place_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped spirit_niche_place because SpiritNichePlaceRequest event resource is missing"
-                    );
-                    continue;
-                };
-                spirit_niche_place_tx.send(SpiritNichePlaceRequest {
-                    player: ev.client,
-                    pos: [x, y, z],
-                    item_instance_id: Some(item_instance_id),
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SpiritNicheRepair {
-                x,
-                y,
-                z,
-                item_instance_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][social] spirit_niche_repair entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
-                    ev.client
-                );
-                let Some(spirit_niche_repair_tx) = dispatch.spirit_niche_repair_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped spirit_niche_repair because SpiritNicheRepairRequest event resource is missing"
-                    );
-                    continue;
-                };
-                spirit_niche_repair_tx.send(SpiritNicheRepairRequest {
-                    player: ev.client,
-                    pos: [x, y, z],
-                    item_instance_id: Some(item_instance_id),
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SpiritNicheGaze { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][social] spirit_niche_gaze entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped spirit_niche_gaze because SpiritNicheCoordinateRevealRequest event resource is missing"
-                    );
-                    continue;
-                };
-                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
-                    observer: ev.client,
-                    pos: [x, y, z],
-                    source: SpiritNicheRevealSource::Gaze,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SpiritNicheMarkCoordinate { x, y, z, .. } => {
-                tracing::info!(
-                    "[bong][network][social] spirit_niche_mark_coordinate entity={:?} pos=[{x},{y},{z}]",
-                    ev.client
-                );
-                let Some(reveal_tx) = dispatch.spirit_niche_coordinate_reveal_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped spirit_niche_mark_coordinate because SpiritNicheCoordinateRevealRequest event resource is missing"
-                    );
-                    continue;
-                };
-                reveal_tx.send(SpiritNicheCoordinateRevealRequest {
-                    observer: ev.client,
-                    pos: [x, y, z],
-                    source: SpiritNicheRevealSource::MarkCoordinate,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SpiritNicheActivateGuardian {
-                niche_pos,
-                guardian_kind,
-                materials,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][social] spirit_niche_activate_guardian entity={:?} pos={:?} kind={:?}",
-                    ev.client,
-                    niche_pos,
-                    guardian_kind
-                );
-                let Some(activate_tx) = dispatch.spirit_niche_activate_guardian_tx.as_deref_mut()
-                else {
-                    tracing::warn!(
-                        "[bong][network] dropped spirit_niche_activate_guardian because SpiritNicheActivateGuardianRequest event resource is missing"
-                    );
-                    continue;
-                };
-                activate_tx.send(SpiritNicheActivateGuardianRequest {
-                    player: ev.client,
-                    niche_pos,
-                    guardian_kind: guardian_kind_from_schema(guardian_kind),
-                    materials,
-                    tick: combat_clock.tick,
-                });
-            }
             // NPC requests are consumed by the typed route above. This arm exists only to keep
             // the exhaustive match explicit if the route is ever rearranged.
             ClientRequestV1::NpcInspectRequest { .. }
             | ClientRequestV1::NpcDialogueChoice { .. }
-            | ClientRequestV1::NpcTradeRequest { .. } => {
+            | ClientRequestV1::NpcTradeRequest { .. }
+            | ClientRequestV1::GiveDanToElder { .. } => {
                 unreachable!("NPC request bypassed its typed route")
             }
             ClientRequestV1::ZhenfaPlace { .. }
@@ -2526,72 +2281,6 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     persistence.as_deref(),
                     &mut combat_params,
-                );
-            }
-            // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
-            ClientRequestV1::CraftStart {
-                recipe_id,
-                quantity,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][craft] start entity={:?} recipe={recipe_id} quantity={quantity}",
-                    ev.client,
-                );
-                if let Some(craft_start_tx) = dispatch.craft_start_tx.as_deref_mut() {
-                    craft_start_tx.send(crate::craft::CraftStartIntent {
-                        caster: ev.client,
-                        recipe_id: crate::craft::RecipeId::new(recipe_id),
-                        quantity,
-                    });
-                }
-            }
-            ClientRequestV1::MaterialMove {
-                recipe_id,
-                instance_id,
-                station_pos,
-                returning,
-                expected_revision,
-                ..
-            } => {
-                if let Some(tx) = dispatch.material_move_tx.as_deref_mut() {
-                    tx.send(crate::craft::events::MaterialMoveIntent {
-                        caster: ev.client,
-                        recipe_id: crate::craft::RecipeId::new(recipe_id),
-                        instance_id,
-                        station_pos,
-                        returning,
-                        expected_revision,
-                    });
-                }
-            }
-            ClientRequestV1::CraftCancel { .. } => {
-                tracing::info!("[bong][network][craft] cancel entity={:?}", ev.client);
-                if let Some(craft_cancel_tx) = dispatch.craft_cancel_tx.as_deref_mut() {
-                    craft_cancel_tx.send(crate::craft::CraftCancelIntent { caster: ev.client });
-                }
-            }
-            // ── 垂死大能给丹（plan-dying-elder-v1 P1）─────────────────────────
-            ClientRequestV1::GiveDanToElder {
-                pill_instance_id,
-                elder_entity_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][dying_elder] give_dan entity={:?} pill_instance_id={pill_instance_id} elder_entity_id={elder_entity_id}",
-                    ev.client,
-                );
-                handle_give_dan_to_elder(
-                    ev.client,
-                    pill_instance_id,
-                    elder_entity_id,
-                    &mut inventories,
-                    combat_params.entity_manager.as_deref(),
-                    &mut clients,
-                    dispatch.give_dan_to_elder_tx.as_deref_mut(),
-                    &combat_params.positions,
-                    &combat_params.dimensions,
-                    &combat_params.dying_elder_targets,
                 );
             }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
@@ -3417,14 +3106,6 @@ fn resolve_skill_cast_target(
     id.parse::<u64>()
         .ok()
         .and_then(|bits| Entity::try_from_bits(bits).ok())
-}
-
-fn guardian_kind_from_schema(kind: GuardianKindV1) -> crate::social::components::GuardianKind {
-    match kind {
-        GuardianKindV1::Puppet => crate::social::components::GuardianKind::Puppet,
-        GuardianKindV1::ZhenfaTrap => crate::social::components::GuardianKind::ZhenfaTrap,
-        GuardianKindV1::BondedDaoxiang => crate::social::components::GuardianKind::BondedDaoxiang,
-    }
 }
 
 fn map_anqi_carrier_slot(slot: crate::schema::client_request::AnqiCarrierSlotV1) -> CarrierSlot {
@@ -8509,7 +8190,7 @@ fn resync_inventory_only(
 /// - elder_entity_id 找不到 entity → warn + reject
 /// - give_dan_to_elder_tx 缺失 → warn + reject（事件注册未完成）
 #[allow(clippy::too_many_arguments)]
-fn handle_give_dan_to_elder(
+pub(crate) fn handle_give_dan_to_elder(
     player_entity: Entity,
     pill_instance_id: u64,
     elder_entity_id: i32,
