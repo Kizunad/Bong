@@ -435,30 +435,9 @@ fn handle_start_forge_requests(
                 continue;
             }
         }
-        if let Some(persistence) = persistence.as_deref() {
-            let Ok((username, _, _)) = contexts.get(req.caster) else {
-                continue;
-            };
-            if let Err(error) = crate::player::state::save_player_craft_checkpoint(
-                persistence,
-                &username.0,
-                Some(&staged),
-                None,
-                None,
-                None,
-                &refunds,
-            ) {
-                tracing::warn!("[bong][forge] 起炉材料保存失败：{error}");
-                continue;
-            }
-        }
-        *inventory = staged;
-        if let Some(dropped) = dropped.as_deref_mut() {
-            dropped
-                .entries
-                .extend(refunds.into_iter().map(|entry| (entry.instance_id, entry)));
-        }
-
+        // 先发布不可覆盖的会话所有权，再提交库存和掉落持久化。这样 session ID
+        // 冲突会在任何物料副作用之前 fail-closed；持久化失败时也能撤销刚发布的
+        // adapter，调用方不会留下“材料已扣但会话未建立”的半状态。
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
         session.station_pos = station.pos;
         session.station_dimension = station.dimension;
@@ -487,10 +466,36 @@ fn handle_start_forge_requests(
         );
         if !sessions.insert_adapter(adapter) {
             tracing::error!(
-                "[bong][forge] session id collision after material commit: {:?}",
+                "[bong][forge] session id collision before material commit: {:?}",
                 id
             );
             continue;
+        }
+
+        if let Some(persistence) = persistence.as_deref() {
+            let Ok((username, _, _)) = contexts.get(req.caster) else {
+                sessions.remove(id);
+                continue;
+            };
+            if let Err(error) = crate::player::state::save_player_craft_checkpoint(
+                persistence,
+                &username.0,
+                Some(&staged),
+                None,
+                None,
+                None,
+                &refunds,
+            ) {
+                sessions.remove(id);
+                tracing::warn!("[bong][forge] 起炉材料保存失败：{error}");
+                continue;
+            }
+        }
+        *inventory = staged;
+        if let Some(dropped) = dropped.as_deref_mut() {
+            dropped
+                .entries
+                .extend(refunds.into_iter().map(|entry| (entry.instance_id, entry)));
         }
         station.session = Some(id);
         accepted.send(ForgeStartAccepted {

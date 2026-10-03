@@ -1,6 +1,6 @@
 //! plan-forge-v1 §1.3 四步进程 Session 状态机。
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{Entity, Resource};
@@ -211,11 +211,13 @@ impl ForgeSessions {
     /// 表示发布成功，`false` 表示调用方仍保有传入 adapter 的所有权并应回滚外部事务。
     pub fn insert_adapter(&mut self, adapter: ForgeSessionAdapter) -> bool {
         let id = adapter.session.id;
-        if self.sessions.contains_key(&id) {
-            return false;
+        match self.sessions.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(adapter);
+                true
+            }
+            Entry::Occupied(_) => false,
         }
-        self.sessions.insert(id, adapter);
-        true
     }
 
     pub fn get(&self, id: ForgeSessionId) -> Option<&ForgeSessionAdapter> {

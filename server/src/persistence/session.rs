@@ -94,7 +94,25 @@ pub fn persist_suspended_session_checkpoint(
     checkpoint: &SuspendedSessionCheckpoint,
     reconnect_guard: &ReconnectGuard,
 ) -> io::Result<SuspendedCheckpointPersistOutcome> {
-    validate_checkpoint_and_guard(checkpoint, reconnect_guard)?;
+    let mut outcomes =
+        persist_suspended_session_checkpoints(persistence, &[(checkpoint, reconnect_guard)])?;
+    outcomes
+        .pop()
+        .ok_or_else(|| io::Error::other("checkpoint batch returned no outcome"))
+}
+
+/// 在一个 SQLite 事务中写入一批 Suspended checkpoint 与 guard。
+///
+/// 关服阶段会同时挂起多座工位；批量事务避免为每座工位各自打开连接并提交一次
+/// synchronous SQLite transaction。任何一条记录的校验或版本裁决失败都会回滚整批，
+/// 调用方随后恢复内存中的 adapter 快照。
+pub fn persist_suspended_session_checkpoints(
+    persistence: &PlayerStatePersistence,
+    checkpoints: &[(&SuspendedSessionCheckpoint, &ReconnectGuard)],
+) -> io::Result<Vec<SuspendedCheckpointPersistOutcome>> {
+    if checkpoints.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut connection = open_player_connection(persistence)?;
     // A lifecycle transition must be serialized before we compare the existing
     // checkpoint and restore credential.  Otherwise two writers can both pass
@@ -102,13 +120,16 @@ pub fn persist_suspended_session_checkpoint(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(io::Error::other)?;
-    let outcome = persist_suspended_session_checkpoint_in_transaction(
-        &transaction,
-        checkpoint,
-        reconnect_guard,
-    )?;
+    let mut outcomes = Vec::with_capacity(checkpoints.len());
+    for (checkpoint, reconnect_guard) in checkpoints {
+        outcomes.push(persist_suspended_session_checkpoint_in_transaction(
+            &transaction,
+            checkpoint,
+            reconnect_guard,
+        )?);
+    }
     transaction.commit().map_err(io::Error::other)?;
-    Ok(outcome)
+    Ok(outcomes)
 }
 
 /// 在已有玩家/库存/制作 checkpoint 事务中写入 S-07/M-12 投影。

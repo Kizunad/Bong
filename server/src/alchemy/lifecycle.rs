@@ -8,6 +8,7 @@ use valence::prelude::{Added, AppExit, Client, EventReader, Query, RemovedCompon
 
 use crate::persistence::{
     consume_reconnect_guard, load_suspended_session_bundle, persist_suspended_session_checkpoint,
+    persist_suspended_session_checkpoints, SuspendedCheckpointPersistOutcome,
 };
 use crate::player::state::{canonical_player_id, PlayerStatePersistence};
 use crate::session::{SessionEvent, SessionLifecycleCtx, SessionState};
@@ -61,29 +62,47 @@ pub(crate) fn checkpoint_alchemy_sessions_on_disconnect(
             let Ok((guard, checkpoint)) = adapter.suspend_for_disconnect(&mut context) else {
                 continue;
             };
-            if let Err(error) =
-                persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
-            {
-                *adapter = previous;
-                tracing::warn!(
-                    "[bong][alchemy] disconnect checkpoint failed for {}: {error}",
-                    checkpoint.session_key
-                );
-            } else {
-                tracing::info!(
-                    "[bong][alchemy] disconnected furnace session suspended: {}",
-                    checkpoint.session_key
-                );
+            match persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard) {
+                Ok(
+                    SuspendedCheckpointPersistOutcome::Inserted
+                    | SuspendedCheckpointPersistOutcome::Updated,
+                ) => {
+                    tracing::info!(
+                        "[bong][alchemy] disconnected furnace session suspended: {}",
+                        checkpoint.session_key
+                    );
+                }
+                Ok(SuspendedCheckpointPersistOutcome::IgnoredStale) => {
+                    *adapter = previous;
+                    tracing::warn!(
+                        "[bong][alchemy] stale disconnect checkpoint ignored for {}",
+                        checkpoint.session_key
+                    );
+                }
+                Err(error) => {
+                    *adapter = previous;
+                    tracing::warn!(
+                        "[bong][alchemy] disconnect checkpoint failed for {}: {error}",
+                        checkpoint.session_key
+                    );
+                }
             }
         }
     }
+}
+
+struct PendingShutdownCheckpoint {
+    furnace: valence::prelude::Entity,
+    previous: AlchemySessionAdapter,
+    checkpoint: crate::persistence::SuspendedSessionCheckpoint,
+    guard: crate::persistence::ReconnectGuard,
 }
 
 /// 关服与断线共用 durable fence；成功的 Suspended 炉次不会被 shutdown qi flush 提前
 /// 移入 overflow，下一次同一进程重连仍可用 guard 恢复。
 pub(crate) fn checkpoint_alchemy_sessions_on_shutdown(
     mut app_exit: EventReader<AppExit>,
-    mut furnaces: Query<&mut AlchemyFurnace>,
+    mut furnaces: Query<(valence::prelude::Entity, &mut AlchemyFurnace)>,
     persistence: Option<Res<PlayerStatePersistence>>,
 ) {
     if app_exit.read().next().is_none() {
@@ -92,7 +111,8 @@ pub(crate) fn checkpoint_alchemy_sessions_on_shutdown(
     let Some(persistence) = persistence else {
         return;
     };
-    for mut furnace in &mut furnaces {
+    let mut pending = Vec::new();
+    for (furnace_entity, mut furnace) in &mut furnaces {
         let Some(adapter) = furnace.session.as_mut() else {
             continue;
         };
@@ -107,12 +127,48 @@ pub(crate) fn checkpoint_alchemy_sessions_on_shutdown(
         let Ok((guard, checkpoint)) = adapter.suspend_for_shutdown(&mut context) else {
             continue;
         };
-        if let Err(error) = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
-        {
-            *adapter = previous;
+        pending.push(PendingShutdownCheckpoint {
+            furnace: furnace_entity,
+            previous,
+            checkpoint,
+            guard,
+        });
+    }
+    if pending.is_empty() {
+        return;
+    }
+
+    let batch: Vec<_> = pending
+        .iter()
+        .map(|item| (&item.checkpoint, &item.guard))
+        .collect();
+    match persist_suspended_session_checkpoints(&persistence, &batch) {
+        Ok(outcomes) => {
+            for (item, outcome) in pending.iter().zip(outcomes) {
+                if outcome == SuspendedCheckpointPersistOutcome::IgnoredStale {
+                    if let Ok((_, mut furnace)) = furnaces.get_mut(item.furnace) {
+                        if let Some(adapter) = furnace.session.as_mut() {
+                            *adapter = item.previous.clone();
+                        }
+                    }
+                    tracing::warn!(
+                        "[bong][alchemy] stale shutdown checkpoint ignored for {}",
+                        item.checkpoint.session_key
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            for item in &pending {
+                if let Ok((_, mut furnace)) = furnaces.get_mut(item.furnace) {
+                    if let Some(adapter) = furnace.session.as_mut() {
+                        *adapter = item.previous.clone();
+                    }
+                }
+            }
             tracing::warn!(
-                "[bong][alchemy] shutdown checkpoint failed for {}: {error}",
-                checkpoint.session_key
+                "[bong][alchemy] shutdown checkpoint batch failed; restored {} session(s): {error}",
+                pending.len()
             );
         }
     }

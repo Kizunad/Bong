@@ -281,6 +281,7 @@ mod tests {
 
     use crate::alchemy::furnace::AlchemyFurnace;
     use crate::cultivation::components::Cultivation;
+    use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
     use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
     use crate::qi_physics::WorldQiBudget;
     use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
@@ -896,7 +897,8 @@ mod tests {
     #[test]
     fn shutdown_keeps_checkpointed_furnace_balance_for_guarded_restore() {
         let mut app = App::new();
-        app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
+        // 该关服路径验证生产默认预算；局部注灵测试仍使用小夹具以保持测试轻量。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
         app.insert_resource(WorldQiAccount::default());
         app.init_resource::<AlchemyQiReservationBook>();
         app.add_event::<AppExit>();
