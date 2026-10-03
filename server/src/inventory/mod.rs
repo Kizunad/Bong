@@ -64,7 +64,15 @@ pub mod corpse;
 pub mod food;
 // 在线 tick freshness cache + season/anqi multiplier；种植来源由后续重构接入。
 pub mod freshness;
+// RF-33 R10 P1：纯库存布局迁移 helper，不接 production writer。
+pub mod layout;
+// RF-33 R10 P1：掉落 metadata 迁移与可见性 contract，不接同步 writer。
+pub mod dropped_loot;
+// RF-33 R10 P1：bounded capacity/provider 与 spill 接缝骨架。
+pub mod capacity;
+// RF-33 R10 P1：staged inventory transaction contract，暂不替换旧 consumer。
 pub(crate) mod operator;
+pub mod txn;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
 pub mod poi_loot;
 pub mod spirit_treasure;
@@ -75,6 +83,29 @@ pub mod tsy_loot_spawn;
 // plan-tsy-loot-v1 §8.2 — 端到端集成测试。
 #[cfg(test)]
 mod tsy_loot_integration_test;
+
+// RF-33 contract-first surface: callers may import the stable symbols from `inventory` while
+// the implementation remains split into focused modules.  No existing production writer is
+// switched to these seams in R10 P1.
+pub use capacity::{
+    BoundedCapacityProvider, CapacityError, CapacityProvider, CapacityReservation,
+    CapacitySnapshot, DurableSpill, NoopDurableSpill, SpillContext, SpillContextError,
+    MAX_DURABLE_DROPPED_LOOT_ENTRIES, MAX_OWNER_ONLY_DISCARD_ENTRIES_PER_PLAYER,
+    SYSTEM_RESERVED_DURABLE_DROPPED_LOOT_ENTRIES,
+};
+pub use dropped_loot::{
+    apply_dropped_loot_metadata, migrate_legacy_dropped_loot_entry, DroppedLootMetadata,
+    DroppedLootMigrationError, DroppedLootVisibility, CURRENT_DROPPED_LOOT_SCHEMA_VERSION,
+};
+pub use layout::{
+    migrate_equipped_v1_to_v2, migrate_legacy_inventory_layout, InventoryLayoutMigrationError,
+    MigrationOutcome, CURRENT_INVENTORY_LAYOUT_SCHEMA_VERSION,
+};
+pub use txn::{
+    ConsumeRequest, DeliveryItem, DeliveryRequest, InventoryConsumeReceipt,
+    InventoryDeliveryReceipt, InventoryMergeReceipt, InventoryPickupReceipt, InventorySpillReceipt,
+    InventoryTxn, InventoryTxnError, PickupAuthorization, PickupRequest,
+};
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";

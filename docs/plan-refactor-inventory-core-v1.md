@@ -2,10 +2,14 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。P0 只冻结事实、失败边界、跨轨 owner 与审核要求的 pins；不把设计当实现。
 
+## Status Overview
+
+当前状态：P1 已于 2026-10-02 完成，P0、P2、P3、P4 尚未完成。
+
 ## 阶段
 
 - ⏳ P0 完整契约面重写 + absorption audit
-- ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers；对应 master M-06/M-13 的 transaction/provider surface，R3 seam 只按 M-04 提供。
+- ✅ 2026-10-02 P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers；对应 master M-06/M-13 的 transaction/provider surface，R3 seam 只按 M-04 提供。
 - ⬜ P2：production writer 迁移分为 metadata/provider、Public/OwnerOnly writer 与 terminal worker；terminal worker 对应 M-06/O-10..O-27，dropped-loot hydration/projection 与 pickup consumer 只按 master M-13/M-14/M-15 启用。
 - ⬜ P3：pickup/merge txn；R4/R5/R6 consumer 与 receipt/attrition 接缝只引用 master M-14/M-15。
 - ⬜ P4：联合 bot/e2e + plan 收口；完成 evidence 需覆盖对应 M-row 与 canonical O-row。
