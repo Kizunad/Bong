@@ -2918,7 +2918,8 @@ fn online_renown_delta_persists_active_identity_bridge() {
         .identities
         .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
     identities.active_identity_id = IdentityId(1);
-    identity_db::save_player_identities(&persistence, "char:online", &identities)
+    let identity_key = crate::player::state::canonical_player_id("Online");
+    identity_db::save_player_identities(&persistence, &identity_key, &identities)
         .expect("identity row should persist before online renown event");
 
     let mut app = qi_test_app();
@@ -2963,7 +2964,7 @@ fn online_renown_delta_persists_active_identity_bridge() {
     assert_eq!((inactive.renown.fame, inactive.renown.notoriety), (0, 0));
     assert!(inactive.renown.tags.is_empty());
 
-    let loaded_identities = identity_db::load_player_identities(&persistence, "char:online")
+    let loaded_identities = identity_db::load_player_identities(&persistence, &identity_key)
         .expect("online identity row should load")
         .expect("online identity row should remain");
     let persisted_active = loaded_identities.active().unwrap();

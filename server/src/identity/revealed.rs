@@ -25,9 +25,9 @@
 //! app.add_systems(Update, consume_revealed_event::<AnqiRevealedEvent>);
 //! ```
 
-use valence::prelude::{Entity, Event, EventReader, Query, Res, With};
+use valence::prelude::{Entity, Event, EventReader, Query, Res, Username, With};
 
-use super::{PlayerIdentities, RevealedTag, RevealedTagKind};
+use super::{IdentityPersistenceLoadFailed, PlayerIdentities, RevealedTag, RevealedTagKind};
 use crate::combat::components::Lifecycle;
 use crate::cultivation::components::Realm;
 use crate::cultivation::dugu::DuguRevealedEvent;
@@ -78,14 +78,23 @@ impl RevealedEvent for DuguRevealedEvent {
 /// 持久化在写入成功（首次）时同步保存。
 pub fn consume_revealed_event<E: RevealedEvent>(
     mut events: EventReader<E>,
-    mut players: Query<(&mut PlayerIdentities, &Lifecycle), With<valence::prelude::Client>>,
+    mut players: Query<
+        (
+            &mut PlayerIdentities,
+            &Lifecycle,
+            &Username,
+            Option<&IdentityPersistenceLoadFailed>,
+        ),
+        With<valence::prelude::Client>,
+    >,
     persistence: Option<Res<PersistenceSettings>>,
 ) {
     for event in events.read() {
-        let Ok((mut identities, lifecycle)) = players.get_mut(event.revealed_player()) else {
+        let Ok((mut identities, _lifecycle, username, load_failed)) =
+            players.get_mut(event.revealed_player())
+        else {
             continue;
         };
-        let char_id = lifecycle.character_id.clone();
         let written = write_revealed_tag_if_absent(
             &mut identities,
             event.revealed_tag_kind(),
@@ -93,8 +102,9 @@ pub fn consume_revealed_event<E: RevealedEvent>(
             event.is_permanent(),
             event.at_tick(),
         );
-        if written {
+        if written && load_failed.is_none() {
             if let Some(settings) = persistence.as_deref() {
+                let char_id = crate::player::state::canonical_player_id(username.0.as_str());
                 if let Err(error) =
                     identity_db::save_player_identities(settings, &char_id, &identities)
                 {

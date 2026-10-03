@@ -23,6 +23,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::identity::{IdentityId, IdentityProfile, PlayerIdentities};
 use crate::persistence::{open_persistence_connection, PersistenceSettings};
+use crate::player::state::canonical_player_id;
 
 const IDENTITY_ROW_SCHEMA_VERSION: i32 = 1;
 
@@ -94,12 +95,54 @@ pub fn save_player_identities(
     Ok(())
 }
 
-/// 读单玩家的 identity 集合；不存在 → `Ok(None)`（让调用方走默认创建）。
+/// 读指定 durable key 的 identity 集合；不存在 → `Ok(None)`（让调用方走默认创建）。
 pub fn load_player_identities(
     settings: &PersistenceSettings,
     char_id: &str,
 ) -> io::Result<Option<PlayerIdentities>> {
     let connection = open_persistence_connection(settings)?;
+    load_player_identities_from_connection(&connection, char_id)
+}
+
+/// 按玩家稳定键载入 identity，并兼容 RF-11 之前使用 `offline:<user>:<char_uuid>`
+/// 的历史行。若 canonical 行不存在，选择该玩家最近更新的旧行；后续写入统一落到
+/// `offline:<user>`，避免角色轮换继续制造多个 durable key。
+pub fn load_player_identities_for_username(
+    settings: &PersistenceSettings,
+    username: &str,
+) -> io::Result<Option<PlayerIdentities>> {
+    let connection = open_persistence_connection(settings)?;
+    let canonical_key = canonical_player_id(username);
+    if let Some(identities) = load_player_identities_from_connection(&connection, &canonical_key)? {
+        return Ok(Some(identities));
+    }
+
+    let legacy_key: Option<String> = connection
+        .query_row(
+            "
+            SELECT char_id
+            FROM player_identities
+            WHERE substr(char_id, 1, length(?1)) = ?1
+              AND substr(char_id, length(?1) + 1, 1) = ':'
+            ORDER BY last_updated_wall DESC, char_id DESC
+            LIMIT 1
+            ",
+            params![canonical_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    legacy_key
+        .as_deref()
+        .map(|key| load_player_identities_from_connection(&connection, key))
+        .transpose()
+        .map(|loaded| loaded.flatten())
+}
+
+fn load_player_identities_from_connection(
+    connection: &rusqlite::Connection,
+    char_id: &str,
+) -> io::Result<Option<PlayerIdentities>> {
     let row = connection
         .query_row(
             "
@@ -127,8 +170,10 @@ pub fn load_player_identities(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
     if identities.is_empty() {
-        // 损坏行（有 row 但 list 为空）→ 不当作"已加载"，让调用方重建默认。
-        return Ok(None);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("player_identities row `{char_id}` contains no identity profiles"),
+        ));
     }
 
     let requested_active_id = IdentityId(active_id_raw.max(0) as u32);
@@ -202,6 +247,38 @@ mod tests {
         let settings = fresh_settings();
         let loaded = load_player_identities(&settings, "offline:nobody").expect("load");
         assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn username_loader_reads_legacy_character_key() {
+        let settings = fresh_settings();
+        let identities = PlayerIdentities::with_default("kiz", 0);
+        save_player_identities(&settings, "offline:kiz:legacy-character", &identities)
+            .expect("legacy save");
+
+        let loaded = load_player_identities_for_username(&settings, "kiz")
+            .expect("legacy-compatible load")
+            .expect("legacy row should be visible through the stable username key");
+        assert_eq!(loaded, identities);
+    }
+
+    #[test]
+    fn empty_identity_row_is_a_load_failure_not_a_missing_row() {
+        let settings = fresh_settings();
+        let connection = open_persistence_connection(&settings).expect("open sqlite");
+        connection
+            .execute(
+                "INSERT INTO player_identities (
+                    char_id, identities_json, active_identity_id, last_switch_tick,
+                    schema_version, last_updated_wall
+                 ) VALUES (?1, '[]', 0, 0, 1, 0)",
+                params!["offline:empty"],
+            )
+            .expect("insert malformed identity row");
+
+        let error = load_player_identities(&settings, "offline:empty")
+            .expect_err("an existing empty row must be classified as failed");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
