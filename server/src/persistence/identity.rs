@@ -8,12 +8,15 @@
 //! ```sql
 //! CREATE TABLE IF NOT EXISTS player_identities (
 //!     char_id TEXT PRIMARY KEY,
+//!     username TEXT,
 //!     identities_json TEXT NOT NULL,           -- serde_json(Vec<IdentityProfile>)
 //!     active_identity_id INTEGER NOT NULL CHECK (active_identity_id >= 0),
 //!     last_switch_tick INTEGER NOT NULL CHECK (last_switch_tick >= 0),
 //!     schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
 //!     last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
 //! );
+//! CREATE INDEX idx_player_identities_username_updated
+//!     ON player_identities (username, last_updated_wall DESC, char_id DESC);
 //! ```
 
 use std::io;
@@ -23,7 +26,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::identity::{IdentityId, IdentityProfile, PlayerIdentities};
 use crate::persistence::{open_persistence_connection, PersistenceSettings};
-use crate::player::state::canonical_player_id;
+use crate::player::state::{canonical_player_id, player_username_from_character_id};
 
 const IDENTITY_ROW_SCHEMA_VERSION: i32 = 1;
 
@@ -61,6 +64,7 @@ pub fn save_player_identities(
 ) -> io::Result<()> {
     let identities_json = serde_json::to_string(&identities.identities)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let username = player_username_from_character_id(char_id);
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     transaction
@@ -68,13 +72,15 @@ pub fn save_player_identities(
             "
             INSERT INTO player_identities (
                 char_id,
+                username,
                 identities_json,
                 active_identity_id,
                 last_switch_tick,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(char_id) DO UPDATE SET
+                username = excluded.username,
                 identities_json = excluded.identities_json,
                 active_identity_id = excluded.active_identity_id,
                 last_switch_tick = excluded.last_switch_tick,
@@ -83,6 +89,7 @@ pub fn save_player_identities(
             ",
             params![
                 char_id,
+                username,
                 identities_json,
                 identities.active_identity_id.0,
                 identities.last_switch_tick,
@@ -122,12 +129,12 @@ pub fn load_player_identities_for_username(
             "
             SELECT char_id
             FROM player_identities
-            WHERE substr(char_id, 1, length(?1)) = ?1
-              AND substr(char_id, length(?1) + 1, 1) = ':'
+            WHERE username = ?1
+              AND char_id <> ?2
             ORDER BY last_updated_wall DESC, char_id DESC
             LIMIT 1
             ",
-            params![canonical_key],
+            params![username, canonical_key],
             |row| row.get(0),
         )
         .optional()
@@ -259,6 +266,57 @@ mod tests {
         let loaded = load_player_identities_for_username(&settings, "kiz")
             .expect("legacy-compatible load")
             .expect("legacy row should be visible through the stable username key");
+        assert_eq!(loaded, identities);
+    }
+
+    #[test]
+    fn v48_migration_backfills_username_for_legacy_identity_rows() {
+        let settings = fresh_settings();
+        let identities = PlayerIdentities::with_default("kiz", 0);
+        let identities_json = serde_json::to_string(&identities.identities).expect("serialize");
+        let connection = open_persistence_connection(&settings).expect("open sqlite");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE player_identities;
+                CREATE TABLE player_identities (
+                    char_id TEXT PRIMARY KEY,
+                    identities_json TEXT NOT NULL,
+                    active_identity_id INTEGER NOT NULL,
+                    last_switch_tick INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                PRAGMA user_version = 47;
+                ",
+            )
+            .expect("install v47 identity fixture");
+        connection
+            .execute(
+                "INSERT INTO player_identities (
+                    char_id, identities_json, active_identity_id, last_switch_tick,
+                    schema_version, last_updated_wall
+                 ) VALUES (?1, ?2, 0, 0, 1, 7)",
+                params!["offline:kiz:legacy-character", identities_json],
+            )
+            .expect("insert legacy identity row");
+        drop(connection);
+
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("v48 identity migration should succeed");
+
+        let connection = open_persistence_connection(&settings).expect("open migrated sqlite");
+        let username: String = connection
+            .query_row(
+                "SELECT username FROM player_identities WHERE char_id = ?1",
+                params!["offline:kiz:legacy-character"],
+                |row| row.get(0),
+            )
+            .expect("migration should backfill the username");
+        assert_eq!(username, "kiz");
+        let loaded = load_player_identities_for_username(&settings, "kiz")
+            .expect("legacy-compatible load")
+            .expect("backfilled legacy row should be visible");
         assert_eq!(loaded, identities);
     }
 
