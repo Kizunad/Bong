@@ -23,6 +23,18 @@ use crate::network::client_request_handler::{
 /// 已通过 schema/version 校验的 Production/Alchemy 请求。
 #[derive(Debug, PartialEq)]
 pub(crate) enum ProductionRequest {
+    CraftStart {
+        recipe_id: String,
+        quantity: u32,
+    },
+    MaterialMove {
+        recipe_id: String,
+        instance_id: Option<u64>,
+        station_pos: Option<(i32, i32, i32)>,
+        returning: bool,
+        expected_revision: u64,
+    },
+    CraftCancel,
     OpenFurnace {
         furnace_pos: (i32, i32, i32),
     },
@@ -71,6 +83,29 @@ pub(crate) fn try_into_production_request(
     request: ClientRequestV1,
 ) -> Result<ProductionRequest, ClientRequestV1> {
     match request {
+        ClientRequestV1::CraftStart {
+            recipe_id,
+            quantity,
+            ..
+        } => Ok(ProductionRequest::CraftStart {
+            recipe_id,
+            quantity,
+        }),
+        ClientRequestV1::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+            ..
+        } => Ok(ProductionRequest::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+        }),
+        ClientRequestV1::CraftCancel { .. } => Ok(ProductionRequest::CraftCancel),
         ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
             Ok(ProductionRequest::OpenFurnace { furnace_pos })
         }
@@ -251,6 +286,45 @@ pub(crate) fn dispatch_production_request<
         }
     }
     match request {
+        ProductionRequest::CraftStart {
+            recipe_id,
+            quantity,
+        } => {
+            tracing::info!(
+                "[bong][network][craft] start entity={player:?} recipe={recipe_id} quantity={quantity}"
+            );
+            if let Some(tx) = dispatch.craft_start_tx.as_deref_mut() {
+                tx.send(crate::craft::CraftStartIntent {
+                    caster: player,
+                    recipe_id: crate::craft::RecipeId::new(recipe_id),
+                    quantity,
+                });
+            }
+        }
+        ProductionRequest::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+        } => {
+            if let Some(tx) = dispatch.material_move_tx.as_deref_mut() {
+                tx.send(crate::craft::events::MaterialMoveIntent {
+                    caster: player,
+                    recipe_id: crate::craft::RecipeId::new(recipe_id),
+                    instance_id,
+                    station_pos,
+                    returning,
+                    expected_revision,
+                });
+            }
+        }
+        ProductionRequest::CraftCancel => {
+            tracing::info!("[bong][network][craft] cancel entity={player:?}");
+            if let Some(tx) = dispatch.craft_cancel_tx.as_deref_mut() {
+                tx.send(crate::craft::CraftCancelIntent { caster: player });
+            }
+        }
         ProductionRequest::OpenFurnace { furnace_pos } => {
             crate::network::client_request_handler::handle_alchemy_open_furnace(
                 player,
@@ -428,6 +502,41 @@ mod tests {
 
     #[test]
     fn typed_conversion_preserves_all_alchemy_payloads_and_boundaries() {
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::CraftStart {
+                v: 1,
+                recipe_id: "reed_rope".to_owned(),
+                quantity: u32::MAX,
+            })
+            .ok(),
+            Some(ProductionRequest::CraftStart {
+                recipe_id: "reed_rope".to_owned(),
+                quantity: u32::MAX,
+            })
+        );
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::MaterialMove {
+                v: 1,
+                recipe_id: "reed_rope".to_owned(),
+                instance_id: Some(u64::MAX),
+                station_pos: Some((i32::MIN, 0, i32::MAX)),
+                returning: true,
+                expected_revision: u64::MAX,
+            })
+            .ok(),
+            Some(ProductionRequest::MaterialMove {
+                recipe_id: "reed_rope".to_owned(),
+                instance_id: Some(u64::MAX),
+                station_pos: Some((i32::MIN, 0, i32::MAX)),
+                returning: true,
+                expected_revision: u64::MAX,
+            })
+        );
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::CraftCancel { v: 1 }).ok(),
+            Some(ProductionRequest::CraftCancel)
+        );
+
         assert_eq!(
             try_into_production_request(ClientRequestV1::AlchemyOpenFurnace {
                 v: 1,

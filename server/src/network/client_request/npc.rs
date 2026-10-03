@@ -11,7 +11,7 @@ use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
-use crate::network::client_request_handler::CombatRequestParams;
+use crate::network::client_request_handler::{handle_give_dan_to_elder, CombatRequestParams};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::npc_metadata::{
     display_name as npc_display_name, greeting_text_for_archetype,
@@ -59,9 +59,71 @@ pub(crate) struct NpcEngagementRequestParams<'w, 's> {
     pub(crate) audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
 }
 
+/// 已通过 schema/version 校验的 NPC 请求。
+///
+/// GiveDanToElder 与查看、对话、交易共用同一个 NPC ingress；把 wire enum
+/// 先收窄为这个类型后，顶层 handler 不再保留 NPC 业务分支。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NpcRequest {
+    Inspect {
+        npc_entity_id: i32,
+    },
+    Dialogue {
+        npc_entity_id: i32,
+        option_id: String,
+    },
+    Trade {
+        npc_entity_id: i32,
+        offered_items: Vec<u64>,
+        requested_item_id: String,
+    },
+    GiveDanToElder {
+        pill_instance_id: u64,
+        elder_entity_id: i32,
+    },
+}
+
+/// 从总的 C2S schema enum 提取 NPC 域；非 NPC 请求原样交还顶层 handler。
+pub(crate) fn try_into_npc_request(
+    request: ClientRequestV1,
+) -> Result<NpcRequest, ClientRequestV1> {
+    match request {
+        ClientRequestV1::NpcInspectRequest { npc_entity_id, .. } => {
+            Ok(NpcRequest::Inspect { npc_entity_id })
+        }
+        ClientRequestV1::NpcDialogueChoice {
+            npc_entity_id,
+            option_id,
+            ..
+        } => Ok(NpcRequest::Dialogue {
+            npc_entity_id,
+            option_id,
+        }),
+        ClientRequestV1::NpcTradeRequest {
+            npc_entity_id,
+            offered_items,
+            requested_item_id,
+            ..
+        } => Ok(NpcRequest::Trade {
+            npc_entity_id,
+            offered_items,
+            requested_item_id,
+        }),
+        ClientRequestV1::GiveDanToElder {
+            pill_instance_id,
+            elder_entity_id,
+            ..
+        } => Ok(NpcRequest::GiveDanToElder {
+            pill_instance_id,
+            elder_entity_id,
+        }),
+        request => Err(request),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch<'combat_w, 'combat_s, 'npc_w, 'npc_s, 'allocator_w>(
-    request: &ClientRequestV1,
+    request: NpcRequest,
     player: Entity,
     tick: u64,
     combat_params: &CombatRequestParams<'combat_w, 'combat_s>,
@@ -73,12 +135,13 @@ pub(crate) fn dispatch<'combat_w, 'combat_s, 'npc_w, 'npc_s, 'allocator_w>(
     cultivations: &Query<&Cultivation>,
     item_registry: &ItemRegistry,
     instance_allocator: &mut Option<ResMut<'allocator_w, InventoryInstanceIdAllocator>>,
+    give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
 ) {
     match request {
-        ClientRequestV1::NpcInspectRequest { npc_entity_id, .. } => {
+        NpcRequest::Inspect { npc_entity_id } => {
             let Some(target) = resolve_npc_engagement_target(
                 player,
-                *npc_entity_id,
+                npc_entity_id,
                 combat_params,
                 npc_params,
                 zone_registry,
@@ -95,14 +158,13 @@ pub(crate) fn dispatch<'combat_w, 'combat_s, 'npc_w, 'npc_s, 'allocator_w>(
                 format!("§7[NPC] {}：{}", target.display_name, target.greeting_text),
             );
         }
-        ClientRequestV1::NpcDialogueChoice {
+        NpcRequest::Dialogue {
             npc_entity_id,
             option_id,
-            ..
         } => {
             let Some(target) = resolve_npc_engagement_target(
                 player,
-                *npc_entity_id,
+                npc_entity_id,
                 combat_params,
                 npc_params,
                 zone_registry,
@@ -132,17 +194,16 @@ pub(crate) fn dispatch<'combat_w, 'combat_s, 'npc_w, 'npc_s, 'allocator_w>(
                 }
             }
         }
-        ClientRequestV1::NpcTradeRequest {
+        NpcRequest::Trade {
             npc_entity_id,
             offered_items,
             requested_item_id,
-            ..
         } => {
             handle_trade(
                 player,
-                *npc_entity_id,
-                offered_items,
-                requested_item_id,
+                npc_entity_id,
+                &offered_items,
+                &requested_item_id,
                 tick,
                 combat_params,
                 npc_params,
@@ -155,7 +216,23 @@ pub(crate) fn dispatch<'combat_w, 'combat_s, 'npc_w, 'npc_s, 'allocator_w>(
                 instance_allocator,
             );
         }
-        _ => unreachable!("NPC typed route received a non-NPC request"),
+        NpcRequest::GiveDanToElder {
+            pill_instance_id,
+            elder_entity_id,
+        } => {
+            handle_give_dan_to_elder(
+                player,
+                pill_instance_id,
+                elder_entity_id,
+                inventories,
+                combat_params.entity_manager.as_deref(),
+                clients,
+                give_dan_tx,
+                &npc_params.positions,
+                &npc_params.dimensions,
+                &combat_params.dying_elder_targets,
+            );
+        }
     }
 }
 
@@ -527,4 +604,69 @@ pub(crate) fn is_rarity_refused_at_low_rep(rarity: crate::inventory::ItemRarity)
 
 fn canonical_player_id(username: &str) -> String {
     crate::player::state::canonical_player_id(username)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_conversion_preserves_all_npc_request_fields() {
+        assert_eq!(
+            try_into_npc_request(ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id: i32::MIN,
+            })
+            .ok(),
+            Some(NpcRequest::Inspect {
+                npc_entity_id: i32::MIN,
+            })
+        );
+        assert_eq!(
+            try_into_npc_request(ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id: i32::MAX,
+                option_id: "trade".to_owned(),
+            })
+            .ok(),
+            Some(NpcRequest::Dialogue {
+                npc_entity_id: i32::MAX,
+                option_id: "trade".to_owned(),
+            })
+        );
+        assert_eq!(
+            try_into_npc_request(ClientRequestV1::NpcTradeRequest {
+                v: 1,
+                npc_entity_id: 17,
+                offered_items: vec![1, u64::MAX],
+                requested_item_id: "spirit_grass".to_owned(),
+            })
+            .ok(),
+            Some(NpcRequest::Trade {
+                npc_entity_id: 17,
+                offered_items: vec![1, u64::MAX],
+                requested_item_id: "spirit_grass".to_owned(),
+            })
+        );
+        assert_eq!(
+            try_into_npc_request(ClientRequestV1::GiveDanToElder {
+                v: 1,
+                pill_instance_id: u64::MAX,
+                elder_entity_id: -7,
+            })
+            .ok(),
+            Some(NpcRequest::GiveDanToElder {
+                pill_instance_id: u64::MAX,
+                elder_entity_id: -7,
+            })
+        );
+    }
+
+    #[test]
+    fn non_npc_request_is_returned_unchanged() {
+        assert!(matches!(
+            try_into_npc_request(ClientRequestV1::BreakthroughRequest { v: 1 }),
+            Err(ClientRequestV1::BreakthroughRequest { v: 1 })
+        ));
+    }
 }

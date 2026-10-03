@@ -1,4 +1,4 @@
-//! 玩家之间的 Social C2S 请求分发。
+//! 玩家之间及灵龛交互的 Social C2S 请求分发。
 //!
 //! 这里故意只把请求转换为 `social::events` 事件：目标解析是只读的，
 //! 不触碰 inventory、world 或任何交易业务谓词。
@@ -8,9 +8,11 @@ use valence::prelude::{bevy_ecs, Entity, EntityManager, Events, ResMut};
 use bevy_ecs::system::SystemParam;
 
 use crate::schema::client_request::ClientRequestV1;
+use crate::schema::social::GuardianKindV1;
 use crate::social::events::{
-    SparringInviteResponseEvent, SparringInviteResponseKind, TradeOfferRequest,
-    TradeOfferResponseEvent,
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
+    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 
 /// Social ingress 所需的唯一事件写入面。
@@ -22,6 +24,12 @@ pub(crate) struct SocialRequestParams<'w> {
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
+    pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
+    pub spirit_niche_repair_tx: Option<ResMut<'w, Events<SpiritNicheRepairRequest>>>,
+    pub spirit_niche_coordinate_reveal_tx:
+        Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
+    pub spirit_niche_activate_guardian_tx:
+        Option<ResMut<'w, Events<SpiritNicheActivateGuardianRequest>>>,
 }
 
 /// 已经通过 schema 解析的 Social 请求。
@@ -43,6 +51,25 @@ pub(crate) enum SocialRequest {
         offer_id: String,
         accepted: bool,
         requested_instance_id: Option<u64>,
+    },
+    SpiritNichePlace {
+        pos: [i32; 3],
+        item_instance_id: u64,
+    },
+    SpiritNicheRepair {
+        pos: [i32; 3],
+        item_instance_id: u64,
+    },
+    SpiritNicheGaze {
+        pos: [i32; 3],
+    },
+    SpiritNicheMarkCoordinate {
+        pos: [i32; 3],
+    },
+    SpiritNicheActivateGuardian {
+        niche_pos: [i32; 3],
+        guardian_kind: GuardianKindV1,
+        materials: Vec<String>,
     },
 }
 
@@ -78,6 +105,42 @@ pub(crate) fn try_into_social_request(
             offer_id,
             accepted,
             requested_instance_id,
+        }),
+        ClientRequestV1::SpiritNichePlace {
+            x,
+            y,
+            z,
+            item_instance_id,
+            ..
+        } => Ok(SocialRequest::SpiritNichePlace {
+            pos: [x, y, z],
+            item_instance_id,
+        }),
+        ClientRequestV1::SpiritNicheRepair {
+            x,
+            y,
+            z,
+            item_instance_id,
+            ..
+        } => Ok(SocialRequest::SpiritNicheRepair {
+            pos: [x, y, z],
+            item_instance_id,
+        }),
+        ClientRequestV1::SpiritNicheGaze { x, y, z, .. } => {
+            Ok(SocialRequest::SpiritNicheGaze { pos: [x, y, z] })
+        }
+        ClientRequestV1::SpiritNicheMarkCoordinate { x, y, z, .. } => {
+            Ok(SocialRequest::SpiritNicheMarkCoordinate { pos: [x, y, z] })
+        }
+        ClientRequestV1::SpiritNicheActivateGuardian {
+            niche_pos,
+            guardian_kind,
+            materials,
+            ..
+        } => Ok(SocialRequest::SpiritNicheActivateGuardian {
+            niche_pos,
+            guardian_kind,
+            materials,
         }),
         request => Err(request),
     }
@@ -174,6 +237,100 @@ pub(crate) fn dispatch_social_request(
             });
             SocialDispatchOutcome::Emitted
         }
+        SocialRequest::SpiritNichePlace {
+            pos,
+            item_instance_id,
+        } => {
+            let Some(tx) = params.spirit_niche_place_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped spirit_niche_place because SpiritNichePlaceRequest event resource is missing"
+                );
+                return SocialDispatchOutcome::DroppedMissingEventResource;
+            };
+            tx.send(SpiritNichePlaceRequest {
+                player,
+                pos,
+                item_instance_id: Some(item_instance_id),
+                tick,
+            });
+            SocialDispatchOutcome::Emitted
+        }
+        SocialRequest::SpiritNicheRepair {
+            pos,
+            item_instance_id,
+        } => {
+            let Some(tx) = params.spirit_niche_repair_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped spirit_niche_repair because SpiritNicheRepairRequest event resource is missing"
+                );
+                return SocialDispatchOutcome::DroppedMissingEventResource;
+            };
+            tx.send(SpiritNicheRepairRequest {
+                player,
+                pos,
+                item_instance_id: Some(item_instance_id),
+                tick,
+            });
+            SocialDispatchOutcome::Emitted
+        }
+        SocialRequest::SpiritNicheGaze { pos } => {
+            let Some(tx) = params.spirit_niche_coordinate_reveal_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped spirit_niche_gaze because SpiritNicheCoordinateRevealRequest event resource is missing"
+                );
+                return SocialDispatchOutcome::DroppedMissingEventResource;
+            };
+            tx.send(SpiritNicheCoordinateRevealRequest {
+                observer: player,
+                pos,
+                source: SpiritNicheRevealSource::Gaze,
+                tick,
+            });
+            SocialDispatchOutcome::Emitted
+        }
+        SocialRequest::SpiritNicheMarkCoordinate { pos } => {
+            let Some(tx) = params.spirit_niche_coordinate_reveal_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped spirit_niche_mark_coordinate because SpiritNicheCoordinateRevealRequest event resource is missing"
+                );
+                return SocialDispatchOutcome::DroppedMissingEventResource;
+            };
+            tx.send(SpiritNicheCoordinateRevealRequest {
+                observer: player,
+                pos,
+                source: SpiritNicheRevealSource::MarkCoordinate,
+                tick,
+            });
+            SocialDispatchOutcome::Emitted
+        }
+        SocialRequest::SpiritNicheActivateGuardian {
+            niche_pos,
+            guardian_kind,
+            materials,
+        } => {
+            let Some(tx) = params.spirit_niche_activate_guardian_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped spirit_niche_activate_guardian because SpiritNicheActivateGuardianRequest event resource is missing"
+                );
+                return SocialDispatchOutcome::DroppedMissingEventResource;
+            };
+            tx.send(SpiritNicheActivateGuardianRequest {
+                player,
+                niche_pos,
+                guardian_kind: guardian_kind_from_schema(guardian_kind),
+                materials,
+                tick,
+            });
+            SocialDispatchOutcome::Emitted
+        }
+    }
+}
+
+fn guardian_kind_from_schema(kind: GuardianKindV1) -> crate::social::components::GuardianKind {
+    match kind {
+        GuardianKindV1::Puppet => crate::social::components::GuardianKind::Puppet,
+        GuardianKindV1::ZhenfaTrap => crate::social::components::GuardianKind::ZhenfaTrap,
+        GuardianKindV1::BondedDaoxiang => crate::social::components::GuardianKind::BondedDaoxiang,
     }
 }
 
