@@ -4,7 +4,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
@@ -37,6 +37,7 @@ pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 pub(crate) const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
 const INVENTORY_SCHEMA_VERSION: i32 = 2;
 const DEFAULT_INVENTORY_JSON: &str = "null";
+const DROPPED_LOOT_ID_QUERY_BATCH_SIZE: usize = 900;
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
 const MAX_SAFE_PLAYER_Y: f64 =
     (crate::world::terrain::MIN_Y + crate::world::terrain::WORLD_HEIGHT as i32 - 1) as f64;
@@ -1692,6 +1693,7 @@ fn persist_legacy_inventory_migration(
     }
 
     let mut instance_ids = HashSet::with_capacity(entries.len());
+    let mut persisted_ids = Vec::with_capacity(entries.len());
     for entry in &entries {
         if !instance_ids.insert(entry.instance_id) {
             return Err(io::Error::new(
@@ -1702,15 +1704,11 @@ fn persist_legacy_inventory_migration(
                 ),
             ));
         }
-        let existing: Option<i64> = transaction
-            .query_row(
-                "SELECT instance_id FROM dropped_loot WHERE instance_id = ?1",
-                params![i64::try_from(entry.instance_id).map_err(io::Error::other)?],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(io::Error::other)?;
-        if existing.is_some() {
+        persisted_ids.push(i64::try_from(entry.instance_id).map_err(io::Error::other)?);
+    }
+    let existing_ids = load_existing_dropped_loot_ids_in_batches(&transaction, &persisted_ids)?;
+    for entry in &entries {
+        if existing_ids.contains(&entry.instance_id) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -1729,6 +1727,30 @@ fn persist_legacy_inventory_migration(
         last_updated_wall,
     )?;
     transaction.commit().map_err(io::Error::other)
+}
+
+/// Look up legacy overflow ids with bounded `IN` lists instead of one SQLite query per item.
+fn load_existing_dropped_loot_ids_in_batches(
+    transaction: &rusqlite::Transaction<'_>,
+    persisted_ids: &[i64],
+) -> io::Result<HashSet<u64>> {
+    let mut existing_ids = HashSet::new();
+    for batch in persisted_ids.chunks(DROPPED_LOOT_ID_QUERY_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query =
+            format!("SELECT instance_id FROM dropped_loot WHERE instance_id IN ({placeholders})");
+        let mut statement = transaction.prepare(&query).map_err(io::Error::other)?;
+        let rows = statement
+            .query_map(params_from_iter(batch.iter()), |row| row.get::<_, i64>(0))
+            .map_err(io::Error::other)?;
+        for row in rows {
+            let id = row.map_err(io::Error::other)?;
+            existing_ids.insert(u64::try_from(id).map_err(io::Error::other)?);
+        }
+    }
+    Ok(existing_ids)
 }
 
 fn load_player_craft_session_from_sqlite(
