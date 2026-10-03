@@ -1445,28 +1445,34 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if current_version < 48 {
         let transaction = connection.transaction()?;
-        let columns = table_columns(&transaction, "player_identities")?;
-        if !columns.iter().any(|column| column == "username") {
-            transaction.execute_batch("ALTER TABLE player_identities ADD COLUMN username TEXT;")?;
+        let identity_table_exists = table_exists(&transaction, "player_identities")?;
+        if identity_table_exists {
+            let columns = table_columns(&transaction, "player_identities")?;
+            if !columns.iter().any(|column| column == "username") {
+                transaction
+                    .execute_batch("ALTER TABLE player_identities ADD COLUMN username TEXT;")?;
+            }
+            transaction.execute_batch(
+                "
+                UPDATE player_identities
+                SET username = NULLIF(
+                    CASE
+                        WHEN instr(substr(char_id, 9), ':') > 0
+                        THEN substr(substr(char_id, 9), 1, instr(substr(char_id, 9), ':') - 1)
+                        ELSE substr(char_id, 9)
+                    END,
+                    ''
+                )
+                WHERE username IS NULL AND char_id LIKE 'offline:%';
+                CREATE INDEX IF NOT EXISTS idx_player_identities_username_updated
+                ON player_identities (username, last_updated_wall DESC, char_id DESC);
+                ",
+            )?;
         }
-        transaction.execute_batch(
-            "
-            UPDATE player_identities
-            SET username = NULLIF(
-                CASE
-                    WHEN instr(substr(char_id, 9), ':') > 0
-                    THEN substr(substr(char_id, 9), 1, instr(substr(char_id, 9), ':') - 1)
-                    ELSE substr(char_id, 9)
-                END,
-                ''
-            )
-            WHERE username IS NULL AND char_id LIKE 'offline:%';
-            CREATE INDEX IF NOT EXISTS idx_player_identities_username_updated
-            ON player_identities (username, last_updated_wall DESC, char_id DESC);
-            PRAGMA user_version = 48;
-            ",
-        )?;
-        assert_player_identities_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 48;")?;
+        if identity_table_exists {
+            assert_player_identities_schema_ready(&transaction)?;
+        }
         transaction.commit()?;
     }
 
@@ -1491,10 +1497,6 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     let player_status_effects_schema_transaction = connection.transaction()?;
     assert_player_status_effects_schema_ready(&player_status_effects_schema_transaction)?;
     player_status_effects_schema_transaction.commit()?;
-
-    let identity_schema_transaction = connection.transaction()?;
-    assert_player_identities_schema_ready(&identity_schema_transaction)?;
-    identity_schema_transaction.commit()?;
 
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
