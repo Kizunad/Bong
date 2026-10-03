@@ -26,8 +26,31 @@ REQUIRED_JOIN_PAYLOAD_TYPES = frozenset(
     {"inventory_snapshot"}
 )
 # narration 是欢迎流程的动态文案，不是 client Store 的状态快照；它可能只在首次
-# 建档时出现，不能把它纳入两次连接的集合相等性断言。
-NON_SNAPSHOT_PAYLOAD_TYPES = frozenset({"narration"})
+# 建档时出现，不能把它纳入两次连接的集合相等性断言。周期同步也不能进入集合：
+# heartbeat、vortex_state 等由连接/世界调度器独立发出，首次和重连的收集窗可能各自
+# 刚好跨过不同的 tick，观察到的集合天然不稳定。这里列出纯周期类型，而不是复用
+# 拒绝路径的完整 ambient 注册表；后者还包含 derived_attrs_sync、morph_state、
+# remains_sync、spiritual_sense_targets 这类带 join 快照语义的 payload，必须继续比较。
+NON_SNAPSHOT_PAYLOAD_TYPES = frozenset(
+    {
+        "narration",
+        "heartbeat",
+        "carrier_state",
+        "false_skin_state",
+        "treasure_equipped",
+        "vortex_state",
+        "dugu_poison_state",
+        "poison_trait_state",
+        "status_snapshot",
+        "zone_info",
+        "player_state",
+        "cultivation_detail",
+        "combat_hud_state",
+        "wounds_snapshot",
+        "movement_state",
+        "sword_bond_hud_state",
+    }
+)
 # join 的 deferred attach 可能在 inventory_snapshot 之后继续排出状态；用一个有界
 # 收集窗覆盖这段尾流，而不是要求全连接进入静默。heartbeat / HUD 周期流不会阻塞
 # 场景，且两次连接使用相同的收集窗来比较 join 快照集合。
