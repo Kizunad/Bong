@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
@@ -17,7 +17,7 @@ use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
-use crate::inventory::{DroppedLootEntry, PlayerInventory};
+use crate::inventory::{DroppedLootEntry, PlayerInventory, MAX_DURABLE_DROPPED_LOOT_ENTRIES};
 use crate::persistence::{ZoneRuntimeRecord, DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
 use crate::player::spawn_selector::SpawnPurpose;
 use crate::qi_physics::ledger::WorldQiAccount;
@@ -37,6 +37,7 @@ pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 pub(crate) const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
 const INVENTORY_SCHEMA_VERSION: i32 = 2;
 const DEFAULT_INVENTORY_JSON: &str = "null";
+const DROPPED_LOOT_ID_QUERY_BATCH_SIZE: usize = 900;
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
 const MAX_SAFE_PLAYER_Y: f64 =
     (crate::world::terrain::MIN_Y + crate::world::terrain::WORLD_HEIGHT as i32 - 1) as f64;
@@ -531,7 +532,7 @@ fn load_player_slices_inner(
     load_known_techniques: bool,
 ) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
-    let connection = match open_player_connection(persistence) {
+    let mut connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(
@@ -578,7 +579,14 @@ fn load_player_slices_inner(
             )
         }
     };
-    let inventory = match load_player_inventory_from_sqlite(&connection, username) {
+    let inventory = match load_player_inventory_from_sqlite(
+        &mut connection,
+        username,
+        Some(LegacyInventorySpillContext {
+            world_pos: position,
+            dimension: last_dimension,
+        }),
+    ) {
         Ok(inventory) => inventory,
         Err(error) => {
             tracing::warn!(
@@ -1551,9 +1559,16 @@ fn backfill_owner_instance_ids(inventory: &mut PlayerInventory) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LegacyInventorySpillContext {
+    world_pos: [f64; 3],
+    dimension: DimensionKind,
+}
+
 fn load_player_inventory_from_sqlite(
-    connection: &Connection,
+    connection: &mut Connection,
     username: &str,
+    spill_context: Option<LegacyInventorySpillContext>,
 ) -> io::Result<Option<PlayerInventory>> {
     // plan-layered-equip-v1 P0.6（决议 #4）— 先读 schema_version 分流；旧版本走 v1→v2 迁移。
     let row: Option<(String, i32)> = connection
@@ -1606,13 +1621,136 @@ fn load_player_inventory_from_sqlite(
         return Ok(Some(inventory));
     }
 
-    // 旧版本（v1）：解析为 Value → 迁移 equipped 形态 → 反序列化。
-    let mut value: serde_json::Value = serde_json::from_str(&inventory_json)
+    // 旧版本（v1）：解析为 Value → 迁移完整 inventory layout → 反序列化。
+    let value: serde_json::Value = serde_json::from_str(&inventory_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    migrate_equipped_v1_to_v2(&mut value);
-    serde_json::from_value::<PlayerInventory>(value)
-        .map(Some)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let outcome = crate::inventory::migrate_legacy_inventory_layout(value, schema_version);
+    if let Some(error) = outcome.error {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("legacy inventory layout migration failed: {error:?}"),
+        ));
+    }
+    let mut inventory = serde_json::from_value::<PlayerInventory>(outcome.migrated_value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    backfill_owner_instance_ids(&mut inventory);
+
+    if !outcome.overflow.is_empty() {
+        let Some(spill_context) = spill_context else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legacy inventory overflow requires a position and dimension spill context",
+            ));
+        };
+        persist_legacy_inventory_migration(
+            connection,
+            username,
+            &inventory,
+            &outcome.overflow,
+            spill_context,
+        )?;
+    }
+
+    Ok(Some(inventory))
+}
+
+/// Commit a legacy layout migration and its overflow handoff together.
+///
+/// 旧库存行保持不变，直到所有 overflow 实例都写入 durable dropped-loot 表；写入失败时
+/// 原始 JSON 仍可重试，hydration 不会静默删除物品。
+fn persist_legacy_inventory_migration(
+    connection: &mut Connection,
+    username: &str,
+    inventory: &PlayerInventory,
+    overflow: &[crate::inventory::ItemInstance],
+    spill_context: LegacyInventorySpillContext,
+) -> io::Result<()> {
+    let entries = overflow
+        .iter()
+        .map(|item| crate::inventory::DroppedLootEntry {
+            instance_id: item.instance_id,
+            source_container_id: format!("legacy_inventory_overflow:{username}"),
+            source_row: 0,
+            source_col: 0,
+            world_pos: spill_context.world_pos,
+            dimension: spill_context.dimension,
+            item: item.clone(),
+        })
+        .collect::<Vec<_>>();
+    let inventory_json = serialize_inventory_json(Some(inventory))?;
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+
+    let current_count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM dropped_loot", [], |row| row.get(0))
+        .map_err(io::Error::other)?;
+    let current_count = usize::try_from(current_count).map_err(io::Error::other)?;
+    if entries.len() > MAX_DURABLE_DROPPED_LOOT_ENTRIES.saturating_sub(current_count) {
+        return Err(io::Error::other(format!(
+            "legacy inventory overflow exceeds dropped-loot capacity: current={current_count}, required={}, limit={MAX_DURABLE_DROPPED_LOOT_ENTRIES}",
+            entries.len()
+        )));
+    }
+
+    let mut instance_ids = HashSet::with_capacity(entries.len());
+    let mut persisted_ids = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        if !instance_ids.insert(entry.instance_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "legacy inventory overflow contains duplicate instance {}",
+                    entry.instance_id
+                ),
+            ));
+        }
+        persisted_ids.push(i64::try_from(entry.instance_id).map_err(io::Error::other)?);
+    }
+    let existing_ids = load_existing_dropped_loot_ids_in_batches(&transaction, &persisted_ids)?;
+    for entry in &entries {
+        if existing_ids.contains(&entry.instance_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "legacy inventory overflow instance {} already exists in dropped_loot",
+                    entry.instance_id
+                ),
+            ));
+        }
+    }
+
+    crate::persistence::upsert_dropped_loot_entries(&transaction, &entries, last_updated_wall)?;
+    persist_player_inventory_json_in_transaction(
+        &transaction,
+        username,
+        &inventory_json,
+        last_updated_wall,
+    )?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+/// Look up legacy overflow ids with bounded `IN` lists instead of one SQLite query per item.
+fn load_existing_dropped_loot_ids_in_batches(
+    transaction: &rusqlite::Transaction<'_>,
+    persisted_ids: &[i64],
+) -> io::Result<HashSet<u64>> {
+    let mut existing_ids = HashSet::new();
+    for batch in persisted_ids.chunks(DROPPED_LOOT_ID_QUERY_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query =
+            format!("SELECT instance_id FROM dropped_loot WHERE instance_id IN ({placeholders})");
+        let mut statement = transaction.prepare(&query).map_err(io::Error::other)?;
+        let rows = statement
+            .query_map(params_from_iter(batch.iter()), |row| row.get::<_, i64>(0))
+            .map_err(io::Error::other)?;
+        for row in rows {
+            let id = row.map_err(io::Error::other)?;
+            existing_ids.insert(u64::try_from(id).map_err(io::Error::other)?);
+        }
+    }
+    Ok(existing_ids)
 }
 
 fn load_player_craft_session_from_sqlite(
@@ -1653,129 +1791,9 @@ fn load_player_craft_session_from_sqlite(
 /// - `extra_hand_0/1` → `<slot>.held`（武器落 held，不误塞多件）。
 /// - `head/chest/legs/feet` → `<slot>.worn`（盔甲穿戴层）。
 /// - `main_hand/off_hand` → `<slot>.held`（手持武器/工具）。
+#[cfg(test)]
 fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
-    use serde_json::{json, Value};
-
-    let Some(equipped) = value.get_mut("equipped").and_then(Value::as_object_mut) else {
-        return;
-    };
-    let old = std::mem::take(equipped);
-
-    // plan-layered-equip-v1 P4（决议 #8）：旧 treasure_belt_* 件迁入触发位，按 belt 槽序排列。
-    let mut triggered: std::collections::BTreeMap<String, Value> =
-        std::collections::BTreeMap::new();
-
-    // 累积每个目标身体/手槽的 worn 列表与 held 件。
-    let mut new_slots: std::collections::HashMap<String, (Vec<Value>, Option<Value>)> =
-        std::collections::HashMap::new();
-    // plan-layered-equip-v1 P0.6（决议 #17 / Bug3）— 旧背包专属装备槽（back_pack/waist_pouch/
-    // chest_satchel）的背包件迁去 chest.worn 后，其同名静态容器必须随之改名到运行时
-    // `pack_<instance_id>` 命名空间，否则 rebuild_containers_from_equipment 会新建空 pack_*、
-    // 把装着东西的旧 back_pack 容器留成无主孤儿（伪皮/物品全卡在里面取不出 = 真机症状）。
-    // legacy_slot_name → 该槽背包件的 instance_id。
-    let mut legacy_pack_container_renames: std::collections::HashMap<String, u64> =
-        std::collections::HashMap::new();
-    let push_worn = |slots: &mut std::collections::HashMap<String, (Vec<Value>, Option<Value>)>,
-                     slot: &str,
-                     item: Value| {
-        slots.entry(slot.to_string()).or_default().0.push(item);
-    };
-    let set_held = |slots: &mut std::collections::HashMap<String, (Vec<Value>, Option<Value>)>,
-                    slot: &str,
-                    item: Value| {
-        slots.entry(slot.to_string()).or_default().1 = Some(item);
-    };
-
-    for (old_slot, item) in old {
-        // 已是 v2 形态（含 worn/held）的件：原样保留（容错幂等）。
-        if item.get("worn").is_some() || item.get("held").is_some() {
-            let entry = new_slots.entry(old_slot.clone()).or_default();
-            if let Some(worn) = item.get("worn").and_then(Value::as_array) {
-                entry.0.extend(worn.iter().cloned());
-            }
-            if let Some(held) = item.get("held") {
-                if !held.is_null() {
-                    entry.1 = Some(held.clone());
-                }
-            }
-            continue;
-        }
-        match old_slot.as_str() {
-            "false_skin" => push_worn(&mut new_slots, "chest", item),
-            "two_hand" => set_held(&mut new_slots, "main_hand", item),
-            "treasure_belt_0" | "treasure_belt_1" | "treasure_belt_2" | "treasure_belt_3" => {
-                // 法宝激活态归触发位（决议 #8）——不进装备槽 worn，按 belt 槽序收集到 triggered。
-                triggered.insert(old_slot.clone(), item);
-            }
-            "back_pack" | "waist_pouch" | "chest_satchel" => {
-                // 记下背包件 instance_id，下面把同名旧容器改名到 pack_<instance_id>。
-                if let Some(instance_id) = item.get("instance_id").and_then(Value::as_u64) {
-                    legacy_pack_container_renames.insert(old_slot.clone(), instance_id);
-                }
-                push_worn(&mut new_slots, "chest", item)
-            }
-            "head" | "chest" | "legs" | "feet" => push_worn(&mut new_slots, &old_slot, item),
-            "main_hand" | "off_hand" | "extra_hand_0" | "extra_hand_1" => {
-                set_held(&mut new_slots, &old_slot, item)
-            }
-            // 未知旧槽：默认按 worn 落到原槽名（容错）。
-            other => push_worn(&mut new_slots, other, item),
-        }
-    }
-
-    let rebuilt = value
-        .get_mut("equipped")
-        .and_then(Value::as_object_mut)
-        .expect("equipped object present");
-    for (slot, (worn, held)) in new_slots {
-        rebuilt.insert(
-            slot,
-            json!({ "worn": worn, "held": held.unwrap_or(Value::Null) }),
-        );
-    }
-
-    // 旧背包专属容器改名到 pack_<instance_id>（决议 #17 / Bug3）。
-    // 旧档静态容器 id 与旧装备槽同名（back_pack/waist_pouch/chest_satchel，见 #736 前 default.toml）；
-    // 改名后容器随穿戴背包件进入 pack_<id> 命名空间，与 rebuild_containers_from_equipment 一致，
-    // 装在里面的物品不再丢失。
-    if !legacy_pack_container_renames.is_empty() {
-        if let Some(containers) = value.get_mut("containers").and_then(Value::as_array_mut) {
-            for container in containers.iter_mut() {
-                let Some(container_id) = container
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                else {
-                    continue;
-                };
-                if let Some(&instance_id) = legacy_pack_container_renames.get(&container_id) {
-                    if let Some(obj) = container.as_object_mut() {
-                        obj.insert(
-                            "id".to_string(),
-                            Value::String(crate::inventory::container_id_for_worn_pack(
-                                instance_id,
-                            )),
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // plan-layered-equip-v1 P4（决议 #8）：旧 treasure_belt_* 件迁入顶层 triggered_treasures。
-    // BTreeMap 按 belt_0..3 槽名升序迭代，保持原 belt 顺序；超出触发位容量的多余件丢弃。
-    if !triggered.is_empty() {
-        let trigger_items: Vec<Value> = triggered
-            .into_values()
-            .take(crate::inventory::TREASURE_TRIGGER_CAP)
-            .collect();
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "triggered_treasures".to_string(),
-                Value::Array(trigger_items),
-            );
-        }
-    }
+    crate::inventory::layout::migrate_equipped_v1_to_v2(value);
 }
 
 fn load_player_ui_prefs_from_sqlite(
