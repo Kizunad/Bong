@@ -9,6 +9,7 @@
 //! - [`events`]：P1 `IdentityCreatedEvent` / `IdentitySwitchedEvent` Bevy 事件
 //! - [`precondition`]：P1 `WithinOwnNiche` precondition（玩家须在自己灵龛 5 格内）
 //! - [`command`]：P1 `/identity list / new / switch / rename` slash command
+//! - [`service`]：命令层使用的 identity 持久化服务边界
 //! - `DuguRevealedEvent` consumer 在 P2 (`dugu_consumer.rs`)；NPC 反应分级在 P3
 //! - 通用 `RevealedEvent` trait 在 P4 (`revealed.rs`)；gossip + agent + client UI 在 P5
 
@@ -20,6 +21,7 @@ pub mod precondition;
 pub mod reaction;
 pub mod revealed;
 pub mod scorer;
+pub mod service;
 pub mod wanted_player_emit;
 
 use std::collections::HashMap;

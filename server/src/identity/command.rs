@@ -24,12 +24,12 @@ use valence::prelude::{
 
 use super::events::{IdentityCreatedEvent, IdentitySwitchedEvent};
 use super::precondition::{check_within_own_niche, NichePreconditionError};
+use super::service;
 use super::{
     reputation_score, IdentityId, IdentityPersistenceLoadFailed, IdentityProfile, PlayerIdentities,
 };
 use crate::combat::components::Lifecycle;
 use crate::npc::movement::GameTick;
-use crate::persistence::identity as identity_db;
 use crate::persistence::PersistenceSettings;
 use crate::social::SpiritNicheRegistry;
 
@@ -467,9 +467,8 @@ fn save_identities(
         return;
     }
     let Some(settings) = persistence else { return };
-    let char_id = crate::player::state::canonical_player_id(username);
-    if let Err(error) = identity_db::save_player_identities(settings, &char_id, identities) {
-        tracing::warn!(?error, char_id, "[bong][identity] persistence save failed");
+    if let Err(error) = service::save_player_identities(settings, username, identities) {
+        tracing::warn!(?error, username, "[bong][identity] persistence save failed");
     }
 }
 
