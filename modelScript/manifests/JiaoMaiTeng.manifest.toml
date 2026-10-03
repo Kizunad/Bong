@@ -1,0 +1,17 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+scorch_bed = [52, 45, 40]
+char_black = [30, 27, 26]
+char_high = [68, 57, 50]
+ember_red = [184, 53, 25]
+ember_hot = [255, 106, 26]
+ash_leaf = [78, 67, 58]
+
+[features]
+scorched_bed = { elements = ["bed_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+charred_vines = { elements = ["vine_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+ember_core = { elements = ["ember_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+ash_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

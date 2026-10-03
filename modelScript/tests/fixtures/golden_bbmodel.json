@@ -262,6 +262,12 @@
    "HuiLiDan.bbmodel": "38e3861c8922b69fb10cb12cbe4f3e808b4f5564e37d83ae688c881faf2a8da8"
   }
  },
+ "gen_hui_yuan_zhi.py": {
+  "exit": 0,
+  "outputs": {
+   "HuiYuanZhi.bbmodel": "417579ea7ef140243eaa1cce68b87e1533824fa3763b1fd6c09921fc24be3476"
+  }
+ },
  "gen_huiyuan_pill.py": {
   "exit": 0,
   "outputs": {
@@ -325,6 +331,12 @@
   "exit": 0,
   "outputs": {
    "JianPlayerAnim.bbmodel": "9e9dd92558156ffdf64cd188780d0a21f48dff56cbc179b2cbbe51d643b8f11c"
+  }
+ },
+ "gen_jiao_mai_teng.py": {
+  "exit": 0,
+  "outputs": {
+   "JiaoMaiTeng.bbmodel": "6da9d69bcc91838bda08e9db70127e401a5fa84c4df171c3bc03141f6ba75d6e"
   }
  },
  "gen_jin_zhong_dan.py": {
@@ -484,6 +496,12 @@
    "armor/scroll_wrap/ScrollWrapLeggingsOnPlayer.bbmodel": "fb6155e9e3c4667f65209aa736962bbffd2d55a58ebee9fbc0cf5438ab2507eb"
   }
  },
+ "gen_shao_hou_man.py": {
+  "exit": 0,
+  "outputs": {
+   "ShaoHouMan.bbmodel": "aa68015534c7bb9330fff8e61876a99e7b3559bb15f741529f8521bddbe3e8ad"
+  }
+ },
  "gen_shi_ling_xian.py": {
   "exit": 0,
   "outputs": {
@@ -584,6 +602,12 @@
    "XuYuanRui.bbmodel": "bf72ab0aef2222fa6f0a61fc5d6d025948ad7195a979ee0969b4bf892da0fa1f"
   }
  },
+ "gen_xuan_gen_wei.py": {
+  "exit": 0,
+  "outputs": {
+   "XuanGenWei.bbmodel": "e4e8b915c6a266a63433f59d9d49e09a37be1c256804791975a2a4820e2dfd80"
+  }
+ },
  "gen_xuan_iron.py": {
   "exit": 0,
   "outputs": {
@@ -612,6 +636,12 @@
    "YangJingTai.bbmodel": "7140514237b7ea38b84fb927688a651df4285853c4a46b9733e76c968f405e6a"
   }
  },
+ "gen_ye_ku_teng.py": {
+  "exit": 0,
+  "outputs": {
+   "YeKuTeng.bbmodel": "84151cb9a3066e81278069d16fe7b3ef0c119b0ab202c7c6a32ed4d807b5428a"
+  }
+ },
  "gen_ying_yuan_gu.py": {
   "exit": 0,
   "outputs": {
@@ -632,6 +662,12 @@
   "exit": 0,
   "outputs": {
    "ZhenyuanMine.bbmodel": "18d35232ed47a46e9f0ced1398a548699914a118add61ce42c12f34ad269598d"
+  }
+ },
+ "gen_zhong_yan_teng.py": {
+  "exit": 0,
+  "outputs": {
+   "ZhongYanTeng.bbmodel": "e3c405d8031c89deb6c4ef37d8b8895d451de207b5f9939d3e7c87eba3e5fc1f"
   }
  },
  "gen_zhu_sha.py": {
