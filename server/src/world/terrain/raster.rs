@@ -1,3 +1,11 @@
+//! Read-only bridge from worldgen raster exports to runtime terrain sampling.
+//!
+//! Loading is deliberately staged: the manifest and palettes are validated
+//! first, sidecars are admitted next, and tile mmaps are opened last.  Each
+//! stage only prepares data; [`TerrainProvider::load_preflighted`] commits a
+//! provider after every diagnostic has been collected.  This keeps startup
+//! fail-closed while making a malformed export explainable in one report.
+
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
@@ -59,15 +67,22 @@ pub struct PlacementManifest {
 // worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LayerExportType {
+    /// Four-byte little-endian floating-point raster.
     F32,
+    /// One-byte unsigned integer raster.
     U8,
 }
 
+/// Runtime mirror of one worldgen layer's binary encoding and safe fallback.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayerSchema {
+    /// Stable worldgen layer name.
     pub name: &'static str,
+    /// On-disk scalar encoding.
     pub export_type: LayerExportType,
+    /// Fallback used when an optional floating-point layer is absent.
     pub safe_default_f32: Option<f32>,
+    /// Fallback used when an optional byte layer is absent.
     pub safe_default_u8: Option<u8>,
 }
 
@@ -197,9 +212,13 @@ fn decode_spans(count_bytes: &Mmap, spans_bytes: &Mmap, index: usize) -> ColumnS
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds2D {
+    /// Inclusive minimum world X.
     pub min_x: i32,
+    /// Inclusive maximum world X.
     pub max_x: i32,
+    /// Inclusive minimum world Z.
     pub min_z: i32,
+    /// Inclusive maximum world Z.
     pub max_z: i32,
 }
 
@@ -210,10 +229,15 @@ pub struct Bounds2D {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct WildPlantSpawnPoint {
+    /// Stable worldgen identifier used for persistence and deduplication.
     pub id: u64,
+    /// Plant catalog identifier.
     pub plant_id: String,
+    /// Zone identifier used by gameplay refresh rules.
     pub zone_name: String,
+    /// Absolute world position `[x, y, z]`.
     pub position: [i32; 3],
+    /// Suggested regeneration interval in ticks.
     #[serde(default)]
     pub regen_ticks: u64,
 }
@@ -227,6 +251,7 @@ struct WildPlantSpawnFile {
 
 #[allow(dead_code)]
 impl Bounds2D {
+    /// Test whether an X/Z coordinate lies inside the inclusive bounds.
     pub fn contains(&self, x: i32, z: i32) -> bool {
         x >= self.min_x && x <= self.max_x && z >= self.min_z && z <= self.max_z
     }
@@ -406,6 +431,11 @@ impl ColumnSample {
     }
 }
 
+/// Immutable terrain data admitted from one raster export.
+///
+/// The provider owns the decoded manifest metadata and memory maps the binary
+/// layers.  Runtime sampling never re-reads the manifest or follows asset
+/// paths, so changing files after startup cannot change an admitted world.
 #[derive(Debug)]
 pub struct TerrainProvider {
     tiles: HashMap<(i32, i32), TileFields>,
@@ -438,7 +468,7 @@ pub struct TerrainProvider {
 
 impl Resource for TerrainProvider {}
 
-/// Per-dimension `TerrainProvider` map (plan-tsy-dimension-v1 §2.2).
+/// Per-dimension [`TerrainProvider`] map (plan-tsy-dimension-v1 §2.2).
 ///
 /// Inserted alongside the legacy `TerrainProvider` resource so existing
 /// overworld-only consumers keep compiling. New / TSY-aware consumers should
@@ -448,13 +478,16 @@ impl Resource for TerrainProvider {}
 /// TSY raster manifest is not yet produced; once worldgen lands the field
 /// becomes mandatory (§6 contract).
 pub struct TerrainProviders {
+    /// Required overworld provider.
     pub overworld: TerrainProvider,
     #[allow(dead_code)]
+    /// Optional TSY provider while that dimension's export is transitional.
     pub tsy: Option<TerrainProvider>,
 }
 
 impl Resource for TerrainProviders {}
 
+/// Deterministic error set produced while admitting one raster export.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TerrainLoadError {
     diagnostics: Vec<String>,
@@ -503,6 +536,38 @@ impl TerrainProviders {
             DimensionKind::Tsy => self.tsy.as_ref(),
         }
     }
+}
+
+/// Results of validating manifest-owned metadata before any tile is mmaped.
+///
+/// `None` values mean that a diagnostic was recorded for that input.  Keeping
+/// the optional values lets tile admission continue and report independent
+/// errors from the same startup attempt instead of hiding them behind the first
+/// invalid palette.
+#[derive(Default)]
+struct ManifestPreflight {
+    bot_fixture: Option<BotRasterFixture>,
+    tile_area: Option<usize>,
+    surface_palette: Option<Vec<BlockState>>,
+    biome_palette: Option<Vec<BiomeId>>,
+    decoration_palette: Option<Vec<Option<Decoration>>>,
+    diagnostics: Vec<String>,
+}
+
+/// Sidecar inputs admitted beside a raster manifest.
+struct RasterSidecars {
+    placement: Option<(PlacementIndex, usize)>,
+    wild_plant_points: Vec<WildPlantSpawnPoint>,
+    raster_root: Option<PathBuf>,
+}
+
+/// Shared immutable context for one tile admission.
+struct TileLoadContext<'a> {
+    manifest: &'a RasterManifest,
+    raster_dir: &'a Path,
+    raster_root: &'a Path,
+    tile_area: usize,
+    decoration_palette: &'a [Option<Decoration>],
 }
 
 #[derive(Debug)]
@@ -649,7 +714,9 @@ struct ManifestBotFixture {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BotRasterFixture {
+    /// Fixture kind understood by the bot harness.
     pub kind: String,
+    /// Authored token used to prove the manifest and raster agree.
     pub token: String,
 }
 
@@ -782,29 +849,48 @@ struct ManifestFossilBbox {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+/// A point of interest exported in the terrain manifest.
 pub struct Poi {
+    /// Zone identifier.
     pub zone: String,
+    /// Gameplay category.
     pub kind: String,
+    /// Authored display/name key.
     pub name: String,
+    /// Absolute floating-point position.
     pub pos_xyz: [f32; 3],
+    /// World or gameplay tags.
     pub tags: Vec<String>,
+    /// Unlock condition key.
     pub unlock: String,
+    /// Local qi affinity metadata.
     pub qi_affinity: f32,
+    /// Local danger bias metadata.
     pub danger_bias: i32,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+/// One manifest decoration entry after strict block lowering.
 pub struct Decoration {
+    /// Global byte id used by raster decoration layers.
     pub global_id: u32,
+    /// Worldgen profile identifier.
     pub profile: String,
+    /// Profile-local id.
     pub local_id: u32,
+    /// Authored decoration name.
     pub name: String,
+    /// Placement family (tree, flower, ground cover, ...).
     pub kind: String,
+    /// Source block names retained for diagnostics and metadata.
     pub blocks: Vec<String>,
     pub(crate) resolved_blocks: Vec<BlockState>,
+    /// Inclusive authored size range.
     pub size_range: [i32; 2],
+    /// Relative placement rarity from worldgen.
     pub rarity: f32,
+    /// Free-form worldgen notes.
     pub notes: String,
     /// worldgen-v4 P6 §8.1 — relative paths (under `server/structures/`) of the
     /// authored NBT variants for this decoration. Empty ⇒ this decoration stays
@@ -831,16 +917,418 @@ impl Decoration {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+/// One fossil spawn envelope exported by worldgen.
 pub struct FossilBbox {
+    /// Zone containing this fossil envelope.
     pub zone: String,
+    /// Authored fossil name.
     pub name: String,
+    /// Envelope center in world X/Z.
     pub center_xz: [i32; 2],
+    /// Envelope center Y.
     pub center_y: i32,
+    /// Inclusive minimum world X.
     pub min_x: i32,
+    /// Inclusive maximum world X.
     pub max_x: i32,
+    /// Inclusive minimum world Z.
     pub min_z: i32,
+    /// Inclusive maximum world Z.
     pub max_z: i32,
+    /// Maximum number of units the gameplay system may materialize.
     pub max_units: u32,
+}
+
+fn finish_load_with_nbt_diagnostics(
+    nbt_diagnostics: &[String],
+    terrain_result: Result<TerrainProvider, TerrainLoadError>,
+) -> Result<TerrainProvider, String> {
+    let mut diagnostics = nbt_diagnostics
+        .iter()
+        .map(|diagnostic| format!("nbt: {diagnostic}"))
+        .collect::<Vec<_>>();
+    match terrain_result {
+        Ok(provider) if diagnostics.is_empty() => Ok(provider),
+        Ok(_) => Err(TerrainLoadError::new(diagnostics).to_string()),
+        Err(error) => {
+            diagnostics.extend(error.diagnostics().iter().cloned());
+            Err(TerrainLoadError::new(diagnostics).to_string())
+        }
+    }
+}
+
+fn read_raster_manifest(manifest_path: &Path) -> Result<RasterManifest, TerrainLoadError> {
+    let manifest_text = std::fs::read_to_string(manifest_path).map_err(|error| {
+        TerrainLoadError::new([format!(
+            "manifest: failed to read terrain raster manifest {}: {error}",
+            manifest_path.display()
+        )])
+    })?;
+    serde_json::from_str(&manifest_text).map_err(|error| {
+        TerrainLoadError::new([format!(
+            "manifest: failed to parse terrain raster manifest {}: {error}",
+            manifest_path.display()
+        )])
+    })
+}
+
+fn preflight_manifest(
+    manifest: &RasterManifest,
+    manifest_path: &Path,
+    biomes: &BiomeRegistry,
+    registry: &super::nbt_registry::DecorationNbtRegistry,
+) -> ManifestPreflight {
+    let mut preflight = ManifestPreflight::default();
+    if let Err(error) = validate_manifest_version(manifest.version, manifest_path) {
+        preflight.diagnostics.push(format!("manifest: {error}"));
+    }
+    preflight.bot_fixture = validate_manifest_bot_fixture(
+        manifest.bot_fixture.as_ref(),
+        manifest_path,
+        &mut preflight.diagnostics,
+    );
+    preflight.tile_area = validate_tile_area(manifest.tile_size, &mut preflight.diagnostics);
+    preflight.surface_palette = resolve_manifest_surface_palette(
+        &manifest.surface_palette,
+        manifest_path,
+        &mut preflight.diagnostics,
+    );
+    preflight.biome_palette =
+        resolve_manifest_biome_palette(&manifest.biome_palette, biomes, &mut preflight.diagnostics);
+    collect_decoration_template_diagnostics(
+        &manifest.global_decoration_palette,
+        registry,
+        &mut preflight.diagnostics,
+    );
+    preflight.decoration_palette = resolve_manifest_decoration_palette(
+        &manifest.global_decoration_palette,
+        manifest_path,
+        &mut preflight.diagnostics,
+    );
+    preflight
+}
+
+fn validate_manifest_bot_fixture(
+    fixture: Option<&ManifestBotFixture>,
+    manifest_path: &Path,
+    diagnostics: &mut Vec<String>,
+) -> Option<BotRasterFixture> {
+    let fixture = fixture.map(|fixture| ManifestBotFixture {
+        kind: fixture.kind.clone(),
+        token: fixture.token.clone(),
+        _surface_y: fixture._surface_y,
+        _support: fixture._support.clone(),
+        _feet_y: fixture._feet_y,
+        _head_y: fixture._head_y,
+    });
+    match validate_bot_fixture(fixture, manifest_path) {
+        Ok(fixture) => fixture,
+        Err(error) => {
+            diagnostics.push(format!("manifest: {error}"));
+            None
+        }
+    }
+}
+
+fn validate_tile_area(tile_size: i32, diagnostics: &mut Vec<String>) -> Option<usize> {
+    match tile_size {
+        tile_size if tile_size > 0 => match tile_size
+            .checked_mul(tile_size)
+            .and_then(|area| usize::try_from(area).ok())
+        {
+            Some(tile_area) => Some(tile_area),
+            None => {
+                diagnostics.push(
+                    "manifest: tile_size squared overflowed while loading rasters".to_string(),
+                );
+                None
+            }
+        },
+        _ => {
+            diagnostics.push("manifest: tile_size must be positive".to_string());
+            None
+        }
+    }
+}
+
+fn resolve_manifest_surface_palette(
+    names: &[String],
+    manifest_path: &Path,
+    diagnostics: &mut Vec<String>,
+) -> Option<Vec<BlockState>> {
+    match resolve_surface_palette(names, manifest_path) {
+        Ok(palette) if !palette.is_empty() => Some(palette),
+        Ok(_) => {
+            diagnostics.push("manifest: surface palette cannot be empty".to_string());
+            None
+        }
+        Err(error) => {
+            diagnostics.extend(prefix_multiline_diagnostics("surface", &error));
+            None
+        }
+    }
+}
+
+fn resolve_manifest_biome_palette(
+    names: &[String],
+    biomes: &BiomeRegistry,
+    diagnostics: &mut Vec<String>,
+) -> Option<Vec<BiomeId>> {
+    let mut resolved = Vec::with_capacity(names.len());
+    let mut errors = Vec::new();
+    for (index, name) in names.iter().enumerate() {
+        match biome_id_from_name(name, biomes) {
+            Ok(id) => resolved.push(id),
+            Err(error) => errors.push(format!(
+                "manifest: biome_palette #{} '{}': {error}",
+                index + 1,
+                name
+            )),
+        }
+    }
+    if !errors.is_empty() {
+        diagnostics.extend(errors);
+        None
+    } else if resolved.is_empty() {
+        diagnostics.push("manifest: biome palette cannot be empty".to_string());
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
+fn resolve_manifest_decoration_palette(
+    decorations: &[ManifestDecoration],
+    manifest_path: &Path,
+    diagnostics: &mut Vec<String>,
+) -> Option<Vec<Option<Decoration>>> {
+    match resolve_decoration_palette(decorations.to_vec(), manifest_path) {
+        Ok(palette) => Some(palette),
+        Err(error) => {
+            diagnostics.extend(prefix_multiline_diagnostics("decoration", &error));
+            None
+        }
+    }
+}
+
+fn load_raster_sidecars(
+    manifest: &RasterManifest,
+    raster_dir: &Path,
+) -> (RasterSidecars, Vec<String>) {
+    let mut diagnostics = Vec::new();
+    let placement = match load_placement_index(&raster_dir.join("placement_manifest.json")) {
+        Ok(placement) => Some(placement),
+        Err(error) => {
+            diagnostics.extend(prefix_multiline_diagnostics("placement", &error));
+            None
+        }
+    };
+    let wild_plant_points = match load_wild_plant_points(
+        &raster_dir.join("wild_plant_points.json"),
+        &manifest.world_bounds,
+    ) {
+        Ok(points) => points,
+        Err(error) => {
+            diagnostics.extend(prefix_multiline_diagnostics("wild plant", &error));
+            Vec::new()
+        }
+    };
+    let raster_root = match std::fs::canonicalize(raster_dir) {
+        Ok(root) => Some(root),
+        Err(error) => {
+            diagnostics.push(format!(
+                "raster: failed to anchor raster directory {}: {error}",
+                raster_dir.display()
+            ));
+            None
+        }
+    };
+    (
+        RasterSidecars {
+            placement,
+            wild_plant_points,
+            raster_root,
+        },
+        diagnostics,
+    )
+}
+
+fn load_raster_tiles(
+    manifest: &RasterManifest,
+    raster_dir: &Path,
+    preflight: &ManifestPreflight,
+    raster_root: Option<&Path>,
+    diagnostics: &mut Vec<String>,
+) -> HashMap<(i32, i32), TileFields> {
+    let (Some(tile_area), Some(raster_root)) = (preflight.tile_area, raster_root) else {
+        return HashMap::new();
+    };
+    let context = TileLoadContext {
+        manifest,
+        raster_dir,
+        raster_root,
+        tile_area,
+        decoration_palette: preflight.decoration_palette.as_deref().unwrap_or(&[]),
+    };
+    let mut tiles = HashMap::with_capacity(manifest.tiles.len());
+    for tile in &manifest.tiles {
+        match load_one_raster_tile(tile, &context, diagnostics) {
+            Ok(tile_fields) => {
+                tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
+            }
+            Err(error) => diagnostics.push(format!("raster: {error}")),
+        }
+    }
+    tiles
+}
+
+fn load_one_raster_tile(
+    tile: &ManifestTile,
+    context: &TileLoadContext<'_>,
+    diagnostics: &mut Vec<String>,
+) -> Result<TileFields, String> {
+    for layer_name in &tile.layers {
+        if layer_schema(layer_name).is_none() {
+            diagnostics.push(format!(
+                "raster: tile ({},{}) '{}' declares unknown layer '{}', not present in the canonical layer registry",
+                tile.tile_x, tile.tile_z, tile.dir, layer_name
+            ));
+        }
+    }
+    let tile_dir = context.raster_dir.join(&tile.dir);
+    let tile_fields = TileFields::load(
+        &tile_dir,
+        context.raster_root,
+        &tile.layers,
+        context.tile_area,
+    )?;
+    collect_tile_palette_diagnostics(tile, &tile_fields, context, diagnostics);
+    Ok(tile_fields)
+}
+
+fn collect_tile_palette_diagnostics(
+    tile: &ManifestTile,
+    tile_fields: &TileFields,
+    context: &TileLoadContext<'_>,
+    diagnostics: &mut Vec<String>,
+) {
+    collect_palette_id_diagnostics(
+        tile,
+        "surface_id",
+        &tile_fields.surface_id,
+        "surface palette",
+        context.manifest.surface_palette.len(),
+        diagnostics,
+    );
+    collect_palette_id_diagnostics(
+        tile,
+        "subsurface_id",
+        &tile_fields.subsurface_id,
+        "surface palette",
+        context.manifest.surface_palette.len(),
+        diagnostics,
+    );
+    collect_palette_id_diagnostics(
+        tile,
+        "biome_id",
+        &tile_fields.biome_id,
+        "biome palette",
+        context.manifest.biome_palette.len(),
+        diagnostics,
+    );
+    for (layer_name, bytes) in [
+        ("flora_variant_id", tile_fields.flora_variant_id.as_ref()),
+        ("ground_cover_id", tile_fields.ground_cover_id.as_ref()),
+    ] {
+        if let Some(bytes) = bytes {
+            collect_decoration_palette_id_diagnostics(
+                tile,
+                layer_name,
+                bytes,
+                context.decoration_palette,
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn build_terrain_provider(
+    manifest: RasterManifest,
+    preflight: ManifestPreflight,
+    sidecars: RasterSidecars,
+    tiles: HashMap<(i32, i32), TileFields>,
+) -> TerrainProvider {
+    let surface_palette = preflight
+        .surface_palette
+        .expect("validated surface palette must be present");
+    let biome_palette = preflight
+        .biome_palette
+        .expect("validated biome palette must be present");
+    let decoration_palette = preflight
+        .decoration_palette
+        .expect("validated decoration palette must be present");
+    let (placement_index, placement_block_count) = sidecars
+        .placement
+        .expect("validated placement index must be present");
+    let default_wilderness_biome = biome_palette[0];
+    let forest_wilderness_biome = biome_palette
+        .get(7)
+        .copied()
+        .unwrap_or(default_wilderness_biome);
+    let river_wilderness_biome = biome_palette
+        .get(8)
+        .copied()
+        .unwrap_or(default_wilderness_biome);
+    let pois = manifest_pois_into_runtime(manifest.pois);
+    let anomaly_kinds = manifest
+        .anomaly_kinds
+        .into_iter()
+        .filter_map(|(key, value)| key.parse::<u8>().ok().map(|id| (id, value)))
+        .collect();
+    let abyssal_tier_floor_y = manifest
+        .abyssal_tier_floor_y
+        .into_iter()
+        .filter_map(|(key, value)| key.parse::<u8>().ok().map(|tier| (tier, value)))
+        .collect();
+    let fossil_bboxes = manifest
+        .fossil_bboxes
+        .into_iter()
+        .map(|raw| FossilBbox {
+            zone: raw.zone,
+            name: raw.name,
+            center_xz: raw.center_xz,
+            center_y: raw.center_y,
+            min_x: raw.min_x,
+            max_x: raw.max_x,
+            min_z: raw.min_z,
+            max_z: raw.max_z,
+            max_units: raw.max_units,
+        })
+        .collect();
+    TerrainProvider {
+        tiles,
+        tile_size: manifest.tile_size,
+        world_bounds: Bounds2D {
+            min_x: manifest.world_bounds.min_x,
+            max_x: manifest.world_bounds.max_x,
+            min_z: manifest.world_bounds.min_z,
+            max_z: manifest.world_bounds.max_z,
+        },
+        surface_palette,
+        biome_palette,
+        default_wilderness_biome,
+        forest_wilderness_biome,
+        river_wilderness_biome,
+        pois,
+        anomaly_kinds,
+        decoration_palette,
+        abyssal_tier_floor_y,
+        fossil_bboxes,
+        placement_index,
+        placement_block_count,
+        wild_plant_points: sidecars.wild_plant_points,
+        bot_fixture: preflight.bot_fixture,
+    }
 }
 
 impl TerrainProvider {
@@ -979,288 +1467,43 @@ impl TerrainProvider {
         biomes: &BiomeRegistry,
     ) -> Result<Self, String> {
         let nbt_preflight = super::nbt_registry::DecorationNbtRegistry::prepare_default();
-        let mut diagnostics = nbt_preflight
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| format!("nbt: {diagnostic}"))
-            .collect::<Vec<_>>();
-        let provider = match Self::load_preflighted(
-            manifest_path,
-            raster_dir,
-            biomes,
-            nbt_preflight.candidate(),
-        ) {
-            Ok(provider) => Some(provider),
-            Err(error) => {
-                diagnostics.extend(error.diagnostics().iter().cloned());
-                None
-            }
-        };
-        if diagnostics.is_empty() {
-            Ok(provider.expect("diagnostic-free raster preflight must produce a provider"))
-        } else {
-            Err(TerrainLoadError::new(diagnostics).to_string())
-        }
+        let provider =
+            Self::load_preflighted(manifest_path, raster_dir, biomes, nbt_preflight.candidate());
+        finish_load_with_nbt_diagnostics(nbt_preflight.diagnostics(), provider)
     }
 
+    /// Admit a raster after the shared NBT candidate has been prepared.
+    ///
+    /// This is crate-visible because the world bootstrap must validate the
+    /// overworld and optional TSY exports against one candidate registry before
+    /// committing any runtime resources.  The public [`Self::load`] wrapper is
+    /// the standalone entry point for callers that do not already have a
+    /// preflight candidate.
     pub(crate) fn load_preflighted(
         manifest_path: &Path,
         raster_dir: &Path,
         biomes: &BiomeRegistry,
         registry: &super::nbt_registry::DecorationNbtRegistry,
     ) -> Result<Self, TerrainLoadError> {
-        let manifest_text = std::fs::read_to_string(manifest_path).map_err(|error| {
-            TerrainLoadError::new([format!(
-                "manifest: failed to read terrain raster manifest {}: {error}",
-                manifest_path.display()
-            )])
-        })?;
-        let manifest: RasterManifest = serde_json::from_str(&manifest_text).map_err(|error| {
-            TerrainLoadError::new([format!(
-                "manifest: failed to parse terrain raster manifest {}: {error}",
-                manifest_path.display()
-            )])
-        })?;
-
-        let mut diagnostics = Vec::new();
-        if let Err(error) = validate_manifest_version(manifest.version, manifest_path) {
-            diagnostics.push(format!("manifest: {error}"));
-        }
-        let bot_fixture = match validate_bot_fixture(manifest.bot_fixture, manifest_path) {
-            Ok(fixture) => Some(fixture),
-            Err(error) => {
-                diagnostics.push(format!("manifest: {error}"));
-                None
-            }
-        };
-        let tile_area = match manifest.tile_size {
-            tile_size if tile_size > 0 => match tile_size
-                .checked_mul(tile_size)
-                .and_then(|area| usize::try_from(area).ok())
-            {
-                Some(tile_area) => Some(tile_area),
-                None => {
-                    diagnostics.push(
-                        "manifest: tile_size squared overflowed while loading rasters".to_string(),
-                    );
-                    None
-                }
-            },
-            _ => {
-                diagnostics.push("manifest: tile_size must be positive".to_string());
-                None
-            }
-        };
-        let surface_palette =
-            match resolve_surface_palette(&manifest.surface_palette, manifest_path) {
-                Ok(palette) if !palette.is_empty() => Some(palette),
-                Ok(_) => {
-                    diagnostics.push("manifest: surface palette cannot be empty".to_string());
-                    None
-                }
-                Err(error) => {
-                    diagnostics.extend(prefix_multiline_diagnostics("surface", &error));
-                    None
-                }
-            };
-        let mut resolved_biomes = Vec::with_capacity(manifest.biome_palette.len());
-        let mut biome_errors = Vec::new();
-        for (index, name) in manifest.biome_palette.iter().enumerate() {
-            match biome_id_from_name(name, biomes) {
-                Ok(id) => resolved_biomes.push(id),
-                Err(error) => biome_errors.push(format!(
-                    "manifest: biome_palette #{} '{}': {error}",
-                    index + 1,
-                    name
-                )),
-            }
-        }
-        let biome_palette = if !biome_errors.is_empty() {
-            diagnostics.extend(biome_errors);
-            None
-        } else if resolved_biomes.is_empty() {
-            diagnostics.push("manifest: biome palette cannot be empty".to_string());
-            None
-        } else {
-            Some(resolved_biomes)
-        };
-
-        collect_decoration_template_diagnostics(
-            &manifest.global_decoration_palette,
-            registry,
+        let manifest = read_raster_manifest(manifest_path)?;
+        let mut preflight = preflight_manifest(&manifest, manifest_path, biomes, registry);
+        let (sidecars, sidecar_diagnostics) = load_raster_sidecars(&manifest, raster_dir);
+        preflight.diagnostics.extend(sidecar_diagnostics);
+        let mut diagnostics = std::mem::take(&mut preflight.diagnostics);
+        let tiles = load_raster_tiles(
+            &manifest,
+            raster_dir,
+            &preflight,
+            sidecars.raster_root.as_deref(),
             &mut diagnostics,
         );
-        let decoration_palette = match resolve_decoration_palette(
-            manifest.global_decoration_palette.clone(),
-            manifest_path,
-        ) {
-            Ok(palette) => Some(palette),
-            Err(error) => {
-                diagnostics.extend(prefix_multiline_diagnostics("decoration", &error));
-                None
-            }
-        };
+        preflight.diagnostics = diagnostics;
 
-        let sidecar_path = raster_dir.join("placement_manifest.json");
-        let placement = match load_placement_index(&sidecar_path) {
-            Ok(placement) => Some(placement),
-            Err(error) => {
-                diagnostics.extend(prefix_multiline_diagnostics("placement", &error));
-                None
-            }
-        };
-
-        let wild_plant_points = match load_wild_plant_points(
-            &raster_dir.join("wild_plant_points.json"),
-            &manifest.world_bounds,
-        ) {
-            Ok(points) => points,
-            Err(error) => {
-                diagnostics.extend(prefix_multiline_diagnostics("wild plant", &error));
-                Vec::new()
-            }
-        };
-
-        let raster_root = match std::fs::canonicalize(raster_dir) {
-            Ok(root) => Some(root),
-            Err(error) => {
-                diagnostics.push(format!(
-                    "raster: failed to anchor raster directory {}: {error}",
-                    raster_dir.display()
-                ));
-                None
-            }
-        };
-        let mut tiles = HashMap::with_capacity(manifest.tiles.len());
-        if let (Some(tile_area), Some(raster_root)) = (tile_area, raster_root.as_deref()) {
-            for tile in &manifest.tiles {
-                for layer_name in &tile.layers {
-                    if layer_schema(layer_name).is_none() {
-                        diagnostics.push(format!(
-                            "raster: tile ({},{}) '{}' declares unknown layer '{}', not present in the canonical layer registry",
-                            tile.tile_x, tile.tile_z, tile.dir, layer_name
-                        ));
-                    }
-                }
-                let tile_dir = raster_dir.join(&tile.dir);
-                match TileFields::load(&tile_dir, raster_root, &tile.layers, tile_area) {
-                    Ok(tile_fields) => {
-                        collect_palette_id_diagnostics(
-                            tile,
-                            "surface_id",
-                            &tile_fields.surface_id,
-                            "surface palette",
-                            manifest.surface_palette.len(),
-                            &mut diagnostics,
-                        );
-                        collect_palette_id_diagnostics(
-                            tile,
-                            "subsurface_id",
-                            &tile_fields.subsurface_id,
-                            "surface palette",
-                            manifest.surface_palette.len(),
-                            &mut diagnostics,
-                        );
-                        collect_palette_id_diagnostics(
-                            tile,
-                            "biome_id",
-                            &tile_fields.biome_id,
-                            "biome palette",
-                            manifest.biome_palette.len(),
-                            &mut diagnostics,
-                        );
-                        for (layer_name, bytes) in [
-                            ("flora_variant_id", tile_fields.flora_variant_id.as_ref()),
-                            ("ground_cover_id", tile_fields.ground_cover_id.as_ref()),
-                        ] {
-                            if let Some(bytes) = bytes {
-                                collect_decoration_palette_id_diagnostics(
-                                    tile,
-                                    layer_name,
-                                    bytes,
-                                    decoration_palette.as_deref().unwrap_or(&[]),
-                                    &mut diagnostics,
-                                );
-                            }
-                        }
-                        tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
-                    }
-                    Err(error) => diagnostics.push(format!("raster: {error}")),
-                }
-            }
+        if !preflight.diagnostics.is_empty() {
+            return Err(TerrainLoadError::new(preflight.diagnostics));
         }
 
-        if !diagnostics.is_empty() {
-            return Err(TerrainLoadError::new(diagnostics));
-        }
-
-        let surface_palette = surface_palette.expect("validated surface palette must be present");
-        let biome_palette = biome_palette.expect("validated biome palette must be present");
-        let decoration_palette =
-            decoration_palette.expect("validated decoration palette must be present");
-        let (placement_index, placement_block_count) =
-            placement.expect("validated placement index must be present");
-        let default_wilderness_biome = biome_palette[0];
-        let forest_wilderness_biome = biome_palette
-            .get(7)
-            .copied()
-            .unwrap_or(default_wilderness_biome);
-        let river_wilderness_biome = biome_palette
-            .get(8)
-            .copied()
-            .unwrap_or(default_wilderness_biome);
-
-        let pois = manifest_pois_into_runtime(manifest.pois);
-        let anomaly_kinds = manifest
-            .anomaly_kinds
-            .into_iter()
-            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|id| (id, v)))
-            .collect::<HashMap<u8, String>>();
-        let abyssal_tier_floor_y = manifest
-            .abyssal_tier_floor_y
-            .into_iter()
-            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|tier| (tier, v)))
-            .collect::<HashMap<u8, f32>>();
-        let fossil_bboxes = manifest
-            .fossil_bboxes
-            .into_iter()
-            .map(|raw| FossilBbox {
-                zone: raw.zone,
-                name: raw.name,
-                center_xz: raw.center_xz,
-                center_y: raw.center_y,
-                min_x: raw.min_x,
-                max_x: raw.max_x,
-                min_z: raw.min_z,
-                max_z: raw.max_z,
-                max_units: raw.max_units,
-            })
-            .collect::<Vec<_>>();
-
-        Ok(Self {
-            tiles,
-            tile_size: manifest.tile_size,
-            world_bounds: Bounds2D {
-                min_x: manifest.world_bounds.min_x,
-                max_x: manifest.world_bounds.max_x,
-                min_z: manifest.world_bounds.min_z,
-                max_z: manifest.world_bounds.max_z,
-            },
-            surface_palette,
-            biome_palette,
-            default_wilderness_biome,
-            forest_wilderness_biome,
-            river_wilderness_biome,
-            pois,
-            anomaly_kinds,
-            decoration_palette,
-            abyssal_tier_floor_y,
-            fossil_bboxes,
-            placement_index,
-            placement_block_count,
-            wild_plant_points,
-            bot_fixture: bot_fixture.expect("validated bot fixture result must be present"),
-        })
+        Ok(build_terrain_provider(manifest, preflight, sidecars, tiles))
     }
 
     /// Zone-scoped POI list from the worldgen blueprint.
