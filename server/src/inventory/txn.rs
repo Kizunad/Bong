@@ -481,6 +481,11 @@ impl<'a> InventoryTxn<'a> {
                 instance_id: request.instance_id,
             },
         )?;
+        if entry.instance_id != request.instance_id {
+            return Err(InventoryTxnError::IdentityMismatch {
+                instance_id: request.instance_id,
+            });
+        }
         if entry.dimension != authorization.dimension {
             return Err(InventoryTxnError::WrongDimension);
         }
@@ -980,6 +985,50 @@ mod tests {
             .expect_err("cross-dimension pickup is forbidden");
         assert_eq!(error, InventoryTxnError::WrongDimension);
         assert!(drops.entries.contains_key(&9));
+    }
+
+    #[test]
+    fn pickup_rejects_registry_key_identity_mismatch_without_mutation() {
+        let mut inventory = inventory(1, 1, Vec::new());
+        let before_inventory = inventory.clone();
+        let registry = registry();
+        let mut allocator = InventoryInstanceIdAllocator::new(20);
+        let mut drops = DroppedLootRegistry::default();
+        drops.entries.insert(
+            9,
+            DroppedLootEntry {
+                instance_id: 10,
+                source_container_id: "player:alice".to_string(),
+                source_row: 0,
+                source_col: 0,
+                world_pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+                item: item(10, "ore", 1),
+            },
+        );
+        let before_drops = drops.clone();
+        let mut txn = InventoryTxn::new(&mut inventory, &registry, &mut allocator);
+        let error = txn
+            .pickup_and_merge(
+                PickupRequest::new("identity-mismatch", 9),
+                PickupAuthorization::new(
+                    "player:alice",
+                    DimensionKind::Overworld,
+                    [0.0, 64.0, 0.0],
+                    2.5,
+                ),
+                &mut drops,
+            )
+            .expect_err("registry key and entry identity must agree");
+        assert_eq!(
+            error,
+            InventoryTxnError::IdentityMismatch { instance_id: 9 }
+        );
+        assert_eq!(
+            serde_json::to_value(&inventory).expect("inventory should serialize"),
+            serde_json::to_value(&before_inventory).expect("inventory snapshot should serialize")
+        );
+        assert_eq!(drops.entries, before_drops.entries);
     }
 
     #[test]
