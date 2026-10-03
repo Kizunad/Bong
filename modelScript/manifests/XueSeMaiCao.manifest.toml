@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_bloody = [45, 32, 34]
+stem_base = [55, 45, 48]
+leaf_red = [192, 42, 26]      # #c02a1a 鲜赤红
+leaf_cyan = [42, 168, 160]    # #2aa8a0 亮青绿
+vein_bright = [240, 85, 65]
+
+[features]
+soil_base = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+red_fan_leaves = { elements = ["red_"], must_show_in = ["FRONT", "SIDE_L", "BACK", "3/4", "TOP"], min_px = 1 }
+cyan_fan_leaves = { elements = ["cyan_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "3/4", "TOP"], min_px = 1 }
+central_ridge = { elements = ["ridge_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

@@ -33,12 +33,35 @@ const PLANTS = {
     kong_shou_hen: "KongShouHen",
     ling_jing_xu: "LingJingXu",
     bai_yan_peng: "BaiYanPeng",
+    // 第 3 批：藤蔓
     jiao_mai_teng: "JiaoMaiTeng",
     ye_ku_teng: "YeKuTeng",
     zhong_yan_teng: "ZhongYanTeng",
     shao_hou_man: "ShaoHouMan",
     xuan_gen_wei: "XuanGenWei",
     hui_yuan_zhi: "HuiYuanZhi",
+    // 第 4 批：草本 / 蕨
+    spirit_grass: "SpiritGrass",
+    ning_mai_cao: "NingMaiCao",
+    ci_she_hao: "CiSheHao",
+    qing_zhuo_cao: "QingZhuoCao",
+    xue_se_mai_cao: "XueSeMaiCao",
+    fu_chen_cao: "FuChenCao",
+    fu_yuan_jue: "FuYuanJue",
+    zhen_jie_zi: "ZhenJieZi",
+    // 第 5 批：花 / 兰 / 蕊
+    fu_you_hua: "FuYouHua",
+    jie_gu_rui: "JieGuRui",
+    mao_xin_wei: "MaoXinWei",
+    yun_ding_lan: "YunDingLan",
+    yuan_ni_hong_yu: "YuanNiHongYu",
+    duan_ji_ci: "DuanJiCi",
+    // 第 6 批：果实 / 根
+    an_shen_guo: "AnShenGuo",
+    wu_yan_guo: "WuYanGuo",
+    "food.spirit_fruit.ling_guo": "LingGuo",
+    tian_nu_jiao: "TianNuJiao",
+    shi_mai_gen: "ShiMaiGen",
 };
 
 function centerModel(source) {

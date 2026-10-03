@@ -18,14 +18,15 @@
             "texture": "bong-client:textures/gui/botany/stages/an_shen_guo_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/an_shen_guo.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/an_shen_guo.png"
+            "texture": "bong:textures/entity/plants/an_shen_guo.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -288,14 +289,15 @@
             "texture": "bong-client:textures/gui/botany/stages/ci_she_hao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/ci_she_hao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/ci_she_hao.png"
+            "texture": "bong:textures/entity/plants/ci_she_hao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -343,14 +345,15 @@
             "texture": "bong-client:textures/gui/botany/stages/duan_ji_ci_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/duan_ji_ci.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/duan_ji_ci.png"
+            "texture": "bong:textures/entity/plants/duan_ji_ci.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -423,14 +426,15 @@
       "visual": {
         "stages": {
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/food.spirit_fruit.ling_guo.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "minecraft:textures/block/grass.png"
+            "texture": "bong:textures/entity/plants/food.spirit_fruit.ling_guo.png"
           }
         },
         "tint_rgb": 10543200
@@ -478,14 +482,15 @@
             "texture": "bong-client:textures/gui/botany/stages/fu_chen_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/fu_chen_cao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/fu_chen_cao.png"
+            "texture": "bong:textures/entity/plants/fu_chen_cao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -534,14 +539,15 @@
             "texture": "bong-client:textures/gui/botany/stages/fu_you_hua_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/fu_you_hua.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/fu_you_hua.png"
+            "texture": "bong:textures/entity/plants/fu_you_hua.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -589,14 +595,15 @@
             "texture": "bong-client:textures/gui/botany/stages/fu_yuan_jue_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/fu_yuan_jue.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/fu_yuan_jue.png"
+            "texture": "bong:textures/entity/plants/fu_yuan_jue.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -971,14 +978,15 @@
             "texture": "bong-client:textures/gui/botany/stages/jie_gu_rui_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/jie_gu_rui.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/jie_gu_rui.png"
+            "texture": "bong:textures/entity/plants/jie_gu_rui.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1381,14 +1389,15 @@
             "texture": "bong-client:textures/gui/botany/stages/mao_xin_wei_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/mao_xin_wei.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/mao_xin_wei.png"
+            "texture": "bong:textures/entity/plants/mao_xin_wei.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1545,14 +1554,15 @@
             "texture": "bong-client:textures/gui/botany/stages/ning_mai_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/ning_mai_cao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/ning_mai_cao.png"
+            "texture": "bong:textures/entity/plants/ning_mai_cao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1600,14 +1610,15 @@
             "texture": "bong-client:textures/gui/botany/stages/qing_zhuo_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/qing_zhuo_cao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/qing_zhuo_cao.png"
+            "texture": "bong:textures/entity/plants/qing_zhuo_cao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1748,14 +1759,15 @@
             "texture": "bong-client:textures/gui/botany/stages/shi_mai_gen_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/shi_mai_gen.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/shi_mai_gen.png"
+            "texture": "bong:textures/entity/plants/shi_mai_gen.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1793,14 +1805,15 @@
       "visual": {
         "stages": {
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/spirit_grass.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/spirit_grass.png"
+            "texture": "bong:textures/entity/plants/spirit_grass.png"
           }
         },
         "tint_rgb": 16777215
@@ -1838,14 +1851,15 @@
             "texture": "bong-client:textures/gui/botany/stages/tian_nu_jiao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/tian_nu_jiao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/tian_nu_jiao.png"
+            "texture": "bong:textures/entity/plants/tian_nu_jiao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -1891,14 +1905,15 @@
             "texture": "bong-client:textures/gui/botany/stages/wu_yan_guo_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/wu_yan_guo.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/wu_yan_guo.png"
+            "texture": "bong:textures/entity/plants/wu_yan_guo.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2178,14 +2193,15 @@
             "texture": "bong-client:textures/gui/botany/stages/xue_se_mai_cao_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/xue_se_mai_cao.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/xue_se_mai_cao.png"
+            "texture": "bong:textures/entity/plants/xue_se_mai_cao.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2459,14 +2475,15 @@
             "texture": "bong-client:textures/gui/botany/stages/yuan_ni_hong_yu_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/yuan_ni_hong_yu.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/yuan_ni_hong_yu.png"
+            "texture": "bong:textures/entity/plants/yuan_ni_hong_yu.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2544,14 +2561,15 @@
             "texture": "bong-client:textures/gui/botany/stages/yun_ding_lan_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/yun_ding_lan.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/items/yun_ding_lan.png"
+            "texture": "bong:textures/entity/plants/yun_ding_lan.png"
           },
           "seedling": {
             "kind": "billboard",
@@ -2619,14 +2637,15 @@
             "texture": "bong-client:textures/gui/botany/stages/zhen_jie_zi_growing.png"
           },
           "mature": {
-            "kind": "billboard",
+            "geometry": "bong:geo/plants/zhen_jie_zi.geo.json",
+            "kind": "geo",
             "offset": [
               0.0,
-              0.02,
+              0.0,
               0.0
             ],
             "scale": 1.0,
-            "texture": "bong-client:textures/gui/botany/zhen_jie_zi.png"
+            "texture": "bong:textures/entity/plants/zhen_jie_zi.png"
           },
           "seedling": {
             "kind": "billboard",

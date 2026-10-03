@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_base = [42, 40, 48]
+leaf_deep_green = [42, 65, 38]      # #2a3a28 深绿叶
+peach_dark_green = [22, 38, 28]     # #1e2a22 墨绿近黑桃形果
+light_stripes = [205, 195, 155]     # #c8c0a0 浅色纵纹
+bottom_warm = [225, 165, 75]        # 底部透暖光
+
+[features]
+branch_and_leaves = { elements = ["branch_", "leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+stepped_peach_fruit = { elements = ["peach_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+light_stripes = { elements = ["stripe_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+warm_glow = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

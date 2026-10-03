@@ -46,7 +46,7 @@ class PlantModelRegistryTest {
             }
         }
         assertTrue(PlantModelRegistry.stage("missing_plant", PlantGrowthStage.MATURE).isEmpty());
-        assertFalse(PlantModelRegistry.stage("ning_mai_cao", PlantGrowthStage.MATURE).orElseThrow().isGeo());
+        assertFalse(PlantModelRegistry.stage("ning_mai_cao", PlantGrowthStage.GROWING).orElseThrow().isGeo());
     }
 
     @Test

@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_stone = [45, 48, 44]           # 山间碎石座
+wood_branch = [65, 52, 42]          # 木质短枝
+mountain_leaf = [52, 95, 45]        # 两片翠叶
+fruit_green = [106, 176, 74]        # #6ab04a 圆润绿果
+cyan_streamer = [170, 240, 208]     # #aaf0d0 淡青流光
+
+[features]
+branch_and_leaves = { elements = ["branch_", "leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+stepped_spirit_fruit = { elements = ["fruit_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+cyan_glowing_ring = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
