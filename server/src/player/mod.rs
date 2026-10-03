@@ -370,6 +370,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
             persisted.inventory.as_ref(),
             resources.technique_registry.as_deref(),
         );
+        let write_set = persisted.load_guard.write_set();
         if let (Some(store), Some(schemas)) = (
             resources.skill_config_store.as_deref_mut(),
             resources.skill_config_schemas.as_deref(),
@@ -386,6 +387,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
             CurrentDimension(last_dimension),
             quick_slot_bindings,
             skill_bar_bindings,
+            write_set,
             persisted.load_guard,
             UnlockedStyles::default(),
         ));
