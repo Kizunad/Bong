@@ -1,0 +1,22 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+warm_soil = [82, 73, 61]
+stone_seat = [58, 58, 62]
+stone_edge = [92, 92, 96]
+qi_cyan = [74, 216, 208]
+branch_bark = [102, 69, 49]
+branch_high = [153, 111, 69]
+leaf_sage = [116, 158, 92]
+leaf_fresh = [175, 205, 112]
+lantern_fruit = [218, 210, 154]
+lantern_glint = [255, 244, 198]
+
+[features]
+warm_soil = { elements = ["soil_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+stone_seat = { elements = ["seat_", "qi_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+upright_branches = { elements = ["branch_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+sage_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+lantern_fruits = { elements = ["lantern_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

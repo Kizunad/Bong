@@ -1,0 +1,17 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+cave_wall = [38, 35, 34]
+wall_high = [67, 57, 52]
+throat_vine = [48, 27, 27]
+ember_orange = [235, 82, 28]
+glow_hot = [255, 146, 45]
+burn_leaf = [105, 38, 35]
+
+[features]
+cave_wall = { elements = ["wall_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+hanging_vines = { elements = ["vine_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+ember_segments = { elements = ["ember_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+burn_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

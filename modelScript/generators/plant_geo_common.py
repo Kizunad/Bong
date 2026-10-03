@@ -54,6 +54,36 @@ def strand(
     rig.shaft(bone, name, start, end, radius, max(radius * 0.8, 0.12), mat=mat)
 
 
+def curved_vine_chain(
+    rig: Rig,
+    bone: str,
+    prefix: str,
+    points: list[tuple[float, float, float]],
+    radius_start: float,
+    radius_end: float,
+    mat: str,
+) -> None:
+    """沿 3D 曲线铺细藤连杆，端点精确贴合相邻节点。
+
+    这里复用蜕骨藤生成器的旋转连杆算法：`Rig.shaft` 通过 `shaft_box` 计算每段
+    的 pitch / yaw 与旋转轴，因此螺旋和垂挂曲线不会退化成一排竖直方块。
+    """
+
+    if len(points) < 2:
+        raise ValueError(f"{prefix}: 曲线至少需要两个节点")
+    last = len(points) - 2
+    for index, (start, end) in enumerate(zip(points, points[1:])):
+        progress = index / max(1, last)
+        radius = radius_start + (radius_end - radius_start) * progress
+        rig.shaft(
+            bone,
+            f"{prefix}_{index:02d}",
+            start,
+            end,
+            radius,
+            max(radius * 0.8, 0.12),
+            mat=mat,
+        )
 def leaf(
     rig: Rig,
     bone: str,

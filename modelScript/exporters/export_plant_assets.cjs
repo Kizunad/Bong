@@ -33,6 +33,13 @@ const PLANTS = {
     kong_shou_hen: "KongShouHen",
     ling_jing_xu: "LingJingXu",
     bai_yan_peng: "BaiYanPeng",
+    // 第 3 批：藤蔓
+    jiao_mai_teng: "JiaoMaiTeng",
+    ye_ku_teng: "YeKuTeng",
+    zhong_yan_teng: "ZhongYanTeng",
+    shao_hou_man: "ShaoHouMan",
+    xuan_gen_wei: "XuanGenWei",
+    hui_yuan_zhi: "HuiYuanZhi",
     // 第 4 批：草本 / 蕨
     spirit_grass: "SpiritGrass",
     ning_mai_cao: "NingMaiCao",
