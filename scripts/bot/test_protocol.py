@@ -4733,6 +4733,26 @@ class ReconnectStateFreshnessContractTest(unittest.TestCase):
                     "server_data",
                     {"payload_type": "narration"},
                 ),
+                _FakeEvent(
+                    1.5,
+                    "server_data",
+                    {"payload_type": "derived_attrs_sync"},
+                ),
+                _FakeEvent(
+                    1.6,
+                    "server_data",
+                    {"payload_type": "morph_state"},
+                ),
+                _FakeEvent(
+                    1.7,
+                    "server_data",
+                    {"payload_type": "remains_sync"},
+                ),
+                _FakeEvent(
+                    1.8,
+                    "server_data",
+                    {"payload_type": "spiritual_sense_targets"},
+                ),
             ]
         )
         with (
@@ -4743,8 +4763,15 @@ class ReconnectStateFreshnessContractTest(unittest.TestCase):
 
         self.assertEqual(
             payload_types,
-            {"inventory_snapshot", "techniques_snapshot"},
-            "重连集合只比较快照类 payload，周期心跳、涡流 HUD 和动态欢迎文案不得制造抖动",
+            {
+                "inventory_snapshot",
+                "techniques_snapshot",
+                "derived_attrs_sync",
+                "morph_state",
+                "remains_sync",
+                "spiritual_sense_targets",
+            },
+            "重连集合保留 join 快照，周期心跳、涡流 HUD 和动态欢迎文案不得制造抖动",
         )
 
 
