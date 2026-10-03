@@ -171,6 +171,42 @@ fn failed_inventory_load_omits_only_inventory_from_aggregate_write_set() {
 }
 
 #[test]
+fn aggregate_writer_does_not_create_unverified_skill_set_row() {
+    let (persistence, data_dir) = sqlite_persistence("player-skill-write-barrier");
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "NewPlayer",
+        &PlayerState::default(),
+        [0.0, 70.0, 0.0],
+        DimensionKind::default(),
+        None,
+        None,
+        &SkillSet::default(),
+        None,
+        None,
+        None,
+        WriteSet::all(),
+    )
+    .expect("aggregate writer should persist guarded slices");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let skill_row_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_skills WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("skill row count should be queryable");
+    assert_eq!(
+        skill_row_count, 0,
+        "aggregate player writes must not persist an unverified SkillSet"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
 fn long_term_status_effects_round_trip_as_a_guarded_player_slice() {
     let (persistence, data_dir) = sqlite_persistence("player-status-effects");
     let status_effects = StatusEffects {

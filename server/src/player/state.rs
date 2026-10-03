@@ -2981,7 +2981,7 @@ fn persist_player_slices_in_sqlite_with_write_set(
     last_dimension: DimensionKind,
     inventory: Option<&PlayerInventory>,
     lifespan: Option<&LifespanComponent>,
-    skill_set: &SkillSet,
+    _skill_set: &SkillSet,
     in_coffin: Option<bool>,
     // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
     coffin_grade: Option<CoffinGrade>,
@@ -2998,7 +2998,6 @@ fn persist_player_slices_in_sqlite_with_write_set(
         .contains(PlayerSlice::Inventory)
         .then(|| serialize_inventory_json(inventory))
         .transpose()?;
-    let skill_set_json = serialize_skill_set_json(skill_set)?;
     let known_techniques_json = write_set
         .contains(PlayerSlice::KnownTechniques)
         .then(|| serialize_known_techniques_json(&KnownTechniques::default()))
@@ -3126,26 +3125,6 @@ fn persist_player_slices_in_sqlite_with_write_set(
             )
             .map_err(io::Error::other)?;
     }
-    // SkillSet remains outside RF-11's guard. Keep its legacy row intact; the dedicated
-    // changed-component writer is the only path allowed to replace it.
-    transaction
-        .execute(
-            "
-            INSERT OR IGNORE INTO player_skills (
-                username,
-                skill_set_json,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ",
-            params![
-                username,
-                skill_set_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
     if let Some(known_techniques_json) = known_techniques_json {
         transaction
             .execute(
