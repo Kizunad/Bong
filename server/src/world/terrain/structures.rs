@@ -1,3 +1,12 @@
+//! Mid-size authored and procedural structures placed during chunk decoration.
+//!
+//! This module owns the deterministic seed-spacing grids for ruins, altars, ore
+//! veins, bridge remnants, bone piles, and the spawn portal. It decides which
+//! structure instances overlap a chunk, while the individual `instantiate_*`
+//! and `place_*` functions keep eligibility and block rasterisation separate.
+//! Flora, authored landmarks, and the sword sea have their own decoration
+//! passes and are intentionally not coupled to these grids.
+
 use std::collections::HashMap;
 
 use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
@@ -132,6 +141,10 @@ const RIFT_BRIDGE_PROFILE: RiftBridgeProfile = RiftBridgeProfile {
     chance_boundary_penalty: 0.14,
 };
 
+/// Places every structure family whose deterministic footprint intersects one
+/// chunk. The family order is part of the existing priority merge semantics and
+/// must remain stable: each `place_*` function still resolves block conflicts
+/// through the same [`upsert_block`] rules as before this orchestration split.
 pub(super) fn decorate_chunk(
     chunk: &mut UnloadedChunk,
     pos: ChunkPos,
@@ -149,145 +162,197 @@ pub(super) fn decorate_chunk(
     let bounds = ChunkBounds::from_chunk_pos(pos);
     let world_height = chunk.height() as i32;
 
-    let cell_min_x = (bounds.min_x - RUIN_PILLAR_PROFILE.max_extent)
-        .div_euclid(RUIN_PILLAR_PROFILE.seed_spacing);
-    let cell_max_x = (bounds.max_x + RUIN_PILLAR_PROFILE.max_extent)
-        .div_euclid(RUIN_PILLAR_PROFILE.seed_spacing);
-    let cell_min_z = (bounds.min_z - RUIN_PILLAR_PROFILE.max_extent)
-        .div_euclid(RUIN_PILLAR_PROFILE.seed_spacing);
-    let cell_max_z = (bounds.max_z + RUIN_PILLAR_PROFILE.max_extent)
-        .div_euclid(RUIN_PILLAR_PROFILE.seed_spacing);
+    place_ruin_pillars(chunk, min_y, world_height, terrain, &bounds, registry);
 
-    for cell_z in cell_min_z..=cell_max_z {
-        for cell_x in cell_min_x..=cell_max_x {
+    place_broken_altars(chunk, min_y, world_height, terrain, &bounds, registry);
+
+    place_spirit_ore_veins(chunk, min_y, world_height, terrain, &bounds, registry);
+
+    place_rift_bridge_remnants(chunk, min_y, world_height, terrain, &bounds, registry);
+
+    place_bone_piles(chunk, min_y, world_height, terrain, &bounds, registry);
+
+    place_spawn_portals(chunk, min_y, world_height, terrain, &bounds, registry);
+
+    place_spawn_tutorial_coffins_from_pois(chunk, min_y, world_height, terrain, &bounds);
+}
+
+/// Returns the seed-spacing cells whose possible footprint can touch `bounds`.
+/// Keeping this calculation in one place makes the six family loops visibly
+/// equivalent without changing their order or per-family profile constants.
+fn structure_cell_range(
+    bounds: &ChunkBounds,
+    max_extent: i32,
+    seed_spacing: i32,
+) -> (i32, i32, i32, i32) {
+    (
+        (bounds.min_x - max_extent).div_euclid(seed_spacing),
+        (bounds.max_x + max_extent).div_euclid(seed_spacing),
+        (bounds.min_z - max_extent).div_euclid(seed_spacing),
+        (bounds.max_z + max_extent).div_euclid(seed_spacing),
+    )
+}
+
+fn place_ruin_pillars(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        RUIN_PILLAR_PROFILE.max_extent,
+        RUIN_PILLAR_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_ruin_pillar(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_ruin_pillar_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_ruin_pillar_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
+}
 
-    let altar_min_x = (bounds.min_x - BROKEN_ALTAR_PROFILE.max_extent)
-        .div_euclid(BROKEN_ALTAR_PROFILE.seed_spacing);
-    let altar_max_x = (bounds.max_x + BROKEN_ALTAR_PROFILE.max_extent)
-        .div_euclid(BROKEN_ALTAR_PROFILE.seed_spacing);
-    let altar_min_z = (bounds.min_z - BROKEN_ALTAR_PROFILE.max_extent)
-        .div_euclid(BROKEN_ALTAR_PROFILE.seed_spacing);
-    let altar_max_z = (bounds.max_z + BROKEN_ALTAR_PROFILE.max_extent)
-        .div_euclid(BROKEN_ALTAR_PROFILE.seed_spacing);
-
-    for cell_z in altar_min_z..=altar_max_z {
-        for cell_x in altar_min_x..=altar_max_x {
+fn place_broken_altars(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        BROKEN_ALTAR_PROFILE.max_extent,
+        BROKEN_ALTAR_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_broken_altar(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_broken_altar_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_broken_altar_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
+}
 
-    let ore_min_x =
-        (bounds.min_x - SPIRIT_ORE_PROFILE.max_extent).div_euclid(SPIRIT_ORE_PROFILE.seed_spacing);
-    let ore_max_x =
-        (bounds.max_x + SPIRIT_ORE_PROFILE.max_extent).div_euclid(SPIRIT_ORE_PROFILE.seed_spacing);
-    let ore_min_z =
-        (bounds.min_z - SPIRIT_ORE_PROFILE.max_extent).div_euclid(SPIRIT_ORE_PROFILE.seed_spacing);
-    let ore_max_z =
-        (bounds.max_z + SPIRIT_ORE_PROFILE.max_extent).div_euclid(SPIRIT_ORE_PROFILE.seed_spacing);
-
-    for cell_z in ore_min_z..=ore_max_z {
-        for cell_x in ore_min_x..=ore_max_x {
+fn place_spirit_ore_veins(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        SPIRIT_ORE_PROFILE.max_extent,
+        SPIRIT_ORE_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_spirit_ore_vein(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_spirit_ore_vein_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_spirit_ore_vein_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
+}
 
-    let bridge_min_x = (bounds.min_x - RIFT_BRIDGE_PROFILE.max_extent)
-        .div_euclid(RIFT_BRIDGE_PROFILE.seed_spacing);
-    let bridge_max_x = (bounds.max_x + RIFT_BRIDGE_PROFILE.max_extent)
-        .div_euclid(RIFT_BRIDGE_PROFILE.seed_spacing);
-    let bridge_min_z = (bounds.min_z - RIFT_BRIDGE_PROFILE.max_extent)
-        .div_euclid(RIFT_BRIDGE_PROFILE.seed_spacing);
-    let bridge_max_z = (bounds.max_z + RIFT_BRIDGE_PROFILE.max_extent)
-        .div_euclid(RIFT_BRIDGE_PROFILE.seed_spacing);
-
-    for cell_z in bridge_min_z..=bridge_max_z {
-        for cell_x in bridge_min_x..=bridge_max_x {
+fn place_rift_bridge_remnants(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        RIFT_BRIDGE_PROFILE.max_extent,
+        RIFT_BRIDGE_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_rift_bridge_remnant(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_rift_bridge_remnant_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_rift_bridge_remnant_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
+}
 
-    let bone_min_x =
-        (bounds.min_x - BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_max_x =
-        (bounds.max_x + BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_min_z =
-        (bounds.min_z - BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
-    let bone_max_z =
-        (bounds.max_z + BONE_PILE_PROFILE.max_extent).div_euclid(BONE_PILE_PROFILE.seed_spacing);
-
-    for cell_z in bone_min_z..=bone_max_z {
-        for cell_x in bone_min_x..=bone_max_x {
+fn place_bone_piles(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        BONE_PILE_PROFILE.max_extent,
+        BONE_PILE_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_bone_pile(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_bone_pile_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_bone_pile_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
+}
 
-    let portal_min_x = (bounds.min_x - SPAWN_PORTAL_PROFILE.max_extent)
-        .div_euclid(SPAWN_PORTAL_PROFILE.seed_spacing);
-    let portal_max_x = (bounds.max_x + SPAWN_PORTAL_PROFILE.max_extent)
-        .div_euclid(SPAWN_PORTAL_PROFILE.seed_spacing);
-    let portal_min_z = (bounds.min_z - SPAWN_PORTAL_PROFILE.max_extent)
-        .div_euclid(SPAWN_PORTAL_PROFILE.seed_spacing);
-    let portal_max_z = (bounds.max_z + SPAWN_PORTAL_PROFILE.max_extent)
-        .div_euclid(SPAWN_PORTAL_PROFILE.seed_spacing);
-
-    for cell_z in portal_min_z..=portal_max_z {
-        for cell_x in portal_min_x..=portal_max_x {
+fn place_spawn_portals(
+    chunk: &mut UnloadedChunk,
+    min_y: i32,
+    world_height: i32,
+    terrain: &TerrainProvider,
+    bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+) {
+    let (min_x, max_x, min_z, max_z) = structure_cell_range(
+        bounds,
+        SPAWN_PORTAL_PROFILE.max_extent,
+        SPAWN_PORTAL_PROFILE.seed_spacing,
+    );
+    for cell_z in min_z..=max_z {
+        for cell_x in min_x..=max_x {
             let Some(instance) =
                 instantiate_spawn_portal(cell_x, cell_z, min_y, world_height, terrain)
             else {
                 continue;
             };
-            if !instance.bounds.intersects_chunk(&bounds) {
-                continue;
+            if instance.bounds.intersects_chunk(bounds) {
+                place_spawn_portal_in_chunk(chunk, min_y, bounds, &instance, registry);
             }
-            place_spawn_portal_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
-
-    place_spawn_tutorial_coffins_from_pois(chunk, min_y, world_height, terrain, &bounds);
 }
 
 #[derive(Clone, Copy)]
@@ -387,13 +452,18 @@ struct SpawnPortalProfile {
 
 #[derive(Clone, Copy)]
 pub(super) struct StructureBounds {
+    /// Inclusive world-space X range occupied by the structure.
     pub min_x: i32,
+    /// Inclusive world-space X range occupied by the structure.
     pub max_x: i32,
+    /// Inclusive world-space Z range occupied by the structure.
     pub min_z: i32,
+    /// Inclusive world-space Z range occupied by the structure.
     pub max_z: i32,
 }
 
 impl StructureBounds {
+    /// Reports whether this structure can write at least one block in `chunk`.
     pub(super) fn intersects_chunk(self, chunk: &ChunkBounds) -> bool {
         self.max_x >= chunk.min_x
             && self.min_x <= chunk.max_x
