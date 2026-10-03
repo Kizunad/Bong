@@ -198,6 +198,12 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 用户发起一次 `/consume-plan plan-refactor-persistence-slices-v1` 后，consumer 依次完成当前未完成阶段的实现、locked gate、Bot E2E、精确 HEAD validator、push、PR、独立 `/review`、返工复审和 merge；每个阶段 merge 后从最新 `origin/main` 继续下一 PR。只有真实用户决策、#1259 等外部依赖未满足或基础设施持续不可用时才暂停；P5 全绿后自动补 Finish Evidence、归档 plan 并提交最终 PR。
 
+## R3 P2 RF-11 本 PR 证据（2026-10-04）
+
+- 本 PR 在 RF-11-R3-P2 范围内把 core、position、inventory、lifespan、长期状态效果、UI prefs 与 identity key 接入玩家载入守护：`PlayerSliceLoadGuard` 保存 `Missing/Loaded/Failed` provenance，聚合 writer 通过 `WriteSet` 省略失败切片；SkillSet、Wounds 与暗器按冻结要求不改。
+- 长期状态效果新增 `player_status_effects` v47 表并接入 join hydrate、autosave、断线/关服写屏障；identity 读取兼容 `offline:<username>:<character>` 历史键，写入统一使用 `offline:<username>`，损坏行带 marker 后禁止默认值覆盖。
+- 契约测试覆盖损坏 inventory / position / status-effects 行的单切片写保护、长期状态 round-trip、显式新角色重置清空 buff、旧 identity 键兼容读取；Bot 场景为 `scripts/bot/scenarios/restart_player_slices.py` 与显式启用的 `load_failure_guard.py`。Wounds/SkillSet 仍待冻结解除后的后续 P2 批次，因此本节不宣称 R3 P2 总体完成。
+
 ## R3 P1 本 PR 证据（2026-09-08）
 
 - 本 PR 最终净 diff 只完成 persistence 生产码的按域机械拆分：`server/src/persistence/mod.rs` 保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring；迁移链、SQL、表结构、事务边界、连接 ownership 和调用方均未改动。以 `169a70872` 为纯搬迁边界，`7fb558e91` 起的原子发布加固提交已用 `git revert` 翻回，没有 force-push。
