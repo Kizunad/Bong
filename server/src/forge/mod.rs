@@ -14,6 +14,7 @@
 //! `ForgeSessions`（在炉进度）、`BlueprintRegistry`（图谱定义版本/校验）、
 //! `LearnedBlueprints`（玩家已学图谱）与 `WeaponForgeStation`（砧方块实体）。
 
+pub mod adapter;
 pub mod artifact_color;
 pub mod artifact_meridian;
 pub mod blueprint;
@@ -29,6 +30,8 @@ pub mod session;
 pub mod skill_hook;
 pub mod station;
 pub mod steps;
+
+pub use adapter::{ForgeSessionAdapter, ForgeSessionCheckpoint};
 
 use std::collections::HashMap;
 
