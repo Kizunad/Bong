@@ -1,3 +1,10 @@
+//! Terrain admission and chunk-generation orchestration.
+//!
+//! This module owns the world-facing boundary around the raster provider and
+//! decoration registry. [`prepare_raster_bootstrap`] validates every enabled
+//! dimension before `world::setup_world` inserts resources; chunk generation
+//! below consumes that committed snapshot and does not reopen asset paths.
+
 mod authored;
 mod biome;
 pub(crate) mod blocks;
@@ -80,6 +87,7 @@ pub struct SurfaceInfo {
 /// lightweight mocks (flat plane, slope, cliff, etc.) without touching raster
 /// files.
 pub trait SurfaceProvider {
+    /// Query the walkable surface at world X/Z coordinates.
     fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo;
 }
 
@@ -104,15 +112,21 @@ impl SurfaceProvider for TerrainProvider {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RasterBootstrapConfig {
+    /// Path to the worldgen manifest that names this raster export.
     pub manifest_path: PathBuf,
+    /// Directory containing the manifest's tile files and sidecars.
     pub raster_dir: PathBuf,
 }
 
+/// Fully validated terrain inputs ready to be committed to the ECS world.
 pub struct ValidatedRasterBootstrap {
+    /// NBT templates validated against all manifest decoration references.
     pub decoration_registry: nbt_registry::DecorationNbtRegistry,
+    /// Providers for the enabled dimensions; overworld is always present.
     pub providers: TerrainProviders,
 }
 
+/// Deterministic error set returned when one or more bootstrap inputs fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerrainBootstrapError {
     diagnostics: Vec<String>,
@@ -129,6 +143,7 @@ impl TerrainBootstrapError {
         Self { diagnostics }
     }
 
+    /// Return sorted, de-duplicated diagnostics for logs and contract tests.
     pub fn diagnostics(&self) -> &[String] {
         &self.diagnostics
     }
@@ -146,6 +161,7 @@ impl std::fmt::Display for TerrainBootstrapError {
 
 impl std::error::Error for TerrainBootstrapError {}
 
+/// Read the optional TSY manifest path from the process environment.
 pub(crate) fn configured_tsy_raster_bootstrap() -> Result<Option<RasterBootstrapConfig>, String> {
     let Some(raw) = std::env::var_os(TSY_RASTER_PATH_ENV_VAR) else {
         return Ok(None);
@@ -166,6 +182,12 @@ pub(crate) fn configured_tsy_raster_bootstrap() -> Result<Option<RasterBootstrap
     }))
 }
 
+/// Validate and atomically assemble the overworld plus optional TSY providers.
+///
+/// All enabled dimensions and the shared decoration registry are checked before
+/// any caller can commit them to ECS resources. A configured but broken TSY
+/// export is therefore fatal, while an absent TSY configuration remains
+/// backward-compatible.
 pub fn prepare_raster_bootstrap(
     overworld: RasterBootstrapConfig,
     tsy: Option<RasterBootstrapConfig>,
@@ -243,6 +265,7 @@ fn prepare_raster_bootstrap_with_nbt_preflight(
     })
 }
 
+/// Load the default decoration NBT registry for non-raster world bootstraps.
 pub fn load_default_decoration_registry() -> nbt_registry::DecorationNbtRegistry {
     nbt_registry::DecorationNbtRegistry::load_default().unwrap_or_else(|error| {
         panic!("[bong][world] failed to initialize decoration NBT registry: {error}")

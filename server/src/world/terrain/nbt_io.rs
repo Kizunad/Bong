@@ -181,7 +181,9 @@ impl PaletteEntry {
 /// authored assets carry one, but the format allows it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructureBlockEntry {
+    /// Template-local block coordinates in X/Y/Z order.
     pub pos: [i32; 3],
+    /// Zero-based index into [`StructureNbt::palette`].
     pub state: i32,
     /// Verbatim per-block `nbt` compound, if present. Held raw to round-trip
     /// block entities (signs, banners) without modelling each one.
@@ -192,9 +194,13 @@ pub struct StructureBlockEntry {
 /// to round-trip the original bytes (after gzip decompression).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructureNbt {
+    /// Minecraft structure data version (3465 for MC 1.20.1).
     pub data_version: i32,
+    /// Declared template dimensions in X/Y/Z order.
     pub size: [i32; 3],
+    /// Blockstate palette, retained in source order for lossless writes.
     pub palette: Vec<PaletteEntry>,
+    /// Non-air block entries and their optional block-entity payloads.
     pub blocks: Vec<StructureBlockEntry>,
     /// Verbatim root-level `entities` list (armor stands, item frames, …),
     /// held raw so a `read → write` round-trip never silently drops them.
@@ -321,6 +327,7 @@ impl StructureNbt {
                 .sum::<usize>()
     }
 
+    /// Return strict-catalog errors for palette entries that cannot be lowered.
     pub fn unresolved_palette_blocks(&self) -> Vec<String> {
         self.palette
             .iter()
@@ -333,6 +340,7 @@ impl StructureNbt {
             .collect()
     }
 
+    /// Return palette lowering errors plus bounded invalid-state examples.
     pub fn palette_diagnostics(&self) -> Vec<String> {
         let mut diagnostics = self.unresolved_palette_blocks();
         let mut invalid_count = 0usize;
