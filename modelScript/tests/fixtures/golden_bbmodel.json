@@ -59,6 +59,12 @@
    "BeiWenZhi.bbmodel": "01fda7c40c8b8c3635be2e4c2165d542aac5e0596a7fd11ac7abd578c84e1a54"
   }
  },
+ "gen_bing_jia_shou_tao.py": {
+  "exit": 0,
+  "outputs": {
+   "BingJiaShouTao.bbmodel": "534c6d819820f85c24a0320ecf91a28d79676bcba8e67874e963f559e4f7b046"
+  }
+ },
  "gen_bone_armor.py": {
   "exit": 0,
   "outputs": {
@@ -231,6 +237,12 @@
   "exit": 0,
   "outputs": {
    "GuYuanPill.bbmodel": "52a19a541712825e1643e5ebcefd104ee7f7a0867cedf13742a0e7f16f09a238"
+  }
+ },
+ "gen_hand_wrap.py": {
+  "exit": 0,
+  "outputs": {
+   "HandWrap.bbmodel": "1a0126dcf681bef2daa15a4c89fcf548ae0f800b7c9eaf52d53859490f8b0c33"
   }
  },
  "gen_hei_gu_jun.py": {
@@ -603,6 +615,12 @@
   "exit": 0,
   "outputs": {
    "SpiritGrass.bbmodel": "3566a66d229f5fbee0a07b7e0746d22639a122648e09f80051e92805cfc92d7b"
+  }
+ },
+ "gen_spirit_sword.py": {
+  "exit": 0,
+  "outputs": {
+   "SpiritSword.bbmodel": "2778b1738ba1c47b96141d2111bbf371e44f5e8e0d16ba4e242abd04518ee629"
   }
  },
  "gen_stone_coffin.py": {

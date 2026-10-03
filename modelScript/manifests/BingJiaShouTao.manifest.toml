@@ -1,0 +1,18 @@
+# 兵甲手套 (BingJiaShouTao / bing_jia_shou_tao) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[materials]
+leather_base = [118, 86, 60]          # 磨旧熟皮手套底套
+leather_strap = [92, 64, 44]          # 腕部紧束加固皮带
+iron_plate = [120, 120, 126]          # 锈蚀防冻铁甲片
+metal_buckle = [154, 154, 160]        # 方形银灰带扣 #9a9aa0
+metal_rivet = [235, 240, 248]         # 金属加固铆钉
+
+[features]
+leather_glove_base = { elements = ["sleeve_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = 50 }
+wrist_straps = { elements = ["strap_", "buckle_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = 30 }
+dorsal_plate = { elements = ["plate_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 40 }
+knuckle_plates = { elements = ["knuckle_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 40 }
+thumb_guard = { elements = ["thumb_"], must_show_in = ["FRONT", "SIDE_R", "TOP", "3/4"], min_px = 20 }
