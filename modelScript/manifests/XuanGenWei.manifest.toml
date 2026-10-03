@@ -1,0 +1,18 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+island_rock = [68, 78, 70]
+rock_high = [104, 113, 94]
+root_green = [42, 112, 62]
+leaf_green = [88, 168, 78]
+leaf_high = [142, 204, 98]
+siphon_crystal = [106, 224, 106]
+crystal_glint = [178, 246, 140]
+
+[features]
+island_underside = { elements = ["island_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+hanging_roots = { elements = ["root_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+root_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+siphon_crystals = { elements = ["crystal_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }

@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+velvet_black = [20, 20, 22]
+velvet_mid = [35, 35, 39]
+velvet_edge = [49, 47, 53]
+ice_crystal = [159, 216, 255]
+blue_glow = [74, 184, 255]
+
+[features]
+velvet_pad = { elements = ["pad_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+velvet_tuft = { elements = ["tuft_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+ice_crystal = { elements = ["crystal_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+blue_crack = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

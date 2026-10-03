@@ -1,0 +1,22 @@
+{
+  "anyOf": [
+    {
+      "const": "IDLE",
+      "type": "string"
+    },
+    {
+      "const": "CASTING",
+      "type": "string"
+    },
+    {
+      "const": "COMPLETE",
+      "type": "string"
+    },
+    {
+      "const": "INTERRUPT",
+      "type": "string"
+    }
+  ],
+  "x-bong-typebox-source-sha256": "f80f8c43c48ed2d0f381d6c6d3e1a607920f70c9979637d84f5cdb8a4d1445a5",
+  "x-bong-schema-generation-version": "r6-p1-v1"
+}

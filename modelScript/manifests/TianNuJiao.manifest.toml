@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+charred_soil = [42, 30, 30]          # 焦土碎石座
+green_calyx = [55, 85, 42]           # 绿梗与短茎
+pepper_dark_blood = [58, 10, 8]      # #3a0a08 压暗焦黑红椒身
+pepper_ember = [148, 48, 18]         # 焦红过渡
+flame_crack = [255, 106, 26]         # #ff6a1a 橙红发光裂纹
+
+[features]
+scorched_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+green_stem_calyx = { elements = ["calyx_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+curved_chili_pepper = { elements = ["pepper_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+flame_cracks = { elements = ["crack_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
