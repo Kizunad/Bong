@@ -23,6 +23,7 @@
 //!   * Redis channel（bong:alchemy/*）+ agent schema 对齐
 //!   * 品阶 / 铭文 / 开光 / AutoProfile
 
+pub mod adapter;
 pub mod auto_profile;
 pub mod danxin;
 pub mod furnace;
@@ -78,6 +79,7 @@ type JoinedClientsWithoutRecipesFilter = (
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 
+pub use adapter::AlchemySessionAdapter;
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 #[allow(unused_imports)]
