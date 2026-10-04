@@ -1,3 +1,10 @@
+//! NPC 生命周期与终结事务。
+//!
+//! 本模块负责活体 NPC 的年龄推进、退休请求和终结提交。终结采用显式的 staged
+//! 状态：先在副本上完成生命周期、死亡记录和真元归还，再写入 SQLite；持久化成功后
+//! 才把 ECS、zone、账本以及死亡通知/VFX/繁衍副作用一起提交。战斗判定、离屏快照和
+//! 物品掉落仍由各自模块负责，本模块只消费它们发出的终结请求。
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -454,6 +461,7 @@ impl NpcRegistry {
     }
 }
 
+/// 已进入终结阶段、等待 SQLite 与真元结算提交的 NPC。
 #[derive(Clone, Debug, Component)]
 pub struct PendingNpcTermination {
     pub cause: String,
@@ -475,6 +483,7 @@ enum NpcTerminalBarrierSet {
     CommitFlush,
 }
 
+/// NPC 终结事务的三个公开调度阶段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum NpcTerminalSystemSet {
     Stage,
@@ -482,6 +491,7 @@ pub enum NpcTerminalSystemSet {
     PostCommit,
 }
 
+/// NPC 终结已经持久化并提交后的下游通知。
 #[derive(Clone, Debug, Event)]
 pub struct NpcTerminalSettlementSucceeded {
     pub entity: Entity,
@@ -497,9 +507,11 @@ pub struct NpcTerminalSettlementSucceeded {
 #[derive(Clone, Copy, Debug, Component)]
 pub struct PendingRetirement;
 
+/// 标记 NPC 已完成终结提交，防止重复持久化与副作用。
 #[derive(Clone, Copy, Debug, Component)]
 pub(crate) struct NpcTerminalCommitted;
 
+/// 请求把某个 NPC 送入自然老死终结流程。
 #[derive(Clone, Debug, Event)]
 pub struct NpcRetireRequest {
     pub entity: Entity,
@@ -511,6 +523,7 @@ pub struct NpcRetireRequest {
 /// Beast 领地繁衍（§8）复用同一通道：`archetype = Beast` + 必填
 /// `territory_center` / `territory_radius`（新生幼崽要挂 Territory 组件，
 /// spawn 侧据此重建）。避免 lifecycle.rs 反向依赖 territory.rs。
+/// 终结成功后交给 spawn 侧消费的邻居繁衍请求。
 #[derive(Clone, Debug, Event)]
 pub struct NpcReproductionRequest {
     pub archetype: NpcArchetype,
@@ -597,6 +610,7 @@ impl NpcDeathReason {
 #[derive(Clone, Copy, Debug, Component)]
 pub struct NpcDeathNoticeEmitted;
 
+/// NPC 终结成功后发给叙事、统计和客户端桥的死亡快照。
 #[derive(Clone, Debug, Event)]
 #[allow(dead_code)]
 pub struct NpcDeathNotice {
@@ -613,6 +627,109 @@ pub struct NpcDeathNotice {
     /// plan-offscreen-war-v1 P0：死亡坐标（有则带，无则 None）。dormant 死亡用 snapshot.position，
     /// 实体死亡当前无坐标上下文回填 None（后续阶段可补）。
     pub pos: Option<[f64; 3]>,
+}
+
+/// 在任何持久化或 ECS 写入前准备好的终结状态副本。
+///
+/// 真元、zone 与账本都留在副本里；SQLite 失败时丢弃它即可保留原实体并在后续 tick 重试。
+struct StagedNpcTermination {
+    lifecycle: Lifecycle,
+    record: LifeRecord,
+    registry: DeathRegistry,
+    cultivation: Cultivation,
+    zones: crate::world::zone::ZoneRegistry,
+    ledger: crate::qi_physics::WorldQiAccount,
+    daozhan: Option<crate::fauna::daozhan::DaoZhangBehaviorBlackboard>,
+}
+
+/// 在隔离副本中记录终结并按原路径释放 NPC 与道伥携带的真元。
+#[allow(clippy::too_many_arguments)]
+fn stage_npc_termination(
+    pending: &PendingNpcTermination,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry: &DeathRegistry,
+    cultivation: &Cultivation,
+    position: Option<&Position>,
+    dimension: Option<&crate::world::dimension::CurrentDimension>,
+    daozhan: Option<&crate::fauna::daozhan::DaoZhangBehaviorBlackboard>,
+    zones: &crate::world::zone::ZoneRegistry,
+    ledger: &crate::qi_physics::WorldQiAccount,
+    actor: &ActorQiIdentity,
+) -> Option<StagedNpcTermination> {
+    let mut staged_lifecycle = lifecycle.clone();
+    let mut staged_record = life_record.clone();
+    let mut staged_registry = death_registry.clone();
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_zones = zones.clone();
+    let mut staged_ledger = ledger.clone();
+    staged_lifecycle.terminate(pending.at_tick);
+    staged_registry.record_death(pending.at_tick, pending.death_zone);
+    staged_record.push(BiographyEntry::Terminated {
+        cause: pending.cause.clone(),
+        tick: pending.at_tick,
+    });
+
+    let zone_name = position.zip(dimension).and_then(|(position, dimension)| {
+        staged_zones
+            .find_zone(dimension.0, position.get())
+            .map(|zone| zone.name.clone())
+    });
+    staged_cultivation
+        .release_to_zone(
+            zone_name
+                .as_deref()
+                .and_then(|name| staged_zones.find_zone_mut(name)),
+            &mut staged_ledger,
+            actor,
+            staged_cultivation.qi_current,
+            crate::qi_physics::QiTransferReason::ReleaseToZone,
+        )
+        .ok()?;
+
+    let mut staged_daozhan = daozhan.cloned();
+    if let Some(daozhan) = staged_daozhan.as_mut() {
+        let daozhan_amount = daozhan.daozhan_qi;
+        release_external_qi_to_zone(
+            &mut daozhan.daozhan_qi,
+            actor.account(),
+            zone_name
+                .as_deref()
+                .and_then(|name| staged_zones.find_zone_mut(name)),
+            &mut staged_ledger,
+            daozhan_amount,
+            crate::qi_physics::QiTransferReason::ReleaseToZone,
+        )
+        .ok()?;
+    }
+
+    Some(StagedNpcTermination {
+        lifecycle: staged_lifecycle,
+        record: staged_record,
+        registry: staged_registry,
+        cultivation: staged_cultivation,
+        zones: staged_zones,
+        ledger: staged_ledger,
+        daozhan: staged_daozhan,
+    })
+}
+
+/// 先持久化已经完成真元结算的快照；调用方只在成功后应用 ECS 与通知副作用。
+fn persist_staged_npc_termination(
+    persistence: &crate::persistence::PersistenceSettings,
+    pending: &PendingNpcTermination,
+    staged: &StagedNpcTermination,
+) -> bool {
+    crate::persistence::persist_npc_termination_with_qi_snapshot(
+        persistence,
+        &staged.lifecycle,
+        &staged.record,
+        pending.cause.as_str(),
+        pending.lifespan_event.as_ref(),
+        &staged.zones,
+        &staged.ledger,
+    )
+    .is_ok()
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -686,72 +803,27 @@ fn commit_pending_npc_terminations(
             continue;
         }
 
-        let mut staged_lifecycle = lifecycle.clone();
-        let mut staged_record = life_record.clone();
-        let mut staged_registry = death_registry.clone();
-        let mut staged_cultivation = cultivation.clone();
-        let mut staged_zones = zones.clone();
-        let mut staged_ledger = ledger.clone();
-        staged_lifecycle.terminate(pending.at_tick);
-        staged_registry.record_death(pending.at_tick, pending.death_zone);
-        staged_record.push(BiographyEntry::Terminated {
-            cause: pending.cause.clone(),
-            tick: pending.at_tick,
-        });
-
-        let zone_name = position.zip(dimension).and_then(|(position, dimension)| {
-            staged_zones
-                .find_zone(dimension.0, position.get())
-                .map(|zone| zone.name.clone())
-        });
-        let result = staged_cultivation.release_to_zone(
-            zone_name
-                .as_deref()
-                .and_then(|name| staged_zones.find_zone_mut(name)),
-            &mut staged_ledger,
+        let Some(staged) = stage_npc_termination(
+            pending,
+            lifecycle,
+            life_record,
+            death_registry,
+            cultivation,
+            position,
+            dimension,
+            daozhan,
+            &zones,
+            &ledger,
             &actor,
-            staged_cultivation.qi_current,
-            crate::qi_physics::QiTransferReason::ReleaseToZone,
-        );
-        if result.is_err() {
+        ) else {
+            continue;
+        };
+        if !persist_staged_npc_termination(&persistence, pending, &staged) {
             continue;
         }
 
-        let mut staged_daozhan = daozhan.cloned();
-        if let Some(daozhan) = staged_daozhan.as_mut() {
-            let daozhan_amount = daozhan.daozhan_qi;
-            if release_external_qi_to_zone(
-                &mut daozhan.daozhan_qi,
-                actor.account(),
-                zone_name
-                    .as_deref()
-                    .and_then(|name| staged_zones.find_zone_mut(name)),
-                &mut staged_ledger,
-                daozhan_amount,
-                crate::qi_physics::QiTransferReason::ReleaseToZone,
-            )
-            .is_err()
-            {
-                continue;
-            }
-        }
-
-        if crate::persistence::persist_npc_termination_with_qi_snapshot(
-            &persistence,
-            &staged_lifecycle,
-            &staged_record,
-            pending.cause.as_str(),
-            pending.lifespan_event.as_ref(),
-            &staged_zones,
-            &staged_ledger,
-        )
-        .is_err()
-        {
-            continue;
-        }
-
-        *zones = staged_zones;
-        *ledger = staged_ledger;
+        *zones = staged.zones.clone();
+        *ledger = staged.ledger.clone();
 
         crate::combat::lifecycle::emit_terminal_vfx(
             position,
@@ -764,7 +836,7 @@ fn commit_pending_npc_terminations(
             *archetype,
             lifespan,
             faction,
-            Some(&staged_record),
+            Some(&staged.record),
             pending.reason,
         ));
         if let Some(reproduction) = pending.reproduction.clone() {
@@ -776,15 +848,15 @@ fn commit_pending_npc_terminations(
 
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
-            staged_lifecycle,
-            staged_record,
-            staged_registry,
-            staged_cultivation,
+            staged.lifecycle,
+            staged.record,
+            staged.registry,
+            staged.cultivation,
             NpcTerminalCommitted,
             NpcDeathNoticeEmitted,
             Despawned,
         ));
-        if let Some(staged_daozhan) = staged_daozhan {
+        if let Some(staged_daozhan) = staged.daozhan {
             entity_commands.insert(staged_daozhan);
         }
         if let Some(payload) = pending.death_insight.clone() {
@@ -803,6 +875,7 @@ fn commit_pending_npc_terminations(
     }
 }
 
+/// 注册 NPC 生命周期资源、终结事件和阶段化系统。
 pub fn register(app: &mut App) {
     app.insert_resource(NpcAgingConfig::default())
         .insert_resource(NpcRegistry::default())
@@ -845,6 +918,7 @@ pub fn register(app: &mut App) {
         );
 }
 
+/// 新 NPC 的生命周期、培养、战斗和死亡记录组件集合。
 #[derive(Bundle)]
 pub struct NpcRuntimeBundle {
     pub archetype: NpcArchetype,
@@ -864,6 +938,7 @@ pub struct NpcRuntimeBundle {
     pub lifecycle: Lifecycle,
 }
 
+/// 以零年龄创建一个带完整生命周期组件的 NPC。
 pub fn npc_runtime_bundle(
     entity: Entity,
     archetype: NpcArchetype,
@@ -872,6 +947,7 @@ pub fn npc_runtime_bundle(
     npc_runtime_bundle_with_age(entity, archetype, realm, 0.0)
 }
 
+/// 以指定年龄创建一个带完整生命周期组件的 NPC。
 pub fn npc_runtime_bundle_with_age(
     entity: Entity,
     archetype: NpcArchetype,
@@ -1241,6 +1317,7 @@ mod tests {
 
         use crate::combat::events::DeathInsightRequested;
         use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
+        use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
         use crate::qi_physics::WorldQiAccount;
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::ZoneRegistry;
@@ -1280,6 +1357,9 @@ mod tests {
         let actor_qi_identity =
             ActorQiIdentity::from_life_record(&bundle.life_record, ActorQiKind::Npc)
                 .expect("fixture identity should be canonical");
+        let mut bundle = bundle;
+        bundle.cultivation.qi_current = 25.0;
+        bundle.cultivation.qi_max = 100.0;
         app.world_mut().entity_mut(entity).insert((
             bundle,
             CurrentDimension(DimensionKind::Overworld),
@@ -1305,6 +1385,7 @@ mod tests {
                 }),
             },
         ));
+        let before = summarize_world_qi(app.world_mut());
 
         app.update();
         assert!(app.world().get::<Despawned>(entity).is_none());
@@ -1328,6 +1409,9 @@ mod tests {
             .resource::<WorldQiAccount>()
             .transfers()
             .is_empty());
+        let after_failed_persistence = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after_failed_persistence, 0.0)
+            .expect("SQLite 失败时 staged 终结不得改变 NPC 真元总量");
         assert_eq!(
             app.world()
                 .resource::<bevy_ecs::event::Events<crate::network::vfx_event_emit::VfxEventRequest>>()
@@ -1343,6 +1427,9 @@ mod tests {
             "terminal-side-effects-pass",
         ));
         app.update();
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("NPC 终结释放真元到 overflow 后必须保持全服守恒");
 
         assert!(app.world().get::<Despawned>(entity).is_some());
         assert!(app.world().get::<NpcTerminalCommitted>(entity).is_some());
