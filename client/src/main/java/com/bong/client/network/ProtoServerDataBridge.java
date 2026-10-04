@@ -325,37 +325,28 @@ public final class ProtoServerDataBridge {
             return bridgePlayerState(envelope.getPlayerState(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SOCIAL_EXPOSURE) {
-            return bridgeStripEnums(envelope.getSocialExposure(), typeString,
-                    new String[] {"kind", "EXPOSURE_KIND_"});
+            return bridgeNormalized(envelope.getSocialExposure(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.RIFT_PORTAL_STATE) {
-            return bridgeStripEnums(envelope.getRiftPortalState(), typeString,
-                    new String[] {"direction", "RIFT_PORTAL_DIRECTION_"},
-                    new String[] {"kind", "RIFT_PORTAL_KIND_"});
+            return bridgeNormalized(envelope.getRiftPortalState(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SEARCH_ABORTED) {
-            return bridgeStripEnums(envelope.getSearchAborted(), typeString,
-                    new String[] {"reason", "SEARCH_ABORT_REASON_"});
+            return bridgeNormalized(envelope.getSearchAborted(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.YIDAO_HUD_STATE) {
-            return bridgeStripEnums(envelope.getYidaoHudState(), typeString,
-                    new String[] {"active_skill", "YIDAO_SKILL_ID_"});
+            return bridgeNormalized(envelope.getYidaoHudState(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_XP_GAIN) {
-            return bridgeStripEnums(envelope.getSkillXpGain(), typeString,
-                    new String[] {"skill", "SKILL_ID_"});
+            return bridgeNormalized(envelope.getSkillXpGain(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_LV_UP) {
-            return bridgeStripEnums(envelope.getSkillLvUp(), typeString,
-                    new String[] {"skill", "SKILL_ID_"});
+            return bridgeNormalized(envelope.getSkillLvUp(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CAP_CHANGED) {
-            return bridgeStripEnums(envelope.getSkillCapChanged(), typeString,
-                    new String[] {"skill", "SKILL_ID_"});
+            return bridgeNormalized(envelope.getSkillCapChanged(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_SCROLL_USED) {
-            return bridgeStripEnums(envelope.getSkillScrollUsed(), typeString,
-                    new String[] {"skill", "SKILL_ID_"});
+            return bridgeNormalized(envelope.getSkillScrollUsed(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED) {
             return bridgeAlchemyOutcomeResolved(envelope.getAlchemyOutcomeResolved(), typeString);
@@ -367,50 +358,38 @@ public final class ProtoServerDataBridge {
             return bridgeBotanyPlantV2RenderProfiles(envelope.getBotanyPlantV2RenderProfiles(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.GATHERING_SESSION) {
-            return bridgeStripEnums(envelope.getGatheringSession(), typeString,
-                    new String[] {"target_type", "GATHERING_TARGET_TYPE_"},
-                    new String[] {"quality_hint", "GATHERING_QUALITY_HINT_"});
+            return bridgeNormalized(envelope.getGatheringSession(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CARRIER_STATE) {
-            return bridgeStripEnums(envelope.getCarrierState(), typeString,
-                    new String[] {"phase", "CARRIER_CHARGE_PHASE_"});
+            return bridgeNormalized(envelope.getCarrierState(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FALSE_SKIN_STATE) {
             return bridgeFalseSkinState(envelope.getFalseSkinState(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.QI_COLOR_OBSERVED) {
-            return bridgeStripEnums(envelope.getQiColorObserved(), typeString,
-                    new String[] {"main", "COLOR_KIND_"},
-                    new String[] {"secondary", "COLOR_KIND_"});
+            return bridgeNormalized(envelope.getQiColorObserved(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SPIRITUAL_SENSE_TARGETS) {
             return bridgeSpiritualSenseTargets(envelope.getSpiritualSenseTargets(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EVENT_ALERT) {
-            return bridgeStripEnums(envelope.getEventAlert(), typeString,
-                    new String[] {"event", "EVENT_KIND_"});
+            return bridgeNormalized(envelope.getEventAlert(), typeString);
         }
         // ─── plan-wire-format-bridge-v1 P1／RC2 warn+info 批 ─────────────
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_STARTED) {
-            return bridgeStripEnums(envelope.getExtractStarted(), typeString,
-                    new String[] {"portal_kind", "RIFT_PORTAL_KIND_"});
+            return bridgeNormalized(envelope.getExtractStarted(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_ABORTED) {
-            return bridgeStripEnums(envelope.getExtractAborted(), typeString,
-                    new String[] {"reason", "EXTRACT_ABORTED_REASON_"});
+            return bridgeNormalized(envelope.getExtractAborted(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_FAILED) {
-            return bridgeStripEnums(envelope.getExtractFailed(), typeString,
-                    new String[] {"reason", "EXTRACT_FAILED_REASON_"});
+            return bridgeNormalized(envelope.getExtractFailed(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FORGE_OUTCOME) {
-            return bridgeStripEnums(envelope.getForgeOutcome(), typeString,
-                    new String[] {"bucket", "FORGE_OUTCOME_BUCKET_"},
-                    new String[] {"color", "COLOR_KIND_"});
+            return bridgeNormalized(envelope.getForgeOutcome(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.REALM_VISION_PARAMS) {
-            return bridgeStripEnums(envelope.getRealmVisionParams(), typeString,
-                    new String[] {"fog_shape", "FOG_SHAPE_"});
+            return bridgeNormalized(envelope.getRealmVisionParams(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_DIALOGUE) {
             return bridgeSpiritTreasureDialogue(envelope.getSpiritTreasureDialogue(), typeString);
@@ -423,12 +402,10 @@ public final class ProtoServerDataBridge {
         // 灵龛守护 fatigue/broken 之前走 generic path，未剥 GUARDIAN_KIND_ 前缀，
         // 玩家会在 HUD/事件流看到裸 "GUARDIAN_KIND_PUPPET" 而非 "puppet"。
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_FATIGUE) {
-            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianFatigue(), typeString,
-                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+            return bridgeNormalized(envelope.getNicheGuardianFatigue(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.NICHE_GUARDIAN_BROKEN) {
-            return bridgeStripEnumsOmittingUnspecified(envelope.getNicheGuardianBroken(), typeString,
-                    new String[] {"guardian_kind", "GUARDIAN_KIND_"});
+            return bridgeNormalized(envelope.getNicheGuardianBroken(), typeString);
         }
 
         // Extract the inner oneof message.
@@ -436,21 +413,7 @@ public final class ProtoServerDataBridge {
         if (inner == null) {
             return BridgeResult.error("failed to extract inner message for " + payloadCase.name());
         }
-
-        try {
-            String innerJson = printAndNormalize(inner);
-
-            String legacyJson;
-            if (innerJson.equals("{}")) {
-                legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"}";
-            } else {
-                legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
-            }
-
-            return BridgeResult.success(legacyJson);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-            return BridgeResult.error("proto→JSON conversion failed for " + payloadCase.name() + ": " + e.getMessage());
-        }
+        return bridgeNormalized(inner, typeString);
     }
 
     /**
@@ -700,7 +663,7 @@ public final class ProtoServerDataBridge {
             // step 路由 / TemperingInputHandler / InscriptionPanelComponent /
             // ConsecrationPanelComponent 全部只认 "billet"/"tempering"/"inscription"/
             // "consecration"/"done"，不剥则整个锻造小游戏 UI 永久卡死/空白。
-            stripEnumPrefix(root, "current_step", "FORGE_STEP_");
+            normalizeEnumPrefixes(root, typeString);
             String innerJson = root.toString();
             String legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
             return BridgeResult.success(legacyJson);
@@ -781,11 +744,6 @@ public final class ProtoServerDataBridge {
                     for (String axis : new String[]{"x", "y", "z"}) array.add(position.has(axis) ? position.get(axis).getAsInt() : 0);
                     preparation.add("station_pos", array);
                 }
-                if (preparation.has("materials")) {
-                    for (JsonElement material : preparation.getAsJsonArray("materials")) {
-                        if (material.isJsonObject()) stripForgeColorFromItem(material.getAsJsonObject());
-                    }
-                }
             }
             // 普通库存物品使用同一颜色规范。
             // (optional ColorKind) 在 placed_items[].item / equipped.*_worn[] /
@@ -793,46 +751,11 @@ public final class ProtoServerDataBridge {
             // "COLOR_KIND_SHARP" 全名；ItemTooltipPanel.forgeColorLabel() 只认 Rust
             // 风格首字母大写单词（"Sharp"/"Heavy"/...），不剥则任何锻造染色物品的提示
             // 文案永久显示裸 proto 常量。
-            if (root.has("placed_items") && root.get("placed_items").isJsonArray()) {
-                for (JsonElement el : root.getAsJsonArray("placed_items")) {
-                    if (el == null || !el.isJsonObject()) continue;
-                    JsonObject placed = el.getAsJsonObject();
-                    if (placed.has("item") && placed.get("item").isJsonObject()) {
-                        stripForgeColorFromItem(placed.getAsJsonObject("item"));
-                    }
-                }
-            }
-            if (root.has("equipped") && root.get("equipped").isJsonObject()) {
-                JsonObject equipped = root.getAsJsonObject("equipped");
-                for (Map.Entry<String, JsonElement> entry : equipped.entrySet()) {
-                    JsonElement value = entry.getValue();
-                    if (value == null) continue;
-                    if (value.isJsonArray()) {
-                        for (JsonElement itemEl : value.getAsJsonArray()) {
-                            if (itemEl != null && itemEl.isJsonObject()) {
-                                stripForgeColorFromItem(itemEl.getAsJsonObject());
-                            }
-                        }
-                    } else if (value.isJsonObject()) {
-                        stripForgeColorFromItem(value.getAsJsonObject());
-                    }
-                }
-            }
-            if (unwrappedHotbar != null) {
-                for (JsonElement itemEl : unwrappedHotbar) {
-                    if (itemEl != null && itemEl.isJsonObject()) {
-                        stripForgeColorFromItem(itemEl.getAsJsonObject());
-                    }
-                }
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
         }
-    }
-
-    private static void stripForgeColorFromItem(JsonObject item) {
-        stripEnumPrefixCapitalized(item, "forge_color", "COLOR_KIND_");
     }
 
     // ─── movement_state: enum name normalization ────────────────────
@@ -842,9 +765,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "movement_action", "MOVEMENT_ACTION_");
-            stripEnumPrefix(root, "zone_kind", "MOVEMENT_ZONE_KIND_");
-            stripEnumPrefix(root, "rejected_action", "MOVEMENT_ACTION_REQUEST_KIND_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -864,8 +785,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "phase", "CAST_PHASE_");
-            stripEnumPrefix(root, "outcome", "CAST_OUTCOME_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -886,8 +806,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "kind", "CONTAINER_KIND_");
-            stripEnumPrefix(root, "locked", "KEY_KIND_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -909,8 +828,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "channel", "EVENT_CHANNEL_");
-            stripEnumPrefix(root, "priority", "EVENT_PRIORITY_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -934,16 +852,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "stage", "DEATH_SCREEN_STAGE_");
-            stripEnumPrefix(root, "zone_kind", "DEATH_SCREEN_ZONE_KIND_");
-            if (root.has("cinematic") && root.get("cinematic").isJsonObject()) {
-                JsonObject cinematic = root.getAsJsonObject("cinematic");
-                stripEnumPrefix(cinematic, "phase", "DEATH_CINEMATIC_PHASE_");
-                stripEnumPrefix(cinematic, "zone_kind", "DEATH_CINEMATIC_ZONE_KIND_");
-                if (cinematic.has("roll") && cinematic.get("roll").isJsonObject()) {
-                    stripEnumPrefix(cinematic.getAsJsonObject("roll"), "result", "DEATH_ROLL_RESULT_");
-                }
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1058,8 +967,6 @@ public final class ProtoServerDataBridge {
                 root.add("cracks_count", cracksCount);
             }
 
-            normalizeRealmField(root, "realm");
-
             // plan-race-system-v1 P1c：target_meridian 现为 channel id 字符串，client 直接
             // MeridianChannel.fromChannelId 解析——保持字符串原样，不再转 int 下标。仅剥掉
             // 空串（proto optional 未设的边角），避免下游把空当作有效 channel。
@@ -1072,17 +979,7 @@ public final class ProtoServerDataBridge {
                 }
             }
 
-            stripEnumPrefix(root, "qi_color_main", "COLOR_KIND_");
-            stripEnumPrefix(root, "qi_color_secondary", "COLOR_KIND_");
-
-            if (root.has("practice_weights") && root.get("practice_weights").isJsonArray()) {
-                for (JsonElement el : root.getAsJsonArray("practice_weights")) {
-                    if (el != null && el.isJsonObject()) {
-                        stripEnumPrefix(el.getAsJsonObject(), "color", "COLOR_KIND_");
-                    }
-                }
-            }
-
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1100,27 +997,15 @@ public final class ProtoServerDataBridge {
                 for (JsonElement recipeEl : root.getAsJsonArray("recipes")) {
                     if (recipeEl == null || !recipeEl.isJsonObject()) continue;
                     JsonObject recipe = recipeEl.getAsJsonObject();
-                    stripEnumPrefix(recipe, "category", "CRAFT_CATEGORY_");
                     convertPairArrayToTuples(recipe, "materials");
                     convertPairToTuple(recipe, "output");
                     if (recipe.has("requirements") && recipe.get("requirements").isJsonObject()) {
                         JsonObject req = recipe.getAsJsonObject("requirements");
-                        normalizeRealmField(req, "realm_min");
                         convertPairToTuple(req, "qi_color_min");
-                        if (req.has("qi_color_min") && req.get("qi_color_min").isJsonArray()) {
-                            JsonArray qcArr = req.getAsJsonArray("qi_color_min");
-                            if (qcArr.size() >= 1 && qcArr.get(0).isJsonPrimitive()) {
-                                String colorVal = qcArr.get(0).getAsString();
-                                if (colorVal.startsWith("COLOR_KIND_")) {
-                                    qcArr.set(0, new JsonPrimitive(
-                                            colorVal.substring("COLOR_KIND_".length())
-                                                    .toLowerCase(Locale.ROOT)));
-                                }
-                            }
-                        }
                     }
                 }
             }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1183,7 +1068,7 @@ public final class ProtoServerDataBridge {
 
     /**
      * 剥前缀后只把首字母大写、其余小写（单个 wire 单词 → "Sharp"/"Condense" 风格）。
-     * 用于 {@code normalizeRealmField}（Realm）与 forge_color / alchemy_contamination
+     * 用于 Realm、forge_color 与 alchemy_contamination
      * 的 color 字段（ColorKind）——这两处消费端期望 Rust 风格首字母大写单词，而非
      * {@link #stripEnumPrefix} 产出的全小写。
      */
@@ -1228,52 +1113,274 @@ public final class ProtoServerDataBridge {
         }
     }
 
-    private static void normalizeRealmField(JsonObject obj, String field) {
-        stripEnumPrefixCapitalized(obj, field, "REALM_");
-    }
-
     /**
-     * 通用「仅剥若干顶层字段枚举前缀」fixup，用于 generic path 无差别覆盖的
-     * simple-field payloadCase（proto 枚举字段直接挂在消息顶层，不涉及嵌套数组/
-     * oneof）。嵌套数组/oneof 场景仍走各自专属方法（如 bridgeAlchemyContamination）。
+     * 将 protobuf 的枚举全名转换为现有 client consumer 约定的 wire 字面量。
+     *
+     * <p>所有 bridge 路径都在完成 oneof 解包、数组重塑等结构变换后调用这一入口。
+     * 入口按 payload type 选择字段路径和大小写策略，低层 helper 只负责单字段转换；
+     * 因而新增枚举时只需在这里登记，避免某个新 payload 忘记剥前缀。</p>
      */
-    private static BridgeResult bridgeStripEnums(
-            MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
-        return bridgeStripEnums(msg, typeString, false, fieldPrefixPairs);
+    private static void normalizeEnumPrefixes(JsonObject root, String typeString) {
+        switch (typeString) {
+            case "player_state" -> normalizePlayerState(root);
+            case "social_exposure" -> normalizeSnake(root, "kind", "EXPOSURE_KIND_");
+            case "rift_portal_state" -> normalizeRiftPortal(root);
+            case "search_aborted" -> normalizeSnake(root, "reason", "SEARCH_ABORT_REASON_");
+            case "yidao_hud_state" -> normalizeSnake(root, "active_skill", "YIDAO_SKILL_ID_");
+            case "skill_xp_gain", "skill_lv_up", "skill_cap_changed", "skill_scroll_used" ->
+                    normalizeSnake(root, "skill", "SKILL_ID_");
+            case "alchemy_outcome_resolved" -> normalizeAlchemyOutcome(root);
+            case "alchemy_contamination" -> normalizeArrayCapitalized(
+                    root, "levels", "color", "COLOR_KIND_");
+            case "botany_plant_v2_render_profiles" -> normalizeArraySnake(
+                    root, "profiles", "model_overlay", "BOTANY_MODEL_OVERLAY_");
+            case "gathering_session" -> normalizeGathering(root);
+            case "carrier_state" -> normalizeSnake(root, "phase", "CARRIER_CHARGE_PHASE_");
+            case "false_skin_state" -> normalizeFalseSkin(root);
+            case "qi_color_observed" -> normalizeQiColor(root);
+            case "spiritual_sense_targets" -> normalizeArrayPascal(
+                    root, "entries", "kind", "SENSE_KIND_");
+            case "event_alert" -> normalizeSnake(root, "event", "EVENT_KIND_");
+            case "extract_started" -> normalizeSnake(root, "portal_kind", "RIFT_PORTAL_KIND_");
+            case "extract_aborted" -> normalizeSnake(root, "reason", "EXTRACT_ABORTED_REASON_");
+            case "extract_failed" -> normalizeSnake(root, "reason", "EXTRACT_FAILED_REASON_");
+            case "forge_outcome" -> normalizeForgeOutcome(root);
+            case "realm_vision_params" -> normalizeSnake(root, "fog_shape", "FOG_SHAPE_");
+            case "forge_session" -> normalizeSnake(root, "current_step", "FORGE_STEP_");
+            case "movement_state" -> normalizeMovement(root);
+            case "cast_sync" -> normalizeCast(root);
+            case "container_state" -> normalizeContainer(root);
+            case "event_stream_push" -> normalizeEventStream(root);
+            case "death_screen" -> normalizeDeathScreen(root);
+            case "cultivation_detail" -> normalizeCultivation(root);
+            case "craft_recipe_list" -> normalizeCraftRecipes(root);
+            case "spirit_treasure_dialogue" -> normalizeSnake(
+                    nestedObject(root, "dialogue"), "tone", "SPIRIT_TREASURE_DIALOGUE_TONE_");
+            case "recipe_unlocked" -> normalizeSnake(
+                    nestedObject(root, "source"), "trigger", "INSIGHT_TRIGGER_");
+            case "craft_outcome" -> normalizeSnake(root, "reason", "CRAFT_FAILURE_REASON_");
+            case "inventory_snapshot" -> normalizeInventoryItems(root);
+            case "niche_guardian_fatigue", "niche_guardian_broken" -> normalizeGuardian(root);
+            default -> {
+                // Payloads without enum fields deliberately pass through unchanged.
+            }
+        }
     }
 
-    /**
-     * 与 {@link #bridgeStripEnums(MessageOrBuilder, String, String[]...)} 相同，但会移除
-     * proto3 默认枚举 {@code *_UNSPECIFIED}。灵龛 legacy schema 只接受三个真实守护类型；
-     * missing 与显式 UNSPECIFIED 在 wire bytes 上等价，均应让下游 required-field gate
-     * 安全 no-op，而不是伪造一个名为 {@code unspecified} 的 HUD/store key。
-     */
-    private static BridgeResult bridgeStripEnumsOmittingUnspecified(
-            MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
-        return bridgeStripEnums(msg, typeString, true, fieldPrefixPairs);
+    private static void normalizePlayerState(JsonObject root) {
+        normalizeCapitalized(root, "realm", "REALM_");
+        normalizeSnake(root, "season_state", "season", "SEASON_");
     }
 
-    private static BridgeResult bridgeStripEnums(
-            MessageOrBuilder msg,
-            String typeString,
-            boolean omitUnspecified,
-            String[]... fieldPrefixPairs) {
+    private static void normalizeRiftPortal(JsonObject root) {
+        normalizeSnake(root, "direction", "RIFT_PORTAL_DIRECTION_");
+        normalizeSnake(root, "kind", "RIFT_PORTAL_KIND_");
+    }
+
+    private static void normalizeAlchemyOutcome(JsonObject root) {
+        normalizeSnake(root, "bucket", "ALCHEMY_OUTCOME_BUCKET_");
+        normalizeOptionalCapitalized(root, "toxin_color", "COLOR_KIND_");
+    }
+
+    private static void normalizeGathering(JsonObject root) {
+        normalizeSnake(root, "target_type", "GATHERING_TARGET_TYPE_");
+        normalizeSnake(root, "quality_hint", "GATHERING_QUALITY_HINT_");
+    }
+
+    private static void normalizeFalseSkin(JsonObject root) {
+        normalizeSnake(root, "kind", "FALSE_SKIN_KIND_");
+        normalizeArraySnake(root, "layers", "tier", "FALSE_SKIN_TIER_");
+    }
+
+    private static void normalizeQiColor(JsonObject root) {
+        normalizeSnake(root, "main", "COLOR_KIND_");
+        normalizeSnake(root, "secondary", "COLOR_KIND_");
+    }
+
+    private static void normalizeForgeOutcome(JsonObject root) {
+        normalizeSnake(root, "bucket", "FORGE_OUTCOME_BUCKET_");
+        normalizeSnake(root, "color", "COLOR_KIND_");
+    }
+
+    private static void normalizeMovement(JsonObject root) {
+        normalizeSnake(root, "movement_action", "MOVEMENT_ACTION_");
+        normalizeSnake(root, "zone_kind", "MOVEMENT_ZONE_KIND_");
+        normalizeSnake(root, "rejected_action", "MOVEMENT_ACTION_REQUEST_KIND_");
+    }
+
+    private static void normalizeCast(JsonObject root) {
+        normalizeSnake(root, "phase", "CAST_PHASE_");
+        normalizeSnake(root, "outcome", "CAST_OUTCOME_");
+    }
+
+    private static void normalizeContainer(JsonObject root) {
+        normalizeSnake(root, "kind", "CONTAINER_KIND_");
+        normalizeSnake(root, "locked", "KEY_KIND_");
+    }
+
+    private static void normalizeEventStream(JsonObject root) {
+        normalizeSnake(root, "channel", "EVENT_CHANNEL_");
+        normalizeSnake(root, "priority", "EVENT_PRIORITY_");
+    }
+
+    private static void normalizeCultivation(JsonObject root) {
+        normalizeCapitalized(root, "realm", "REALM_");
+        normalizeSnake(root, "qi_color_main", "COLOR_KIND_");
+        normalizeSnake(root, "qi_color_secondary", "COLOR_KIND_");
+        normalizeArraySnake(root, "practice_weights", "color", "COLOR_KIND_");
+    }
+
+    private static void normalizeGuardian(JsonObject root) {
+        removeUnspecified(root, "guardian_kind", "GUARDIAN_KIND_");
+        normalizeSnake(root, "guardian_kind", "GUARDIAN_KIND_");
+    }
+
+    private static BridgeResult bridgeNormalized(MessageOrBuilder msg, String typeString) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            for (String[] pair : fieldPrefixPairs) {
-                if (omitUnspecified && removeUnspecifiedEnum(root, pair[0], pair[1])) {
-                    continue;
-                }
-                stripEnumPrefix(root, pair[0], pair[1]);
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
         }
     }
 
-    private static boolean removeUnspecifiedEnum(JsonObject root, String field, String prefix) {
+    private static void normalizeSnake(JsonObject root, String field, String prefix) {
+        if (root != null) {
+            stripEnumPrefix(root, field, prefix);
+        }
+    }
+
+    private static void normalizeSnake(
+            JsonObject parent, String childField, String field, String prefix) {
+        if (parent != null && parent.has(childField) && parent.get(childField).isJsonObject()) {
+            normalizeSnake(parent.getAsJsonObject(childField), field, prefix);
+        }
+    }
+
+    private static void normalizeCapitalized(JsonObject root, String field, String prefix) {
+        if (root != null) {
+            stripEnumPrefixCapitalized(root, field, prefix);
+        }
+    }
+
+    private static void normalizeOptionalCapitalized(JsonObject root, String field, String prefix) {
+        if (root != null && !removeUnspecified(root, field, prefix)) {
+            normalizeCapitalized(root, field, prefix);
+        }
+    }
+
+    private static void normalizeArraySnake(JsonObject root, String arrayField, String field, String prefix) {
+        stripEnumPrefixInArray(root, arrayField, field, prefix);
+    }
+
+    private static void normalizeArrayCapitalized(
+            JsonObject root, String arrayField, String field, String prefix) {
+        if (root == null || !root.has(arrayField) || !root.get(arrayField).isJsonArray()) return;
+        for (JsonElement element : root.getAsJsonArray(arrayField)) {
+            if (element != null && element.isJsonObject()) {
+                normalizeCapitalized(element.getAsJsonObject(), field, prefix);
+            }
+        }
+    }
+
+    private static void normalizeArrayPascal(JsonObject root, String arrayField, String field, String prefix) {
+        if (root == null || !root.has(arrayField) || !root.get(arrayField).isJsonArray()) return;
+        for (JsonElement element : root.getAsJsonArray(arrayField)) {
+            if (element != null && element.isJsonObject()) {
+                stripEnumPrefixPascalCase(element.getAsJsonObject(), field, prefix);
+            }
+        }
+    }
+
+    private static JsonObject nestedObject(JsonObject root, String field) {
+        if (root != null && root.has(field) && root.get(field).isJsonObject()) {
+            return root.getAsJsonObject(field);
+        }
+        return null;
+    }
+
+    private static void normalizeDeathScreen(JsonObject root) {
+        normalizeSnake(root, "stage", "DEATH_SCREEN_STAGE_");
+        normalizeSnake(root, "zone_kind", "DEATH_SCREEN_ZONE_KIND_");
+        JsonObject cinematic = nestedObject(root, "cinematic");
+        normalizeSnake(cinematic, "phase", "DEATH_CINEMATIC_PHASE_");
+        normalizeSnake(cinematic, "zone_kind", "DEATH_CINEMATIC_ZONE_KIND_");
+        normalizeSnake(nestedObject(cinematic, "roll"), "result", "DEATH_ROLL_RESULT_");
+    }
+
+    private static void normalizeCraftRecipes(JsonObject root) {
+        if (root == null || !root.has("recipes") || !root.get("recipes").isJsonArray()) return;
+        for (JsonElement element : root.getAsJsonArray("recipes")) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject recipe = element.getAsJsonObject();
+            normalizeSnake(recipe, "category", "CRAFT_CATEGORY_");
+            JsonObject requirements = nestedObject(recipe, "requirements");
+            normalizeCapitalized(requirements, "realm_min", "REALM_");
+            if (requirements != null && requirements.has("qi_color_min")
+                    && requirements.get("qi_color_min").isJsonArray()) {
+                JsonArray pair = requirements.getAsJsonArray("qi_color_min");
+                if (pair.size() > 0 && pair.get(0).isJsonPrimitive()) {
+                    String color = pair.get(0).getAsString();
+                    if (color.startsWith("COLOR_KIND_")) {
+                        pair.set(0, new JsonPrimitive(
+                                color.substring("COLOR_KIND_".length()).toLowerCase(Locale.ROOT)));
+                    }
+                }
+            }
+        }
+    }
+
+    private static void normalizeInventoryItems(JsonObject root) {
+        if (root == null) return;
+        if (root.has("material_preparation") && root.get("material_preparation").isJsonObject()) {
+            JsonObject preparation = root.getAsJsonObject("material_preparation");
+            if (preparation.has("materials") && preparation.get("materials").isJsonArray()) {
+                normalizeObjectArrayCapitalized(preparation.getAsJsonArray("materials"), "forge_color");
+            }
+        }
+        if (root.has("placed_items") && root.get("placed_items").isJsonArray()) {
+            for (JsonElement element : root.getAsJsonArray("placed_items")) {
+                normalizeItemWrapper(element);
+            }
+        }
+        JsonObject equipped = nestedObject(root, "equipped");
+        if (equipped != null) {
+            for (JsonElement value : equipped.entrySet().stream().map(Map.Entry::getValue).toList()) {
+                if (value.isJsonArray()) {
+                    normalizeObjectArrayCapitalized(value.getAsJsonArray(), "forge_color");
+                } else {
+                    normalizeCapitalized(value.isJsonObject() ? value.getAsJsonObject() : null,
+                            "forge_color", "COLOR_KIND_");
+                }
+            }
+        }
+        if (root.has("hotbar") && root.get("hotbar").isJsonArray()) {
+            normalizeObjectArrayCapitalized(root.getAsJsonArray("hotbar"), "forge_color");
+        }
+    }
+
+    private static void normalizeItemWrapper(JsonElement element) {
+        if (element != null && element.isJsonObject()) {
+            JsonObject object = element.getAsJsonObject();
+            normalizeCapitalized(object.has("item") && object.get("item").isJsonObject()
+                    ? object.getAsJsonObject("item") : object, "forge_color", "COLOR_KIND_");
+        }
+    }
+
+    private static void normalizeObjectArrayCapitalized(JsonArray values, String field) {
+        for (JsonElement value : values) {
+            if (value != null && value.isJsonObject()) {
+                JsonObject object = value.getAsJsonObject();
+                normalizeCapitalized(object.has("item") && object.get("item").isJsonObject()
+                        ? object.getAsJsonObject("item") : object, field, "COLOR_KIND_");
+            }
+        }
+    }
+
+    private static boolean removeUnspecified(JsonObject root, String field, String prefix) {
+        if (root == null) return false;
         JsonElement value = root.get(field);
         if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
             return false;
@@ -1289,7 +1396,7 @@ public final class ProtoServerDataBridge {
     //
     // proto3 canonical JSON 把 Realm 打成 "REALM_CONDENSE" 全名；PLAYER_STATE
     // 之前无 specialCase，走 generic path 不剥。HudRealmGate.tier() /
-    // RealmLabel.displayName 只认 normalizeRealmField 产出的 "Condense" 式大小写
+    // RealmLabel.displayName 只认桥接入口产出的 "Condense" 式大小写
     // （复用 bridgeCultivationDetail 已在用的同一 helper）。不剥则所有境界门控 HUD
     // 恒判醒灵（tier 0），境界中文标签也恒显示裸 proto 常量。
 
@@ -1297,10 +1404,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            normalizeRealmField(root, "realm");
-            if (root.has("season_state") && root.get("season_state").isJsonObject()) {
-                stripEnumPrefix(root.getAsJsonObject("season_state"), "season", "SEASON_");
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1311,10 +1415,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "bucket", "ALCHEMY_OUTCOME_BUCKET_");
-            if (!removeUnspecifiedEnum(root, "toxin_color", "COLOR_KIND_")) {
-                stripEnumPrefixCapitalized(root, "toxin_color", "COLOR_KIND_");
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1324,7 +1425,7 @@ public final class ProtoServerDataBridge {
     // ─── alchemy_contamination: per-level color enum normalization ──
     //
     // AlchemyContaminationHandler 用 String.equals("Mellow")/("Violent")（Rust 风格
-    // 首字母大写单词）挑 mellow/violent 两条快捷字段，不是 stripEnumPrefix 产出的
+    // 首字母大写单词）挑 mellow/violent 两条快捷字段，不是 snake_case 产出的
     // 全小写。不剥（或剥错大小写）则 ContaminationWarningStore 永远停在初始 0/0/true，
     // 玩家看不到真实的中毒警示。
 
@@ -1332,13 +1433,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            if (root.has("levels") && root.get("levels").isJsonArray()) {
-                for (JsonElement el : root.getAsJsonArray("levels")) {
-                    if (el != null && el.isJsonObject()) {
-                        stripEnumPrefixCapitalized(el.getAsJsonObject(), "color", "COLOR_KIND_");
-                    }
-                }
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1354,7 +1449,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefixInArray(root, "profiles", "model_overlay", "BOTANY_MODEL_OVERLAY_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1371,8 +1466,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            stripEnumPrefix(root, "kind", "FALSE_SKIN_KIND_");
-            stripEnumPrefixInArray(root, "layers", "tier", "FALSE_SKIN_TIER_");
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1383,20 +1477,14 @@ public final class ProtoServerDataBridge {
     //
     // SenseKind.fromWire() 精确匹配多段 PascalCase 字面量（"AmbientLeyline"／
     // "ZhenfaWardAlert"／"DyingElderQi"…），既不是全小写也不是单段首字母大写，
-    // 必须用 stripEnumPrefixPascalCase。不剥则每条神识目标恒回落 LIVING_QI，
+    // 必须用 PascalCase 转换。不剥则每条神识目标恒回落 LIVING_QI，
     // 濒死大能 / 伪装蛛 / 阵法警示等差异化视觉永久失效。
 
     private static BridgeResult bridgeSpiritualSenseTargets(MessageOrBuilder msg, String typeString) {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            if (root.has("entries") && root.get("entries").isJsonArray()) {
-                for (JsonElement el : root.getAsJsonArray("entries")) {
-                    if (el != null && el.isJsonObject()) {
-                        stripEnumPrefixPascalCase(el.getAsJsonObject(), "kind", "SENSE_KIND_");
-                    }
-                }
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1414,9 +1502,7 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
-            if (root.has("dialogue") && root.get("dialogue").isJsonObject()) {
-                stripEnumPrefix(root.getAsJsonObject("dialogue"), "tone", "SPIRIT_TREASURE_DIALOGUE_TONE_");
-            }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1449,10 +1535,10 @@ public final class ProtoServerDataBridge {
                 } else if (rawSource.has("insight_trigger")) {
                     normalized.addProperty("kind", "insight");
                     normalized.add("trigger", rawSource.get("insight_trigger"));
-                    stripEnumPrefix(normalized, "trigger", "INSIGHT_TRIGGER_");
                 }
                 root.add("source", normalized);
             }
+            normalizeEnumPrefixes(root, typeString);
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
@@ -1478,7 +1564,7 @@ public final class ProtoServerDataBridge {
             String raw = printAndNormalize(v.inner());
             JsonObject inner = raw.equals("{}") ? new JsonObject() : JsonParser.parseString(raw).getAsJsonObject();
             if ("failed".equals(v.kind())) {
-                stripEnumPrefix(inner, "reason", "CRAFT_FAILURE_REASON_");
+                normalizeEnumPrefixes(inner, typeString);
             }
             JsonObject root = new JsonObject();
             root.addProperty("v", 1);
