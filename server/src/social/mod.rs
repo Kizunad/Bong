@@ -40,7 +40,7 @@ use crate::cultivation::components::{Cultivation, Karma, QiFlowError, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::identity::{IdentityId, PlayerIdentities};
+use crate::identity::{IdentityId, IdentityPersistenceLoadFailed, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -69,6 +69,15 @@ use crate::schema::social::{
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+type SocialRenownPlayersQueryItem<'a> = (
+    &'a Username,
+    &'a Lifecycle,
+    &'a mut Renown,
+    Option<&'a mut PlayerIdentities>,
+    Option<&'a IdentityPersistenceLoadFailed>,
+);
+type SocialPlayersQueryFilter = With<Client>;
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
 const DEATH_EXPOSURE_RADIUS: f64 = 50.0;
@@ -1504,7 +1513,7 @@ fn emit_social_relationship_vfx(
 pub(crate) fn apply_social_renown_deltas(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRenownDeltaEvent>,
-    mut players: Query<(&Lifecycle, &mut Renown, Option<&mut PlayerIdentities>), With<Client>>,
+    mut players: Query<SocialRenownPlayersQueryItem<'_>, SocialPlayersQueryFilter>,
 ) {
     for event in events.read() {
         let mut persisted_renown = None;
@@ -1536,9 +1545,9 @@ pub(crate) fn apply_social_renown_deltas(
         }
 
         let mut identity_synced = false;
-        if let Some((_, mut renown, identities)) = players
+        if let Some((username, _, mut renown, identities, identity_load_failed)) = players
             .iter_mut()
-            .find(|(lifecycle, _, _)| lifecycle.character_id == event.char_id)
+            .find(|(_, lifecycle, _, _, _)| lifecycle.character_id == event.char_id)
         {
             if let Some(persisted_renown) = persisted_renown.as_ref() {
                 *renown = persisted_renown.clone();
@@ -1553,11 +1562,13 @@ pub(crate) fn apply_social_renown_deltas(
             if let Some(mut identities) = identities {
                 identity_synced =
                     apply_social_renown_delta_to_identity(event, &mut identities, "online");
-                if identity_synced {
+                if identity_synced && identity_load_failed.is_none() {
                     if let Some(persistence) = persistence.as_deref() {
+                        let identity_key =
+                            crate::player::state::canonical_player_id(username.0.as_str());
                         if let Err(error) = identity_db::save_player_identities(
                             persistence,
-                            event.char_id.as_str(),
+                            &identity_key,
                             &identities,
                         ) {
                             tracing::warn!(
@@ -1618,14 +1629,19 @@ fn apply_social_renown_delta_to_persisted_identity(
     persistence: &PersistenceSettings,
     event: &SocialRenownDeltaEvent,
 ) {
-    match identity_db::load_player_identities(persistence, event.char_id.as_str()) {
+    let username = crate::player::state::player_username_from_character_id(&event.char_id);
+    let identity_key = username
+        .map(crate::player::state::canonical_player_id)
+        .unwrap_or_else(|| event.char_id.clone());
+    let loaded = username
+        .map(|username| identity_db::load_player_identities_for_username(persistence, username))
+        .unwrap_or_else(|| identity_db::load_player_identities(persistence, &identity_key));
+    match loaded {
         Ok(Some(mut identities)) => {
             if apply_social_renown_delta_to_identity(event, &mut identities, "persistence") {
-                if let Err(error) = identity_db::save_player_identities(
-                    persistence,
-                    event.char_id.as_str(),
-                    &identities,
-                ) {
+                if let Err(error) =
+                    identity_db::save_player_identities(persistence, &identity_key, &identities)
+                {
                     tracing::warn!(
                         "[bong][social] failed to persist offline identity renown for `{}`: {error}",
                         event.char_id

@@ -1423,6 +1423,59 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 47 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_status_effects (
+                username           TEXT PRIMARY KEY,
+                status_effects_json TEXT NOT NULL,
+                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 47;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 48 {
+        let transaction = connection.transaction()?;
+        let identity_table_exists = table_exists(&transaction, "player_identities")?;
+        if identity_table_exists {
+            let columns = table_columns(&transaction, "player_identities")?;
+            if !columns.iter().any(|column| column == "username") {
+                transaction
+                    .execute_batch("ALTER TABLE player_identities ADD COLUMN username TEXT;")?;
+            }
+            transaction.execute_batch(
+                "
+                UPDATE player_identities
+                SET username = NULLIF(
+                    CASE
+                        WHEN instr(substr(char_id, 9), ':') > 0
+                        THEN substr(substr(char_id, 9), 1, instr(substr(char_id, 9), ':') - 1)
+                        ELSE substr(char_id, 9)
+                    END,
+                    ''
+                )
+                WHERE username IS NULL AND char_id LIKE 'offline:%';
+                CREATE INDEX IF NOT EXISTS idx_player_identities_username_updated
+                ON player_identities (username, last_updated_wall DESC, char_id DESC);
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 48;")?;
+        if identity_table_exists {
+            assert_player_identities_schema_ready(&transaction)?;
+        }
+        transaction.commit()?;
+    }
+
     let deceased_schema_transaction = connection.transaction()?;
     if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
         assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
@@ -1440,6 +1493,10 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     let suspended_session_schema_transaction = connection.transaction()?;
     assert_suspended_session_schema_ready(&suspended_session_schema_transaction)?;
     suspended_session_schema_transaction.commit()?;
+
+    let player_status_effects_schema_transaction = connection.transaction()?;
+    assert_player_status_effects_schema_ready(&player_status_effects_schema_transaction)?;
+    player_status_effects_schema_transaction.commit()?;
 
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
@@ -1505,6 +1562,89 @@ pub(super) fn assert_runtime_clock_schema_ready(
                 )),
             )));
         }
+    }
+
+    Ok(())
+}
+
+pub(super) fn assert_player_status_effects_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "player_status_effects")?;
+    let required = [
+        "username",
+        "status_effects_json",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v47 migration completed but player_status_effects column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(player_status_effects)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    if primary_key.as_slice() != [("username".to_owned(), 1)] {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v47 migration completed but player_status_effects primary key mismatch: expected username got {primary_key:?}"
+            )),
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn assert_player_identities_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "player_identities")?;
+    let required = [
+        "char_id",
+        "username",
+        "identities_json",
+        "active_identity_id",
+        "last_switch_tick",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v48 migration completed but player_identities column {missing} missing"
+            )),
+        )));
+    }
+
+    let index_exists: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_player_identities_username_updated'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !index_exists {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(
+                "v48 migration completed but player_identities username index missing",
+            ),
+        )));
     }
 
     Ok(())

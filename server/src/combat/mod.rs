@@ -55,7 +55,8 @@ use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
     canonical_player_id, load_current_character_id, load_player_lifecycle_slice,
-    load_player_shrine_anchor_slice, player_character_id, PlayerStatePersistence,
+    load_player_shrine_anchor_slice, load_player_status_effects_slice, player_character_id,
+    PlayerStatePersistence,
 };
 
 use self::anticheat::{
@@ -63,7 +64,10 @@ use self::anticheat::{
     DEFAULT_ANTICHEAT_CONFIG_PATH,
 };
 use self::body_mass::{BodyMass, Stance};
-use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
+use self::components::{
+    CombatState, DerivedAttrs, Lifecycle, LifecyclePersistenceLoadFailed, Stamina, StatusEffects,
+    StatusEffectsPersistenceLoadFailed, Wounds,
+};
 use self::events::{
     ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathCinematicPublished, DeathEvent,
     DeathInsightRequested, DebugCombatCommand, DefenseIntent, RevivalActionIntent,
@@ -141,6 +145,7 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
         // 当前 tick 空间（跨重启也不例外），auto_confirm_revival_decisions 会在下一 tick 自然按折算后的 deadline 继续结算，
         // 无需在这里重放决策逻辑。character_id 不匹配（老档 / 已转生到新角色）时视为
         // "无可复用的存档"，回退默认值。
+        let mut lifecycle_load_failed = false;
         let persisted_lifecycle = persistence.and_then(|persistence| {
             match load_player_lifecycle_slice(
                 persistence,
@@ -159,6 +164,7 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
                          falling back to Lifecycle::default(): {error}",
                         username.0,
                     );
+                    lifecycle_load_failed = true;
                     None
                 }
             }
@@ -177,11 +183,27 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
             },
         };
 
-        commands.entity(entity).insert((
+        let mut status_effects_load_failed = false;
+        let status_effects = persistence.and_then(|persistence| {
+            match load_player_status_effects_slice(persistence, username.0.as_str()) {
+                Ok(status_effects) => status_effects,
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][combat] failed to load long-term status effects for `{}`; using runtime default without write permission: {error}",
+                        username.0
+                    );
+                    status_effects_load_failed = true;
+                    None
+                }
+            }
+        });
+
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert((
             Wounds::default(),
             Stamina::default(),
             CombatState::default(),
-            StatusEffects::default(),
+            status_effects.unwrap_or_default(),
             DerivedAttrs::default(),
             BodyMass::default(),
             Stance::default(),
@@ -191,6 +213,12 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
             player_attack::PlayerAttackCooldown::default(),
             lifecycle,
         ));
+        if lifecycle_load_failed {
+            entity_commands.insert(LifecyclePersistenceLoadFailed);
+        }
+        if status_effects_load_failed {
+            entity_commands.insert(StatusEffectsPersistenceLoadFailed);
+        }
     }
 }
 

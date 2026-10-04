@@ -1,4 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
+//! 玩家持久化切片的读写 facade。
+//!
+//! 本模块把既有 SQLite 行聚合为玩家运行时快照，并保留每个切片的载入 provenance。
+//! 载入失败时运行时仍可使用安全默认值，但对应写出口会从 [`WriteSet`] 中移除，避免
+//! 默认值覆盖未知的 durable row；功法、身体部位等冻结域仍由各自旧路径负责。
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -10,7 +16,7 @@ use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::coffin::CoffinGrade;
-use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
+use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot, StatusEffects};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
@@ -41,6 +47,156 @@ const DROPPED_LOOT_ID_QUERY_BATCH_SIZE: usize = 900;
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
 const MAX_SAFE_PLAYER_Y: f64 =
     (crate::world::terrain::MIN_Y + crate::world::terrain::WORLD_HEIGHT as i32 - 1) as f64;
+
+/// 参与玩家聚合写屏障的持久化切片。
+///
+/// `SkillSet` 与 `Wounds` 按 RF-11 冻结，不在此枚举中；`KnownTechniques` 仍由既有
+/// canonical adapter 独立接管，但保留枚举项让调用方能描述完整的写集合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum PlayerSlice {
+    /// 玩家核心数值与当前角色键。
+    Core,
+    /// 最后位置与维度。
+    Position,
+    /// 背包与装备布局。
+    Inventory,
+    /// 寿命与棺材状态。
+    Lifespan,
+    /// 可恢复的工位会话。
+    Craft,
+    /// HUD 快捷栏与 UI 偏好。
+    UiPrefs,
+    /// 跨重连保留的长期状态效果。
+    LongTermBuff,
+    /// 独立的身份档案键。
+    Identity,
+    /// 已知功法的 canonical adapter slice。
+    KnownTechniques,
+}
+
+/// 玩家切片的载入 provenance；`Failed` 表示不能证明 durable row 可安全覆盖。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerSliceLoadStatus {
+    /// 数据库中没有该玩家的行，可用新玩家默认值建立。
+    Missing,
+    /// 行存在且已成功解码、校验。
+    Loaded,
+    /// 读取、解码或校验失败，禁止默认值覆盖原行。
+    Failed,
+}
+
+/// 聚合 writer 当前获准更新的 durable row 集合。
+///
+/// 某个切片载入失败只会移除该切片；运行时可以继续使用默认值，但未知的原始行保持
+/// 不动。这就是 `WriteSet omit` 契约。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
+pub struct WriteSet(u16);
+
+impl WriteSet {
+    const CORE: u16 = 1 << 0;
+    const POSITION: u16 = 1 << 1;
+    const INVENTORY: u16 = 1 << 2;
+    const LIFESPAN: u16 = 1 << 3;
+    const CRAFT: u16 = 1 << 4;
+    const UI_PREFS: u16 = 1 << 5;
+    const LONG_TERM_BUFF: u16 = 1 << 6;
+    const IDENTITY: u16 = 1 << 7;
+    const KNOWN_TECHNIQUES: u16 = 1 << 8;
+
+    /// 创建不允许写回任何切片的集合。
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// 创建允许写回所有本卡管理切片的集合。
+    pub const fn all() -> Self {
+        Self(
+            Self::CORE
+                | Self::POSITION
+                | Self::INVENTORY
+                | Self::LIFESPAN
+                | Self::CRAFT
+                | Self::UI_PREFS
+                | Self::LONG_TERM_BUFF
+                | Self::IDENTITY
+                | Self::KNOWN_TECHNIQUES,
+        )
+    }
+
+    const fn bit(slice: PlayerSlice) -> u16 {
+        match slice {
+            PlayerSlice::Core => Self::CORE,
+            PlayerSlice::Position => Self::POSITION,
+            PlayerSlice::Inventory => Self::INVENTORY,
+            PlayerSlice::Lifespan => Self::LIFESPAN,
+            PlayerSlice::Craft => Self::CRAFT,
+            PlayerSlice::UiPrefs => Self::UI_PREFS,
+            PlayerSlice::LongTermBuff => Self::LONG_TERM_BUFF,
+            PlayerSlice::Identity => Self::IDENTITY,
+            PlayerSlice::KnownTechniques => Self::KNOWN_TECHNIQUES,
+        }
+    }
+
+    /// 判断指定切片是否仍在写集合中。
+    pub const fn contains(self, slice: PlayerSlice) -> bool {
+        self.0 & Self::bit(slice) != 0
+    }
+
+    /// 从写集合中移除一个切片，保留其他切片的资格。
+    pub const fn omit(self, slice: PlayerSlice) -> Self {
+        Self(self.0 & !Self::bit(slice))
+    }
+
+    /// 将一个已经确认可写的切片加入集合。
+    pub const fn include(self, slice: PlayerSlice) -> Self {
+        Self(self.0 | Self::bit(slice))
+    }
+}
+
+/// 与运行时 fallback 值一起挂在 ECS 实体上的切片载入 provenance。
+#[derive(Debug, Clone, Component)]
+pub struct PlayerSliceLoadGuard {
+    statuses: BTreeMap<PlayerSlice, PlayerSliceLoadStatus>,
+    write_set: WriteSet,
+    failures: HashMap<PlayerSlice, String>,
+}
+
+impl PlayerSliceLoadGuard {
+    /// 返回切片的载入 provenance；未知项按失败处理以保持 fail-closed。
+    pub fn status(&self, slice: PlayerSlice) -> PlayerSliceLoadStatus {
+        self.statuses
+            .get(&slice)
+            .copied()
+            .unwrap_or(PlayerSliceLoadStatus::Failed)
+    }
+
+    /// 返回当前聚合 writer 可使用的写集合。
+    pub const fn write_set(&self) -> WriteSet {
+        self.write_set
+    }
+
+    /// 返回失败切片的诊断文本（若有）。
+    pub fn failure(&self, slice: PlayerSlice) -> Option<&str> {
+        self.failures.get(&slice).map(String::as_str)
+    }
+
+    fn new(
+        statuses: BTreeMap<PlayerSlice, PlayerSliceLoadStatus>,
+        failures: HashMap<PlayerSlice, String>,
+    ) -> Self {
+        let mut write_set = WriteSet::empty();
+        for (slice, status) in &statuses {
+            if !matches!(status, PlayerSliceLoadStatus::Failed) {
+                write_set = write_set.include(*slice);
+            }
+        }
+        Self {
+            statuses,
+            write_set,
+            failures,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
@@ -235,12 +391,16 @@ pub struct LoadedPlayerSlices {
     pub inventory: Option<PlayerInventory>,
     pub craft_session: Option<CraftSession>,
     pub lifespan: Option<LifespanComponent>,
+    /// 已成功载入的长期状态效果；`None` 表示没有 durable row 或载入失败。
+    pub status_effects: Option<StatusEffects>,
     pub in_coffin: bool,
     /// 棺材档级：Some(grade) = 在棺内 + 档级；None = 不在棺内（与 in_coffin=false 语义对齐）
     pub coffin_grade: Option<CoffinGrade>,
     pub skill_set: SkillSet,
     pub known_techniques: LoadedKnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
+    /// 供断线和关服聚合 writer 使用的载入 provenance。
+    pub load_guard: PlayerSliceLoadGuard,
 }
 
 /// 功法聚合加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
@@ -531,7 +691,10 @@ fn load_player_slices_inner(
     username: &str,
     load_known_techniques: bool,
 ) -> LoadedPlayerSlices {
-    let state = load_player_state(persistence, username);
+    let spawn_position =
+        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin);
+    let mut statuses = BTreeMap::new();
+    let mut failures = HashMap::new();
     let mut connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
         Err(error) => {
@@ -540,16 +703,28 @@ fn load_player_slices_inner(
                 username,
                 persistence.db_path().display()
             );
+            for slice in [
+                PlayerSlice::Core,
+                PlayerSlice::Position,
+                PlayerSlice::Inventory,
+                PlayerSlice::Lifespan,
+                PlayerSlice::Craft,
+                PlayerSlice::UiPrefs,
+                PlayerSlice::LongTermBuff,
+                PlayerSlice::KnownTechniques,
+                PlayerSlice::Identity,
+            ] {
+                statuses.insert(slice, PlayerSliceLoadStatus::Failed);
+                failures.insert(slice, error.to_string());
+            }
             return LoadedPlayerSlices {
-                state,
-                position: crate::player::spawn_position_for_seed(
-                    username,
-                    SpawnPurpose::InitialLogin,
-                ),
+                state: PlayerState::default(),
+                position: spawn_position,
                 last_dimension: DimensionKind::default(),
                 inventory: None,
                 craft_session: None,
                 lifespan: None,
+                status_effects: None,
                 in_coffin: false,
                 coffin_grade: None,
                 skill_set: SkillSet::default(),
@@ -557,26 +732,70 @@ fn load_player_slices_inner(
                 // 必须按 LoadFailed 写保护，绝不能当「新玩家」用 default 覆盖写回
                 known_techniques: LoadedKnownTechniques::LoadFailed,
                 ui_prefs: PlayerUiPrefs::default(),
+                load_guard: PlayerSliceLoadGuard::new(statuses, failures),
             };
         }
     };
 
-    let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
-        Ok(Some((pos, dim))) => sanitize_loaded_position(username, pos, dim),
-        Ok(None) => (
-            crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
-            DimensionKind::default(),
-        ),
+    let state = match load_player_state_from_sqlite(&connection, username) {
+        Ok(Some(state)) => {
+            statuses.insert(PlayerSlice::Core, PlayerSliceLoadStatus::Loaded);
+            state
+        }
+        Ok(None) => {
+            match migrate_legacy_player_json_to_sqlite(persistence, &mut connection, username) {
+                Ok(Some(state)) => {
+                    statuses.insert(PlayerSlice::Core, PlayerSliceLoadStatus::Loaded);
+                    state
+                }
+                Ok(None) => {
+                    statuses.insert(PlayerSlice::Core, PlayerSliceLoadStatus::Missing);
+                    PlayerState::default()
+                }
+                Err(error) => {
+                    statuses.insert(PlayerSlice::Core, PlayerSliceLoadStatus::Failed);
+                    failures.insert(PlayerSlice::Core, error.to_string());
+                    PlayerState::default()
+                }
+            }
+        }
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted position/dimension for `{}` from sqlite {}: {error}; using spawn defaults",
+                "[bong][player] failed to load persisted core state for `{}` from sqlite {}: {error}; using runtime default without write permission",
                 username,
                 persistence.db_path().display()
             );
-            (
-                crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
-                DimensionKind::default(),
-            )
+            statuses.insert(PlayerSlice::Core, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::Core, error.to_string());
+            PlayerState::default()
+        }
+    };
+
+    let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
+        Ok(Some((pos, dim))) => match sanitize_loaded_position(username, pos, dim) {
+            Ok(position) => {
+                statuses.insert(PlayerSlice::Position, PlayerSliceLoadStatus::Loaded);
+                position
+            }
+            Err(error) => {
+                statuses.insert(PlayerSlice::Position, PlayerSliceLoadStatus::Failed);
+                failures.insert(PlayerSlice::Position, error.to_string());
+                (spawn_position, DimensionKind::default())
+            }
+        },
+        Ok(None) => {
+            statuses.insert(PlayerSlice::Position, PlayerSliceLoadStatus::Missing);
+            (spawn_position, DimensionKind::default())
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted position/dimension for `{}` from sqlite {}: {error}; using runtime default without write permission",
+                username,
+                persistence.db_path().display()
+            );
+            statuses.insert(PlayerSlice::Position, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::Position, error.to_string());
+            (spawn_position, DimensionKind::default())
         }
     };
     let inventory = match load_player_inventory_from_sqlite(
@@ -587,24 +806,52 @@ fn load_player_slices_inner(
             dimension: last_dimension,
         }),
     ) {
-        Ok(inventory) => inventory,
+        Ok(inventory) => {
+            let status = match inventory {
+                Some(_) => PlayerSliceLoadStatus::Loaded,
+                None => match inventory_row_has_payload(&connection, username) {
+                    Ok(true) => PlayerSliceLoadStatus::Failed,
+                    Ok(false) => PlayerSliceLoadStatus::Missing,
+                    Err(error) => {
+                        failures.insert(PlayerSlice::Inventory, error.to_string());
+                        PlayerSliceLoadStatus::Failed
+                    }
+                },
+            };
+            statuses.insert(PlayerSlice::Inventory, status);
+            inventory
+        }
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using default inventory fallback",
+                "[bong][player] failed to load persisted inventory for `{}` from sqlite {}: {error}; using runtime default without write permission",
                 username,
                 persistence.db_path().display()
             );
+            statuses.insert(PlayerSlice::Inventory, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::Inventory, error.to_string());
             None
         }
     };
     let craft_session = match load_player_craft_session_from_sqlite(&connection, username) {
-        Ok(session) => session,
+        Ok(session) => {
+            statuses.insert(
+                PlayerSlice::Craft,
+                if session.is_some() {
+                    PlayerSliceLoadStatus::Loaded
+                } else {
+                    PlayerSliceLoadStatus::Missing
+                },
+            );
+            session
+        }
         Err(error) => {
             tracing::error!(
                 "[bong][player] failed to load persisted craft session for `{}` from sqlite {}: {error}; refusing to invent a replacement session",
                 username,
                 persistence.db_path().display()
             );
+            statuses.insert(PlayerSlice::Craft, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::Craft, error.to_string());
             None
         }
     };
@@ -613,17 +860,23 @@ fn load_player_slices_inner(
         username,
     ) {
         Ok(Some((lifespan, in_coffin, grade))) => {
+            statuses.insert(PlayerSlice::Lifespan, PlayerSliceLoadStatus::Loaded);
             // coffin_grade = Some(grade) 当 in_coffin=true，None 当 in_coffin=false
             let coffin_grade = if in_coffin { Some(grade) } else { None };
             (Some(lifespan), in_coffin, coffin_grade)
         }
-        Ok(None) => (None, false, None),
+        Ok(None) => {
+            statuses.insert(PlayerSlice::Lifespan, PlayerSliceLoadStatus::Missing);
+            (None, false, None)
+        }
         Err(error) => {
             tracing::warn!(
-                    "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
+                    "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default without write permission",
                     username,
                     persistence.db_path().display()
                 );
+            statuses.insert(PlayerSlice::Lifespan, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::Lifespan, error.to_string());
             (None, false, None)
         }
     };
@@ -641,6 +894,7 @@ fn load_player_slices_inner(
     let known_techniques = if load_known_techniques {
         match load_player_known_techniques_from_sqlite(&connection, username) {
             Ok(known_techniques) => {
+                statuses.insert(PlayerSlice::KnownTechniques, PlayerSliceLoadStatus::Loaded);
                 LoadedKnownTechniques::Loaded(known_techniques.unwrap_or_default())
             }
             Err(error) => {
@@ -649,23 +903,64 @@ fn load_player_slices_inner(
                     username,
                     persistence.db_path().display()
                 );
+                statuses.insert(PlayerSlice::KnownTechniques, PlayerSliceLoadStatus::Failed);
+                failures.insert(PlayerSlice::KnownTechniques, error.to_string());
                 LoadedKnownTechniques::LoadFailed
             }
         }
     } else {
+        statuses.insert(PlayerSlice::KnownTechniques, PlayerSliceLoadStatus::Failed);
+        failures.insert(
+            PlayerSlice::KnownTechniques,
+            "canonical persistence adapter owns this slice".to_string(),
+        );
         LoadedKnownTechniques::NotLoaded
     };
-    let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
-        Ok(ui_prefs) => ui_prefs,
+    let ui_prefs = match load_player_ui_prefs_optional_from_sqlite(&connection, username) {
+        Ok(Some(ui_prefs)) => {
+            statuses.insert(PlayerSlice::UiPrefs, PlayerSliceLoadStatus::Loaded);
+            ui_prefs
+        }
+        Ok(None) => {
+            statuses.insert(PlayerSlice::UiPrefs, PlayerSliceLoadStatus::Missing);
+            PlayerUiPrefs::default()
+        }
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted UI prefs for `{}` from sqlite {}: {error}; using default UI prefs",
+                "[bong][player] failed to load persisted UI prefs for `{}` from sqlite {}: {error}; using runtime default without write permission",
                 username,
                 persistence.db_path().display()
             );
+            statuses.insert(PlayerSlice::UiPrefs, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::UiPrefs, error.to_string());
             PlayerUiPrefs::default()
         }
     };
+    let status_effects = match load_player_status_effects_from_sqlite(&connection, username) {
+        Ok(Some(status_effects)) => {
+            statuses.insert(PlayerSlice::LongTermBuff, PlayerSliceLoadStatus::Loaded);
+            Some(status_effects)
+        }
+        Ok(None) => {
+            statuses.insert(PlayerSlice::LongTermBuff, PlayerSliceLoadStatus::Missing);
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted long-term buffs for `{}` from sqlite {}: {error}; using runtime default without write permission",
+                username,
+                persistence.db_path().display()
+            );
+            statuses.insert(PlayerSlice::LongTermBuff, PlayerSliceLoadStatus::Failed);
+            failures.insert(PlayerSlice::LongTermBuff, error.to_string());
+            None
+        }
+    };
+    statuses.insert(PlayerSlice::Identity, PlayerSliceLoadStatus::Failed);
+    failures.insert(
+        PlayerSlice::Identity,
+        "identity adapter loads independently from canonical player key".to_string(),
+    );
 
     LoadedPlayerSlices {
         state,
@@ -674,11 +969,13 @@ fn load_player_slices_inner(
         inventory,
         craft_session,
         lifespan,
+        status_effects,
         in_coffin,
         coffin_grade,
         skill_set,
         known_techniques,
         ui_prefs,
+        load_guard: PlayerSliceLoadGuard::new(statuses, failures),
     }
 }
 
@@ -716,6 +1013,15 @@ pub fn load_player_lifecycle_slice(
 ) -> io::Result<Option<crate::combat::components::Lifecycle>> {
     let connection = open_player_connection(persistence)?;
     load_player_lifecycle_from_sqlite(&connection, username, current_combat_clock_tick)
+}
+
+/// 读取玩家长期状态效果；损坏或不可读的行返回 `Err`，由调用方挂载写保护标记。
+pub fn load_player_status_effects_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<StatusEffects>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_status_effects_from_sqlite(&connection, username)
 }
 
 /// bughunt player-lifecycle-relog-death-consequence-wipe：断线/关服 flush 时把当前
@@ -769,8 +1075,11 @@ pub fn save_player_slices(
     skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
+    // 该入口只用于显式的新角色/重生重置；长期状态效果也必须随同一事务清空，
+    // 否则下一次 hydrate 会把旧角色的 buff 带回新角色。
+    let reset_status_effects = StatusEffects::default();
     // grade=None → resolve_coffin_grade_for_persist 回读 DB 既有 grade
-    persist_player_slices_in_sqlite(
+    persist_player_slices_in_sqlite_with_write_set(
         &mut connection,
         username,
         state,
@@ -782,6 +1091,8 @@ pub fn save_player_slices(
         None,
         None,
         None,
+        Some(&reset_status_effects),
+        WriteSet::all(),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -799,8 +1110,43 @@ pub fn save_player_slices_with_coffin(
     grade: Option<CoffinGrade>,
     craft_session: Option<&CraftSession>,
 ) -> io::Result<PathBuf> {
+    save_player_slices_with_coffin_and_write_set(
+        persistence,
+        username,
+        state,
+        position,
+        last_dimension,
+        inventory,
+        lifespan,
+        skill_set,
+        grade,
+        craft_session,
+        None,
+        WriteSet::all(),
+    )
+}
+
+/// 按 `write_set` 原子保存玩家聚合切片。
+///
+/// 被省略的切片完全不写对应 durable row；调用方应把载入失败产生的集合原样传入，
+/// 这样运行时 fallback 不会覆盖未知的持久化数据。
+#[allow(clippy::too_many_arguments)]
+pub fn save_player_slices_with_coffin_and_write_set(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    state: &PlayerState,
+    position: [f64; 3],
+    last_dimension: DimensionKind,
+    inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
+    skill_set: &SkillSet,
+    grade: Option<CoffinGrade>,
+    craft_session: Option<&CraftSession>,
+    status_effects: Option<&StatusEffects>,
+    write_set: WriteSet,
+) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_slices_in_sqlite(
+    persist_player_slices_in_sqlite_with_write_set(
         &mut connection,
         username,
         state,
@@ -812,6 +1158,8 @@ pub fn save_player_slices_with_coffin(
         Some(grade.is_some()),
         grade,
         Some(craft_session),
+        status_effects,
+        write_set,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -905,6 +1253,17 @@ pub fn save_player_inventory_slice(
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_inventory_slice_in_sqlite(&mut connection, username, inventory)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+/// 保存玩家长期状态效果切片；该行与其他玩家 slice 使用同一 SQLite schema 版本。
+pub fn save_player_status_effects_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    status_effects: &StatusEffects,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_status_effects_slice_in_sqlite(&mut connection, username, status_effects)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -1459,12 +1818,12 @@ fn load_player_slow_from_sqlite(
         return Ok(None);
     };
 
-    let last_dimension = dimension_kind_from_sql(&dimension_text).unwrap_or_else(|error| {
-        tracing::warn!(
-            "[bong][player] unknown last_dimension `{dimension_text}` for `{username}`: {error}; defaulting to overworld"
-        );
-        DimensionKind::default()
-    });
+    let last_dimension = dimension_kind_from_sql(&dimension_text).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown last_dimension `{dimension_text}` for `{username}`: {error}"),
+        )
+    })?;
 
     Ok(Some(([pos_x, pos_y, pos_z], last_dimension)))
 }
@@ -1473,24 +1832,24 @@ fn sanitize_loaded_position(
     username: &str,
     position: [f64; 3],
     last_dimension: DimensionKind,
-) -> ([f64; 3], DimensionKind) {
+) -> io::Result<([f64; 3], DimensionKind)> {
     let [x, y, z] = position;
     if x.is_finite()
         && y.is_finite()
         && z.is_finite()
         && (MIN_SAFE_PLAYER_Y..=MAX_SAFE_PLAYER_Y).contains(&y)
     {
-        return (position, last_dimension);
+        return Ok((position, last_dimension));
     }
 
     tracing::warn!(
         "[bong][player] persisted position for `{username}` is outside safe login bounds \
          ({x:.2}, {y:.2}, {z:.2}, {last_dimension:?}); using spawn defaults"
     );
-    (
-        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
-        DimensionKind::default(),
-    )
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("persisted position for `{username}` is outside safe login bounds"),
+    ))
 }
 
 /// Bug A（真机回归）— 检测 #736 旧迁移 bug 污染并已落盘为 v2 的存档指纹：
@@ -1654,6 +2013,21 @@ fn load_player_inventory_from_sqlite(
     Ok(Some(inventory))
 }
 
+/// 识别 `load_player_inventory_from_sqlite` 返回 `None` 时究竟是缺行/显式 `null`，还是
+/// 旧存档校验后主动丢弃了一个损坏载荷。后者必须进入 `Failed`，否则聚合 writer 会把
+/// 默认库存写回并覆盖待人工恢复的原始 JSON。
+fn inventory_row_has_payload(connection: &Connection, username: &str) -> io::Result<bool> {
+    let inventory_json: Option<String> = connection
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(inventory_json.is_some_and(|json| json.trim() != DEFAULT_INVENTORY_JSON))
+}
+
 /// Commit a legacy layout migration and its overflow handoff together.
 ///
 /// 旧库存行保持不变，直到所有 overflow 实例都写入 durable dropped-loot 表；写入失败时
@@ -1773,6 +2147,26 @@ fn load_player_craft_session_from_sqlite(
         .transpose()
 }
 
+fn load_player_status_effects_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<StatusEffects>> {
+    let status_json: Option<String> = connection
+        .query_row(
+            "SELECT status_effects_json FROM player_status_effects WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    status_json
+        .map(|json| {
+            serde_json::from_str::<StatusEffects>(&json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .transpose()
+}
+
 /// plan-layered-equip-v1 P0.6（决议 #4 / #17）— inventory v1→v2 存档迁移（原地改写 Value）。
 ///
 /// v1 `equipped` 形态：`{ "<slot>": <ItemInstance object>, ... }`（每槽单件）。
@@ -1800,6 +2194,13 @@ fn load_player_ui_prefs_from_sqlite(
     connection: &Connection,
     username: &str,
 ) -> io::Result<PlayerUiPrefs> {
+    Ok(load_player_ui_prefs_optional_from_sqlite(connection, username)?.unwrap_or_default())
+}
+
+fn load_player_ui_prefs_optional_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<Option<PlayerUiPrefs>> {
     let prefs_json: Option<String> = connection
         .query_row(
             "
@@ -1814,10 +2215,11 @@ fn load_player_ui_prefs_from_sqlite(
         .map_err(io::Error::other)?;
 
     let Some(prefs_json) = prefs_json else {
-        return Ok(PlayerUiPrefs::default());
+        return Ok(None);
     };
 
     serde_json::from_str::<PlayerUiPrefs>(&prefs_json)
+        .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -2245,18 +2647,32 @@ fn persist_player_core_slice_in_sqlite(
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let last_updated_wall = current_unix_seconds();
-    let updated = connection
+
+    // 核心切片首次落盘只建立角色锚点。用单条 upsert 把首次创建与已有行更新
+    // 合并为一个 SQLite 原子操作，避免并发保存同时走 UPDATE→INSERT 时丢失本次写入。
+    // 冲突更新刻意保留已有 current_char_id；其它切片的载入 provenance 可能仍是
+    // Failed，不能借这个 fallback 把默认值写进未知的 durable row。
+    let current_char_id = Uuid::now_v7().to_string();
+    connection
         .execute(
             "
-            UPDATE player_core
-            SET karma = ?2,
-                inventory_score = ?3,
-                schema_version = ?4,
-                last_updated_wall = ?5
-            WHERE username = ?1
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                karma,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                karma = excluded.karma,
+                inventory_score = excluded.inventory_score,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
             ",
             params![
                 username,
+                current_char_id,
                 normalized.karma,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
@@ -2264,22 +2680,6 @@ fn persist_player_core_slice_in_sqlite(
             ],
         )
         .map_err(io::Error::other)?;
-
-    if updated == 0 {
-        persist_player_slices_in_sqlite(
-            connection,
-            username,
-            state,
-            crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
-            DimensionKind::default(),
-            None,
-            None,
-            &SkillSet::default(),
-            None,
-            None,
-            None,
-        )?;
-    }
 
     Ok(())
 }
@@ -2460,6 +2860,39 @@ fn persist_player_known_techniques_slice_in_sqlite(
     Ok(())
 }
 
+fn persist_player_status_effects_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    status_effects: &StatusEffects,
+) -> io::Result<()> {
+    let status_effects_json = serde_json::to_string(status_effects)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let last_updated_wall = current_unix_seconds();
+    connection
+        .execute(
+            "
+            INSERT INTO player_status_effects (
+                username,
+                status_effects_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                status_effects_json = excluded.status_effects_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                status_effects_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 /// bughunt player-lifecycle-relog-death-consequence-wipe：整份 `Lifecycle` 组件镜像进
 /// `player_lifecycle.lifecycle_json`（同 known_techniques 的单 JSON 列模式），覆盖
 /// state/fortune_remaining/awaiting_decision/各 deadline tick —— 调用方（断线清理 /
@@ -2517,42 +2950,95 @@ fn persist_player_slices_in_sqlite(
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
     in_coffin: Option<bool>,
+    coffin_grade: Option<CoffinGrade>,
+    craft_session: Option<Option<&CraftSession>>,
+) -> io::Result<()> {
+    persist_player_slices_in_sqlite_with_write_set(
+        connection,
+        username,
+        state,
+        position,
+        last_dimension,
+        inventory,
+        lifespan,
+        skill_set,
+        in_coffin,
+        coffin_grade,
+        craft_session,
+        None,
+        WriteSet::all(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_player_slices_in_sqlite_with_write_set(
+    connection: &mut Connection,
+    username: &str,
+    state: &PlayerState,
+    position: [f64; 3],
+    last_dimension: DimensionKind,
+    inventory: Option<&PlayerInventory>,
+    lifespan: Option<&LifespanComponent>,
+    _skill_set: &SkillSet,
+    in_coffin: Option<bool>,
     // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
     coffin_grade: Option<CoffinGrade>,
     // None = 调用方无 craft 上下文，保留数据库原值；Some(None) = 删除 session。
     craft_session: Option<Option<&CraftSession>>,
+    status_effects: Option<&StatusEffects>,
+    write_set: WriteSet,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
     let inventory_score = normalized.inventory_score;
     let [pos_x, pos_y, pos_z] = position;
-    let inventory_json = serialize_inventory_json(inventory)?;
-    let skill_set_json = serialize_skill_set_json(skill_set)?;
-    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
+    let inventory_json = write_set
+        .contains(PlayerSlice::Inventory)
+        .then(|| serialize_inventory_json(inventory))
+        .transpose()?;
+    let known_techniques_json = write_set
+        .contains(PlayerSlice::KnownTechniques)
+        .then(|| serialize_known_techniques_json(&KnownTechniques::default()))
+        .transpose()?;
     let last_updated_wall = current_unix_seconds();
-    let prefs_json = default_ui_prefs_json()?;
-    let craft_session_json = craft_session
+    let prefs_json = write_set
+        .contains(PlayerSlice::UiPrefs)
+        .then(default_ui_prefs_json)
+        .transpose()?;
+    let craft_session_json = write_set
+        .contains(PlayerSlice::Craft)
+        .then(|| craft_session.flatten().map(serde_json::to_string))
         .flatten()
-        .map(serde_json::to_string)
         .transpose()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
-    let coffin_grade_value = resolve_coffin_grade_for_persist(connection, username, coffin_grade)?;
+    let in_coffin_value = write_set
+        .contains(PlayerSlice::Lifespan)
+        .then(|| resolve_in_coffin_for_persist(connection, username, in_coffin))
+        .transpose()?;
+    let coffin_grade_value = write_set
+        .contains(PlayerSlice::Lifespan)
+        .then(|| resolve_coffin_grade_for_persist(connection, username, coffin_grade))
+        .transpose()?;
 
     let transaction = connection.transaction().map_err(io::Error::other)?;
-    let current_char_id: Option<String> = transaction
-        .query_row(
-            "SELECT current_char_id FROM player_core WHERE username = ?1",
-            params![username],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(io::Error::other)?;
-    let current_char_id = current_char_id.unwrap_or_else(|| Uuid::now_v7().to_string());
+    let current_char_id = if write_set.contains(PlayerSlice::Core) {
+        let current_char_id: Option<String> = transaction
+            .query_row(
+                "SELECT current_char_id FROM player_core WHERE username = ?1",
+                params![username],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(io::Error::other)?;
+        Some(current_char_id.unwrap_or_else(|| Uuid::now_v7().to_string()))
+    } else {
+        None
+    };
 
-    transaction
-        .execute(
-            "
+    if let Some(current_char_id) = current_char_id {
+        transaction
+            .execute(
+                "
             INSERT INTO player_core (
                 username,
                 current_char_id,
@@ -2568,20 +3054,22 @@ fn persist_player_slices_in_sqlite(
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
-            params![
-                username,
-                current_char_id,
-                karma,
-                inventory_score,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
+                params![
+                    username,
+                    current_char_id,
+                    karma,
+                    inventory_score,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
 
-    transaction
-        .execute(
-            "
+    if write_set.contains(PlayerSlice::Position) {
+        transaction
+            .execute(
+                "
             INSERT INTO player_slow (
                 username,
                 pos_x,
@@ -2599,20 +3087,22 @@ fn persist_player_slices_in_sqlite(
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
-            params![
-                username,
-                pos_x,
-                pos_y,
-                pos_z,
-                dimension_kind_to_sql(last_dimension),
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
+                params![
+                    username,
+                    pos_x,
+                    pos_y,
+                    pos_z,
+                    dimension_kind_to_sql(last_dimension),
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
+    if let Some(inventory_json) = inventory_json {
+        transaction
+            .execute(
+                "
             INSERT INTO inventories (
                 username,
                 inventory_json,
@@ -2624,39 +3114,19 @@ fn persist_player_slices_in_sqlite(
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
-            params![
-                username,
-                inventory_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
-            INSERT INTO player_skills (
-                username,
-                skill_set_json,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(username) DO UPDATE SET
-                skill_set_json = excluded.skill_set_json,
-                schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
-            ",
-            params![
-                username,
-                skill_set_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
+                params![
+                    username,
+                    inventory_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
+    if let Some(known_techniques_json) = known_techniques_json {
+        transaction
+            .execute(
+                "
             INSERT OR IGNORE INTO player_known_techniques (
                 username,
                 known_techniques_json,
@@ -2664,17 +3134,19 @@ fn persist_player_slices_in_sqlite(
                 last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4)
             ",
-            params![
-                username,
-                known_techniques_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
+                params![
+                    username,
+                    known_techniques_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
+    if let Some(prefs_json) = prefs_json {
+        transaction
+            .execute(
+                "
             INSERT OR IGNORE INTO player_ui_prefs (
                 username,
                 prefs_json,
@@ -2682,19 +3154,23 @@ fn persist_player_slices_in_sqlite(
                 last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4)
             ",
-            params![
-                username,
-                prefs_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    if let Some(lifespan) = lifespan {
-        let offline_pause_wall = last_updated_wall;
-        transaction
-            .execute(
-                "
+                params![
+                    username,
+                    prefs_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
+    }
+    if write_set.contains(PlayerSlice::Lifespan) {
+        if let (Some(lifespan), Some(in_coffin_value), Some(coffin_grade_value)) =
+            (lifespan, in_coffin_value, coffin_grade_value)
+        {
+            let offline_pause_wall = last_updated_wall;
+            transaction
+                .execute(
+                    "
                 INSERT INTO player_lifespan (
                     username,
                     born_at_tick,
@@ -2716,27 +3192,53 @@ fn persist_player_slices_in_sqlite(
                     schema_version = excluded.schema_version,
                     last_updated_wall = excluded.last_updated_wall
                 ",
-                params![
-                    username,
-                    lifespan.born_at_tick,
-                    lifespan.years_lived.min(lifespan.cap_by_realm as f64),
-                    lifespan.cap_by_realm,
-                    offline_pause_wall,
-                    i64::from(in_coffin_value),
-                    coffin_grade_value.as_db_str(),
-                    PLAYER_ROW_SCHEMA_VERSION,
-                    last_updated_wall
-                ],
-            )
-            .map_err(io::Error::other)?;
+                    params![
+                        username,
+                        lifespan.born_at_tick,
+                        lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                        lifespan.cap_by_realm,
+                        offline_pause_wall,
+                        i64::from(in_coffin_value),
+                        coffin_grade_value.as_db_str(),
+                        PLAYER_ROW_SCHEMA_VERSION,
+                        last_updated_wall
+                    ],
+                )
+                .map_err(io::Error::other)?;
+        }
     }
-    if craft_session.is_some() {
+    if write_set.contains(PlayerSlice::Craft) && craft_session.is_some() {
         persist_player_craft_session_in_transaction(
             &transaction,
             username,
             craft_session_json.as_deref(),
             last_updated_wall,
         )?;
+    }
+    if write_set.contains(PlayerSlice::LongTermBuff) {
+        if let Some(status_effects) = status_effects {
+            let status_effects_json = serde_json::to_string(status_effects)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            transaction
+                .execute(
+                    "
+                    INSERT INTO player_status_effects (
+                        username, status_effects_json, schema_version, last_updated_wall
+                    ) VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(username) DO UPDATE SET
+                        status_effects_json = excluded.status_effects_json,
+                        schema_version = excluded.schema_version,
+                        last_updated_wall = excluded.last_updated_wall
+                    ",
+                    params![
+                        username,
+                        status_effects_json,
+                        PLAYER_ROW_SCHEMA_VERSION,
+                        last_updated_wall
+                    ],
+                )
+                .map_err(io::Error::other)?;
+        }
     }
     transaction.commit().map_err(io::Error::other)
 }
