@@ -4628,6 +4628,8 @@ fn pickup_dropped_loot_instance_reinserts_item_and_clears_registry_entry() {
             source_col: 0,
             world_pos: [0.5, 64.0, 0.5],
             dimension: DimensionKind::Overworld,
+            owner: None,
+            visibility: DroppedLootVisibility::Public,
             item: ItemInstance {
                 instance_id: 42,
                 template_id: "starter_talisman".to_string(),
@@ -4661,6 +4663,149 @@ fn pickup_dropped_loot_instance_reinserts_item_and_clears_registry_entry() {
     assert_eq!(inventory.containers[0].items.len(), 1);
     assert!(!registry.entries.contains_key(&42));
     let _ = owner;
+}
+
+#[test]
+fn dropped_loot_writers_publish_metadata_and_keep_batch_admission_atomic() {
+    let source = make_test_inventory_with_one_item().containers[0].items[0]
+        .instance
+        .clone();
+    let public = DroppedLootEntry {
+        instance_id: 700,
+        source_container_id: "writer-test".to_string(),
+        source_row: 0,
+        source_col: 0,
+        world_pos: [0.0, 64.0, 0.0],
+        dimension: DimensionKind::Overworld,
+        owner: Some("stale-owner".to_string()),
+        visibility: DroppedLootVisibility::OwnerOnly,
+        item: ItemInstance {
+            instance_id: 700,
+            ..source.clone()
+        },
+    };
+    let mut registry = DroppedLootRegistry::default();
+    registry
+        .try_insert_public(public.clone())
+        .expect("public writer should admit a valid entry");
+    let stored = registry
+        .entries
+        .get(&700)
+        .expect("public entry should exist");
+    assert_eq!(
+        stored.owner, None,
+        "public writer must clear owner metadata"
+    );
+    assert_eq!(stored.visibility, DroppedLootVisibility::Public);
+
+    let mut private = public;
+    private.instance_id = 701;
+    private.item.instance_id = 701;
+    registry
+        .try_insert_owner_only(private, "offline:alice")
+        .expect("owner-only writer should admit a canonical owner");
+    let stored = registry
+        .entries
+        .get(&701)
+        .expect("private entry should exist");
+    assert_eq!(stored.owner.as_deref(), Some("offline:alice"));
+    assert_eq!(stored.visibility, DroppedLootVisibility::OwnerOnly);
+
+    let duplicate = registry.entries.get(&700).cloned().expect("fixture");
+    let extra = DroppedLootEntry {
+        instance_id: 702,
+        item: ItemInstance {
+            instance_id: 702,
+            ..source
+        },
+        ..duplicate.clone()
+    };
+    let before = registry.clone();
+    assert!(matches!(
+        registry.try_insert_public_batch([duplicate, extra]),
+        Err(DroppedLootWriteError::DuplicateInstanceId(700))
+    ));
+    assert_eq!(
+        registry.entries, before.entries,
+        "rejected batch must publish nothing"
+    );
+}
+
+#[test]
+fn owner_discard_publishes_owner_metadata() {
+    let mut inventory = make_test_inventory_with_one_item();
+    let mut registry = DroppedLootRegistry::default();
+    let outcome = discard_inventory_item_to_dropped_loot_with_owner(
+        &mut inventory,
+        &mut registry,
+        [0.0, 64.0, 0.0],
+        DimensionKind::Overworld,
+        42,
+        &crate::schema::inventory::InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        },
+        Some("offline:alice"),
+    )
+    .expect("owner discard should be admitted");
+
+    assert_eq!(outcome.dropped.owner.as_deref(), Some("offline:alice"));
+    assert_eq!(outcome.dropped.visibility, DroppedLootVisibility::OwnerOnly);
+    assert_eq!(
+        registry
+            .entries
+            .get(&42)
+            .and_then(|entry| entry.owner.as_deref()),
+        Some("offline:alice")
+    );
+}
+
+#[test]
+fn discard_admission_failure_preserves_inventory() {
+    let mut inventory = make_test_inventory_with_one_item();
+    let before_inventory = serde_json::to_value(&inventory).expect("inventory should serialize");
+    let source = inventory.containers[0].items[0].instance.clone();
+    let mut registry = DroppedLootRegistry::default();
+    registry
+        .try_insert_public(DroppedLootEntry {
+            instance_id: 42,
+            source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [0.5, 64.0, 0.5],
+            dimension: DimensionKind::Overworld,
+            owner: None,
+            visibility: DroppedLootVisibility::Public,
+            item: source,
+        })
+        .expect("fixture drop should be admitted");
+    let before_entries = registry.entries.clone();
+
+    let result = discard_inventory_item_to_dropped_loot_with_owner(
+        &mut inventory,
+        &mut registry,
+        [0.0, 64.0, 0.0],
+        DimensionKind::Overworld,
+        42,
+        &crate::schema::inventory::InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        },
+        Some("offline:alice"),
+    );
+
+    assert!(
+        result.is_err(),
+        "duplicate admission must reject the discard"
+    );
+    assert_eq!(
+        serde_json::to_value(&inventory).expect("inventory should serialize"),
+        before_inventory,
+        "failed admission must leave the source inventory untouched"
+    );
+    assert_eq!(registry.entries, before_entries);
 }
 
 #[test]
@@ -4712,6 +4857,8 @@ fn discard_inventory_item_to_dropped_loot_stays_pickable_after_registry_growth()
                 source_col: 0,
                 world_pos: [0.5, 64.0, 0.5],
                 dimension: DimensionKind::Overworld,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item,
             },
         );

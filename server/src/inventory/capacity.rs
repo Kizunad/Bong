@@ -1,9 +1,10 @@
-//! Inventory capacity and durable spill contracts for RF-33 R10 P1.
+//! Inventory capacity and durable spill contracts for RF-33 R10 P1 and RF-34 R10 P2a.
 //!
-//! The provider is deliberately independent from the existing inventory writers.  It gives
-//! R3/R10 a single typed admission point for bounded dropped-loot storage; production writers
-//! will be moved to it in P2.  [`SpillContext`] carries the facts a spill needs so a caller
-//! cannot silently invent a position, dimension, source revision, or transaction identity.
+//! The provider is deliberately independent from gameplay-specific inventory code. It gives
+//! R3/R10 a single typed admission point for bounded dropped-loot storage; R10 P2a routes the
+//! first production writer wave through that gate. [`SpillContext`] carries the facts a spill
+//! needs so a caller cannot silently invent a position, dimension, source revision, or
+//! transaction identity.
 
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryRevision};
 use crate::world::dimension::DimensionKind;

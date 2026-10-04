@@ -125,14 +125,18 @@ impl OperatorInventoryAccess<'_> {
                     source_col: 0,
                     world_pos: [position[0], position[1] + 0.5, position[2]],
                     dimension,
+                    owner: None,
+                    visibility: DroppedLootVisibility::Public,
                     item,
                 })
                 .collect();
+            let mut staged_dropped = dropped.clone();
+            staged_dropped
+                .try_insert_public_batch(entries.clone())
+                .map_err(|error| io::Error::other(format!("掉落物 admission 失败: {error:?}")))?;
             // 库存减物和掉落物增物必须同事务。失败时不发布缩容结果，也不写运行时掉落表。
             save_player_inventory_with_drops(persistence, username, &staged, &entries)?;
-            for entry in entries {
-                dropped.entries.insert(entry.instance_id, entry);
-            }
+            *dropped = staged_dropped;
         }
         Ok(Some(staged))
     }

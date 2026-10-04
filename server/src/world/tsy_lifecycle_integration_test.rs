@@ -92,6 +92,8 @@ mod tests {
             source_col: 0,
             world_pos: [pos.x, pos.y, pos.z],
             dimension: DimensionKind::Tsy,
+            owner: None,
+            visibility: crate::inventory::DroppedLootVisibility::Public,
             item: ancient_item(id),
         }
     }

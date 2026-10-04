@@ -1240,6 +1240,8 @@ mod tests {
                     source_col: 0,
                     world_pos: [8.5, 66.0, 8.5],
                     dimension: DimensionKind::Overworld,
+                    owner: None,
+                    visibility: crate::inventory::DroppedLootVisibility::Public,
                     item: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
                 },
             );

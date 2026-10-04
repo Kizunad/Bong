@@ -76,12 +76,12 @@ use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::inventory::{
     add_item_to_player_inventory_with_alchemy, apply_inventory_move_with_race,
-    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
-    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
-    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    InventoryMoveRejectReason, ItemInstance, PlayerInventory,
+    apply_item_spiritual_wear, consume_item_instance_once, fully_repair_weapon_instance,
+    inventory_instance_container_attrition_exempt, inventory_item_by_instance_borrow,
+    inventory_item_by_instance_mut, inventory_location_attrition_exempt,
+    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryDurabilityChangedEvent,
+    InventoryInstanceIdAllocator, InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance,
+    PlayerInventory,
 };
 use crate::inventory::{AlchemyItemData, ItemEffect, ItemRegistry};
 use crate::mineral::probe::is_probe_target_in_range;
@@ -4374,6 +4374,10 @@ pub(crate) fn handle_inventory_discard(
 ) {
     let player_pos = client_position(positions, entity);
     let player_dimension = dimensions.get(entity).map(|dim| dim.0).unwrap_or_default();
+    let owner = clients
+        .get(entity)
+        .ok()
+        .map(|(username, _)| canonical_player_id(username.0.as_str()));
     let mut inventory = match inventories.get_mut(entity) {
         Ok(inv) => inv,
         Err(_) => {
@@ -4384,13 +4388,14 @@ pub(crate) fn handle_inventory_discard(
         }
     };
 
-    match discard_inventory_item_to_dropped_loot(
+    match crate::inventory::discard_inventory_item_to_dropped_loot_with_owner(
         &mut inventory,
         dropped_loot_registry,
         player_pos,
         player_dimension,
         instance_id,
         &from,
+        owner.as_deref(),
     ) {
         Ok(outcome) => {
             tracing::info!(

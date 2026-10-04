@@ -475,6 +475,7 @@ pub fn fauna_drop_system(
             )
         };
         let mut dropped_core = false;
+        let mut entries = Vec::new();
         for (idx, drop) in drops.into_iter().enumerate() {
             let Ok(item) = build_fauna_item_instance(
                 drop.item_id,
@@ -492,20 +493,27 @@ pub fn fauna_drop_system(
             };
             dropped_core |= item.template_id == BIAN_YI_HEXIN;
             let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
-            loot_registry.entries.insert(
-                item.instance_id,
-                DroppedLootEntry {
-                    instance_id: item.instance_id,
-                    source_container_id: source_tag.clone(),
-                    source_row: 0,
-                    source_col: 0,
-                    world_pos,
-                    dimension: dimension
-                        .map(|dim| dim.0)
-                        .unwrap_or(DimensionKind::Overworld),
-                    item,
-                },
+            entries.push(DroppedLootEntry {
+                instance_id: item.instance_id,
+                source_container_id: source_tag.clone(),
+                source_row: 0,
+                source_col: 0,
+                world_pos,
+                dimension: dimension
+                    .map(|dim| dim.0)
+                    .unwrap_or(DimensionKind::Overworld),
+                owner: None,
+                visibility: crate::inventory::DroppedLootVisibility::Public,
+                item,
+            });
+        }
+        if let Err(error) = loot_registry.try_insert_public_batch(entries) {
+            tracing::error!(
+                target = ?event.entity,
+                ?error,
+                "[bong][fauna] drop admission failed; retaining terminal event for retry"
             );
+            continue;
         }
 
         if dropped_core {
