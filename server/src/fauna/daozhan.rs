@@ -1275,6 +1275,7 @@ pub(crate) fn daozhan_death_loot_system(
         // roll_loot 已处理 chance × stack range，不重复实现 RNG
         let table = NpcLootTable::new(crate::npc::lifecycle::NpcArchetype::Daoxiang, loot_entries);
         let rolled = roll_loot(&table, seed);
+        let mut entries = Vec::new();
         for (idx, loot) in rolled.into_iter().enumerate() {
             let Ok(item) = build_fauna_item_instance(
                 loot.template_id.as_str(),
@@ -1291,17 +1292,23 @@ pub(crate) fn daozhan_death_loot_system(
                 continue;
             };
             let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
-            loot_registry.entries.insert(
-                item.instance_id,
-                DroppedLootEntry {
-                    instance_id: item.instance_id,
-                    source_container_id: format!("daozhan_death:{:?}", blackboard.origin_realm),
-                    source_row: 0,
-                    source_col: 0,
-                    world_pos,
-                    dimension: dim,
-                    item,
-                },
+            entries.push(DroppedLootEntry {
+                instance_id: item.instance_id,
+                source_container_id: format!("daozhan_death:{:?}", blackboard.origin_realm),
+                source_row: 0,
+                source_col: 0,
+                world_pos,
+                dimension: dim,
+                owner: None,
+                visibility: crate::inventory::DroppedLootVisibility::Public,
+                item,
+            });
+        }
+        if let Err(error) = loot_registry.try_insert_public_batch(entries) {
+            tracing::error!(
+                target = ?death.target,
+                ?error,
+                "[bong][daozhan] death loot admission failed"
             );
         }
     }

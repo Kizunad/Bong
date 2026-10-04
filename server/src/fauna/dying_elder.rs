@@ -1372,11 +1372,13 @@ pub(crate) fn dying_elder_death_system(
         let drop_pos: [f64; 3] = [bb.home_pos.x, bb.home_pos.y, bb.home_pos.z];
         let dim = DimensionKind::Tsy;
 
+        let mut loot_admitted = true;
         if let (Some(item_reg), Some(allocator), Some(loot_reg)) = (
             item_registry.as_deref(),
             allocator.as_deref_mut(),
             loot_registry.as_deref_mut(),
         ) {
+            let mut pending_drops = Vec::new();
             // ── a. 地阶功法残卷（核心 loot，由 offered_skill_id 决定） ──────
             let scroll_template = skill_id_to_scroll_template(bb.offered_skill_id);
             if let Some(template_id) = scroll_template {
@@ -1405,21 +1407,17 @@ pub(crate) fn dying_elder_death_system(
                                 alchemy: None,
                                 lingering_owner_qi: None,
                             };
-                            loot_reg.entries.insert(
+                            pending_drops.push(crate::inventory::DroppedLootEntry {
                                 instance_id,
-                                crate::inventory::DroppedLootEntry {
-                                    instance_id,
-                                    source_container_id: format!(
-                                        "dying_elder:{}",
-                                        entity.to_bits()
-                                    ),
-                                    source_row: 0,
-                                    source_col: 0,
-                                    world_pos: drop_pos,
-                                    dimension: dim,
-                                    item: scroll,
-                                },
-                            );
+                                source_container_id: format!("dying_elder:{}", entity.to_bits()),
+                                source_row: 0,
+                                source_col: 0,
+                                world_pos: drop_pos,
+                                dimension: dim,
+                                owner: None,
+                                visibility: crate::inventory::DroppedLootVisibility::Public,
+                                item: scroll,
+                            });
                             tracing::info!(
                                 "[bong][dying_elder] death_system: elder {:?} dropped scroll '{}' betrayal={dead_by_betrayal} tick={tick}",
                                 entity,
@@ -1501,22 +1499,21 @@ pub(crate) fn dying_elder_death_system(
                             alchemy: None,
                             lingering_owner_qi: None,
                         };
-                        loot_reg.entries.insert(
+                        pending_drops.push(crate::inventory::DroppedLootEntry {
                             instance_id,
-                            crate::inventory::DroppedLootEntry {
-                                instance_id,
-                                source_container_id: format!(
-                                    "dying_elder_secondary:{}:{}",
-                                    secondary_pool_id,
-                                    entity.to_bits()
-                                ),
-                                source_row: 0,
-                                source_col: 0,
-                                world_pos: drop_pos,
-                                dimension: dim,
-                                item: secondary_item,
-                            },
-                        );
+                            source_container_id: format!(
+                                "dying_elder_secondary:{}:{}",
+                                secondary_pool_id,
+                                entity.to_bits()
+                            ),
+                            source_row: 0,
+                            source_col: 0,
+                            world_pos: drop_pos,
+                            dimension: dim,
+                            owner: None,
+                            visibility: crate::inventory::DroppedLootVisibility::Public,
+                            item: secondary_item,
+                        });
                         tracing::debug!(
                             "[bong][dying_elder] death_system: elder {:?} secondary loot '{}' ×{} pool={} tick={tick}",
                             entity,
@@ -1532,6 +1529,20 @@ pub(crate) fn dying_elder_death_system(
                     }
                 }
             }
+            if let Err(error) = loot_reg.try_insert_public_batch(pending_drops) {
+                tracing::error!(
+                    entity = ?entity,
+                    ?error,
+                    "[bong][dying_elder] death loot admission failed"
+                );
+                loot_admitted = false;
+            }
+        }
+
+        if !loot_admitted {
+            // Qi release has already completed and qi_current is zero, so the next tick can
+            // retry only the item publication without duplicating the release transfer.
+            continue;
         }
 
         // ── 标记已处理（防重复） ──────────────────────────────────────────────

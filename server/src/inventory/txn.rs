@@ -1,7 +1,8 @@
-//! Staged inventory transaction contracts for RF-33 R10 P1.
+//! Staged inventory transaction contracts for RF-33 R10 P1 and RF-34 R10 P2a.
 //!
-//! This module is intentionally an unwired seam.  Existing gameplay writers keep their
-//! behaviour until R10 P2; new callers can nevertheless exercise the same validation order:
+//! The transaction keeps the same validation order while its spill path uses the bounded
+//! dropped-loot writer introduced by R10 P2a. The terminal-delivery consumer remains a later
+//! phase. New callers can exercise the same validation order:
 //! clone a staged view, validate every requested change, then commit one inventory revision.
 //! A failed operation leaves the caller's inventory and dropped-loot registry untouched.
 
@@ -13,8 +14,9 @@ use super::{
     attach_at_location, bump_revision, detach_instance, find_first_fit_container_location,
     inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
     inventory_location_by_instance, stack_identity_matches, validate_attach_fits, DroppedLootEntry,
-    DroppedLootRegistry, InventoryInstanceIdAllocator, InventoryMoveRejectReason,
-    InventoryRevision, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
+    DroppedLootRegistry, DroppedLootVisibility, DroppedLootWriteError,
+    InventoryInstanceIdAllocator, InventoryMoveRejectReason, InventoryRevision, ItemInstance,
+    ItemRegistry, ItemTemplate, PlayerInventory,
 };
 
 /// One item in a delivery request.  Existing instances are moved without rebuilding their NBT;
@@ -351,6 +353,8 @@ impl<'a> InventoryTxn<'a> {
                 source_col: 0,
                 world_pos: spill_context.world_pos,
                 dimension: spill_context.dimension,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item: item.clone(),
             };
             spilled_count = spilled_count.saturating_add(u64::from(item.stack_count));
@@ -388,6 +392,23 @@ impl<'a> InventoryTxn<'a> {
                     instance_id: duplicate.instance_id,
                 });
             }
+            let mut staged_registry = spill_context.registry.clone();
+            for entry in &spill_entries {
+                if let Err(error) = staged_registry.try_insert_public(entry.clone()) {
+                    spill_context.capacity.release(reservation);
+                    return Err(match error {
+                        DroppedLootWriteError::DuplicateInstanceId(instance_id) => {
+                            InventoryTxnError::DuplicateInstanceId { instance_id }
+                        }
+                        DroppedLootWriteError::Capacity(error) => {
+                            InventoryTxnError::Capacity(error)
+                        }
+                        other => InventoryTxnError::PersistenceUnavailable {
+                            reason: format!("dropped-loot admission failed: {other:?}"),
+                        },
+                    });
+                }
+            }
             if let Err(reason) = spill_context
                 .durable
                 .persist_batch(&spill_context.transaction_id, &spill_entries)
@@ -395,12 +416,7 @@ impl<'a> InventoryTxn<'a> {
                 spill_context.capacity.release(reservation);
                 return Err(InventoryTxnError::PersistenceUnavailable { reason });
             }
-            for entry in spill_entries {
-                spill_context
-                    .registry
-                    .entries
-                    .insert(entry.instance_id, entry);
-            }
+            *spill_context.registry = staged_registry;
             spill_context.capacity.commit(reservation);
         }
 
@@ -967,6 +983,8 @@ mod tests {
                 source_col: 0,
                 world_pos: [0.0, 64.0, 0.0],
                 dimension: DimensionKind::Tsy,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item: item(9, "ore", 1),
             },
         );
@@ -1003,6 +1021,8 @@ mod tests {
                 source_col: 0,
                 world_pos: [0.0, 64.0, 0.0],
                 dimension: DimensionKind::Overworld,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item: item(10, "ore", 1),
             },
         );
@@ -1046,6 +1066,8 @@ mod tests {
                 source_col: 0,
                 world_pos: [4.0, 64.0, 0.0],
                 dimension: DimensionKind::Overworld,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item: item(9, "ore", 1),
             },
         );
