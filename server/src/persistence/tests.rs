@@ -8931,6 +8931,10 @@ fn runtime_slice_rows_round_trip_and_reject_corrupt_payloads() {
             target_player: Some("offline:RuntimePlayer".to_string()),
             calamity: None,
             beast_tide_kind: None,
+            thunder_runtime: None,
+            beast_tide_runtime: None,
+            collapse_runtime: None,
+            calamity_runtime: None,
         }],
         pending_qi_transfers: Vec::new(),
     };
@@ -9054,6 +9058,109 @@ fn runtime_slice_rows_round_trip_and_reject_corrupt_payloads() {
         load_world_runtime_slice::<PersistedActiveEvents>(&settings, "world.active_events")
             .is_err(),
         "future runtime schema versions must fail closed instead of being decoded optimistically"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn v49_runtime_slice_schema_repair_preserves_rows_and_constraints() {
+    let (settings, root) = persistence_settings("v49-runtime-slice-schema-repair");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+
+    let mut connection = Connection::open(settings.db_path()).expect("db should open");
+    connection
+        .execute_batch(
+            "
+            DROP TABLE world_runtime_slices;
+            DROP TABLE player_runtime_slices;
+            CREATE TABLE world_runtime_slices (
+                slice_id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                last_updated_wall INTEGER NOT NULL
+            );
+            CREATE TABLE player_runtime_slices (
+                username TEXT,
+                slice_id TEXT,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                last_updated_wall INTEGER NOT NULL
+            );
+            INSERT INTO world_runtime_slices
+                (slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES ('world.active_events', '{}', 1, 10);
+            INSERT INTO player_runtime_slices
+                (username, slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES ('RuntimePlayer', 'player.realm_taint', '{}', 1, 10);
+            ",
+        )
+        .expect("malformed v49 runtime slice fixture should be created");
+
+    apply_migrations(&mut connection).expect("v49 migration should repair constraint-only drift");
+
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT payload_json FROM world_runtime_slices WHERE slice_id = 'world.active_events'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("world runtime row should survive repair"),
+        "{}"
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT payload_json FROM player_runtime_slices WHERE username = 'RuntimePlayer' AND slice_id = 'player.realm_taint'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("player runtime row should survive repair"),
+        "{}"
+    );
+
+    let world_pk = connection
+        .prepare("PRAGMA table_info(world_runtime_slices)")
+        .expect("world runtime schema should be queryable")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
+        })
+        .expect("world runtime schema rows should be readable")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("world runtime schema query should succeed")
+        .into_iter()
+        .filter(|(_, _, pk)| *pk > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(world_pk, vec![("slice_id".to_string(), 1, 1)]);
+
+    let player_pk = connection
+        .prepare("PRAGMA table_info(player_runtime_slices)")
+        .expect("player runtime schema should be queryable")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
+        })
+        .expect("player runtime schema rows should be readable")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("player runtime schema query should succeed")
+        .into_iter()
+        .filter(|(_, _, pk)| *pk > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        player_pk,
+        vec![
+            ("username".to_string(), 1, 1),
+            ("slice_id".to_string(), 1, 2)
+        ]
     );
 
     let _ = fs::remove_dir_all(root);
