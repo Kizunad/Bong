@@ -88,20 +88,40 @@ pub(super) fn load_void_action_cooldown_records(
         .map_err(io::Error::other)
 }
 
-pub(super) fn hydrate_void_action_cooldowns(
+/// Hydrate cooldowns into the current runtime-tick epoch.
+///
+/// Older databases only stored an absolute `ready_at_tick`, without the runtime
+/// epoch in which it was written. A value farther than one declared cooldown into
+/// the current epoch is therefore an old-process uptime artifact, not a remaining
+/// deadline. Clamping that legacy value preserves the cooldown's own upper bound
+/// and prevents a restart from adding the old server uptime a second time.
+pub(super) fn hydrate_void_action_cooldowns_at_tick(
     settings: &PersistenceSettings,
     cooldowns: &mut VoidActionCooldowns,
+    current_tick: u64,
 ) -> io::Result<usize> {
     let records = load_void_action_cooldown_records(settings)?;
     let count = records.len();
     for record in records {
-        cooldowns.force_ready_at(
-            record.character_id.as_str(),
-            record.kind,
+        let ready_at_tick = rebase_void_action_ready_at(
             record.ready_at_tick,
+            current_tick,
+            record.kind.cooldown_ticks(),
         );
+        cooldowns.force_ready_at(record.character_id.as_str(), record.kind, ready_at_tick);
     }
     Ok(count)
+}
+
+/// Rebase one persisted absolute deadline without extending it by old-process uptime.
+pub(super) fn rebase_void_action_ready_at(
+    stored_ready_at: u64,
+    current_tick: u64,
+    cooldown_ticks: u64,
+) -> u64 {
+    stored_ready_at
+        .max(current_tick)
+        .min(current_tick.saturating_add(cooldown_ticks))
 }
 
 pub(super) fn legacy_player_realm_to_cultivation(realm: &str) -> Option<Realm> {

@@ -24,6 +24,7 @@ pub(super) fn bootstrap_persistence_system(
     mut combat_clock: Option<ResMut<crate::combat::CombatClock>>,
     mut gameplay_tick: Option<ResMut<crate::player::gameplay::GameplayTick>>,
     mut shelflife_tick: Option<ResMut<crate::shelflife::sweep::ShelflifeSweepTick>>,
+    mut mineral_tick: Option<ResMut<crate::mineral::MineralTickClock>>,
     mut runtime_clock_state: Option<ResMut<RuntimeClockSnapshotState>>,
     mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
@@ -80,6 +81,9 @@ pub(super) fn bootstrap_persistence_system(
     if let Some(shelflife_tick) = shelflife_tick.as_deref_mut() {
         shelflife_tick.0 = runtime_tick;
     }
+    if let Some(mineral_tick) = mineral_tick.as_deref_mut() {
+        mineral_tick.tick = runtime_tick;
+    }
     let checkpoint_wall_clock = current_unix_seconds();
     if let Err(error) = persist_runtime_clock(&settings, runtime_tick, checkpoint_wall_clock) {
         panic!(
@@ -108,7 +112,7 @@ pub(super) fn bootstrap_persistence_system(
     }
 
     if let Some(cooldowns) = void_action_cooldowns.as_deref_mut() {
-        match hydrate_void_action_cooldowns(&settings, cooldowns) {
+        match hydrate_void_action_cooldowns_at_tick(&settings, cooldowns, runtime_tick) {
             Ok(count) if count > 0 => tracing::info!(
                 "[bong][persistence] hydrated {count} void-action cooldown(s) from sqlite"
             ),
