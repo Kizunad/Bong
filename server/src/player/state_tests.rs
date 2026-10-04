@@ -263,6 +263,61 @@ fn core_anchor_initialization_does_not_overwrite_other_slices() {
 }
 
 #[test]
+fn core_slice_upsert_preserves_existing_character_anchor() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-upsert");
+    save_player_core_slice(
+        &persistence,
+        "ExistingPlayer",
+        &PlayerState {
+            karma: 0.1,
+            inventory_score: 0.2,
+        },
+    )
+    .expect("initial core save should create the character anchor");
+
+    let initial_anchor: String = Connection::open(persistence.db_path())
+        .expect("sqlite db should open")
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params!["ExistingPlayer"],
+            |row| row.get(0),
+        )
+        .expect("initial character anchor should exist");
+
+    save_player_core_slice(
+        &persistence,
+        "ExistingPlayer",
+        &PlayerState {
+            karma: 0.8,
+            inventory_score: 0.6,
+        },
+    )
+    .expect("upsert should update an existing core row atomically");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let (updated_anchor, karma, inventory_score): (String, f64, f64) = connection
+        .query_row(
+            "
+            SELECT current_char_id, karma, inventory_score
+            FROM player_core
+            WHERE username = ?1
+            ",
+            params!["ExistingPlayer"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("updated core row should remain queryable");
+
+    assert_eq!(
+        updated_anchor, initial_anchor,
+        "core upsert must preserve the existing character anchor"
+    );
+    approx_eq(karma, 0.8);
+    approx_eq(inventory_score, 0.6);
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
 fn long_term_status_effects_round_trip_as_a_guarded_player_slice() {
     let (persistence, data_dir) = sqlite_persistence("player-status-effects");
     let status_effects = StatusEffects {

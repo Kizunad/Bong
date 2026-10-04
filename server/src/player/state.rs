@@ -2647,18 +2647,32 @@ fn persist_player_core_slice_in_sqlite(
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let last_updated_wall = current_unix_seconds();
-    let updated = connection
+
+    // 核心切片首次落盘只建立角色锚点。用单条 upsert 把首次创建与已有行更新
+    // 合并为一个 SQLite 原子操作，避免并发保存同时走 UPDATE→INSERT 时丢失本次写入。
+    // 冲突更新刻意保留已有 current_char_id；其它切片的载入 provenance 可能仍是
+    // Failed，不能借这个 fallback 把默认值写进未知的 durable row。
+    let current_char_id = Uuid::now_v7().to_string();
+    connection
         .execute(
             "
-            UPDATE player_core
-            SET karma = ?2,
-                inventory_score = ?3,
-                schema_version = ?4,
-                last_updated_wall = ?5
-            WHERE username = ?1
+            INSERT INTO player_core (
+                username,
+                current_char_id,
+                karma,
+                inventory_score,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(username) DO UPDATE SET
+                karma = excluded.karma,
+                inventory_score = excluded.inventory_score,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
             ",
             params![
                 username,
+                current_char_id,
                 normalized.karma,
                 normalized.inventory_score,
                 PLAYER_ROW_SCHEMA_VERSION,
@@ -2666,34 +2680,6 @@ fn persist_player_core_slice_in_sqlite(
             ],
         )
         .map_err(io::Error::other)?;
-
-    if updated == 0 {
-        // 核心切片首次落盘只建立角色锚点。其它切片的载入 provenance 可能仍是
-        // Failed，不能借这个 fallback 把默认值写进未知的 durable row。
-        let current_char_id = Uuid::now_v7().to_string();
-        connection
-            .execute(
-                "
-                INSERT INTO player_core (
-                    username,
-                    current_char_id,
-                    karma,
-                    inventory_score,
-                    schema_version,
-                    last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ",
-                params![
-                    username,
-                    current_char_id,
-                    normalized.karma,
-                    normalized.inventory_score,
-                    PLAYER_ROW_SCHEMA_VERSION,
-                    last_updated_wall
-                ],
-            )
-            .map_err(io::Error::other)?;
-    }
 
     Ok(())
 }
