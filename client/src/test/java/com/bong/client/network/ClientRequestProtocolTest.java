@@ -187,6 +187,27 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAlchemyLearnRecipeFragmentAtJavaScriptSafeIntegerLimit() {
+        long maxSafeInteger = 9_007_199_254_740_991L;
+        assertEquals(
+            "{\"type\":\"alchemy_learn_recipe_fragment\",\"v\":1,\"item_instance_id\":9007199254740991}",
+            ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(maxSafeInteger)
+        );
+    }
+
+    @Test
+    void rejectsAlchemyLearnRecipeFragmentOutsideJavaScriptSafeIntegerRange() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(-1L)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(9_007_199_254_740_992L)
+        );
+    }
+
+    @Test
     void encodesForgeLearnBlueprint() {
         assertEquals(
             "{\"type\":\"forge_learn_blueprint\",\"v\":1,\"blueprint_id\":\"blueprint.stone\"}",

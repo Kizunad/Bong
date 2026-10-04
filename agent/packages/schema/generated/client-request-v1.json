@@ -3182,6 +3182,8 @@
           "type": "string"
         },
         "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         }
       }
@@ -3204,6 +3206,8 @@
           "type": "string"
         },
         "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         }
       }
@@ -3226,6 +3230,8 @@
           "type": "string"
         },
         "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         }
       }
@@ -3892,6 +3898,8 @@
           "type": "integer"
         },
         "elder_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "type": "integer"
         }
       }
@@ -4149,6 +4157,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "56b1a01f38f4cef61100c5bd73550d3b7c1d770660b6da573971bc7202c0cce6",
+  "x-bong-typebox-source-sha256": "e4f244da55ed5b75f75ef19a9e4803f84308e501db9a1937545f894da36b9900",
   "x-bong-schema-generation-version": "r6-p1-v1"
 }

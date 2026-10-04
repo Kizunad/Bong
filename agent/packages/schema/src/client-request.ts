@@ -30,6 +30,12 @@ import {
 } from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+const ENTITY_ID_MIN = -2_147_483_648;
+const ENTITY_ID_MAX = 2_147_483_647;
+const ENTITY_ID_V1 = Type.Integer({
+  minimum: ENTITY_ID_MIN,
+  maximum: ENTITY_ID_MAX,
+});
 const HOTBAR_SLOT_COUNT = 2;
 // 与 server::craft::MAX_CRAFT_QUANTITY 及 Java sender 的同名边界保持一致。
 const MAX_CRAFT_QUANTITY_V1 = 64;
@@ -1141,7 +1147,7 @@ export const SupplyCoffinOpenRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("supply_coffin_open"),
-    entity_id: Type.Integer(),
+    entity_id: ENTITY_ID_V1,
   },
   { additionalProperties: false },
 );
@@ -1154,7 +1160,7 @@ export const ContainerOpenRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("container_open"),
-    entity_id: Type.Integer(),
+    entity_id: ENTITY_ID_V1,
   },
   { additionalProperties: false },
 );
@@ -1165,7 +1171,7 @@ export const WorkbenchOpenRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("workbench_open"),
-    entity_id: Type.Integer(),
+    entity_id: ENTITY_ID_V1,
   },
   { additionalProperties: false },
 );
@@ -1230,7 +1236,7 @@ export const GiveDanToElderRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("give_dan_to_elder"),
     pill_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
-    elder_entity_id: Type.Integer(),
+    elder_entity_id: ENTITY_ID_V1,
   },
   { additionalProperties: false },
 );

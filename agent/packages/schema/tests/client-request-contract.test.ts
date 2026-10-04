@@ -5,9 +5,13 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+  ContainerOpenRequestV1,
   CLIENT_REQUEST_REGISTRY,
   CLIENT_REQUEST_TYPE_SET,
   ClientRequestV1,
+  GiveDanToElderRequestV1,
+  SupplyCoffinOpenRequestV1,
+  WorkbenchOpenRequestV1,
 } from "../src/client-request.js";
 import { validate } from "../src/validate.js";
 
@@ -133,6 +137,46 @@ describe("C2S registry contract", () => {
         rejected.ok,
         `${type} unknown discriminator should be rejected as a negative sample`,
       ).toBe(false);
+    });
+  }
+});
+
+describe("entity-based C2S request bounds", () => {
+  const i32Minimum = -2_147_483_648;
+  const i32Maximum = 2_147_483_647;
+  const cases = [
+    {
+      type: "supply_coffin_open",
+      schema: SupplyCoffinOpenRequestV1,
+      field: "entity_id",
+      base: { v: 1, type: "supply_coffin_open" },
+    },
+    {
+      type: "container_open",
+      schema: ContainerOpenRequestV1,
+      field: "entity_id",
+      base: { v: 1, type: "container_open" },
+    },
+    {
+      type: "workbench_open",
+      schema: WorkbenchOpenRequestV1,
+      field: "entity_id",
+      base: { v: 1, type: "workbench_open" },
+    },
+    {
+      type: "give_dan_to_elder",
+      schema: GiveDanToElderRequestV1,
+      field: "elder_entity_id",
+      base: { v: 1, type: "give_dan_to_elder", pill_instance_id: 1 },
+    },
+  ] as const;
+
+  for (const { type, schema, field, base } of cases) {
+    it(`${type} accepts the Rust i32 bounds and rejects overflow`, () => {
+      expect(validate(schema, { ...base, [field]: i32Minimum }).ok).toBe(true);
+      expect(validate(schema, { ...base, [field]: i32Maximum }).ok).toBe(true);
+      expect(validate(schema, { ...base, [field]: i32Minimum - 1 }).ok).toBe(false);
+      expect(validate(schema, { ...base, [field]: i32Maximum + 1 }).ok).toBe(false);
     });
   }
 });
