@@ -551,6 +551,97 @@ fn social_events_persist_and_reload_by_character_id() {
 }
 
 #[test]
+fn relationship_update_survives_social_sqlite_failure() {
+    let data_dir = unique_temp_dir("relationship-persist-failure");
+    let db_path = data_dir.join("bong.db");
+    std::fs::create_dir_all(&db_path).expect("test database path should be a directory");
+    let persistence = PersistenceSettings::with_db_path(
+        db_path,
+        "social-relationship-persist-failure".to_string(),
+    );
+    let mut app = qi_test_app();
+    app.insert_resource(persistence);
+    app.add_event::<SocialRelationshipEvent>();
+    app.add_systems(Update, apply_social_relationships);
+
+    let (left_bundle, _) = create_mock_client("Left");
+    let left = app.world_mut().spawn(left_bundle).id();
+    app.world_mut().entity_mut(left).insert((
+        Lifecycle {
+            character_id: "char:left".to_string(),
+            ..Default::default()
+        },
+        Relationships::default(),
+    ));
+    let (right_bundle, _) = create_mock_client("Right");
+    let right = app.world_mut().spawn(right_bundle).id();
+    app.world_mut().entity_mut(right).insert((
+        Lifecycle {
+            character_id: "char:right".to_string(),
+            ..Default::default()
+        },
+        Relationships::default(),
+    ));
+
+    app.world_mut().send_event(SocialRelationshipEvent {
+        left: "char:left".to_string(),
+        right: "char:right".to_string(),
+        left_kind: RelationshipKindV1::Feud,
+        right_kind: RelationshipKindV1::Feud,
+        tick: 7,
+        metadata: serde_json::json!({ "source": "persist_failure" }),
+    });
+    app.update();
+
+    let left_relationships = app
+        .world()
+        .get::<Relationships>(left)
+        .expect("left player should retain runtime relationships");
+    assert_eq!(left_relationships.edges.len(), 1);
+    assert_eq!(left_relationships.edges[0].peer, "char:right");
+    assert_eq!(left_relationships.edges[0].kind, RelationshipKindV1::Feud);
+    let right_relationships = app
+        .world()
+        .get::<Relationships>(right)
+        .expect("right player should retain runtime relationships");
+    assert_eq!(right_relationships.edges.len(), 1);
+    assert_eq!(right_relationships.edges[0].peer, "char:left");
+
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+fn social_exposure_retry_is_idempotent() {
+    let (persistence, data_dir) = social_persistence("exposure-retry");
+    let exposure = SocialExposureEvent {
+        actor: "char:actor".to_string(),
+        kind: ExposureKindV1::Chat,
+        witnesses: vec!["char:witness".to_string()],
+        tick: 12,
+        zone: Some("spawn".to_string()),
+    };
+
+    persist_social_exposure(&persistence, &exposure)
+        .expect("first persistence attempt should work");
+    persist_social_exposure(&persistence, &exposure).expect("retry should remain successful");
+
+    let connection = open_social_connection(&persistence).expect("social sqlite should open");
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM social_exposures WHERE char_id = ?1",
+            rusqlite::params!["char:actor"],
+            |row| row.get(0),
+        )
+        .expect("exposure count should be queryable");
+    assert_eq!(
+        count, 1,
+        "retry must not duplicate the same social exposure"
+    );
+
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
 fn social_exposure_live_refreshes_anonymity_for_actor_and_witnesses_only() {
     for kind in [
         ExposureKindV1::Chat,
