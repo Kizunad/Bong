@@ -137,6 +137,60 @@ pub(crate) struct PersistedActiveEvent {
     pub target_player: Option<String>,
     pub calamity: Option<String>,
     pub beast_tide_kind: Option<String>,
+    #[serde(default)]
+    pub thunder_runtime: Option<PersistedThunderRuntime>,
+    #[serde(default)]
+    pub beast_tide_runtime: Option<PersistedBeastTideRuntime>,
+    #[serde(default)]
+    pub collapse_runtime: Option<PersistedRealmCollapseRuntime>,
+    #[serde(default)]
+    pub calamity_runtime: Option<PersistedCalamityRuntime>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedThunderRuntime {
+    #[serde(default)]
+    pub emitted_strikes: Vec<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedBeastTideRuntime {
+    #[serde(default)]
+    pub spawn_points: Vec<[f64; 3]>,
+    #[serde(default)]
+    pub beast_kind: Option<BeastKind>,
+    #[serde(default)]
+    pub origin_zone: Option<String>,
+    #[serde(default)]
+    pub target_zone: Option<String>,
+    #[serde(default)]
+    pub front_position: Option<[f64; 3]>,
+    #[serde(default)]
+    pub front_velocity: Option<[f64; 3]>,
+    #[serde(default)]
+    pub drained_chunks: Vec<[i32; 2]>,
+    #[serde(default)]
+    pub group_alive: u32,
+    #[serde(default)]
+    pub active_window_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedRealmCollapseRuntime {
+    #[serde(default)]
+    pub completed: bool,
+    #[serde(default)]
+    pub evacuation_warning_emitted: bool,
+    #[serde(default)]
+    pub last_evacuation_reminder_bucket: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedCalamityRuntime {
+    #[serde(default)]
+    pub initialized: bool,
+    #[serde(default)]
+    pub spawn_completed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -268,6 +322,12 @@ impl BeastTideRuntimeState {
 
     fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
         if let Self::LocustSwarm(state) = self {
+            // 重启恢复的兽潮没有可跨进程复用的 ECS Entity；保留持久化的
+            // group_alive，让前锋位置和 drained_chunks 继续推进，直到领域条件
+            // 自然结束事件。正常运行时仍以当前实体集合刷新真实存活数。
+            if state.spawned_rats.is_empty() {
+                return;
+            }
             state
                 .spawned_rats
                 .retain(|entity| live_npcs.contains(entity));
@@ -282,6 +342,7 @@ struct RealmCollapseRuntimeState {
     evacuation_warning_emitted: bool,
     last_evacuation_reminder_bucket: Option<u64>,
     evacuee_entities: HashSet<Entity>,
+    evacuee_snapshot_initialized: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -289,6 +350,7 @@ struct CalamityRuntimeState {
     initialized: bool,
     spawned_entities: Vec<Entity>,
     last_pulse_tick: u64,
+    spawn_completed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -331,6 +393,57 @@ impl ActiveEvent {
                 BeastTideRuntimeState::Wandering(_) => "wandering".to_string(),
                 BeastTideRuntimeState::LocustSwarm(_) => "locust_swarm".to_string(),
             });
+        let thunder_runtime = Some(PersistedThunderRuntime {
+            emitted_strikes: self
+                .thunder
+                .emitted_strikes
+                .iter()
+                .map(|position| dvec3_to_array(*position))
+                .collect(),
+        });
+        let beast_tide_runtime =
+            (self.event_name == EVENT_BEAST_TIDE).then(|| match &self.beast_tide {
+                BeastTideRuntimeState::Wandering(state) => PersistedBeastTideRuntime {
+                    spawn_points: state
+                        .spawn_points
+                        .iter()
+                        .copied()
+                        .map(dvec3_to_array)
+                        .collect(),
+                    beast_kind: state.beast_kind,
+                    ..Default::default()
+                },
+                BeastTideRuntimeState::LocustSwarm(state) => PersistedBeastTideRuntime {
+                    spawn_points: state
+                        .spawn_points
+                        .iter()
+                        .copied()
+                        .map(dvec3_to_array)
+                        .collect(),
+                    origin_zone: Some(state.origin_zone.clone()),
+                    target_zone: Some(state.target_zone.clone()),
+                    front_position: Some(dvec3_to_array(state.front_position)),
+                    front_velocity: Some(dvec3_to_array(state.front_velocity)),
+                    drained_chunks: state
+                        .drained_chunks
+                        .iter()
+                        .map(|chunk| [chunk.x, chunk.z])
+                        .collect(),
+                    group_alive: state.group_alive,
+                    active_window_size: Some(state.active_window_size),
+                    ..Default::default()
+                },
+            });
+        let collapse_runtime =
+            (self.event_name == EVENT_REALM_COLLAPSE).then_some(PersistedRealmCollapseRuntime {
+                completed: self.collapse.completed,
+                evacuation_warning_emitted: self.collapse.evacuation_warning_emitted,
+                last_evacuation_reminder_bucket: self.collapse.last_evacuation_reminder_bucket,
+            });
+        let calamity_runtime = self.calamity.is_some().then_some(PersistedCalamityRuntime {
+            initialized: self.calamity_state.initialized,
+            spawn_completed: self.calamity_state.spawn_completed,
+        });
         PersistedActiveEvent {
             event_name: self.event_name.clone(),
             zone_name: self.zone_name.clone(),
@@ -340,6 +453,10 @@ impl ActiveEvent {
             target_player: self.target_player.clone(),
             calamity: self.calamity.map(|kind| kind.event_name().to_string()),
             beast_tide_kind,
+            thunder_runtime,
+            beast_tide_runtime,
+            collapse_runtime,
+            calamity_runtime,
         }
     }
 
@@ -366,20 +483,64 @@ impl ActiveEvent {
         {
             return Err(format!("invalid active event `{}`", snapshot.event_name));
         }
+        let beast_tide_runtime = snapshot.beast_tide_runtime.as_ref();
         let beast_tide = if event_name == EVENT_BEAST_TIDE {
             match snapshot.beast_tide_kind.as_deref() {
-                Some("wandering") => BeastTideRuntimeState::default(),
-                Some("locust_swarm") => BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
-                    spawned_rats: Vec::new(),
-                    spawn_points: Vec::new(),
-                    origin_zone: snapshot.zone_name.clone(),
-                    target_zone: snapshot.zone_name.clone(),
-                    front_position: DVec3::ZERO,
-                    front_velocity: DVec3::ZERO,
-                    drained_chunks: HashSet::new(),
-                    group_alive: 0,
-                    active_window_size: LOCUST_SWARM_ACTIVE_WINDOW_SIZE,
-                }),
+                Some("wandering") => {
+                    let runtime = beast_tide_runtime.cloned().unwrap_or_default();
+                    BeastTideRuntimeState::Wandering(WanderingTideState {
+                        spawned_beasts: Vec::new(),
+                        spawn_points: decode_positions(runtime.spawn_points)?,
+                        beast_kind: runtime.beast_kind,
+                    })
+                }
+                Some("locust_swarm") => {
+                    let runtime = beast_tide_runtime.cloned().unwrap_or_default();
+                    let front_position = runtime
+                        .front_position
+                        .map(dvec3_from_array)
+                        .unwrap_or(DVec3::ZERO);
+                    let front_velocity = runtime
+                        .front_velocity
+                        .map(dvec3_from_array)
+                        .unwrap_or(DVec3::ZERO);
+                    validate_position(
+                        front_position,
+                        "locust front_position",
+                        &snapshot.event_name,
+                    )?;
+                    validate_position(
+                        front_velocity,
+                        "locust front_velocity",
+                        &snapshot.event_name,
+                    )?;
+                    let target_zone = runtime
+                        .target_zone
+                        .filter(|zone| !zone.trim().is_empty())
+                        .unwrap_or_else(|| snapshot.zone_name.clone());
+                    let origin_zone = runtime
+                        .origin_zone
+                        .filter(|zone| !zone.trim().is_empty())
+                        .unwrap_or_else(|| snapshot.zone_name.clone());
+                    BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
+                        spawned_rats: Vec::new(),
+                        spawn_points: decode_positions(runtime.spawn_points)?,
+                        origin_zone,
+                        target_zone,
+                        front_position,
+                        front_velocity,
+                        drained_chunks: runtime
+                            .drained_chunks
+                            .into_iter()
+                            .map(|[x, z]| ChunkPos::new(x, z))
+                            .collect(),
+                        group_alive: runtime.group_alive,
+                        active_window_size: runtime
+                            .active_window_size
+                            .unwrap_or(LOCUST_SWARM_ACTIVE_WINDOW_SIZE)
+                            .max(1),
+                    })
+                }
                 other => {
                     return Err(format!(
                         "invalid beast tide kind {other:?} in active event `{}`",
@@ -390,6 +551,35 @@ impl ActiveEvent {
         } else {
             BeastTideRuntimeState::default()
         };
+        let calamity_runtime = snapshot.calamity_runtime.as_ref().cloned();
+        let calamity_state = calamity_runtime.unwrap_or_else(|| PersistedCalamityRuntime {
+            initialized: snapshot.elapsed_ticks > 0
+                && matches!(
+                    event_name,
+                    EVENT_MERIDIAN_SEAL | EVENT_ALL_WITHER | EVENT_HEAVENLY_FIRE
+                ),
+            spawn_completed: snapshot.elapsed_ticks > 0 && event_name == EVENT_DAOXIANG_WAVE,
+        });
+        let collapse_runtime = snapshot
+            .collapse_runtime
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let thunder_runtime = snapshot
+            .thunder_runtime
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let emitted_strikes = thunder_runtime
+            .emitted_strikes
+            .iter()
+            .copied()
+            .map(dvec3_from_array)
+            .collect::<Vec<_>>();
+        for strike in &emitted_strikes {
+            validate_position(*strike, "thunder emitted strike", &snapshot.event_name)?;
+        }
+
         Ok(Self {
             event_name: event_name.to_string(),
             zone_name: snapshot.zone_name.clone(),
@@ -398,10 +588,21 @@ impl ActiveEvent {
             intensity: snapshot.intensity,
             target_player: snapshot.target_player.clone(),
             calamity,
-            thunder: ThunderRuntimeState::default(),
+            thunder: ThunderRuntimeState { emitted_strikes },
             beast_tide,
-            collapse: RealmCollapseRuntimeState::default(),
-            calamity_state: CalamityRuntimeState::default(),
+            collapse: RealmCollapseRuntimeState {
+                completed: collapse_runtime.completed,
+                evacuation_warning_emitted: collapse_runtime.evacuation_warning_emitted,
+                last_evacuation_reminder_bucket: collapse_runtime.last_evacuation_reminder_bucket,
+                evacuee_entities: HashSet::new(),
+                evacuee_snapshot_initialized: false,
+            },
+            calamity_state: CalamityRuntimeState {
+                initialized: calamity_state.initialized,
+                spawned_entities: Vec::new(),
+                last_pulse_tick: 0,
+                spawn_completed: calamity_state.spawn_completed,
+            },
         })
     }
 
@@ -1486,7 +1687,7 @@ impl ActiveEventsResource {
                     }
                 }
                 EVENT_DAOXIANG_WAVE => {
-                    if event.calamity_state.spawned_entities.is_empty() {
+                    if !event.calamity_state.spawn_completed {
                         let Some(layer_entity) = layer_entity else {
                             tracing::warn!(
                                 "[bong][world] daoxiang_wave runtime for zone `{}` skipped: missing entity layer",
@@ -1532,6 +1733,7 @@ impl ActiveEventsResource {
                             );
                             event.calamity_state.spawned_entities.push(entity);
                         }
+                        event.calamity_state.spawn_completed = true;
                         recent_events.push(GameEvent {
                             event_type: GameEventType::EventTriggered,
                             tick: event.elapsed_ticks,
@@ -1619,6 +1821,13 @@ impl ActiveEventsResource {
                 }
                 EVENT_REALM_COLLAPSE => {
                     let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if event.collapse.evacuation_warning_emitted
+                        && !event.collapse.evacuee_snapshot_initialized
+                    {
+                        event.collapse.evacuee_entities =
+                            realm_collapse_entities_in_zone(&zone, collapse_targets.unwrap_or(&[]));
+                        event.collapse.evacuee_snapshot_initialized = true;
+                    }
                     if !event.collapse.completed && next_elapsed < event.duration_ticks {
                         let remaining_ticks = event.duration_ticks.saturating_sub(next_elapsed);
                         if remaining_ticks <= REALM_COLLAPSE_EVACUATION_WINDOW_TICKS {
@@ -1631,6 +1840,7 @@ impl ActiveEventsResource {
                                     &zone,
                                     collapse_targets.unwrap_or(&[]),
                                 );
+                                event.collapse.evacuee_snapshot_initialized = true;
                                 self.pending_major_alerts.push(MajorEventAlert {
                                     event_name: event.event_name.clone(),
                                     zone_name: event.zone_name.clone(),
@@ -2004,8 +2214,7 @@ fn tick_active_events(
             reserved_by_zone.insert(event.zone_name.clone(), reserved);
         }
         for event in active_events.active_events.iter().filter(|event| {
-            event.event_name == EVENT_DAOXIANG_WAVE
-                && event.calamity_state.spawned_entities.is_empty()
+            event.event_name == EVENT_DAOXIANG_WAVE && !event.calamity_state.spawn_completed
         }) {
             let desired = daoxiang_count_for_intensity(event.intensity);
             let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
@@ -2090,6 +2299,33 @@ fn flush_collapse_qi_transfers(
     for transfer in active_events.drain_qi_transfers() {
         qi_transfer_events.send(transfer);
     }
+}
+
+fn dvec3_to_array(position: DVec3) -> [f64; 3] {
+    [position.x, position.y, position.z]
+}
+
+fn dvec3_from_array([x, y, z]: [f64; 3]) -> DVec3 {
+    DVec3::new(x, y, z)
+}
+
+fn validate_position(position: DVec3, label: &str, event_name: &str) -> Result<(), String> {
+    if position.is_finite() {
+        Ok(())
+    } else {
+        Err(format!("invalid {label} in active event `{event_name}`"))
+    }
+}
+
+fn decode_positions(positions: Vec<[f64; 3]>) -> Result<Vec<DVec3>, String> {
+    positions
+        .into_iter()
+        .map(|position| {
+            let position = dvec3_from_array(position);
+            validate_position(position, "position", "persisted runtime")?;
+            Ok(position)
+        })
+        .collect()
 }
 
 fn value_to_u64(value: Option<&Value>) -> Option<u64> {
@@ -2898,7 +3134,7 @@ fn advance_locust_swarm(
     death_events: Option<&mut EventWriter<DeathEvent>>,
     tick: u64,
 ) -> bool {
-    if state.spawned_rats.is_empty() {
+    if state.spawned_rats.is_empty() && state.group_alive == 0 {
         return true;
     }
 

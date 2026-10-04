@@ -4,8 +4,8 @@ use serde_json::json;
 use serde_json::Value;
 use valence::entity::lightning::LightningEntity;
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, DVec3, Despawned, Entity, EntityKind, Events, IntoSystemConfigs,
-    Position, Update, With,
+    bevy_ecs, App, BlockPos, ChunkPos, DVec3, Despawned, Entity, EntityKind, Events,
+    IntoSystemConfigs, Position, Update, With,
 };
 use valence::testing::{create_mock_client, ScenarioSingleClient};
 
@@ -13,9 +13,11 @@ use super::{
     average_zone_qi, beast_kind_from_command, daoxiang_count_for_intensity,
     maybe_nullify_targeted_zone_qi, persist_zone_collapsed_overlays,
     redistribute_zone_qi_before_collapse, tick_active_events, ActiveEvent, ActiveEventsResource,
-    CalamityTargetRecord, PersistedActiveEvent, RealmCollapseLowQiMonitor, ZoneCollapsedEvent,
-    ZoneOccupantPosition, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE,
-    EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+    CalamityTargetRecord, PersistedActiveEvent, PersistedBeastTideRuntime,
+    PersistedCalamityRuntime, PersistedRealmCollapseRuntime, PersistedThunderRuntime,
+    RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+    COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE, EVENT_KARMA_BACKLASH,
+    EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     LOCUST_SWARM_DISBAND_THRESHOLD, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
     REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
     REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
@@ -87,6 +89,10 @@ fn persisted_beast_tide_rejects_unknown_kind_instead_of_defaulting() {
         target_player: None,
         calamity: None,
         beast_tide_kind: Some("future_kind".to_string()),
+        thunder_runtime: None,
+        beast_tide_runtime: None,
+        collapse_runtime: None,
+        calamity_runtime: None,
     };
 
     let error = ActiveEvent::from_persisted(&snapshot)
@@ -95,6 +101,96 @@ fn persisted_beast_tide_rejects_unknown_kind_instead_of_defaulting() {
         error.contains("invalid beast tide kind"),
         "error should identify the rejected persisted kind: {error}"
     );
+}
+
+#[test]
+fn persisted_active_event_restores_one_shot_markers_and_locust_progress() {
+    let meridian = PersistedActiveEvent {
+        event_name: EVENT_MERIDIAN_SEAL.to_string(),
+        zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+        elapsed_ticks: 8,
+        duration_ticks: 100,
+        intensity: 0.5,
+        target_player: None,
+        calamity: Some(EVENT_MERIDIAN_SEAL.to_string()),
+        beast_tide_kind: None,
+        thunder_runtime: Some(PersistedThunderRuntime {
+            emitted_strikes: vec![[1.0, 64.0, 2.0]],
+        }),
+        beast_tide_runtime: None,
+        collapse_runtime: None,
+        calamity_runtime: Some(PersistedCalamityRuntime {
+            initialized: true,
+            spawn_completed: false,
+        }),
+    };
+    let restored_meridian =
+        ActiveEvent::from_persisted(&meridian).expect("persisted calamity marker should restore");
+    assert!(restored_meridian.calamity_state.initialized);
+    assert_eq!(restored_meridian.thunder.emitted_strikes.len(), 1);
+
+    let collapse = PersistedActiveEvent {
+        event_name: EVENT_REALM_COLLAPSE.to_string(),
+        zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+        elapsed_ticks: 12,
+        duration_ticks: 100,
+        intensity: 0.5,
+        target_player: None,
+        calamity: Some(EVENT_REALM_COLLAPSE.to_string()),
+        beast_tide_kind: None,
+        thunder_runtime: None,
+        beast_tide_runtime: None,
+        collapse_runtime: Some(PersistedRealmCollapseRuntime {
+            completed: false,
+            evacuation_warning_emitted: true,
+            last_evacuation_reminder_bucket: Some(3),
+        }),
+        calamity_runtime: None,
+    };
+    let restored_collapse = ActiveEvent::from_persisted(&collapse)
+        .expect("persisted collapse lifecycle markers should restore");
+    assert!(restored_collapse.collapse.evacuation_warning_emitted);
+    assert_eq!(
+        restored_collapse.collapse.last_evacuation_reminder_bucket,
+        Some(3)
+    );
+    assert!(!restored_collapse.collapse.evacuee_snapshot_initialized);
+
+    let locust = PersistedActiveEvent {
+        event_name: EVENT_BEAST_TIDE.to_string(),
+        zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+        elapsed_ticks: 12,
+        duration_ticks: 100,
+        intensity: 0.5,
+        target_player: None,
+        calamity: None,
+        beast_tide_kind: Some("locust_swarm".to_string()),
+        thunder_runtime: None,
+        beast_tide_runtime: Some(PersistedBeastTideRuntime {
+            origin_zone: Some(DEFAULT_SPAWN_ZONE_NAME.to_string()),
+            target_zone: Some("blood_valley".to_string()),
+            front_position: Some([4.0, 65.0, 6.0]),
+            front_velocity: Some([0.35, 0.0, 0.0]),
+            drained_chunks: vec![[2, 3]],
+            group_alive: 8,
+            active_window_size: Some(40),
+            ..Default::default()
+        }),
+        collapse_runtime: None,
+        calamity_runtime: None,
+    };
+    let restored_locust =
+        ActiveEvent::from_persisted(&locust).expect("persisted locust progress should restore");
+    match restored_locust.beast_tide {
+        super::BeastTideRuntimeState::LocustSwarm(state) => {
+            assert_eq!(state.front_position, DVec3::new(4.0, 65.0, 6.0));
+            assert_eq!(state.front_velocity, DVec3::new(0.35, 0.0, 0.0));
+            assert!(state.drained_chunks.contains(&ChunkPos::new(2, 3)));
+            assert_eq!(state.group_alive, 8);
+            assert!(state.spawned_rats.is_empty());
+        }
+        other => panic!("expected restored locust runtime, got {other:?}"),
+    }
 }
 
 #[test]
