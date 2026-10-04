@@ -12,10 +12,10 @@ use valence::testing::{create_mock_client, ScenarioSingleClient};
 use super::{
     average_zone_qi, beast_kind_from_command, daoxiang_count_for_intensity,
     maybe_nullify_targeted_zone_qi, persist_zone_collapsed_overlays,
-    redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
-    CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
-    COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE, EVENT_KARMA_BACKLASH,
-    EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+    redistribute_zone_qi_before_collapse, tick_active_events, ActiveEvent, ActiveEventsResource,
+    CalamityTargetRecord, PersistedActiveEvent, RealmCollapseLowQiMonitor, ZoneCollapsedEvent,
+    ZoneOccupantPosition, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE,
+    EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
     LOCUST_SWARM_DISBAND_THRESHOLD, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
     REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
     REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
@@ -74,6 +74,27 @@ fn spawn_event_command(target: &str, event: &str, duration_ticks: u64) -> Comman
         target: target.to_string(),
         params,
     }
+}
+
+#[test]
+fn persisted_beast_tide_rejects_unknown_kind_instead_of_defaulting() {
+    let snapshot = PersistedActiveEvent {
+        event_name: EVENT_BEAST_TIDE.to_string(),
+        zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+        elapsed_ticks: 0,
+        duration_ticks: 100,
+        intensity: 0.5,
+        target_player: None,
+        calamity: None,
+        beast_tide_kind: Some("future_kind".to_string()),
+    };
+
+    let error = ActiveEvent::from_persisted(&snapshot)
+        .expect_err("unknown beast tide kinds must fail closed during hydrate");
+    assert!(
+        error.contains("invalid beast tide kind"),
+        "error should identify the rejected persisted kind: {error}"
+    );
 }
 
 #[test]

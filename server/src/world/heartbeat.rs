@@ -391,14 +391,14 @@ impl WorldHeartbeat {
         &mut self,
         snapshot: PersistedHeartbeatRuntime,
     ) -> Result<(), String> {
-        if snapshot
-            .overrides
+        if snapshot.overrides.iter().any(|override_| {
+            override_
+                .intensity_override
+                .is_some_and(|intensity| !valid_persisted_intensity(intensity))
+        }) || snapshot
+            .forced_events
             .iter()
-            .any(|override_| !override_.intensity_override.is_none_or(f64::is_finite))
-            || snapshot
-                .forced_events
-                .iter()
-                .any(|(_, _, intensity)| !intensity.is_finite())
+            .any(|(_, _, intensity)| !valid_persisted_intensity(*intensity))
         {
             return Err("heartbeat runtime snapshot contains invalid values".to_string());
         }
@@ -718,6 +718,10 @@ impl WorldHeartbeat {
             .rev()
             .find(|override_| override_.event_kind == kind && override_.target_zone == target_zone)
     }
+}
+
+fn valid_persisted_intensity(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
 fn dvec3_to_array(value: DVec3) -> [f64; 3] {

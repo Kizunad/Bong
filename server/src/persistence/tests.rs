@@ -8821,6 +8821,66 @@ fn zone_influence_load_empty_returns_empty_vec() {
 }
 
 #[test]
+fn player_runtime_hydrate_failure_does_not_leave_default_attention_active() {
+    let (settings, root) = persistence_settings("player-runtime-hydrate-failure");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+    let connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "
+            INSERT INTO player_runtime_slices
+                (username, slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![
+                "RuntimePlayer",
+                "player.tiandao_attention",
+                "{broken",
+                1,
+                current_unix_seconds()
+            ],
+        )
+        .expect("test should be able to install a corrupt attention row");
+
+    let mut app = App::new();
+    app.insert_resource(settings);
+    app.add_systems(Update, hydrate_player_runtime_slices);
+    let (client_bundle, _helper) = create_mock_client("RuntimePlayer");
+    let entity = app
+        .world_mut()
+        .spawn((
+            client_bundle,
+            PlayerState::default(),
+            crate::world::tiandao_hunt::TiandaoAttention::default(),
+        ))
+        .id();
+
+    app.update();
+
+    assert!(
+        app.world()
+            .get::<crate::world::tiandao_hunt::TiandaoAttention>(entity)
+            .is_none(),
+        "a failed runtime hydrate must not leave TiandaoAttention::default() active"
+    );
+    assert!(
+        app.world()
+            .get::<PlayerRuntimeSlicesLoadFailed>(entity)
+            .is_some(),
+        "failed runtime hydrate must block later writes"
+    );
+    assert!(
+        app.world()
+            .get::<PlayerRuntimeSlicesLoaded>(entity)
+            .is_some(),
+        "failed runtime hydrate must still close the one-shot load gate"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn runtime_slice_rows_round_trip_and_reject_corrupt_payloads() {
     use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
     use crate::supply_coffin::{

@@ -366,20 +366,27 @@ impl ActiveEvent {
         {
             return Err(format!("invalid active event `{}`", snapshot.event_name));
         }
-        let beast_tide = if event_name == EVENT_BEAST_TIDE
-            && snapshot.beast_tide_kind.as_deref() == Some("locust_swarm")
-        {
-            BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
-                spawned_rats: Vec::new(),
-                spawn_points: Vec::new(),
-                origin_zone: snapshot.zone_name.clone(),
-                target_zone: snapshot.zone_name.clone(),
-                front_position: DVec3::ZERO,
-                front_velocity: DVec3::ZERO,
-                drained_chunks: HashSet::new(),
-                group_alive: 0,
-                active_window_size: LOCUST_SWARM_ACTIVE_WINDOW_SIZE,
-            })
+        let beast_tide = if event_name == EVENT_BEAST_TIDE {
+            match snapshot.beast_tide_kind.as_deref() {
+                Some("wandering") => BeastTideRuntimeState::default(),
+                Some("locust_swarm") => BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
+                    spawned_rats: Vec::new(),
+                    spawn_points: Vec::new(),
+                    origin_zone: snapshot.zone_name.clone(),
+                    target_zone: snapshot.zone_name.clone(),
+                    front_position: DVec3::ZERO,
+                    front_velocity: DVec3::ZERO,
+                    drained_chunks: HashSet::new(),
+                    group_alive: 0,
+                    active_window_size: LOCUST_SWARM_ACTIVE_WINDOW_SIZE,
+                }),
+                other => {
+                    return Err(format!(
+                        "invalid beast tide kind {other:?} in active event `{}`",
+                        snapshot.event_name
+                    ));
+                }
+            }
         } else {
             BeastTideRuntimeState::default()
         };

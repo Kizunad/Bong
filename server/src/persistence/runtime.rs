@@ -82,6 +82,23 @@ pub(crate) fn save_player_runtime_slice<T: Serialize>(
     let payload_json = serde_json::to_string(payload).map_err(io::Error::other)?;
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
+    save_player_runtime_slice_in_transaction(
+        &transaction,
+        username,
+        slice_id,
+        &payload_json,
+        current_unix_seconds(),
+    )?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub(crate) fn save_player_runtime_slice_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    slice_id: &str,
+    payload_json: &str,
+    wall_clock: i64,
+) -> io::Result<()> {
     transaction
         .execute(
             "
@@ -98,11 +115,11 @@ pub(crate) fn save_player_runtime_slice<T: Serialize>(
                 slice_id,
                 payload_json,
                 RUNTIME_SLICE_SCHEMA_VERSION,
-                current_unix_seconds()
+                wall_clock
             ],
         )
         .map_err(io::Error::other)?;
-    transaction.commit().map_err(io::Error::other)
+    Ok(())
 }
 
 pub(crate) fn load_player_runtime_slice<T: DeserializeOwned>(
@@ -138,13 +155,12 @@ pub(crate) fn load_player_runtime_slice<T: DeserializeOwned>(
         .transpose()
 }
 
-pub(crate) fn delete_player_runtime_slice(
-    settings: &PersistenceSettings,
+pub(crate) fn delete_player_runtime_slice_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
     username: &str,
     slice_id: &str,
 ) -> io::Result<()> {
-    let connection = open_persistence_connection(settings)?;
-    connection
+    transaction
         .execute(
             "DELETE FROM player_runtime_slices WHERE username = ?1 AND slice_id = ?2",
             params![username, slice_id],
