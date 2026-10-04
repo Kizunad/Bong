@@ -30,6 +30,7 @@ import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.itemmodel.BongItemModelChannel;
 import com.bong.client.scroll.ScrollReadScreenBootstrap;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
+import com.bong.client.craft.WorkbenchScreenBootstrap;
 import com.bong.client.iris.IrisBootstrap;
 import com.bong.client.hud.HudImmersionControls;
 import com.bong.client.hud.svg.SvgHudPreviewHarness;
@@ -81,6 +82,7 @@ public class BongClient implements ClientModInitializer {
         LOGGER.info("Initializing Bong Client...");
 
         BongBlocks.register();
+        WorkbenchScreenBootstrap.installServerDataHandler();
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
         NpcLodWorldRenderer.register();

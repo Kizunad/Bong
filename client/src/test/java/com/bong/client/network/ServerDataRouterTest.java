@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -198,6 +200,49 @@ public class ServerDataRouterTest {
             // 到专属 bong:halfstep_rechallenge channel（JSON），不再经 ServerDataRouter 路由。
             // BongNetworkHandler.registerHalfStepRechallengeChannel() 负责接收和解析。
         ), router.registeredTypes());
+    }
+
+    @Test
+    void domainRegistriesComposeExactlyTheDefaultTypeSet() {
+        Map<String, ServerDataHandler> registryHandlers = new LinkedHashMap<>();
+        CoreServerDataRegistry.register(registryHandlers);
+        BotanyServerDataRegistry.register(registryHandlers);
+        AlchemyServerDataRegistry.register(registryHandlers);
+        CombatServerDataRegistry.register(registryHandlers);
+        WorldActivityServerDataRegistry.register(registryHandlers);
+        ForgeServerDataRegistry.register(registryHandlers);
+        SocialServerDataRegistry.register(registryHandlers);
+        CraftServerDataRegistry.register(registryHandlers);
+        SpecializedServerDataRegistry.register(registryHandlers);
+
+        assertEquals(
+            ServerDataRouter.createDefault().registeredTypes(),
+            registryHandlers.keySet(),
+            "分域注册表合并后必须与默认路由的 type set 完全一致"
+        );
+        assertTrue(registryHandlers.values().stream().allMatch(handler -> handler != null));
+    }
+
+    @Test
+    void craftRegistryAcceptsWorkbenchHandlerThroughTheNetworkContract() {
+        ServerDataHandler expected = envelope ->
+            ServerDataDispatch.handled(envelope.type(), "test workbench handler");
+        Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
+
+        CraftServerDataRegistry.register(handlers, expected);
+
+        assertSame(expected, handlers.get("workbench_open"),
+            "craft 注册必须通过 ServerDataHandler seam 注入工作台入口");
+    }
+
+    @Test
+    void droppedLootProjectionContractRemainsUnwiredUntilItsProductionMergeUnit() {
+        Set<String> registeredTypes = ServerDataRouter.createDefault().registeredTypes();
+
+        assertFalse(registeredTypes.contains("dropped_loot_projection_reset"));
+        assertFalse(registeredTypes.contains("dropped_loot_projection_page"));
+        assertTrue(registeredTypes.contains("dropped_loot_sync"),
+            "RF-26 P2 必须保留旧 receiver，直到 R6 P3 原子切换");
     }
 
     @Test
