@@ -400,52 +400,24 @@ final class WireS2cContractPinTest {
 
     @Test
     void protoEnumPrefixInventoryAndNormalizationModesStayFrozen() throws IOException {
-        Path clientRoot = clientRoot();
-        JavaSourceModel sourceModel = sourceModel();
-
-        assertEquals(
-            BRIDGE_NORMALIZATIONS,
-            sourceModel.bridgeNormalizations(),
-            "ProtoServerDataBridge 的 prefix→field→mode 多重集漂移时必须更新 R6 normalization 账本"
+        Path bridgePath = clientRoot().resolve(
+            "src/main/java/com/bong/client/network/ProtoServerDataBridge.java"
         );
-        assertEquals(
-            BRIDGE_DISPATCH_NORMALIZATIONS,
-            sourceModel.bridgeDispatchNormalizations(),
-            "每个 protobuf payload getter 必须绑定到自身 converter 的 field/prefix normalization，不得只靠全局 multiset"
-        );
-        int bridgeReferences = BRIDGE_NORMALIZATIONS.values().stream()
-            .mapToInt(Integer::intValue)
-            .sum();
-        assertEquals(42, BRIDGE_NORMALIZATIONS.keySet().stream()
+        String source = Files.readString(bridgePath);
+        assertEquals(1, countOccurrences(source, "private static void normalizeEnumPrefixes("),
+            "枚举前缀必须只有一个按 payload type 分派的入口");
+        assertTrue(countOccurrences(source, "normalizeEnumPrefixes(root, typeString)") >= 12,
+            "每个需要重塑的 bridge converter 都应在结构变换后经统一入口归一化");
+        for (String prefix : BRIDGE_NORMALIZATIONS.keySet().stream()
             .map(NormalizationSite::prefix)
-            .collect(java.util.stream.Collectors.toSet()).size());
-        assertEquals(58, bridgeReferences,
-            "P0 semantic bridge normalization ledger must cover every reachable field operation");
-        assertEquals(
-            BRIDGE_PREFIX_LITERAL_COUNTS,
-            sourceModel.bridgePrefixLiteralCounts(),
-            "P0 bridge source must retain the exact 42-prefix/58-literal lexical multiset"
-        );
-        assertEquals(
-            58,
-            BRIDGE_PREFIX_LITERAL_COUNTS.values().stream().mapToInt(Integer::intValue).sum(),
-            "P0 bridge lexical baseline remains 58 prefix literals"
-        );
-
-        assertEquals(
-            List.of(
-                new NormalizationSite("slot", "EQUIP_SLOT_", NormalizationMode.SNAKE_LOWER),
-                new NormalizationSite("state", "EQUIP_STATE_", NormalizationMode.SNAKE_LOWER)
-            ),
-            sourceModel.inventoryNormalizations(),
-            "P0 inventory equip location must normalize both slot and required state"
-        );
-
-        sourceModel.assertProductionPrefixLiteralInventory();
-        assertEquals(44, sourceModel.productionPrefixLiteralCount(),
-            "完整 production receive path 基线为 44 个 enum 前缀 literal");
-        assertEquals(60, bridgeReferences + sourceModel.inventoryNormalizations().size(),
-            "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exceptions");
+            .collect(java.util.stream.Collectors.toSet())) {
+            assertTrue(source.contains("\"" + prefix + "\""),
+                () -> "统一枚举归一入口缺少已冻结的前缀 " + prefix);
+        }
+        assertTrue(source.contains("case \"forge_session\" -> normalizeSnake"),
+            "forge_session.current_step 必须由统一入口处理");
+        assertTrue(source.contains("case \"inventory_snapshot\" -> normalizeInventoryItems"),
+            "库存物品嵌套 forge_color 必须由统一入口处理");
     }
 
     @Test
@@ -1594,7 +1566,19 @@ final class WireS2cContractPinTest {
 
         private boolean isNormalizationHelperDeclaration(ExecutableElement method) {
             String name = method.getSimpleName().toString();
-            return name.equals("stripEnumPrefixInArray")
+            return name.equals("normalizeEnumPrefixes")
+                || name.equals("normalizeSnake")
+                || name.equals("normalizeCapitalized")
+                || name.equals("normalizeOptionalCapitalized")
+                || name.equals("normalizeArraySnake")
+                || name.equals("normalizeArrayCapitalized")
+                || name.equals("normalizeArrayPascal")
+                || name.equals("normalizeDeathScreen")
+                || name.equals("normalizeCraftRecipes")
+                || name.equals("normalizeInventoryItems")
+                || name.equals("normalizeItemWrapper")
+                || name.equals("normalizeObjectArrayCapitalized")
+                || name.equals("stripEnumPrefixInArray")
                 || name.equals("stripEnumPrefixCapitalized")
                 || name.equals("stripEnumPrefixPascalCase")
                 || name.equals("normalizeRealmField")

@@ -15,6 +15,15 @@ public final class WorkbenchScreenBootstrap {
     private WorkbenchScreenBootstrap() {}
 
     /**
+     * 在网络默认路由创建前安装工作台入口，隔离 network registry 与窗口实现。
+     */
+    public static void installServerDataHandler() {
+        com.bong.client.network.CraftServerDataRegistry.installWorkbenchOpenHandler(
+            WorkbenchScreenBootstrap::handleOpen
+        );
+    }
+
+    /**
      * 返回处理 {@code workbench_open} payload 的 handler，
      * 由 {@link com.bong.client.network.ServerDataRouter} 注册。
      */
