@@ -263,6 +263,45 @@ fn core_anchor_initialization_does_not_overwrite_other_slices() {
 }
 
 #[test]
+fn fresh_core_slice_save_matches_migrated_player_core_schema() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-fresh-schema");
+
+    save_player_core_slice(&persistence, "FreshPlayer", &PlayerState::default())
+        .expect("a fresh core save should satisfy the current migrated schema");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let legacy_column_count: i64 = connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM pragma_table_info('player_core')
+            WHERE name IN ('realm', 'spirit_qi', 'spirit_qi_max', 'experience')
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .expect("player_core schema should be inspectable");
+    assert_eq!(
+        legacy_column_count, 0,
+        "v13 migration removes legacy cultivation columns before core saves"
+    );
+
+    let persisted_row_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_core WHERE username = ?1",
+            params!["FreshPlayer"],
+            |row| row.get(0),
+        )
+        .expect("fresh player_core row should be queryable");
+    assert_eq!(
+        persisted_row_count, 1,
+        "fresh core save must create a durable row without legacy columns"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
 fn core_slice_upsert_preserves_existing_character_anchor() {
     let (persistence, data_dir) = sqlite_persistence("player-core-upsert");
     save_player_core_slice(
