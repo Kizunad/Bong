@@ -1,0 +1,5 @@
+"""bbmodel_maker 命名空间包扩展。"""
+
+import pkgutil
+
+__path__ = pkgutil.extend_path(__path__, __name__)
