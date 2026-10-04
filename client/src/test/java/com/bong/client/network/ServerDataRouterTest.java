@@ -224,6 +224,18 @@ public class ServerDataRouterTest {
     }
 
     @Test
+    void craftRegistryAcceptsWorkbenchHandlerThroughTheNetworkContract() {
+        ServerDataHandler expected = envelope ->
+            ServerDataDispatch.handled(envelope.type(), "test workbench handler");
+        Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
+
+        CraftServerDataRegistry.register(handlers, expected);
+
+        assertSame(expected, handlers.get("workbench_open"),
+            "craft 注册必须通过 ServerDataHandler seam 注入工作台入口");
+    }
+
+    @Test
     void droppedLootProjectionContractRemainsUnwiredUntilItsProductionMergeUnit() {
         Set<String> registeredTypes = ServerDataRouter.createDefault().registeredTypes();
 

@@ -33,6 +33,9 @@ public final class DroppedLootProjectionReducer {
 
     /** Accepts a strictly newer server reset and clears the current visible view. */
     public ApplyResult applyReset(DroppedLootProjectionReset reset) {
+        if (reset == null) {
+            return ApplyResult.REJECTED;
+        }
         long revision = reset.projectionRevision();
         if (revision <= Math.max(revisionFloor, highestCommittedRevision)) {
             return ApplyResult.IGNORED_STALE;

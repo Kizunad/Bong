@@ -39,6 +39,23 @@ class DroppedLootProjectionReducerTest {
     }
 
     @Test
+    void nullResetIsRejectedWithoutChangingTheVisibleProjection() {
+        DroppedLootProjectionReducer reducer = new DroppedLootProjectionReducer();
+        DroppedItemStore.Entry existing = entry(8L, "existing");
+        reducer.applyReset(new DroppedLootProjectionReset(7L, BINDING));
+        reducer.applyPage(new DroppedLootProjectionPage(7L, 0, 1, BINDING, List.of(existing)));
+
+        assertEquals(
+            DroppedLootProjectionReducer.ApplyResult.REJECTED,
+            reducer.applyReset(null),
+            "缺失 reset 必须 fail closed，不能因解引用 null 中断接收流程"
+        );
+        assertEquals(List.of(existing), reducer.visibleEntries(),
+            "拒绝缺失 reset 时必须保留当前已提交投影");
+        assertEquals(7L, reducer.highestCommittedRevision());
+    }
+
+    @Test
     void mixedRevisionOrBindingPagesFailClosedAndDoNotReplaceVisibleState() {
         DroppedLootProjectionReducer reducer = new DroppedLootProjectionReducer();
         DroppedLootProjectionBinding otherBinding =
