@@ -664,10 +664,16 @@ fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
     app.insert_resource(active_events);
     app.insert_resource(CultivationClock { tick: 1 });
     app.insert_resource(qi_ledger);
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app.add_event::<EventChainTrigger>();
     app.add_event::<QiTransfer>();
     app.add_systems(Update, heartbeat_tick);
 
+    let before = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "heartbeat conservation snapshots must use the configured world qi budget"
+    );
     app.update();
 
     let heartbeat = app.world().resource::<WorldHeartbeat>();
@@ -709,6 +715,13 @@ fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
                 && transfer.amount > 0.0
         }),
         "expected one auditable PseudoVeinSettle transfer for the decay delta"
+    );
+    let after = summarize_world_qi(app.world_mut());
+    assert_conservation(&before, &after, 0.0)
+        .expect("heartbeat pseudo-vein settlement must conserve qi without era decay");
+    assert_eq!(
+        after.era_decay_accum, before.era_decay_accum,
+        "heartbeat evaluation must leave the separate era-decay budget unchanged"
     );
 }
 
