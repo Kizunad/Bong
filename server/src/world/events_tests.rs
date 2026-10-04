@@ -154,7 +154,8 @@ fn persisted_active_event_restores_one_shot_markers_and_locust_progress() {
         restored_collapse.collapse.last_evacuation_reminder_bucket,
         Some(3)
     );
-    assert!(!restored_collapse.collapse.evacuee_snapshot_initialized);
+    assert!(restored_collapse.collapse.evacuee_snapshot_initialized);
+    assert!(restored_collapse.collapse.evacuee_entities.is_empty());
 
     let locust = PersistedActiveEvent {
         event_name: EVENT_BEAST_TIDE.to_string(),
@@ -191,6 +192,63 @@ fn persisted_active_event_restores_one_shot_markers_and_locust_progress() {
         }
         other => panic!("expected restored locust runtime, got {other:?}"),
     }
+}
+
+#[test]
+fn legacy_active_event_snapshot_keeps_daoxiang_spawn_retryable() {
+    // Legacy payload: calamity_runtime and all other runtime extensions were
+    // absent from the serialized event.
+    let snapshot: PersistedActiveEvent = serde_json::from_value(json!({
+        "event_name": EVENT_DAOXIANG_WAVE,
+        "zone_name": DEFAULT_SPAWN_ZONE_NAME,
+        "elapsed_ticks": 12,
+        "duration_ticks": 100,
+        "intensity": 0.5,
+        "target_player": null,
+        "calamity": EVENT_DAOXIANG_WAVE,
+        "beast_tide_kind": null,
+    }))
+    .expect("legacy Daoxiang payload should deserialize");
+
+    let restored = ActiveEvent::from_persisted(&snapshot)
+        .expect("legacy Daoxiang snapshot should remain recoverable");
+
+    assert!(
+        !restored.calamity_state.spawn_completed,
+        "missing legacy completion marker must leave Daoxiang eligible for a spawn retry"
+    );
+}
+
+#[test]
+fn legacy_realm_collapse_snapshot_treats_post_restart_entities_as_intruders() {
+    // Older runtime snapshots kept the warning marker but had no durable
+    // warning-time identity set to carry across the restart.
+    let snapshot: PersistedActiveEvent = serde_json::from_value(json!({
+        "event_name": EVENT_REALM_COLLAPSE,
+        "zone_name": DEFAULT_SPAWN_ZONE_NAME,
+        "elapsed_ticks": 12,
+        "duration_ticks": 100,
+        "intensity": 0.5,
+        "target_player": null,
+        "calamity": EVENT_REALM_COLLAPSE,
+        "beast_tide_kind": null,
+        "collapse_runtime": {
+            "completed": false,
+            "evacuation_warning_emitted": true,
+            "last_evacuation_reminder_bucket": 3
+        }
+    }))
+    .expect("legacy collapse payload should deserialize");
+
+    let restored = ActiveEvent::from_persisted(&snapshot)
+        .expect("legacy collapse snapshot should remain recoverable");
+
+    assert!(restored.collapse.evacuation_warning_emitted);
+    assert!(restored.collapse.evacuee_snapshot_initialized);
+    assert!(
+        restored.collapse.evacuee_entities.is_empty(),
+        "without a warning-time identity snapshot, no post-restart entity may be grandfathered"
+    );
 }
 
 #[test]

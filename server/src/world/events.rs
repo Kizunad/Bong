@@ -558,7 +558,10 @@ impl ActiveEvent {
                     event_name,
                     EVENT_MERIDIAN_SEAL | EVENT_ALL_WITHER | EVENT_HEAVENLY_FIRE
                 ),
-            spawn_completed: snapshot.elapsed_ticks > 0 && event_name == EVENT_DAOXIANG_WAVE,
+            // Legacy snapshots did not record whether Daoxiang had actually
+            // spawned. Keep it retryable instead of treating elapsed time as
+            // proof that the spawn completed.
+            spawn_completed: false,
         });
         let collapse_runtime = snapshot
             .collapse_runtime
@@ -595,7 +598,10 @@ impl ActiveEvent {
                 evacuation_warning_emitted: collapse_runtime.evacuation_warning_emitted,
                 last_evacuation_reminder_bucket: collapse_runtime.last_evacuation_reminder_bucket,
                 evacuee_entities: HashSet::new(),
-                evacuee_snapshot_initialized: false,
+                // Entity IDs cannot survive a restart. Without a persisted
+                // warning-time identity snapshot, fail closed: keep the set
+                // empty so every entity observed after restart is an intruder.
+                evacuee_snapshot_initialized: collapse_runtime.evacuation_warning_emitted,
             },
             calamity_state: CalamityRuntimeState {
                 initialized: calamity_state.initialized,
