@@ -207,6 +207,62 @@ fn aggregate_writer_does_not_create_unverified_skill_set_row() {
 }
 
 #[test]
+fn core_anchor_initialization_does_not_overwrite_other_slices() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-anchor");
+    let inventory = empty_weapon_inventory();
+    save_player_inventory_slice(&persistence, "NewPlayer", Some(&inventory))
+        .expect("inventory fixture should persist without a core row");
+
+    let before_inventory: String = Connection::open(persistence.db_path())
+        .expect("sqlite db should open")
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("inventory row should exist");
+
+    save_player_core_slice(&persistence, "NewPlayer", &PlayerState::default())
+        .expect("missing core row should be initialized");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let current_char_id: String = connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("core initialization should create a character anchor");
+    Uuid::parse_str(&current_char_id).expect("core anchor should be a UUID");
+
+    let after_inventory: String = connection
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("inventory row should remain available");
+    assert_eq!(
+        after_inventory, before_inventory,
+        "initializing Core must not rewrite another player slice"
+    );
+
+    let skill_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_skills WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("skill rows should be queryable");
+    assert_eq!(
+        skill_rows, 0,
+        "core initialization must not invent a SkillSet row"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
 fn long_term_status_effects_round_trip_as_a_guarded_player_slice() {
     let (persistence, data_dir) = sqlite_persistence("player-status-effects");
     let status_effects = StatusEffects {

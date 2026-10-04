@@ -2668,19 +2668,31 @@ fn persist_player_core_slice_in_sqlite(
         .map_err(io::Error::other)?;
 
     if updated == 0 {
-        persist_player_slices_in_sqlite(
-            connection,
-            username,
-            state,
-            crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
-            DimensionKind::default(),
-            None,
-            None,
-            &SkillSet::default(),
-            None,
-            None,
-            None,
-        )?;
+        // 核心切片首次落盘只建立角色锚点。其它切片的载入 provenance 可能仍是
+        // Failed，不能借这个 fallback 把默认值写进未知的 durable row。
+        let current_char_id = Uuid::now_v7().to_string();
+        connection
+            .execute(
+                "
+                INSERT INTO player_core (
+                    username,
+                    current_char_id,
+                    karma,
+                    inventory_score,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
+                params![
+                    username,
+                    current_char_id,
+                    normalized.karma,
+                    normalized.inventory_score,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    last_updated_wall
+                ],
+            )
+            .map_err(io::Error::other)?;
     }
 
     Ok(())

@@ -9,8 +9,8 @@ use self::state::{
     save_player_inventory_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
     save_player_slices_with_coffin_and_write_set, save_player_slow_slice,
-    save_player_status_effects_slice, update_player_ui_prefs, PlayerSlice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence, WriteSet,
+    save_player_status_effects_slice, update_player_ui_prefs, PlayerSlice, PlayerSliceLoadStatus,
+    PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence, WriteSet,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{
@@ -302,6 +302,19 @@ pub(crate) fn attach_player_state_to_joined_clients(
             .remove::<ReconnectPersistencePending>();
         let mut persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
+        // 首次登录没有 durable core 行时，先建立角色锚点，供同一帧随后运行的
+        // cultivation attach 读取完整 `offline:<user>:<uuid>`。只写 Core；其它切片
+        // 仍由各自的 load guard 决定，不能用新玩家默认值覆盖未知存档。
+        if persisted.load_guard.status(PlayerSlice::Core) == PlayerSliceLoadStatus::Missing {
+            if let Err(error) =
+                save_player_core_slice(&persistence, username.0.as_str(), &persisted.state)
+            {
+                tracing::warn!(
+                    "[bong][player] failed to initialize core character anchor for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
         // 持久化的背包尺寸不是权限；在库存对网络请求可见之前按当前 OP 名单校准。
         if let Some(inventory) = persisted.inventory.as_ref() {
             match resources.operator_inventory.reconcile(
