@@ -177,6 +177,9 @@ pub fn register(app: &mut App) {
     slice_registry
         .register_slice::<ZoneRuntimePersistenceSlice>()
         .and_then(|()| slice_registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<MineralExhaustedPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<ZoneInfluencePersistenceSlice>())
         .expect("production persistence slice descriptors must be valid");
 
     app.insert_resource(slice_registry)

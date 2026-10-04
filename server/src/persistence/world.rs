@@ -45,6 +45,139 @@ const ZONE_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
     shutdown_flush: Some(flush_zone_runtime_slice),
 };
 
+/// 矿脉耗尽日志的 canonical slice。
+///
+/// Update 中的节流写入只负责降低正常运行时的丢失窗口；关服时必须通过
+/// registry 强制 flush，确保最后一批 `MineralExhaustedEvent` 不会留在内存里。
+pub(super) struct MineralExhaustedPersistenceSlice;
+
+impl PersistenceSlice for MineralExhaustedPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &MINERAL_EXHAUSTED_SLICE_DESCRIPTOR
+    }
+}
+
+const MINERAL_EXHAUSTED_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.mineral_exhausted"),
+    scope: SliceScope::WorldResource,
+    order: 110,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.mineral_exhausted"),
+        WriteAuthority::new("persistence.mineral_exhausted"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_mineral_exhausted_slice),
+};
+
+/// 灵木采伐日志的 canonical slice。
+///
+/// 采伐日志在 Update 中按窗口节流，但窗口尚未到期时仍可能有 dirty 内容；
+/// shutdown dispatcher 是它唯一的关服强刷出口，避免重启后采伐点复活。
+pub(super) struct SpiritwoodHarvestedPersistenceSlice;
+
+impl PersistenceSlice for SpiritwoodHarvestedPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &SPIRITWOOD_HARVESTED_SLICE_DESCRIPTOR
+    }
+}
+
+const SPIRITWOOD_HARVESTED_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.spiritwood_harvested"),
+    scope: SliceScope::WorldResource,
+    order: 120,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.spiritwood_harvested"),
+        WriteAuthority::new("persistence.spiritwood_harvested"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_spiritwood_harvested_slice),
+};
+
+/// zone influence 的 canonical shutdown slice。
+///
+/// influence 仍保留既有 5 分钟节流快照；这里仅接管 AppExit → Last 的最后一次
+/// snapshot，不改变正常 Update 写入或失败重试语义。
+pub(super) struct ZoneInfluencePersistenceSlice;
+
+impl PersistenceSlice for ZoneInfluencePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &ZONE_INFLUENCE_SLICE_DESCRIPTOR
+    }
+}
+
+const ZONE_INFLUENCE_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.zone_influence"),
+    scope: SliceScope::WorldResource,
+    order: 130,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.zone_influence"),
+        WriteAuthority::new("persistence.zone_influence"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_zone_influence_slice),
+};
+
+fn flush_mineral_exhausted_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(mut log) = world.get_resource_mut::<crate::mineral::ExhaustedMineralsLog>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    log.flush()
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("mineral exhausted log flush failed: {error}")))
+}
+
+fn flush_spiritwood_harvested_slice(
+    world: &mut World,
+    _context: &SliceRunContext,
+) -> SliceRunResult {
+    let Some(mut logs) = world.get_resource_mut::<crate::spiritwood::SpiritWoodHarvestedLogs>()
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    logs.flush()
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| {
+            SliceRunError::new(format!("spiritwood harvested log flush failed: {error}"))
+        })
+}
+
+fn flush_zone_influence_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(influence_map) = world.get_resource::<crate::world::territory::ZoneInfluenceMap>()
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    persist_zone_influence_snapshot(&settings, influence_map)
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("zone influence flush failed: {error}")))
+}
+
 pub(super) fn persist_zone_runtime_system(
     settings: Res<PersistenceSettings>,
     mut snapshot_state: ResMut<ZoneRuntimeSnapshotState>,

@@ -1839,13 +1839,39 @@ fn void_action_cooldowns_roundtrip_hydrates_resource() {
         .expect("cooldown should persist");
 
     let mut cooldowns = VoidActionCooldowns::default();
-    let count =
-        hydrate_void_action_cooldowns(&settings, &mut cooldowns).expect("cooldowns should hydrate");
+    let count = hydrate_void_action_cooldowns_at_tick(&settings, &mut cooldowns, 0)
+        .expect("cooldowns should hydrate");
 
     assert_eq!(count, 1);
     assert_eq!(
         cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
         12_345
+    );
+}
+
+#[test]
+fn void_action_cooldown_hydrate_does_not_replay_old_process_uptime() {
+    use crate::cultivation::void::components::BARRIER_COOLDOWN_TICKS;
+
+    let (settings, _root) = persistence_settings("void-action-cooldowns-rebase");
+    bootstrap_sqlite(settings.db_path(), "server-run-test").expect("bootstrap should succeed");
+    let old_process_tick = 10 * crate::cultivation::void::components::TICKS_PER_DAY;
+    persist_void_action_cooldown(
+        &settings,
+        "offline:Void",
+        VoidActionKind::Barrier,
+        old_process_tick + BARRIER_COOLDOWN_TICKS,
+    )
+    .expect("cooldown should persist");
+
+    let mut cooldowns = VoidActionCooldowns::default();
+    hydrate_void_action_cooldowns_at_tick(&settings, &mut cooldowns, 100)
+        .expect("cooldown should hydrate");
+
+    assert_eq!(
+        cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
+        100 + BARRIER_COOLDOWN_TICKS,
+        "a legacy absolute deadline must be capped to one cooldown in the current epoch"
     );
 }
 
@@ -4881,11 +4907,132 @@ fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
             .descriptors()
             .map(|descriptor| descriptor.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["player.known_techniques", "world.zone_runtime"],
+        vec![
+            "player.known_techniques",
+            "world.zone_runtime",
+            "world.mineral_exhausted",
+            "world.spiritwood_harvested",
+            "world.zone_influence",
+        ],
         "production must install every wired production descriptor"
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn production_registry_flushes_world_logs_on_shutdown() {
+    use crate::mineral::{load_exhausted_log, ExhaustedEntry, ExhaustedMineralsLog};
+    use crate::spiritwood::persistence::load_harvested_log;
+    use crate::spiritwood::SpiritWoodHarvestedLogs;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::territory::{PlayerInfluence, ZoneInfluenceEntry, ZoneInfluenceMap};
+    use valence::prelude::BlockPos;
+
+    let (settings, root) = persistence_settings("production-world-log-shutdown");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let mineral_path = root.join("data").join("minerals").join("exhausted.json");
+    let mut mineral_log = ExhaustedMineralsLog::default().with_path(&mineral_path);
+    mineral_log.record(ExhaustedEntry {
+        mineral_id: "fan_tie".to_string(),
+        x: 1,
+        y: 64,
+        z: 2,
+        tick: 42,
+        respawn_at_tick: None,
+    });
+
+    let spiritwood_path = root.join("data").join("spiritwood").join("harvested.json");
+    let mut spiritwood_log = SpiritWoodHarvestedLogs::default().with_path(&spiritwood_path);
+    spiritwood_log.mark_harvested(DimensionKind::Overworld, BlockPos::new(3, 80, 4), 43);
+
+    let mut influence_map = ZoneInfluenceMap::default();
+    let mut influence_entry = ZoneInfluenceEntry::default();
+    influence_entry.players.insert(
+        "offline:ShutdownProbe".to_string(),
+        PlayerInfluence {
+            value: 1.0,
+            last_activity_tick: 44,
+            source_breakdown: Default::default(),
+        },
+    );
+    influence_map
+        .zones
+        .insert("spawn".to_string(), influence_entry);
+
+    let mut registry = PersistenceSliceRegistry::empty();
+    registry
+        .register_slice::<MineralExhaustedPersistenceSlice>()
+        .and_then(|()| registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<ZoneInfluencePersistenceSlice>())
+        .expect("world persistence descriptors should remain valid");
+    let mut world = World::new();
+    world.insert_resource(registry);
+    world.insert_resource(settings);
+    world.insert_resource(mineral_log);
+    world.insert_resource(spiritwood_log);
+    world.insert_resource(influence_map);
+
+    let report = dispatch_production_shutdown_flushes(&mut world);
+    assert_eq!(
+        report.failures,
+        Vec::new(),
+        "world slice flushes should succeed"
+    );
+    assert!(mineral_path.exists(), "shutdown must flush the mineral log");
+    assert!(
+        spiritwood_path.exists(),
+        "shutdown must flush the spiritwood log"
+    );
+    assert_eq!(
+        load_exhausted_log(&mineral_path)
+            .expect("mineral shutdown output should parse")
+            .entries
+            .len(),
+        1
+    );
+    assert!(load_harvested_log(&spiritwood_path)
+        .expect("spiritwood shutdown output should parse")
+        .entries
+        .iter()
+        .any(|entry| entry.x == 3 && entry.z == 4));
+    let records = load_zone_influence_snapshot(
+        world
+            .get_resource::<PersistenceSettings>()
+            .expect("settings should remain available"),
+    )
+    .expect("zone influence shutdown output should load");
+    assert_eq!(records.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zone_influence_shutdown_without_map_is_clean_even_without_settings() {
+    let mut registry = PersistenceSliceRegistry::empty();
+    registry
+        .register_slice::<ZoneInfluencePersistenceSlice>()
+        .expect("zone influence descriptor should remain valid");
+    let mut world = World::new();
+    world.insert_resource(registry);
+
+    let report = dispatch_shutdown_flushes(
+        &mut world,
+        ShutdownFlushRequest::Requested,
+        &ProductionSliceClock {
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+        },
+    )
+    .expect("shutdown dispatch should handle an absent influence map");
+    assert_eq!(
+        report.failures,
+        Vec::new(),
+        "a missing ZoneInfluenceMap is a clean no-op and must not require persistence settings"
+    );
+    assert_eq!(report.clean, 1);
 }
 
 #[test]
@@ -4926,6 +5073,9 @@ fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
     registry
         .register_slice::<ZoneRuntimePersistenceSlice>()
         .and_then(|()| registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<MineralExhaustedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<ZoneInfluencePersistenceSlice>())
         .expect("production slice descriptors must remain valid");
     registry
 }
@@ -4969,14 +5119,14 @@ fn production_zone_runtime_flush_without_registry_is_clean_noop() {
     let report = dispatch_production_shutdown_flushes(&mut world);
 
     assert_eq!(
-        report.attempted, 2,
-        "both production descriptors must be attempted, actual {report:?}"
+        report.attempted, 5,
+        "all production descriptors must be attempted, actual {report:?}"
     );
     assert!(
         report.failures.is_empty(),
         "an absent ZoneRegistry must be a clean no-op, actual {report:?}"
     );
-    assert_eq!(report.clean, 2, "both slices must report Clean");
+    assert_eq!(report.clean, 5, "all slices must report Clean");
     assert!(
         load_zone_runtime_snapshot(&settings)
             .expect("zone snapshot load must work on a fixture database")
