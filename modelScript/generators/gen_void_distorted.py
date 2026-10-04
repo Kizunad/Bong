@@ -81,138 +81,146 @@ def _cube(
     }
 
 
-def part_spine_ribcage() -> list[dict]:
-    """生成 01 部件：拱起骨脊、短骨刺和下挂的外露肋笼。
+# 脊椎沿 Z 从后（低）向前（高）抬升；前端之后由 02 号部件的头颅接上。
+SPINE_Z_REAR = -9.0
+SPINE_Z_FRONT = 9.0
+SPINE_Y_REAR = 11.0
+SPINE_Y_FRONT = 17.0
+VERTEBRA_LENGTH = 2.0
+VERTEBRA_PITCH = 2.4
 
-    坐标约定为 X 左右、Y 向上、Z 朝向生物正面。骨脊从后方低点沿 Z
-    轴拱到中段高点，再向前下倾；肋骨从脊柱两侧向外、向下分层，中央留
-    出虚空黑腔，使正面和侧面都能读出“骨架悬空”的形状。
-    """
-    cubes: list[dict] = []
 
-    # 背部骨脊：每节略微改变高度和厚度，形成驼背弧线，而不是一根直梁。
-    vertebrae = [
-        ("rear", -5.6, -3.9, 10.6, 11.8, 1.45),
-        ("rear_mid", -4.3, -2.6, 11.5, 12.9, 1.55),
-        ("mid_low", -3.0, -1.3, 12.6, 14.2, 1.7),
-        ("crest", -1.7, 0.1, 13.8, 15.7, 1.9),
-        ("front_crest", -0.4, 1.3, 14.2, 15.6, 1.75),
-        ("front_slope", 0.9, 2.6, 13.2, 14.6, 1.6),
-        ("front_tip", 2.2, 3.9, 12.0, 13.4, 1.45),
-    ]
-    for index, (label, z0, z1, y0, y1, half_width) in enumerate(vertebrae):
-        material = "bone" if index % 2 == 0 else "bone_shadow"
+def _spine_y(z: float) -> float:
+    """脊椎底面在 z 处的高度：线性抬升，前段再略微拱起。"""
+    t = (z - SPINE_Z_REAR) / (SPINE_Z_FRONT - SPINE_Z_REAR)
+    return SPINE_Y_REAR + (SPINE_Y_FRONT - SPINE_Y_REAR) * t + 1.2 * np.sin(np.pi * t)
+
+
+def _vertebrae() -> list[dict]:
+    """一节节宽窄交替的骨椎，节间留缝，轮廓是一条上抬的锯齿脊线。"""
+    cubes = []
+    count = int((SPINE_Z_FRONT - SPINE_Z_REAR) // VERTEBRA_PITCH) + 1
+    for index in range(count):
+        z0 = SPINE_Z_REAR + index * VERTEBRA_PITCH
+        y0 = float(_spine_y(z0 + VERTEBRA_LENGTH / 2))
+        half_width = 1.1 if index % 2 == 0 else 0.85
         cubes.append(
             _cube(
-                f"spine_vertebra_{label}",
+                f"spine_vertebra_{index:02d}",
                 (-half_width, y0, z0),
-                (half_width, y1, z1),
-                material,
+                (half_width, y0 + 1.5, z0 + VERTEBRA_LENGTH),
+                "bone" if index % 2 == 0 else "bone_shadow",
             )
         )
+    return cubes
 
-    # 脊椎之间的窄连接节不与相邻顶面共面，保持弧线连续但不产生闪面。
-    connector_specs = [
-        ("rear", -4.05, -3.72, 11.55, 12.45, 1.0),
-        ("rear_mid", -2.75, -2.42, 12.55, 13.55, 1.05),
-        ("mid", -1.45, -1.12, 13.65, 14.75, 1.1),
-        ("crest", -0.18, 0.18, 14.85, 15.95, 1.15),
-        ("front", 1.12, 1.48, 13.85, 14.75, 1.0),
-        ("tip", 2.52, 2.86, 12.65, 13.55, 0.9),
-    ]
-    for label, z0, z1, y0, y1, half_width in connector_specs:
+
+def _spine_spikes() -> list[dict]:
+    """每节椎骨顶上一根细长骨刺，高度参差；两侧再各有一排斜外倾的短刺。"""
+    cubes = []
+    count = int((SPINE_Z_FRONT - SPINE_Z_REAR) // VERTEBRA_PITCH) + 1
+    heights = [1.6, 2.4, 1.8, 2.6, 1.7, 2.2, 1.9, 2.8]
+    for index in range(count):
+        zc = SPINE_Z_REAR + index * VERTEBRA_PITCH + VERTEBRA_LENGTH / 2
+        top = float(_spine_y(zc)) + 1.5
+        height = heights[index % len(heights)]
         cubes.append(
             _cube(
-                f"spine_connector_{label}",
-                (-half_width, y0, z0),
-                (half_width, y1, z1),
-                "bone_shadow",
-            )
-        )
-
-    # 脊顶短刺：一排分散、长短不一的细骨条，不合并成块。
-    spike_specs = [
-        ("rear", -4.95, 11.82, 0.72),
-        ("rear_mid", -3.65, 12.95, 0.92),
-        ("mid_low", -2.35, 14.25, 1.05),
-        ("crest_a", -1.15, 15.72, 1.32),
-        ("crest_b", 0.05, 15.68, 1.12),
-        ("front_crest", 1.05, 15.64, 0.86),
-        ("front_slope", 2.05, 14.7, 0.7),
-        ("front_tip", 3.15, 13.52, 0.55),
-    ]
-    for index, (label, z, bottom, height) in enumerate(spike_specs):
-        width = 0.34 if index % 2 else 0.42
-        depth = 0.58 if index % 2 else 0.68
-        cubes.append(
-            _cube(
-                f"spine_short_spike_{label}",
-                (-width, bottom, z - depth / 2),
-                (width, bottom + height, z + depth / 2),
+                f"spine_spike_{index:02d}",
+                (-0.35, top, zc - 0.35),
+                (0.35, top + height, zc + 0.35),
                 "bone",
             )
         )
-
-    # 虚空黑腔是肋笼后的退让面；它只负责衬出骨条，不冒充另一件部件。
-    cubes.append(
-        _cube(
-            "ribcage_void_cavity",
-            (-3.25, 5.25, -0.1),
-            (3.25, 11.12, 0.72),
-            "void_black",
-        )
-    )
-
-    # 四层肋骨，每层由左右外弧、下坠端节和中央胸骨构成。各层高度错开，
-    # 既保留间隙，又避免门禁把相邻肋条判为共面重叠。
-    rib_levels = [
-        ("lower", 5.75, 3.75, 1.3),
-        ("low_mid", 7.0, 4.05, 1.48),
-        ("upper_mid", 8.35, 4.3, 1.66),
-        ("upper", 9.75, 4.0, 1.86),
-        ("top", 10.92, 3.55, 2.04),
-    ]
-    for index, (label, y, radius, front_z) in enumerate(rib_levels):
-        thickness = 0.46 if index < 3 else 0.42
-        outer_x = radius + 0.35
-        inner_x = 0.9 + index * 0.04
-        material = "bone_shadow" if index % 2 else "bone"
-        cubes.extend(
-            [
-                _cube(
-                    f"rib_{label}_left_arc",
-                    (-outer_x, y, front_z - 0.82),
-                    (-inner_x, y + thickness, front_z + 0.1),
-                    material,
-                ),
-                _cube(
-                    f"rib_{label}_right_arc",
-                    (inner_x, y, front_z - 0.82),
-                    (outer_x, y + thickness, front_z + 0.1),
-                    material,
-                ),
-                _cube(
-                    f"rib_{label}_left_drop",
-                    (-outer_x - 0.34, y - 0.62, front_z - 0.22),
-                    (-outer_x + 0.05, y + 0.02, front_z + 0.52),
-                    "bone_shadow",
-                ),
-                _cube(
-                    f"rib_{label}_right_drop",
-                    (outer_x - 0.05, y - 0.62, front_z - 0.22),
-                    (outer_x + 0.34, y + 0.02, front_z + 0.52),
-                    "bone_shadow",
-                ),
-                _cube(
-                    f"rib_{label}_sternum",
-                    (-inner_x + 0.1, y + 0.18, front_z + 0.13),
-                    (inner_x - 0.1, y + 0.18 + thickness, front_z + 0.58),
-                    "bone",
-                ),
-            ]
-        )
-
     return cubes
+
+
+def _mirrored_box(
+    name: str,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    z_range: tuple[float, float],
+    material: str,
+) -> list[dict]:
+    """x_range 取正值，生成 left / right 两个镜像立方体。"""
+    return [
+        _cube(f"{name}_l", (-x_range[1], y_range[0], z_range[0]), (-x_range[0], y_range[1], z_range[1]), material),
+        _cube(f"{name}_r", (x_range[0], y_range[0], z_range[0]), (x_range[1], y_range[1], z_range[1]), material),
+    ]
+
+
+# 肋骨沿 X 向外一段段下落（x0, x1, 相对脊底下落量, 厚度）。整体是人字形拱，
+# 末段再接一小截垂直下挂的骨尖。
+RIB_SEGMENTS = [
+    (1.0, 3.0, 0.2, 1.0),
+    (3.0, 5.0, 1.5, 1.0),
+    (5.0, 6.8, 3.0, 1.0),
+    (6.8, 8.0, 4.6, 1.0),
+]
+RIB_REAR_LEAN = 0.5
+RIB_STATION_Z =[-7.6, -5.2, -2.8, -0.4, 2.0, 4.4, 6.8]
+
+
+def _ribs() -> list[dict]:
+    """七对肋骨沿脊椎排开，中段最宽，前后收窄；上缘立短刺，末端垂尖。"""
+    cubes = []
+    for index, zc in enumerate(RIB_STATION_Z):
+        reach = 1.0 - 0.07 * abs(index - 3)
+        depth = 0.9 if index % 2 == 0 else 0.7
+        spine_bottom = float(_spine_y(zc))
+        material = "bone" if index % 2 == 0 else "bone_shadow"
+        for seg, (x0, x1, drop, thick) in enumerate(RIB_SEGMENTS):
+            x0 *= reach if seg else 1.0
+            x1 *= reach
+            y_top = spine_bottom - drop
+            # 越往外越向后倾，侧视时肋骨是斜条而不是竖杆。
+            lean = RIB_REAR_LEAN * seg
+            z_range = (zc - depth / 2 - lean, zc + depth / 2 - lean)
+            cubes += _mirrored_box(
+                f"rib_{index}_seg{seg}", (x0, x1), (y_top - thick, y_top), z_range, material
+            )
+        # 末端骨尖：窄而长，垂直下挂，各肋长短不一。
+        tip_x1 = RIB_SEGMENTS[-1][1] * reach
+        tip_top = spine_bottom - RIB_SEGMENTS[-1][2] - RIB_SEGMENTS[-1][3]
+        tip_len = 2.6 + 0.5 * (index % 3)
+        tip_lean = RIB_REAR_LEAN * (len(RIB_SEGMENTS) - 1)
+        cubes += _mirrored_box(
+            f"rib_{index}_tip",
+            (tip_x1 - 0.8, tip_x1 - 0.3),
+            (tip_top - tip_len, tip_top),
+            (zc - 0.25 - tip_lean, zc + 0.25 - tip_lean),
+            "bone_shadow",
+        )
+        # 上缘外倾短刺：两段错位，从拱面向外上方斜伸。
+        for seg in (1, 2):
+            x0, x1, drop, _ = RIB_SEGMENTS[seg]
+            y_top = spine_bottom - drop
+            base_x = (x0 + x1) / 2 * reach
+            cubes += _mirrored_box(
+                f"rib_{index}_spike{seg}_base",
+                (base_x - 0.3, base_x + 0.3),
+                (y_top, y_top + 1.1),
+                (zc - 0.3, zc + 0.3),
+                "bone",
+            )
+            cubes += _mirrored_box(
+                f"rib_{index}_spike{seg}_tip",
+                (base_x + 0.1, base_x + 0.6),
+                (y_top + 1.1, y_top + 2.0 + 0.4 * seg),
+                (zc - 0.22, zc + 0.22),
+                "bone",
+            )
+    return cubes
+
+
+def part_spine_ribcage() -> list[dict]:
+    """01 部件：沿驼背上抬的骨脊 + 脊上细刺 + 向两侧斜垂的人字形肋笼。
+
+    坐标：X 左右、Y 向上、Z 朝向生物正面（前高后低）。对照
+    parts_ref/01_spine_ribcage.png：正面是倒 V 的拱，侧面是前高后低的斜脊。
+    红肉条属于 03 号部件，锈甲属于 04 号，本件不含。
+    """
+    return _vertebrae() + _spine_spikes() + _ribs()
 
 
 def all_cubes() -> list[dict]:
@@ -306,7 +314,7 @@ def generate_bbmodel(out_path: Path = BBMODEL_OUT, cubes_override: list[dict] | 
         ],
     }
     out_path.write_text(json.dumps(model, indent=2), encoding="utf-8")
-    print(f"✓ VoidDistorted 01_spine_ribcage 写入成功: {out_path.relative_to(REPO)}")
+    print(f"✓ VoidDistorted 01_spine_ribcage 写入成功: {out_path}")
     return out_path
 
 
@@ -409,12 +417,15 @@ def self_test() -> None:
     _assert_no_coplanar_faces(cubes)
     print("  [OK] 01_spine_ribcage 无共面冲突")
 
+    # 注入缺陷由第一节椎骨派生：另放一块骨片，顶面与它同高、水平投影部分重叠。
+    victim = next(cube for cube in cubes if cube["name"].startswith("spine_vertebra_"))
+    low, high = victim["from"], victim["to"]
     defective = list(cubes)
     defective.append(
         _cube(
             "inject_coplanar_fail",
-            (-1.0, 11.8, -5.0),
-            (1.0, 12.7, -3.5),
+            (low[0] + 0.3, high[1] - 0.8, low[2] + 0.5),
+            (high[0] + 0.6, high[1], high[2] + 0.5),
             "bone",
         )
     )
