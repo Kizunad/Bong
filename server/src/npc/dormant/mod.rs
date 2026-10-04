@@ -1,7 +1,17 @@
-//! NPC dormant data plane.
+//! NPC dormant data plane for NPCs that are outside the hydrated ECS radius.
 //!
-//! v1 keeps a deliberately small two-state model: live ECS entities stay
-//! hydrated, far NPCs move into this resource and are advanced in batches.
+//! Live entities stay in the normal lifecycle and combat systems.  Once they
+//! move off-screen, [`NpcDormantStore`] owns their position, lifespan,
+//! cultivation state, faction identity, and pending terminal state.  The
+//! periodic tick advances those snapshots, while the terminal helpers commit
+//! natural death or off-screen combat in a durable order before removing a
+//! snapshot.  In particular, every off-screen death releases qi through
+//! [`release_dormant_qi_to_zone`]; telemetry and relic events are emitted only
+//! after that transaction succeeds.
+//!
+//! The module deliberately does not decide online attack gates, hydrate
+//! presentation, or loot policy.  Those remain in the lifecycle, combat,
+//! hydrate, and loot modules that consume the events produced here.
 
 /// plan-offscreen-war-v1 P1：离屏 dormant 战斗的纯逻辑核心（配对 + 胜负 roll）。
 ///
@@ -116,6 +126,11 @@ pub fn sim_seed_from_env() -> u64 {
 }
 
 #[derive(Clone, Debug, Resource)]
+/// Runtime limits and cadence for the hydrated/off-screen NPC boundary.
+///
+/// The fields only control scheduling, population caps, and deterministic
+/// simulation inputs.  They never replace the cultivation or qi-physics
+/// rules used by the tick and terminal settlement paths.
 pub struct NpcVirtualizationConfig {
     pub hydrate_radius_blocks: f64,
     pub dehydrate_radius_blocks: f64,
@@ -301,6 +316,10 @@ pub enum DormantBehaviorIntent {
 }
 
 impl DormantBehaviorIntent {
+    /// Choose the persisted off-screen movement intent for an archetype.
+    ///
+    /// This is a pure policy helper: it does not move a snapshot or inspect
+    /// live ECS entities.  The tick system consumes the returned intent later.
     pub fn for_archetype(archetype: NpcArchetype, patrol: Option<&DormantPatrolSnapshot>) -> Self {
         match archetype {
             NpcArchetype::Rogue | NpcArchetype::Disciple => patrol
@@ -341,6 +360,12 @@ where
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Durable state for one NPC while it is outside the hydrated ECS radius.
+///
+/// The cultivation and optional TSY Daozhan owners remain the physical qi
+/// owners until [`release_dormant_qi_to_zone`] completes.  Terminal flags are
+/// persisted before settlement so a restart cannot roll a pending loser again
+/// or discard a snapshot that still carries qi.
 pub struct NpcDormantSnapshot {
     pub char_id: CharId,
     pub archetype: NpcArchetype,
@@ -503,6 +528,12 @@ impl Default for DormantPersistenceRuntime {
 }
 
 #[derive(Clone, Debug, Default, Resource, Serialize, Deserialize)]
+/// Persistent collection and secondary indexes for off-screen NPC snapshots.
+///
+/// Mutators also maintain the Redis dirty/revision gate.  The global tick uses
+/// this resource for both ordinary aging and the durable pending-death retry;
+/// callers must not remove a snapshot before its terminal qi transaction has
+/// committed.
 pub struct NpcDormantStore {
     pub snapshots: HashMap<CharId, NpcDormantSnapshot>,
     pub by_archetype: HashMap<NpcArchetype, Vec<CharId>>,
@@ -1085,6 +1116,200 @@ pub fn planar_distance(left: DVec3, right: DVec3) -> f64 {
     (dx * dx + dz * dz).sqrt()
 }
 
+/// Result of one off-screen snapshot pass.  The separate flags keep movement
+/// and zone-index updates independent from terminal removal, which is important
+/// for the persistence dirty gate and for rebuilding combat indexes only when a
+/// snapshot actually leaves a zone.
+#[derive(Default)]
+struct DormantSnapshotProgress {
+    mutated: bool,
+    indexes_dirty: bool,
+    terminal: Option<NaturalDeathSettlement>,
+}
+
+struct NaturalDeathSettlement {
+    char_id: CharId,
+    tombstone: crate::persistence::DormantTerminalCommitRecord,
+    notice: Option<NpcDeathNotice>,
+}
+
+/// Advance one ordinary dormant snapshot and, when eligible, stage natural death.
+///
+/// Combat-pending snapshots return immediately: their clock and qi owners stay
+/// frozen while [`run_pending_combat_release_retry`] performs the only allowed
+/// terminal transition.  This helper owns the ordinary movement, aging, regen,
+/// breakthrough, and natural-aging order; the global system below only folds
+/// its result into indexes and events.
+#[allow(clippy::too_many_arguments)]
+fn advance_dormant_snapshot(
+    snapshot: &mut NpcDormantSnapshot,
+    tick: u64,
+    config: &NpcVirtualizationConfig,
+    mut zones: Option<&mut ZoneRegistry>,
+    mut ledger: Option<&mut WorldQiAccount>,
+    faction_store: Option<&FactionStore>,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
+    war_bonus: Option<&crate::npc::war::settle::ZoneSpiritBonusStore>,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> DormantSnapshotProgress {
+    let mut progress = DormantSnapshotProgress::default();
+    if snapshot.combat_dead_pending_release {
+        return progress;
+    }
+
+    let elapsed_ticks = tick.saturating_sub(snapshot.last_dormant_tick_processed);
+    snapshot.last_dormant_tick_processed = tick;
+    if elapsed_ticks == 0 {
+        return progress;
+    }
+    progress.mutated = true;
+
+    advance_dormant_position(snapshot, elapsed_ticks, tick);
+    if let Some(zones) = zones.as_deref() {
+        progress.indexes_dirty = refresh_snapshot_zone_name(snapshot, zones);
+    }
+    snapshot.lifespan.age_ticks +=
+        elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
+
+    // 凡兽无灵：离屏期跳过 regen / breakthrough，与 live 侧的
+    // `Without<MundaneFaunaSpecies>` 保持一致，避免 hydrate 后把吸入的真元丢失。
+    if snapshot.archetype != NpcArchetype::Mundane {
+        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+            let war_multiplier = war_bonus
+                .map(|store| store.multiplier_for(&snapshot.zone_name))
+                .unwrap_or(1.0);
+            apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
+        }
+        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+            let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick, body_plans, races);
+        }
+    }
+
+    if snapshot.lifespan.is_expired() {
+        if let (Some(zones), Some(ledger)) = (zones, ledger) {
+            progress.terminal = settle_expired_dormant_snapshot(
+                snapshot,
+                tick,
+                faction_store,
+                zones,
+                ledger,
+                persistence,
+            );
+        }
+    }
+    progress
+}
+
+/// Commit an expired snapshot's terminal qi transaction before the snapshot is removed.
+///
+/// The staged copies preserve the existing all-or-nothing behavior: a bad Zone,
+/// owner, overflow, or persistence write leaves the original snapshot and all
+/// physical qi owners untouched so the next tick can retry.
+fn settle_expired_dormant_snapshot(
+    snapshot: &mut NpcDormantSnapshot,
+    tick: u64,
+    faction_store: Option<&FactionStore>,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
+) -> Option<NaturalDeathSettlement> {
+    let mut staged_snapshot = snapshot.clone();
+    let mut staged_zones = zones.clone();
+    let mut staged_ledger = ledger.clone();
+    let settlement = if dormant_terminal_qi_is_settled(&staged_snapshot) {
+        QiFlowOutcome {
+            requested: 0.0,
+            source_debited: 0.0,
+            target_credited: 0.0,
+            zone_accepted: 0.0,
+            overflow_credited: 0.0,
+            untransferred: 0.0,
+            transfers: Vec::new(),
+        }
+    } else {
+        let Ok(settlement) =
+            release_dormant_qi_to_zone(&mut staged_snapshot, &mut staged_zones, &mut staged_ledger)
+        else {
+            tracing::warn!(
+                "[bong][npc] retained expired dormant NPC `{}` until all qi owners settle",
+                snapshot.char_id
+            );
+            return None;
+        };
+        settlement
+    };
+    if !dormant_terminal_qi_is_settled(&staged_snapshot) {
+        return None;
+    }
+
+    let tombstone = crate::persistence::DormantTerminalCommitRecord {
+        char_id: snapshot.char_id.clone(),
+        cause: "natural_aging".to_string(),
+        at_tick: tick,
+        zone: snapshot.zone_name.clone(),
+        winner: None,
+        winner_group: None,
+        loser_group: faction_store
+            .and_then(|store| effective_group(snapshot, store))
+            .map(|group| u64::from(group.0)),
+        zone_accepted: settlement.zone_accepted,
+        cleanup_revision: None,
+    };
+    let first_commit = persist_natural_death_commit(
+        persistence,
+        &tombstone,
+        &staged_zones,
+        &staged_ledger,
+        &snapshot.char_id,
+    )?;
+
+    let notice = if first_commit {
+        *snapshot = staged_snapshot;
+        *zones = staged_zones;
+        *ledger = staged_ledger;
+        Some(dormant_natural_death_notice(snapshot))
+    } else {
+        None
+    };
+    Some(NaturalDeathSettlement {
+        char_id: snapshot.char_id.clone(),
+        tombstone,
+        notice,
+    })
+}
+
+/// Persist one natural-death terminal record and distinguish the idempotent
+/// already-committed case from a new commit.  A storage error returns `None`,
+/// leaving the caller's staged owners untouched for a later retry.
+fn persist_natural_death_commit(
+    persistence: Option<&crate::persistence::PersistenceSettings>,
+    tombstone: &crate::persistence::DormantTerminalCommitRecord,
+    zones: &ZoneRegistry,
+    ledger: &WorldQiAccount,
+    char_id: &str,
+) -> Option<bool> {
+    let Some(persistence) = persistence else {
+        return Some(true);
+    };
+    match crate::persistence::persist_dormant_terminal_commit(
+        persistence,
+        tombstone,
+        zones,
+        ledger,
+        None,
+    ) {
+        Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => Some(true),
+        Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => Some(false),
+        Err(error) => {
+            tracing::warn!(
+                "[bong][npc] retained expired dormant NPC `{char_id}` after terminal persistence failure: {error}"
+            );
+            None
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dormant_global_tick_system(
     game_tick: Option<Res<GameTick>>,
@@ -1098,9 +1323,6 @@ fn dormant_global_tick_system(
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
     mut pending_relics: EventWriter<PendingDormantRelicCreated>,
     war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
-    // plan-race-system-v1 P6b review major-4 收口：离屏突破配额换轨所需的两个解析
-    // 资源，语义与在线 `breakthrough_system`/`cultivate_action_system` 同款——缺失时
-    // （既有测试未插入）`advance_dormant_breakthrough` 内部优雅退化到 humanoid。
     body_plans: Option<Res<BodyPlanRegistry>>,
     races: Option<Res<RaceRegistry>>,
 ) {
@@ -1113,157 +1335,37 @@ fn dormant_global_tick_system(
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
         return;
     }
+
     let mut ids = store.snapshots.keys().cloned().collect::<Vec<_>>();
     ids.sort();
-
     let mut expired = Vec::new();
     let mut committed_tombstones = Vec::new();
     let mut indexes_dirty = false;
-    // Whether this tick actually advanced any snapshot (position / aging / regen
-    // / breakthrough) or removed an expired one. Drives the persistence dirty
-    // flag so a tick that touched nothing (all `elapsed_ticks == 0`) does not
-    // schedule a redundant full hash write.
     let mut mutated_any = false;
     for char_id in ids {
         let Some(snapshot) = store.snapshots.get_mut(&char_id) else {
             continue;
         };
-        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：已离屏战死、真元待释放的败者
-        // （`combat_dead_pending_release`）是**逻辑死亡**——它不该再移动 / 吸气 / 突破 / 自然老死。
-        // `collect_zone_combat_pairs` 只把它排除出**配对**，但这条 per-char 推进循环若仍处理它，
-        // 一个「已死」NPC 会在待释放期间继续 `advance_dormant_position`、`apply_dormant_regen`
-        // （从 zone 拉真元进死者账户）、`advance_dormant_breakthrough` 甚至触发自然老死分支——语义
-        // 错误，且 regen↔release 在满 zone 下来回 churn（吸进来又被 retry 释放回去）。直接 early-
-        // continue 让它时钟冻结（连 `last_dormant_tick_processed` 也不推进），真元释放完全交给
-        // `run_pending_combat_release_retry`（每 tick 重试 release，释放完才造遗物 + remove）。
-        // 注意：不置 `mutated_any`——本循环对它零状态变更，dirty 由 combat phase 的 `mutated`
-        // 信号负责（retain 翻 flag / retry partial-release 都已置 `mutated`，见 `CombatPhaseOutcome`）。
-        if snapshot.combat_dead_pending_release {
-            continue;
-        }
-        let elapsed_ticks = tick.saturating_sub(snapshot.last_dormant_tick_processed);
-        snapshot.last_dormant_tick_processed = tick;
-        if elapsed_ticks == 0 {
-            continue;
-        }
-        mutated_any = true;
-        advance_dormant_position(snapshot, elapsed_ticks, tick);
-        if let Some(zones) = zones.as_deref() {
-            indexes_dirty |= refresh_snapshot_zone_name(snapshot, zones);
-        }
-        snapshot.lifespan.age_ticks +=
-            elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
-
-        // plan-mundane-fauna-v1 守恒豁免：凡兽无灵——脱水期同样不吸/放 zone 灵气，对齐 live 侧
-        // qi_regen_and_zone_drain_tick 的 `Without<MundaneFaunaSpecies>`。凡兽脱水快照
-        // sum_rate()=1.0（Awaken 开 1 脉，默认 flow_rate=1.0），若不豁免会逐 tick 把
-        // zone.spirit_qi 抽进 snapshot.qi_current，hydrate 用 snapshot.cultivation 覆盖回 live
-        // 后死亡（负灵域枯萎/LOD 超距回收裸 insert(Despawned)、无 CurrentDimension 走 overflow）
-        // 100% 蒸发，破守恒。跳过 regen + breakthrough（两者都从 zone 拉真元），保留位置/寿命推进。
-        if snapshot.archetype != NpcArchetype::Mundane {
-            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                // plan-offscreen-war-v1 P9：从 ZoneSpiritBonusStore 查 zone 倍率（默认 1.0）
-                let war_multiplier = war_bonus
-                    .as_deref()
-                    .map(|s| s.multiplier_for(&snapshot.zone_name))
-                    .unwrap_or(1.0);
-                apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
+        let progress = advance_dormant_snapshot(
+            snapshot,
+            tick,
+            &config,
+            zones.as_deref_mut(),
+            ledger.as_deref_mut(),
+            faction_store.as_deref(),
+            persistence.as_deref(),
+            war_bonus.as_deref(),
+            body_plans.as_deref(),
+            races.as_deref(),
+        );
+        mutated_any |= progress.mutated;
+        indexes_dirty |= progress.indexes_dirty;
+        if let Some(settlement) = progress.terminal {
+            if let Some(notice) = settlement.notice {
+                death_notices.send(notice);
             }
-            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                let _ = advance_dormant_breakthrough(
-                    snapshot,
-                    zones,
-                    ledger,
-                    tick,
-                    body_plans.as_deref(),
-                    races.as_deref(),
-                );
-            }
-        }
-
-        if snapshot.lifespan.is_expired() {
-            let mut staged_snapshot = snapshot.clone();
-            let Some(zones) = zones.as_deref_mut() else {
-                continue;
-            };
-            let Some(ledger) = ledger.as_deref_mut() else {
-                continue;
-            };
-            let mut staged_zones = zones.clone();
-            let mut staged_ledger = ledger.clone();
-            let settlement = if dormant_terminal_qi_is_settled(&staged_snapshot) {
-                QiFlowOutcome {
-                    requested: 0.0,
-                    source_debited: 0.0,
-                    target_credited: 0.0,
-                    zone_accepted: 0.0,
-                    overflow_credited: 0.0,
-                    untransferred: 0.0,
-                    transfers: Vec::new(),
-                }
-            } else {
-                let Ok(settlement) = release_dormant_qi_to_zone(
-                    &mut staged_snapshot,
-                    &mut staged_zones,
-                    &mut staged_ledger,
-                ) else {
-                    tracing::warn!(
-                        "[bong][npc] retained expired dormant NPC `{}` until all qi owners settle",
-                        snapshot.char_id
-                    );
-                    continue;
-                };
-                settlement
-            };
-            if !dormant_terminal_qi_is_settled(&staged_snapshot) {
-                continue;
-            }
-
-            let tombstone = crate::persistence::DormantTerminalCommitRecord {
-                char_id: snapshot.char_id.clone(),
-                cause: "natural_aging".to_string(),
-                at_tick: tick,
-                zone: snapshot.zone_name.clone(),
-                winner: None,
-                winner_group: None,
-                loser_group: faction_store
-                    .as_deref()
-                    .and_then(|store| effective_group(snapshot, store))
-                    .map(|group| u64::from(group.0)),
-                zone_accepted: settlement.zone_accepted,
-                cleanup_revision: None,
-            };
-            let first_commit = if let Some(persistence) = persistence.as_deref() {
-                match crate::persistence::persist_dormant_terminal_commit(
-                    persistence,
-                    &tombstone,
-                    &staged_zones,
-                    &staged_ledger,
-                    None,
-                ) {
-                    Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => true,
-                    Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => {
-                        false
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            "[bong][npc] retained expired dormant NPC `{}` after terminal persistence failure: {error}",
-                            snapshot.char_id
-                        );
-                        continue;
-                    }
-                }
-            } else {
-                true
-            };
-            if first_commit {
-                *snapshot = staged_snapshot;
-                *zones = staged_zones;
-                *ledger = staged_ledger;
-                death_notices.send(dormant_natural_death_notice(snapshot));
-            }
-            expired.push(char_id);
-            committed_tombstones.push(tombstone);
+            expired.push(settlement.char_id);
+            committed_tombstones.push(settlement.tombstone);
         }
     }
 
@@ -1291,31 +1393,24 @@ fn dormant_global_tick_system(
     // winner context. This must drive `mark_dirty` even when the aging pass touched
     // nothing, otherwise a restart can reload the loser as alive. Confirmed pending
     // rows settle and emit terminal events on a later phase.
-    let mut combat_mutated = false;
-    if let (Some(faction_store), Some(zones), Some(ledger)) = (
+    let combat = run_dormant_combat_if_ready(
+        &mut store,
         faction_store.as_deref(),
+        &config,
+        tick,
         zones.as_deref_mut(),
         ledger.as_deref_mut(),
-    ) {
-        let combat = run_dormant_combat_phase(
-            &mut store,
-            faction_store,
-            &config,
-            tick,
-            zones,
-            ledger,
-            persistence.as_deref(),
-            &mut death_notices,
-            &mut combat_outcomes,
-            &mut pending_relics,
-        );
-        combat_mutated = combat.mutated;
-        if combat.removed {
-            // Only removal changes zone membership. A pending-failure marker mutation leaves
-            // `by_zone` intact, so it drives dirty persistence but not an index rebuild.
-            removed_expired = true;
-            store.rebuild_indexes();
-        }
+        persistence.as_deref(),
+        &mut death_notices,
+        &mut combat_outcomes,
+        &mut pending_relics,
+    );
+    let combat_mutated = combat.mutated;
+    if combat.removed {
+        // Only removal changes zone membership. A pending-failure marker mutation leaves
+        // `by_zone` intact, so it drives dirty persistence but not an index rebuild.
+        removed_expired = true;
+        store.rebuild_indexes();
     }
 
     // Any advanced, removed, or newly pending snapshot changed persisted state;
@@ -1323,6 +1418,36 @@ fn dormant_global_tick_system(
     if mutated_any || removed_expired || combat_mutated {
         store.mark_dirty();
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_dormant_combat_if_ready(
+    store: &mut NpcDormantStore,
+    faction_store: Option<&FactionStore>,
+    config: &NpcVirtualizationConfig,
+    tick: u64,
+    zones: Option<&mut ZoneRegistry>,
+    ledger: Option<&mut WorldQiAccount>,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
+    death_notices: &mut EventWriter<NpcDeathNotice>,
+    combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
+    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
+) -> CombatPhaseOutcome {
+    let (Some(faction_store), Some(zones), Some(ledger)) = (faction_store, zones, ledger) else {
+        return CombatPhaseOutcome::default();
+    };
+    run_dormant_combat_phase(
+        store,
+        faction_store,
+        config,
+        tick,
+        zones,
+        ledger,
+        persistence,
+        death_notices,
+        combat_outcomes,
+        pending_relics,
+    )
 }
 
 /// Outcome of one combat phase (`run_dormant_combat_phase`), reported back to
