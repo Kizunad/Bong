@@ -151,9 +151,10 @@ pub(super) fn autosave_player_runtime_slices(
     let entries = players
         .iter()
         .filter_map(|(username, attention, taint, load_failed, _loaded)| {
-            load_failed
-                .is_none()
-                .then(|| (username.0.clone(), attention.cloned(), taint.cloned()))
+            if load_failed.is_some() {
+                return None;
+            }
+            Some((username.0.clone(), attention.cloned(), taint.cloned()))
         })
         .collect::<Vec<_>>();
     if let Err(error) = persist_player_runtime_batch(&settings, &entries) {
@@ -231,9 +232,10 @@ fn flush_player_runtime_slice(world: &mut World, _context: &SliceRunContext) -> 
     let entries = query
         .iter(world)
         .filter_map(|(username, attention, taint, load_failed, _loaded)| {
-            load_failed
-                .is_none()
-                .then(|| (username.0.clone(), attention.cloned(), taint.cloned()))
+            if load_failed.is_some() {
+                return None;
+            }
+            Some((username.0.clone(), attention.cloned(), taint.cloned()))
         })
         .collect::<Vec<_>>();
     persist_player_runtime_batch(&settings, &entries)

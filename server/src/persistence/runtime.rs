@@ -73,6 +73,7 @@ pub(crate) fn load_world_runtime_slice_from_connection<T: DeserializeOwned>(
         .transpose()
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn save_player_runtime_slice<T: Serialize>(
     settings: &PersistenceSettings,
     username: &str,
