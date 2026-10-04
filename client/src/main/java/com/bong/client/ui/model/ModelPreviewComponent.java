@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
+import io.wispforest.owo.ui.util.ScissorStack;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.DiffuseLighting;
 import net.minecraft.client.render.LightmapTextureManager;
@@ -75,14 +76,15 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
         boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean blending = GL11.glIsEnabled(GL11.GL_BLEND);
         float[] shaderColor = RenderSystem.getShaderColor().clone();
-        context.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
+        // 与父窗口共用裁剪栈；预览局部退出后不能解除丹方或工位的边界。
+        ScissorStack.push(x + 1, y + 1, Math.max(0, width - 2), Math.max(0, height - 2), context.getMatrices());
         try {
             mesh.clear();
             collectModel(new MatrixStack(), mesh, partialTicks);
             Box bounds = mesh.bounds();
             if (bounds == null) { message(context, "此实体没有可显示的模型"); return; }
             // 动画伸展时扩大取景，避免待机动作导致镜头每帧忽大忽小。
-            framing = framing == null ? bounds : framing.union(bounds);
+            framing = framingBounds(framing, bounds);
             prepareCamera(framing);
             var matrices = context.getMatrices();
             var buffers = client.getBufferBuilders().getEntityVertexConsumers();
@@ -126,9 +128,14 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
                                            boolean depth, boolean blending) {
         Throwable primary = null;
         try {
-            context.disableScissor();
+            context.draw();
         } catch (RuntimeException | Error failure) {
             primary = failure;
+        }
+        try {
+            ScissorStack.pop();
+        } catch (RuntimeException | Error failure) {
+            primary = accumulate(primary, failure);
         }
         try {
             DiffuseLighting.enableGuiDepthLighting();
@@ -166,6 +173,10 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
     }
 
     protected void prepareCamera(Box bounds) {}
+
+    protected Box framingBounds(Box previous, Box current) {
+        return previous == null ? current : previous.union(current);
+    }
 
     protected void drawModelOverlay(OwoUIDrawContext context, MatrixStack matrices, Box bounds,
                                     int mouseX, int mouseY, float elapsed) {}

@@ -651,6 +651,11 @@
         },
         "rotated": {
           "type": "boolean"
+        },
+        "count": {
+          "minimum": 1,
+          "maximum": 4294967295,
+          "type": "integer"
         }
       }
     },
@@ -1985,6 +1990,30 @@
       "required": [
         "v",
         "type",
+        "item_instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "alchemy_learn_recipe_fragment",
+          "type": "string"
+        },
+        "item_instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "pill_item_id"
       ],
       "properties": {
@@ -2043,10 +2072,8 @@
       "required": [
         "v",
         "type",
-        "x",
-        "y",
-        "z",
-        "source"
+        "furnace_pos",
+        "item_instance_id"
       ],
       "properties": {
         "v": {
@@ -2054,53 +2081,30 @@
           "type": "number"
         },
         "type": {
-          "const": "lingtian_start_replenish",
+          "const": "alchemy_place_incense",
           "type": "string"
         },
-        "x": {
-          "type": "integer"
-        },
-        "y": {
-          "type": "integer"
-        },
-        "z": {
-          "type": "integer"
-        },
-        "source": {
-          "anyOf": [
+        "furnace_pos": {
+          "type": "array",
+          "items": [
             {
-              "const": "zone",
-              "type": "string"
+              "type": "integer"
             },
             {
-              "const": "bone_coin",
-              "type": "string"
+              "type": "integer"
             },
             {
-              "const": "beast_core",
-              "type": "string"
-            },
-            {
-              "const": "ling_shui",
-              "type": "string"
-            },
-            {
-              "const": "pill_residue_failed_pill",
-              "type": "string"
-            },
-            {
-              "const": "pill_residue_flawed_pill",
-              "type": "string"
-            },
-            {
-              "const": "pill_residue_processing_dregs",
-              "type": "string"
-            },
-            {
-              "const": "pill_residue_aging_scraps",
-              "type": "string"
+              "type": "integer"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "item_instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
         }
       }
     },
@@ -2215,6 +2219,66 @@
         "type": {
           "const": "coffin_leave",
           "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "coffin_break",
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "coffin_menu_reclaim",
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
         }
       }
     },
@@ -2942,6 +3006,39 @@
       "required": [
         "v",
         "type",
+        "item_instance_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "qi_scatter_bead_use",
+          "type": "string"
+        },
+        "item_instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "instance_id"
       ],
       "properties": {
@@ -3064,6 +3161,366 @@
         "v": {
           "const": 1,
           "type": "number"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "supply_coffin_open",
+          "type": "string"
+        },
+        "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "container_open",
+          "type": "string"
+        },
+        "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "workbench_open",
+          "type": "string"
+        },
+        "entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id",
+        "instance_id",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "external_container_move",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "pattern": "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot",
+                "state"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "extra_hand_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "extra_hand_1",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "worn",
+                      "type": "string"
+                    },
+                    {
+                      "const": "held",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "to": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "container_id",
+                "row",
+                "col"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "container",
+                  "type": "string"
+                },
+                "container_id": {
+                  "pattern": "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "row": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "col": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot",
+                "state"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "equip",
+                  "type": "string"
+                },
+                "slot": {
+                  "anyOf": [
+                    {
+                      "const": "head",
+                      "type": "string"
+                    },
+                    {
+                      "const": "chest",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "feet",
+                      "type": "string"
+                    },
+                    {
+                      "const": "main_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "off_hand",
+                      "type": "string"
+                    },
+                    {
+                      "const": "extra_hand_0",
+                      "type": "string"
+                    },
+                    {
+                      "const": "extra_hand_1",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "worn",
+                      "type": "string"
+                    },
+                    {
+                      "const": "held",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hotbar",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "session_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "external_container_close",
+          "type": "string"
+        },
+        "session_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
         }
       }
     },
@@ -3377,6 +3834,100 @@
       "required": [
         "v",
         "type",
+        "recipe_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "craft_start",
+          "type": "string"
+        },
+        "recipe_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "quantity": {
+          "minimum": 1,
+          "maximum": 64,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "craft_cancel",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "pill_instance_id",
+        "elder_entity_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "give_dan_to_elder",
+          "type": "string"
+        },
+        "pill_instance_id": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "elder_entity_id": {
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "jiemai",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "x",
         "y",
         "z",
@@ -3606,5 +4157,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "7ddafa2c71926ab1931bac34b2027943015e43bc0167807fa0905341f92117de"
+  "x-bong-typebox-source-sha256": "e4f244da55ed5b75f75ef19a9e4803f84308e501db9a1937545f894da36b9900",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

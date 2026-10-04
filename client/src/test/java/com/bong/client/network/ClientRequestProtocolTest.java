@@ -179,6 +179,43 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAlchemyLearnRecipeFragment() {
+        assertEquals(
+            "{\"type\":\"alchemy_learn_recipe_fragment\",\"v\":1,\"item_instance_id\":3003}",
+            ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(3003L)
+        );
+    }
+
+    @Test
+    void encodesAlchemyLearnRecipeFragmentAtJavaScriptSafeIntegerLimit() {
+        long maxSafeInteger = 9_007_199_254_740_991L;
+        assertEquals(
+            "{\"type\":\"alchemy_learn_recipe_fragment\",\"v\":1,\"item_instance_id\":9007199254740991}",
+            ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(maxSafeInteger)
+        );
+    }
+
+    @Test
+    void rejectsAlchemyLearnRecipeFragmentOutsideJavaScriptSafeIntegerRange() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(-1L)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(9_007_199_254_740_992L)
+        );
+    }
+
+    @Test
+    void encodesForgeLearnBlueprint() {
+        assertEquals(
+            "{\"type\":\"forge_learn_blueprint\",\"v\":1,\"blueprint_id\":\"blueprint.stone\"}",
+            ClientRequestProtocol.encodeForgeLearnBlueprint("blueprint.stone")
+        );
+    }
+
+    @Test
     void encodesSkillConfigIntent() {
         JsonObject config = new JsonObject();
         config.addProperty("meridian_id", "Pericardium");
@@ -796,6 +833,10 @@ public class ClientRequestProtocolTest {
         assertEquals(
             "{\"type\":\"alchemy_furnace_place\",\"v\":1,\"x\":-12,\"y\":64,\"z\":38,\"item_instance_id\":4242}",
             ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, 4242L)
+        );
+        assertEquals(
+            "{\"type\":\"alchemy_place_incense\",\"v\":1,\"furnace_pos\":[-12,64,38],\"item_instance_id\":4242}",
+            ClientRequestProtocol.encodeAlchemyPlaceIncense(pos, 4242L)
         );
     }
 

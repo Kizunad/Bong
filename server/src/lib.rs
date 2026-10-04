@@ -80,7 +80,8 @@ pub mod gathering;
 pub mod identity;
 pub mod inventory;
 #[allow(dead_code)]
-pub mod lingtian;
+pub mod processing;
+//TODO:lingtian_refactor 在独立模块接入新的田块玩法。
 // mineral：M3 注册 MineralRegistry + MineralOreIndex + DiggingEvent listener；
 // M2 worldgen 接入前 OreIndex 始终空，listener 对所有 block 静默 no-op。
 #[allow(dead_code)]
@@ -102,6 +103,8 @@ pub mod reach;
 #[allow(dead_code)]
 pub mod schema;
 pub mod server_readiness;
+#[allow(dead_code)]
+pub mod session;
 pub mod shader;
 pub mod shutdown;
 pub mod skin;

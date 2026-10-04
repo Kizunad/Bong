@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+base_leaf_dark = [42, 46, 52]    # #2a2e34 暗灰晶质叶丛
+base_leaf_mid = [65, 72, 80]
+spore_ball = [200, 200, 200]     # #c8c8c8 灰白孢子球
+spore_halo = [225, 235, 230]
+stalk_pale = [85, 95, 100]
+
+[features]
+crystal_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+spore_chain = { elements = ["spore_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+connecting_stalks = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }

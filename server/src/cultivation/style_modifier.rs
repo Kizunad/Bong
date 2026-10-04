@@ -1,7 +1,7 @@
 //! plan-zone-weather-v1 P2 — cultivation style modifier for zone weather hits.
 
 use super::components::{ColorKind, QiColor};
-use crate::lingtian::weather::WeatherEvent;
+use crate::world::weather::WeatherEvent;
 
 pub const VIOLENT_LIGHTNING_MULTIPLIER: f32 = 0.7;
 pub const METAL_ARMOR_LIGHTNING_MULTIPLIER: f32 = 1.5;

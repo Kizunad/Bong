@@ -154,8 +154,7 @@ fn tsy_blueprint_merge_rejects_non_tsy_zones_without_partial_state() {
 #[test]
 fn spatial_revision_mutates_only_on_successful_membership_change() {
     // fix-spec-1901-v2 §7.1 — spatial_revision 契约：成功注册 +1、非空 TSY 并入 +1；
-    // 空并入与一切被拒绝的变化都必须保持 revision 不变（否则 lingtian 的 pending
-    // plot retry 门会误判，见 auto_set_plot_zone 的 last_seen_spatial_revision）。
+    // 空并入与一切被拒绝的变化都必须保持 revision 不变，避免空间索引缓存无效刷新。
     let mut registry = ZoneRegistry::fallback();
     assert_eq!(
         registry.spatial_revision, 0,

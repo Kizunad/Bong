@@ -134,6 +134,7 @@ mod tests {
             Some(&CarrierCharging {
                 slot: CarrierSlot::MainHand,
                 instance_id: 7,
+                owner_id: "test-character".to_string(),
                 qi_target: 30.0,
                 prepaid_qi: 15.0,
                 started_at_tick: 100,

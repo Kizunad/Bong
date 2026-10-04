@@ -20,10 +20,18 @@ pub(super) fn bootstrap_persistence_system(
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut heartbeat: Option<ResMut<WorldHeartbeat>>,
-    clock: Res<CultivationClock>,
+    mut clock: ResMut<CultivationClock>,
+    mut combat_clock: Option<ResMut<crate::combat::CombatClock>>,
+    mut gameplay_tick: Option<ResMut<crate::player::gameplay::GameplayTick>>,
+    mut shelflife_tick: Option<ResMut<crate::shelflife::sweep::ShelflifeSweepTick>>,
+    mut mineral_tick: Option<ResMut<crate::mineral::MineralTickClock>>,
+    mut runtime_clock_state: Option<ResMut<RuntimeClockSnapshotState>>,
     mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
+    active_events: Option<ResMut<crate::world::events::ActiveEventsResource>>,
+    coffins: Option<ResMut<crate::supply_coffin::SupplyCoffinRegistry>>,
+    spirit_eyes: Option<ResMut<crate::world::spirit_eye::SpiritEyeRegistry>>,
 ) {
     let wall_clock = current_unix_seconds();
     daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
@@ -59,6 +67,39 @@ pub(super) fn bootstrap_persistence_system(
         );
     }
 
+    let persisted_runtime_tick = load_runtime_clock(&settings).unwrap_or_else(|error| {
+        panic!(
+            "[bong][persistence] cannot safely hydrate runtime clock at {}: {error}",
+            settings.db_path().display()
+        )
+    });
+    let runtime_tick = clock.tick.max(persisted_runtime_tick);
+    clock.tick = runtime_tick;
+    if let Some(combat_clock) = combat_clock.as_deref_mut() {
+        combat_clock.tick = runtime_tick;
+    }
+    if let Some(gameplay_tick) = gameplay_tick.as_deref_mut() {
+        gameplay_tick.set_current_tick(runtime_tick);
+    }
+    if let Some(shelflife_tick) = shelflife_tick.as_deref_mut() {
+        shelflife_tick.0 = runtime_tick;
+    }
+    if let Some(mineral_tick) = mineral_tick.as_deref_mut() {
+        mineral_tick.tick = runtime_tick;
+    }
+    let checkpoint_wall_clock = current_unix_seconds();
+    if let Err(error) = persist_runtime_clock(&settings, runtime_tick, checkpoint_wall_clock) {
+        panic!(
+            "[bong][persistence] cannot safely checkpoint hydrated runtime clock at {}: {error}",
+            settings.db_path().display()
+        );
+    }
+    if let Some(runtime_clock_state) = runtime_clock_state.as_deref_mut() {
+        runtime_clock_state.last_snapshot_tick = Some(runtime_tick);
+        runtime_clock_state.last_snapshot_wall = Some(checkpoint_wall_clock);
+        runtime_clock_state.last_wall_check_tick = Some(runtime_tick);
+    }
+
     hydrate_runtime_qi_accounts(&settings, &mut qi_ledger).unwrap_or_else(|error| {
         panic!(
             "[bong][persistence] cannot safely hydrate runtime qi accounts at {}: {error}",
@@ -74,7 +115,7 @@ pub(super) fn bootstrap_persistence_system(
     }
 
     if let Some(cooldowns) = void_action_cooldowns.as_deref_mut() {
-        match hydrate_void_action_cooldowns(&settings, cooldowns) {
+        match hydrate_void_action_cooldowns_at_tick(&settings, cooldowns, runtime_tick) {
             Ok(count) if count > 0 => tracing::info!(
                 "[bong][persistence] hydrated {count} void-action cooldown(s) from sqlite"
             ),
@@ -140,6 +181,20 @@ pub(super) fn bootstrap_persistence_system(
             ),
         }
     }
+
+    if let Err(error) = hydrate_p4_world_runtime(
+        &settings,
+        active_events,
+        heartbeat,
+        coffins,
+        spirit_eyes,
+        zones,
+    ) {
+        panic!(
+            "[bong][persistence] refusing startup after P4 runtime hydrate failure at {}: {error}",
+            settings.db_path().display()
+        );
+    }
 }
 
 pub(super) fn daily_midnight_backup_system(
@@ -187,6 +242,17 @@ pub(super) fn dispatch_persistence_shutdown_flushes(world: &mut World) {
     let runtime_tick = world
         .get_resource::<CultivationClock>()
         .map_or(0, |clock| clock.tick);
+    if requested {
+        if let Some(settings) = world.get_resource::<PersistenceSettings>() {
+            let wall_clock = current_unix_seconds();
+            if let Err(error) = persist_runtime_clock(settings, runtime_tick, wall_clock) {
+                tracing::warn!(
+                    "[bong][persistence] failed to persist runtime clock during shutdown at {}: {error}",
+                    settings.db_path().display()
+                );
+            }
+        }
+    }
     let wall_unix_millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64);

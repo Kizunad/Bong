@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+bulb_base = [30, 48, 45]
+leaf_dark = [30, 74, 90]
+leaf_mid = [58, 138, 160]
+leaf_light = [105, 195, 215]
+blue_crack = [138, 224, 255]
+
+[features]
+bulb_root = { elements = ["bulb_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+spread_broad_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+spirit_cracks = { elements = ["crack_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

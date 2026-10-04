@@ -14,7 +14,6 @@ dying_elder.delay	dying_elder/DyingElderInteractionKeybindings.java	delayKey	key
 hud.immersive_toggle	hud/HudImmersionControls.java	toggleKey	key.bong-client.hud_immersive_toggle	KEYSYM	UNKNOWN	category.bong-client	1
 identity.open_panel	identity/IdentityPanelScreenBootstrap.java	openScreenKey	key.bong-client.open_identity_panel	KEYSYM	DEFAULT_KEY=O	category.bong-client.controls	1
 interaction.unified_g	input/InteractionKeybindings.java	interactKey	key.bong-client.interact	KEYSYM	G	category.bong-client.controls	1
-lingtian.open_action_screen	lingtian/LingtianActionScreenBootstrap.java	openScreenKey	key.bong-client.open_lingtian_action_screen	KEYSYM	UNKNOWN	category.bong-client.controls	1
 mineral.sense	mineral/MineralSenseBootstrap.java	senseKey	key.bong-client.mineral_sense	KEYSYM	N	category.bong-client.mineral	1
 movement.dash	movement/MovementKeybindings.java	dashKey	key.bong-client.movement_dash	KEYSYM	V	category.bong-client.controls	1
 npc.interaction_log	npc/NpcInteractionLogControls.java	key	key.bong-client.npc_interaction_log	KEYSYM	UNKNOWN	category.bong-client.controls	1

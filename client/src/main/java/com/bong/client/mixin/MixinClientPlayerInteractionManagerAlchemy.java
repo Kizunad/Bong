@@ -1,9 +1,6 @@
 package com.bong.client.mixin;
 
 import com.bong.client.alchemy.AlchemyFurnaceItems;
-import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
-import com.bong.client.alchemy.AlchemyScreenBootstrap;
-import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.coffin.TutorialCoffinPosRules;
@@ -150,17 +147,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             player.swingHand(Hand.MAIN_HAND);
             cir.setReturnValue(ActionResult.SUCCESS);
             return;
-        }
-
-        // plan-coffin-tiers-v1 P3 — CHEST→coffin_enter 旧路径已退役。
-        // P2 起延寿棺改为 marker 实体（坐标 AIR，无 CHEST 方块），进棺统一由
-        // CoffinEnterIntentHandler 触发（右键/G → CoffinMenuScreen → [入眠]）。
-        if (client.world == null) return;
-        BlockPos pos = hit.getBlockPos();
-        if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
-            && AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
-            AlchemyScreenBootstrap.requestOpenAlchemyScreen(client, pos);
-            cir.setReturnValue(ActionResult.SUCCESS);
         }
     }
 

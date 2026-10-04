@@ -1,3 +1,10 @@
+/**
+ * 天道 Redis IPC 适配层：订阅 server 事件、校验 payload，并提供有界 drain 队列。
+ *
+ * 本模块只处理 Redis 连接、频道分发和 wire payload 的容错解析；tick 编排在
+ * `runtime.ts`，WorldModel 的内部 camelCase 快照在 `world-model.ts`。所有
+ * snake_case ↔ camelCase 映射集中在 mirror parser，避免业务代码散落协议细节。
+ */
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 import {
@@ -22,7 +29,6 @@ import {
   validateTsyExitEventV1Contract,
   validateTsyZoneActivatedV1Contract,
   validateWeatherEventUpdateV1Contract,
-  validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 import type {
   AgentWorldModelEnvelopeV1,
@@ -49,7 +55,6 @@ import type {
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
-  ZonePressureCrossedV1,
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
@@ -71,7 +76,6 @@ const {
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   RAT_PHASE_EVENT,
   WEATHER_EVENT_UPDATE,
@@ -118,7 +122,9 @@ const CROSS_SYSTEM_EVENT_BUFFER_LIMIT = 256;
 const ECONOMY_EVENT_BUFFER_LIMIT = 64;
 const WEATHER_EVENT_BUFFER_LIMIT = 128;
 const DRAIN_COUNTER_KEY = `${PLAYER_CHAT}:drain_counter`;
+/** Redis 中持久化 world model mirror 的 hash key。 */
 export const WORLD_MODEL_STATE_KEY = "bong:tiandao:state";
+/** world model mirror 的稳定 snake_case 字段名。 */
 export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   currentEra: "current_era",
   zoneHistory: "zone_history",
@@ -140,6 +146,7 @@ const REQUIRED_WORLD_MODEL_STATE_FIELDS = Object.freeze([
   WORLD_MODEL_STATE_FIELDS.lastStateTs,
 ]);
 
+/** 发布 world model mirror 时使用的 envelope 与关联信息。 */
 export interface PublishAgentWorldModelRequest {
   source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
   snapshot: AgentWorldModelEnvelopeV1["snapshot"];
@@ -149,11 +156,17 @@ export interface PublishAgentWorldModelRequest {
   };
 }
 
+/** TSY 敌对事件的受支持联合类型。 */
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
+/** TSY 进入/退出运行时事件的受支持联合类型。 */
 export type TsyRuntimeEventV1 = TsyEnterEventV1 | TsyExitEventV1;
+/** NPC 运行时事件的受支持联合类型。 */
 export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
+/** 炼丹运行时事件的受支持联合类型。 */
 export type AlchemyRuntimeEventV1 = AlchemySessionEndV1 | AlchemyInsightV1;
+/** POI 新手事件的受支持联合类型。 */
 export type PoiNoviceRuntimeEventV1 = PoiSpawnedEventV1 | TrespassEventV1;
+/** 尚未有专用 runtime handler 的跨系统事件封装。 */
 export interface CrossSystemRuntimeEventV1 {
   channel: ChannelName;
   payload: unknown;
@@ -162,7 +175,6 @@ export interface CrossSystemRuntimeEventV1 {
 const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   BOTANY_ECOLOGY,
   FAUNA_ECOLOGY,
-  ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   AGING,
   LIFESPAN_EVENT,
@@ -210,6 +222,24 @@ redis.call('del', drainKey)
 return result
 `;
 
+// Selective consumption keeps other consumers' chat messages in the shared list.
+// The scan and removal run in one Redis script, so a second consumer cannot take
+// the same matching message between the two operations.
+const TAKE_MATCHING_PLAYER_CHAT_SCRIPT = `
+local items = redis.call('lrange', KEYS[1], 0, -1)
+for _, item in ipairs(items) do
+  local ok, message = pcall(cjson.decode, item)
+  if ok and type(message) == 'table'
+      and message.player == ARGV[1]
+      and type(message.raw) == 'string'
+      and string.find(message.raw, ARGV[2], 1, true) then
+    redis.call('lrem', KEYS[1], 1, item)
+    return item
+  end
+end
+return false
+`;
+
 interface MultiExecResult<T = unknown> {
   0: Error | null;
   1: T;
@@ -221,6 +251,7 @@ interface RedisMultiLike {
   exec(): Promise<Array<MultiExecResult<unknown>> | null>;
 }
 
+/** RedisIpc 实际使用的最小 Redis client 接口，便于注入测试 fake。 */
 export interface RedisIpcClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
@@ -234,15 +265,18 @@ export interface RedisIpcClient {
   eval?(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
 }
 
+/** RedisIpc 连接地址与可选 client 工厂。 */
 export interface RedisIpcConfig {
   url: string;
   createClient?: (url: string) => RedisIpcClient;
 }
 
+/** RedisIpc 的可替换依赖。 */
 export interface RedisIpcDeps {
   createClient?: (url: string) => RedisIpcClient;
 }
 
+/** 管理订阅、事件缓冲、原子 drain 和 agent outbound 发布的 Redis 适配器。 */
 export class RedisIpc {
   private sub: RedisIpcClient;
   private pub: RedisIpcClient;
@@ -266,7 +300,6 @@ export class RedisIpc {
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
-  private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
   private pendingTsyRuntimeOverflowDropped = 0;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
@@ -281,7 +314,6 @@ export class RedisIpc {
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
   private faunaEcologyCallbacks: Array<(event: FaunaEcologySnapshotV1) => void> = [];
-  private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel === WORLD_STATE) {
@@ -316,11 +348,6 @@ export class RedisIpc {
 
     if (channel === FAUNA_ECOLOGY) {
       this.handleFaunaEcologyMessage(message);
-      return;
-    }
-
-    if (channel === ZONE_PRESSURE_CROSSED) {
-      this.handleZonePressureCrossedMessage(message);
       return;
     }
 
@@ -621,32 +648,6 @@ export class RedisIpc {
     }
   }
 
-  private handleZonePressureCrossedMessage(message: string): void {
-    try {
-      const data = JSON.parse(message) as unknown;
-      const result = validateZonePressureCrossedV1Contract(data);
-      if (!result.ok) {
-        console.warn("[redis-ipc] invalid zone pressure crossed event:", result.errors.join("; "));
-        return;
-      }
-      this.recordZonePressureCrossedEvent(data as ZonePressureCrossedV1);
-      this.recordCrossSystemEvent({ channel: ZONE_PRESSURE_CROSSED, payload: data });
-    } catch (e) {
-      console.warn("[redis-ipc] failed to parse zone pressure crossed event:", e);
-    }
-  }
-
-  private recordZonePressureCrossedEvent(event: ZonePressureCrossedV1): void {
-    this.latestZonePressureCrossedEvents.push(event);
-    if (this.latestZonePressureCrossedEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
-      this.latestZonePressureCrossedEvents =
-        this.latestZonePressureCrossedEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
-    }
-    for (const cb of this.zonePressureCrossedCallbacks) {
-      cb(event);
-    }
-  }
-
   private handleRatPhaseEventMessage(message: string): void {
     try {
       const data = JSON.parse(message) as unknown;
@@ -780,6 +781,7 @@ export class RedisIpc {
     }
   }
 
+  /** 创建订阅与发布两个独立 Redis client，避免 pub/sub 状态互相影响。 */
   constructor(config: RedisIpcConfig, deps?: RedisIpcDeps) {
     const createClient =
       config.createClient ??
@@ -789,6 +791,7 @@ export class RedisIpc {
     this.pub = createClient(config.url);
   }
 
+  /** 建立订阅并安装单一 message dispatcher；重复调用保持幂等。 */
   async connect(): Promise<void> {
     if (this.connected) {
       return;
@@ -814,31 +817,37 @@ export class RedisIpc {
     );
   }
 
+  /** 返回最近一次收到的 world_state 快照。 */
   getLatestState(): WorldStateV1 | null {
     return this.latestState;
   }
 
+  /** 注册 world_state 观察者；观察者异常由调用方自行处理。 */
   onWorldState(cb: (state: WorldStateV1) => void): void {
     this.stateCallbacks.push(cb);
   }
 
+  /** 返回最近缓冲的 TSY 敌对事件副本。 */
   getLatestTsyHostileEvents(): TsyHostileEventV1[] {
     return [...this.latestTsyHostileEvents];
   }
 
+  /** 注册 TSY 敌对事件观察者。 */
   onTsyHostileEvent(cb: (event: TsyHostileEventV1) => void): void {
     this.tsyHostileCallbacks.push(cb);
   }
 
+  /** 返回尚未 drain 的 TSY enter/exit 事件副本。 */
   getLatestTsyRuntimeEvents(): TsyRuntimeEventV1[] {
     return [...this.latestTsyRuntimeEvents];
   }
 
+  /** 注册 TSY enter/exit 事件观察者。 */
   onTsyRuntimeEvent(cb: (event: TsyRuntimeEventV1) => void): void {
     this.tsyRuntimeCallbacks.push(cb);
   }
 
-  /** Drain validated enter/exit events for the single Tiandao runtime consumer. */
+  /** 原子语义地取出并清空供单一 Tiandao runtime consumer 使用的 TSY enter/exit 队列。 */
   drainTsyRuntimeEvents(): TsyRuntimeEventV1[] {
     const events = [...this.latestTsyRuntimeEvents];
     if (this.pendingTsyRuntimeOverflowDropped > 0) {
@@ -852,128 +861,133 @@ export class RedisIpc {
     return events;
   }
 
-  /**
-   * plan-agent-ui-data-v1 P2 — drain 自上次 drain 以来累积的 tsy_zone_activated 事件。
-   * 供 runRuntime 每轮 tick 消费，触发 AgentUiRuntime.triggerUi() TSY 秘境发现面板。
-   */
+  /** 取出并清空 TSY zone activated 队列，供 UI runtime 每轮触发发现面板。 */
   drainTsyZoneActivatedEvents(): TsyZoneActivatedV1[] {
     const events = [...this.latestTsyZoneActivatedEvents];
     this.latestTsyZoneActivatedEvents = [];
     return events;
   }
 
+  /** 返回最近缓冲的 NPC spawn/death/faction 事件副本。 */
   getLatestNpcEvents(): NpcRuntimeEventV1[] {
     return [...this.latestNpcEvents];
   }
 
+  /** 注册 NPC 运行时事件观察者。 */
   onNpcRuntimeEvent(cb: (event: NpcRuntimeEventV1) => void): void {
     this.npcEventCallbacks.push(cb);
   }
 
-  /**
-   * plan-offscreen-war-v1 P4：drain 自上次 drain 以来累积的 bong:npc/death 事件（含非
-   * combat，由下游 offscreenWarBlock 的 aggregateOffscreenWarReport 过滤）。
-   */
+  /** 取出并清空供离屏战斗上下文使用的 death 队列（非 combat 由下游过滤）。 */
   drainNpcDeathEvents(): NpcDeathV1[] {
     const events = [...this.latestNpcDeathEvents];
     this.latestNpcDeathEvents = [];
     return events;
   }
 
+  /** 返回最近缓冲的炼丹事件副本。 */
   getLatestAlchemyEvents(): AlchemyRuntimeEventV1[] {
     return [...this.latestAlchemyEvents];
   }
 
+  /** 注册炼丹事件观察者。 */
   onAlchemyRuntimeEvent(cb: (event: AlchemyRuntimeEventV1) => void): void {
     this.alchemyEventCallbacks.push(cb);
   }
 
+  /** 返回最近缓冲的 POI 新手事件副本。 */
   getLatestPoiNoviceEvents(): PoiNoviceRuntimeEventV1[] {
     return [...this.latestPoiNoviceEvents];
   }
 
+  /** 注册 POI 新手事件观察者。 */
   onPoiNoviceEvent(cb: (event: PoiNoviceRuntimeEventV1) => void): void {
     this.poiNoviceEventCallbacks.push(cb);
   }
 
+  /** 取出并清空蝗灾阶段事件队列。 */
   drainRatPhaseEvents(): RatPhaseChangeEventV1[] {
     const events = [...this.latestRatPhaseEvents];
     this.latestRatPhaseEvents = [];
     return events;
   }
 
+  /** 注册蝗灾阶段事件观察者。 */
   onRatPhaseEvent(cb: (event: RatPhaseChangeEventV1) => void): void {
     this.ratPhaseEventCallbacks.push(cb);
   }
 
+  /** 取出并清空价格指数事件队列。 */
   drainPriceIndexEvents(): PriceIndexV1[] {
     const events = [...this.latestPriceIndexEvents];
     this.latestPriceIndexEvents = [];
     return events;
   }
 
+  /** 注册价格指数事件观察者。 */
   onPriceIndex(cb: (event: PriceIndexV1) => void): void {
     this.priceIndexCallbacks.push(cb);
   }
 
+  /** 取出并清空骨币 tick 事件队列。 */
   drainBoneCoinTickEvents(): BoneCoinTickV1[] {
     const events = [...this.latestBoneCoinTickEvents];
     this.latestBoneCoinTickEvents = [];
     return events;
   }
 
+  /** 注册骨币 tick 事件观察者。 */
   onBoneCoinTick(cb: (event: BoneCoinTickV1) => void): void {
     this.boneCoinTickCallbacks.push(cb);
   }
 
+  /** 取出并清空天气更新事件队列。 */
   drainWeatherEventUpdates(): WeatherEventUpdateV1[] {
     const events = [...this.latestWeatherEventUpdates];
     this.latestWeatherEventUpdates = [];
     return events;
   }
 
+  /** 注册天气更新事件观察者。 */
   onWeatherEventUpdate(cb: (event: WeatherEventUpdateV1) => void): void {
     this.weatherEventCallbacks.push(cb);
   }
 
+  /** 返回最近缓冲的跨系统事件副本。 */
   getLatestCrossSystemEvents(): CrossSystemRuntimeEventV1[] {
     return [...this.latestCrossSystemEvents];
   }
 
+  /** 注册跨系统事件观察者。 */
   onCrossSystemEvent(cb: (event: CrossSystemRuntimeEventV1) => void): void {
     this.crossSystemEventCallbacks.push(cb);
   }
 
+  /** 取出并清空植物生态快照队列。 */
   drainBotanyEcologyEvents(): BotanyEcologySnapshotV1[] {
     const events = [...this.latestBotanyEcologyEvents];
     this.latestBotanyEcologyEvents = [];
     return events;
   }
 
+  /** 注册植物生态快照观察者。 */
   onBotanyEcology(cb: (event: BotanyEcologySnapshotV1) => void): void {
     this.botanyEcologyCallbacks.push(cb);
   }
 
+  /** 取出并清空凡兽生态快照队列。 */
   drainFaunaEcologyEvents(): FaunaEcologySnapshotV1[] {
     const events = [...this.latestFaunaEcologyEvents];
     this.latestFaunaEcologyEvents = [];
     return events;
   }
 
+  /** 注册凡兽生态快照观察者。 */
   onFaunaEcology(cb: (event: FaunaEcologySnapshotV1) => void): void {
     this.faunaEcologyCallbacks.push(cb);
   }
 
-  drainZonePressureCrossedEvents(): ZonePressureCrossedV1[] {
-    const events = [...this.latestZonePressureCrossedEvents];
-    this.latestZonePressureCrossedEvents = [];
-    return events;
-  }
-
-  onZonePressureCrossed(cb: (event: ZonePressureCrossedV1) => void): void {
-    this.zonePressureCrossedCallbacks.push(cb);
-  }
-
+  /** 将仲裁后的命令发布到 agent command 频道。 */
   async publishCommands(request: CommandPublishRequest): Promise<void> {
     const { source, commands, metadata } = request;
     if (commands.length === 0) return;
@@ -992,6 +1006,7 @@ export class RedisIpc {
     );
   }
 
+  /** 将叙事发布到 agent narration 频道。 */
   async publishNarrations(request: NarrationPublishRequest): Promise<void> {
     const { narrations, metadata } = request;
     if (narrations.length === 0) return;
@@ -1008,6 +1023,7 @@ export class RedisIpc {
     );
   }
 
+  /** 移除 dispatcher、取消订阅并关闭两个 Redis client。 */
   async disconnect(): Promise<void> {
     this.connected = false;
     this.sub.off?.("message", this.onMessage);
@@ -1017,6 +1033,7 @@ export class RedisIpc {
     console.log("[redis-ipc] disconnected");
   }
 
+  /** 将 world model 的 wire 快照发布到 agent world model 频道。 */
   async publishAgentWorldModel(request: PublishAgentWorldModelRequest): Promise<void> {
     const { source, snapshot, metadata } = request;
 
@@ -1034,6 +1051,7 @@ export class RedisIpc {
     );
   }
 
+  /** 从 Redis mirror 读取并校验 world model；坏 mirror 返回 null。 */
   async loadWorldModelState(options: { logger?: Pick<typeof console, "warn"> } = {}): Promise<WorldModelSnapshot | null> {
     if (!this.pub.hgetall) {
       return null;
@@ -1048,6 +1066,7 @@ export class RedisIpc {
     return parseWorldModelStateMirror(mirror, logger);
   }
 
+  /** 原子取出一批玩家聊天并解析为 schema 消息。 */
   async drainPlayerChat(options: { maxItems?: number; logger?: Pick<typeof console, "warn"> } = {}): Promise<ChatMessageV1[]> {
     const maxItems = options.maxItems ?? DEFAULT_CHAT_DRAIN_WINDOW;
     const logger = options.logger ?? console;
@@ -1056,6 +1075,30 @@ export class RedisIpc {
       return [];
     }
     return parseChatMessages(raw, logger);
+  }
+
+  async takeMatchingPlayerChat(options: {
+    player: string;
+    token: string;
+    logger?: Pick<typeof console, "warn">;
+  }): Promise<ChatMessageV1 | undefined> {
+    if (!this.pub.eval || options.player.length === 0 || options.token.length === 0) {
+      return undefined;
+    }
+
+    const logger = options.logger ?? console;
+    const result = await this.pub.eval(
+      TAKE_MATCHING_PLAYER_CHAT_SCRIPT,
+      1,
+      PLAYER_CHAT,
+      options.player,
+      options.token,
+    );
+    if (typeof result !== "string") {
+      return undefined;
+    }
+
+    return parseChatMessages([result], logger)[0];
   }
 
   async drainPlayerChatRaw(): Promise<string[]> {
@@ -1178,19 +1221,38 @@ function parseWorldModelStateMirror(
     return null;
   }
 
+  return mapWorldModelWireSnapshot({
+    current_era: currentEra,
+    zone_history: zoneHistory,
+    last_decisions: lastDecisions,
+    player_first_seen_tick: playerFirstSeenTick,
+    neg_domain_pending_tribulations: negDomainPendingTribulations,
+    neg_domain_escape_telemetry: negDomainEscapeTelemetry,
+    neg_domain_escape_sessions: negDomainEscapeSessions,
+    last_tick: lastTick,
+    last_state_ts: lastStateTs,
+  });
+}
+
+const INVALID_MIRROR_FIELD = Symbol("invalid-world-model-mirror-field");
+
+/** 将已校验的 Redis snake_case 快照转换为 WorldModel 的内部形状。 */
+function mapWorldModelWireSnapshot(
+  snapshot: AgentWorldModelSnapshotV1,
+): WorldModelSnapshot {
   return {
-    currentEra: currentEra
+    currentEra: snapshot.current_era
       ? {
-          name: currentEra.name,
-          sinceTick: currentEra.since_tick,
-          globalEffect: currentEra.global_effect,
+          name: snapshot.current_era.name,
+          sinceTick: snapshot.current_era.since_tick,
+          globalEffect: snapshot.current_era.global_effect,
         }
       : null,
-    zoneHistory,
-    lastDecisions,
-    playerFirstSeenTick,
+    zoneHistory: snapshot.zone_history,
+    lastDecisions: snapshot.last_decisions,
+    playerFirstSeenTick: snapshot.player_first_seen_tick,
     negDomainPendingTribulations: Object.fromEntries(
-      Object.entries(negDomainPendingTribulations).map(([playerId, pending]) => [
+      Object.entries(snapshot.neg_domain_pending_tribulations).map(([playerId, pending]) => [
         playerId,
         {
           playerUuid: pending.player_uuid,
@@ -1203,14 +1265,15 @@ function parseWorldModelStateMirror(
       ]),
     ),
     negDomainEscapeTelemetry: {
-      escapeEntryCount: negDomainEscapeTelemetry.escape_entry_count,
-      postEscapeRealmDropCount: negDomainEscapeTelemetry.post_escape_realm_drop_count,
-      successfulTribulationAvoidanceCount: negDomainEscapeTelemetry.successful_tribulation_avoidance_count,
-      activeEscapeSessionCount: negDomainEscapeTelemetry.active_escape_session_count,
-      postEscapeRealmDropRate: negDomainEscapeTelemetry.post_escape_realm_drop_rate,
+      escapeEntryCount: snapshot.neg_domain_escape_telemetry.escape_entry_count,
+      postEscapeRealmDropCount: snapshot.neg_domain_escape_telemetry.post_escape_realm_drop_count,
+      successfulTribulationAvoidanceCount:
+        snapshot.neg_domain_escape_telemetry.successful_tribulation_avoidance_count,
+      activeEscapeSessionCount: snapshot.neg_domain_escape_telemetry.active_escape_session_count,
+      postEscapeRealmDropRate: snapshot.neg_domain_escape_telemetry.post_escape_realm_drop_rate,
     },
     negDomainEscapeSessions: Object.fromEntries(
-      Object.entries(negDomainEscapeSessions).map(([playerId, session]) => [
+      Object.entries(snapshot.neg_domain_escape_sessions).map(([playerId, session]) => [
         playerId,
         {
           playerUuid: session.player_uuid,
@@ -1221,12 +1284,10 @@ function parseWorldModelStateMirror(
         },
       ]),
     ),
-    lastTick,
-    lastStateTs,
+    lastTick: snapshot.last_tick,
+    lastStateTs: snapshot.last_state_ts,
   };
 }
-
-const INVALID_MIRROR_FIELD = Symbol("invalid-world-model-mirror-field");
 
 function parseJsonField<T>(
   rawValue: string | undefined,

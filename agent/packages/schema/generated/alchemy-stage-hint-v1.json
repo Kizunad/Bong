@@ -25,7 +25,33 @@
     },
     "missed": {
       "type": "boolean"
+    },
+    "ingredients": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "material",
+          "required",
+          "inserted"
+        ],
+        "properties": {
+          "material": {
+            "type": "string"
+          },
+          "required": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inserted": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      }
     }
   },
-  "x-bong-typebox-source-sha256": "3575f932d3b8aa09784d16211330888c096156fb107449ec86b20810f46e820c"
+  "x-bong-typebox-source-sha256": "533a0fa4caea5547eae1d4ff6beb8a4347749cb9df8126a79131e6d0428caa3c",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

@@ -1,0 +1,11 @@
+# 麻布拳套 / 缠手布 (HandWrap / hand_wrap) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+base_sleeve = { elements = ["sleeve_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = 50 }
+wrist_wrap  = { elements = ["wrist_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = 60 }
+knuckle_pad = { elements = ["knuckle_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 50 }
+palm_cross  = { elements = ["palm_"], must_show_in = ["BACK", "3/4"], min_px = 30 }
+thumb_wrap  = { elements = ["thumb_"], must_show_in = ["FRONT", "SIDE_R", "TOP", "3/4"], min_px = 25 }

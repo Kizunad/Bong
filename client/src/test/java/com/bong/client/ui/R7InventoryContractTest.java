@@ -194,7 +194,6 @@ class R7InventoryContractTest {
         return switch (path) {
             case "menu/MainMenuScreen.java" -> "Multiplayer-only title screen; local XML";
             case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
-            case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
             case "coffin/CoffinMenuScreen.java" -> "P4 XML migration slice; G menu";
             case "combat/screen/DeathScreen.java" -> "P4 XML migration slice; system-terminal screen";
             case "combat/screen/TerminateScreen.java" -> "P4 XML migration slice; system-terminal screen";
@@ -205,7 +204,7 @@ class R7InventoryContractTest {
             case "combat/screen/ForgeCarrierScreen.java" -> "P4 XML migration slice;暗器注入";
             case "combat/screen/RepairScreen.java" -> "P4 XML migration slice; weapon repair";
             case "inventory/LootContainerScreen.java",
-                "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
+                "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
                 "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java" -> "Code-built FlowLayout";
             case "cultivation/TechniqueScrollReadScreen.java" ->
                 "Suffix matches Screen.java but class is a toast/text helper";

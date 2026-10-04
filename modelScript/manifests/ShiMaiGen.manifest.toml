@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_chasm = [38, 30, 42]           # 负灵域裂隙土
+root_black_flesh = [26, 18, 20]     # #1a1214 黑红块根
+pulse_vein_red = [138, 26, 42]      # #8a1a2a 暗红脉络
+vein_glow = [210, 58, 80]           # 亮红脉结
+fine_rootlet = [55, 62, 50]         # 侧生细须根
+
+[features]
+chasm_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+twisted_root_trunk = { elements = ["root_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pulse_red_veins = { elements = ["vein_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+fine_rootlets = { elements = ["rootlet_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }

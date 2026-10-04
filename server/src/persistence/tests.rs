@@ -14,8 +14,11 @@ use crate::player::state::{
     save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{assert_conservation, qi_flow_overflow_account, WorldQiSnapshot};
-use crate::schema::common::{NpcStateKind, SPIRIT_QI_TOTAL};
+use crate::qi_physics::ledger::{
+    assert_conservation, persistent_runtime_qi_accounts, qi_flow_overflow_account, QiAccountId,
+    QiTransfer, QiTransferReason, WorldQiSnapshot, ANQI_CARRIER_ACCOUNT_PREFIX,
+};
+use crate::schema::common::{NpcStateKind, TEST_QI_FIXTURE_TOTAL};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -1142,6 +1145,246 @@ fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
     )
 }
 
+fn suspended_checkpoint_fixture(
+    owner_key: &str,
+    session_key: &str,
+    generation: u64,
+    phase_revision: u64,
+) -> (SuspendedSessionCheckpoint, ReconnectGuard) {
+    let checkpoint = SuspendedSessionCheckpoint {
+        owner_key: owner_key.to_string(),
+        session_key: session_key.to_string(),
+        generation,
+        phase_revision,
+        placed_id: Some("placed:workbench:azure".to_string()),
+        checkpoint_json: r#"{"phase":"suspended","remaining_ticks":12}"#.to_string(),
+    };
+    let guard = ReconnectGuard {
+        owner_key: owner_key.to_string(),
+        session_key: session_key.to_string(),
+        generation,
+        phase_revision,
+        restore_token: "RestoreToken_0123456789abcdefghijklmnop".to_string(),
+    };
+    (checkpoint, guard)
+}
+
+#[test]
+fn suspended_checkpoint_roundtrips_with_matching_craft_restore_guard() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-roundtrip");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+            .expect("checkpoint and guard should commit"),
+        SuspendedCheckpointPersistOutcome::Inserted
+    );
+    let bundle = load_suspended_session_bundle(&persistence, &checkpoint.session_key)
+        .expect("checkpoint should load")
+        .expect("matching guard should make checkpoint restorable");
+    assert_eq!(bundle.checkpoint, checkpoint);
+    assert_eq!(bundle.reconnect_guard, guard);
+    assert_eq!(
+        bundle.craft_restore_guard,
+        CraftRestoreGuard::from(&bundle.reconnect_guard)
+    );
+
+    assert!(
+        consume_reconnect_guard(&persistence, &bundle.reconnect_guard)
+            .expect("matching guard should be consumed")
+    );
+    assert!(
+        !consume_reconnect_guard(&persistence, &bundle.reconnect_guard)
+            .expect("a consumed guard must not be replayable")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_write_rejects_replay_after_guard_consumed() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-replay");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect_err("a consumed guard must not recreate the restore capability");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(load_suspended_session_bundle(&persistence, &checkpoint.session_key).is_err());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_after_consumed_guard_accepts_newer_generation() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-newer-generation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 3, 9);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("checkpoint and guard should commit");
+    assert!(consume_reconnect_guard(&persistence, &guard).expect("guard should be consumed once"));
+
+    let (newer_checkpoint, newer_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 1);
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &newer_checkpoint, &newer_guard)
+            .expect("a newer lifecycle should recreate its guard atomically"),
+        SuspendedCheckpointPersistOutcome::Updated
+    );
+    let loaded = load_suspended_session_bundle(&persistence, &newer_checkpoint.session_key)
+        .expect("the newer checkpoint should load")
+        .expect("the newer guard should be present");
+    assert_eq!(loaded.checkpoint, newer_checkpoint);
+    assert_eq!(loaded.reconnect_guard, newer_guard);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_write_rejects_stale_version_without_replacing_guard() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-stale");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 7);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("initial checkpoint should commit");
+    let (stale_checkpoint, stale_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 6);
+
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &stale_checkpoint, &stale_guard)
+            .expect("stale writes should be ignored cleanly"),
+        SuspendedCheckpointPersistOutcome::IgnoredStale
+    );
+    let loaded = load_suspended_session_bundle(&persistence, "craft:azure")
+        .expect("checkpoint should load")
+        .expect("guard should remain present");
+    assert_eq!(loaded.reconnect_guard.phase_revision, 7);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_guard_compare_and_swap_preserves_newer_lifecycle() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-guard-cas");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 7);
+    persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect("initial checkpoint should commit");
+
+    let mut conflicting_guard = guard.clone();
+    conflicting_guard.restore_token = "ConflictingToken_0123456789abcdefghijkl".to_string();
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &conflicting_guard)
+        .expect_err("a different token at the same lifecycle version must fail closed");
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    let loaded = load_suspended_session_bundle(&persistence, &checkpoint.session_key)
+        .expect("the original guard should remain readable")
+        .expect("the original guard should remain present");
+    assert_eq!(loaded.reconnect_guard.restore_token, guard.restore_token);
+
+    let mut newer_guard = suspended_checkpoint_fixture("player:Azure", "craft:azure", 5, 1).1;
+    newer_guard.restore_token = "LaterToken_0123456789abcdefghijklmnop".to_string();
+    let newer_frame = serde_json::to_string(&CraftRestoreGuard::from(&newer_guard))
+        .expect("newer guard frame should serialize");
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "
+            UPDATE craft_restore_guards
+            SET owner_key = ?1,
+                generation = ?2,
+                phase_revision = ?3,
+                restore_token = ?4,
+                frame_json = ?5
+            WHERE session_key = ?6
+            ",
+            params![
+                &newer_guard.owner_key,
+                newer_guard.generation as i64,
+                newer_guard.phase_revision as i64,
+                &newer_guard.restore_token,
+                &newer_frame,
+                &newer_guard.session_key,
+            ],
+        )
+        .expect("newer guard fixture should be installed");
+
+    let (stale_checkpoint, stale_guard) =
+        suspended_checkpoint_fixture("player:Azure", "craft:azure", 4, 8);
+    assert_eq!(
+        persist_suspended_session_checkpoint(&persistence, &stale_checkpoint, &stale_guard)
+            .expect("a write behind the newer guard should be ignored"),
+        SuspendedCheckpointPersistOutcome::IgnoredStale
+    );
+    let stored_guard: (i64, i64, String) = connection
+        .query_row(
+            "
+            SELECT generation, phase_revision, restore_token
+            FROM craft_restore_guards
+            WHERE session_key = ?1
+            ",
+            params!["craft:azure"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("newer guard should remain stored");
+    assert_eq!(
+        stored_guard,
+        (
+            newer_guard.generation as i64,
+            newer_guard.phase_revision as i64,
+            newer_guard.restore_token,
+        )
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn suspended_checkpoint_and_guard_roll_back_together_when_frame_write_fails() {
+    let (settings, root) = persistence_settings("suspended-checkpoint-rollback");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap should work");
+    let persistence =
+        PlayerStatePersistence::with_db_path(root.join("data").join("players"), settings.db_path());
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER fail_restore_guard_insert
+            BEFORE INSERT ON craft_restore_guards
+            BEGIN
+                SELECT RAISE(FAIL, 'forced restore guard failure');
+            END;
+            ",
+        )
+        .expect("failure trigger should install");
+    let (checkpoint, guard) = suspended_checkpoint_fixture("player:Azure", "craft:azure", 1, 1);
+
+    let error = persist_suspended_session_checkpoint(&persistence, &checkpoint, &guard)
+        .expect_err("frame failure must abort the whole checkpoint transaction");
+    assert!(error.to_string().contains("forced restore guard failure"));
+    let counts: (i64, i64) = connection
+        .query_row(
+            "
+            SELECT
+                (SELECT COUNT(*) FROM suspended_session_checkpoints),
+                (SELECT COUNT(*) FROM craft_restore_guards)
+            ",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("rollback count query should work");
+    assert_eq!(counts, (0, 0));
+    std::fs::remove_dir_all(root).ok();
+}
+
 fn heartbeat_pseudo_vein_record(zone_id: &str) -> HeartbeatPseudoVeinRecord {
     HeartbeatPseudoVeinRecord {
         zone_id: zone_id.to_string(),
@@ -1596,13 +1839,39 @@ fn void_action_cooldowns_roundtrip_hydrates_resource() {
         .expect("cooldown should persist");
 
     let mut cooldowns = VoidActionCooldowns::default();
-    let count =
-        hydrate_void_action_cooldowns(&settings, &mut cooldowns).expect("cooldowns should hydrate");
+    let count = hydrate_void_action_cooldowns_at_tick(&settings, &mut cooldowns, 0)
+        .expect("cooldowns should hydrate");
 
     assert_eq!(count, 1);
     assert_eq!(
         cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
         12_345
+    );
+}
+
+#[test]
+fn void_action_cooldown_hydrate_does_not_replay_old_process_uptime() {
+    use crate::cultivation::void::components::BARRIER_COOLDOWN_TICKS;
+
+    let (settings, _root) = persistence_settings("void-action-cooldowns-rebase");
+    bootstrap_sqlite(settings.db_path(), "server-run-test").expect("bootstrap should succeed");
+    let old_process_tick = 10 * crate::cultivation::void::components::TICKS_PER_DAY;
+    persist_void_action_cooldown(
+        &settings,
+        "offline:Void",
+        VoidActionKind::Barrier,
+        old_process_tick + BARRIER_COOLDOWN_TICKS,
+    )
+    .expect("cooldown should persist");
+
+    let mut cooldowns = VoidActionCooldowns::default();
+    hydrate_void_action_cooldowns_at_tick(&settings, &mut cooldowns, 100)
+        .expect("cooldown should hydrate");
+
+    assert_eq!(
+        cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
+        100 + BARRIER_COOLDOWN_TICKS,
+        "a legacy absolute deadline must be capped to one cooldown in the current epoch"
     );
 }
 
@@ -4438,7 +4707,10 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let zone_absolute = record.qi_current * QI_ZONE_UNIT_CAPACITY;
     let mut seed_ledger = WorldQiAccount::default();
     seed_ledger
-        .set_balance(pending_inflow_account(), SPIRIT_QI_TOTAL - zone_absolute)
+        .set_balance(
+            pending_inflow_account(),
+            TEST_QI_FIXTURE_TOTAL - zone_absolute,
+        )
         .expect("seed pending inflow balance should be finite");
     let total_before_restart = zone_absolute + seed_ledger.total();
     persist_zone_runtime_snapshot_with_heartbeat(
@@ -4506,7 +4778,7 @@ fn production_startup_order_restores_pseudo_vein_before_first_snapshot() {
     let restored_ledger = app.world().resource::<WorldQiAccount>();
     assert_eq!(
         restored_ledger.balance(&pending_inflow_account()),
-        SPIRIT_QI_TOTAL - zone_absolute,
+        TEST_QI_FIXTURE_TOTAL - zone_absolute,
         "expected restart to restore the pending pool that backs the active pseudo-vein loan"
     );
     assert!(
@@ -4635,8 +4907,167 @@ fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
             .descriptors()
             .map(|descriptor| descriptor.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["player.known_techniques", "world.zone_runtime"],
+        vec![
+            "player.known_techniques",
+            "player.runtime_state",
+            "world.zone_runtime",
+            "world.mineral_exhausted",
+            "world.spiritwood_harvested",
+            "world.zone_influence",
+            "world.active_events",
+            "world.heartbeat_runtime",
+            "world.supply_coffin",
+            "world.spirit_eyes",
+        ],
         "production must install every wired production descriptor"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn production_registry_flushes_world_logs_on_shutdown() {
+    use crate::mineral::{load_exhausted_log, ExhaustedEntry, ExhaustedMineralsLog};
+    use crate::spiritwood::persistence::load_harvested_log;
+    use crate::spiritwood::SpiritWoodHarvestedLogs;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::territory::{PlayerInfluence, ZoneInfluenceEntry, ZoneInfluenceMap};
+    use valence::prelude::BlockPos;
+
+    let (settings, root) = persistence_settings("production-world-log-shutdown");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let mineral_path = root.join("data").join("minerals").join("exhausted.json");
+    let mut mineral_log = ExhaustedMineralsLog::default().with_path(&mineral_path);
+    mineral_log.record(ExhaustedEntry {
+        mineral_id: "fan_tie".to_string(),
+        x: 1,
+        y: 64,
+        z: 2,
+        tick: 42,
+        respawn_at_tick: None,
+    });
+
+    let spiritwood_path = root.join("data").join("spiritwood").join("harvested.json");
+    let mut spiritwood_log = SpiritWoodHarvestedLogs::default().with_path(&spiritwood_path);
+    spiritwood_log.mark_harvested(DimensionKind::Overworld, BlockPos::new(3, 80, 4), 43);
+
+    let mut influence_map = ZoneInfluenceMap::default();
+    let mut influence_entry = ZoneInfluenceEntry::default();
+    influence_entry.players.insert(
+        "offline:ShutdownProbe".to_string(),
+        PlayerInfluence {
+            value: 1.0,
+            last_activity_tick: 44,
+            source_breakdown: Default::default(),
+        },
+    );
+    influence_map
+        .zones
+        .insert("spawn".to_string(), influence_entry);
+
+    let mut registry = PersistenceSliceRegistry::empty();
+    registry
+        .register_slice::<MineralExhaustedPersistenceSlice>()
+        .and_then(|()| registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<ZoneInfluencePersistenceSlice>())
+        .expect("world persistence descriptors should remain valid");
+    let mut world = World::new();
+    world.insert_resource(registry);
+    world.insert_resource(settings);
+    world.insert_resource(mineral_log);
+    world.insert_resource(spiritwood_log);
+    world.insert_resource(influence_map);
+
+    let report = dispatch_production_shutdown_flushes(&mut world);
+    assert_eq!(
+        report.failures,
+        Vec::new(),
+        "world slice flushes should succeed"
+    );
+    assert!(mineral_path.exists(), "shutdown must flush the mineral log");
+    assert!(
+        spiritwood_path.exists(),
+        "shutdown must flush the spiritwood log"
+    );
+    assert_eq!(
+        load_exhausted_log(&mineral_path)
+            .expect("mineral shutdown output should parse")
+            .entries
+            .len(),
+        1
+    );
+    assert!(load_harvested_log(&spiritwood_path)
+        .expect("spiritwood shutdown output should parse")
+        .entries
+        .iter()
+        .any(|entry| entry.x == 3 && entry.z == 4));
+    let records = load_zone_influence_snapshot(
+        world
+            .get_resource::<PersistenceSettings>()
+            .expect("settings should remain available"),
+    )
+    .expect("zone influence shutdown output should load");
+    assert_eq!(records.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zone_influence_shutdown_without_map_is_clean_even_without_settings() {
+    let mut registry = PersistenceSliceRegistry::empty();
+    registry
+        .register_slice::<ZoneInfluencePersistenceSlice>()
+        .expect("zone influence descriptor should remain valid");
+    let mut world = World::new();
+    world.insert_resource(registry);
+
+    let report = dispatch_shutdown_flushes(
+        &mut world,
+        ShutdownFlushRequest::Requested,
+        &ProductionSliceClock {
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+        },
+    )
+    .expect("shutdown dispatch should handle an absent influence map");
+    assert_eq!(
+        report.failures,
+        Vec::new(),
+        "a missing ZoneInfluenceMap is a clean no-op and must not require persistence settings"
+    );
+    assert_eq!(report.clean, 1);
+}
+
+#[test]
+fn last_persistence_without_shutdown_request_does_not_write_runtime_clock() {
+    let (settings, root) = persistence_settings("runtime-clock-no-shutdown");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture database should bootstrap");
+    persist_runtime_clock(&settings, 7, 1_234).expect("fixture runtime clock should persist");
+
+    let mut world = World::new();
+    world.insert_resource(PersistenceShutdownReader::default());
+    world.insert_resource(Events::<AppExit>::default());
+    world.insert_resource(settings.clone());
+    world.insert_resource(CultivationClock { tick: 99 });
+    world.insert_resource(PersistenceSliceRegistry::empty());
+
+    dispatch_persistence_shutdown_flushes(&mut world);
+
+    let connection = Connection::open(settings.db_path()).expect("fixture database should open");
+    let stored = connection
+        .query_row(
+            "SELECT tick, snapshot_wall FROM runtime_clock WHERE clock_id = ?1",
+            params![1_i64],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("runtime clock row should remain available");
+    assert_eq!(
+        stored,
+        (7, 1_234),
+        "Last frames without AppExit must not rewrite the runtime clock snapshot"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -4647,6 +5078,9 @@ fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
     registry
         .register_slice::<ZoneRuntimePersistenceSlice>()
         .and_then(|()| registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<MineralExhaustedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| registry.register_slice::<ZoneInfluencePersistenceSlice>())
         .expect("production slice descriptors must remain valid");
     registry
 }
@@ -4690,14 +5124,14 @@ fn production_zone_runtime_flush_without_registry_is_clean_noop() {
     let report = dispatch_production_shutdown_flushes(&mut world);
 
     assert_eq!(
-        report.attempted, 2,
-        "both production descriptors must be attempted, actual {report:?}"
+        report.attempted, 5,
+        "all production descriptors must be attempted, actual {report:?}"
     );
     assert!(
         report.failures.is_empty(),
         "an absent ZoneRegistry must be a clean no-op, actual {report:?}"
     );
-    assert_eq!(report.clean, 2, "both slices must report Clean");
+    assert_eq!(report.clean, 5, "all slices must report Clean");
     assert!(
         load_zone_runtime_snapshot(&settings)
             .expect("zone snapshot load must work on a fixture database")
@@ -8327,6 +8761,50 @@ fn zone_influence_persistence_round_trip() {
 }
 
 #[test]
+fn zone_influence_snapshot_replaces_deleted_entries_before_reload() {
+    use crate::world::territory::{PlayerInfluence, ZoneInfluenceEntry, ZoneInfluenceMap};
+
+    let (settings, root) = persistence_settings("zone-influence-replace");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let mut map = ZoneInfluenceMap::default();
+    let mut entry = ZoneInfluenceEntry::default();
+    entry.players.insert(
+        "offline:Retained".to_string(),
+        PlayerInfluence {
+            value: 10.0,
+            ..Default::default()
+        },
+    );
+    entry.players.insert(
+        "offline:Removed".to_string(),
+        PlayerInfluence {
+            value: 5.0,
+            ..Default::default()
+        },
+    );
+    map.zones.insert("spawn".to_string(), entry);
+    persist_zone_influence_snapshot(&settings, &map)
+        .expect("initial complete influence snapshot should persist");
+
+    map.zones
+        .get_mut("spawn")
+        .expect("spawn entry should exist")
+        .players
+        .remove("offline:Removed");
+    persist_zone_influence_snapshot(&settings, &map)
+        .expect("replacement influence snapshot should persist");
+
+    let restored = load_zone_influence_snapshot(&settings)
+        .expect("replacement influence snapshot should reload");
+    assert_eq!(restored.len(), 1, "deleted influence rows must not revive");
+    assert_eq!(restored[0].char_id, "offline:Retained");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn zone_influence_load_empty_returns_empty_vec() {
     let (settings, root) = persistence_settings("zone-influence-empty");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -8337,6 +8815,352 @@ fn zone_influence_load_empty_returns_empty_vec() {
         records.is_empty(),
         "空表 load 应返回 [], 实际 {:?}",
         records
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn player_runtime_hydrate_failure_does_not_leave_default_attention_active() {
+    let (settings, root) = persistence_settings("player-runtime-hydrate-failure");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+    let connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "
+            INSERT INTO player_runtime_slices
+                (username, slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![
+                "RuntimePlayer",
+                "player.tiandao_attention",
+                "{broken",
+                1,
+                current_unix_seconds()
+            ],
+        )
+        .expect("test should be able to install a corrupt attention row");
+
+    let mut app = App::new();
+    app.insert_resource(settings);
+    app.add_systems(Update, hydrate_player_runtime_slices);
+    let (client_bundle, _helper) = create_mock_client("RuntimePlayer");
+    let entity = app
+        .world_mut()
+        .spawn((
+            client_bundle,
+            PlayerState::default(),
+            crate::world::tiandao_hunt::TiandaoAttention::default(),
+        ))
+        .id();
+
+    app.update();
+
+    assert!(
+        app.world()
+            .get::<crate::world::tiandao_hunt::TiandaoAttention>(entity)
+            .is_none(),
+        "a failed runtime hydrate must not leave TiandaoAttention::default() active"
+    );
+    assert!(
+        app.world()
+            .get::<PlayerRuntimeSlicesLoadFailed>(entity)
+            .is_some(),
+        "failed runtime hydrate must block later writes"
+    );
+    assert!(
+        app.world()
+            .get::<PlayerRuntimeSlicesLoaded>(entity)
+            .is_some(),
+        "failed runtime hydrate must still close the one-shot load gate"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn runtime_slice_rows_round_trip_and_reject_corrupt_payloads() {
+    use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
+    use crate::supply_coffin::{
+        CoffinCooldown, PersistedSupplyCoffinRuntime, SupplyCoffinGrade, SupplyCoffinRegistry,
+    };
+    use crate::world::events::{
+        ActiveEventsResource, PersistedActiveEvent, PersistedActiveEvents, EVENT_KARMA_BACKLASH,
+    };
+    use crate::world::heartbeat::{
+        HeartbeatEventKind, HeartbeatOverride, HeartbeatOverrideAction, PersistedHeartbeatRuntime,
+    };
+    use crate::world::spirit_eye::{PersistedSpiritEyeRegistry, SpiritEyeRegistry};
+    use crate::world::zone::ZoneRegistry;
+
+    let (settings, root) = persistence_settings("runtime-slice-roundtrip");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+
+    let heartbeat = PersistedHeartbeatRuntime {
+        overrides: vec![HeartbeatOverride {
+            action: HeartbeatOverrideAction::Suppress,
+            event_kind: HeartbeatEventKind::BeastTide,
+            target_zone: "spawn".to_string(),
+            expires_at_tick: 120,
+            intensity_override: None,
+        }],
+        forced_events: vec![(
+            HeartbeatEventKind::KarmaBacklash,
+            "blood_valley".to_string(),
+            0.8,
+        )],
+    };
+    save_world_runtime_slice(&settings, "world.heartbeat_runtime", &heartbeat)
+        .expect("world runtime slice should save atomically");
+    let restored =
+        load_world_runtime_slice::<PersistedHeartbeatRuntime>(&settings, "world.heartbeat_runtime")
+            .expect("world runtime slice should load")
+            .expect("saved world runtime row should exist");
+    assert_eq!(restored, heartbeat);
+
+    let active_events = PersistedActiveEvents {
+        events: vec![PersistedActiveEvent {
+            event_name: EVENT_KARMA_BACKLASH.to_string(),
+            zone_name: "spawn".to_string(),
+            elapsed_ticks: 12,
+            duration_ticks: 120,
+            intensity: 0.7,
+            target_player: Some("offline:RuntimePlayer".to_string()),
+            calamity: None,
+            beast_tide_kind: None,
+            thunder_runtime: None,
+            beast_tide_runtime: None,
+            collapse_runtime: None,
+            calamity_runtime: None,
+        }],
+        pending_qi_transfers: Vec::new(),
+    };
+    save_world_runtime_slice(&settings, "world.active_events", &active_events)
+        .expect("active event runtime should save");
+    let restored_events =
+        load_world_runtime_slice::<PersistedActiveEvents>(&settings, "world.active_events")
+            .expect("active event runtime should load")
+            .expect("saved active event row should exist");
+    let mut restored_event_resource = ActiveEventsResource::default();
+    let mut zones = ZoneRegistry::fallback();
+    restored_event_resource
+        .restore_persisted_snapshot(restored_events, Some(&mut zones))
+        .expect("active event runtime should restore against known zones");
+    assert_eq!(
+        restored_event_resource.elapsed_for_first("spawn", EVENT_KARMA_BACKLASH),
+        Some(12),
+        "active event elapsed ticks must survive restart"
+    );
+
+    let coffin_runtime = PersistedSupplyCoffinRuntime {
+        cooldowns: vec![CoffinCooldown {
+            grade: SupplyCoffinGrade::Rare,
+            broken_at_wall_secs: 123,
+        }],
+        rng_state: 0xfeed_beef,
+    };
+    save_world_runtime_slice(&settings, "world.supply_coffin", &coffin_runtime)
+        .expect("supply coffin runtime should save");
+    let restored_coffin =
+        load_world_runtime_slice::<PersistedSupplyCoffinRuntime>(&settings, "world.supply_coffin")
+            .expect("supply coffin runtime should load")
+            .expect("saved supply coffin row should exist");
+    assert_eq!(restored_coffin, coffin_runtime);
+    let mut restored_coffin_registry =
+        SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0);
+    restored_coffin_registry
+        .restore_persisted_runtime(restored_coffin.clone())
+        .expect("supply coffin runtime should restore into its registry");
+    assert_eq!(restored_coffin_registry.persisted_runtime(), coffin_runtime);
+
+    let spirit_eyes = SpiritEyeRegistry::from_zones(&ZoneRegistry::fallback(), 0);
+    let spirit_eye_runtime = spirit_eyes.persisted_snapshot();
+    save_world_runtime_slice(&settings, "world.spirit_eyes", &spirit_eye_runtime)
+        .expect("spirit eye runtime should save");
+    let restored_spirit_eyes =
+        load_world_runtime_slice::<PersistedSpiritEyeRegistry>(&settings, "world.spirit_eyes")
+            .expect("spirit eye runtime should load")
+            .expect("saved spirit eye row should exist");
+    assert_eq!(restored_spirit_eyes, spirit_eye_runtime);
+    let mut restored_spirit_eye_registry = SpiritEyeRegistry::from_zones(&zones, 99);
+    restored_spirit_eye_registry
+        .restore_persisted_snapshot(restored_spirit_eyes.clone())
+        .expect("spirit eye runtime should restore into its registry");
+    assert_eq!(
+        restored_spirit_eye_registry.persisted_snapshot(),
+        spirit_eye_runtime
+    );
+
+    let attention = crate::world::tiandao_hunt::TiandaoAttention {
+        level: 42.0,
+        response: crate::world::tiandao_hunt::TiandaoResponseLevel::Pressure,
+        last_eval_tick: 88,
+        accumulation_rate: 0.5,
+        peak_level: 60.0,
+        last_response_tick: 80,
+        last_emitted_response: crate::world::tiandao_hunt::TiandaoResponseLevel::Watch,
+        narration_count: 3,
+    };
+    save_player_runtime_slice(
+        &settings,
+        "RuntimePlayer",
+        "player.tiandao_attention",
+        &attention,
+    )
+    .expect("player runtime slice should save");
+    let restored_attention = load_player_runtime_slice::<
+        crate::world::tiandao_hunt::TiandaoAttention,
+    >(&settings, "RuntimePlayer", "player.tiandao_attention")
+    .expect("player runtime slice should load")
+    .expect("saved player runtime row should exist");
+    assert_eq!(restored_attention, attention);
+
+    let taint = RealmTaintState {
+        kind: RealmTaintedKind::NicheIntrusion,
+        qi_taint_severity: 0.6,
+        last_tainted_at: 90,
+        wash_available_at: 100,
+    };
+    save_player_runtime_slice(&settings, "RuntimePlayer", "player.realm_taint", &taint)
+        .expect("realm taint runtime should save");
+    let restored_taint = load_player_runtime_slice::<RealmTaintState>(
+        &settings,
+        "RuntimePlayer",
+        "player.realm_taint",
+    )
+    .expect("realm taint runtime should load")
+    .expect("saved realm taint row should exist");
+    assert_eq!(restored_taint, taint);
+
+    let connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "UPDATE world_runtime_slices SET payload_json = '{broken' WHERE slice_id = 'world.heartbeat_runtime'",
+            [],
+        )
+        .expect("test should be able to corrupt the fixture row");
+    assert!(
+        load_world_runtime_slice::<PersistedHeartbeatRuntime>(&settings, "world.heartbeat_runtime")
+            .is_err(),
+        "corrupt runtime payload must fail closed instead of becoming a default value"
+    );
+
+    connection
+        .execute(
+            "UPDATE world_runtime_slices SET schema_version = 2 WHERE slice_id = 'world.active_events'",
+            [],
+        )
+        .expect("test should be able to install a future schema version");
+    assert!(
+        load_world_runtime_slice::<PersistedActiveEvents>(&settings, "world.active_events")
+            .is_err(),
+        "future runtime schema versions must fail closed instead of being decoded optimistically"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn v49_runtime_slice_schema_repair_preserves_rows_and_constraints() {
+    let (settings, root) = persistence_settings("v49-runtime-slice-schema-repair");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+
+    let mut connection = Connection::open(settings.db_path()).expect("db should open");
+    connection
+        .execute_batch(
+            "
+            DROP TABLE world_runtime_slices;
+            DROP TABLE player_runtime_slices;
+            CREATE TABLE world_runtime_slices (
+                slice_id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                last_updated_wall INTEGER NOT NULL
+            );
+            CREATE TABLE player_runtime_slices (
+                username TEXT,
+                slice_id TEXT,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                last_updated_wall INTEGER NOT NULL
+            );
+            INSERT INTO world_runtime_slices
+                (slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES ('world.active_events', '{}', 1, 10);
+            INSERT INTO player_runtime_slices
+                (username, slice_id, payload_json, schema_version, last_updated_wall)
+            VALUES ('RuntimePlayer', 'player.realm_taint', '{}', 1, 10);
+            ",
+        )
+        .expect("malformed v49 runtime slice fixture should be created");
+
+    apply_migrations(&mut connection).expect("v49 migration should repair constraint-only drift");
+
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT payload_json FROM world_runtime_slices WHERE slice_id = 'world.active_events'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("world runtime row should survive repair"),
+        "{}"
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT payload_json FROM player_runtime_slices WHERE username = 'RuntimePlayer' AND slice_id = 'player.realm_taint'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("player runtime row should survive repair"),
+        "{}"
+    );
+
+    let world_pk = connection
+        .prepare("PRAGMA table_info(world_runtime_slices)")
+        .expect("world runtime schema should be queryable")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
+        })
+        .expect("world runtime schema rows should be readable")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("world runtime schema query should succeed")
+        .into_iter()
+        .filter(|(_, _, pk)| *pk > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(world_pk, vec![("slice_id".to_string(), 1, 1)]);
+
+    let player_pk = connection
+        .prepare("PRAGMA table_info(player_runtime_slices)")
+        .expect("player runtime schema should be queryable")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
+        })
+        .expect("player runtime schema rows should be readable")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("player runtime schema query should succeed")
+        .into_iter()
+        .filter(|(_, _, pk)| *pk > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        player_pk,
+        vec![
+            ("username".to_string(), 1, 1),
+            ("slice_id".to_string(), 1, 2)
+        ]
     );
 
     let _ = fs::remove_dir_all(root);
@@ -9937,6 +10761,205 @@ fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
         hydrated.transfers().is_empty(),
         "restart must not restore audit history"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn carrier_overflow_account_survives_runtime_qi_restart() {
+    let (settings, root) = persistence_settings("carrier-overflow-runtime-restart");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+
+    let carrier_overflow = qi_flow_overflow_account();
+    assert!(
+        persistent_runtime_qi_accounts().contains(&carrier_overflow),
+        "carrier miss overflow must use a durable runtime account"
+    );
+
+    let mut source = WorldQiAccount::default();
+    source
+        .set_balance(carrier_overflow.clone(), 9.75)
+        .expect("carrier overflow fixture balance should be valid");
+    persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &crate::world::zone::ZoneRegistry::fallback(),
+        None,
+        &source,
+    )
+    .expect("runtime snapshot should persist the carrier overflow balance");
+
+    let mut hydrated = WorldQiAccount::default();
+    hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+        .expect("fresh ledger should hydrate the carrier overflow balance");
+    assert_eq!(hydrated.balance(&carrier_overflow), 9.75);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn carrier_account_survives_restart_and_miss_release_preserves_conservation() {
+    let (settings, root) = persistence_settings("carrier-account-runtime-restart");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+
+    let carrier = QiAccountId::container(format!("{ANQI_CARRIER_ACCOUNT_PREFIX}test-owner:7"));
+    let amount = 9.75;
+    let mut source = WorldQiAccount::default();
+    source
+        .set_balance(carrier.clone(), amount)
+        .expect("dynamic carrier balance should be valid");
+    persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &crate::world::zone::ZoneRegistry::fallback(),
+        None,
+        &source,
+    )
+    .expect("runtime snapshot should persist dynamic carrier balances");
+
+    let mut hydrated = WorldQiAccount::default();
+    assert_eq!(
+        hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+            .expect("fresh ledger should hydrate dynamic carrier balance"),
+        6,
+        "five fixed pools plus the active carrier account must hydrate"
+    );
+    assert_eq!(hydrated.balance(&carrier), amount);
+
+    let before = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: 0.0,
+        container_qi: 0.0,
+        ledger_qi: amount,
+        era_decay_accum: 0.0,
+        budget_initial_total: 0.0,
+        budget_current_total: 0.0,
+    };
+    hydrated
+        .transfer(
+            QiTransfer::new(
+                carrier.clone(),
+                qi_flow_overflow_account(),
+                amount,
+                QiTransferReason::ReleaseToZone,
+            )
+            .expect("miss release transfer should be representable"),
+        )
+        .expect("miss release should debit restored carrier and credit overflow");
+    assert_eq!(hydrated.balance(&carrier), 0.0);
+    assert_eq!(hydrated.balance(&qi_flow_overflow_account()), amount);
+    let after = WorldQiSnapshot {
+        container_qi: 0.0,
+        ledger_qi: hydrated.total(),
+        ..before
+    };
+    assert_conservation(&before, &after, 0.0)
+        .expect("restart recovery followed by miss release must preserve qi conservation");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn positive_carrier_row_missing_from_ledger_fails_closed_without_deletion() {
+    let (settings, root) = persistence_settings("carrier-row-missing-from-ledger");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let account_id = format!("{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:7");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "
+            INSERT INTO qi_runtime_accounts
+                (account_id, balance, schema_version, last_updated_wall)
+            VALUES (?1, 6.25, ?2, ?3)
+            ",
+            params![account_id, CURRENT_SCHEMA_VERSION, 100_i64],
+        )
+        .expect("fixture should seed a positive carrier row");
+
+    let source = WorldQiAccount::default();
+    let transaction = connection
+        .transaction()
+        .expect("save transaction should start");
+    let error = upsert_runtime_qi_account_balances(&transaction, &source, 200)
+        .expect_err("positive carrier data absent from the ledger must fail closed");
+    assert!(
+        error.to_string().contains(&account_id),
+        "failure should identify the unreconciled carrier account, actual={error}"
+    );
+    drop(transaction);
+
+    let persisted: f64 = connection
+        .query_row(
+            "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .expect("failed save must retain the durable carrier row");
+    assert_eq!(persisted, 6.25);
+    drop(connection);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn completed_carrier_lifecycles_remove_zero_rows_without_growth() {
+    let (settings, root) = persistence_settings("carrier-zero-row-reconciliation");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let mut connection = open_persistence_connection(&settings).expect("db should open");
+
+    for instance_id in 1..=8_u64 {
+        let account = QiAccountId::container(format!(
+            "{ANQI_CARRIER_ACCOUNT_PREFIX}stable-character:{instance_id}"
+        ));
+        let mut active = WorldQiAccount::default();
+        active
+            .set_balance(account.clone(), 2.0)
+            .expect("active carrier balance should be valid");
+        {
+            let transaction = connection
+                .transaction()
+                .expect("active carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64)
+                .expect("active carrier balance should persist");
+            transaction
+                .commit()
+                .expect("active carrier save should commit");
+        }
+
+        active
+            .transfer(
+                QiTransfer::new(
+                    account.clone(),
+                    qi_flow_overflow_account(),
+                    2.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .expect("carrier settlement transfer should be representable"),
+            )
+            .expect("carrier settlement should debit the active account");
+        assert_eq!(active.balance(&account), 0.0);
+        active.remove_balance(&account);
+        {
+            let transaction = connection
+                .transaction()
+                .expect("settled carrier save transaction should start");
+            upsert_runtime_qi_account_balances(&transaction, &active, instance_id as i64 + 100)
+                .expect("settled carrier zero row should be removable");
+            transaction
+                .commit()
+                .expect("settled carrier cleanup should commit");
+        }
+        let dynamic_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id LIKE ?1",
+                params![format!("{ANQI_CARRIER_ACCOUNT_PREFIX}%")],
+                |row| row.get(0),
+            )
+            .expect("dynamic carrier row count should query");
+        assert_eq!(
+            dynamic_rows, 0,
+            "completed carrier lifecycle {instance_id} must not leave a dynamic row"
+        );
+    }
+    drop(connection);
     let _ = fs::remove_dir_all(root);
 }
 

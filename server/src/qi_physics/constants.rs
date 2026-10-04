@@ -53,8 +53,6 @@ pub const QI_TSY_BASE_DRAIN_PER_TICK: f64 = 0.5;
 pub const QI_EXPLODE_ZONE_RETURN_TICKS: u64 = 6 * 30 * 24 * 60 * 60 * 20;
 /// plan-zhenfa-content-v2 P0：单颗散真元珠可封存并释放的真元量。
 pub const QI_SCATTER_BEAD_CAPACITY: f64 = 3.0;
-/// plan-zhenfa-content-v2 P0：凡阶组网阵提供的聚灵容量加成。
-pub const QI_NETWORK_ARRAY_LINGJU_CAP_BONUS: f32 = 0.5;
 /// plan-tsy-container-v1：搜刮中主动暴露的 TSY 抽取放大因子。
 pub const QI_TSY_SEARCH_EXPOSURE_FACTOR: f64 = 1.5;
 /// worldview §十七：中性节律。
@@ -63,16 +61,13 @@ pub const QI_RHYTHM_NEUTRAL: f64 = 1.0;
 pub const QI_RHYTHM_ACTIVE: f64 = 1.2;
 /// worldview §十七：汐转波动范围。
 pub const QI_RHYTHM_TURBULENT_RANGE: (f64, f64) = (0.7, 1.5);
-/// worldview §十：全服灵气预算默认值；生产值由 server config 初始化。
+/// 服务器未提供启动参数或环境变量时的全服真元预算。
 ///
-/// plan-zone-qi-economy-v1 §8.1 #2（用户 2026-07-03 拍板）：100.0 → 20000.0。
-/// 实测全 zones 满仓仅 ≈453 绝对点、目标编制（3 化虚 + 4 固元）峰值持有 ≈4500，
-/// 旧值 100 比经济规模小两个数量级——是"zone 灵气永不恢复"经济死局的根因之一。
-/// 20000 ≈ 目标峰值 4.4×，留 NPC 私池 + 波动冗余。`DEFAULT_VOID_QUOTA_K`
-/// （`cultivation::tribulation::DEFAULT_VOID_QUOTA_K`）按此值等比例导出，
-/// 化虚名额闸门（满预算 2 名额）不受影响，勿手改该常量。
-/// `docs/worldview.md:874` 的字面值 100 走独立 docs PR 同步（§10.0），不在本改动范围。
-pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 20000.0;
+/// 真正生效的预算由 `qi_physics::WorldQiTotalConfig` 在起服时解析，
+/// 优先使用 `--spirit-qi-total`，其次使用 `BONG_SPIRIT_QI_TOTAL`，最后回退到这里。
+/// 这个常量只承载默认值；运行时守恒快照必须读取 `WorldQiBudget`，不能在业务函数中
+/// 偷读它。按全服总量计算的玩法（例如化虚名额门槛）应使用启动后注入的预算。
+pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 2_000_000.0;
 /// worldview §十：天道时代衰减下限。
 pub const QI_TIANDAO_DECAY_PER_ERA_MIN: f64 = 0.01;
 /// worldview §十：天道时代衰减上限。
@@ -93,16 +88,11 @@ pub const QI_ZONE_UNIT_CAPACITY: f64 = 50.0;
 /// 同值但独立声明（语义不同：NPC 只喝地板以上的"溢出层"，玩家开脉/修炼吸取永远有底仓不受此约束）。
 /// 落点：`npc::dormant::apply_dormant_regen_with_multiplier`、
 /// `cultivation::tick::qi_regen_and_zone_drain_tick`（NpcMarker 分支）、
-/// `world::tiandao_hunt::apply_watch_zone_qi_drain`、`lingtian::systems::ReplenishSource::Zone`。
+/// `world::tiandao_hunt::apply_watch_zone_qi_drain`。
 pub const QI_NPC_ABSORB_FLOOR: f64 = 0.3;
 /// player gather：采集动作默认真元奖励，以 zone qi 对冲供给。
 pub const QI_GATHER_REWARD: f64 = 14.0;
-/// plan-lingtian-v1：偷灵注入操作者比例。
-pub const LINGTIAN_DRAIN_PLAYER_RATIO: f32 = 0.8;
-/// plan-lingtian-v1：偷灵散逸回 zone 比例。
-pub const LINGTIAN_DRAIN_ZONE_RATIO: f32 = 0.2;
-/// plan-lingtian-v1：plot 灵气不足时从环境场漏吸的比例。
-pub const QI_LINGTIAN_AMBIENT_LEAK_RATIO: f32 = 0.2;
+//TODO:lingtian_refactor 田块灵气交换应接入统一守恒账本。
 /// plan-qi-physics-patch-v1 P2-6：跨界磨损最小比例。
 pub const QI_TARGETED_ITEM_WEAR_MIN_FRACTION: f64 = 0.01;
 /// plan-qi-physics-patch-v1 P2-6：跨界磨损最大比例。
@@ -231,21 +221,10 @@ mod tests {
 
     #[test]
     fn zhenfa_content_v2_qi_constants_match_plan_budget() {
-        let cases = [
-            (QI_SCATTER_BEAD_CAPACITY, 3.0, "QI_SCATTER_BEAD_CAPACITY"),
-            (
-                f64::from(QI_NETWORK_ARRAY_LINGJU_CAP_BONUS),
-                0.5,
-                "QI_NETWORK_ARRAY_LINGJU_CAP_BONUS",
-            ),
-        ];
-
-        for (actual, expected, name) in cases {
-            assert!(
-                (actual - expected).abs() < QI_EPSILON,
-                "{name} 应固定为 plan-zhenfa-content-v2 P0 的 {expected}，实际 {actual}"
-            );
-        }
+        assert!(
+            (QI_SCATTER_BEAD_CAPACITY - 3.0).abs() < QI_EPSILON,
+            "散真元珠封存容量必须为 3 点"
+        );
     }
 
     // ── plan-neg-domain-fauna-v1 P0：真元抽取率常量 pin 测试 ──

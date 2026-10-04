@@ -1,8 +1,14 @@
+//! 世界层 facade：按固定顺序注册时钟、地形、事件、heartbeat 与跨域系统。
+//!
+//! 各子模块拥有自己的资源和系统实现；本 facade 只声明注册顺序与跨模块
+//! 的 Bevy set 约束，不承载世界事件优先级、真元流向或时代衰减逻辑。
+
 pub mod block_break;
 pub mod block_drop;
 pub mod block_place;
 pub mod bong_blocks;
 pub mod calamity;
+pub mod clock;
 pub mod container_block;
 pub mod container_open;
 pub mod dimension;
@@ -55,7 +61,9 @@ pub mod tsy_poi_consumer;
 pub mod tsy_portal;
 #[allow(dead_code)]
 pub mod wangyintai_atmosphere;
+pub mod weather;
 pub mod weather_physics;
+pub mod weather_profile;
 pub mod weather_to_environment;
 pub mod zone;
 
@@ -137,7 +145,13 @@ struct AnvilBootstrapConfig {
     region_dir: PathBuf,
 }
 
+/// 按世界运行时契约注册全部 world 子系统。
+///
+/// 注册顺序是启动与 tick 的一部分：事件与 heartbeat 在 zone、season 和
+/// qi physics 资源之后接入，后续模块只消费已经建立的 facade 资源。
 pub fn register(app: &mut App) {
+    clock::register(app);
+    weather::register(app);
     tracing::info!("[bong][world] registering world setup systems");
     dimension::register(app);
     dimension_transfer::register(app);

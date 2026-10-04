@@ -420,12 +420,6 @@ public final class BongHudOrchestrator {
         commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));
         // plan-dandao-path-v1 P3 fix — 丹道异化 HUD 面板（stage<=0 时自行返回空列表，条件显示）。
         commands.addAll(com.bong.client.dandao.MutationHudPlanner.buildCommands(screenWidth, screenHeight));
-        commands.addAll(LingtianOverlayHudPlanner.buildCommands(
-            com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),
-            screenWidth,
-            screenHeight,
-            com.bong.client.state.SeasonStateStore.snapshot()
-        ));
         commands.addAll(ExtractProgressHudPlanner.buildCommands(
             com.bong.client.tsy.ExtractStateStore.snapshot(),
             widthMeasurer,

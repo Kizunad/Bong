@@ -13,8 +13,10 @@ export * from "./audio-event.js";
 export * from "./baomai-v3.js";
 export * from "./baomai-v4.js";
 export * from "./botany.js";
+export * from "./plant-catalog.js";
 export * from "./fauna.js";
 export * from "./calamity.js";
+export * from "./cast.js";
 export * from "./biography.js";
 export * from "./chat-message.js";
 export * from "./client-payload.js";
@@ -29,7 +31,7 @@ export * from "./economy.js";
 export * from "./full-power.js";
 export * from "./identity.js";
 export * from "./inventory.js";
-export * from "./lingtian-weather.js";
+export * from "./weather.js";
 export * from "./movement.js";
 export * from "./mutation-event.js";
 export * from "./narration.js";
@@ -60,7 +62,6 @@ export * from "./woliu_erosion.js";
 export * from "./world-state.js";
 export * from "./yidao.js";
 export * from "./zone-environment.js";
-export * from "./zone-pressure.js";
 export * from "./zhenmai-v2.js";
 export * from "./zhenfa-v2.js";
 export * from "./zong-formation.js";
@@ -70,6 +71,7 @@ export * from "./payloads/agent-ui.js";
 
 // Validation & registry
 export * from "./schema-registry.js";
+export * from "./generation-manifest.js";
 export * from "./validate.js";
 
 // 修炼 (plan-cultivation-v1 §6)

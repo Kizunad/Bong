@@ -2,11 +2,11 @@
 
 use valence::prelude::{Res, ResMut};
 
-use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
-use crate::lingtian::weather_profile::ZoneWeatherProfile;
-use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
 use crate::world::environment_overlay::EnvironmentOverlays;
+use crate::world::weather::{ActiveWeather, WeatherEvent};
+use crate::world::weather_profile::ZoneWeatherProfile;
+use crate::world::weather_profile::ZoneWeatherProfileRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// Fixed visual bundle for a weather event in one zone.

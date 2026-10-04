@@ -60,13 +60,15 @@ use valence::prelude::{
     IntoSystemConfigs, Local, NetworkSettings, Query, Res, ResMut, Resource, Username,
 };
 
+use crate::player::authorization::{AuthorizationProvider, OperatorAuthorization};
+
 const DEV_COMMAND_SCOPE: &str = "bong.dev";
 pub const PUBLIC_COMMAND_ROOTS: &[&str] = &["bong", "faction", "identity", "ping"];
 
 #[derive(Default, Resource)]
 struct DevCommandRoots(HashSet<String>);
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub struct DevCommandPermissions {
     allowed_usernames: HashSet<String>,
     usernames_are_authenticated: bool,
@@ -114,6 +116,12 @@ impl DevCommandPermissions {
 
     pub fn is_operator(&self, username: &str) -> bool {
         self.usernames_are_authenticated && self.allowed_usernames.contains(username)
+    }
+}
+
+impl OperatorAuthorization for DevCommandPermissions {
+    fn allows_operator(&self, username: &str) -> bool {
+        self.is_operator(username)
     }
 }
 
@@ -197,6 +205,7 @@ fn register_operator_gate(app: &mut App) {
             .map(|settings| &settings.connection_mode),
     );
     app.init_resource::<DevCommandRoots>()
+        .insert_resource(AuthorizationProvider::new(permissions.clone()))
         .insert_resource(permissions)
         .add_systems(
             EventLoopPreUpdate,

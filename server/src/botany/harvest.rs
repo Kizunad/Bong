@@ -228,7 +228,7 @@ pub fn complete_harvest_for_player(
         ));
     }
 
-    let kind = match kind_registry.get(session.target_plant) {
+    let kind = match kind_registry.get(&session.target_plant) {
         Some(kind) => kind,
         None => {
             send_structural_cancel_terminal(&session, terminal_events);
@@ -292,7 +292,7 @@ pub fn complete_harvest_for_player(
     );
 
     let harvest_spirit_quality = item_registry
-        .get(kind.item_id)
+        .get(&kind.item_id)
         .map(|template| {
             template.spirit_quality_initial + herbalism_quality_bonus + variant.quality_modifier()
         })
@@ -307,7 +307,7 @@ pub fn complete_harvest_for_player(
         item_registry,
         allocator,
         dropped_loot,
-        kind.item_id,
+        &kind.item_id,
         1,
         now_tick,
         ground_pos,
@@ -339,7 +339,7 @@ pub fn complete_harvest_for_player(
     // plan-gathering-tool-bind-v1 P1：required_tool_used 与 tool_used（下方 gathering_tool
     // 派生）是两套正交系统——required_tool 管受伤/耐久，gathering_tool 管采集速度/品质
     // （§8.1 决议 #3）。这里只判定"required_tool 是否命中"，供 HUD/AV 消费。
-    let session_required_tool = required_tool_for(session.target_plant, kind_registry);
+    let session_required_tool = required_tool_for(&session.target_plant, kind_registry);
     let required_tool_matched =
         session_required_tool.is_some_and(|required_tool| actual_tool == Some(required_tool));
     if let Some(required_tool) = session_required_tool {
@@ -358,7 +358,7 @@ pub fn complete_harvest_for_player(
             .get_mut(session.client_entity)
             .expect("progression was validated before completion hazards");
     let bare_hand_wound = super::hazard::apply_completion_hazards(
-        session.target_plant,
+        &session.target_plant,
         kind_registry,
         Some(&mut *cultivation),
         contamination.as_deref_mut(),
@@ -369,11 +369,11 @@ pub fn complete_harvest_for_player(
 
     if let (Some(target_pos), Some(zone_name)) = (target_pos, target_zone_name.as_deref()) {
         for (mob_kind, min_count, max_count) in
-            super::hazard::attracts_mobs_hazards_for_kind(session.target_plant, kind_registry)
+            super::hazard::attracts_mobs_hazards_for_kind(&session.target_plant, kind_registry)
         {
             mob_attraction_events.send(BotanyAttractsMobsEvent {
                 client_entity: session.client_entity,
-                plant_kind: session.target_plant,
+                plant_kind: session.target_plant.clone(),
                 zone_name: zone_name.to_string(),
                 target_pos,
                 mob_kind,
@@ -486,13 +486,7 @@ fn apply_harvest_modifiers_to_item(
     }
 }
 
-// F23 — `pub(crate)` (not private) so `lingtian::systems::handle_start_harvest` can reuse the
-// same herbalism-level resolution to gate `SessionMode::Auto` server-side (see botany/components.rs
-// `BotanySkillState::auto_unlock_level`). Botany's own harvest flow already used this locally.
-pub(crate) fn herbalism_effective_lv(
-    cultivation: Option<&Cultivation>,
-    skill_set: Option<&SkillSet>,
-) -> u8 {
+fn herbalism_effective_lv(cultivation: Option<&Cultivation>, skill_set: Option<&SkillSet>) -> u8 {
     let real_lv = skill_set
         .and_then(|skill_set| {
             skill_set
@@ -584,14 +578,14 @@ pub fn enforce_harvest_session_constraints(
         let trampled = should_trample(trample_seed, trample_roll.chance_inverse);
         let dispersed = super::hazard::should_disperse_on_fail(
             trample_seed ^ 0xD1B5_4A32_D192_ED03,
-            super::hazard::failure_dispersal_chance(session.target_plant, kind_registry.as_ref()),
+            super::hazard::failure_dispersal_chance(&session.target_plant, kind_registry.as_ref()),
         );
         let reason: &'static str = if hit { "受击打断" } else { "移动打断" };
         to_interrupt.push(InterruptTarget {
             player_id: session.player_id.clone(),
             client_entity: session.client_entity,
             target_entity: session.target_entity,
-            target_plant: session.target_plant,
+            target_plant: session.target_plant.clone(),
             mode: session.mode,
             duration_ticks: session.duration_ticks,
             reason,
@@ -808,7 +802,7 @@ pub fn tick_harvest_sessions(
 }
 
 fn required_tool_for(
-    plant_id: BotanyPlantId,
+    plant_id: impl AsRef<str>,
     registry: &BotanyKindRegistry,
 ) -> Option<crate::tools::ToolKind> {
     let kind = registry.get(plant_id)?;
@@ -2370,7 +2364,7 @@ mod tests {
                 .insert(Contamination::default())
                 .insert(Wounds::default())
                 .id();
-            let target = plant_entity_with_id(&mut app, "spawn", plant_id);
+            let target = plant_entity_with_id(&mut app, "spawn", plant_id.clone());
 
             app.world_mut()
                 .resource_mut::<HarvestSessionStore>()
@@ -2378,7 +2372,7 @@ mod tests {
                     player_id: "offline:Azure".to_string(),
                     client_entity,
                     target_entity: Some(target),
-                    target_plant: plant_id,
+                    target_plant: plant_id.clone(),
                     mode: BotanyHarvestMode::Manual,
                     started_at_tick: 0,
                     duration_ticks: 0,
@@ -2540,7 +2534,7 @@ mod tests {
                 .insert(Contamination::default())
                 .insert(Wounds::default())
                 .id();
-            let target = plant_entity_with_id(&mut app, "spawn", plant_id);
+            let target = plant_entity_with_id(&mut app, "spawn", plant_id.clone());
 
             app.world_mut()
                 .resource_mut::<HarvestSessionStore>()
@@ -2548,7 +2542,7 @@ mod tests {
                     player_id: "offline:Azure".to_string(),
                     client_entity,
                     target_entity: Some(target),
-                    target_plant: plant_id,
+                    target_plant: plant_id.clone(),
                     mode: BotanyHarvestMode::Manual,
                     started_at_tick: 0,
                     duration_ticks: 0,

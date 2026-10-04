@@ -1,4 +1,4 @@
-//! plan-lingtian-process-v1 §5.3 — 作物加工 IPC 镜像。
+//! 作物加工 IPC 镜像；种植来源由后续重构接入。
 
 use serde::{Deserialize, Serialize};
 

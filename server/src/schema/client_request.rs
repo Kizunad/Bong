@@ -130,7 +130,7 @@ pub enum ClientRequestV1 {
     },
     /// plan-alchemy-v1 §1.2 — 玩家手持炉类物品，客户端拦截右键地面并发此请求。
     /// server 校验 `item_instance_id` 为合法炉类物品 → 消耗一个 → 在 `pos`
-    /// spawn `AlchemyFurnace` ECS entity，并把对应方块刷成 `FURNACE`。
+    /// spawn `AlchemyFurnace` ECS entity，并由视觉桥生成对应的自定义丹炉模型实体。
     AlchemyFurnacePlace {
         v: u8,
         x: i32,
@@ -343,6 +343,9 @@ pub enum ClientRequestV1 {
         to: InventoryLocationV1,
         #[serde(default)]
         rotated: bool,
+        /// 缺省移动整堆；小于原堆叠时拆出新实例，数量由服务端校验。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
     },
     /// plan-tuike-v1 — 装备伪皮的专用 C2S 包；服务端落到 false_skin 装备槽。
     EquipFalseSkin {
@@ -559,60 +562,6 @@ pub enum ClientRequestV1 {
         v: u8,
         session_id: u64,
     },
-    // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
-    /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
-    /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
-    LingtianStartTill {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        hoe_instance_id: u64,
-        /// "manual" / "auto"（auto 需 herbalism Lv.3+，server 暂不校验）。
-        mode: String,
-    },
-    /// plan §1.6 — 起翻新 session。
-    LingtianStartRenew {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        hoe_instance_id: u64,
-    },
-    /// plan §1.2.3 — 起种植 session（背包内须有该 plant 的种子）。
-    LingtianStartPlanting {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        plant_id: String,
-    },
-    /// plan §1.5 — 起收获 session（plot.crop 须 ripe）。
-    LingtianStartHarvest {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        mode: String,
-    },
-    /// plan §1.4 — 起补灵 session。
-    LingtianStartReplenish {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-        /// "zone" / "bone_coin" / "beast_core" / "ling_shui" /
-        /// "pill_residue_failed_pill" / "pill_residue_flawed_pill" /
-        /// "pill_residue_processing_dregs" / "pill_residue_aging_scraps"。
-        source: String,
-    },
-    /// plan §1.7 — 起偷灵 session。
-    LingtianStartDrainQi {
-        v: u8,
-        x: i32,
-        y: i32,
-        z: i32,
-    },
     // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
     /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
     /// plan-forge-session-entry-wiring-v1 §4.1#3 — 寻址从 `station_id: String`
@@ -750,6 +699,13 @@ pub enum ClientRequestV1 {
         #[serde(default)]
         params: std::collections::HashMap<String, String>,
     },
+    /// 将背包中的香料实例投入已打开的丹炉香座。
+    /// 追加在既有变体之后以保留 C2S 门禁矩阵顺序。
+    AlchemyPlaceIncense {
+        v: u8,
+        furnace_pos: (i32, i32, i32),
+        item_instance_id: u64,
+    },
 }
 
 impl ClientRequestV1 {
@@ -783,6 +739,7 @@ impl ClientRequestV1 {
             }
             Self::AlchemyTakePill { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::AlchemyFurnacePlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyPlaceIncense { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CoffinOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::CoffinPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::BlockPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
@@ -874,18 +831,6 @@ impl ClientRequestV1 {
                 ],
             }),
             Self::ExternalContainerClose { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::LingtianStartTill { .. } => RequestGate::Spec(GateSpec {
-                target: GateTarget::RequestBlockPosition,
-                distance: DistanceRule::NEARBY_INTERACT,
-                dimension: DimensionRule::Same,
-                ownership: OwnershipRule::None,
-                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
-            }),
-            Self::LingtianStartRenew { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::LingtianStartPlanting { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::LingtianStartHarvest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::LingtianStartReplenish { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
-            Self::LingtianStartDrainQi { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeStartSession { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeTemperingHit { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
             Self::ForgeInscriptionScroll { .. } => RequestGate::NoGate(NoGateReason::InvalidState),

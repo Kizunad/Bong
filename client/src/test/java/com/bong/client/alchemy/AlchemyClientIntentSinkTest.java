@@ -36,6 +36,7 @@ class AlchemyClientIntentSinkTest {
         assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.InjectQi(POS, Double.NaN)).kind().name());
         assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.AdjustTemp(POS, 1.01)).kind().name());
         assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.Ignite(POS, " ")).kind().name());
+        assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.PlaceIncense(POS, 0)).kind().name());
     }
 
     @Test
@@ -47,8 +48,9 @@ class AlchemyClientIntentSinkTest {
         assertTrue(sink.dispatch(new AlchemyIntent.InjectQi(POS, 1.5)).kind().name().endsWith("ACCEPTED"));
         assertTrue(sink.dispatch(new AlchemyIntent.Ignite(POS, "kai_mai_pill_v0")).kind().name().endsWith("ACCEPTED"));
         assertTrue(sink.dispatch(new AlchemyIntent.AdjustTemp(POS, 0.62)).kind().name().endsWith("ACCEPTED"));
-        assertEquals(7, transport.calls);
-        assertEquals("adjust:0.62", transport.lastCall);
+        assertTrue(sink.dispatch(new AlchemyIntent.PlaceIncense(POS, 9001)).kind().name().endsWith("ACCEPTED"));
+        assertEquals(8, transport.calls);
+        assertEquals("incense:9001", transport.lastCall);
     }
 
     @Test
@@ -61,10 +63,15 @@ class AlchemyClientIntentSinkTest {
 
         transport.fail = false;
         assertEquals("LOCAL_ACCEPTED", sink.dispatch(new AlchemyIntent.LearnRecipe("retry_recipe")).kind().name());
+        assertTrue(RecipeScrollStore.snapshot().learned().stream().noneMatch(recipe -> recipe.id().equals("retry_recipe")),
+            "发包成功不代表服务端认可，不能提前向丹方册添加配方");
+        RecipeScrollStore.learn(new RecipeScrollStore.RecipeEntry("retry_recipe", "已确认的丹方", ""));
         assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.LearnRecipe("retry_recipe")).kind().name());
 
         transport.fail = true;
+        var before = RecipeScrollStore.snapshot();
         assertEquals("LOCAL_ERROR", sink.dispatch(new AlchemyIntent.TurnPage(1)).kind().name());
+        assertEquals(before, RecipeScrollStore.snapshot(), "翻页失败不得改变本地选方");
     }
 
     private static final class RecordingTransport implements AlchemyClientIntentSink.Transport {
@@ -85,5 +92,6 @@ class AlchemyClientIntentSinkTest {
         @Override public void injectQi(BlockPos pos, double amount) { record("qi:" + amount); }
         @Override public void ignite(BlockPos pos, String recipeId) { record("ignite:" + recipeId); }
         @Override public void adjustTemp(BlockPos pos, double temperature) { record("adjust:" + temperature); }
+        @Override public void placeIncense(BlockPos pos, long itemInstanceId) { record("incense:" + itemInstanceId); }
     }
 }

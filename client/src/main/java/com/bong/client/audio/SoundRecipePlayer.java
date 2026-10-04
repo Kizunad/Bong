@@ -4,7 +4,6 @@ import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.hud.HudImmersionMode;
-import com.bong.client.lingtian.state.LingtianSessionStore;
 import com.bong.client.BongClient;
 import com.bong.client.network.AudioEventPayload;
 import com.bong.client.tiandao.TiandaoPresenceState;
@@ -273,7 +272,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             TiandaoPresenceState state = TiandaoPresenceStore.snapshot();
             return state.active() && state.response().equals(response);
         }
-        // 有内置状态谓词的 flag（低血 / 灵田抽灵）必须**先**按真实状态判定，不能被
+        // 有内置状态谓词的 flag（低血）必须**先**按真实状态判定，不能被
         // payload 自注册的 sticky flag 短路成永真：server 发带 flag 的 loop 时
         // play() 会 EnvironmentAudioLoopState.activate(flag)，若让 sticky 优先，
         // recipe 的 while_flag 就成了死条件——heartbeat_low_hp 的
@@ -296,10 +295,6 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         return switch (flag) {
             case "hp_below_20" -> CombatHudStateStore.snapshot().hpPercent() < 0.2f;
             case "hp_below_30" -> CombatHudStateStore.snapshot().hpPercent() < 0.3f;
-            case "lingtian_drain_active" -> {
-                LingtianSessionStore.Snapshot snapshot = LingtianSessionStore.snapshot();
-                yield snapshot.active() && snapshot.kind() == LingtianSessionStore.Kind.DRAIN_QI;
-            }
             default -> null;
         };
     }

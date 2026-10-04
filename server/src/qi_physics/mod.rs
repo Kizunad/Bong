@@ -1,9 +1,169 @@
 //! 真元/灵气物理底盘。
 //!
 //! 本模块只提供 server 内部物理算子、账本与守恒断言；既有系统迁移由
-//! plan-qi-physics-patch-v1 承接。
+//! plan-qi-physics-patch-v1 承接。服务器启动时的全服总量解析、优先级和
+//! `WorldQiBudget` 注入也归这里定义；玩法模块只读取注入后的资源，不自行读取环境变量。
 
 #![allow(unused_imports)]
+
+use std::fmt;
+
+use constants::DEFAULT_SPIRIT_QI_TOTAL;
+
+/// `BONG_SPIRIT_QI_TOTAL` 是服务器启动时读取的全服真元预算环境变量。
+pub const SPIRIT_QI_TOTAL_ENV: &str = "BONG_SPIRIT_QI_TOTAL";
+/// `--spirit-qi-total` 是服务器启动时注入全服真元预算的命令行参数。
+pub const SPIRIT_QI_TOTAL_ARG: &str = "--spirit-qi-total";
+
+/// 记录全服真元预算最终来自哪里，供启动日志和诊断使用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldQiTotalSource {
+    /// 命令行显式提供了 `--spirit-qi-total`。
+    CommandLine,
+    /// 环境变量 `BONG_SPIRIT_QI_TOTAL` 提供了总量。
+    Environment,
+    /// 未提供覆盖值，采用 `DEFAULT_SPIRIT_QI_TOTAL`。
+    Default,
+}
+
+impl fmt::Display for WorldQiTotalSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::CommandLine => "命令行",
+            Self::Environment => "环境变量",
+            Self::Default => "默认值",
+        };
+        formatter.write_str(label)
+    }
+}
+
+/// 起服阶段解析后的全服真元预算。
+///
+/// 该值在构建 Bevy `App` 之前完成校验，保证 NaN、无穷、非正数和无法解析的输入
+/// 不会静默回退成另一个预算。`WorldQiBudget` 只保存已验证的数值，业务系统通过
+/// 资源读取本次运行的实际总量。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WorldQiTotalConfig {
+    /// 已通过有限性和正数校验的全服真元总量。
+    pub total: f64,
+    /// 记录总量的生效来源，供启动日志和诊断使用。
+    pub source: WorldQiTotalSource,
+}
+
+/// 全服真元预算启动配置的解析错误。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorldQiTotalConfigError {
+    /// 参数名后没有可解析的数值。
+    MissingCommandLineValue,
+    /// 同一进程参数列表重复指定总量。
+    DuplicateCommandLineValue,
+    /// 命令行或环境变量提供了非有限、非正或无法解析的值。
+    InvalidValue {
+        source: WorldQiTotalSource,
+        raw: String,
+    },
+}
+
+impl fmt::Display for WorldQiTotalConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCommandLineValue => {
+                formatter.write_str("--spirit-qi-total 需要一个数值参数")
+            }
+            Self::DuplicateCommandLineValue => {
+                formatter.write_str("--spirit-qi-total 只能指定一次")
+            }
+            Self::InvalidValue { source, raw } => write!(
+                formatter,
+                "{source}提供的全服真元总量 {raw:?} 非法；必须是有限且大于 0 的数字"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WorldQiTotalConfigError {}
+
+impl WorldQiTotalConfig {
+    /// 按命令行优先、环境变量其次、默认值最后的顺序解析预算。
+    pub fn resolve(
+        command_line_value: Option<&str>,
+        environment_value: Option<&str>,
+    ) -> Result<Self, WorldQiTotalConfigError> {
+        if let Some(raw) = command_line_value {
+            return Ok(Self {
+                total: parse_positive_finite_total(raw, WorldQiTotalSource::CommandLine)?,
+                source: WorldQiTotalSource::CommandLine,
+            });
+        }
+        if let Some(raw) = environment_value {
+            return Ok(Self {
+                total: parse_positive_finite_total(raw, WorldQiTotalSource::Environment)?,
+                source: WorldQiTotalSource::Environment,
+            });
+        }
+        Ok(Self {
+            total: DEFAULT_SPIRIT_QI_TOTAL,
+            source: WorldQiTotalSource::Default,
+        })
+    }
+
+    /// 从传给服务器的参数列表中提取 `--spirit-qi-total`，其余参数交给既有 CLI。
+    pub fn from_args<I, S>(arguments: I) -> Result<Self, WorldQiTotalConfigError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut command_line_value = None;
+        let mut iter = arguments.into_iter();
+        while let Some(argument) = iter.next() {
+            let argument = argument.as_ref();
+            let value = if argument == SPIRIT_QI_TOTAL_ARG {
+                let Some(value) = iter.next() else {
+                    return Err(WorldQiTotalConfigError::MissingCommandLineValue);
+                };
+                let value = value.as_ref();
+                if value.starts_with("--") {
+                    return Err(WorldQiTotalConfigError::MissingCommandLineValue);
+                }
+                Some(value.to_owned())
+            } else {
+                argument
+                    .strip_prefix("--spirit-qi-total=")
+                    .map(str::to_owned)
+            };
+
+            if let Some(value) = value {
+                if command_line_value.replace(value).is_some() {
+                    return Err(WorldQiTotalConfigError::DuplicateCommandLineValue);
+                }
+            }
+        }
+
+        let environment_value = std::env::var(SPIRIT_QI_TOTAL_ENV).ok();
+        Self::resolve(command_line_value.as_deref(), environment_value.as_deref())
+    }
+}
+
+fn parse_positive_finite_total(
+    raw: &str,
+    source: WorldQiTotalSource,
+) -> Result<f64, WorldQiTotalConfigError> {
+    let value = raw
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| WorldQiTotalConfigError::InvalidValue {
+            source,
+            raw: raw.to_owned(),
+        })?;
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(WorldQiTotalConfigError::InvalidValue {
+            source,
+            raw: raw.to_owned(),
+        })
+    }
+}
 
 pub mod attrition;
 pub mod channeling;
@@ -64,12 +224,12 @@ pub use ledger::{
     dying_elder_dan_excess_account, dying_elder_release_overflow_account, pending_inflow_account,
     persistent_runtime_qi_accounts, qi_flow_overflow_account, reject_audit_only_qi_reason,
     rift_drain_account, snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
-    transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger, AttritionOpKind, QiAccountId,
-    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
-    WorldQiBudget, WorldQiSnapshot, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
-    DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
-    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_FLOW_OVERFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
-    RIFT_DRAIN_ACCOUNT_ID,
+    transfer_ledger_qi_to_external, transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger,
+    AttritionOpKind, QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer,
+    QiTransferReason, WorldQiAccount, WorldQiBudget, WorldQiSnapshot,
+    DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    PENDING_INFLOW_ACCOUNT_ID, PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_FLOW_OVERFLOW_ACCOUNT_ID,
+    QI_LEDGER_ACCOUNT_FIELD_PREFIX, RIFT_DRAIN_ACCOUNT_ID,
 };
 pub use prepare::{prepare_transfer, TransferPlan};
 pub use projectile::{
@@ -190,8 +350,20 @@ pub(crate) fn subtraction_makes_progress(before: f64, amount: f64) -> Result<boo
 }
 
 pub fn register(app: &mut App) {
-    tracing::info!("[bong][qi_physics] registering qi physics resources");
-    app.insert_resource(WorldQiBudget::from_env())
+    let config =
+        WorldQiTotalConfig::resolve(None, std::env::var(SPIRIT_QI_TOTAL_ENV).ok().as_deref())
+            .unwrap_or_else(|error| panic!("[bong][qi_physics] invalid spirit qi total: {error}"));
+    register_with_total(app, config);
+}
+
+/// 将已在进程入口校验的总量注入 qi physics 资源，并记录最终来源。
+pub fn register_with_total(app: &mut App, config: WorldQiTotalConfig) {
+    tracing::info!(
+        "[bong][qi_physics] world spirit qi total initialized: {} (source={})",
+        config.total,
+        config.source
+    );
+    app.insert_resource(WorldQiBudget::from_total(config.total))
         .init_resource::<EraDecayClock>()
         .init_resource::<WorldQiAccount>()
         .add_event::<QiTransfer>()
@@ -234,10 +406,81 @@ mod tests {
         let budget = app.world().resource::<WorldQiBudget>();
         assert_eq!(
             budget.current_total, DEFAULT_SPIRIT_QI_TOTAL,
-            "budget must reset to the (now 20000.0) default total on boot unless \
+            "budget must reset to the (now 2_000_000.0) default total on boot unless \
              BONG_SPIRIT_QI_TOTAL overrides it — no carry-over from a prior run"
         );
         assert_eq!(budget.era_decay_accum, 0.0);
+    }
+
+    #[test]
+    fn world_qi_total_cli_has_priority_over_environment() {
+        let config = WorldQiTotalConfig::resolve(Some("1234.5"), Some("6789.0"))
+            .expect("valid command-line total should resolve");
+        assert_eq!(config.total, 1234.5);
+        assert_eq!(config.source, WorldQiTotalSource::CommandLine);
+    }
+
+    #[test]
+    fn world_qi_total_environment_is_used_when_cli_is_absent() {
+        let config = WorldQiTotalConfig::resolve(None, Some("6789.0"))
+            .expect("valid environment total should resolve");
+        assert_eq!(config.total, 6789.0);
+        assert_eq!(config.source, WorldQiTotalSource::Environment);
+    }
+
+    #[test]
+    fn world_qi_total_default_is_two_million() {
+        let config = WorldQiTotalConfig::resolve(None, None).expect("default should resolve");
+        assert_eq!(config.total, DEFAULT_SPIRIT_QI_TOTAL);
+        assert_eq!(config.source, WorldQiTotalSource::Default);
+    }
+
+    #[test]
+    fn world_qi_total_rejects_non_positive_non_finite_and_malformed_values() {
+        for raw in ["0", "-1", "NaN", "inf", "-inf", "not-a-number"] {
+            let error = WorldQiTotalConfig::resolve(Some(raw), None)
+                .expect_err("invalid command-line total must fail closed");
+            assert!(matches!(
+                error,
+                WorldQiTotalConfigError::InvalidValue {
+                    source: WorldQiTotalSource::CommandLine,
+                    ..
+                }
+            ));
+        }
+        let error = WorldQiTotalConfig::resolve(None, Some("not-a-number"))
+            .expect_err("invalid environment total must fail closed");
+        assert!(matches!(
+            error,
+            WorldQiTotalConfigError::InvalidValue {
+                source: WorldQiTotalSource::Environment,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn world_qi_total_argument_parser_accepts_separate_and_equals_forms() {
+        let separate = WorldQiTotalConfig::from_args(["--spirit-qi-total", "42.0"])
+            .expect("separate argument form should resolve");
+        assert_eq!(separate.total, 42.0);
+        let equals = WorldQiTotalConfig::from_args(["--spirit-qi-total=43.0"])
+            .expect("equals argument form should resolve");
+        assert_eq!(equals.total, 43.0);
+    }
+
+    #[test]
+    fn world_qi_total_argument_parser_leaves_unrelated_arguments_for_existing_cli() {
+        let config = WorldQiTotalConfig::from_args([
+            "--lifecycle-mode",
+            "managed",
+            "--spirit-qi-total",
+            "44.0",
+            "--startup-marker=ci",
+        ])
+        .expect("unrelated lifecycle arguments must not block startup configuration");
+        assert_eq!(config.total, 44.0);
+        assert_eq!(config.source, WorldQiTotalSource::CommandLine);
     }
 
     #[test]

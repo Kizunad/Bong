@@ -83,6 +83,22 @@ const FEATURE_CLUSTER_MAX: u32 = 70;
 /// meadows feel continuous (~15% bald patches).
 const GROUND_COVER_CLUSTER_MAX: u32 = 85;
 
+/// Shared inputs for the two ordered decoration layers. Keeping the chunk,
+/// terrain snapshot, and registry together makes it explicit that both layers
+/// use the same world position and resource view.
+struct DecorationPass<'a> {
+    chunk: &'a mut UnloadedChunk,
+    pos: ChunkPos,
+    min_y: i32,
+    world_height: i32,
+    terrain: &'a TerrainProvider,
+    registry: &'a DecorationNbtRegistry,
+}
+
+/// Decorates one chunk in two deterministic layers: feature geometry first,
+/// then ground cover in columns not reserved by a feature footprint. The
+/// caller supplies the already computed surface heights; this module only
+/// chooses eligible decoration entries and writes their geometry.
 pub fn decorate_chunk(
     chunk: &mut UnloadedChunk,
     pos: ChunkPos,
@@ -91,10 +107,8 @@ pub fn decorate_chunk(
     top_y_by_column: &[[i32; 16]; 16],
     registry: &DecorationNbtRegistry,
 ) {
-    // Sword sea zone: no vegetation — only bare stone and swords
-    if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
-        && super::giant_sword::is_in_sword_sea(pos.x * 16 + 15, pos.z * 16 + 15)
-    {
+    // Sword sea zone: no vegetation — only bare stone and swords.
+    if chunk_is_sword_sea(pos) {
         return;
     }
 
@@ -103,143 +117,149 @@ pub fn decorate_chunk(
     // can skip them — otherwise a boulder's lower rim sits on top of the
     // ground-cover flower we just placed (visible "sand on dead bush").
     let mut feature_occupied = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+    let mut pass = DecorationPass {
+        chunk,
+        pos,
+        min_y,
+        world_height,
+        terrain,
+        registry,
+    };
 
-    for (local_z, row) in top_y_by_column.iter().enumerate() {
-        for (local_x, &top_y) in row.iter().enumerate() {
-            let world_x = pos.x * CHUNK_SIZE + local_x as i32;
-            let world_z = pos.z * CHUNK_SIZE + local_z as i32;
-            let sample = terrain.sample(world_x, world_z);
-
-            // Cluster score combines 8×8 and 16×16 cell hashes. Averaging
-            // softens the hard 8×8 cell edges while keeping the macro
-            // bald-patch distribution from the 16×16 layer.
-            let cluster_a = decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
-            let cluster_b =
-                decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
-            let cluster_score = (cluster_a + cluster_b) / 2;
-
-            // --- Layer 1: feature decoration (trees / shrubs / boulders) ---
-            if cluster_score < FEATURE_CLUSTER_MAX
-                && sample.flora_density >= MIN_DENSITY
-                && sample.flora_variant_id != 0
-            {
-                if let Some(deco) = terrain.decoration(sample.flora_variant_id) {
-                    if let Some(base_y) =
-                        placement_base_y(deco, &sample, top_y, min_y, world_height)
-                    {
-                        // Sky-isle bottom hangs from above; everything else needs
-                        // a block under base_y (carve / mega_tree / water can
-                        // leave top_y empty otherwise → 浮空树/石/灌).
-                        // Plant-like kinds (tree/shrub) want soil whitelist；
-                        // 岩石/结构/菌类（boulder/crystal/mushroom/fallen_log/
-                        // grave_mound）能落在 stone/deepslate/andesite 等任意
-                        // 实心方块上，否则 broken_peaks / waste_plateau 整片
-                        // feature 装饰会消失。
-                        let needs_below_support = !is_sky_isle_bottom_flora(deco);
-                        if needs_below_support {
-                            let supported = if requires_plant_soil(deco) {
-                                has_plant_support_below(
-                                    chunk,
-                                    local_x as i32,
-                                    base_y,
-                                    local_z as i32,
-                                    min_y,
-                                )
-                            } else {
-                                has_solid_support_below(
-                                    chunk,
-                                    local_x as i32,
-                                    base_y,
-                                    local_z as i32,
-                                    min_y,
-                                )
-                            };
-                            if !supported {
-                                continue;
-                            }
-                        }
-                        let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
-                        let target = (sample.flora_density
-                            * deco.rarity.max(0.05)
-                            * placement_density_scale(deco)
-                            * DENSITY_PRECISION as f32) as u32;
-                        if roll < target {
-                            // worldgen-v4 P6 §8.1 — footprint-aware anti-overlap.
-                            // Authored NBT variants have multi-cell footprints (the
-                            // rift_bridge spans up to 13–15 cells); two scatter points
-                            // landing close used to interpenetrate because each feature
-                            // marked only its anchor cell. Compute the cells this
-                            // decoration will actually occupy and skip the whole column
-                            // if any of them is already claimed by an earlier feature.
-                            // Greedy / row-major so the result stays deterministic
-                            // (same seed → same chunk).
-                            //
-                            // ACCEPTED RESIDUAL (worldgen-v4 P7): cells of a large
-                            // footprint that fall in a NEIGHBOURING chunk are clipped by
-                            // the `set_block_*` writers (silent out-of-bounds drop, never
-                            // a panic) and not tracked here, so cross-chunk feature
-                            // overlap can still occur and a boundary-straddling feature
-                            // may render partially. This pass only resolves within-chunk
-                            // feature-vs-feature overlap. P7 chose to accept the clip
-                            // rather than add a cross-chunk reservation channel: the
-                            // alternative (skip any candidate whose centred footprint
-                            // touches the edge) would thin large decorations along every
-                            // chunk seam — an 8-cell-wide dead band — which reads worse
-                            // than the occasional half-bridge. Centring (below) widens
-                            // the clip slightly vs. the old corner anchor but keeps the
-                            // feature visually attached to its column.
-                            let footprint = decoration_footprint(
-                                local_x as i32,
-                                local_z as i32,
-                                base_y,
-                                deco,
-                                world_x,
-                                world_z,
-                                registry,
-                            );
-                            // Greedy first-come reservation: place only if every
-                            // footprint cell is free, then claim them all. Skipped
-                            // features are NOT re-tried via procedural — the column
-                            // simply yields to the earlier feature.
-                            if !reserve_footprint(&mut feature_occupied, &footprint) {
-                                continue;
-                            }
-                            place_decoration(
-                                chunk,
-                                local_x as i32,
-                                base_y,
-                                local_z as i32,
-                                min_y,
-                                deco,
-                                world_x,
-                                world_z,
-                                registry,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
+    place_feature_layer(&mut pass, top_y_by_column, &mut feature_occupied);
 
     // --- Layer 2: ground cover (草/花/枯木) ---
     // 单独一遍循环，跳过被特征装饰占用的列；同时检查 base_y-1 是不是真正能
     // 承载植被的方块（防止 carve / mega_tree / 水位异常导致草浮空）。
     // Independent salt (1009 vs 997) so feature roll and ground-cover roll
     // don't lock-step — same column can win one and lose the other.
+    place_ground_cover_layer(&mut pass, top_y_by_column, &feature_occupied);
+}
+
+fn chunk_is_sword_sea(pos: ChunkPos) -> bool {
+    super::giant_sword::is_in_sword_sea(pos.x * CHUNK_SIZE, pos.z * CHUNK_SIZE)
+        && super::giant_sword::is_in_sword_sea(
+            pos.x * CHUNK_SIZE + CHUNK_SIZE - 1,
+            pos.z * CHUNK_SIZE + CHUNK_SIZE - 1,
+        )
+}
+
+/// Combines the two cluster scales used by both flora layers. Keeping the
+/// calculation shared prevents a refactor from making feature and ground-cover
+/// gates disagree at a chunk boundary.
+fn decoration_cluster_score(world_x: i32, world_z: i32) -> u32 {
+    let cluster_a = decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
+    let cluster_b = decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
+    (cluster_a + cluster_b) / 2
+}
+
+fn place_feature_layer(
+    pass: &mut DecorationPass<'_>,
+    top_y_by_column: &[[i32; 16]; 16],
+    feature_occupied: &mut [[bool; CHUNK_SIZE as usize]; CHUNK_SIZE as usize],
+) {
+    for (local_z, row) in top_y_by_column.iter().enumerate() {
+        for (local_x, &top_y) in row.iter().enumerate() {
+            let world_x = pass.pos.x * CHUNK_SIZE + local_x as i32;
+            let world_z = pass.pos.z * CHUNK_SIZE + local_z as i32;
+            let sample = pass.terrain.sample(world_x, world_z);
+            let cluster_score = decoration_cluster_score(world_x, world_z);
+
+            if cluster_score >= FEATURE_CLUSTER_MAX
+                || sample.flora_density < MIN_DENSITY
+                || sample.flora_variant_id == 0
+            {
+                continue;
+            }
+
+            let Some(deco) = pass.terrain.decoration(sample.flora_variant_id) else {
+                continue;
+            };
+            let Some(base_y) =
+                placement_base_y(deco, &sample, top_y, pass.min_y, pass.world_height)
+            else {
+                continue;
+            };
+
+            // Sky-isle bottom hangs from above; everything else needs a block
+            // under base_y. Plant kinds use the soil whitelist, while rocks,
+            // structures, and fungi accept any solid support.
+            if !is_sky_isle_bottom_flora(deco) {
+                let supported = if requires_plant_soil(deco) {
+                    has_plant_support_below(
+                        pass.chunk,
+                        local_x as i32,
+                        base_y,
+                        local_z as i32,
+                        pass.min_y,
+                    )
+                } else {
+                    has_solid_support_below(
+                        pass.chunk,
+                        local_x as i32,
+                        base_y,
+                        local_z as i32,
+                        pass.min_y,
+                    )
+                };
+                if !supported {
+                    continue;
+                }
+            }
+
+            let roll = decoration_hash(world_x, world_z, 997) % DENSITY_PRECISION;
+            let target = (sample.flora_density
+                * deco.rarity.max(0.05)
+                * placement_density_scale(deco)
+                * DENSITY_PRECISION as f32) as u32;
+            if roll >= target {
+                continue;
+            }
+
+            // Authored NBT variants can occupy several cells. Reserve their
+            // complete in-chunk footprint before writing so row-major placement
+            // remains deterministic and features never interpenetrate.
+            let footprint = decoration_footprint(
+                local_x as i32,
+                local_z as i32,
+                base_y,
+                deco,
+                world_x,
+                world_z,
+                pass.registry,
+            );
+            if !reserve_footprint(feature_occupied, &footprint) {
+                continue;
+            }
+            place_decoration(
+                pass.chunk,
+                local_x as i32,
+                base_y,
+                local_z as i32,
+                pass.min_y,
+                deco,
+                world_x,
+                world_z,
+                pass.registry,
+            );
+        }
+    }
+}
+
+fn place_ground_cover_layer(
+    pass: &mut DecorationPass<'_>,
+    top_y_by_column: &[[i32; 16]; 16],
+    feature_occupied: &[[bool; CHUNK_SIZE as usize]; CHUNK_SIZE as usize],
+) {
     for (local_z, row) in top_y_by_column.iter().enumerate() {
         for (local_x, &top_y) in row.iter().enumerate() {
             if feature_occupied[local_z][local_x] {
                 continue;
             }
-            let world_x = pos.x * CHUNK_SIZE + local_x as i32;
-            let world_z = pos.z * CHUNK_SIZE + local_z as i32;
-            let sample = terrain.sample(world_x, world_z);
-
-            let cluster_a = decoration_hash(world_x.div_euclid(8), world_z.div_euclid(8), 31) % 100;
-            let cluster_b =
-                decoration_hash(world_x.div_euclid(16), world_z.div_euclid(16), 33) % 100;
-            let cluster_score = (cluster_a + cluster_b) / 2;
+            let world_x = pass.pos.x * CHUNK_SIZE + local_x as i32;
+            let world_z = pass.pos.z * CHUNK_SIZE + local_z as i32;
+            let sample = pass.terrain.sample(world_x, world_z);
+            let cluster_score = decoration_cluster_score(world_x, world_z);
 
             if cluster_score >= GROUND_COVER_CLUSTER_MAX
                 || sample.ground_cover_density < MIN_DENSITY
@@ -249,12 +269,18 @@ pub fn decorate_chunk(
             }
 
             let base_y = top_y + 1;
-            // 下方支撑白名单：vanilla 草本类植物只在土质 / 沙质 / 苔藓类方块上稳定
-            if !has_plant_support_below(chunk, local_x as i32, base_y, local_z as i32, min_y) {
+            // Ground cover uses the same soil whitelist as plant-like features.
+            if !has_plant_support_below(
+                pass.chunk,
+                local_x as i32,
+                base_y,
+                local_z as i32,
+                pass.min_y,
+            ) {
                 continue;
             }
 
-            let Some(deco) = terrain.decoration(sample.ground_cover_id) else {
+            let Some(deco) = pass.terrain.decoration(sample.ground_cover_id) else {
                 continue;
             };
             let roll = decoration_hash(world_x, world_z, 1009) % DENSITY_PRECISION;
@@ -265,15 +291,15 @@ pub fn decorate_chunk(
                 continue;
             }
             place_decoration(
-                chunk,
+                pass.chunk,
                 local_x as i32,
                 base_y,
                 local_z as i32,
-                min_y,
+                pass.min_y,
                 deco,
                 world_x,
                 world_z,
-                registry,
+                pass.registry,
             );
         }
     }

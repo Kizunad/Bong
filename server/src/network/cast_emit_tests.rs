@@ -1426,8 +1426,10 @@ fn guangbo_casting(skill_id: &str) -> Casting {
 }
 
 fn spawn_caster(app: &mut App, casting: Casting) -> Entity {
+    let qi_settled = casting.skill_id.as_deref() == Some(GUANGBO_TICAO_ID);
     let (client_bundle, _helper) = create_mock_client("Stretcher");
-    app.world_mut()
+    let entity = app
+        .world_mut()
         .spawn(client_bundle)
         .insert((
             Position::new([0.0, 64.0, 0.0]),
@@ -1438,7 +1440,11 @@ fn spawn_caster(app: &mut App, casting: Casting) -> Entity {
             QuickSlotBindings::default(),
             SkillBarBindings::default(),
         ))
-        .id()
+        .id();
+    if qi_settled {
+        app.world_mut().entity_mut(entity).insert(QiSettledCast);
+    }
+    entity
 }
 
 #[test]
@@ -1487,6 +1493,25 @@ fn guangbo_ticao_natural_completion_sends_practice_event_and_audio() {
             .iter()
             .map(|e| e.recipe_id.as_str())
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn guangbo_completion_without_qi_settlement_sends_no_practice_event() {
+    let mut app = build_cast_tick_app(100);
+    let entity = spawn_caster(&mut app, guangbo_casting(GUANGBO_TICAO_ID));
+    app.world_mut().entity_mut(entity).remove::<QiSettledCast>();
+
+    app.update();
+
+    let practice_events: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+        .drain()
+        .collect();
+    assert!(
+        practice_events.is_empty(),
+        "没有 qi ledger settlement marker 的广播体操完成不得产生修行事件"
     );
 }
 

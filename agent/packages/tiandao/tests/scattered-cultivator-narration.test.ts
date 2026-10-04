@@ -4,11 +4,10 @@ import { CHANNELS } from "@bong/schema";
 import {
   ScatteredCultivatorNarrationRuntime,
   renderNpcIntrusionNarration,
-  renderPressureNarration,
   type ScatteredCultivatorNarrationRuntimeClient,
 } from "../src/scattered-cultivator-narration.js";
 
-const { AGENT_NARRATE, SOCIAL_NICHE_INTRUSION, ZONE_PRESSURE_CROSSED } = CHANNELS;
+const { AGENT_NARRATE, SOCIAL_NICHE_INTRUSION } = CHANNELS;
 
 class FakePubSub implements ScatteredCultivatorNarrationRuntimeClient {
   public published: Array<{ channel: string; message: string }> = [];
@@ -42,46 +41,16 @@ class FakePubSub implements ScatteredCultivatorNarrationRuntimeClient {
 const silent = { info: vi.fn(), warn: vi.fn() };
 
 describe("ScatteredCultivatorNarrationRuntime", () => {
-  it("subscribes to pressure and niche intrusion channels", async () => {
+  it("subscribes to niche intrusion channel", async () => {
     const pub = new FakePubSub();
     const sub = new FakePubSub();
     const runtime = new ScatteredCultivatorNarrationRuntime({ sub, pub, logger: silent });
 
     await runtime.connect();
 
-    expect(sub.subscribedChannels).toEqual([ZONE_PRESSURE_CROSSED, SOCIAL_NICHE_INTRUSION]);
+    expect(sub.subscribedChannels).toEqual([SOCIAL_NICHE_INTRUSION]);
   });
 
-  it("publishes zone-scoped narration on pressure crossing", async () => {
-    const pub = new FakePubSub();
-    const sub = new FakePubSub();
-    const runtime = new ScatteredCultivatorNarrationRuntime({ sub, pub, logger: silent });
-
-    await runtime.handlePayload(
-      ZONE_PRESSURE_CROSSED,
-      JSON.stringify({
-        v: 1,
-        kind: "zone_pressure_crossed",
-        zone: "spawn",
-        level: "high",
-        raw_pressure: 1.2,
-        at_tick: 80,
-      }),
-    );
-
-    expect(pub.published).toHaveLength(1);
-    expect(pub.published[0].channel).toBe(AGENT_NARRATE);
-    const envelope = JSON.parse(pub.published[0].message);
-    expect(envelope.narrations[0]).toEqual({
-      scope: "zone",
-      target: "spawn",
-      text: "spawn 散修聚众，地脉已被榨到阈上；此地又一波将逝。",
-      style: "narration",
-      kind: "npc_farm_pressure",
-    });
-    expect(runtime.stats.received).toBe(1);
-    expect(runtime.stats.published).toBe(1);
-  });
 
   it("publishes NPC-only niche intrusion narration", async () => {
     const pub = new FakePubSub();
@@ -126,16 +95,6 @@ describe("ScatteredCultivatorNarrationRuntime", () => {
   });
 
   it("renders deterministic narration helpers", () => {
-    expect(
-      renderPressureNarration({
-        v: 1,
-        kind: "zone_pressure_crossed",
-        zone: "valley",
-        level: "mid",
-        raw_pressure: 0.7,
-        at_tick: 1,
-      }).text,
-    ).toContain("田埂人影相续");
     expect(
       renderNpcIntrusionNarration({
         v: 1,

@@ -30,6 +30,7 @@ import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.itemmodel.BongItemModelChannel;
 import com.bong.client.scroll.ScrollReadScreenBootstrap;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
+import com.bong.client.craft.WorkbenchScreenBootstrap;
 import com.bong.client.iris.IrisBootstrap;
 import com.bong.client.hud.HudImmersionControls;
 import com.bong.client.hud.svg.SvgHudPreviewHarness;
@@ -43,7 +44,6 @@ import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.inventory.LootContainerScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
-import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.dying_elder.DyingElderInteractionKeybindings;
 import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcLodWorldRenderer;
@@ -82,6 +82,7 @@ public class BongClient implements ClientModInitializer {
         LOGGER.info("Initializing Bong Client...");
 
         BongBlocks.register();
+        WorkbenchScreenBootstrap.installServerDataHandler();
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
         NpcLodWorldRenderer.register();
@@ -106,9 +107,9 @@ public class BongClient implements ClientModInitializer {
         DroppedItemPickupBootstrap.register();
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
+        com.bong.client.alchemy.AlchemyWorldEffects.register();
         ClientUiBootstrap.registerCraftScreen();
         IdentityPanelScreenBootstrap.register();
-        LingtianActionScreenBootstrap.register();
         VoidActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());

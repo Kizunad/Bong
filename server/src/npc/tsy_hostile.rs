@@ -1,4 +1,17 @@
-//! plan-tsy-hostile-v1 — TSY 敌对 NPC 分层、spawn pool、Fuya 光环与 NPC 掉落。
+//! TSY hostile runtime: spawn pools, family-specific AI, Fuya aura, and drops.
+//!
+//! The module owns the runtime wiring for hostile entities that originate in a
+//! TSY family zone.  Spawn helpers build the shared NPC shell and attach only
+//! the family marker, loadout, technique set, and family-specific state.  The
+//! Big Brain scorers/actions then turn those components into ordinary
+//! [`AttackIntent`] events; the combat resolver remains the owner of attack
+//! gates.  Terminal loot, aura audio/VFX, and sentinel phase events are
+//! downstream effects and do not change spawn budgets or qi ownership.
+//!
+//! Dormant snapshots use the parallel data definitions in
+//! [`crate::npc::dormant`].  Hydrate/dehydrate and persistence are deliberately
+//! outside this module so TSY behavior can be read without mixing ECS lifetime
+//! management with spawn policy.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -79,11 +92,13 @@ pub const DEFAULT_TSY_SPAWN_POOLS_PATH: &str = "tsy_spawn_pools.json";
 pub const DEFAULT_TSY_DROPS_PATH: &str = "tsy_drops.json";
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
+/// Identifies the TSY family that owns a hostile NPC.
 pub struct TsyHostileMarker {
     pub family_id: String,
 }
 
 #[derive(Component, Debug, Clone)]
+/// Sentinel state linking a hostile guardian to its optional loot container.
 pub struct TsySentinelMarker {
     pub family_id: String,
     pub guarding_container: Option<Entity>,
@@ -92,6 +107,10 @@ pub struct TsySentinelMarker {
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
+/// A Fuya aura's radius and multiplicative drain pressure.
+///
+/// The cultivation drain system reads this component; this module only owns
+/// its spawn defaults and presentation effects.
 pub struct FuyaAura {
     pub radius_blocks: f32,
     pub drain_boost_multiplier: f64,
@@ -353,6 +372,7 @@ pub struct TsyHostileSpawnSummary {
 }
 
 #[derive(Event, Debug, Clone)]
+/// Per-family summary emitted after the spawn pool has been consumed.
 pub struct TsyNpcSpawned {
     pub family_id: String,
     pub archetype: TsyHostileArchetype,
@@ -361,6 +381,7 @@ pub struct TsyNpcSpawned {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Hostile family used by [`TsyNpcSpawned`] telemetry.
 pub enum TsyHostileArchetype {
     Daoxiang,
     Zhinian,
@@ -370,6 +391,7 @@ pub enum TsyHostileArchetype {
 }
 
 #[derive(Event, Debug, Clone)]
+/// Sentinel phase transition keyed by its guarding container.
 pub struct TsySentinelPhaseChanged {
     pub family_id: String,
     pub container_entity_id: u64,
@@ -415,6 +437,13 @@ pub struct TsyDropRoll {
     pub count: (u32, u32),
 }
 
+/// Register TSY spawn resources, Big Brain phases, presentation effects, and
+/// terminal drop handling on the server app.
+///
+/// The registration order is part of the runtime contract: scorers/actions use
+/// the components installed by spawn helpers, while terminal effects run only
+/// after lifecycle settlement commits.  The small registration helpers below
+/// keep those boundaries visible without changing Bevy sets or ordering.
 #[allow(clippy::too_many_arguments)]
 pub fn register(app: &mut App) {
     let spawn_pools = load_tsy_spawn_pool_registry().unwrap_or_else(|error| {
@@ -435,43 +464,52 @@ pub fn register(app: &mut App) {
         .add_event::<TsyHostileSpawnedSummary>()
         .add_event::<VfxEventRequest>()
         .insert_resource(spawn_pools)
-        .insert_resource(drop_tables)
-        .add_systems(
-            PreUpdate,
-            (
-                update_sentinel_phase_system,
-                daoxiang_instinct_scorer_system,
-                zhinian_ambush_scorer_system,
-                zhinian_chase_scorer_system,
-                sentinel_aggro_scorer_system,
-                fuya_enrage_scorer_system,
-                fuya_charge_scorer_system,
-            )
-                .in_set(BigBrainSet::Scorers),
+        .insert_resource(drop_tables);
+    register_tsy_brain_systems(app);
+    register_tsy_presentation_and_terminal_systems(app);
+}
+
+/// Register the TSY-specific Big Brain scorer/action phases.
+fn register_tsy_brain_systems(app: &mut App) {
+    app.add_systems(
+        PreUpdate,
+        (
+            update_sentinel_phase_system,
+            daoxiang_instinct_scorer_system,
+            zhinian_ambush_scorer_system,
+            zhinian_chase_scorer_system,
+            sentinel_aggro_scorer_system,
+            fuya_enrage_scorer_system,
+            fuya_charge_scorer_system,
         )
-        .add_systems(
-            PreUpdate,
-            (
-                daoxiang_instinct_action_system,
-                zhinian_combo_step_action_system,
-                sentinel_phase_action_system,
-                fuya_enrage_action_system,
-            )
-                .in_set(BigBrainSet::Actions),
+            .in_set(BigBrainSet::Scorers),
+    )
+    .add_systems(
+        PreUpdate,
+        (
+            daoxiang_instinct_action_system,
+            zhinian_combo_step_action_system,
+            sentinel_phase_action_system,
+            fuya_enrage_action_system,
         )
-        .add_systems(
-            Update,
-            (
-                emit_tsy_hostile_spawn_summary
-                    .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
-                emit_fuya_aura_vfx,
-                emit_fuya_pressure_hum_audio_system,
-                stop_fuya_pressure_hum_audio_on_death_system
-                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
-                handle_npc_death_drop
-                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
-            ),
-        );
+            .in_set(BigBrainSet::Actions),
+    );
+}
+
+/// Register effects that are downstream of spawn and lifecycle settlement.
+fn register_tsy_presentation_and_terminal_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            emit_tsy_hostile_spawn_summary
+                .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
+            emit_fuya_aura_vfx,
+            emit_fuya_pressure_hum_audio_system,
+            stop_fuya_pressure_hum_audio_on_death_system
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+            handle_npc_death_drop.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+        ),
+    );
 }
 
 pub fn emit_fuya_aura_vfx(
@@ -562,6 +600,11 @@ pub fn load_tsy_drop_table_registry_from_path(
     Ok(TsyNpcDropTableRegistry { entries })
 }
 
+/// Spawn all configured hostile layers and sentinels for one TSY family.
+///
+/// The function only consumes the configured family budget.  It does not
+/// decide attack validity or loot; those are handled by the shared combat and
+/// lifecycle systems after the entities have been spawned.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_tsy_hostiles_for_family(
     commands: &mut Commands,
@@ -625,20 +668,14 @@ pub fn spawn_tsy_hostiles_for_family(
         }
     }
 
-    let sentinel_count = sentinel_desired.min(remaining);
-    for guard in relic_cores.iter().take(sentinel_count as usize) {
-        let entity = spawn_tsy_sentinel_at(
-            commands,
-            layer,
-            family_id,
-            &format!("{family_id}_deep"),
-            guard.pos + DVec3::new(2.0, 0.0, 0.0),
-            Some(guard.entity),
-        );
-        tracing::debug!(?entity, family = %family_id, "[bong][tsy-hostile] spawned TSY sentinel");
-        summary.sentinel = summary.sentinel.saturating_add(1);
-        remaining = remaining.saturating_sub(1);
-    }
+    summary.sentinel = summary.sentinel.saturating_add(spawn_family_sentinels(
+        commands,
+        layer,
+        family_id,
+        relic_cores,
+        sentinel_desired,
+        &mut remaining,
+    ));
 
     if let Some(registry) = npc_registry {
         registry.release_zone_batch(&format!("{family_id}_deep"), remaining as usize);
@@ -668,6 +705,31 @@ fn reserve_tsy_family_budget(
         )
 }
 
+fn spawn_family_sentinels(
+    commands: &mut Commands,
+    layer: Entity,
+    family_id: &str,
+    relic_cores: &[TsyContainerSpawnRef],
+    desired: u32,
+    remaining: &mut u32,
+) -> u32 {
+    let mut spawned = 0;
+    for guard in relic_cores.iter().take(desired.min(*remaining) as usize) {
+        let entity = spawn_tsy_sentinel_at(
+            commands,
+            layer,
+            family_id,
+            &format!("{family_id}_deep"),
+            guard.pos + DVec3::new(2.0, 0.0, 0.0),
+            Some(guard.entity),
+        );
+        tracing::debug!(?entity, family = %family_id, "[bong][tsy-hostile] spawned TSY sentinel");
+        spawned += 1;
+        *remaining = remaining.saturating_sub(1);
+    }
+    spawned
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_layer_hostiles(
     commands: &mut Commands,
@@ -681,78 +743,194 @@ fn spawn_layer_hostiles(
     remaining: &mut u32,
     summary: &mut TsyHostileSpawnSummary,
 ) {
-    for i in 0..counts.daoxiang {
-        if *remaining == 0 {
-            return;
-        }
-        if let Some(pos) = sample_hostile_position(zone, family_id, depth, "daoxiang", i, tick) {
-            spawn_tsy_daoxiang_at(
-                commands,
-                technique_registry,
-                layer,
-                family_id,
-                &zone.name,
-                pos,
-                zone.patrol_target(0),
-            );
-            summary.daoxiang = summary.daoxiang.saturating_add(1);
-            *remaining = remaining.saturating_sub(1);
-        }
-    }
-    for i in 0..counts.zhinian {
-        if *remaining == 0 {
-            return;
-        }
-        if let Some(pos) = sample_hostile_position(zone, family_id, depth, "zhinian", i, tick) {
-            spawn_tsy_zhinian_at(
-                commands,
-                technique_registry,
-                layer,
-                family_id,
-                &zone.name,
-                pos,
-                zone.patrol_target(0),
-            );
-            summary.zhinian = summary.zhinian.saturating_add(1);
-            *remaining = remaining.saturating_sub(1);
-        }
-    }
-    for i in 0..counts.fuya {
-        if *remaining == 0 {
-            return;
-        }
-        if let Some(pos) = sample_hostile_position(zone, family_id, depth, "fuya", i, tick) {
-            spawn_tsy_fuya_at(
-                commands,
-                layer,
-                family_id,
-                &zone.name,
-                pos,
-                zone.patrol_target(0),
-            );
-            summary.fuya = summary.fuya.saturating_add(1);
-            *remaining = remaining.saturating_sub(1);
-        }
-    }
-    for i in 0..counts.skull_fiend {
-        if *remaining == 0 {
-            return;
-        }
-        if let Some(pos) = sample_hostile_position(zone, family_id, depth, "skull_fiend", i, tick) {
-            spawn_tsy_skull_fiend_at(
-                commands,
-                layer,
-                family_id,
-                &zone.name,
-                pos + DVec3::new(0.0, 4.0, 0.0),
-                zone.patrol_target(0),
-            );
-            summary.skull_fiend = summary.skull_fiend.saturating_add(1);
-            *remaining = remaining.saturating_sub(1);
-        }
-    }
+    summary.daoxiang = summary.daoxiang.saturating_add(spawn_daoxiang_layer(
+        commands,
+        technique_registry,
+        layer,
+        family_id,
+        zone,
+        depth,
+        counts.daoxiang,
+        tick,
+        remaining,
+    ));
+    summary.zhinian = summary.zhinian.saturating_add(spawn_zhinian_layer(
+        commands,
+        technique_registry,
+        layer,
+        family_id,
+        zone,
+        depth,
+        counts.zhinian,
+        tick,
+        remaining,
+    ));
+    summary.fuya = summary.fuya.saturating_add(spawn_fuya_layer(
+        commands,
+        layer,
+        family_id,
+        zone,
+        depth,
+        counts.fuya,
+        tick,
+        remaining,
+    ));
+    summary.skull_fiend = summary.skull_fiend.saturating_add(spawn_skull_fiend_layer(
+        commands,
+        layer,
+        family_id,
+        zone,
+        depth,
+        counts.skull_fiend,
+        tick,
+        remaining,
+    ));
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_daoxiang_layer(
+    commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
+    layer: Entity,
+    family_id: &str,
+    zone: &Zone,
+    depth: TsyDepth,
+    requested: u32,
+    tick: u64,
+    remaining: &mut u32,
+) -> u32 {
+    let mut spawned = 0;
+    for index in 0..requested {
+        if *remaining == 0 {
+            break;
+        }
+        let Some(position) =
+            sample_hostile_position(zone, family_id, depth, "daoxiang", index, tick)
+        else {
+            continue;
+        };
+        spawn_tsy_daoxiang_at(
+            commands,
+            technique_registry,
+            layer,
+            family_id,
+            &zone.name,
+            position,
+            zone.patrol_target(0),
+        );
+        spawned += 1;
+        *remaining = remaining.saturating_sub(1);
+    }
+    spawned
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_zhinian_layer(
+    commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
+    layer: Entity,
+    family_id: &str,
+    zone: &Zone,
+    depth: TsyDepth,
+    requested: u32,
+    tick: u64,
+    remaining: &mut u32,
+) -> u32 {
+    let mut spawned = 0;
+    for index in 0..requested {
+        if *remaining == 0 {
+            break;
+        }
+        let Some(position) =
+            sample_hostile_position(zone, family_id, depth, "zhinian", index, tick)
+        else {
+            continue;
+        };
+        spawn_tsy_zhinian_at(
+            commands,
+            technique_registry,
+            layer,
+            family_id,
+            &zone.name,
+            position,
+            zone.patrol_target(0),
+        );
+        spawned += 1;
+        *remaining = remaining.saturating_sub(1);
+    }
+    spawned
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_fuya_layer(
+    commands: &mut Commands,
+    layer: Entity,
+    family_id: &str,
+    zone: &Zone,
+    depth: TsyDepth,
+    requested: u32,
+    tick: u64,
+    remaining: &mut u32,
+) -> u32 {
+    let mut spawned = 0;
+    for index in 0..requested {
+        if *remaining == 0 {
+            break;
+        }
+        let Some(position) = sample_hostile_position(zone, family_id, depth, "fuya", index, tick)
+        else {
+            continue;
+        };
+        spawn_tsy_fuya_at(
+            commands,
+            layer,
+            family_id,
+            &zone.name,
+            position,
+            zone.patrol_target(0),
+        );
+        spawned += 1;
+        *remaining = remaining.saturating_sub(1);
+    }
+    spawned
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_skull_fiend_layer(
+    commands: &mut Commands,
+    layer: Entity,
+    family_id: &str,
+    zone: &Zone,
+    depth: TsyDepth,
+    requested: u32,
+    tick: u64,
+    remaining: &mut u32,
+) -> u32 {
+    let mut spawned = 0;
+    for index in 0..requested {
+        if *remaining == 0 {
+            break;
+        }
+        let Some(position) =
+            sample_hostile_position(zone, family_id, depth, "skull_fiend", index, tick)
+        else {
+            continue;
+        };
+        spawn_tsy_skull_fiend_at(
+            commands,
+            layer,
+            family_id,
+            &zone.name,
+            position + DVec3::new(0.0, 4.0, 0.0),
+            zone.patrol_target(0),
+        );
+        spawned += 1;
+        *remaining = remaining.saturating_sub(1);
+    }
+    spawned
+}
+
+/// Spawn one Daoxiang hostile with its Induce loadout, technique set, and AI.
 pub fn spawn_tsy_daoxiang_at(
     commands: &mut Commands,
     technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
@@ -813,6 +991,7 @@ pub fn spawn_tsy_daoxiang_at(
     entity
 }
 
+/// Convert one internal spawn summary into per-archetype telemetry events.
 pub fn emit_tsy_hostile_spawn_summary(
     mut events: EventWriter<TsyNpcSpawned>,
     mut summaries: EventReader<TsyHostileSpawnedSummary>,
@@ -875,6 +1054,7 @@ fn send_spawn_event(
 }
 
 #[derive(Event, Debug, Clone)]
+/// Internal per-family counts consumed by [`emit_tsy_hostile_spawn_summary`].
 pub struct TsyHostileSpawnedSummary {
     pub family_id: String,
     pub daoxiang: u32,
@@ -903,6 +1083,7 @@ impl TsyHostileSpawnedSummary {
     }
 }
 
+/// Spawn one Zhinian hostile with its Condense loadout and combo AI.
 pub fn spawn_tsy_zhinian_at(
     commands: &mut Commands,
     technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
@@ -964,6 +1145,7 @@ pub fn spawn_tsy_zhinian_at(
     entity
 }
 
+/// Spawn one Fuya hostile with its aura and charge AI.
 pub fn spawn_tsy_fuya_at(
     commands: &mut Commands,
     layer: Entity,
@@ -1004,6 +1186,7 @@ pub fn spawn_tsy_fuya_at(
     entity
 }
 
+/// Spawn one Skull Fiend hostile with its visual, wounds, and aura state.
 pub fn spawn_tsy_skull_fiend_at(
     commands: &mut Commands,
     layer: Entity,
@@ -1053,6 +1236,7 @@ pub fn spawn_tsy_skull_fiend_at(
     entity
 }
 
+/// Spawn one sentinel and optionally bind it to the guarding container entity.
 pub fn spawn_tsy_sentinel_at(
     commands: &mut Commands,
     layer: Entity,
@@ -1853,11 +2037,12 @@ pub fn handle_npc_death_drop(
         };
         let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.entity.index());
         let items = roll_drop_entry(entry, &ctx, item_registry, relic_pool, allocator, seed);
-        for (idx, item) in items.into_iter().enumerate() {
-            let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
-            let instance_id = item.instance_id;
-            loot_registry.entries.insert(
-                instance_id,
+        let entries = items
+            .into_iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
+                let instance_id = item.instance_id;
                 DroppedLootEntry {
                     instance_id,
                     source_container_id: format!("tsy_npc_drop:{family_id}:{drop_key}"),
@@ -1865,9 +2050,19 @@ pub fn handle_npc_death_drop(
                     source_col: 0,
                     world_pos,
                     dimension: DimensionKind::Tsy,
+                    owner: None,
+                    visibility: crate::inventory::DroppedLootVisibility::Public,
                     item,
-                },
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = loot_registry.try_insert_public_batch(entries) {
+            tracing::error!(
+                entity = ?event.entity,
+                ?error,
+                "[bong][tsy-hostile] drop admission failed; retaining terminal drop for retry"
             );
+            continue;
         }
         commands.entity(event.entity).insert(TsyNpcDropIssued);
     }

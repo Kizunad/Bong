@@ -19,6 +19,7 @@ use crate::gathering::tools::GatheringTargetKind;
 use crate::gathering::GatheringSystemSet;
 use crate::network::status_snapshot_emit::emit_status_snapshot_payloads;
 
+mod alchemy;
 mod forge;
 mod gathering;
 
@@ -30,6 +31,7 @@ pub(crate) struct SceneDefinition {
 
 enum SceneContent {
     Forge,
+    AlchemyFurnace,
     StatusEffects(&'static [(StatusEffectKind, f32, u64)]),
     Gathering {
         target: GatheringTargetKind,
@@ -43,6 +45,12 @@ pub(crate) const SCENES: &[SceneDefinition] = &[
         name: "test_forge_station_1",
         description: "身边放置真实炼器砧，按交互键打开锻造窗口；解锁铁剑与青锋剑测试图谱",
         content: SceneContent::Forge,
+    },
+    SceneDefinition {
+        name: "test_alchemy_furnace_1",
+        description:
+            "身边放置真实凡铁丹炉，对准炉体按交互键（默认 G）打开炼丹工位；解锁灵息丸丹方并领取灵草与普通香料",
+        content: SceneContent::AlchemyFurnace,
     },
     SceneDefinition {
         name: "test_status_effect_animation_1",
@@ -177,6 +185,7 @@ pub(super) fn register(app: &mut App, test_env: bool) {
     app.insert_resource(TestSceneAccess)
         .init_resource::<gathering::GatheringSceneState>()
         .init_resource::<forge::ForgeSceneState>()
+        .init_resource::<alchemy::AlchemySceneState>()
         .add_command::<SceneCmd>()
         .add_systems(
             Update,
@@ -214,6 +223,7 @@ fn handle_scene(
     mut players: Query<ScenePlayer<'_>>,
     mut gathering: gathering::GatheringSceneContext<'_>,
     mut forge: forge::ForgeSceneContext<'_, '_>,
+    mut alchemy: alchemy::AlchemySceneContext<'_, '_>,
 ) {
     for event in events.read() {
         let Ok((username, mut client, statuses, lifecycle, position)) =
@@ -278,7 +288,35 @@ fn handle_scene(
             }
             continue;
         }
+        if matches!(
+            scene.map(|value| &value.content),
+            Some(SceneContent::AlchemyFurnace)
+        ) {
+            let Some(position) = position else { continue };
+            let value = position.get();
+            let origin = valence::prelude::BlockPos::new(
+                value.x.floor() as i32,
+                value.y.floor() as i32,
+                value.z.floor() as i32,
+            );
+            match alchemy.start(event.executor, &username.0, origin) {
+                Ok(pos) => {
+                    gathering.clear(event.executor);
+                    statuses.active.clear();
+                    client.send_chat_message(format!(
+                        "[scene] 炼丹炉已就绪 [{}, {}, {}]，对准炉体按交互键（默认 G）进入工位；/scene clear 清理空闲测试炉。",
+                        pos.x, pos.y, pos.z
+                    ));
+                }
+                Err(message) => client.send_chat_message(format!("[scene] {message}")),
+            }
+            continue;
+        }
         if let Err(message) = forge.clear(event.executor) {
+            client.send_chat_message(format!("[scene] {message}"));
+            continue;
+        }
+        if let Err(message) = alchemy.clear(event.executor) {
             client.send_chat_message(format!("[scene] {message}"));
             continue;
         }

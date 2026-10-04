@@ -1,5 +1,7 @@
 # Bong · plan-lingtian-weather-v1
 
+> 2026-09-29：旧田块天气效果已删除。公共天气、概率配置和分钟时钟分别迁入 `server/src/world/weather.rs`、`weather_profile.rs`、`clock.rs`；天气协议迁入 `server/src/schema/weather.rs` 与 `agent/packages/schema/src/weather.ts`。下文田块相关描述仅为历史记录。
+
 > **⚠️ 2026-05-04 范围调整**：节律基础设施（`Season` enum / `WorldSeasonState` Resource / `season_tick` system / 32 game-day 周期 / zone 同步策略 / HUD 季节 mini-tag）**已转交 `plan-jiezeq-v1`**（active，2026-05-04 立项）。本 plan 范围收窄为「消费 jiezeq-v1 的 `query_season(zone, tick)` API + 4 类 WeatherEvent + plot 影响逻辑」。
 >
 > 受影响章节：**P0 改写**为消费 jiezeq-v1 API + PlotEnvironment 加 season/weather 槽位（不再自定义 Season enum）；**P3 撤销 HUD mini-tag**（违反 worldview §K 红线第 11 条 + journey-v1 O.10 决策"完全不显式"）；**§0 第 6 条"每 zone 季节独立" 撤销**（jiezeq-v1 决定全服同步）；**§2 周期长度段 + zone 独立段 撤销**（jiezeq-v1 接管）。详见各章节 ⚠️ 标注。

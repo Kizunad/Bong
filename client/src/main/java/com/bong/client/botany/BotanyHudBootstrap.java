@@ -43,6 +43,7 @@ public final class BotanyHudBootstrap {
 
     public static void clearOnDisconnect() {
         BotanyDragState.clearOnDisconnect();
+        PlantGeoRenderer.clearCache();
     }
 
     private static void onStartClientTick(MinecraftClient client) {

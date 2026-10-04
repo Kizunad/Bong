@@ -606,7 +606,7 @@ fn guangbo_practice_emits_stretch_anim_and_happy_particle_for_skinned_player() {
     let player = spawn_skinned_npc_target(&mut app, "Stretcher", [3.0, 64.0, 9.0]);
 
     app.world_mut()
-        .send_event(GuangboTicaoPracticeEvent { entity: player });
+        .send_event(GuangboTicaoPracticeEvent::unverified(player));
     app.update();
 
     let emitted = drain_vfx(&mut app);
@@ -655,7 +655,7 @@ fn guangbo_practice_without_position_emits_nothing() {
     let player = app.world_mut().spawn_empty().id();
 
     app.world_mut()
-        .send_event(GuangboTicaoPracticeEvent { entity: player });
+        .send_event(GuangboTicaoPracticeEvent::unverified(player));
     app.update();
 
     let emitted = drain_vfx(&mut app);
@@ -663,72 +663,6 @@ fn guangbo_practice_without_position_emits_nothing() {
         emitted.is_empty(),
         "无 Position/UniqueId 的练习者不应产生任何 VFX，实际 {} 条",
         emitted.len()
-    );
-}
-
-#[test]
-fn lingtian_completion_events_emit_plot_rune_particles() {
-    let mut app = App::new();
-    app.add_event::<TillCompleted>();
-    app.add_event::<PlantingCompleted>();
-    app.add_event::<HarvestCompleted>();
-    app.add_event::<ReplenishCompleted>();
-    app.add_event::<DrainQiCompleted>();
-    app.add_event::<VfxEventRequest>();
-    app.add_systems(Update, emit_lingtian_visual_triggers);
-    let player = app.world_mut().spawn_empty().id();
-    let pos = valence::prelude::BlockPos::new(2, 65, 7);
-
-    app.world_mut().send_event(TillCompleted {
-        player,
-        pos,
-        hoe: crate::lingtian::hoe::HoeKind::Iron,
-        hoe_instance_id: 1,
-    });
-    app.world_mut().send_event(PlantingCompleted {
-        player,
-        pos,
-        plant_id: "ci_she_hao".to_string(),
-    });
-    app.world_mut().send_event(HarvestCompleted {
-        player,
-        pos,
-        plant_id: "ci_she_hao".to_string(),
-        seed_dropped: false,
-    });
-    app.world_mut().send_event(ReplenishCompleted {
-        player,
-        pos,
-        source: crate::lingtian::session::ReplenishSource::Zone,
-        plot_qi_added: 0.25,
-        overflow_to_zone: 0.0,
-    });
-    app.world_mut().send_event(DrainQiCompleted {
-        player,
-        pos,
-        plot_qi_drained: 0.5,
-        qi_to_player: 0.4,
-        qi_to_zone: 0.1,
-    });
-
-    app.update();
-
-    let ids: Vec<_> = drain_vfx(&mut app)
-        .into_iter()
-        .map(|req| match req.payload {
-            VfxEventPayloadV1::SpawnParticle { event_id, .. } => event_id,
-            other => panic!("expected SpawnParticle, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(
-        ids,
-        vec![
-            LINGTIAN_TILL_VFX,
-            LINGTIAN_PLANT_VFX,
-            LINGTIAN_HARVEST_VFX,
-            LINGTIAN_REPLENISH_VFX,
-            LINGTIAN_DRAIN_VFX,
-        ]
     );
 }
 

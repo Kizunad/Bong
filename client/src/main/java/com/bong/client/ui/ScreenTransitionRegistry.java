@@ -1,6 +1,5 @@
 package com.bong.client.ui;
 
-import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.combat.screen.DeathScreen;
 import com.bong.client.combat.screen.ForgeCarrierScreen;
 import com.bong.client.combat.screen.RepairScreen;
@@ -10,7 +9,6 @@ import com.bong.client.cultivation.voidaction.VoidActionScreen;
 import com.bong.client.identity.IdentityPanelScreen;
 import com.bong.client.insight.InsightOfferScreen;
 import com.bong.client.inventory.InspectScreen;
-import com.bong.client.lingtian.LingtianActionScreen;
 import com.bong.client.processing.ProcessingActionScreen;
 import com.bong.client.npc.NpcDialogueScreen;
 import com.bong.client.npc.NpcInspectScreen;
@@ -53,16 +51,6 @@ public final class ScreenTransitionRegistry {
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
         ));
-        register(AlchemyScreen.class, new TransitionConfig(
-            AlchemyScreen.class,
-            ScreenTransition.Type.SCALE_UP,
-            400,
-            ScreenTransition.Type.FADE,
-            400,
-            ScreenTransition.Easing.EASE_OUT_QUAD,
-            TransitionConfig.OverlayStyle.FOG,
-            false
-        ));
         register(GameMenuScreen.class, TransitionConfig.of(
             GameMenuScreen.class, ScreenTransition.Type.FADE, 150, ScreenTransition.Type.FADE, 150
         ));
@@ -80,9 +68,6 @@ public final class ScreenTransitionRegistry {
         ));
         register(IdentityPanelScreen.class, TransitionConfig.of(
             IdentityPanelScreen.class, ScreenTransition.Type.FADE, 250, ScreenTransition.Type.FADE, 200
-        ));
-        register(LingtianActionScreen.class, TransitionConfig.of(
-            LingtianActionScreen.class, ScreenTransition.Type.FADE, 300, ScreenTransition.Type.FADE, 200
         ));
         register(VoidActionScreen.class, TransitionConfig.of(
             VoidActionScreen.class, ScreenTransition.Type.FADE, 300, ScreenTransition.Type.FADE, 200

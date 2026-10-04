@@ -1,0 +1,13 @@
+{
+  "id": "alchemy_material_insert",
+  "layers": [
+    { "sound": "minecraft:block.iron_trapdoor.open", "volume": 0.4, "pitch": 0.92, "delay_ticks": 0 },
+    { "sound": "minecraft:block.iron_trapdoor.close", "volume": 0.35, "pitch": 0.78, "delay_ticks": 16 },
+    { "sound": "minecraft:entity.item.pickup", "volume": 0.55, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:block.brewing_stand.brew", "volume": 0.25, "pitch": 1.0, "delay_ticks": 3 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

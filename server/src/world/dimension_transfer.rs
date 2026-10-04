@@ -88,9 +88,7 @@ pub fn apply_dimension_transfers(
 pub fn register(app: &mut App) {
     app.add_event::<DimensionTransferRequest>().add_systems(
         Update,
-        // fix-spec-1901-v2 §4.2 — DimensionTransferSet 是统一移动 commit set 的成员
-        //（不再是灵田排序的唯一依据；lingtian::register 只排
-        // `AuthoritativePositionCommitSet` 之后）。
+        // DimensionTransferSet 属于统一位置提交阶段，交互校验可排在该阶段之后。
         apply_dimension_transfers
             .in_set(DimensionTransferSet)
             .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),

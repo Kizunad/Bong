@@ -71,6 +71,134 @@ fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
     }
 }
 
+#[test]
+fn split_stack_preserves_quantity_metadata_and_source_orientation() {
+    use bong_server::schema::inventory::InventoryLocationV1;
+
+    let registry =
+        registry_from_templates(vec![test_template("herb", ItemCategory::Misc, 2, 1, 64)]);
+    for target_container in [MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID] {
+        let mut inv = empty_inventory(4, 4);
+        let mut item = make_test_item_instance(42, "herb");
+        item.grid_w = 2;
+        item.stack_count = 10;
+        item.spirit_quality = 0.7;
+        item.durability = 0.8;
+        item.forge_side_effects = vec!["split_metadata".to_owned()];
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item.clone(),
+        });
+        let mut target = inv.containers[0].clone();
+        target.id = SMALL_POUCH_CONTAINER_ID.to_owned();
+        target.items.clear();
+        inv.containers.push(target);
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_owned(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: target_container.to_owned(),
+            row: 1,
+            col: 2,
+        };
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+        let split_id =
+            apply_inventory_split(&mut inv, &registry, &mut allocator, 42, &from, &to, 3, true)
+                .expect("同包与跨包空格均应允许拆堆");
+        let original = inventory_item_by_instance_borrow(&inv, 42).unwrap();
+        let split = inventory_item_by_instance_borrow(&inv, split_id).unwrap();
+        let mut expected_source = item.clone();
+        expected_source.stack_count = 7;
+        assert_eq!(
+            original, &expected_source,
+            "源堆叠只扣数量，方向与元数据不变"
+        );
+        item.instance_id = split_id;
+        item.stack_count = 3;
+        item.grid_w = 1;
+        item.grid_h = 2;
+        assert_eq!(split, &item, "新堆叠继承元数据，并应用拖拽旋转");
+        assert_ne!(split_id, 42);
+        assert_eq!(inv.revision, InventoryRevision(1));
+    }
+}
+
+#[test]
+fn rejected_split_leaves_entire_inventory_unchanged() {
+    use bong_server::schema::inventory::InventoryLocationV1;
+
+    let registry =
+        registry_from_templates(vec![test_template("herb", ItemCategory::Misc, 1, 1, 64)]);
+    let mut initial = empty_inventory(3, 3);
+    let mut item = make_test_item_instance(42, "herb");
+    item.stack_count = 10;
+    initial.containers[0].items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance: item,
+    });
+    initial.containers[0].items.push(PlacedItemState {
+        row: 0,
+        col: 1,
+        instance: make_test_item_instance(43, "herb"),
+    });
+    let location = |row, col| InventoryLocationV1::Container {
+        container_id: MAIN_PACK_CONTAINER_ID.to_owned(),
+        row,
+        col,
+    };
+    let before = serde_json::to_value(&initial).unwrap();
+    let cases = [
+        (0, location(1, 0)),
+        (11, location(1, 0)),
+        (3, location(0, 0)),
+        (3, location(0, 1)),
+        (3, location(9, 9)),
+        (3, InventoryLocationV1::Hotbar { index: 0 }),
+    ];
+    for (count, to) in cases {
+        let mut inv = initial.clone();
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+        assert!(apply_inventory_split(
+            &mut inv,
+            &registry,
+            &mut allocator,
+            42,
+            &location(0, 0),
+            &to,
+            count,
+            false
+        )
+        .is_err());
+        assert_eq!(
+            serde_json::to_value(&inv).unwrap(),
+            before,
+            "拒绝时数量、位置、元数据和 revision 均不得改变"
+        );
+    }
+    let mut allocator = InventoryInstanceIdAllocator::new(JS_SAFE_INTEGER_MAX);
+    allocator.next_id().unwrap();
+    assert!(apply_inventory_split(
+        &mut initial,
+        &registry,
+        &mut allocator,
+        42,
+        &location(0, 0),
+        &location(1, 0),
+        3,
+        false
+    )
+    .is_err());
+    assert_eq!(
+        serde_json::to_value(&initial).unwrap(),
+        before,
+        "实例分配失败不能吞掉源物品"
+    );
+}
+
 fn make_test_item_instance(instance_id: u64, template_id: &str) -> ItemInstance {
     ItemInstance {
         instance_id,

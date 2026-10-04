@@ -4,6 +4,7 @@
 //! 已经通过这些门禁的十个炼丹请求转换为编译期闭合的领域路由，并复用既有
 //! `client_request_handler` helper，保持业务校验和副作用顺序不变。
 
+use valence::message::SendMessage;
 use valence::prelude::{Client, Commands, Entity, Events, Query, Username};
 
 use crate::alchemy::Intervention;
@@ -16,12 +17,24 @@ use crate::schema::alchemy::AlchemyInterventionV1;
 
 use crate::network::client_request_handler::{
     AlchemyRequestParams, ClientRequestDispatchParams, CombatRequestParams,
-    NpcEngagementRequestParams, SkillScrollRequestParams,
+    NpcEngagementRequestParams, QiMaxShrinkReleaseResources, SkillScrollRequestParams,
 };
 
 /// 已通过 schema/version 校验的 Production/Alchemy 请求。
 #[derive(Debug, PartialEq)]
 pub(crate) enum ProductionRequest {
+    CraftStart {
+        recipe_id: String,
+        quantity: u32,
+    },
+    MaterialMove {
+        recipe_id: String,
+        instance_id: Option<u64>,
+        station_pos: Option<(i32, i32, i32)>,
+        returning: bool,
+        expected_revision: u64,
+    },
+    CraftCancel,
     OpenFurnace {
         furnace_pos: (i32, i32, i32),
     },
@@ -59,6 +72,10 @@ pub(crate) enum ProductionRequest {
         pos: (i32, i32, i32),
         item_instance_id: u64,
     },
+    PlaceIncense {
+        furnace_pos: (i32, i32, i32),
+        item_instance_id: u64,
+    },
 }
 
 /// 从总 C2S enum 提取 Production/Alchemy 域；非本域请求原样交还顶层 handler。
@@ -66,6 +83,29 @@ pub(crate) fn try_into_production_request(
     request: ClientRequestV1,
 ) -> Result<ProductionRequest, ClientRequestV1> {
     match request {
+        ClientRequestV1::CraftStart {
+            recipe_id,
+            quantity,
+            ..
+        } => Ok(ProductionRequest::CraftStart {
+            recipe_id,
+            quantity,
+        }),
+        ClientRequestV1::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+            ..
+        } => Ok(ProductionRequest::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+        }),
+        ClientRequestV1::CraftCancel { .. } => Ok(ProductionRequest::CraftCancel),
         ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
             Ok(ProductionRequest::OpenFurnace { furnace_pos })
         }
@@ -123,6 +163,14 @@ pub(crate) fn try_into_production_request(
             ..
         } => Ok(ProductionRequest::FurnacePlace {
             pos: (x, y, z),
+            item_instance_id,
+        }),
+        ClientRequestV1::AlchemyPlaceIncense {
+            furnace_pos,
+            item_instance_id,
+            ..
+        } => Ok(ProductionRequest::PlaceIncense {
+            furnace_pos,
             item_instance_id,
         }),
         request => Err(request),
@@ -211,7 +259,72 @@ pub(crate) fn dispatch_production_request<
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&crate::player::state::PlayerState>,
 ) -> ProductionDispatchOutcome {
+    let target = match &request {
+        ProductionRequest::OpenFurnace { furnace_pos }
+        | ProductionRequest::FeedSlot { furnace_pos, .. }
+        | ProductionRequest::TakeBack { furnace_pos, .. }
+        | ProductionRequest::Ignite { furnace_pos, .. }
+        | ProductionRequest::Intervention { furnace_pos, .. }
+        | ProductionRequest::PlaceIncense { furnace_pos, .. } => Some(*furnace_pos),
+        ProductionRequest::FurnacePlace { pos, .. } => Some(*pos),
+        _ => None,
+    };
+    if let Some(pos) = target {
+        let reachable = skill_scroll
+            .positions
+            .get(player)
+            .ok()
+            .zip(skill_scroll.dimensions.get(player).ok())
+            .is_some_and(|(position, dimension)| {
+                crate::alchemy::furnace::within_reach(position.0, dimension.0, pos)
+            });
+        if !reachable {
+            if let Ok((_, mut client)) = clients.get_mut(player) {
+                client.send_chat_message("§c[炼丹] 请在主世界靠近丹炉后再操作");
+            }
+            return ProductionDispatchOutcome::Dispatched;
+        }
+    }
     match request {
+        ProductionRequest::CraftStart {
+            recipe_id,
+            quantity,
+        } => {
+            tracing::info!(
+                "[bong][network][craft] start entity={player:?} recipe={recipe_id} quantity={quantity}"
+            );
+            if let Some(tx) = dispatch.craft_start_tx.as_deref_mut() {
+                tx.send(crate::craft::CraftStartIntent {
+                    caster: player,
+                    recipe_id: crate::craft::RecipeId::new(recipe_id),
+                    quantity,
+                });
+            }
+        }
+        ProductionRequest::MaterialMove {
+            recipe_id,
+            instance_id,
+            station_pos,
+            returning,
+            expected_revision,
+        } => {
+            if let Some(tx) = dispatch.material_move_tx.as_deref_mut() {
+                tx.send(crate::craft::events::MaterialMoveIntent {
+                    caster: player,
+                    recipe_id: crate::craft::RecipeId::new(recipe_id),
+                    instance_id,
+                    station_pos,
+                    returning,
+                    expected_revision,
+                });
+            }
+        }
+        ProductionRequest::CraftCancel => {
+            tracing::info!("[bong][network][craft] cancel entity={player:?}");
+            if let Some(tx) = dispatch.craft_cancel_tx.as_deref_mut() {
+                tx.send(crate::craft::CraftCancelIntent { caster: player });
+            }
+        }
         ProductionRequest::OpenFurnace { furnace_pos } => {
             crate::network::client_request_handler::handle_alchemy_open_furnace(
                 player,
@@ -220,6 +333,7 @@ pub(crate) fn dispatch_production_request<
                 &mut alchemy.furnaces,
                 &mut alchemy.learned,
                 &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::FeedSlot {
@@ -245,28 +359,22 @@ pub(crate) fn dispatch_production_request<
                 alchemy.qi_ledger.as_deref_mut(),
                 alchemy.attrition_applied_events.as_deref_mut(),
                 alchemy.tsy_lifecycle.as_deref(),
+                alchemy.world_effects.as_deref_mut(),
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::TakeBack {
             furnace_pos,
             slot_idx,
         } => {
-            crate::network::client_request_handler::handle_alchemy_take_back(
-                player,
-                furnace_pos,
-                slot_idx,
-                combat_clock.tick,
-                clients,
-                &mut alchemy.furnaces,
-                &alchemy.recipe_registry,
-                &mut alchemy.outcome_tx,
-                inventories,
-                player_states,
-                &skill_scroll.cultivations,
-                &alchemy.item_registry,
-                alchemy.instance_allocator.as_deref_mut(),
-                alchemy.vfx_events.as_deref_mut(),
-            );
+            if let Some(events) = alchemy.take_back_tx.as_deref_mut() {
+                events.send(crate::alchemy::AlchemyTakeBackRequest {
+                    player,
+                    furnace_pos,
+                    slot_idx,
+                    tick: combat_clock.tick,
+                });
+            }
         }
         ProductionRequest::Ignite {
             furnace_pos,
@@ -281,7 +389,7 @@ pub(crate) fn dispatch_production_request<
                 &alchemy.recipe_registry,
                 alchemy.zones.as_deref(),
                 alchemy.redis.as_deref(),
-                alchemy.vfx_events.as_deref_mut(),
+                alchemy.world_effects.as_deref_mut(),
             );
         }
         ProductionRequest::Intervention {
@@ -299,6 +407,8 @@ pub(crate) fn dispatch_production_request<
                 alchemy.zones.as_deref(),
                 alchemy.redis.as_deref(),
                 alchemy.vfx_events.as_deref_mut(),
+                alchemy.world_effects.as_deref_mut(),
+                alchemy.inject_qi_tx.as_deref_mut(),
             );
         }
         ProductionRequest::TurnPage { delta } => {
@@ -308,6 +418,8 @@ pub(crate) fn dispatch_production_request<
                 clients,
                 &mut alchemy.learned,
                 &mut alchemy.state,
+                &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::LearnRecipe { recipe_id } => {
@@ -317,6 +429,7 @@ pub(crate) fn dispatch_production_request<
                 clients,
                 &mut alchemy.learned,
                 &alchemy.recipe_registry,
+                &alchemy.item_registry,
             );
         }
         ProductionRequest::LearnRecipeFragment { item_instance_id } => {
@@ -339,6 +452,11 @@ pub(crate) fn dispatch_production_request<
                 &skill_scroll.cultivations,
                 combat,
                 &mut dispatch.lifespan_extension_tx,
+                QiMaxShrinkReleaseResources {
+                    zones: alchemy.zones.as_deref_mut(),
+                    ledger: alchemy.qi_ledger.as_deref_mut(),
+                    transfers: alchemy.attrition_qi_transfers.as_deref_mut(),
+                },
                 alchemy.vfx_events.as_deref_mut(),
                 &mut npc.audio_events,
                 alchemy.hallucination_events.as_deref_mut(),
@@ -357,6 +475,23 @@ pub(crate) fn dispatch_production_request<
                 alchemy.place_furnace_tx.as_deref_mut(),
             );
         }
+        ProductionRequest::PlaceIncense {
+            furnace_pos,
+            item_instance_id,
+        } => {
+            crate::network::client_request_handler::handle_alchemy_place_incense(
+                player,
+                furnace_pos,
+                item_instance_id,
+                clients,
+                &mut alchemy.furnaces,
+                &alchemy.recipe_registry,
+                inventories,
+                player_states,
+                &skill_scroll.cultivations,
+                alchemy.world_effects.as_deref_mut(),
+            );
+        }
     }
     ProductionDispatchOutcome::Dispatched
 }
@@ -367,6 +502,41 @@ mod tests {
 
     #[test]
     fn typed_conversion_preserves_all_alchemy_payloads_and_boundaries() {
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::CraftStart {
+                v: 1,
+                recipe_id: "reed_rope".to_owned(),
+                quantity: u32::MAX,
+            })
+            .ok(),
+            Some(ProductionRequest::CraftStart {
+                recipe_id: "reed_rope".to_owned(),
+                quantity: u32::MAX,
+            })
+        );
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::MaterialMove {
+                v: 1,
+                recipe_id: "reed_rope".to_owned(),
+                instance_id: Some(u64::MAX),
+                station_pos: Some((i32::MIN, 0, i32::MAX)),
+                returning: true,
+                expected_revision: u64::MAX,
+            })
+            .ok(),
+            Some(ProductionRequest::MaterialMove {
+                recipe_id: "reed_rope".to_owned(),
+                instance_id: Some(u64::MAX),
+                station_pos: Some((i32::MIN, 0, i32::MAX)),
+                returning: true,
+                expected_revision: u64::MAX,
+            })
+        );
+        assert_eq!(
+            try_into_production_request(ClientRequestV1::CraftCancel { v: 1 }).ok(),
+            Some(ProductionRequest::CraftCancel)
+        );
+
         assert_eq!(
             try_into_production_request(ClientRequestV1::AlchemyOpenFurnace {
                 v: 1,

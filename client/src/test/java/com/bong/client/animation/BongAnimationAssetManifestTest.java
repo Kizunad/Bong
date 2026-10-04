@@ -47,7 +47,6 @@ public class BongAnimationAssetManifestTest {
         "npc_flee_run",
         "forge_hammer",
         "alchemy_stir",
-        "lingtian_till",
         "inventory_reach",
         "stance_baomai",
         "stance_dugu",

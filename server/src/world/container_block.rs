@@ -467,13 +467,20 @@ pub fn drain_container_items_to_drops(
     world_pos: [f64; 3],
     dimension: DimensionKind,
 ) -> usize {
-    let mut count = 0;
-    for placed in &ext.container.items {
-        let entry = dropped_entry_from_placed(placed, &ext.container.id, world_pos, dimension);
-        registry.entries.insert(entry.instance_id, entry);
-        count += 1;
+    let entries = ext
+        .container
+        .items
+        .iter()
+        .map(|placed| dropped_entry_from_placed(placed, &ext.container.id, world_pos, dimension))
+        .collect::<Vec<_>>();
+    if let Err(error) = registry.try_insert_public_batch(entries) {
+        tracing::warn!(
+            ?error,
+            "[bong][container] container-break drop admission failed; retaining container contents"
+        );
+        return 0;
     }
-    count
+    ext.container.items.len()
 }
 
 fn dropped_entry_from_placed(
@@ -489,6 +496,8 @@ fn dropped_entry_from_placed(
         source_col: placed.col,
         world_pos,
         dimension,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: placed.instance.clone(),
     }
 }

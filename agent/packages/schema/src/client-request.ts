@@ -30,7 +30,15 @@ import {
 } from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+const ENTITY_ID_MIN = -2_147_483_648;
+const ENTITY_ID_MAX = 2_147_483_647;
+const ENTITY_ID_V1 = Type.Integer({
+  minimum: ENTITY_ID_MIN,
+  maximum: ENTITY_ID_MAX,
+});
 const HOTBAR_SLOT_COUNT = 2;
+// 与 server::craft::MAX_CRAFT_QUANTITY 及 Java sender 的同名边界保持一致。
+const MAX_CRAFT_QUANTITY_V1 = 64;
 
 export const SetMeridianTargetRequestV1 = Type.Object(
   {
@@ -180,6 +188,8 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
     // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
     // 可选字段：旧客户端不带时 server 侧 `#[serde(default)]` 视为 false（未旋转）。
     rotated: Type.Optional(Type.Boolean()),
+    // 缺省移动整堆；指定时由服务端原子分堆。
+    count: Type.Optional(Type.Integer({ minimum: 1, maximum: 4294967295 })),
   },
   { additionalProperties: false },
 );
@@ -256,6 +266,16 @@ export const UseLifeCoreRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type UseLifeCoreRequestV1 = Static<typeof UseLifeCoreRequestV1>;
+
+/** 截脉反应键；无客户端可控 payload，由 server 从连接实体读取状态。 */
+export const JiemaiRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("jiemai"),
+  },
+  { additionalProperties: false },
+);
+export type JiemaiRequestV1 = Static<typeof JiemaiRequestV1>;
 
 export const PickupDroppedItemRequestV1 = Type.Object(
   {
@@ -557,6 +577,21 @@ export const AlchemyLearnRecipeRequestV1 = Type.Object(
 );
 export type AlchemyLearnRecipeRequestV1 = Static<typeof AlchemyLearnRecipeRequestV1>;
 
+/**
+ * 使用丹方残卷学习一个已知碎片；请求只携带背包实例，不携带可伪造的配方内容。
+ */
+export const AlchemyLearnRecipeFragmentRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("alchemy_learn_recipe_fragment"),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type AlchemyLearnRecipeFragmentRequestV1 = Static<
+  typeof AlchemyLearnRecipeFragmentRequestV1
+>;
+
 export const AlchemyTakePillRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -581,30 +616,19 @@ export const AlchemyFurnacePlaceRequestV1 = Type.Object(
 );
 export type AlchemyFurnacePlaceRequestV1 = Static<typeof AlchemyFurnacePlaceRequestV1>;
 
-export const LingtianReplenishSourceV1 = Type.Union([
-  Type.Literal("zone"),
-  Type.Literal("bone_coin"),
-  Type.Literal("beast_core"),
-  Type.Literal("ling_shui"),
-  Type.Literal("pill_residue_failed_pill"),
-  Type.Literal("pill_residue_flawed_pill"),
-  Type.Literal("pill_residue_processing_dregs"),
-  Type.Literal("pill_residue_aging_scraps"),
-]);
-export type LingtianReplenishSourceV1 = Static<typeof LingtianReplenishSourceV1>;
-
-export const LingtianStartReplenishRequestV1 = Type.Object(
+export const AlchemyPlaceIncenseRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
-    type: Type.Literal("lingtian_start_replenish"),
-    x: Type.Integer(),
-    y: Type.Integer(),
-    z: Type.Integer(),
-    source: LingtianReplenishSourceV1,
+    type: Type.Literal("alchemy_place_incense"),
+    furnace_pos: BlockPosV1,
+    /** 香料物品的 inventory instance_id；服务端成功后消耗一枚。 */
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
   },
   { additionalProperties: false },
 );
-export type LingtianStartReplenishRequestV1 = Static<typeof LingtianStartReplenishRequestV1>;
+export type AlchemyPlaceIncenseRequestV1 = Static<typeof AlchemyPlaceIncenseRequestV1>;
+
+//TODO:lingtian_refactor 新版田块交互另行定义协议。
 
 export const CoffinOpenRequestV1 = Type.Object(
   {
@@ -651,6 +675,34 @@ export const CoffinLeaveRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type CoffinLeaveRequestV1 = Static<typeof CoffinLeaveRequestV1>;
+
+/** 破坏延寿棺 marker；坐标由 server 归一到棺的 lower 格。 */
+export const CoffinBreakRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_break"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type CoffinBreakRequestV1 = Static<typeof CoffinBreakRequestV1>;
+
+/** 通过延寿棺菜单回收棺体并返还材料。 */
+export const CoffinMenuReclaimRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("coffin_menu_reclaim"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false },
+);
+export type CoffinMenuReclaimRequestV1 = Static<
+  typeof CoffinMenuReclaimRequestV1
+>;
 
 export const SpiritNichePlaceRequestV1 = Type.Object(
   {
@@ -913,6 +965,24 @@ export const ZhenfaDisarmRequestV1 = Type.Object(
 );
 export type ZhenfaDisarmRequestV1 = Static<typeof ZhenfaDisarmRequestV1>;
 
+/**
+ * 使用散灵珠；坐标是可选的埋点提示，server 仍以玩家当前位置和权限为准。
+ */
+export const QiScatterBeadUseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("qi_scatter_bead_use"),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    x: Type.Optional(Type.Integer()),
+    y: Type.Optional(Type.Integer()),
+    z: Type.Optional(Type.Integer()),
+  },
+  { additionalProperties: false },
+);
+export type QiScatterBeadUseRequestV1 = Static<
+  typeof QiScatterBeadUseRequestV1
+>;
+
 export const LearnSkillScrollRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1072,6 +1142,106 @@ export const BlockPlaceRequestV1 = Type.Object(
 );
 export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
 
+/** 按 marker 实体打开物资棺；实体编号由 server 解析并再次校验距离。 */
+export const SupplyCoffinOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("supply_coffin_open"),
+    entity_id: ENTITY_ID_V1,
+  },
+  { additionalProperties: false },
+);
+export type SupplyCoffinOpenRequestV1 = Static<
+  typeof SupplyCoffinOpenRequestV1
+>;
+
+/** 打开带 ExternalContainer 组件的世界容器 marker。 */
+export const ContainerOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("container_open"),
+    entity_id: ENTITY_ID_V1,
+  },
+  { additionalProperties: false },
+);
+export type ContainerOpenRequestV1 = Static<typeof ContainerOpenRequestV1>;
+
+/** 打开制作台 marker；server 负责工位存在性、距离和维度校验。 */
+export const WorkbenchOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("workbench_open"),
+    entity_id: ENTITY_ID_V1,
+  },
+  { additionalProperties: false },
+);
+export type WorkbenchOpenRequestV1 = Static<typeof WorkbenchOpenRequestV1>;
+
+/** 在已打开的外部容器会话内移动一个物品实例。 */
+export const ExternalContainerMoveRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("external_container_move"),
+    session_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    from: InventoryLocationV1,
+    to: InventoryLocationV1,
+  },
+  { additionalProperties: false },
+);
+export type ExternalContainerMoveRequestV1 = Static<
+  typeof ExternalContainerMoveRequestV1
+>;
+
+/** 关闭外部容器会话；session_id 用于防止旧窗口关闭新会话。 */
+export const ExternalContainerCloseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("external_container_close"),
+    session_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type ExternalContainerCloseRequestV1 = Static<
+  typeof ExternalContainerCloseRequestV1
+>;
+
+/** 发起手搓制作；缺省 quantity 时 server 按 1 处理。 */
+export const CraftStartRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("craft_start"),
+    recipe_id: Type.String({ minLength: 1 }),
+    quantity: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: MAX_CRAFT_QUANTITY_V1 }),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type CraftStartRequestV1 = Static<typeof CraftStartRequestV1>;
+
+/** 取消当前手搓会话；材料返还语义由 server session 负责。 */
+export const CraftCancelRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("craft_cancel"),
+  },
+  { additionalProperties: false },
+);
+export type CraftCancelRequestV1 = Static<typeof CraftCancelRequestV1>;
+
+/** 向垂死大能交付一颗回元丹，目标实体编号不携带任何客户端状态。 */
+export const GiveDanToElderRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("give_dan_to_elder"),
+    pill_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    elder_entity_id: ENTITY_ID_V1,
+  },
+  { additionalProperties: false },
+);
+export type GiveDanToElderRequestV1 = Static<typeof GiveDanToElderRequestV1>;
+
 // ─── 天道 UI 面板响应（plan-agent-ui-data-v1 P0） ────────────────────────────
 
 /**
@@ -1168,7 +1338,11 @@ export const MaterialMoveRequestV1 = Type.Object({
   expected_revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 }, { additionalProperties: false });
 
-export const ClientRequestV1 = Type.Union([
+/**
+ * C2S wire registry 的唯一入口。JSON Schema、TypeBox union 和契约 pin 都从这份
+ * 顺序稳定的列表派生，新增请求不能只改某一端的散装 union。
+ */
+export const CLIENT_REQUEST_SCHEMAS = [
   MaterialMoveRequestV1,
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -1212,13 +1386,16 @@ export const ClientRequestV1 = Type.Union([
   AlchemyInterventionRequestV1,
   AlchemyTurnPageRequestV1,
   AlchemyLearnRecipeRequestV1,
+  AlchemyLearnRecipeFragmentRequestV1,
   AlchemyTakePillRequestV1,
   AlchemyFurnacePlaceRequestV1,
-  LingtianStartReplenishRequestV1,
+  AlchemyPlaceIncenseRequestV1,
   CoffinOpenRequestV1,
   CoffinPlaceRequestV1,
   CoffinEnterRequestV1,
   CoffinLeaveRequestV1,
+  CoffinBreakRequestV1,
+  CoffinMenuReclaimRequestV1,
   SpiritNichePlaceRequestV1,
   SpiritNicheRepairRequestV1,
   SpiritNicheGazeRequestV1,
@@ -1236,12 +1413,18 @@ export const ClientRequestV1 = Type.Union([
   ZhenfaPlaceRequestV1,
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,
+  QiScatterBeadUseRequestV1,
   LearnSkillScrollRequestV1,
   TechniqueScrollUseRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
   StartSearchRequestV1,
   CancelSearchRequestV1,
+  SupplyCoffinOpenRequestV1,
+  ContainerOpenRequestV1,
+  WorkbenchOpenRequestV1,
+  ExternalContainerMoveRequestV1,
+  ExternalContainerCloseRequestV1,
   ForgeStartSessionRequestV1,
   ForgeTemperingHitRequestV1,
   ForgeInscriptionScrollRequestV1,
@@ -1251,6 +1434,10 @@ export const ClientRequestV1 = Type.Union([
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
   ForgeStationOpenRequestV1,
+  CraftStartRequestV1,
+  CraftCancelRequestV1,
+  GiveDanToElderRequestV1,
+  JiemaiRequestV1,
   BlockPlaceRequestV1,
   BlockPickerActionV1,
   RaiseShieldRequestV1,
@@ -1259,5 +1446,29 @@ export const ClientRequestV1 = Type.Union([
   ScrollReadClosedRequestV1,
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板响应
   AgentUiResponseRequestV1,
-]);
+] as const;
+
+export const ClientRequestV1 = Type.Union([...CLIENT_REQUEST_SCHEMAS]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;
+
+type ClientRequestSchema = (typeof CLIENT_REQUEST_SCHEMAS)[number];
+
+/** 从 schema 的 literal type 字段提取稳定的 C2S wire type 名。 */
+function clientRequestType(schema: ClientRequestSchema): string {
+  return (schema as { properties: { type: { const: string } } }).properties.type.const;
+}
+
+/**
+ * 供 server/client 对拍使用的派生 registry；调用方不得另维护一份 type 字符串清单。
+ */
+export const CLIENT_REQUEST_REGISTRY = Object.freeze(
+  CLIENT_REQUEST_SCHEMAS.map((schema) => ({
+    type: clientRequestType(schema),
+    schema,
+  })),
+);
+
+/** 当前主线 live C2S type set；冻结域移除的历史请求不在此集合中。 */
+export const CLIENT_REQUEST_TYPE_SET = Object.freeze(
+  CLIENT_REQUEST_REGISTRY.map((entry) => entry.type),
+);

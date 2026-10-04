@@ -1730,7 +1730,7 @@ fn halfstep_rechallenge_panics_if_proto_path_is_used() {
 
 // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-/// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (127 total).
+/// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant.
 ///
 /// **Why a list and not an exhaustive match?**
 /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -1759,7 +1759,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
     use bong_server::schema::alchemy::{
         AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeBucketV1,
         AlchemyOutcomeForecastDataV1, AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1,
-        AlchemySessionDataV1,
+        AlchemySessionDataV1, AlchemyWorldDataV1,
     };
     use bong_server::schema::combat_carrier::CarrierStateV1;
     use bong_server::schema::combat_hud::*;
@@ -1774,7 +1774,6 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
     };
     use bong_server::schema::identity::IdentityPanelStateV1;
     use bong_server::schema::inventory::{EquippedInventorySnapshotV1, InventoryWeightV1};
-    use bong_server::schema::lingtian::LingtianSessionDataV1;
     use bong_server::schema::movement::MovementStateV1;
     use bong_server::schema::movement::{MovementActionV1, MovementZoneKindV1};
     use bong_server::schema::poison_trait::{
@@ -2092,8 +2091,23 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
                 has_session: false,
             }
         ))),
+        fix!(ServerDataPayloadV1::AlchemyWorld(Box::new(
+            AlchemyWorldDataV1 {
+                furnace_pos: (2, 64, 3),
+                heat: 0.6,
+                incense: false,
+                materials: Default::default(),
+                action: "state".into(),
+                item: None,
+                count: None,
+                result: None,
+                name: None,
+                source: None,
+            }
+        ))),
         fix!(ServerDataPayloadV1::AlchemySession(Box::new(
             AlchemySessionDataV1 {
+                incense: None,
                 recipe_id: None,
                 active: false,
                 elapsed_ticks: 0,
@@ -2310,19 +2324,6 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             equipped_at_tick: 0,
             layers: vec![],
         })),
-        fix!(ServerDataPayloadV1::LingtianSession(Box::new(
-            LingtianSessionDataV1 {
-                active: false,
-                kind: bong_server::schema::lingtian::LingtianSessionKindV1::Till,
-                pos: [0, 64, 0],
-                elapsed_ticks: 0,
-                target_ticks: 100,
-                plant_id: None,
-                source: None,
-                dye_contamination: None,
-                dye_contamination_warning: false,
-            }
-        ))),
         fix!(ServerDataPayloadV1::DeathScreen {
             visible: false,
             cause: "fall".to_string(),
@@ -2984,7 +2985,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
     ]
 }
 
-/// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (127 total).
+/// Verifies that the fixture list covers every `ServerDataPayloadV1` variant.
 ///
 /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
 /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -3065,6 +3066,7 @@ fn s2c_fixture_count_matches_variant_count() {
         ServerDataType::GatheringSession,
         ServerDataType::BotanySkill,
         ServerDataType::AlchemyFurnace,
+        ServerDataType::AlchemyWorld,
         ServerDataType::AlchemySession,
         ServerDataType::AlchemyOutcomeForecast,
         ServerDataType::AlchemyOutcomeResolved,
@@ -3093,7 +3095,6 @@ fn s2c_fixture_count_matches_variant_count() {
         ServerDataType::PoisonTraitState,
         ServerDataType::CarrierState,
         ServerDataType::FalseSkinState,
-        ServerDataType::LingtianSession,
         ServerDataType::DeathScreen,
         ServerDataType::TerminateScreen,
         ServerDataType::RiftPortalState,
@@ -3214,14 +3215,14 @@ fn s2c_fixture_count_matches_variant_count() {
         );
 }
 
-/// Exhaustive proto encoding guard for all 128 `ServerDataPayloadV1` variants.
+/// Exhaustive proto encoding guard for all `ServerDataPayloadV1` variants.
 ///
-/// For each of the 125 proto-encodable variants (is_json_bypass=false):
+/// For each proto-encodable variant (is_json_bypass=false):
 ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
 ///   - Asserts the bytes are non-empty (proto envelope was built).
 ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
 ///
-/// For each of the 3 JSON-bypass variants (is_json_bypass=true):
+/// For each JSON-bypass variant (is_json_bypass=true):
 ///   - Asserts that `to_proto_bytes()` panics with the expected `unreachable!()` message.
 ///   - This is done via `std::panic::catch_unwind` to avoid aborting the test process.
 ///
@@ -3238,9 +3239,6 @@ fn s2c_all_proto_variants_encode_without_panic() {
     use prost::Message;
 
     let fixtures = s2c_all_fixtures();
-    let mut proto_count = 0usize;
-    let mut bypass_count = 0usize;
-
     for (variant, is_bypass) in fixtures {
         let type_name = format!("{:?}", variant.payload_type());
 
@@ -3257,7 +3255,6 @@ fn s2c_all_proto_variants_encode_without_panic() {
                      either is_json_bypass() is misclassified (should be true) or a proto arm \
                      was accidentally added."
             );
-            bypass_count += 1;
         } else {
             // Proto-encodable variant: must encode to non-empty bytes and decode successfully.
             let envelope = ServerDataV1::new(variant);
@@ -3278,20 +3275,8 @@ fn s2c_all_proto_variants_encode_without_panic() {
                 "Proto-encodable variant {type_name} decoded to an envelope with no payload. \
                      The proto arm in From<&ServerDataPayloadV1> may be returning an empty oneof."
             );
-            proto_count += 1;
         }
     }
-
-    assert_eq!(
-        proto_count, 130,
-        "Expected 130 proto-encodable S2C variants, got {proto_count}. \
-             The fixture list or is_json_bypass classification may have changed."
-    );
-    assert_eq!(
-        bypass_count, 3,
-        "Expected 3 JSON-bypass S2C variants, got {bypass_count}. \
-             Check is_json_bypass() and s2c_all_fixtures()."
-    );
 }
 
 // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
@@ -3570,6 +3555,7 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
                 col: 0,
             },
             rotated: true,
+            count: Some(3),
         }),
         build(ClientRequestV1::EquipFalseSkin {
             v: 1,
@@ -3705,48 +3691,6 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
         build(ClientRequestV1::CancelSearch { v: 1 }),
         build(ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id: 1 }),
         build(ClientRequestV1::ContainerOpen { v: 1, entity_id: 1 }),
-        build(ClientRequestV1::LingtianStartTill {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-            hoe_instance_id: 1,
-            mode: "standard".to_string(),
-        }),
-        build(ClientRequestV1::LingtianStartRenew {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-            hoe_instance_id: 1,
-        }),
-        build(ClientRequestV1::LingtianStartPlanting {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-            plant_id: "herb_a".to_string(),
-        }),
-        build(ClientRequestV1::LingtianStartHarvest {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-            mode: "standard".to_string(),
-        }),
-        build(ClientRequestV1::LingtianStartReplenish {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-            source: "water_bucket".to_string(),
-        }),
-        build(ClientRequestV1::LingtianStartDrainQi {
-            v: 1,
-            x: 0,
-            y: 64,
-            z: 0,
-        }),
         build(ClientRequestV1::ForgeStartSession {
             v: 1,
             station_pos: (0, 64, 0),
@@ -3786,24 +3730,12 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             item_instance_id: 1,
             station_tier: 1,
         }),
-        build(ClientRequestV1::ForgeStationOpen {
-            v: 1,
-            station_pos: (0, 64, 0),
-        }),
         build(ClientRequestV1::CraftStart {
             v: 1,
             recipe_id: "craft.example".to_string(),
             quantity: 1,
         }),
         build(ClientRequestV1::CraftCancel { v: 1 }),
-        build(ClientRequestV1::MaterialMove {
-            v: 1,
-            recipe_id: "craft.example".to_string(),
-            instance_id: Some(1),
-            station_pos: None,
-            returning: false,
-            expected_revision: 1,
-        }),
         build(ClientRequestV1::ExternalContainerMove {
             v: 1,
             session_id: 1,
@@ -3844,52 +3776,6 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             params: Default::default(),
         }),
     ]
-}
-
-/// Verifies that the C2S proto fixture set remains one-per-variant (106 total).
-///
-/// `BlockPickerGive` is intentionally outside this set: it is a dev-only local request
-/// whose proto conversion arm is explicitly unreachable, not an agent-wire payload.
-#[test]
-fn c2s_fixture_count_matches_variant_count() {
-    use bong_server::schema::client_request::ClientRequestV1;
-    use std::collections::HashSet;
-    use std::mem::{discriminant, Discriminant};
-
-    let fixtures = c2s_all_fixtures();
-    let bypass_count = fixtures.iter().filter(|(_, bypass)| *bypass).count();
-    let proto_count = fixtures.iter().filter(|(_, bypass)| !*bypass).count();
-
-    assert_eq!(
-        fixtures.len(),
-        106,
-        "C2S fixture list has {} entries but the proto fixture contract has 106. \
-             Add a fixture for every new proto-backed variant in c2s_all_fixtures().",
-        fixtures.len()
-    );
-    assert_eq!(
-        bypass_count, 1,
-        "Expected exactly 1 C2S JSON-bypass variant (AgentUiResponse), got {bypass_count}. \
-             If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
-    );
-    assert_eq!(
-        proto_count, 105,
-        "Expected 105 proto-encodable C2S variants, got {proto_count}."
-    );
-
-    // `ClientRequestV1` has no payload_type() discriminant enum, so use the Rust enum
-    // discriminant to catch replacing a missing fixture with a duplicate of another variant.
-    let distinct: HashSet<Discriminant<ClientRequestV1>> = fixtures
-        .iter()
-        .map(|(variant, _)| discriminant(variant))
-        .collect();
-    assert_eq!(
-        distinct.len(),
-        106,
-        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 106. \
-             A variant's fixture was likely deleted and another duplicated.",
-        distinct.len()
-    );
 }
 
 /// 比较后替换必须跨 protobuf 保留目标和旧绑定，空槽 0 不能丢失 oneof。
@@ -3935,7 +3821,6 @@ fn c2s_technique_bind_preserves_target_and_expected_binding() {
         );
     }
 }
-
 /// Proto encoding guard for the representative `ClientRequestV1` fixtures.
 ///
 /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.

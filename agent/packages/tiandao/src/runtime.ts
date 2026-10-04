@@ -1,3 +1,10 @@
+/**
+ * 天道运行时编排：把世界状态、事件和 Agent 决策串成一个可发布的 tick。
+ *
+ * 本模块负责 tick 生命周期、事件注入、仲裁和发布；Redis 的协议解析由
+ * `redis-ipc.ts` 负责，WorldModel 的状态持有与持久化形状由 `world-model.ts`
+ * 负责。这里的辅助函数只整理边界，不改变下游 schema 或事件语义。
+ */
 import type {
   AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
@@ -13,7 +20,6 @@ import type {
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
-  ZonePressureCrossedV1,
   ZoneSnapshot,
 } from "@bong/schema";
 import type { AgentUiRuntime } from "./ui/agentUiRuntime.js";
@@ -71,8 +77,11 @@ declare global {
   }
 }
 
+/** 命令行 mock 模式开关。 */
 export const MOCK_FLAG = "--mock";
+/** 天道运行时默认使用的模型名。 */
 export const DEFAULT_MODEL = "gpt-5.4-mini";
+/** 本地开发时 Redis 的默认连接地址。 */
 export const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379";
 const TICK_INTERVAL_MS = 5_000;
 const CHAT_DRAIN_WINDOW = 128;
@@ -90,7 +99,9 @@ const SCORCH_WEATHER_ZONE_IDS = new Set([
   "north_waste_east_scorch",
   "drift_scorch_001",
 ]);
+/** 运行时允许通过环境变量选择的模型白名单。 */
 export const ALLOWED_LLM_MODELS = Object.freeze([DEFAULT_MODEL, "gpt-5.4"] as const);
+/** LLM 客户端按职责路由的稳定角色名。 */
 export const MODEL_ROUTE_ROLES = Object.freeze([
   "default",
   "annotate",
@@ -99,9 +110,12 @@ export const MODEL_ROUTE_ROLES = Object.freeze([
   "era",
 ] as const);
 
+/** 运行时路由支持的模型角色。 */
 export type RuntimeModelRole = (typeof MODEL_ROUTE_ROLES)[number];
+/** 参与常规 tick 推演的 Agent 角色（annotate 仅用于独立客户端）。 */
 export type TickAgentRole = Extract<RuntimeModelRole, "default" | "calamity" | "mutation" | "era">;
 
+/** 每个 Agent 角色使用的模型覆盖配置。 */
 export interface RuntimeModelOverrides {
   default: string;
   annotate: string;
@@ -110,6 +124,7 @@ export interface RuntimeModelOverrides {
   era: string;
 }
 
+/** 与角色一一对应的 LLM 客户端集合。 */
 export interface RuntimeRoleClients {
   default: LlmClient;
   annotate: LlmClient;
@@ -120,6 +135,7 @@ export interface RuntimeRoleClients {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/** 由命令行和环境变量解析出的运行时配置。 */
 export interface RuntimeConfig {
   mockMode: boolean;
   model: string;
@@ -129,6 +145,7 @@ export interface RuntimeConfig {
   apiKey: string | null;
 }
 
+/** 一个参与 tick 的 Agent 能力，以及可选的事件注入接口。 */
 export interface TickAgent {
   name: string;
   tick(client: LlmClient, model: string, state: WorldStateV1): Promise<AgentDecision | null>;
@@ -145,6 +162,7 @@ export interface TickAgent {
   setTsyRuntimeEvents?(events: TsyRuntimeEventV1[]): void;
 }
 
+/** runtime 需要的 Redis 最小能力面；具体实现由 RedisIpc 提供。 */
 export interface RuntimeRedis {
   connect(): Promise<void>;
   getLatestState(): WorldStateV1 | null;
@@ -160,7 +178,6 @@ export interface RuntimeRedis {
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
   drainFaunaEcologyEvents?(): FaunaEcologySnapshotV1[];
-  drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
   publishNarrations(request: NarrationPublishRequest): Promise<void>;
@@ -172,6 +189,7 @@ export interface RuntimeRedis {
   disconnect(): Promise<void>;
 }
 
+/** 可替换的 runtime 依赖，供生产启动和契约测试共用。 */
 export interface RuntimeDeps {
   agents?: TickAgent[];
   createRedis?: (url: string) => RuntimeRedis;
@@ -199,6 +217,7 @@ interface WorldStateCursor {
   ts: number | null;
 }
 
+/** 单个 tick 的输入、事件注入和发布回调。 */
 export interface TickDeps {
   agents: TickAgent[];
   llmClient: LlmClient;
@@ -231,22 +250,26 @@ export interface TickDeps {
   deterministicNpcProducer?: DeterministicNpcProducer;
 }
 
+/** 发布到 server 的 tick 关联信息。 */
 export interface TickPublishMetadata {
   sourceTick: number;
   correlationId: string;
 }
 
+/** Agent 决策命令的发布请求。 */
 export interface CommandPublishRequest {
   source: "arbiter";
   commands: Command[];
   metadata: TickPublishMetadata;
 }
 
+/** 天道叙事的发布请求。 */
 export interface NarrationPublishRequest {
   narrations: Narration[];
   metadata: TickPublishMetadata;
 }
 
+/** 一个 tick 的可观察结果与遥测摘要。 */
 export interface TickResult {
   totalCommands: number;
   totalNarrations: number;
@@ -262,10 +285,38 @@ interface PendingTsyRuntimeEventBatch {
   awaitingAgents: Set<string>;
 }
 
+interface ResolvedTickContext {
+  measuredTickStartMs: number;
+  effectiveModelOverrides: RuntimeModelOverrides;
+  effectiveRoleClients: RuntimeRoleClients;
+  metadata: TickPublishMetadata;
+}
+
+interface TickMetricsInput {
+  state: WorldStateV1;
+  measuredTickStartMs: number;
+  agentResults: TickAgentResult[];
+  mergedCommandCount: number;
+  mergedNarrationCount: number;
+  chatSignalCount: number;
+  eraChanged: boolean;
+  timeoutCount: number;
+  llmBackoffCount: number;
+  backoffCount: number;
+  parseFailCount: number;
+  reconnectCount: number;
+  staleStateSkipped: boolean;
+  narrationScores: NonNullable<TickMetrics["narrationScores"]>;
+  narrationLowScoreCount: number;
+  worldModel?: WorldModel;
+}
+
+/** 从仓库根目录的 `.env` 加载运行时变量。 */
 export function loadEnv(): void {
   dotenv.config({ path: resolve(__dirname, "../../../../.env") });
 }
 
+/** 根据命令行参数和环境变量构造运行时配置。 */
 export function resolveRuntimeConfig(
   argv: string[] = process.argv,
   env: NodeJS.ProcessEnv = process.env,
@@ -288,6 +339,7 @@ export function resolveRuntimeConfig(
   };
 }
 
+/** 构造生产环境使用的 calamity、mutation、era Agent。 */
 export function createDefaultAgents(
   optionsOrNow:
     | { now?: () => number; modelOverrides?: RuntimeModelOverrides }
@@ -383,6 +435,7 @@ function redactRedisUrlForLog(redisUrl: string): string {
   }
 }
 
+/** 构造兼容旧调用方的默认 LLM 客户端。 */
 export function createRuntimeClient(
   config: RuntimeConfig,
   deps: Pick<RuntimeDeps, "createClient" | "createMockClient"> = {},
@@ -402,6 +455,7 @@ export function createRuntimeClient(
   });
 }
 
+/** 按 Agent 角色构造一组 LLM 客户端。 */
 export function createRuntimeClients(
   config: RuntimeConfig,
   deps: Pick<RuntimeDeps, "createClient" | "createMockClient"> = {},
@@ -451,13 +505,67 @@ export function createRuntimeClients(
   };
 }
 
+/** 一次解析本 tick 的客户端、模型路由和关联信息，让 runTick 只呈现生命周期。 */
+function resolveTickContext(state: WorldStateV1, deps: TickDeps): ResolvedTickContext {
+  const effectiveModelOverrides = deps.modelOverrides ?? {
+    default: deps.model,
+    annotate: deps.model,
+    calamity: deps.model,
+    mutation: deps.model,
+    era: deps.model,
+  };
+  const effectiveRoleClients = deps.llmClientsByRole ?? {
+    default: deps.llmClient,
+    annotate: deps.llmClient,
+    calamity: deps.llmClient,
+    mutation: deps.llmClient,
+    era: deps.llmClient,
+  };
+
+  return {
+    measuredTickStartMs: deps.tickStartedAtMs ?? Date.now(),
+    effectiveModelOverrides,
+    effectiveRoleClients,
+    metadata: {
+      sourceTick: state.tick,
+      correlationId: `tiandao-tick-${state.tick}`,
+    },
+  };
+}
+
+/** 将 tick 的运行结果收束为 telemetry 需要的稳定结构。 */
+function buildTickMetrics(input: TickMetricsInput): TickMetrics {
+  const errorBreakdown: TickErrorBreakdown = {
+    ...emptyErrorBreakdown(),
+    timeout: input.timeoutCount,
+    backoff: input.backoffCount + input.llmBackoffCount,
+    parseFail: input.parseFailCount,
+    reconnect: input.reconnectCount,
+    dedupeDrop: 0,
+  };
+
+  return {
+    tick: input.state.tick,
+    timestamp: Date.now(),
+    durationMs: Math.max(0, Date.now() - input.measuredTickStartMs),
+    agentResults: input.agentResults,
+    mergedCommandCount: input.mergedCommandCount,
+    mergedNarrationCount: input.mergedNarrationCount,
+    chatSignalCount: input.chatSignalCount,
+    eraChanged: input.eraChanged,
+    errorBreakdown,
+    staleStateSkipped: input.staleStateSkipped,
+    narrationScores: input.narrationScores,
+    narrationLowScoreCount: input.narrationLowScoreCount,
+    narrationAverageScore: summarizeNarrationAverage(input.narrationScores),
+    negDomainEscape: input.worldModel?.getNegDomainEscapeTelemetrySnapshot(),
+  };
+}
+
+/** 执行一次完整 tick：注入上下文、并发调用 Agent、仲裁并发布结果。 */
 export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<TickResult> {
   const {
     agents,
-    llmClient,
-    model,
-    llmClientsByRole,
-    modelOverrides,
     chatSignals,
     npcDeathEvents,
     buttonClickEvents,
@@ -467,7 +575,6 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     publishCommands,
     publishNarrations,
     logger,
-    tickStartedAtMs,
     reconnectCount,
     backoffCount,
     staleStateSkipped,
@@ -476,7 +583,6 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     telemetryWarnLogger,
     deterministicNpcProducer,
   } = deps;
-
   // plan-agent-ui-data-v1 P2 — 把上轮 drainPendingButtonClicks 结果注入推演日志，
   // 让 agent context 感知玩家 UI 交互（button_click 事件作为玩家意图信号）。
   // 注意：实际注入 agents 在 applyButtonClickEventsToAgents 完成（见下方）。
@@ -494,26 +600,12 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
       `(player TSY enter/exit context for this tick)`,
     );
   }
-  const measuredTickStartMs = tickStartedAtMs ?? Date.now();
-  const effectiveModelOverrides = modelOverrides ?? {
-    default: model,
-    annotate: model,
-    calamity: model,
-    mutation: model,
-    era: model,
-  };
-  const effectiveRoleClients = llmClientsByRole ?? {
-    default: llmClient,
-    annotate: llmClient,
-    calamity: llmClient,
-    mutation: llmClient,
-    era: llmClient,
-  };
-  const metadata: TickPublishMetadata = {
-    sourceTick: state.tick,
-    correlationId: `tiandao-tick-${state.tick}`,
-  };
-
+  const {
+    measuredTickStartMs,
+    effectiveModelOverrides,
+    effectiveRoleClients,
+    metadata,
+  } = resolveTickContext(state, deps);
   const negDomainNarrations = renderNegDomainNarrations({
     previousState: worldModel?.latestState ?? null,
     state,
@@ -714,30 +806,24 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
 
     return count;
   }, 0);
-  const errorBreakdown: TickErrorBreakdown = {
-    ...emptyErrorBreakdown(),
-    timeout: timeoutCount,
-    backoff: (backoffCount ?? 0) + llmBackoffCount,
-    parseFail: parseFailCount,
-    reconnect: reconnectCount ?? 0,
-    dedupeDrop: 0,
-  };
-  const metrics: TickMetrics = {
-    tick: state.tick,
-    timestamp: Date.now(),
-    durationMs: Math.max(0, Date.now() - measuredTickStartMs),
+  const metrics = buildTickMetrics({
+    state,
+    measuredTickStartMs,
     agentResults,
     mergedCommandCount: merged.commands.length,
     mergedNarrationCount: merged.narrations.length,
     chatSignalCount: chatSignalCount ?? chatSignals?.length ?? 0,
     eraChanged: merged.currentEra !== null,
-    errorBreakdown,
+    timeoutCount,
+    llmBackoffCount,
+    backoffCount: backoffCount ?? 0,
+    parseFailCount,
+    reconnectCount: reconnectCount ?? 0,
     staleStateSkipped: staleStateSkipped ?? false,
     narrationScores,
     narrationLowScoreCount,
-    narrationAverageScore: summarizeNarrationAverage(narrationScores),
-    negDomainEscape: worldModel?.getNegDomainEscapeTelemetrySnapshot(),
-  };
+    worldModel,
+  });
 
   if (telemetrySink) {
     try {
@@ -787,6 +873,7 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+/** 按连续失败次数计算 Redis/runtime 主循环的指数退避时长。 */
 export function computeLoopBackoffMs(failureStreak: number): number {
   if (failureStreak <= 0) {
     return LOOP_BACKOFF_BASE_MS;
@@ -951,7 +1038,6 @@ async function processEcologyEvents(args: {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
   const faunaEcologyEvents = redis.drainFaunaEcologyEvents?.() ?? [];
-  const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
 
@@ -963,11 +1049,6 @@ async function processEcologyEvents(args: {
   for (const event of faunaEcologyEvents) {
     sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
     narrations.push(...ecologyAnalyzer.ingestFaunaEcology(worldModel, event));
-  }
-
-  for (const event of pressureEvents) {
-    sourceTick = Math.max(sourceTick ?? event.at_tick, event.at_tick);
-    narrations.push(...ecologyAnalyzer.ingestZonePressureCrossed(worldModel, event));
   }
 
   if (narrations.length === 0 || sourceTick === null) {
@@ -1022,6 +1103,7 @@ async function processEconomyEvents(args: {
   }
 }
 
+/** 将天气事件转换成叙事并发布，忽略非 started 事件。 */
 export async function processWeatherEvents(args: {
   redis: RuntimeRedis;
   logger: Pick<typeof console, "warn">;
@@ -1041,8 +1123,8 @@ export async function processWeatherEvents(args: {
     }
     narrations.push(narration);
     sourceTick = Math.max(
-      sourceTick ?? event.data.started_at_lingtian_tick,
-      event.data.started_at_lingtian_tick,
+      sourceTick ?? event.data.started_at_minute,
+      event.data.started_at_minute,
     );
   }
   if (narrations.length === 0 || sourceTick === null) {
@@ -1062,6 +1144,7 @@ export async function processWeatherEvents(args: {
   }
 }
 
+/** 将单个天气 started 事件转换成可发布叙事。 */
 export function renderWeatherNarration(event: WeatherEventUpdateV1): Narration | null {
   if (event.kind !== "started") {
     return null;
@@ -1113,6 +1196,7 @@ function sameNarration(left: Narration, right: Narration): boolean {
   );
 }
 
+/** 消费蝗灾阶段事件并发布去重后的命令与叙事。 */
 export async function processLocustSwarmEvents(args: {
   redis: RuntimeRedis;
   state: WorldStateV1;
@@ -1177,15 +1261,10 @@ function isLocustSwarmSpawnCommand(command: Command): boolean {
 }
 
 /**
- * plan-agent-ui-data-v1 P2 Fix① — TSY 秘境激活 → triggerUi 参考生产路径。
+ * 消费 TSY 激活事件，为事件中的玩家触发 UI 面板。
  *
- * 当 tsy_zone_activated 事件到达时，从 world state 找出秘境内（zone 名匹配 family_id）
- * 或全体在线玩家（若秘境内无人），选第一个玩家触发 tsy_discovery UI 面板。
- *
- * 设计决议（plan §P2 验收 line 167-170）：
- *   - 仅作为"参考生产路径"：垂死传承/天道启示触发源属下游 skeleton plan，不在本 plan 范围
- *   - dangerTier 从 zone snapshot 的 danger_level 推算（0-7 → 低危/中危/高危/极危）
- *   - 若无在线玩家则静默跳过（不 emit）
+ * 这是参考生产路径：不改变下游 TSY 触发源，只负责从当前 world state
+ * 找到目标玩家并把 danger_level 转成展示等级。
  */
 export async function processTsyZoneActivatedForUi(args: {
   state: WorldStateV1;
@@ -1195,12 +1274,18 @@ export async function processTsyZoneActivatedForUi(args: {
 }): Promise<void> {
   const { state, events, agentUiRuntime, logger } = args;
   for (const event of events) {
-    // 优先用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
+    // 用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
     // 旧逻辑「p.zone === event.family_id」在 zone 名带 _shallow/_mid/_deep 后缀时永不匹配，
-    // 已弃用。fallback 到在线第一个玩家以确保面板总能送达。
-    const targetPlayer =
-      state.players.find((p) => p.uuid === event.player_id) ?? state.players[0];
+    // 已弃用。目标玩家未出现在本轮 world state 时必须跳过，不能错投给其他在线玩家。
+    const targetPlayer = state.players.find((p) => p.uuid === event.player_id);
     if (!targetPlayer) {
+      if (state.players.length > 0) {
+        logger.warn(
+          `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
+          `target_player=${event.player_id} missing from world state, skipping triggerUi`,
+        );
+        continue;
+      }
       logger.log(
         `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
         `no online players, skipping triggerUi`,
@@ -1291,6 +1376,7 @@ function resolveTsyDangerTier(dangerLevel: number): string {
   return "极危";
 }
 
+/** 启动可重连的天道主循环，直到收到 shutdown 或达到测试迭代上限。 */
 export async function runRuntime(
   config: RuntimeConfig,
   deps: RuntimeDeps = {},
@@ -1583,7 +1669,7 @@ export async function runRuntime(
                 }
 
                 // plan-agent-ui-data-v1 P2 Fix①: TSY 秘境发现 → triggerUi 生产路径接通。
-                // drain tsy_zone_activated 事件，为秘境内的玩家触发 tsy_discovery UI 面板。
+                // drain tsy_zone_activated 事件，为事件中的 first-enter 触发玩家打开面板。
                 if (agentUiRuntime) {
                   const tsyActivatedEvents = redis.drainTsyZoneActivatedEvents?.() ?? [];
                   if (tsyActivatedEvents.length > 0) {

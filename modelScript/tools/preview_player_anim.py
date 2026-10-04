@@ -69,6 +69,7 @@ for _d in (LIB / "tools", REPO / "client" / "tools"):
 
 import anim_common as AC  # noqa: E402  关节解剖判据的唯一定义处
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
+from gif_timing import gif_schedule  # noqa: E402  两个预览工具共用的 GIF 时间表
 from bbmodel_maker.workbench.preview_armor_on_body import make_player_skin  # noqa: E402
 from bbmodel_maker.render.render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
 
@@ -485,8 +486,8 @@ def _fit_focus(kfs, display, scene, ids, held_ids, end, samples=17, margin=1.10)
     return center, span
 
 
-def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
-    """一个 tick 的三视图横排。GIF 和静态网格共用，保证两者画的是同一套变换。"""
+def _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views=VIEWS):
+    """一个 tick 的若干视角横排。GIF 和静态网格共用，保证两者画的是同一套变换。"""
     seg = segment_transforms(kfs, tick)
     xform = {ids[n]: m for n, m in seg.items()}
     if held_ids:
@@ -495,7 +496,27 @@ def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
             xform[hid] = hm
     return [(label, render(scene, yaw=yaw, pitch=pitch, size=args.size,
                            xform=xform, focus=focus, shading="mc")[0])
-            for label, yaw, pitch in VIEWS]
+            for label, yaw, pitch in views]
+
+
+def _selected_views(args):
+    """本次要画的视角。--camera 给了就只画这一个自定义机位（PNG 和 GIF 都认）；
+    否则 GIF 按 --gif-views 挑，缺省三视图全要。
+
+    自定义机位的用处：刃面水平的横砍，三个固定视角都几乎侧对刃面，斧头看着像根棍，
+    要从高处俯看才读得出刃口朝哪。
+    """
+    if args.camera is not None:
+        yaw, pitch = args.camera
+        return ((f"CAM yaw={yaw:g} pitch={pitch:g}", yaw, pitch),)
+    if not (args.gif and args.gif_views):
+        return VIEWS
+    wanted = [name.strip() for name in args.gif_views.split(",")]
+    known = {label: (label, yaw, pitch) for label, yaw, pitch in VIEWS}
+    missing = [name for name in wanted if name not in known]
+    if missing:
+        raise SystemExit(f"--gif-views 里有未知视角 {missing}，可选 {list(known)}")
+    return tuple(known[name] for name in wanted)
 
 
 def _end_tick(emote) -> float:
@@ -512,15 +533,20 @@ def _end_tick(emote) -> float:
 
 def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
     end = _end_tick(emote)
+    views = _selected_views(args)
     n = max(2, int(round(end * args.subdiv)))
     gap, lab = 8, 16
-    w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
+    w = args.size * len(views) + gap * (len(views) + 1) + 54
     h = args.size + lab + gap * 2
 
+    # 时间表见 gif_timing：循环动画不含 end（末帧 == 首帧会顿一拍）；一次性动画在
+    # --end-hold-ms > 0 时补一帧收势，只承担停留时长，一轮总时长 = 动画时长 + hold。
+    per = max(20, int(round(50.0 / args.subdiv / args.speed)))
+    schedule = gif_schedule(end, n, per, bool(emote.get("isLoop", False)), args.end_hold_ms)
+
     frames = []
-    for i in range(n):
-        tick = end * i / n            # 不含 end：末帧==首帧时循环会顿一拍
-        tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick)
+    for tick, _ in schedule:
+        tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views)
         canvas = Image.new("RGB", (w, h), (16, 17, 20))
         draw = ImageDraw.Draw(canvas)
         draw.text((6, h // 2), f"t{tick:4.1f}", fill=(232, 232, 224))
@@ -531,16 +557,24 @@ def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
             x += args.size + gap
         frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
 
-    per = max(20, int(round(50.0 / args.subdiv / args.speed)))
-    out = args.out or (LIB / "out" / f"{args.json.stem}.gif")
+    durations = [duration for _, duration in schedule]
+    out =args.out or (LIB / "out" / f"{args.json.stem}.gif")
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:],
-                   duration=per, loop=0, disposal=2, optimize=False)
-    print(f"{out}  {n} 帧 / {per}ms 每帧 / 循环 {n * per}ms（原速 {end * 50:.0f}ms）")
+                   duration=durations, loop=0, disposal=2, optimize=False)
+    print(f"{out}  {len(frames)} 帧 / {per}ms 每帧 / 一轮 {sum(durations)}ms（原速 {end * 50:.0f}ms）")
     return 0
 
 
-def main() -> int:
+def non_negative_int(text: str) -> int:
+    """argparse 类型：非负整数。GIF 帧时长加上负数会让 Pillow 报错或写出坏 GIF。"""
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"必须是非负整数，收到 {value}")
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("json", type=Path, help="player_animation JSON")
     ap.add_argument("--hold", type=Path, default=None, help="手持物 bbmodel（挂右手）")
@@ -558,7 +592,18 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=0.35,
                     help="GIF 播放速度倍率（GIF 用）。默认 0.35 倍慢放：原速 8 tick 只有"
                          "400ms，且多数看图器把 <50ms 的帧延迟钳到 100ms，原速反而失真")
-    args = ap.parse_args()
+    ap.add_argument("--gif-views", default=None,
+                    help=f"GIF 只画这几个视角（逗号分隔，可选 {[v[0] for v in VIEWS]}）；缺省全画")
+    ap.add_argument("--end-hold-ms", type=non_negative_int, default=0,
+                    help="一次性动画播完在收势帧停多久再重播（GIF 用，非负毫秒）；循环动画忽略")
+    ap.add_argument("--camera", nargs=2, type=float, metavar=("YAW", "PITCH"), default=None,
+                    help="只画一个自定义机位（度，与 VIEWS 同一约定：FRONT=180、SIDE=96、pitch 为俯角）；"
+                         "PNG 与 GIF 都生效，给了就忽略 --gif-views")
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     # **先剥到 emote 再用**。这里曾经拿整份文档当 emote 使：`collect_keyframes` 那行
     # 自己做了 `.get("emote", ...)` 所以关键帧是对的，但后面两处 `endTick` 取的是**文档
@@ -584,6 +629,7 @@ def main() -> int:
     if args.gif:
         return _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus)
 
+    views = _selected_views(args)
     rows = []
     for tick in ticks:
         seg = segment_transforms(kfs, tick)
@@ -593,14 +639,14 @@ def main() -> int:
             for hid in held_ids:
                 xform[hid] = hm
         tiles = []
-        for label, yaw, pitch in VIEWS:
+        for label, yaw, pitch in views:
             img, _ = render(scene, yaw=yaw, pitch=pitch, size=args.size,
                             xform=xform, focus=focus, shading="mc")
             tiles.append((label, img))
         rows.append((tick, tiles))
 
     gap, lab = 8, 16
-    w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
+    w = args.size * len(views) + gap * (len(views) + 1) + 54
     h = (args.size + lab + gap) * len(rows) + gap
     canvas = Image.new("RGB", (w, h), (16, 17, 20))
     draw = ImageDraw.Draw(canvas)

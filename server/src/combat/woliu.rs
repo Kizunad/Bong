@@ -1956,6 +1956,8 @@ mod tests {
                 QiProjectile {
                     owner: None,
                     qi_payload: 1.0,
+                    carrier_instance_id: None,
+                    carrier_owner_id: None,
                 },
             ))
             .id();
@@ -2017,6 +2019,8 @@ mod tests {
             QiProjectile {
                 owner: None,
                 qi_payload: 1.0,
+                carrier_instance_id: None,
+                carrier_owner_id: None,
             },
         ));
         app.add_systems(Update, vortex_intercept_tick);

@@ -455,10 +455,6 @@ mod tests {
     use crate::cultivation::forging::ForgeRequest;
     use crate::cultivation::insight::InsightChosen;
     use crate::inventory::{DroppedLootEntry, DroppedLootRegistry, ItemRegistry};
-    use crate::lingtian::events::{
-        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-        StartReplenishRequest, StartTillRequest,
-    };
     use crate::network::client_request_handler::AlchemyMockState;
     use crate::network::dropped_loot_sync_emit;
     use crate::schema::client_request::ClientRequestV1;
@@ -504,12 +500,6 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::alchemy::PlaceFurnaceRequest>();
         app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
-        app.add_event::<StartTillRequest>();
-        app.add_event::<StartRenewRequest>();
-        app.add_event::<StartPlantingRequest>();
-        app.add_event::<StartHarvestRequest>();
-        app.add_event::<StartReplenishRequest>();
-        app.add_event::<StartDrainQiRequest>();
         app.add_event::<crate::combat::events::AttackIntent>();
         app.add_event::<crate::world::extract_system::StartExtractRequest>();
         app.add_event::<crate::world::extract_system::CancelExtractRequest>();
@@ -537,9 +527,6 @@ mod tests {
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         // plan-agent-ui-data-v1 P0 — handle_client_request_payloads 需要 AgentUiResponseEvent。
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
-        // fix-spec-1901-v2 §4.1 — handle_client_request_payloads 的 lingtian
-        // 分支 enqueue 进 `PendingLingtianRequests`，测试 app 必须 init。
-        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
 
         // Run request handler, then broadcast dropped_loot_sync if the registry changed.
         app.add_systems(
@@ -1253,6 +1240,8 @@ mod tests {
                     source_col: 0,
                     world_pos: [8.5, 66.0, 8.5],
                     dimension: DimensionKind::Overworld,
+                    owner: None,
+                    visibility: crate::inventory::DroppedLootVisibility::Public,
                     item: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
                 },
             );

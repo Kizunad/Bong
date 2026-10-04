@@ -21,10 +21,18 @@ use crate::persistence::{bootstrap_sqlite, identity as identity_db};
 use crate::schema::server_data::ServerDataType;
 use crate::schema::social::RenownTagV1;
 use crate::social::events::PlayerChatCollected;
+use crate::world::dimension::{
+    CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
+};
+use crate::world::dimension_transfer::{
+    apply_dimension_transfers, DimensionTransferRequest, DimensionTransferSet,
+};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use valence::prelude::{App, Events, Position, Update};
-use valence::protocol::packets::play::CustomPayloadS2c;
+use valence::prelude::{
+    App, DVec3, EntityLayerId, Events, Position, Update, VisibleChunkLayer, VisibleEntityLayers,
+};
+use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
 use valence::testing::{create_mock_client, MockClientHelper};
 
 fn item_instance(instance_id: u64, template_id: &str, display_name: &str) -> ItemInstance {
@@ -182,17 +190,37 @@ fn spawn_trade_player(app: &mut App, name: &str, character_id: &str, x: f64) -> 
     spawn_trade_player_with_helper(app, name, character_id, x).0
 }
 
+fn set_trade_player_dimension(
+    app: &mut App,
+    entity: Entity,
+    layer: Entity,
+    dimension: DimensionKind,
+) {
+    let mut visible_layers = VisibleEntityLayers::default();
+    visible_layers.0.insert(layer);
+    app.world_mut().entity_mut(entity).insert((
+        EntityLayerId(layer),
+        VisibleChunkLayer(layer),
+        visible_layers,
+        CurrentDimension(dimension),
+    ));
+}
+
 fn setup_trade_app() -> App {
     let mut app = qi_test_app();
     app.init_resource::<TradeOfferRegistry>();
     app.add_event::<TradeOfferRequest>();
     app.add_event::<TradeOfferResponseEvent>();
+    app.add_event::<DimensionTransferRequest>();
     app.add_event::<SocialExposureEvent>();
     app.add_systems(
         Update,
         (
-            dispatch_trade_offers,
-            handle_trade_offer_responses.after(dispatch_trade_offers),
+            apply_dimension_transfers.in_set(DimensionTransferSet),
+            dispatch_trade_offers.after(DimensionTransferSet),
+            handle_trade_offer_responses
+                .after(dispatch_trade_offers)
+                .after(DimensionTransferSet),
             apply_social_exposures.after(handle_trade_offer_responses),
             crate::network::inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(handle_trade_offer_responses),
@@ -247,6 +275,20 @@ fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerData
         );
     }
     payloads
+}
+
+fn collect_chat_messages(helper: &mut MockClientHelper) -> Vec<String> {
+    helper
+        .collect_received()
+        .0
+        .into_iter()
+        .filter_map(|frame| {
+            frame
+                .decode::<GameMessageS2c>()
+                .ok()
+                .map(|packet| packet.chat.to_legacy_lossy())
+        })
+        .collect()
 }
 
 fn spawn_social_payload_client(
@@ -504,6 +546,97 @@ fn social_events_persist_and_reload_by_character_id() {
     assert_eq!(loaded.renown.fame, 3);
     assert_eq!(loaded.renown.notoriety, 5);
     assert_eq!(loaded.renown.tags[0].tag, "戮道者");
+
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+fn relationship_update_survives_social_sqlite_failure() {
+    let data_dir = unique_temp_dir("relationship-persist-failure");
+    let db_path = data_dir.join("bong.db");
+    std::fs::create_dir_all(&db_path).expect("test database path should be a directory");
+    let persistence = PersistenceSettings::with_db_path(
+        db_path,
+        "social-relationship-persist-failure".to_string(),
+    );
+    let mut app = qi_test_app();
+    app.insert_resource(persistence);
+    app.add_event::<SocialRelationshipEvent>();
+    app.add_systems(Update, apply_social_relationships);
+
+    let (left_bundle, _) = create_mock_client("Left");
+    let left = app.world_mut().spawn(left_bundle).id();
+    app.world_mut().entity_mut(left).insert((
+        Lifecycle {
+            character_id: "char:left".to_string(),
+            ..Default::default()
+        },
+        Relationships::default(),
+    ));
+    let (right_bundle, _) = create_mock_client("Right");
+    let right = app.world_mut().spawn(right_bundle).id();
+    app.world_mut().entity_mut(right).insert((
+        Lifecycle {
+            character_id: "char:right".to_string(),
+            ..Default::default()
+        },
+        Relationships::default(),
+    ));
+
+    app.world_mut().send_event(SocialRelationshipEvent {
+        left: "char:left".to_string(),
+        right: "char:right".to_string(),
+        left_kind: RelationshipKindV1::Feud,
+        right_kind: RelationshipKindV1::Feud,
+        tick: 7,
+        metadata: serde_json::json!({ "source": "persist_failure" }),
+    });
+    app.update();
+
+    let left_relationships = app
+        .world()
+        .get::<Relationships>(left)
+        .expect("left player should retain runtime relationships");
+    assert_eq!(left_relationships.edges.len(), 1);
+    assert_eq!(left_relationships.edges[0].peer, "char:right");
+    assert_eq!(left_relationships.edges[0].kind, RelationshipKindV1::Feud);
+    let right_relationships = app
+        .world()
+        .get::<Relationships>(right)
+        .expect("right player should retain runtime relationships");
+    assert_eq!(right_relationships.edges.len(), 1);
+    assert_eq!(right_relationships.edges[0].peer, "char:left");
+
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+fn social_exposure_retry_is_idempotent() {
+    let (persistence, data_dir) = social_persistence("exposure-retry");
+    let exposure = SocialExposureEvent {
+        actor: "char:actor".to_string(),
+        kind: ExposureKindV1::Chat,
+        witnesses: vec!["char:witness".to_string()],
+        tick: 12,
+        zone: Some("spawn".to_string()),
+    };
+
+    persist_social_exposure(&persistence, &exposure)
+        .expect("first persistence attempt should work");
+    persist_social_exposure(&persistence, &exposure).expect("retry should remain successful");
+
+    let connection = open_social_connection(&persistence).expect("social sqlite should open");
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM social_exposures WHERE char_id = ?1",
+            rusqlite::params!["char:actor"],
+            |row| row.get(0),
+        )
+        .expect("exposure count should be queryable");
+    assert_eq!(
+        count, 1,
+        "retry must not duplicate the same social exposure"
+    );
 
     let _ = std::fs::remove_dir_all(data_dir);
 }
@@ -1346,32 +1479,24 @@ fn trade_offer_dispatches_payload_only_to_target_and_hides_ids() {
 }
 
 #[test]
-fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
+fn trade_offer_dispatch_rejects_cross_dimension_players() {
     let mut app = qi_test_app();
     app.init_resource::<TradeOfferRegistry>();
     app.add_event::<TradeOfferRequest>();
     app.add_systems(Update, dispatch_trade_offers);
-    let (mut initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
+
+    let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
     initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
     let initiator = app.world_mut().spawn(initiator_bundle).id();
-    let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
-    initiator_identities.identities[0].renown.notoriety = 30;
-    initiator_identities.identities[0]
-        .revealed_tags
-        .push(RevealedTag {
-            kind: RevealedTagKind::DuguRevealed,
-            witnessed_at_tick: 20,
-            witness_realm: Realm::Spirit,
-            permanent: true,
-        });
     app.world_mut().entity_mut(initiator).insert((
         Lifecycle {
             character_id: "char:initiator".to_string(),
             ..Default::default()
         },
+        CurrentDimension(DimensionKind::Overworld),
         trade_inventory(1001, "出物"),
-        initiator_identities,
     ));
+
     let (mut target_bundle, mut target_helper) = create_mock_client("Target");
     target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
     let target = app.world_mut().spawn(target_bundle).id();
@@ -1380,6 +1505,7 @@ fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
             character_id: "char:target".to_string(),
             ..Default::default()
         },
+        CurrentDimension(DimensionKind::Tsy),
         trade_inventory(2002, "回物"),
     ));
 
@@ -1392,14 +1518,180 @@ fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
     app.update();
     flush_all_client_packets(&mut app);
 
-    assert!(
-        collect_server_data_payloads(&mut target_helper).is_empty(),
-        "Wanted initiator should be rejected before trade_offer payload reaches target"
-    );
+    assert!(collect_server_data_payloads(&mut target_helper).is_empty());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut initiator_helper)
+        .iter()
+        .any(|message| message.contains("对方不在此界，无法交易")));
+}
+
+#[test]
+fn trade_offer_dispatch_reports_cross_dimension_before_distance_gate() {
+    let mut app = qi_test_app();
+    app.init_resource::<TradeOfferRegistry>();
+    app.add_event::<TradeOfferRequest>();
+    app.add_systems(Update, dispatch_trade_offers);
+
+    let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+    initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+    let initiator = app.world_mut().spawn(initiator_bundle).id();
+    app.world_mut().entity_mut(initiator).insert((
+        Lifecycle {
+            character_id: "char:initiator".to_string(),
+            ..Default::default()
+        },
+        CurrentDimension(DimensionKind::Overworld),
+        trade_inventory(1001, "出物"),
+    ));
+
+    let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+    target_bundle.player.position = Position::new([100.0, 64.0, 0.0]);
+    let target = app.world_mut().spawn(target_bundle).id();
+    app.world_mut().entity_mut(target).insert((
+        Lifecycle {
+            character_id: "char:target".to_string(),
+            ..Default::default()
+        },
+        CurrentDimension(DimensionKind::Tsy),
+        trade_inventory(2002, "回物"),
+    ));
+
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
+    assert!(collect_server_data_payloads(&mut target_helper).is_empty());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut initiator_helper)
+        .iter()
+        .any(|message| message.contains("对方不在此界，无法交易")));
+}
+
+#[test]
+fn trade_offer_dispatch_runs_after_same_tick_dimension_transfer() {
+    let mut app = setup_trade_app();
+    let overworld = app.world_mut().spawn(OverworldLayer).id();
+    let tsy = app.world_mut().spawn(TsyLayer).id();
+    app.insert_resource(DimensionLayers { overworld, tsy });
+
+    let (initiator, mut initiator_helper) =
+        spawn_trade_player_with_helper(&mut app, "Initiator", "char:initiator", 0.0);
+    let (target, mut target_helper) =
+        spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+    set_trade_player_dimension(&mut app, initiator, overworld, DimensionKind::Overworld);
+    set_trade_player_dimension(&mut app, target, overworld, DimensionKind::Overworld);
+
+    app.world_mut().send_event(DimensionTransferRequest {
+        entity: initiator,
+        target: DimensionKind::Tsy,
+        target_pos: DVec3::new(10.0, 64.0, 0.0),
+    });
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
     assert_eq!(
-        app.world().resource::<TradeOfferRegistry>().pending.len(),
-        0
+        app.world().get::<CurrentDimension>(initiator),
+        Some(&CurrentDimension(DimensionKind::Tsy))
     );
+    assert!(collect_server_data_payloads(&mut target_helper).is_empty());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut initiator_helper)
+        .iter()
+        .any(|message| message.contains("对方不在此界，无法交易")));
+}
+
+#[test]
+fn trade_offer_dispatch_allows_low_and_wanted_initiators_between_players() {
+    for (tier, notoriety) in [("Low", 0), ("Wanted", 30)] {
+        let mut app = qi_test_app();
+        app.init_resource::<TradeOfferRegistry>();
+        app.add_event::<TradeOfferRequest>();
+        app.add_systems(Update, dispatch_trade_offers);
+        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        let mut initiator_identities = PlayerIdentities::with_default("毒蛊师", 0);
+        initiator_identities.identities[0].renown.notoriety = notoriety;
+        initiator_identities.identities[0]
+            .revealed_tags
+            .push(RevealedTag {
+                kind: RevealedTagKind::DuguRevealed,
+                witnessed_at_tick: 20,
+                witness_realm: Realm::Spirit,
+                permanent: true,
+            });
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(1001, "出物"),
+            initiator_identities,
+        ));
+        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut().entity_mut(target).insert((
+            Lifecycle {
+                character_id: "char:target".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(2002, "回物"),
+        ));
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            collect_chat_messages(&mut initiator_helper).is_empty(),
+            "{tier} 玩家发起玩家交易时不得收到伪 NPC 拒绝文案"
+        );
+        let target_payloads = collect_server_data_payloads(&mut target_helper);
+        assert_eq!(target_payloads.len(), 1, "{tier} 玩家 offer 应送达目标");
+        match &target_payloads[0].payload {
+            ServerDataPayloadV1::TradeOffer(offer) => {
+                assert_eq!(offer.initiator, "char:initiator");
+                assert_eq!(offer.target, "char:target");
+                assert_eq!(offer.offered_item.instance_id, 1001);
+                assert_eq!(offer.requested_items[0].instance_id, 2002);
+            }
+            other => panic!("expected trade offer payload for {tier}, got {other:?}"),
+        }
+        assert_eq!(
+            app.world().resource::<TradeOfferRegistry>().pending.len(),
+            1,
+            "{tier} 只约束 NPC 反应，不得阻断玩家对玩家交易"
+        );
+    }
 }
 
 #[test]
@@ -1628,6 +1920,126 @@ fn trade_acceptance_exchanges_items_records_life_and_exposure() {
         .resource::<TradeOfferRegistry>()
         .pending
         .is_empty());
+}
+
+#[test]
+fn trade_response_rejects_dimension_changed_before_acceptance() {
+    let mut app = setup_trade_app();
+    let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+    let (target, mut target_helper) =
+        spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    let offer_id = app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .keys()
+        .next()
+        .expect("trade offer should be pending")
+        .clone();
+
+    app.world_mut()
+        .entity_mut(target)
+        .insert(CurrentDimension(DimensionKind::Tsy));
+    app.world_mut().send_event(TradeOfferResponseEvent {
+        player: target,
+        offer_id,
+        accepted: true,
+        requested_instance_id: Some(2002),
+        tick: 50,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
+    let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+    let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+    assert!(inventory_item_by_instance(initiator_inventory, 1001).is_some());
+    assert!(inventory_item_by_instance(initiator_inventory, 2002).is_none());
+    assert!(inventory_item_by_instance(target_inventory, 2002).is_some());
+    assert!(inventory_item_by_instance(target_inventory, 1001).is_none());
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut target_helper)
+        .iter()
+        .any(|message| message.contains("交易双方不在同一界，无法交易")));
+}
+
+#[test]
+fn trade_response_runs_after_same_tick_dimension_transfer() {
+    let mut app = setup_trade_app();
+    let overworld = app.world_mut().spawn(OverworldLayer).id();
+    let tsy = app.world_mut().spawn(TsyLayer).id();
+    app.insert_resource(DimensionLayers { overworld, tsy });
+
+    let (initiator, _initiator_helper) =
+        spawn_trade_player_with_helper(&mut app, "Initiator", "char:initiator", 0.0);
+    let (target, mut target_helper) =
+        spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+    set_trade_player_dimension(&mut app, initiator, overworld, DimensionKind::Overworld);
+    set_trade_player_dimension(&mut app, target, overworld, DimensionKind::Overworld);
+
+    app.world_mut().send_event(TradeOfferRequest {
+        initiator,
+        target,
+        offered_instance_id: 1001,
+        tick: 42,
+    });
+    app.update();
+    let offer_id = app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .keys()
+        .next()
+        .expect("trade offer should be pending")
+        .clone();
+
+    app.world_mut().send_event(DimensionTransferRequest {
+        entity: target,
+        target: DimensionKind::Tsy,
+        target_pos: DVec3::new(10.0, 64.0, 0.0),
+    });
+    app.world_mut().send_event(TradeOfferResponseEvent {
+        player: target,
+        offer_id,
+        accepted: true,
+        requested_instance_id: Some(2002),
+        tick: 50,
+    });
+    app.update();
+    flush_all_client_packets(&mut app);
+
+    assert_eq!(
+        app.world().get::<CurrentDimension>(target),
+        Some(&CurrentDimension(DimensionKind::Tsy))
+    );
+    assert!(inventory_item_by_instance(
+        app.world().get::<PlayerInventory>(initiator).unwrap(),
+        1001
+    )
+    .is_some());
+    assert!(
+        inventory_item_by_instance(app.world().get::<PlayerInventory>(target).unwrap(), 2002)
+            .is_some()
+    );
+    assert!(app
+        .world()
+        .resource::<TradeOfferRegistry>()
+        .pending
+        .is_empty());
+    assert!(collect_chat_messages(&mut target_helper)
+        .iter()
+        .any(|message| message.contains("交易双方不在同一界，无法交易")));
 }
 
 #[test]
@@ -2597,7 +3009,8 @@ fn online_renown_delta_persists_active_identity_bridge() {
         .identities
         .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
     identities.active_identity_id = IdentityId(1);
-    identity_db::save_player_identities(&persistence, "char:online", &identities)
+    let identity_key = crate::player::state::canonical_player_id("Online");
+    identity_db::save_player_identities(&persistence, &identity_key, &identities)
         .expect("identity row should persist before online renown event");
 
     let mut app = qi_test_app();
@@ -2642,7 +3055,7 @@ fn online_renown_delta_persists_active_identity_bridge() {
     assert_eq!((inactive.renown.fame, inactive.renown.notoriety), (0, 0));
     assert!(inactive.renown.tags.is_empty());
 
-    let loaded_identities = identity_db::load_player_identities(&persistence, "char:online")
+    let loaded_identities = identity_db::load_player_identities(&persistence, &identity_key)
         .expect("online identity row should load")
         .expect("online identity row should remain");
     let persisted_active = loaded_identities.active().unwrap();

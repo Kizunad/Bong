@@ -6,6 +6,7 @@ import time
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
     equip_location,
+    fill_empty_carried_containers,
     find_item,
     send_move,
     wait_inventory_revision_after_matching,
@@ -34,14 +35,6 @@ def _latest_drops(bot, timeout: float = 10.0) -> list[dict]:
     return bot.expect_server_data("dropped_loot_sync", timeout=timeout).data["payload"][
         "drops"
     ]
-
-
-def _inventory_count(snapshot: dict, item_id: str) -> int:
-    return sum(
-        placed["item"]["stack_count"]
-        for placed in snapshot.get("placed_items", [])
-        if placed["item"]["item_id"] == item_id
-    )
 
 
 def run(env) -> None:
@@ -121,22 +114,7 @@ def run(env) -> None:
             "axe_iron 已装备到 main_hand held",
         )
 
-        bot.cmd("give grass_fiber 144")
-        bot.expect_chat("[dev] gave grass_fiber x144", timeout=10.0)
-        first_fill = wait_inventory_revision_after_matching(
-            bot,
-            equipped["revision"],
-            lambda snapshot: _inventory_count(snapshot, "grass_fiber") == 144,
-            "第一批 grass_fiber 填满主包",
-        )
-        bot.cmd("give grass_fiber 96")
-        bot.expect_chat("[dev] gave grass_fiber x96", timeout=10.0)
-        full = wait_inventory_revision_after_matching(
-            bot,
-            first_fill["revision"],
-            lambda snapshot: _inventory_count(snapshot, "grass_fiber") == 240,
-            "两批 grass_fiber 填满全部 15 个随身格",
-        )
+        full = fill_empty_carried_containers(bot, equipped)
         assert find_item(full, "axe_iron")["location"] == equip_location(
             "main_hand", "held"
         )

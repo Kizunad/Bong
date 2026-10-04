@@ -122,10 +122,9 @@ pub const CH_SOCIAL_FEUD: &str = "bong:social/feud";
 pub const CH_SOCIAL_RENOWN_DELTA: &str = "bong:social/renown_delta";
 pub const CH_SOCIAL_NICHE_INTRUSION: &str = "bong:social/niche_intrusion";
 pub const CH_HIGH_RENOWN_MILESTONE: &str = "bong:high_renown_milestone";
-pub const CH_ZONE_PRESSURE_CROSSED: &str = "bong:zone/pressure_crossed";
 
-// 天气事件起 / 落（plan-lingtian-weather-v1 §3 / §4.4）。payload 见
-// `crate::schema::lingtian_weather::WeatherEventUpdateV1`。
+// 天气事件起 / 落。payload 见
+// `crate::schema::weather::WeatherEventUpdateV1`。
 pub const CH_WEATHER_EVENT_UPDATE: &str = "bong:weather_event_update";
 
 // zone-scoped 长时环境效果（plan-zone-environment-v1）。payload 见
@@ -374,7 +373,6 @@ mod tests {
         assert_eq!(CH_SOCIAL_RENOWN_DELTA, "bong:social/renown_delta");
         assert_eq!(CH_SOCIAL_NICHE_INTRUSION, "bong:social/niche_intrusion");
         assert_eq!(CH_HIGH_RENOWN_MILESTONE, "bong:high_renown_milestone");
-        assert_eq!(CH_ZONE_PRESSURE_CROSSED, "bong:zone/pressure_crossed");
         assert_eq!(CH_WEATHER_EVENT_UPDATE, "bong:weather_event_update");
         assert_eq!(CH_ZONE_ENVIRONMENT_UPDATE, "bong:zone_environment_update");
         assert_eq!(CH_RAT_PHASE_EVENT, "bong:rat_phase_event");

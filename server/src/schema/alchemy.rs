@@ -7,6 +7,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::cultivation::components::ColorKind;
 
+/// 丹炉世界表现；通过统一 server_data 通道交给附近玩家，不覆盖工位会话。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemyWorldDataV1 {
+    pub furnace_pos: (i32, i32, i32),
+    pub heat: f64,
+    pub incense: bool,
+    pub materials: std::collections::BTreeMap<String, u32>,
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<[f64; 3]>,
+}
+
 /// plan §1.3 五结果桶（与 `crate::alchemy::outcome::OutcomeBucket` 不同 — 此为线上序列化形式）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +104,16 @@ pub struct AlchemyStageHintV1 {
     pub summary: String,
     pub completed: bool,
     pub missed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ingredients: Vec<AlchemyIngredientHintV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemyIngredientHintV1 {
+    pub material: String,
+    pub required: u32,
+    pub inserted: u32,
 }
 
 /// 丹毒色快照（plan §2 — 复用 `ColorKind`）。
@@ -188,6 +219,19 @@ pub struct AlchemySessionDataV1 {
     pub status_label: String,
     pub stages: Vec<AlchemyStageHintV1>,
     pub interventions_recent: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incense: Option<AlchemyIncenseDataV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlchemyIncenseDataV1 {
+    pub kind: String,
+    pub remaining_ticks: u32,
+    pub duration_ticks: u32,
+    pub temp_band_scale: f64,
+    pub qi_cost_scale: f64,
+    pub smoke_color: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -358,6 +402,7 @@ mod tests {
     #[test]
     fn stage_hint_roundtrip() {
         let h = AlchemyStageHintV1 {
+            ingredients: vec![],
             at_tick: 80,
             window: 20,
             summary: "hui_yuan_zhi × 1".into(),

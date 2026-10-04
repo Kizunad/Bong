@@ -1,6 +1,5 @@
 # path	class_name	kind	adapter_style	base_migration_eligible	note
 agentui/AgentUiScreen.java	AgentUiScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
-alchemy/AlchemyScreen.java	AlchemyScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; G menu
 combat/screen/DeathScreen.java	DeathScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice;暗器注入
@@ -13,7 +12,6 @@ identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO_XML	OWO_XML_TEMPLATE	f
 insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
 inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
 inventory/LootContainerScreen.java	LootContainerScreen	BASE_OWO	CODE	true	Code-built FlowLayout
-lingtian/LingtianActionScreen.java	LingtianActionScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 menu/MainMenuScreen.java	MainMenuScreen	OWO_XML	OWO_XML_TEMPLATE	false	Multiplayer-only title screen; local XML
 npc/NpcDialogueScreen.java	NpcDialogueScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 npc/NpcInspectScreen.java	NpcInspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout

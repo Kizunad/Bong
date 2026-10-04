@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_plate = [42, 38, 45]
+stem_purple = [122, 74, 200]  # #7a4ac8 中心紫色茎
+clear_teal = [42, 192, 176]   # #2ac0b0 青翠瓣
+turbid_orange = [224, 122, 42] # #e07a2a 橙红瓣
+core_eye = [185, 235, 225]
+
+[features]
+soil_base = { elements = ["soil_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+purple_stalk = { elements = ["stalk_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 1 }
+five_broad_petals = { elements = ["petal_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+central_eye = { elements = ["eye_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+soil_base = [45, 38, 32]
+silver_leaf = [65, 80, 105]        # #4a4e58 暗银尖叶
+pedicel_green = [48, 75, 42]        # 果柄叶心
+pearl_body = [235, 225, 205]        # #e8e4d8 珍珠白圆球
+pearl_glow = [255, 255, 255]        # #ffffff 纯白高光
+
+[features]
+soil_base = { elements = ["base_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+silver_leaves = { elements = ["leaf_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+pearl_sphere = { elements = ["pearl_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+white_highlight = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }

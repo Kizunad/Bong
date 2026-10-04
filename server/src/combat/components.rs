@@ -1,3 +1,8 @@
+//! 战斗运行时组件与可持久化的长期状态效果类型。
+//!
+//! 本模块只定义 ECS 状态和其序列化形状；玩家长期效果的 SQLite 读写由
+//! `player::state` 负责，载入失败 marker 则供战斗与持久化系统共同执行只读降级。
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use valence::prelude::{bevy_ecs, Component};
@@ -397,7 +402,7 @@ impl Default for DerivedAttrs {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct BodyRefiningMarker;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveStatusEffect {
     pub kind: StatusEffectKind,
     pub magnitude: f32,
@@ -407,10 +412,23 @@ pub struct ActiveStatusEffect {
     pub source_pill: Option<String>,
 }
 
-#[derive(Debug, Clone, Component, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Component, Default, Serialize, Deserialize)]
 pub struct StatusEffects {
     pub active: Vec<ActiveStatusEffect>,
 }
+
+/// 长期状态效果 durable row 无法读取时保留的运行时 marker。
+///
+/// 实体仍会挂安全默认值以保持战斗系统 total，但持久化 writer 必须省略未知原始行，
+/// 直到后续重新载入成功。
+#[derive(Debug, Clone, Copy, Component, Default)]
+pub struct StatusEffectsPersistenceLoadFailed;
+
+/// `Lifecycle` 切片读取失败时的运行时 marker。
+///
+/// 它与 [`StatusEffectsPersistenceLoadFailed`] 分开，保证一个损坏切片不会阻塞无关切片。
+#[derive(Debug, Clone, Copy, Component, Default)]
+pub struct LifecyclePersistenceLoadFailed;
 
 /// plan-HUD-v1 §4 玩家正在 cast 快捷槽时挂在 Player 实体上。
 /// 完成 / 中断后移除。
@@ -436,6 +454,14 @@ pub struct Casting {
     #[allow(dead_code)]
     pub skill_config: Option<crate::skill::config::SkillConfig>,
 }
+
+/// Generic skill-bar casts carry this marker only after their qi cost has been
+/// accepted by `skill_cost::spend_qi_conserved`.
+///
+/// The marker is consumed by cast completion so a practice event cannot grant
+/// proficiency from a synthetic or otherwise uncharged `Casting` component.
+#[derive(Debug, Clone, Copy, Component)]
+pub struct QiSettledCast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastSource {

@@ -9,7 +9,7 @@ use bong_server::qi_physics::ledger::{
     assert_conservation, pending_inflow_account, transfer_zone_qi_to_ledger, QiAccountId,
     QiTransfer, QiTransferReason, WorldQiAccount, WorldQiSnapshot,
 };
-use bong_server::schema::common::{NarrationScope, NarrationStyle, SPIRIT_QI_TOTAL};
+use bong_server::schema::common::{NarrationScope, NarrationStyle};
 use bong_server::schema::pseudo_vein::PseudoVeinSeasonV1;
 use bong_server::schema::vfx_event::VfxEventPayloadV1;
 use bong_server::world::dimension::DimensionKind;
@@ -17,6 +17,9 @@ use bong_server::world::pseudo_vein_runtime::fallback_auto_spawn_on_high_drain a
 use bong_server::world::pseudo_vein_runtime::*;
 use bong_server::world::zone::{Zone, ZoneRegistry};
 use valence::prelude::{App, BlockPos, DVec3, Events, Position, Update};
+
+// 这个集成夹具刻意保持很小，便于回读账本结算；生产预算来自服务器启动配置。
+const TEST_QI_FIXTURE_TOTAL: f64 = 100.0;
 
 #[test]
 fn rising_reaches_max_qi_in_600_ticks() {
@@ -72,7 +75,7 @@ fn qi_conservation() {
     );
 
     // The pure settlement plan above must also survive the real external-zone ledger path:
-    // snapshot the complete observed total from the canonical SPIRIT_QI_TOTAL budget, execute
+    // snapshot the complete observed total from the small test fixture budget, execute
     // the transfer, and prove that no qi is created or lost (era decay is explicitly zero).
     let borrowed_absolute = settlement.return_transfer.amount;
     let mut zone_spirit_qi = borrowed_absolute / QI_ZONE_UNIT_CAPACITY;
@@ -80,7 +83,7 @@ fn qi_conservation() {
     ledger
         .set_balance(
             pending_inflow_account(),
-            SPIRIT_QI_TOTAL - borrowed_absolute,
+            TEST_QI_FIXTURE_TOTAL - borrowed_absolute,
         )
         .expect("the pending pool seed must be a finite non-negative budget remainder");
     let before = WorldQiSnapshot {
@@ -89,8 +92,8 @@ fn qi_conservation() {
         container_qi: 0.0,
         ledger_qi: ledger.total(),
         era_decay_accum: 0.0,
-        budget_initial_total: SPIRIT_QI_TOTAL,
-        budget_current_total: SPIRIT_QI_TOTAL,
+        budget_initial_total: TEST_QI_FIXTURE_TOTAL,
+        budget_current_total: TEST_QI_FIXTURE_TOTAL,
     };
 
     let applied = transfer_zone_qi_to_ledger(
@@ -111,11 +114,12 @@ fn qi_conservation() {
         container_qi: 0.0,
         ledger_qi: ledger.total(),
         era_decay_accum: 0.0,
-        budget_initial_total: SPIRIT_QI_TOTAL,
-        budget_current_total: SPIRIT_QI_TOTAL,
+        budget_initial_total: TEST_QI_FIXTURE_TOTAL,
+        budget_current_total: TEST_QI_FIXTURE_TOTAL,
     };
-    assert_conservation(&before, &after, 0.0)
-        .expect("pseudo-vein settlement must preserve SPIRIT_QI_TOTAL with zero era decay");
+    assert_conservation(&before, &after, 0.0).expect(
+        "pseudo-vein settlement must preserve the injected test budget with zero era decay",
+    );
 }
 
 #[test]

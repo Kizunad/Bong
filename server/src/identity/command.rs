@@ -18,15 +18,18 @@ use valence::command::parsers::{CommandArg, ParseInput};
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, Client, DVec3, Entity, EventReader, EventWriter, Position, Query, Res, Update, With,
+    App, Client, DVec3, Entity, EventReader, EventWriter, Position, Query, Res, Update, Username,
+    With,
 };
 
 use super::events::{IdentityCreatedEvent, IdentitySwitchedEvent};
 use super::precondition::{check_within_own_niche, NichePreconditionError};
-use super::{reputation_score, IdentityId, IdentityProfile, PlayerIdentities};
+use super::service;
+use super::{
+    reputation_score, IdentityId, IdentityPersistenceLoadFailed, IdentityProfile, PlayerIdentities,
+};
 use crate::combat::components::Lifecycle;
 use crate::npc::movement::GameTick;
-use crate::persistence::identity as identity_db;
 use crate::persistence::PersistenceSettings;
 use crate::social::SpiritNicheRegistry;
 
@@ -307,14 +310,20 @@ fn require_cooldown_passed(
     }
 }
 
+type IdentityCommandPlayerQueryItem<'a> = (
+    &'a mut PlayerIdentities,
+    &'a Lifecycle,
+    &'a Position,
+    &'a Username,
+    Option<&'a IdentityPersistenceLoadFailed>,
+);
+type IdentityCommandPlayerQueryFilter = With<valence::prelude::Client>;
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_identity_command(
     mut events: EventReader<CommandResultEvent<IdentityCmd>>,
     mut clients: Query<&mut Client>,
-    mut players: Query<
-        (&mut PlayerIdentities, &Lifecycle, &Position),
-        With<valence::prelude::Client>,
-    >,
+    mut players: Query<IdentityCommandPlayerQueryItem<'_>, IdentityCommandPlayerQueryFilter>,
     niche_registry: Option<Res<SpiritNicheRegistry>>,
     game_tick: Option<Res<GameTick>>,
     persistence: Option<Res<PersistenceSettings>>,
@@ -327,7 +336,9 @@ pub fn handle_identity_command(
 
     for event in events.read() {
         let executor = event.executor;
-        let Ok((mut identities, lifecycle, position)) = players.get_mut(executor) else {
+        let Ok((mut identities, lifecycle, position, username, load_failed)) =
+            players.get_mut(executor)
+        else {
             continue;
         };
         let char_id = lifecycle.character_id.as_str();
@@ -363,7 +374,12 @@ pub fn handle_identity_command(
                                 outcome.created_id.0, outcome.display_name
                             )],
                         );
-                        save_identities(persistence.as_deref(), char_id, &identities);
+                        save_identities(
+                            persistence.as_deref(),
+                            username.0.as_str(),
+                            load_failed.is_none(),
+                            &identities,
+                        );
                     }
                     Err(err) => send_error(&mut clients, executor, &err),
                 }
@@ -391,7 +407,12 @@ pub fn handle_identity_command(
                             outcome.from.0, outcome.to.0
                         )],
                     );
-                    save_identities(persistence.as_deref(), char_id, &identities);
+                    save_identities(
+                        persistence.as_deref(),
+                        username.0.as_str(),
+                        load_failed.is_none(),
+                        &identities,
+                    );
                 }
                 Err(err) => send_error(&mut clients, executor, &err),
             },
@@ -406,7 +427,12 @@ pub fn handle_identity_command(
                                 outcome.identity_id.0, outcome.display_name
                             )],
                         );
-                        save_identities(persistence.as_deref(), char_id, &identities);
+                        save_identities(
+                            persistence.as_deref(),
+                            username.0.as_str(),
+                            load_failed.is_none(),
+                            &identities,
+                        );
                     }
                     Err(err) => send_error(&mut clients, executor, &err),
                 }
@@ -433,12 +459,16 @@ fn send_error(clients: &mut Query<&mut Client>, executor: Entity, err: &Identity
 
 fn save_identities(
     persistence: Option<&PersistenceSettings>,
-    char_id: &str,
+    username: &str,
+    write_allowed: bool,
     identities: &PlayerIdentities,
 ) {
+    if !write_allowed {
+        return;
+    }
     let Some(settings) = persistence else { return };
-    if let Err(error) = identity_db::save_player_identities(settings, char_id, identities) {
-        tracing::warn!(?error, char_id, "[bong][identity] persistence save failed");
+    if let Err(error) = service::save_player_identities(settings, username, identities) {
+        tracing::warn!(?error, username, "[bong][identity] persistence save failed");
     }
 }
 

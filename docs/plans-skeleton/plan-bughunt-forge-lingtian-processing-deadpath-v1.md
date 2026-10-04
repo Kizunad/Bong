@@ -1,5 +1,7 @@
 # plan-bughunt-forge-lingtian-processing-deadpath-v1（骨架）
 
+> 迁移说明：旧种植实现已删除，共享加工逻辑现位于 `server/src/processing.rs`。本计划保留共享加工的断链问题；下文旧路径和行号仅为当时的审计记录，实施前须重新核验。
+
 > 一句话主题：`plan-lingtian-process-v1` 已归档宣称 P2/P3 完成，但 `forge/lingtian/processing` 运行时主链仍停在**测试/死代码**：玩家侧没有启动入口，server 只会挂 `ProcessingSession` 并 tick 进度、不会结算产物/清 session/下发 `processing_session`，client `ProcessingActionScreen` 也无任何创建路径，导致晾晒/碾粉/炮制/萃取整条加工玩法在实际游玩中不可用。
 
 > 立项动机：这不是“未来 enhancement”，而是**已归档功能半接线**。`docs/finished_plans/plan-lingtian-process-v1:388` 明写 P3 已接入 `ProcessingActionScreen` / `ProcessingServerDataHandler` / `ProcessingSessionDataV1.active` 清 session；实际代码里只有 schema、handler 和测试，运行时主链断在多处。

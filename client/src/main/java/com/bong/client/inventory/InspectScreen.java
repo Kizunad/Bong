@@ -47,6 +47,13 @@ import java.util.List;
 import java.util.function.Consumer;
 
 
+/**
+ * 检视工作台的库存外壳。
+ *
+ * <p>本类只负责把既有库存、装备、快捷栏和 tooltip 组件组合起来，并把用户的点击/拖放
+ * 转成现有的客户端请求。物品模型、服务端 wire 契约以及身体/经脉窗口仍由各自模块负责；
+ * 身体与经脉画布的绘制代码保持在 {@link BodyInspectComponent} 中，不在这里重排。</p>
+ */
 public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("检视");
     private static final int ICON_SIZE = 128;
@@ -144,7 +151,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, CRAFT_RECIPE_SCROLL_USE, READ_SCROLL }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, CRAFT_RECIPE_SCROLL_USE, READ_SCROLL, READ_ALCHEMY_RECIPE }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -157,6 +164,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private PendingMeridianUse pendingMeridianUse;
     private WeaponContextMenuState weaponContextMenu;
     private SkillBarContextMenuState skillBarContextMenu;
+
+    /** 中键分堆浮层；确认后保留选定数量，供工位投料或容器原子分堆使用。 */
+    private record StackSplitState(
+        InventoryItem fullItem,
+        BackpackGridPanel sourceGrid,
+        int sourceRow,
+        int sourceCol,
+        int x,
+        int y,
+        int selected,
+        int width,
+        int height
+    ) {
+        StackSplitState withSelected(int value) {
+            return new StackSplitState(fullItem, sourceGrid, sourceRow, sourceCol, x, y,
+                Math.max(1, Math.min(fullItem.stackCount(), value)), width, height);
+        }
+    }
+
+    private StackSplitState stackSplit;
+    /** 中键分堆确认发生在 mouseClicked，随后同一次点击仍会触发左键释放；该释放不能取消新拖拽物。 */
+    private boolean suppressSplitConfirmationRelease;
 
     private static final int PILL_MENU_WIDTH = 112;
     private static final int PILL_MENU_ROW_HEIGHT = 16;
@@ -175,6 +204,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public void removed() {
         itemInspectClicks.cancel();
+        stackSplit = null;
+        suppressSplitConfirmationRelease = false;
         UiWindowRuntime.cancelInput();
         // Screen 被关闭时解绑背包和技艺订阅；模型内容由窗口 scope 持有。
         if (inventoryListener != null) {
@@ -293,14 +324,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // 经脉详情直接绘制在 body 画布内部（见 BodyInspectComponent.drawMeridianDetailInline）
         // 不再作为独立组件，以免增加列宽/列高
 
-        // -- Right column --
-        FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
-        rightCol.gap(2);
-
-        containerSection = OwoXmlTemplateRegistry.production().require("inventory-container")
-            .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
-        rebuildContainerSection();
-        rightCol.child(containerSection);
+        // -- Right column: inventory grids only. --
+        FlowLayout rightCol = buildInventoryColumn();
 
         middle.child(rightCol);
         mainPanel.child(middle);
@@ -374,6 +399,45 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     // ==================== Build helpers ====================
+
+    /**
+     * 构造右侧库存列。
+     *
+     * <p>容器模板和网格重建都集中在这里，左侧的装备/身体入口仍由 {@link #build(FlowLayout)}
+     * 保持原有组合顺序。这样库存布局的生命周期可以单独回读，而不会把身体窗口的入口
+     * 误认为库存状态。</p>
+     */
+    private FlowLayout buildInventoryColumn() {
+        FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
+        rightCol.gap(2);
+        containerSection = buildContainerSection();
+        rightCol.child(containerSection);
+        return rightCol;
+    }
+
+    /**
+     * 在提交到 screen 字段前完成容器入口的构造。
+     *
+     * <p>模板展开或入口填充失败时，旧引用和旧定义都保持不变，并把原异常继续抛给调用方；
+     * 这样 UI 不会挂上一棵半成品树，调用方仍能按现有启动失败路径处理异常。</p>
+     */
+    private FlowLayout buildContainerSection() {
+        FlowLayout previousSection = containerSection;
+        java.util.List<InventoryModel.ContainerDef> previousDefs = filteredContainerDefs;
+        try {
+            FlowLayout candidate = OwoXmlTemplateRegistry.production().require("inventory-container")
+                .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
+            java.util.List<InventoryModel.ContainerDef> nextDefs = computeContainerDefs(model);
+            populateContainerEntries(candidate, nextDefs);
+            filteredContainerDefs = nextDefs;
+            containerSection = candidate;
+            return candidate;
+        } catch (RuntimeException | Error failure) {
+            containerSection = previousSection;
+            filteredContainerDefs = previousDefs;
+            throw failure;
+        }
+    }
 
     /**
      * 灵剑（剑道）信息行。仅当 {@code state.active()} 时返回 3 行：品阶 / 封存 / 人剑合一。
@@ -764,16 +828,47 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     /** 入口只请求打开统一窗口，不持有或重新挂载容器网格。 */
     private void rebuildContainerSection() {
         if (containerSection == null) return;
-        filteredContainerDefs = computeContainerDefs(model);
-        var entries = containerSection.childById(FlowLayout.class, "container-entries");
-        entries.clearChildren();
+        FlowLayout previousSection = containerSection;
+        java.util.List<InventoryModel.ContainerDef> previousDefs = filteredContainerDefs;
+        java.util.List<InventoryModel.ContainerDef> nextDefs = computeContainerDefs(model);
+        try {
+            populateContainerEntries(previousSection, nextDefs);
+            filteredContainerDefs = nextDefs;
+        } catch (RuntimeException | Error failure) {
+            containerSection = previousSection;
+            filteredContainerDefs = previousDefs;
+            throw failure;
+        }
+    }
+
+    /** 将入口定义填充到指定模板；调用方负责在成功后提交字段。 */
+    private void populateContainerEntries(
+        FlowLayout section,
+        java.util.List<InventoryModel.ContainerDef> definitions
+    ) {
+        var entries = section.childById(FlowLayout.class, "container-entries");
         var template = OwoXmlTemplateRegistry.production().require("inventory-container");
-        for (var def : filteredContainerDefs) {
+        List<io.wispforest.owo.ui.core.Component> nextChildren = new ArrayList<>();
+        for (var def : definitions) {
             var button = template.expandTemplate(ButtonComponent.class, "container-entry", java.util.Map.of());
             button.setMessage(Text.literal(MinecraftClient.getInstance().textRenderer.trimToWidth(def.name(), 94)));
             button.tooltip(Text.literal(def.name()));
             button.onPress(ignored -> UiWindowRuntime.openContainer(def.id()));
-            entries.child(button);
+            nextChildren.add(button);
+        }
+
+        List<io.wispforest.owo.ui.core.Component> previousChildren = List.copyOf(entries.children());
+        try {
+            entries.clearChildren();
+            for (var child : nextChildren) entries.child(child);
+        } catch (RuntimeException | Error failure) {
+            try {
+                entries.clearChildren();
+                for (var child : previousChildren) entries.child(child);
+            } catch (RuntimeException | Error rollbackFailure) {
+                if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
         }
     }
 
@@ -1132,6 +1227,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (stackSplit != null) return handleStackSplitClick(mouseX, mouseY, button);
         if (handleContextMenuClick(mouseX, mouseY, button)) return true;
         if (button == 1 && pendingMeridianUse != null) {
             pendingMeridianUse = null;
@@ -1174,8 +1270,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
+        if (handleInventoryClick(mouseX, mouseY, button, shift)) {
+            return true;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
 
-
+    /**
+     * 处理库存网格、装备槽、快捷栏和战利品容器的点击。
+     *
+     * <p>身体窗口的点击仍由 {@link #mouseClicked(double, double, int)} 中原有的分支处理；
+     * 这里只接管库存表面的焦点、检查、拖拽和菜单入口，避免把两个状态机混在同一个方法里。</p>
+     *
+     * @return 点击已经被库存 UI 消费时返回 {@code true}
+     */
+    private boolean handleInventoryClick(double mouseX, double mouseY, int button, boolean shift) {
         var containerGrid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
         boolean loadoutSlot = UiWindowRuntime.loadoutSlotAt(mouseX, mouseY);
         if (containerGrid != null) {
@@ -1191,14 +1300,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (dragState.isDragging()) returnDragToSource();
             return true;
         }
-        if (button != 0 || hasShiftDown()) itemInspectClicks.cancel();
 
-        if (button == 0 && !hasShiftDown() && !startingItemDrag && !dragState.isDragging()
-) {
+        if (button == 2) {
+            if (containerGrid != null && !dragState.isDragging()) {
+                InventoryItem item = itemAtGrid(containerGrid, mouseX, mouseY);
+                if (item != null && item.stackCount() > 1) {
+                    openStackSplit(containerGrid, item, mouseX, mouseY);
+                }
+            }
+            return true;
+        }
+        if (button != 0 || shift) itemInspectClicks.cancel();
+
+        if (button == 0 && !shift && !startingItemDrag && !dragState.isDragging()) {
             InventoryItem item = itemAtScreen(mouseX, mouseY);
             if (item != null) {
                 if (itemInspectClicks.press(item.instanceId(), mouseX, mouseY, System.currentTimeMillis())) {
-                    UiWindowRuntime.openItem(item.instanceId());
+                    if (com.bong.client.alchemy.AlchemyNotesContent.isRecipeItem(item)) {
+                        UiWindowRuntime.openAlchemyNotes(item);
+                    } else {
+                        UiWindowRuntime.openItem(item.instanceId());
+                    }
                 }
                 return true;
             }
@@ -1210,33 +1332,35 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             var item = pos == null ? null : containerGrid.itemAt(pos.row(), pos.col());
             if (item != null && button == 1) {
                 pendingMeridianUse = null;
-                if (InventoryEquipRules.isContainer(item)) openContainerItem(item);
-                else if (!openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                if (InventoryEquipRules.isContainer(item)) {
+                    openContainerItem(item);
+                } else if (!openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
                     openSkillBarContextMenu(item, (int) mouseX, (int) mouseY);
                 }
             } else if (item != null && button == 0 && !dragState.isDragging()) {
-                if (hasShiftDown()) quickEquipFromGrid(item);
-                else beginGridDrag(containerGrid, item);
+                if (shift) {
+                    quickEquipFromGrid(item);
+                } else {
+                    beginGridDrag(containerGrid, item);
+                }
             }
             return true;
         }
 
         if (button == 1) {
-            {
-                var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
-                // 决议 #12：仅栈顶/held（representative）可操作。
-                InventoryItem top = eq == null ? null : eq.representative();
-                // fix/tarkov-nest-persistence §C3 — 右键背包件直接开包（容器件对 weapon/pill 菜单
-                // 都返回 false，故前置拦截）。覆盖装备槽持有位。
-                if (eq != null && top != null && InventoryEquipRules.isContainer(top)) {
-                    openContainerItem(top);
-                    itemInspectClicks.cancel();
-                    return true;
-                }
-                if (eq != null && top != null && openWeaponContextMenu(eq.slotType(), top, (int) mouseX, (int) mouseY)) {
-                    itemInspectClicks.cancel();
-                    return true;
-                }
+            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
+            // 决议 #12：仅栈顶/held（representative）可操作。
+            InventoryItem top = eq == null ? null : eq.representative();
+            // fix/tarkov-nest-persistence §C3 — 右键背包件直接开包（容器件对 weapon/pill 菜单
+            // 都返回 false，故前置拦截）。覆盖装备槽持有位。
+            if (eq != null && top != null && InventoryEquipRules.isContainer(top)) {
+                openContainerItem(top);
+                itemInspectClicks.cancel();
+                return true;
+            }
+            if (eq != null && top != null && openWeaponContextMenu(eq.slotType(), top, (int) mouseX, (int) mouseY)) {
+                itemInspectClicks.cancel();
+                return true;
             }
 
             // plan-exploration-probe-return-v1 P1 fix(M1-②): 先清理 pendingMeridianUse 状态，
@@ -1283,21 +1407,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         if (button == 0) {
-
-
             // Equip
             // 决议 #12：仅栈顶/held（representative）可被拖下/卸下；下层被压住不可动。
-            {
-                var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
-                InventoryItem item = eq == null ? null : eq.representative();
-                if (eq != null && item != null) {
-                    if (shift) quickUnequipToGrid(eq.slotType(), item);
-                    else {
-                        popSlotTop(eq); // 乐观弹出栈顶/held（server 快照为权威）
-                        dragState.pickupFromEquip(item, eq.slotType());
-                    }
-                    return true;
+            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
+            InventoryItem item = eq == null ? null : eq.representative();
+            if (eq != null && item != null) {
+                if (shift) {
+                    quickUnequipToGrid(eq.slotType(), item);
+                } else {
+                    popSlotTop(eq); // 乐观弹出栈顶/held（server 快照为权威）
+                    dragState.pickupFromEquip(item, eq.slotType());
                 }
+                return true;
             }
 
             // Body inspect applied items (physical or meridian layer)
@@ -1308,12 +1429,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
             if (hIdx >= 0 && hotbarItems[hIdx] != null) {
-                InventoryItem item = hotbarItems[hIdx];
-                if (shift) quickMoveHotbarToGrid(hIdx);
-                else {
+                InventoryItem itemInHotbar = hotbarItems[hIdx];
+                if (shift) {
+                    quickMoveHotbarToGrid(hIdx);
+                } else {
                     hotbarItems[hIdx] = null;
                     hotbarSlots[hIdx].clearItem();
-                    dragState.pickupFromHotbar(item, hIdx);
+                    dragState.pickupFromHotbar(itemInHotbar, hIdx);
                 }
                 return true;
             }
@@ -1321,8 +1443,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             // Quick-use bar (F1-F9)
             int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
             if (qIdx >= 0 && quickUseItems[qIdx] != null) {
-                if (shift) clearQuickUseSlot(qIdx);
-                else beginQuickUseDrag(qIdx);
+                if (shift) {
+                    clearQuickUseSlot(qIdx);
+                } else {
+                    beginQuickUseDrag(qIdx);
+                }
                 return true;
             }
 
@@ -1332,27 +1457,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (lg.containsPoint(mouseX, mouseY)) {
                     var pos = lg.screenToGrid(mouseX, mouseY);
                     if (pos != null) {
-                        InventoryItem item = lg.itemAt(pos.row(), pos.col());
-                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
-                            var anchor = lg.anchorOf(item);
+                        InventoryItem itemInLoot = lg.itemAt(pos.row(), pos.col());
+                        if (itemInLoot != null && dragState.phase() == DragState.Phase.IDLE) {
+                            var anchor = lg.anchorOf(itemInLoot);
                             if (anchor != null) {
-                                dragState.pickup(item, lootPanel.extContainerId(),
+                                dragState.pickup(itemInLoot, lootPanel.extContainerId(),
                                     anchor.row(), anchor.col());
-                                lg.remove(item);
+                                lg.remove(itemInLoot);
                                 return true;
                             }
                         }
                     }
                 }
             }
-
         }
 
-        return loadoutSlot || super.mouseClicked(mouseX, mouseY, button);
+        return loadoutSlot;
     }
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (stackSplit != null) return true;
         if (UiWindowRuntime.mouseDrag(mouseX, mouseY, button, deltaX, deltaY)) return true;
         if (button == 0) {
             var press = itemInspectClicks.drag(mouseX, mouseY);
@@ -1378,6 +1503,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (stackSplit != null) return true;
+        if (button == 0 && suppressSplitConfirmationRelease) {
+            suppressSplitConfirmationRelease = false;
+            return true;
+        }
         if (button == 0 && itemInspectClicks.release(mouseX, mouseY, System.currentTimeMillis())) return true;
         if (!dragState.isDragging() && UiWindowRuntime.mouseUp(mouseX, mouseY, button)) {
             itemInspectClicks.cancel();
@@ -1427,18 +1557,118 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return null;
     }
 
+    private static InventoryItem itemAtGrid(BackpackGridPanel grid, double mouseX, double mouseY) {
+        if (grid == null || !grid.containsPoint(mouseX, mouseY)) return null;
+        var pos = grid.screenToGrid(mouseX, mouseY);
+        return pos == null ? null : grid.itemAt(pos.row(), pos.col());
+    }
+
+    void openStackSplit(BackpackGridPanel grid, InventoryItem item, double mouseX, double mouseY) {
+        var anchor = grid.anchorOf(item);
+        if (anchor == null) return;
+        int popupWidth = Math.min(184, Math.max(96, width - 8));
+        int popupHeight = Math.min(68, Math.max(58, height - 8));
+        int left = Math.max(4, Math.min(width - popupWidth - 4, (int) mouseX - popupWidth / 2));
+        int top = Math.max(4, Math.min(height - popupHeight - 4, (int) mouseY - popupHeight - 8));
+        stackSplit = new StackSplitState(item, grid, anchor.row(), anchor.col(), left, top,
+            item.stackCount() / 2, popupWidth, popupHeight);
+        pillContextMenu = null;
+        weaponContextMenu = null;
+        skillBarContextMenu = null;
+        itemInspectClicks.cancel();
+    }
+
+    private boolean handleStackSplitClick(double mouseX, double mouseY, int button) {
+        if (stackSplit == null) return false;
+        if (button == 1) {
+            stackSplit = null;
+            return true;
+        }
+        if (button != 0) return true;
+        StackSplitState state = stackSplit;
+        int left = state.x();
+        int top = state.y();
+        int popupWidth = state.width();
+        int popupHeight = state.height();
+        if (mouseX < left || mouseX >= left + popupWidth || mouseY < top || mouseY >= top + popupHeight) {
+            // 左键点到浮层外表示“确认并开始拖拽”。释放事件随后会继续走
+            // attemptDrop：点在丹炉上会直接投料，点在别处则保持拖拽直到真正释放。
+            confirmStackSplit(mouseX, mouseY, false);
+            return true;
+        }
+        int rowTop = top + 25;
+        if (mouseY >= rowTop && mouseY < rowTop + 18) {
+            if (mouseX < left + 30) stackSplit = state.withSelected(state.selected() - 1);
+            else if (mouseX >= left + popupWidth - 30) stackSplit = state.withSelected(state.selected() + 1);
+            else {
+                double ratio = (mouseX - left - 30) / Math.max(1.0, popupWidth - 60.0);
+                stackSplit = state.withSelected(1 + (int) Math.round(ratio * (state.fullItem().stackCount() - 1)));
+            }
+            return true;
+        }
+        if (mouseY >= top + popupHeight - 21) {
+            confirmStackSplit(mouseX, mouseY, true);
+            return true;
+        }
+        return true;
+    }
+
+    void confirmStackSplit(double mouseX, double mouseY, boolean suppressRelease) {
+        StackSplitState state = stackSplit;
+        if (state == null) return;
+        InventoryItem current = state.sourceGrid().itemAt(state.sourceRow(), state.sourceCol());
+        if (current == null || current.instanceId() != state.fullItem().instanceId()
+            || current.stackCount() < state.selected()) {
+            stackSplit = null;
+            return;
+        }
+        state.sourceGrid().remove(current);
+        dragState.pickupSplit(current, current.withStackCount(state.selected()),
+            state.sourceGrid().containerId(), state.sourceRow(), state.sourceCol());
+        dragState.updateMouse(mouseX, mouseY);
+        suppressSplitConfirmationRelease = suppressRelease;
+        stackSplit = null;
+    }
+
+    @Override
+    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        UiWindowRuntime.keyReleased(keyCode);
+        return super.keyReleased(keyCode, scanCode, modifiers);
+    }
+
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (stackSplit != null) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                stackSplit = null;
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_DOWN) {
+                stackSplit = stackSplit.withSelected(stackSplit.selected() - 1);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_RIGHT || keyCode == GLFW.GLFW_KEY_UP) {
+                stackSplit = stackSplit.withSelected(stackSplit.selected() + 1);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                confirmStackSplit(mouseX(), mouseY(), false);
+                return true;
+            }
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_ESCAPE && UiWindowRuntime.manager().capturedKey() != null) {
             UiWindowRuntime.cancelInput();
             return true;
         }
-        if (UiWindowRuntime.keyPressed(keyCode, scanCode, modifiers)) return true;
         if (keyCode != GLFW.GLFW_KEY_ESCAPE && uiAdapter != null
             && uiAdapter.rootComponent.focusHandler().focused()
                 instanceof io.wispforest.owo.ui.inject.GreedyInputComponent) {
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
+        // 文本优先；拖物时 R 属于背包旋转，不能落到炉位的收取快捷键。
+        if (!(keyCode == GLFW.GLFW_KEY_R && dragState.isDragging())
+            && UiWindowRuntime.keyPressed(keyCode, scanCode, modifiers)) return true;
         if (keyCode == GLFW.GLFW_KEY_ESCAPE || client.options.inventoryKey.matchesKey(keyCode, scanCode)) {
             close();
             return true;
@@ -1560,18 +1790,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) { dragState.cancel(); clearAllHighlights(); return; }
 
+        // 分堆既可投料，也可落入普通容器；新实例和两边数量由服务端快照一起确认。
+        if (dragState.isSplitStack()) {
+            boolean sent = attemptSplitStackDrop(mouseX, mouseY, dragged);
+            // 请求成功后来源槽保持空缺，等待服务端 authoritative snapshot 一次性重建两边；
+            // 只有未发出请求时才回填，避免同一 instance_id 在本地短暂复制。
+            completeAlchemyMaterialDrop(sent);
+            return;
+        }
+
         // QUICK_USE 是引用链接，不参与库存移动。拖到另一个快捷槽时复制链接；
         // 其它位置直接结束拖拽，原快捷链接和背包物品都保持不变。
         if (dragState.sourceKind() == DragState.SourceKind.QUICK_USE) {
-            int target = quickUseSlotAtScreen(mouseX, mouseY);
-            if (target >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
-                requestQuickUseSlot(target, dragged, dragState::drop, () ->
-                    com.bong.client.BongClient.LOGGER.warn(
-                        "[bong][inspect] authoritative quick-use copy rejected slot={}", target));
-            } else {
-                dragState.drop();
-            }
-            clearAllHighlights();
+            attemptQuickUseDrop(mouseX, mouseY, dragged);
             return;
         }
 
@@ -1581,36 +1812,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // 非网格目标（装备槽 / hotbar / 快捷栏 / 丢弃 / loot 外部容器）恒发 false。
         boolean dropRotated = dragState.draggedRotated();
 
-        if (UiWindowRuntime.dropWorkstationMaterial(mouseX, mouseY, dragState.originalDraggedItem())) {
+        if (UiWindowRuntime.dropWorkstationMaterial(mouseX, mouseY, dragged)) {
             // 拖起只修改了本地格子。先恢复投影，再由服务端快照原子地移到材料区。
             returnDragToSource();
             clearAllHighlights();
             return;
         }
-
         if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) {
-            var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
-            var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
-            boolean fromLoot = lootPanel != null && !lootPanel.isClosed()
-                && lootPanel.extContainerId().equals(dragState.sourceContainerId());
-            var item = fromLoot && dropRotated ? dragState.originalDraggedItem() : dragged;
-            if (pos != null && grid.canPlace(item, pos.row(), pos.col())
-                && isWornPackContainerDroppable(InventoryStateStore.snapshot(), grid.containerId())) {
-                boolean accepted;
-                if (fromLoot) {
-                    lootPanel.sendMove(item.instanceId(), dragState.sourceContainerId(),
-                        dragState.sourceRow(), dragState.sourceCol(), grid.containerId(), pos.row(), pos.col());
-                    accepted = true;
-                } else {
-                    accepted = dispatchMoveIntent(item, fromLoc,
-                        new com.bong.client.network.ClientRequestProtocol.ContainerLoc(grid.containerId(), pos.row(), pos.col()),
-                        dropRotated);
-                }
-                if (accepted) {
-                    grid.place(item, pos.row(), pos.col());
-                    dragState.drop();
-                } else returnDragToSource();
-            } else returnDragToSource();
+            handleContainerGridDrop(mouseX, mouseY, dragged, fromLoc, dropRotated);
             clearAllHighlights();
             return;
         }
@@ -1619,60 +1828,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Discard
         if (workbenchTarget && isOverDiscard(mouseX, mouseY)) {
-            if (dispatchDiscardIntent(dragged, fromLoc)) {
-                dragState.drop();
-            } else {
-                returnDragToSource();
-            }
+            handleDiscardDrop(dragged, fromLoc);
             clearAllHighlights();
             return;
         }
 
-
         // Loot grid drop (supply coffin) — handle both directions
-        if (workbenchTarget && lootPanel != null && !lootPanel.isClosed()) {
-            boolean fromLoot = lootPanel.extContainerId().equals(dragState.sourceContainerId());
-
-            // plan-rotate-v1 — loot 面板走 external_container_move 协议（无 rotated 字段），
-            // 旋转态落位一律还原原朝向：与 server 权威状态一致，避免快照回来时形状跳变。
-            InventoryItem lootDropItem = dropRotated && dragState.originalDraggedItem() != null
-                ? dragState.originalDraggedItem()
-                : dragged;
-
-            // Drop onto loot grid (from player container)
-            BackpackGridPanel lg = lootPanel.lootGrid();
-            if (lg.containsPoint(mouseX, mouseY)) {
-                var pos = lg.screenToGrid(mouseX, mouseY);
-                if (pos != null && lg.canPlace(lootDropItem, pos.row(), pos.col())) {
-                    lg.place(lootDropItem, pos.row(), pos.col());
-                    String srcCid = dragState.sourceContainerId();
-                    int srcRow = dragState.sourceRow();
-                    int srcCol = dragState.sourceCol();
-                    dragState.drop();
-                    lootPanel.sendMove(dragged.instanceId(),
-                        srcCid != null ? srcCid : "", srcRow, srcCol,
-                        lootPanel.extContainerId(), pos.row(), pos.col());
-                    clearAllHighlights();
-                    return;
-                }
-            }
-
-        }
+        if (handleLootGridDrop(workbenchTarget, mouseX, mouseY, dragged, dropRotated)) return;
 
         // Equip (with hand restriction from physical body)
         // plan-layered-equip-v1 P4（决议 #3/#12）：删除旧 swap 分支——满/占=飘红退回不顶替；
         // worn 合法则 push 栈顶（乐观更新，server 快照为权威）。canEquip 已含「worn 满 / held 占 / 锁手」拒绝。
-        {
-            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
-            if (eq != null) {
-                if (!commitEquipDropOrReturnToSource(dragged, fromLoc, eq.slotType())) {
-                    clearAllHighlights();
-                    return;
-                }
-                clearAllHighlights();
-                return;
-            }
-        }
+        if (handleEquipmentDrop(mouseX, mouseY, dragged, fromLoc)) return;
 
         // Body inspect drop (physical or meridian layer) — only 1×1 items
         var dropBody = UiWindowRuntime.bodyAt(mouseX, mouseY);
@@ -1761,6 +1928,156 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         returnDragToSource();
         clearAllHighlights();
+    }
+
+    /** 分堆拖放先尝试工位投料，失败后再按普通容器落位。 */
+    private boolean attemptSplitStackDrop(double mouseX, double mouseY, InventoryItem dragged) {
+        boolean sent = UiWindowRuntime.dropAlchemyMaterial(mouseX, mouseY, dragged);
+        if (!sent) {
+            var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
+            var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
+            sent = pos != null && commitSplitDrop(grid, pos.row(), pos.col());
+        }
+        return sent;
+    }
+
+    /** 快捷栏拖放只复制链接，拖到其它表面时恢复原链接。 */
+    private void attemptQuickUseDrop(double mouseX, double mouseY, InventoryItem dragged) {
+        int target = quickUseSlotAtScreen(mouseX, mouseY);
+        if (target >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
+            requestQuickUseSlot(target, dragged, dragState::drop, () ->
+                com.bong.client.BongClient.LOGGER.warn(
+                    "[bong][inspect] authoritative quick-use copy rejected slot={}", target));
+        } else {
+            dragState.drop();
+        }
+        clearAllHighlights();
+    }
+
+    /** 处理玩家容器与战利品容器之间的网格落位。 */
+    private void handleContainerGridDrop(
+        double mouseX,
+        double mouseY,
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc,
+        boolean dropRotated
+    ) {
+        var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
+        var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
+        boolean fromLoot = lootPanel != null && !lootPanel.isClosed()
+            && lootPanel.extContainerId().equals(dragState.sourceContainerId());
+        var item = fromLoot && dropRotated ? dragState.originalDraggedItem() : dragged;
+        if (pos != null && grid.canPlace(item, pos.row(), pos.col())
+            && isWornPackContainerDroppable(InventoryStateStore.snapshot(), grid.containerId())) {
+            boolean accepted;
+            if (fromLoot) {
+                lootPanel.sendMove(item.instanceId(), dragState.sourceContainerId(),
+                    dragState.sourceRow(), dragState.sourceCol(), grid.containerId(), pos.row(), pos.col());
+                accepted = true;
+            } else {
+                accepted = dispatchMoveIntent(item, fromLoc,
+                    new com.bong.client.network.ClientRequestProtocol.ContainerLoc(grid.containerId(), pos.row(), pos.col()),
+                    dropRotated);
+            }
+            if (accepted) {
+                grid.place(item, pos.row(), pos.col());
+                dragState.drop();
+            } else {
+                returnDragToSource();
+            }
+        } else {
+            returnDragToSource();
+        }
+    }
+
+    /** 处理拖到丢弃区的请求，失败时把物品恢复到原来源。 */
+    private void handleDiscardDrop(
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc
+    ) {
+        if (dispatchDiscardIntent(dragged, fromLoc)) {
+            dragState.drop();
+        } else {
+            returnDragToSource();
+        }
+    }
+
+    /**
+     * 处理战利品网格落位。
+     *
+     * @return 成功落入战利品网格时返回 {@code true}，否则交给后续目标继续判断
+     */
+    private boolean handleLootGridDrop(
+        boolean workbenchTarget,
+        double mouseX,
+        double mouseY,
+        InventoryItem dragged,
+        boolean dropRotated
+    ) {
+        if (!workbenchTarget || lootPanel == null || lootPanel.isClosed()) return false;
+
+        // plan-rotate-v1 — loot 面板走 external_container_move 协议（无 rotated 字段），
+        // 旋转态落位一律还原原朝向：与 server 权威状态一致，避免快照回来时形状跳变。
+        InventoryItem lootDropItem = dropRotated && dragState.originalDraggedItem() != null
+            ? dragState.originalDraggedItem()
+            : dragged;
+
+        BackpackGridPanel lg = lootPanel.lootGrid();
+        if (!lg.containsPoint(mouseX, mouseY)) return false;
+        var pos = lg.screenToGrid(mouseX, mouseY);
+        if (pos == null || !lg.canPlace(lootDropItem, pos.row(), pos.col())) return false;
+
+        lg.place(lootDropItem, pos.row(), pos.col());
+        String srcCid = dragState.sourceContainerId();
+        int srcRow = dragState.sourceRow();
+        int srcCol = dragState.sourceCol();
+        dragState.drop();
+        lootPanel.sendMove(dragged.instanceId(),
+            srcCid != null ? srcCid : "", srcRow, srcCol,
+            lootPanel.extContainerId(), pos.row(), pos.col());
+        clearAllHighlights();
+        return true;
+    }
+
+    /** 处理拖到装备槽的提交；装备槽命中后不再继续尝试其它目标。 */
+    private boolean handleEquipmentDrop(
+        double mouseX,
+        double mouseY,
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc
+    ) {
+        var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
+        if (eq == null) return false;
+        if (!commitEquipDropOrReturnToSource(dragged, fromLoc, eq.slotType())) {
+            clearAllHighlights();
+            return true;
+        }
+        clearAllHighlights();
+        return true;
+    }
+
+    /** 炼丹投料请求被本地拒绝时，必须把拖拽物还回原格，不能吞掉客户端物品。 */
+    boolean completeAlchemyMaterialDrop(boolean accepted) {
+        if (accepted) dragState.drop();
+        else returnDragToSource();
+        clearAllHighlights();
+        return accepted;
+    }
+
+    /** 分堆只发送数量请求，避免把同一 instance_id 乐观复制到两个格子。 */
+    boolean commitSplitDrop(BackpackGridPanel grid, int row, int col) {
+        InventoryItem item = dragState.draggedItem();
+        if (!dragState.isSplitStack() || grid == null || item.instanceId() == 0L
+            || !grid.canPlace(item, row, col)
+            || !isWornPackContainerDroppable(InventoryStateStore.snapshot(), grid.containerId())) {
+            return false;
+        }
+        var source = snapshotSourceLocation();
+        if (!(source instanceof com.bong.client.network.ClientRequestProtocol.ContainerLoc)) return false;
+        return InventoryMoveService.move(
+            item.instanceId(), source,
+            new com.bong.client.network.ClientRequestProtocol.ContainerLoc(grid.containerId(), row, col),
+            dragState.draggedRotated(), item.stackCount());
     }
 
     /**
@@ -1873,6 +2190,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item.isCraftRecipeScroll()) {
             actions.add(new PillMenuAction("研读制作残卷", ActionKind.CRAFT_RECIPE_SCROLL_USE));
         }
+        if (com.bong.client.alchemy.AlchemyNotesContent.isRecipeItem(item)) {
+            actions.add(new PillMenuAction("阅读丹方", ActionKind.READ_ALCHEMY_RECIPE));
+        }
         if (item.isTechniqueScroll() && hasTechniqueScrollMetadata(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
         }
@@ -1949,6 +2269,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case READ_SCROLL -> {
                 pendingMeridianUse = null;
                 dispatchScrollReadRequest(item);
+            }
+            case READ_ALCHEMY_RECIPE -> {
+                pendingMeridianUse = null;
+                UiWindowRuntime.openAlchemyNotes(item);
             }
         }
     }
@@ -2156,7 +2480,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
             item.instanceId(), from, to, rotated, item.itemId());
-        boolean accepted = com.bong.client.network.ClientRequestSender.sendInventoryMove(
+        boolean accepted = InventoryMoveService.move(
             item.instanceId(), from, to, rotated);
         if (!accepted) {
             com.bong.client.BongClient.LOGGER.warn(
@@ -2374,7 +2698,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void clearAllHighlights() {
         for (BackpackGridPanel g : containerGrids) g.clearHighlights();
-        equipPanel.clearHighlights();
+        if (equipPanel != null) equipPanel.clearHighlights();
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
@@ -2383,7 +2707,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         if (lootPanel != null && lootPanel.lootGrid() != null) lootPanel.lootGrid().clearHighlights();
-        discardStrip.surface(Surface.flat(0xFF201010));
+        if (discardStrip != null) discardStrip.surface(Surface.flat(0xFF201010));
     }
 
     boolean tryLearnSkillScroll(InventoryItem item) {
@@ -2710,7 +3034,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             matrices.pop();
         }
 
-        UiWindowRuntime.renderWorkspace(context, windowMouseX, windowMouseY, delta);
+        UiWindowRuntime.renderWorkspace(context, windowMouseX, windowMouseY, delta, dragState.isDragging());
         mouseX = windowMouseX;
         mouseY = windowMouseY;
         context.getMatrices().push();
@@ -2720,6 +3044,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             drawPillMenuOverlay(context, mouseX, mouseY);
             drawWeaponMenuOverlay(context, mouseX, mouseY);
             drawSkillBarMenuOverlay(context, mouseX, mouseY);
+            drawStackSplitOverlay(context, mouseX, mouseY);
 
             if (dragState.isDragging() && dragState.draggedItem() != null) {
                 InventoryItem item = dragState.draggedItem();
@@ -2764,6 +3089,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseScrolled(double x, double y, double amount) {
+        if (stackSplit != null) {
+            stackSplit = stackSplit.withSelected(stackSplit.selected() + (amount > 0 ? 1 : -1));
+            return true;
+        }
         return UiWindowRuntime.scroll(x, y, amount) || super.mouseScrolled(x, y, amount);
     }
 
@@ -2953,6 +3282,41 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 PILL_MENU_TEXT
             );
         }
+        matrices.pop();
+    }
+
+    private void drawStackSplitOverlay(DrawContext context, int mouseX, int mouseY) {
+        if (stackSplit == null) return;
+        int left = stackSplit.x();
+        int top = stackSplit.y();
+        int right = left + stackSplit.width();
+        int bottom = top + stackSplit.height();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 480);
+        context.fill(left, top, right, bottom, 0xF01A211D);
+        context.fill(left, top, right, top + 1, 0xFFD5B77A);
+        context.fill(left, bottom - 1, right, bottom, 0xFF6C786D);
+        context.fill(left, top, left + 1, bottom, 0xFF6C786D);
+        context.fill(right - 1, top, right, bottom, 0xFF6C786D);
+        String title = textRenderer.trimToWidth("分离 " + stackSplit.fullItem().displayName(),
+            Math.max(1, stackSplit.width() - 16));
+        context.drawTextWithShadow(textRenderer,
+            Text.literal(title), left + 8, top + 7, 0xFFE5D2A3);
+        int rowTop = top + 25;
+        int hovered = mouseX >= left && mouseX < right && mouseY >= rowTop && mouseY < rowTop + 18 ? 0 : -1;
+        context.fill(left + 4, rowTop, left + 28, rowTop + 18, hovered == 0 ? 0xFF3D4A40 : 0xFF28332D);
+        context.fill(right - 28, rowTop, right - 4, rowTop + 18, hovered == 0 ? 0xFF3D4A40 : 0xFF28332D);
+        context.drawText(textRenderer, Text.literal("−"), left + 14, rowTop + 4, 0xFFE5D2A3, false);
+        context.drawText(textRenderer,
+            Text.literal(stackSplit.selected() + " / " + stackSplit.fullItem().stackCount()),
+            left + Math.max(30, (stackSplit.width() - textRenderer.getWidth(stackSplit.selected() + " / " + stackSplit.fullItem().stackCount())) / 2),
+            rowTop + 4, 0xFFE5E9E3, false);
+        context.drawText(textRenderer, Text.literal("+"), right - 20, rowTop + 4, 0xFFE5D2A3, false);
+        String hint = stackSplit.height() < 64 ? "滚轮/方向键调整 · Enter确认" : "左键拖取 · 滚轮/方向键调整 · 右键取消";
+        context.drawText(textRenderer, textRenderer.trimToWidth(hint,
+            Math.max(1, stackSplit.width() - 16)),
+            left + 8, bottom - 19, 0xFF9DAA9F, false);
         matrices.pop();
     }
 

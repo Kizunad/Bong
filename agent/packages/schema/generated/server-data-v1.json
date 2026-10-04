@@ -137,10 +137,6 @@
                     "type": "string"
                   },
                   {
-                    "const": "npc_farm_pressure",
-                    "type": "string"
-                  },
-                  {
                     "const": "scattered_cultivator",
                     "type": "string"
                   },
@@ -14669,7 +14665,7 @@
           "type": "string"
         },
         "kind": {
-          "description": "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺",
+          "description": "四类作物二级加工工艺；种植来源由后续重构接入",
           "anyOf": [
             {
               "const": "drying",
@@ -14797,6 +14793,339 @@
       }
     },
     {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "furnace_pos",
+            "heat",
+            "incense",
+            "materials",
+            "action"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "alchemy_world",
+              "type": "string"
+            },
+            "furnace_pos": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "heat": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "incense": {
+              "type": "boolean"
+            },
+            "materials": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            "action": {
+              "anyOf": [
+                {
+                  "const": "state",
+                  "type": "string"
+                },
+                {
+                  "const": "ignite",
+                  "type": "string"
+                },
+                {
+                  "const": "fire_raise",
+                  "type": "string"
+                },
+                {
+                  "const": "fire_lower",
+                  "type": "string"
+                },
+                {
+                  "const": "incense",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "furnace_pos",
+            "heat",
+            "incense",
+            "materials",
+            "action",
+            "source"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "alchemy_world",
+              "type": "string"
+            },
+            "furnace_pos": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "heat": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "incense": {
+              "type": "boolean"
+            },
+            "materials": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            "action": {
+              "const": "inject_qi",
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "furnace_pos",
+            "heat",
+            "incense",
+            "materials",
+            "action",
+            "item",
+            "count"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "alchemy_world",
+              "type": "string"
+            },
+            "furnace_pos": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "heat": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "incense": {
+              "type": "boolean"
+            },
+            "materials": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            "action": {
+              "const": "feed",
+              "type": "string"
+            },
+            "item": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "count": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "type",
+            "furnace_pos",
+            "heat",
+            "incense",
+            "materials",
+            "action",
+            "result",
+            "item",
+            "name"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "type": {
+              "const": "alchemy_world",
+              "type": "string"
+            },
+            "furnace_pos": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "heat": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "incense": {
+              "type": "boolean"
+            },
+            "materials": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            "action": {
+              "const": "collect",
+              "type": "string"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "const": "perfect",
+                  "type": "string"
+                },
+                {
+                  "const": "good",
+                  "type": "string"
+                },
+                {
+                  "const": "flawed",
+                  "type": "string"
+                },
+                {
+                  "const": "waste",
+                  "type": "string"
+                },
+                {
+                  "const": "early_take",
+                  "type": "string"
+                },
+                {
+                  "const": "explode",
+                  "type": "string"
+                }
+              ]
+            },
+            "item": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
       "additionalProperties": false,
       "type": "object",
       "required": [
@@ -14899,6 +15228,31 @@
               },
               "missed": {
                 "type": "boolean"
+              },
+              "ingredients": {
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "material",
+                    "required",
+                    "inserted"
+                  ],
+                  "properties": {
+                    "material": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inserted": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                }
               }
             }
           }
@@ -14908,6 +15262,44 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "incense": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "remaining_ticks",
+            "duration_ticks",
+            "temp_band_scale",
+            "qi_cost_scale",
+            "smoke_color"
+          ],
+          "properties": {
+            "kind": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "remaining_ticks": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "duration_ticks": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "temp_band_scale": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "qi_cost_scale": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "smoke_color": {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            }
           }
         }
       }
@@ -16147,6 +16539,704 @@
             "minLength": 1,
             "type": "string"
           }
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": false,
+              "type": "boolean"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "active_cast_instance_id",
+            "minimum_cast_instance_id",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": false,
+              "type": "boolean"
+            },
+            "active_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "minimum_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": true,
+              "type": "boolean"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "caster",
+            "target_entity_id",
+            "session_id",
+            "session_generation",
+            "allocator_exhausted",
+            "active_cast_instance_id",
+            "minimum_cast_instance_id",
+            "type"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "caster": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "player_uuid"
+                  ],
+                  "properties": {
+                    "player_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "npc_uuid"
+                  ],
+                  "properties": {
+                    "npc_uuid": {
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_entity_id": {
+              "minimum": -2147483648,
+              "maximum": 2147483647,
+              "type": "integer"
+            },
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "allocator_exhausted": {
+              "const": true,
+              "type": "boolean"
+            },
+            "active_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "minimum_cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "type": {
+              "const": "cast_session_begin",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "duration_ms",
+        "started_at_ms",
+        "type",
+        "source",
+        "npc",
+        "skill_id",
+        "av_binding_key",
+        "phase",
+        "slot",
+        "outcome"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "entity_uuid"
+              ],
+              "properties": {
+                "entity_uuid": {
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "dimension_id",
+                "x",
+                "y",
+                "z"
+              ],
+              "properties": {
+                "dimension_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "z": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "cast_sync",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "const": "QUICK_SLOT",
+              "type": "string"
+            },
+            {
+              "const": "SKILL_BAR",
+              "type": "string"
+            },
+            {
+              "const": "DEDICATED",
+              "type": "string"
+            }
+          ]
+        },
+        "npc": {
+          "type": "boolean"
+        },
+        "skill_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "IDLE",
+              "type": "string"
+            },
+            {
+              "const": "CASTING",
+              "type": "string"
+            },
+            {
+              "const": "COMPLETE",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT",
+              "type": "string"
+            }
+          ]
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "index"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "quick_slot",
+                  "type": "string"
+                },
+                "index": {
+                  "minimum": 0,
+                  "maximum": 8,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "skill_bar",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "dedicated",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "NONE",
+              "type": "string"
+            },
+            {
+              "const": "COMPLETED",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_MOVEMENT",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTAM",
+              "type": "string"
+            },
+            {
+              "const": "INTERRUPT_CONTROL",
+              "type": "string"
+            },
+            {
+              "const": "USER_CANCEL",
+              "type": "string"
+            },
+            {
+              "const": "DEATH",
+              "type": "string"
+            },
+            {
+              "const": "MERIDIAN_GATED",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_QI_INSUFFICIENT",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_ON_COOLDOWN",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_INVALID_TARGET",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_IN_RECOVERY",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_REALM_TOO_LOW",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_NO_WEAPON",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_TECHNIQUE_INACTIVE",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_RACE_MISMATCH",
+              "type": "string"
+            },
+            {
+              "const": "REJECT_SKILL_CONFIG_INVALID",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "av_binding_key",
+        "animation_id",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "animation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "cast_play_anim",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "identity",
+        "av_binding_key",
+        "animation_id",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "identity": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "session_id",
+            "session_generation",
+            "cast_instance_id"
+          ],
+          "properties": {
+            "session_id": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "session_generation": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            },
+            "cast_instance_id": {
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        },
+        "av_binding_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "animation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "cast_stop_anim",
+          "type": "string"
         }
       }
     },
@@ -21122,5 +22212,6 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "fa33157a11229f722876c7a462f377dee31c7bbf2b673953d45cbf644570b438"
+  "x-bong-typebox-source-sha256": "c2050c9e0e92d0ce53f0eb1433e833eb4d7c734283c2eb298edbc5b8087f6d5d",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

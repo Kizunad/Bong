@@ -2,6 +2,7 @@ package com.bong.client.entity;
 
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnGroup;
+import net.minecraft.entity.MarkerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import org.slf4j.Logger;
@@ -76,6 +77,9 @@ public final class BongEntityRegistry {
 
     private static void registerKinds(List<BongEntityModelKind> kinds) {
         for (BongEntityModelKind kind : kinds) {
+            if (kind == BongEntityModelKind.DRY_CORPSE) {
+                registerReservedType();
+            }
             EntityType<BongModeledEntity> existing = Holder.TYPES.get(kind);
             EntityType<BongModeledEntity> type = existing == null ? registerType(kind) : existing;
             int rawId = Registries.ENTITY_TYPE.getRawId(type);
@@ -116,7 +120,27 @@ public final class BongEntityRegistry {
     }
 
     private static final class Holder {
+        private static EntityType<MarkerEntity> reservedType;
         private static final EnumMap<BongEntityModelKind, EntityType<BongModeledEntity>> TYPES =
             new EnumMap<>(BongEntityModelKind.class);
+    }
+
+    /** 数字协议空位不可压缩，否则后续实体都会被客户端解析为另一种类型。 */
+    private static void registerReservedType() {
+        if (Holder.reservedType != null) {
+            return;
+        }
+        Holder.reservedType = Registry.register(
+            Registries.ENTITY_TYPE,
+            new net.minecraft.util.Identifier("bong", "reserved_155"),
+            EntityType.Builder.create(MarkerEntity::new, SpawnGroup.MISC)
+                .setDimensions(0.0f, 0.0f)
+                .disableSaving()
+                .disableSummon()
+                .build("bong:reserved_155")
+        );
+        if (Registries.ENTITY_TYPE.getRawId(Holder.reservedType) != 155) {
+            throw new IllegalStateException("Reserved entity protocol slot must remain 155");
+        }
     }
 }

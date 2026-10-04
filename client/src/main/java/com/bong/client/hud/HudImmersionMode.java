@@ -46,7 +46,6 @@ public final class HudImmersionMode {
         HudRenderLayer.VISUAL,
         HudRenderLayer.AGENT_UI,
         HudRenderLayer.COFFIN,
-        HudRenderLayer.LINGTIAN_OVERLAY,
         HudRenderLayer.REALM_COLLAPSE
     );
     private static final EnumSet<HudRenderLayer> VISIBLE_OTHER = EnumSet.of(
@@ -66,8 +65,7 @@ public final class HudImmersionMode {
         HudRenderLayer.TOAST,
         HudRenderLayer.VISUAL,
         HudRenderLayer.AGENT_UI,
-        HudRenderLayer.COFFIN,
-        HudRenderLayer.LINGTIAN_OVERLAY
+        HudRenderLayer.COFFIN
     );
 
     private HudImmersionMode() {

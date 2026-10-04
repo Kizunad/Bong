@@ -7,7 +7,7 @@ export const ProcessingKindV1 = Type.Union(
     Type.Literal("forging_alchemy"),
     Type.Literal("extraction"),
   ],
-  { description: "plan-lingtian-process-v1 §5.3 四类作物二级加工工艺" },
+  { description: "四类作物二级加工工艺；种植来源由后续重构接入" },
 );
 export type ProcessingKindV1 = Static<typeof ProcessingKindV1>;
 

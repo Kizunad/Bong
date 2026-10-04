@@ -133,6 +133,16 @@ public final class ClientRequestSender {
         return tryDispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
     }
 
+    public static boolean sendInventoryMove(
+        long instanceId,
+        ClientRequestProtocol.InvLocation from,
+        ClientRequestProtocol.InvLocation to,
+        boolean rotated,
+        int count
+    ) {
+        return tryDispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated, count));
+    }
+
     public static void sendEquipFalseSkin(long itemInstanceId) {
         dispatch(ClientRequestProtocol.encodeEquipFalseSkin(itemInstanceId));
     }
@@ -311,6 +321,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeBlueprintTurnPage(delta));
     }
 
+    /** 发送图谱学习请求，保持 C2S registry 中的 forge_learn_blueprint 入口可复用。 */
+    public static void sendForgeLearnBlueprint(String blueprintId) {
+        dispatch(ClientRequestProtocol.encodeForgeLearnBlueprint(blueprintId));
+    }
+
     public static void sendForgeStepAdvance(long sessionId) {
         dispatch(ClientRequestProtocol.encodeForgeStepAdvance(sessionId));
     }
@@ -442,6 +457,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipe(recipeId));
     }
 
+    /** 发送丹方残卷学习请求，实例归属与碎片内容由 server 校验。 */
+    public static void sendAlchemyLearnRecipeFragment(long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(itemInstanceId));
+    }
+
     public static void sendAlchemyOpenFurnace(BlockPos pos) {
         dispatch(ClientRequestProtocol.encodeAlchemyOpenFurnace(pos));
     }
@@ -468,6 +488,10 @@ public final class ClientRequestSender {
 
     public static void sendAlchemyFurnacePlace(BlockPos pos, long itemInstanceId) {
         dispatch(ClientRequestProtocol.encodeAlchemyFurnacePlace(pos, itemInstanceId));
+    }
+
+    public static void sendAlchemyPlaceIncense(BlockPos pos, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyPlaceIncense(pos, itemInstanceId));
     }
 
     public static void sendCoffinOpen(BlockPos pos) {
@@ -539,31 +563,7 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeGiveDanToElder(pillInstanceId, elderEntityId));
     }
 
-    // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
-
-    public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartTill(x, y, z, hoeInstanceId, mode));
-    }
-
-    public static void sendLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartRenew(x, y, z, hoeInstanceId));
-    }
-
-    public static void sendLingtianStartPlanting(int x, int y, int z, String plantId) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartPlanting(x, y, z, plantId));
-    }
-
-    public static void sendLingtianStartHarvest(int x, int y, int z, String mode) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartHarvest(x, y, z, mode));
-    }
-
-    public static void sendLingtianStartReplenish(int x, int y, int z, String source) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartReplenish(x, y, z, source));
-    }
-
-    public static void sendLingtianStartDrainQi(int x, int y, int z) {
-        dispatch(ClientRequestProtocol.encodeLingtianStartDrainQi(x, y, z));
-    }
+    //TODO:lingtian_refactor 新交互请求在玩法重写后接入。
 
     // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
 

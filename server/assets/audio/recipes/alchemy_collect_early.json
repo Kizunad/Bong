@@ -1,0 +1,13 @@
+{
+  "id": "alchemy_collect_early",
+  "layers": [
+    { "sound": "minecraft:block.iron_trapdoor.open", "volume": 0.4, "pitch": 0.92, "delay_ticks": 0 },
+    { "sound": "minecraft:block.lava.pop", "volume": 0.5, "pitch": 0.68, "delay_ticks": 7 },
+    { "sound": "minecraft:block.fire.extinguish", "volume": 0.35, "pitch": 0.8, "delay_ticks": 12 },
+    { "sound": "minecraft:block.iron_trapdoor.close", "volume": 0.35, "pitch": 0.78, "delay_ticks": 27 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

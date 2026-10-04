@@ -47,10 +47,6 @@ import {
   InventorySnapshotV1,
 } from "../src/inventory.js";
 import {
-  ZonePressureCrossedV1,
-  validateZonePressureCrossedV1Contract,
-} from "../src/zone-pressure.js";
-import {
   INTENSITY_MAX,
   INTENSITY_MIN,
   EventKind,
@@ -85,7 +81,7 @@ import {
   WeatherEventDataV1,
   WeatherEventKindV1,
   WeatherEventUpdateV1,
-} from "../src/lingtian-weather.js";
+} from "../src/weather.js";
 import {
   EnvironmentEffectV1,
   ZoneEnvironmentStateV1,
@@ -511,10 +507,6 @@ describe("sample files pass schema validation", () => {
     );
   });
 
-  it("declares zone pressure Redis channel", () => {
-    expect(CHANNELS.ZONE_PRESSURE_CROSSED).toBe("bong:zone/pressure_crossed");
-    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.ZONE_PRESSURE_CROSSED);
-  });
 
   it("declares rat phase Redis channel", () => {
     expect(CHANNELS.RAT_PHASE_EVENT).toBe("bong:rat_phase_event");
@@ -1177,23 +1169,6 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
-  it("zone pressure contract accepts rising pressure events", () => {
-    const data = {
-      v: 1,
-      kind: "zone_pressure_crossed",
-      zone: "starter_zone",
-      level: "high",
-      raw_pressure: 1.25,
-      at_tick: 1440,
-    };
-
-    expect(validate(ZonePressureCrossedV1, data).ok).toBe(true);
-    expectContractAccepts("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, data);
-    expectContractRejects("ZonePressureCrossedV1", validateZonePressureCrossedV1Contract, {
-      ...data,
-      level: "none",
-    });
-  });
 
   it("server-data.cultivation-detail.sample.json", () => {
     const data = loadSample("server-data.cultivation-detail.sample.json");
@@ -1217,6 +1192,17 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.alchemy-session.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("Rust and client alchemy world fixtures satisfy the shared wire contract", () => {
+    const fixtures = JSON.parse(readFileSync(join(__dirname, "../../../../proto/fixtures/alchemy_world_v1.json"), "utf8"));
+    for (const fixture of fixtures) {
+      const result = validate(ServerDataV1, fixture);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    }
+    const { source, ...withoutSource } = fixtures[0];
+    expect(validate(ServerDataV1, withoutSource).ok).toBe(false);
+    expect(validate(ServerDataV1, { ...fixtures[0], heat: 1.1 }).ok).toBe(false);
   });
 
   it("server-data.alchemy-outcome-forecast.sample.json", () => {
@@ -1796,29 +1782,7 @@ describe("sample files pass schema validation", () => {
     });
   }
 
-  it("client-request.lingtian_start_replenish accepts pill residue source", () => {
-    const result = validate(ClientRequestV1, {
-      v: 1,
-      type: "lingtian_start_replenish",
-      x: 1,
-      y: 64,
-      z: -2,
-      source: "pill_residue_failed_pill",
-    });
-    expect(result.ok, result.errors.join("; ")).toBe(true);
-  });
 
-  it("client-request.lingtian_start_replenish rejects unknown replenish source", () => {
-    const result = validate(ClientRequestV1, {
-      v: 1,
-      type: "lingtian_start_replenish",
-      x: 1,
-      y: 64,
-      z: -2,
-      source: "raw_sludge",
-    });
-    expect(result.ok).toBe(false);
-  });
 
   it("rejects stale alchemy furnace_id routing", () => {
     const result = validate(ClientRequestV1, {
@@ -1904,6 +1868,21 @@ describe("sample files pass schema validation", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it.each([[3, true], [0, false], [-1, false], [1.5, false], [4294967296, false]])(
+    "move intent count %s has validity %s",
+    (count, expected) => {
+      const result = validate(ClientRequestV1, {
+        v: 1,
+        type: "inventory_move_intent",
+        instance_id: 42,
+        count,
+        from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+        to: { kind: "container", container_id: "main_pack", row: 1, col: 0 },
+      });
+      expect(result.ok).toBe(expected);
+    },
+  );
 
   // plan-tarkov-backpack-v1 P2：pack_<数字> container_id 被 ContainerIdV1 pattern 接受（正）。
   it("move intent into pack_<n> container is accepted", () => {
@@ -3782,7 +3761,7 @@ describe("schema rejects invalid data", () => {
   });
 });
 
-describe("plan-lingtian-weather-v1 §4.2 schema", () => {
+describe("weather schema", () => {
   it("WeatherEventKindV1 接受 5 个 wire 字符串", () => {
     for (const kind of [
       "thunderstorm",
@@ -3806,8 +3785,8 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
       v: 1,
       zone_id: "default",
       kind: "thunderstorm",
-      // 缺 started_at_lingtian_tick
-      expires_at_lingtian_tick: 200,
+      // 缺 started_at_minute
+      expires_at_minute: 200,
       remaining_ticks: 100,
     };
     const result = validate(WeatherEventDataV1, data);
@@ -3819,8 +3798,8 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
       v: 1,
       zone_id: "default",
       kind: "thunderstorm",
-      started_at_lingtian_tick: -1,
-      expires_at_lingtian_tick: 200,
+      started_at_minute: -1,
+      expires_at_minute: 200,
       remaining_ticks: 100,
     };
     const result = validate(WeatherEventDataV1, data);
@@ -3836,8 +3815,8 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
           v: 1,
           zone_id: "default",
           kind: "thunderstorm",
-          started_at_lingtian_tick: 0,
-          expires_at_lingtian_tick: 200,
+          started_at_minute: 0,
+          expires_at_minute: 200,
           remaining_ticks: 100,
         },
       };
@@ -3855,8 +3834,8 @@ describe("plan-lingtian-weather-v1 §4.2 schema", () => {
           v: 1,
           zone_id: "default",
           kind: "thunderstorm",
-          started_at_lingtian_tick: 0,
-          expires_at_lingtian_tick: 200,
+          started_at_minute: 0,
+          expires_at_minute: 200,
           remaining_ticks: 100,
         },
       };

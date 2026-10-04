@@ -88,20 +88,20 @@ pub fn apply_craft_material_intents(
             } else {
                 let instance = intent.instance_id.ok_or("未指定材料实例")?;
                 if let Some(pos) = intent.station_pos {
-                    let p = position.get();
-                    if !p.is_finite()
-                        || (p.x - f64::from(pos.0)).abs() > 3.0
-                        || (p.y - f64::from(pos.1)).abs() > 3.0
-                        || (p.z - f64::from(pos.2)).abs() > 3.0
-                        || dimension.map(|value| value.0)
-                            != Some(crate::world::dimension::DimensionKind::Overworld)
-                    {
-                        return Err("请靠近炼器砧后投料".into());
-                    }
                     let station = stations
                         .iter()
                         .find(|station| station.pos == Some(pos))
                         .ok_or("工位不存在")?;
+                    let player_dimension =
+                        dimension.map(|value| value.0).ok_or("请靠近炼器砧后投料")?;
+                    if !crate::forge::is_within_forge_scope(
+                        position.get(),
+                        player_dimension,
+                        station.pos,
+                        station.dimension,
+                    ) {
+                        return Err("请靠近炼器砧后投料".into());
+                    }
                     if station.owner.is_some_and(|owner| owner != entity)
                         || station.session.is_some()
                         || station.integrity <= 0.0

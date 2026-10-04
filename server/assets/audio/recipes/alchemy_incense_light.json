@@ -1,0 +1,11 @@
+{
+  "id": "alchemy_incense_light",
+  "layers": [
+    { "sound": "minecraft:block.fire.ignite", "volume": 0.35, "pitch": 1.35, "delay_ticks": 0 },
+    { "sound": "minecraft:block.campfire.crackle", "volume": 0.2, "pitch": 1.4, "delay_ticks": 3 }
+  ],
+  "priority": 42,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

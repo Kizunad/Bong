@@ -1,0 +1,16 @@
+facing = "+z"
+mirror_x = 8.0
+size = 280
+
+[materials]
+crater_stone = [51, 49, 56]
+crystal_dark = [87, 42, 112]
+crystal_purple = [145, 74, 189]
+crystal_light = [202, 132, 233]
+crystal_glow = [142, 78, 255]
+
+[features]
+crater_stone = { elements = ["crater_"], must_show_in = ["FRONT", "BACK", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+cracked_pillar = { elements = ["pillar_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 1 }
+crystal_whiskers = { elements = ["whisker_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+crystal_glow = { elements = ["glow_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 1 }

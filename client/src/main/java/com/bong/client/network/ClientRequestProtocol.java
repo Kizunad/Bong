@@ -23,6 +23,7 @@ public final class ClientRequestProtocol {
     public static final String CHANNEL_PATH = "client_request";
     public static final int VERSION = 1;
     public static final int MAX_CRAFT_QUANTITY = 64;
+    private static final long JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L;
 
     /**
      * 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。
@@ -395,6 +396,18 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /** 使用丹方残卷学习碎片；server 以实例归属和内容校验为准。 */
+    public static String encodeAlchemyLearnRecipeFragment(long itemInstanceId) {
+        if (itemInstanceId < 0 || itemInstanceId > JS_SAFE_INTEGER_MAX) {
+            throw new IllegalArgumentException(
+                "itemInstanceId must be in [0, " + JS_SAFE_INTEGER_MAX + "], got " + itemInstanceId
+            );
+        }
+        JsonObject obj = envelope("alchemy_learn_recipe_fragment");
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeAlchemyIgnite(BlockPos pos, String recipeId) {
         JsonObject obj = envelope("alchemy_ignite");
         addBlockPos(obj, pos);
@@ -449,6 +462,13 @@ public final class ClientRequestProtocol {
         obj.addProperty("x", pos.getX());
         obj.addProperty("y", pos.getY());
         obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeAlchemyPlaceIncense(BlockPos pos, long itemInstanceId) {
+        JsonObject obj = envelope("alchemy_place_incense");
+        addBlockPos(obj, pos);
         obj.addProperty("item_instance_id", itemInstanceId);
         return obj.toString();
     }
@@ -626,12 +646,25 @@ public final class ClientRequestProtocol {
         InvLocation to,
         boolean rotated
     ) {
+        return encodeInventoryMove(instanceId, from, to, rotated, null);
+    }
+
+    /** count 缺省移动整堆；指定时只移动所选数量，由服务端分配新实例。 */
+    public static String encodeInventoryMove(
+        long instanceId, InvLocation from, InvLocation to, boolean rotated, Integer count
+    ) {
+        if (count != null && count <= 0) {
+            throw new IllegalArgumentException("inventory move count must be positive");
+        }
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
         if (rotated) {
             obj.addProperty("rotated", true);
+        }
+        if (count != null) {
+            obj.addProperty("count", count);
         }
         return obj.toString();
     }
@@ -1099,6 +1132,13 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /** 学习图谱残卷；server 负责确认图谱存在及玩家持有残卷。 */
+    public static String encodeForgeLearnBlueprint(String blueprintId) {
+        JsonObject obj = envelope("forge_learn_blueprint");
+        obj.addProperty("blueprint_id", requireNonBlank(blueprintId, "blueprintId"));
+        return obj.toString();
+    }
+
     public static String encodeForgeStepAdvance(long sessionId) {
         JsonObject obj = envelope("forge_step_advance");
         obj.addProperty("session_id", sessionId);
@@ -1324,67 +1364,7 @@ public final class ClientRequestProtocol {
         return envelope("cancel_search").toString();
     }
 
-    // ─── 灵田（plan-lingtian-v1 §1.2-§1.7） ──────────────────────────
-
-    /** plan §1.2.2 — 起开垦 session。{@code mode} = "manual" | "auto"。 */
-    public static String encodeLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {
-        JsonObject obj = envelope("lingtian_start_till");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("hoe_instance_id", hoeInstanceId);
-        obj.addProperty("mode", mode);
-        return obj.toString();
-    }
-
-    /** plan §1.6 — 起翻新 session。 */
-    public static String encodeLingtianStartRenew(int x, int y, int z, long hoeInstanceId) {
-        JsonObject obj = envelope("lingtian_start_renew");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("hoe_instance_id", hoeInstanceId);
-        return obj.toString();
-    }
-
-    /** plan §1.2.3 — 起种植 session（背包内须有该 plant_id 的种子）。 */
-    public static String encodeLingtianStartPlanting(int x, int y, int z, String plantId) {
-        JsonObject obj = envelope("lingtian_start_planting");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("plant_id", plantId);
-        return obj.toString();
-    }
-
-    /** plan §1.5 — 起收获 session。{@code mode} = "manual" | "auto"。 */
-    public static String encodeLingtianStartHarvest(int x, int y, int z, String mode) {
-        JsonObject obj = envelope("lingtian_start_harvest");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("mode", mode);
-        return obj.toString();
-    }
-
-    /** plan §1.4 + plan-alchemy-recycle-v1 — 起补灵 session。 */
-    public static String encodeLingtianStartReplenish(int x, int y, int z, String source) {
-        JsonObject obj = envelope("lingtian_start_replenish");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        obj.addProperty("source", source);
-        return obj.toString();
-    }
-
-    /** plan §1.7 — 起偷灵 session。 */
-    public static String encodeLingtianStartDrainQi(int x, int y, int z) {
-        JsonObject obj = envelope("lingtian_start_drain_qi");
-        obj.addProperty("x", x);
-        obj.addProperty("y", y);
-        obj.addProperty("z", z);
-        return obj.toString();
-    }
+    //TODO:lingtian_refactor 新请求编码在玩法重写后定义。
 
     // ─── 通用手搓 (plan-craft-v1 P2) ────────────────────────────────────────
 

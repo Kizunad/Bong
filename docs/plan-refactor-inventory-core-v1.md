@@ -2,11 +2,20 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。P0 只冻结事实、失败边界、跨轨 owner 与审核要求的 pins；不把设计当实现。
 
+## Status Overview
+
+当前状态：P1 已于 2026-10-02 完成，P2a 已于 2026-10-04 完成；P0、P2 后续 terminal worker、P3、P4 尚未完成。
+
 ## 阶段
 
 - ⏳ P0 完整契约面重写 + absorption audit
-- ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers；对应 master M-06/M-13 的 transaction/provider surface，R3 seam 只按 M-04 提供。
+- ✅ 2026-10-02 P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers；对应 master M-06/M-13 的 transaction/provider surface，R3 seam 只按 M-04 提供。
 - ⬜ P2：production writer 迁移分为 metadata/provider、Public/OwnerOnly writer 与 terminal worker；terminal worker 对应 M-06/O-10..O-27，dropped-loot hydration/projection 与 pickup consumer 只按 master M-13/M-14/M-15 启用。
+  - ✅ 2026-10-04 P2a：`DroppedLootEntry` 的 owner/visibility 兼容字段、bounded Public/OwnerOnly admission，以及现有生产 writer 第一批接线；旧 dropped-loot JSON 缺字段默认 `None`/`Public`，由 `player::state::tests::durable_dropped_loot_loads_legacy_entry_without_metadata` 锁定。
+  - ⬜ P2 后续交付物与验收（以下均未由 P2a 声称完成）：
+    - **terminal worker / outbox consumer**：在 `server/src/inventory/session_delivery.rs` 落地 §1.2 的 `SessionDeliveryWorker::{claim_next,commit_claimed,fail,retry_dead_letter,resolve_dead_letter}`，operator bridge 为 `server/src/cmd/gameplay/session_delivery.rs::SessionDeliveryOperatorCmd`；owner 接口是 R1 `TerminalDeliveryPolicy` 与 R3 durable outbox。`session_delivery_crash_atomicity`、`session_delivery_outbox_atomicity` 及 §7 pin 8 全部通过，且 O-10..O-21/O-26/O-27 的 claim、lease、digest、receipt replay、dead-letter CAS 可从测试结果核验，才标记完成。
+    - **dropped-loot hydration / projection**：R3 在 `server/src/persistence/player.rs::load_durable_dropped_loot` 前调用 `migrate_legacy_dropped_loot_entry`；R6 在 `server/src/network/dropped_loot_sync_emit.rs` 产出 `DroppedLootProjectionReset` 与分页 envelope。owner 接口是 §3 的 visibility/context key 与 master M-14 的每 recipient revision/byte budget；`inv_dropped_loot_bound` 的 hydration guard、visibility matrix、reset/replacement page 和 empty-page 断言全部通过，才标记完成。
+    - **pickup consumer**：R4/R5/R6 以 `server/src/inventory/txn.rs::InventoryTxn::pickup_and_merge` 和 `PickupAuthorization` 接入真实 C2S authorization、qi attrition 与 receipt/projection wire；§7 pins 5--7 及 `inv_stack_merge`、`inv_dropped_loot_bound` 覆盖同维成功、跨维/超距/私有拒绝、merge/placement-only、失败可重试与守恒。真实 server→wire→client/bot 结果和上述测试标准同时通过，才标记完成。
 - ⬜ P3：pickup/merge txn；R4/R5/R6 consumer 与 receipt/attrition 接缝只引用 master M-14/M-15。
 - ⬜ P4：联合 bot/e2e + plan 收口；完成 evidence 需覆盖对应 M-row 与 canonical O-row。
 

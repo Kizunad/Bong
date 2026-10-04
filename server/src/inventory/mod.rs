@@ -62,8 +62,17 @@ pub mod external_container;
 pub mod corpse;
 // plan-food-v1 P2 — 灵食消费路径（consume_food + FoodRegen 临时修炼加速）。
 pub mod food;
-// plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
+// 在线 tick freshness cache + season/anqi multiplier；种植来源由后续重构接入。
 pub mod freshness;
+// RF-33 R10 P1：纯库存布局迁移 helper；真实 overflow writer 由 R3 consumer 接入。
+pub mod layout;
+// RF-33 R10 P1：掉落 metadata 迁移与可见性 contract；R10 P2a writer 走下方 admission gate。
+pub mod dropped_loot;
+// RF-33 R10 P1：bounded capacity/provider 与 spill 接缝；R10 P2a 已接 production admission。
+pub mod capacity;
+// RF-33 R10 P1：staged inventory transaction contract；R10 P2a 的 spill writer 已接入。
+pub(crate) mod operator;
+pub mod txn;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
 pub mod poi_loot;
 pub mod spirit_treasure;
@@ -74,6 +83,29 @@ pub mod tsy_loot_spawn;
 // plan-tsy-loot-v1 §8.2 — 端到端集成测试。
 #[cfg(test)]
 mod tsy_loot_integration_test;
+
+// RF-33 contract-first surface: callers may import the stable symbols from `inventory` while
+// the implementation remains split into focused modules.  R10 P2a routes production dropped
+// loot writers through the bounded admission methods below.
+pub use capacity::{
+    check_capacity, check_owner_only_discard_capacity, BoundedCapacityProvider, CapacityError,
+    CapacityProvider, CapacityReservation, CapacitySnapshot, DurableSpill, NoopDurableSpill,
+    SpillContext, SpillContextError, MAX_DURABLE_DROPPED_LOOT_ENTRIES,
+    MAX_OWNER_ONLY_DISCARD_ENTRIES_PER_PLAYER, SYSTEM_RESERVED_DURABLE_DROPPED_LOOT_ENTRIES,
+};
+pub use dropped_loot::{
+    apply_dropped_loot_metadata, migrate_legacy_dropped_loot_entry, DroppedLootMetadata,
+    DroppedLootMigrationError, DroppedLootVisibility, CURRENT_DROPPED_LOOT_SCHEMA_VERSION,
+};
+pub use layout::{
+    migrate_equipped_v1_to_v2, migrate_legacy_inventory_layout, InventoryLayoutMigrationError,
+    MigrationOutcome, CURRENT_INVENTORY_LAYOUT_SCHEMA_VERSION,
+};
+pub use txn::{
+    ConsumeRequest, DeliveryItem, DeliveryRequest, InventoryConsumeReceipt,
+    InventoryDeliveryReceipt, InventoryMergeReceipt, InventoryPickupReceipt, InventorySpillReceipt,
+    InventoryTxn, InventoryTxnError, PickupAuthorization, PickupRequest,
+};
 
 pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const DEFAULT_ITEMS_DIR: &str = "assets/items";
@@ -921,6 +953,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(DroppedLootRegistry::default());
     app.insert_resource(freshness::FreshnessEnvironment::default());
     app.insert_resource(spirit_treasure::SpiritTreasureRegistry::default());
+    operator::register(app);
     // plan-tsy-loot-v1 §2 — 上古遗物模板池 + 已 spawn family 集合。
     app.insert_resource(ancient_relics::AncientRelicPool::from_seed());
     app.insert_resource(tsy_loot_spawn::TsySpawnedFamilies::default());
@@ -1006,6 +1039,7 @@ pub fn apply_termination_drop_on_terminate(
         let Ok(mut inventory) = inventories.get_mut(ev.entity) else {
             continue;
         };
+        let inventory_before_drop = inventory.clone();
 
         let cause = last_termination_cause(life_records.get(ev.entity).ok());
         let should_spawn_remains = cause == Some("natural_end");
@@ -1067,24 +1101,40 @@ pub fn apply_termination_drop_on_terminate(
                 );
                 // Fall back to world drops if we can't place a remains entity.
                 let start_idx = dropped_registry.entries.len();
-                for (idx, (source_container_id, source_row, source_col, item)) in
-                    drained.into_iter().enumerate()
-                {
-                    let entry = DroppedLootEntry {
-                        instance_id: item.instance_id,
-                        source_container_id,
-                        source_row,
-                        source_col,
-                        world_pos: [
-                            base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
-                            base[1],
-                            base[2] + 0.35,
-                        ],
-                        dimension: entity_dimension,
-                        item,
-                    };
-                    dropped_registry.entries.insert(entry.instance_id, entry);
+                let entries = drained
+                    .into_iter()
+                    .enumerate()
+                    .map(
+                        |(idx, (source_container_id, source_row, source_col, item))| {
+                            DroppedLootEntry {
+                                instance_id: item.instance_id,
+                                source_container_id,
+                                source_row,
+                                source_col,
+                                world_pos: [
+                                    base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
+                                    base[1],
+                                    base[2] + 0.35,
+                                ],
+                                dimension: entity_dimension,
+                                owner: None,
+                                visibility: DroppedLootVisibility::Public,
+                                item,
+                            }
+                        },
+                    )
+                    .collect::<Vec<_>>();
+                let mut staged_registry = dropped_registry.clone();
+                if let Err(error) = staged_registry.try_insert_public_batch(entries) {
+                    tracing::error!(
+                        entity = ?ev.entity,
+                        ?error,
+                        "[bong][inventory] termination drop admission failed; preserving inventory"
+                    );
+                    *inventory = inventory_before_drop;
+                    continue;
                 }
+                *dropped_registry = staged_registry;
                 commands.entity(ev.entity).remove::<DeathDropAnchor>();
                 bump_revision(&mut inventory);
                 continue;
@@ -1123,24 +1173,38 @@ pub fn apply_termination_drop_on_terminate(
             });
         } else if should_drop_to_world && !drained.is_empty() {
             let start_idx = dropped_registry.entries.len();
-            for (idx, (source_container_id, source_row, source_col, item)) in
-                drained.into_iter().enumerate()
-            {
-                let entry = DroppedLootEntry {
-                    instance_id: item.instance_id,
-                    source_container_id,
-                    source_row,
-                    source_col,
-                    world_pos: [
-                        base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
-                        base[1],
-                        base[2] + 0.35,
-                    ],
-                    dimension: entity_dimension,
-                    item,
-                };
-                dropped_registry.entries.insert(entry.instance_id, entry);
+            let entries = drained
+                .into_iter()
+                .enumerate()
+                .map(
+                    |(idx, (source_container_id, source_row, source_col, item))| DroppedLootEntry {
+                        instance_id: item.instance_id,
+                        source_container_id,
+                        source_row,
+                        source_col,
+                        world_pos: [
+                            base[0] + 0.35 + (start_idx + idx) as f64 * 0.1,
+                            base[1],
+                            base[2] + 0.35,
+                        ],
+                        dimension: entity_dimension,
+                        owner: None,
+                        visibility: DroppedLootVisibility::Public,
+                        item,
+                    },
+                )
+                .collect::<Vec<_>>();
+            let mut staged_registry = dropped_registry.clone();
+            if let Err(error) = staged_registry.try_insert_public_batch(entries) {
+                tracing::error!(
+                    entity = ?ev.entity,
+                    ?error,
+                    "[bong][inventory] termination drop admission failed; preserving inventory"
+                );
+                *inventory = inventory_before_drop;
+                continue;
             }
+            *dropped_registry = staged_registry;
         }
 
         commands.entity(ev.entity).remove::<DeathDropAnchor>();
@@ -1461,16 +1525,23 @@ pub(crate) fn attach_inventory_to_joined_clients(
     mut allocator: valence::prelude::ResMut<InventoryInstanceIdAllocator>,
     default_loadout: valence::prelude::Res<DefaultLoadout>,
     item_registry: valence::prelude::Res<ItemRegistry>,
-    joined_clients: Query<Entity, JoinedClientsWithoutInventoryFilter>,
+    permissions: Option<Res<crate::cmd::dev::DevCommandPermissions>>,
+    joined_clients: Query<(Entity, Option<&Username>), JoinedClientsWithoutInventoryFilter>,
 ) {
-    for entity in &joined_clients {
-        let player_inventory =
+    for (entity, username) in &joined_clients {
+        let mut player_inventory =
             instantiate_inventory_from_loadout(&default_loadout.0, &mut allocator, &item_registry)
                 .unwrap_or_else(|error| {
                 panic!(
                     "[bong][inventory] failed to instantiate default loadout for joined client {entity:?}: {error}"
                 )
             });
+
+        if permissions.as_ref().is_some_and(|permissions| {
+            username.is_some_and(|username| permissions.is_operator(&username.0))
+        }) {
+            operator::expand_pocket(&mut player_inventory, &item_registry);
+        }
 
         commands.entity(entity).insert(player_inventory);
         // plan-HUD-v1 §1.3 默认全解锁（v1 演示）。后续接入修炼系统按真实条件 mutate。
@@ -1976,6 +2047,8 @@ pub fn add_item_to_player_inventory_or_ground(
                 source_col: 0,
                 world_pos: ground_pos,
                 dimension: ground_dimension,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item,
             };
             if dropped_loot.entries.contains_key(&instance_id) {
@@ -1983,7 +2056,9 @@ pub fn add_item_to_player_inventory_or_ground(
                     "dropped loot instance id collision: {instance_id} already exists"
                 ));
             }
-            dropped_loot.entries.insert(instance_id, entry.clone());
+            dropped_loot
+                .try_insert_public(entry.clone())
+                .map_err(|error| format!("public dropped-loot admission failed: {error:?}"))?;
             Ok(GrantOrGroundOutcome::DroppedToGround(Box::new(entry)))
         }
         Err(other) => Err(other),
@@ -3593,6 +3668,12 @@ pub enum InventoryMoveRejectReason {
     FromLocationMismatch,
     /// instance_id 在 inventory 里彻底找不到。
     InstanceNotFound,
+    /// 分堆数量非法、超过库存或物品不可堆叠。
+    InvalidStackCount,
+    /// 部分堆叠只支持普通容器之间移动。
+    SplitRequiresContainer,
+    /// 无法为拆出的堆叠分配实例 id。
+    InstanceAllocationFailed,
     /// container_id 未知（幽灵容器 / 客户端过期状态）。
     UnknownContainerId,
     /// 落位越界（行列超出容器边界，或 row/col 转换失败）。
@@ -3655,6 +3736,9 @@ impl InventoryMoveRejectReason {
         match self {
             Self::FromLocationMismatch => "from_location_mismatch",
             Self::InstanceNotFound => "instance_not_found",
+            Self::InvalidStackCount => "invalid_stack_count",
+            Self::SplitRequiresContainer => "split_requires_container",
+            Self::InstanceAllocationFailed => "instance_allocation_failed",
             Self::UnknownContainerId => "unknown_container_id",
             Self::TargetOutOfBounds => "target_out_of_bounds",
             Self::TargetOccupied { .. } => "target_occupied",
@@ -3714,6 +3798,9 @@ impl InventoryMoveRejectReason {
         match self {
             Self::FromLocationMismatch => "from-location does not hold instance".to_string(),
             Self::InstanceNotFound => "instance not found in inventory".to_string(),
+            Self::InvalidStackCount => "分堆数量无效或库存不足".to_string(),
+            Self::SplitRequiresContainer => "分堆需要放入背包空格".to_string(),
+            Self::InstanceAllocationFailed => "无法分配分堆物品实例".to_string(),
             Self::UnknownContainerId => "unknown container_id".to_string(),
             Self::TargetOutOfBounds => "target rectangle exceeds container bounds".to_string(),
             Self::TargetOccupied { instance_id } => {
@@ -3881,6 +3968,12 @@ pub struct DroppedLootEntry {
     pub source_col: u8,
     pub world_pos: [f64; 3],
     pub dimension: DimensionKind,
+    /// 私人掉落的 canonical owner；旧 durable JSON 缺失时由 serde 默认成 `None`。
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// recipient projection 使用的可见性；旧 durable JSON 缺失时默认公共可见。
+    #[serde(default)]
+    pub visibility: DroppedLootVisibility,
     pub item: ItemInstance,
 }
 
@@ -3892,6 +3985,154 @@ pub struct DroppedLootRegistry {
     /// addressable without an implicit owner. `instance_id` values are globally
     /// unique within a running server.
     pub entries: HashMap<u64, DroppedLootEntry>,
+}
+
+/// Production dropped-loot writers use this error instead of mutating the registry map
+/// directly.  Capacity and identity failures happen before any entry is published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DroppedLootWriteError {
+    /// The registry key and embedded item identity disagree.
+    IdentityMismatch { registry_id: u64, item_id: u64 },
+    /// A writer attempted to publish an already-present instance id.
+    DuplicateInstanceId(u64),
+    /// The bounded durable queue cannot admit the batch.
+    Capacity(CapacityError),
+    /// The owner/visibility pair is not a valid metadata contract.
+    InvalidMetadata(DroppedLootMigrationError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DroppedLootWriterClass {
+    /// Craft, loot, death and other server-owned production paths may use the full queue.
+    System,
+    /// A player discard is owner-only and must preserve the system-reserved tail.
+    PlayerDiscard,
+}
+
+impl DroppedLootRegistry {
+    /// Publish one public drop through the bounded system-writer admission gate.
+    pub fn try_insert_public(
+        &mut self,
+        entry: DroppedLootEntry,
+    ) -> Result<(), DroppedLootWriteError> {
+        self.try_insert_public_batch(std::iter::once(entry))
+    }
+
+    /// Publish a public batch atomically: capacity and all identities are checked first.
+    pub fn try_insert_public_batch(
+        &mut self,
+        entries: impl IntoIterator<Item = DroppedLootEntry>,
+    ) -> Result<(), DroppedLootWriteError> {
+        let mut entries = entries.into_iter().collect::<Vec<_>>();
+        for entry in &mut entries {
+            entry.owner = None;
+            entry.visibility = DroppedLootVisibility::Public;
+        }
+        self.try_insert_batch(entries, DroppedLootWriterClass::System)
+    }
+
+    /// Publish one owner-only player discard, enforcing both the per-owner quota and
+    /// the reserved capacity that production/system writers must retain.
+    pub fn try_insert_owner_only(
+        &mut self,
+        entry: DroppedLootEntry,
+        owner: impl Into<String>,
+    ) -> Result<(), DroppedLootWriteError> {
+        self.try_insert_owner_only_batch(std::iter::once(entry), owner)
+    }
+
+    /// Publish an owner-only player-discard batch atomically.
+    pub fn try_insert_owner_only_batch(
+        &mut self,
+        entries: impl IntoIterator<Item = DroppedLootEntry>,
+        owner: impl Into<String>,
+    ) -> Result<(), DroppedLootWriteError> {
+        let metadata = DroppedLootMetadata::owner_only(owner)
+            .map_err(DroppedLootWriteError::InvalidMetadata)?;
+        let mut entries = entries.into_iter().collect::<Vec<_>>();
+        for entry in &mut entries {
+            entry.owner = metadata.owner.clone();
+            entry.visibility = metadata.visibility;
+        }
+        self.try_insert_batch(entries, DroppedLootWriterClass::PlayerDiscard)
+    }
+
+    fn try_insert_batch(
+        &mut self,
+        entries: Vec<DroppedLootEntry>,
+        writer_class: DroppedLootWriterClass,
+    ) -> Result<(), DroppedLootWriteError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let mut ids = HashSet::with_capacity(entries.len());
+        for entry in &entries {
+            if entry.instance_id != entry.item.instance_id {
+                return Err(DroppedLootWriteError::IdentityMismatch {
+                    registry_id: entry.instance_id,
+                    item_id: entry.item.instance_id,
+                });
+            }
+            if entry.instance_id > JS_SAFE_INTEGER_MAX {
+                return Err(DroppedLootWriteError::IdentityMismatch {
+                    registry_id: entry.instance_id,
+                    item_id: entry.instance_id,
+                });
+            }
+            if !ids.insert(entry.instance_id) || self.entries.contains_key(&entry.instance_id) {
+                return Err(DroppedLootWriteError::DuplicateInstanceId(
+                    entry.instance_id,
+                ));
+            }
+            DroppedLootMetadata {
+                owner: entry.owner.clone(),
+                visibility: entry.visibility,
+            }
+            .validate()
+            .map_err(DroppedLootWriteError::InvalidMetadata)?;
+        }
+
+        let capacity = match writer_class {
+            DroppedLootWriterClass::System => check_capacity(
+                self.entries.len(),
+                entries.len(),
+                MAX_DURABLE_DROPPED_LOOT_ENTRIES,
+            ),
+            DroppedLootWriterClass::PlayerDiscard => {
+                let owner = entries
+                    .first()
+                    .and_then(|entry| entry.owner.as_deref())
+                    .ok_or({
+                        DroppedLootWriteError::InvalidMetadata(
+                            DroppedLootMigrationError::InvalidMetadataCombination {
+                                visibility: DroppedLootVisibility::OwnerOnly,
+                                owner_present: false,
+                            },
+                        )
+                    })?;
+                let owner_current = self
+                    .entries
+                    .values()
+                    .filter(|entry| {
+                        entry.visibility == DroppedLootVisibility::OwnerOnly
+                            && entry.owner.as_deref() == Some(owner)
+                    })
+                    .count();
+                check_owner_only_discard_capacity(
+                    owner_current,
+                    entries.len(),
+                    self.entries.len(),
+                    MAX_DURABLE_DROPPED_LOOT_ENTRIES,
+                )
+            }
+        };
+        capacity.map_err(DroppedLootWriteError::Capacity)?;
+
+        self.entries
+            .extend(entries.into_iter().map(|entry| (entry.instance_id, entry)));
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -4030,6 +4271,64 @@ pub fn apply_inventory_move_with_race(
             })
         }
     }
+}
+
+/// 从容器堆叠拆出部分数量放入空格。源堆叠继续占格，不参与交换；
+/// 校验、实例分配与落位全部成功后才提交，拒绝时库存及 revision 不变。
+#[allow(clippy::too_many_arguments)]
+pub fn apply_inventory_split(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    to: &crate::schema::inventory::InventoryLocationV1,
+    count: u32,
+    rotated: bool,
+) -> Result<u64, InventoryMoveRejectReason> {
+    use crate::schema::inventory::InventoryLocationV1;
+
+    if !matches!(from, InventoryLocationV1::Container { .. })
+        || !matches!(to, InventoryLocationV1::Container { .. })
+    {
+        return Err(InventoryMoveRejectReason::SplitRequiresContainer);
+    }
+    if !location_holds_instance(inventory, instance_id, from) {
+        return Err(InventoryMoveRejectReason::FromLocationMismatch);
+    }
+    let mut split =
+        clone_item_at(inventory, instance_id).ok_or(InventoryMoveRejectReason::InstanceNotFound)?;
+    let template = registry
+        .get(&split.template_id)
+        .ok_or(InventoryMoveRejectReason::UnknownItemTemplate)?;
+    if count == 0
+        || count >= split.stack_count
+        || count > template.max_stack_count
+        || template.max_stack_count <= 1
+        || template.container_spec.is_some()
+    {
+        return Err(InventoryMoveRejectReason::InvalidStackCount);
+    }
+    split.stack_count = count;
+    if rotated {
+        std::mem::swap(&mut split.grid_w, &mut split.grid_h);
+    }
+    validate_move_semantics(registry, inventory, &split, from, to)?;
+    // 不排除来源实例：剩余物品仍在原位，分出的堆叠不得与它重叠。
+    validate_attach_fits(inventory, &split, to)?;
+
+    split.instance_id = allocator
+        .next_id()
+        .map_err(|_| InventoryMoveRejectReason::InstanceAllocationFailed)?;
+    let split_id = split.instance_id;
+    let mut next = inventory.clone();
+    inventory_item_by_instance_mut(&mut next, instance_id)
+        .ok_or(InventoryMoveRejectReason::InstanceNotFound)?
+        .stack_count -= count;
+    attach_at_location(&mut next, split, to)?;
+    bump_revision(&mut next);
+    *inventory = next;
+    Ok(split_id)
 }
 
 pub fn exchange_inventory_items(
@@ -4371,6 +4670,7 @@ pub fn apply_death_drop_on_revive(
         let Ok(mut inventory) = inventories.get_mut(ev.entity) else {
             continue;
         };
+        let inventory_before_drop = inventory.clone();
         let seed = death_drop_seed(ev.entity, inventory.revision.0);
         let base = positions
             .get(ev.entity)
@@ -4396,11 +4696,12 @@ pub fn apply_death_drop_on_revive(
                 base,
                 seed,
             );
-            clear_death_drop_window_components(&mut commands, ev.entity);
             if tsy_outcome.total_dropped() == 0 {
+                clear_death_drop_window_components(&mut commands, ev.entity);
                 continue;
             }
             let mut combined: Vec<DroppedItemRecord> = Vec::new();
+            let mut entries = Vec::new();
             for (idx, record) in tsy_outcome
                 .entry_carry_dropped
                 .iter()
@@ -4420,11 +4721,26 @@ pub fn apply_death_drop_on_revive(
                     source_col: record.col,
                     world_pos: [base.x + 0.35 + idx as f64 * 0.1, base.y, base.z + 0.35],
                     dimension: DimensionKind::Tsy,
+                    owner: None,
+                    visibility: DroppedLootVisibility::Public,
                     item: record.instance.clone(),
                 };
-                dropped_registry.entries.insert(entry.instance_id, entry);
+                entries.push(entry);
                 combined.push(record.clone());
             }
+
+            let mut staged_registry = dropped_registry.clone();
+            if let Err(error) = staged_registry.try_insert_public_batch(entries) {
+                tracing::error!(
+                    entity = ?ev.entity,
+                    ?error,
+                    "[bong][inventory] TSY death-drop admission failed; preserving inventory"
+                );
+                *inventory = inventory_before_drop;
+                continue;
+            }
+            *dropped_registry = staged_registry;
+            clear_death_drop_window_components(&mut commands, ev.entity);
 
             // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
             // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
@@ -4470,8 +4786,11 @@ pub fn apply_death_drop_on_revive(
             })
             .unwrap_or([0.0, 64.0, 0.0]);
         let start_idx = dropped_registry.entries.len();
-        for (idx, dropped) in outcome.dropped.iter().enumerate() {
-            let entry = DroppedLootEntry {
+        let entries = outcome
+            .dropped
+            .iter()
+            .enumerate()
+            .map(|(idx, dropped)| DroppedLootEntry {
                 instance_id: dropped.instance.instance_id,
                 source_container_id: dropped.container_id.clone(),
                 source_row: dropped.row,
@@ -4482,10 +4801,22 @@ pub fn apply_death_drop_on_revive(
                     base[2] + 0.35,
                 ],
                 dimension: entity_dimension,
+                owner: None,
+                visibility: DroppedLootVisibility::Public,
                 item: dropped.instance.clone(),
-            };
-            dropped_registry.entries.insert(entry.instance_id, entry);
+            })
+            .collect::<Vec<_>>();
+        let mut staged_registry = dropped_registry.clone();
+        if let Err(error) = staged_registry.try_insert_public_batch(entries) {
+            tracing::error!(
+                entity = ?ev.entity,
+                ?error,
+                "[bong][inventory] death-drop admission failed; preserving inventory"
+            );
+            *inventory = inventory_before_drop;
+            continue;
         }
+        *dropped_registry = staged_registry;
 
         // Anchor is only needed until the revive-drop is materialized.
         commands.entity(ev.entity).remove::<DeathDropAnchor>();
@@ -4858,20 +5189,20 @@ fn find_pack_instances_anywhere<'a>(
 /// plan-layered-equip-v1 P0.2 / §11.1 #17 — 根据已装备背包重算 `max_weight`。
 ///
 /// 公式：`BASE_CARRY_CAPACITY + Σ(所有身体槽 worn 层里带 container_spec 的件的 weight_capacity)`。
-/// 暗袋（body_pocket）不提供额外负重，始终使用 BASE_CARRY_CAPACITY 作为基础。
+/// 普通暗袋不提供额外负重；经服务端权限校准的 OP 背包使用测试负重上限。
 #[allow(dead_code)]
 pub fn compute_max_weight(inventory: &PlayerInventory, registry: &ItemRegistry) -> f64 {
     let backpack_bonus: f64 = worn_container_items(inventory, registry)
         .map(|(_, spec)| spec.weight_capacity)
         .sum();
 
-    BASE_CARRY_CAPACITY + backpack_bonus
+    operator::base_carry_capacity(inventory) + backpack_bonus
 }
 
 /// plan-layered-equip-v1 P0.2 / §11.1 #13.5 #17 — 根据身体槽 worn 层背包件重建动态容器列表。
 ///
 /// 规则（决议 #17，背包专属槽取消）：
-/// 1. `body_pocket`（2×3）始终存在；不存在时创建空容器。
+/// 1. `body_pocket` 始终存在；保留权限入口已校准的容量，不存在时创建普通 2×3 空容器。
 /// 2. 扫所有身体槽 worn 层里带 `container_spec` 的背包件：容器 id = `pack_<instance_id>`；
 ///    存在则更新 rows/cols（升级换品），否则 push 新空容器。
 /// 3. 移除已不再对应任何穿戴背包件的孤儿 `pack_*` 容器。**孤儿容器若非空，先把其物品
@@ -5020,11 +5351,12 @@ pub fn rebuild_and_drop_overflow(
 ) -> Vec<u64> {
     let overflow = rebuild_containers_from_equipment(inventory, registry);
     let mut dropped_ids = Vec::with_capacity(overflow.len());
-    for item in overflow {
+    let mut entries = Vec::with_capacity(overflow.len());
+    for (idx, item) in overflow.iter().enumerate() {
         let instance_id = item.instance_id;
         // 错位铺开避免叠在同一格；index 取自当前 registry 大小（与 discard 一致）。
-        let next_idx = dropped_registry.entries.len();
-        let dropped = DroppedLootEntry {
+        let next_idx = dropped_registry.entries.len() + idx;
+        entries.push(DroppedLootEntry {
             instance_id,
             source_container_id: "backpack_unequip_overflow".to_string(),
             source_row: 0,
@@ -5037,10 +5369,25 @@ pub fn rebuild_and_drop_overflow(
                 player_pos[2] + 0.35,
             ],
             dimension: player_dimension,
-            item,
-        };
-        dropped_registry.entries.insert(instance_id, dropped);
-        dropped_ids.push(instance_id);
+            owner: None,
+            visibility: DroppedLootVisibility::Public,
+            item: item.clone(),
+        });
+    }
+    let mut staged_registry = dropped_registry.clone();
+    if let Err(error) = staged_registry.try_insert_public_batch(entries) {
+        tracing::error!(
+            ?error,
+            "[bong][inventory] backpack overflow admission failed; retaining items in inventory"
+        );
+        for item in overflow {
+            force_attach_item_to_inventory(inventory, item);
+        }
+        return dropped_ids;
+    }
+    *dropped_registry = staged_registry;
+    for item in overflow {
+        dropped_ids.push(item.instance_id);
     }
     dropped_ids
 }
@@ -5108,22 +5455,24 @@ pub fn enforce_intrinsic_gate_on_morph_release(
 
     let mut stashed_ids = Vec::new();
     let mut dropped_ids = Vec::new();
+    let mut pending_drops = Vec::new();
+    let mut pending_items = Vec::new();
     for item in displaced.into_iter().chain(overflow_from_rebuild) {
         match find_first_fit_container_location(inventory, &item) {
             Some(location) => {
                 let instance_id = item.instance_id;
-                match attach_at_location(inventory, item, &location) {
+                match attach_at_location(inventory, item.clone(), &location) {
                     Ok(()) => stashed_ids.push(instance_id),
                     Err(_) => {
                         // 罕见竞态（location 校验后容器状态变化）——不丢件，转掉落。
-                        dropped_ids.push(instance_id);
+                        pending_items.push(item);
                     }
                 }
             }
             None => {
                 let instance_id = item.instance_id;
                 let next_idx = dropped_registry.entries.len();
-                let dropped = DroppedLootEntry {
+                pending_drops.push(DroppedLootEntry {
                     instance_id,
                     source_container_id: "morph_release_gate_overflow".to_string(),
                     source_row: 0,
@@ -5134,12 +5483,46 @@ pub fn enforce_intrinsic_gate_on_morph_release(
                         player_pos[2] + 0.35,
                     ],
                     dimension: player_dimension,
+                    owner: None,
+                    visibility: DroppedLootVisibility::Public,
                     item,
-                };
-                dropped_registry.entries.insert(instance_id, dropped);
-                dropped_ids.push(instance_id);
+                });
             }
         }
+    }
+    let pending_drop_start = dropped_registry.entries.len() + pending_drops.len();
+    for (idx, item) in pending_items.drain(..).enumerate() {
+        pending_drops.push(DroppedLootEntry {
+            instance_id: item.instance_id,
+            source_container_id: "morph_release_gate_overflow".to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [
+                player_pos[0] + 0.35 + (pending_drop_start + idx) as f64 * 0.1,
+                player_pos[1] + 0.5,
+                player_pos[2] + 0.35,
+            ],
+            dimension: player_dimension,
+            owner: None,
+            visibility: DroppedLootVisibility::Public,
+            item,
+        });
+    }
+    if !pending_drops.is_empty() {
+        let mut staged_registry = dropped_registry.clone();
+        if let Err(error) = staged_registry.try_insert_public_batch(pending_drops.clone()) {
+            tracing::error!(
+                ?error,
+                "[bong][inventory] morph release overflow admission failed; retaining items"
+            );
+            pending_items.extend(pending_drops.into_iter().map(|entry| entry.item));
+        } else {
+            *dropped_registry = staged_registry;
+            dropped_ids.extend(pending_drops.into_iter().map(|entry| entry.instance_id));
+        }
+    }
+    for item in pending_items {
+        force_attach_item_to_inventory(inventory, item);
     }
     (stashed_ids, dropped_ids)
 }
@@ -5321,6 +5704,8 @@ pub fn spawn_template_dropped_loot(
         source_col: 0,
         world_pos: request.world_pos,
         dimension: request.dimension,
+        owner: None,
+        visibility: DroppedLootVisibility::Public,
         item: runtime_instance_from_template(
             template,
             instance_id,
@@ -5328,7 +5713,9 @@ pub fn spawn_template_dropped_loot(
             request.current_tick,
         ),
     };
-    registry.entries.insert(instance_id, dropped.clone());
+    registry
+        .try_insert_public(dropped.clone())
+        .map_err(|error| format!("public dropped-loot admission failed: {error:?}"))?;
     Ok(dropped)
 }
 
@@ -5370,6 +5757,29 @@ pub fn discard_inventory_item_to_dropped_loot(
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
 ) -> Result<InventoryDiscardOutcome, String> {
+    discard_inventory_item_to_dropped_loot_with_owner(
+        inventory,
+        registry,
+        player_pos,
+        player_dimension,
+        instance_id,
+        from,
+        None,
+    )
+}
+
+/// Discard an inventory item while carrying the authenticated owner identity when the
+/// caller is a player action.  NPC/combat callers pass `None` and produce a public drop;
+/// the network discard path passes the canonical player id and produces `OwnerOnly` metadata.
+pub fn discard_inventory_item_to_dropped_loot_with_owner(
+    inventory: &mut PlayerInventory,
+    registry: &mut DroppedLootRegistry,
+    player_pos: [f64; 3],
+    player_dimension: DimensionKind,
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    owner: Option<&str>,
+) -> Result<InventoryDiscardOutcome, String> {
     if !location_holds_instance(inventory, instance_id, from) {
         return Err(format!(
             "from-location {from:?} does not hold instance {instance_id}"
@@ -5378,9 +5788,6 @@ pub fn discard_inventory_item_to_dropped_loot(
 
     let item = clone_item_at(inventory, instance_id)
         .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
-
-    detach_instance(inventory, instance_id);
-    bump_revision(inventory);
 
     let (source_container_id, source_row, source_col) = match from {
         crate::schema::inventory::InventoryLocationV1::Container {
@@ -5403,7 +5810,7 @@ pub fn discard_inventory_item_to_dropped_loot(
     // Keep the visual spread local to the player. Using the global registry length here
     // eventually puts a fresh drop outside the 2.5-block pickup radius during long e2e runs.
     let next_idx = registry.entries.len().min(8);
-    let dropped = DroppedLootEntry {
+    let mut dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
         source_row,
@@ -5415,9 +5822,31 @@ pub fn discard_inventory_item_to_dropped_loot(
             player_pos[2] + 0.35,
         ],
         dimension: player_dimension,
+        owner: None,
+        visibility: DroppedLootVisibility::Public,
         item,
     };
-    registry.entries.insert(instance_id, dropped.clone());
+    if let Some(owner) = owner {
+        dropped.owner = Some(owner.to_string());
+        dropped.visibility = DroppedLootVisibility::OwnerOnly;
+    }
+
+    // Admission is checked against a clone before mutating the source inventory.  A full
+    // bounded queue or duplicate id therefore leaves the item available for retry.
+    let mut staged_registry = registry.clone();
+    if let Some(owner) = owner {
+        staged_registry
+            .try_insert_owner_only(dropped.clone(), owner)
+            .map_err(|error| format!("owner-only dropped-loot admission failed: {error:?}"))?;
+    } else {
+        staged_registry
+            .try_insert_public(dropped.clone())
+            .map_err(|error| format!("public dropped-loot admission failed: {error:?}"))?;
+    }
+
+    detach_instance(inventory, instance_id);
+    bump_revision(inventory);
+    *registry = staged_registry;
 
     Ok(InventoryDiscardOutcome {
         revision: inventory.revision,
@@ -5838,8 +6267,7 @@ fn validate_equip_to(
         | EquipSlotV1::ExtraHand1 => {
             // 类型校验：武器 / 工具 / 锄头。off_hand 另接受 Treasure / Shield。
             let is_weapon = template.weapon_spec.is_some();
-            let is_tool = matches!(template.category, ItemCategory::Tool)
-                || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some();
+            let is_tool = matches!(template.category, ItemCategory::Tool);
             let off_hand_extra = matches!(slot, EquipSlotV1::OffHand)
                 && matches!(
                     template.category,

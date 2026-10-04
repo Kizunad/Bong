@@ -12,6 +12,7 @@ import "bong/common.proto";
 // ─── S2C 信封（Server → Client） ────────────────────────────────
 
 message ServerDataEnvelope {
+  reserved 31; // 已删除消息的编号不可复用。
   oneof payload {
     Welcome           welcome            = 1;
     Heartbeat         heartbeat          = 2;
@@ -23,7 +24,7 @@ message ServerDataEnvelope {
     InventorySnapshot inventory_snapshot = 8;
     CombatHudState    combat_hud_state   = 9;
     KnockbackSync     knockback_sync     = 10;
-    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 / 灵田 ──────────────
+    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 ──────────────────
     AlchemyFurnace          alchemy_furnace           = 11;
     AlchemySession          alchemy_session           = 12;
     AlchemyOutcomeForecast  alchemy_outcome_forecast  = 13;
@@ -44,7 +45,6 @@ message ServerDataEnvelope {
     MiningProgress          mining_progress           = 28;
     LumberProgress          lumber_progress           = 29;
     GatheringSession        gathering_session         = 30;
-    LingtianSessionData     lingtian_session          = 31;
     // ─── P2 B2：战斗 / 伤口 / 防御 / 施法 / 毒 / 载体 / 暗器 ────
     WoundsSnapshot          wounds_snapshot           = 32;
     DefenseWindow           defense_window            = 33;
@@ -179,6 +179,8 @@ message ServerDataEnvelope {
     RaceGateMeta race_gate_meta = 141;
     // plan-race-system-v1 P4：易形状态快照（join+周期全量 / 解除瞬间半径 delta）。
     MorphState morph_state = 142;
+    // 丹炉附近可见的状态与一次性动作，不修改炉主的工位快照。
+    AlchemyWorld alchemy_world = 143;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -233,10 +235,11 @@ message WorkbenchOpen {
 // ─── C2S 信封（Client → Server） ────────────────────────────────
 
 message ClientRequestEnvelope {
+  reserved 22 to 27; // 已删除请求的编号不可复用。
   oneof payload {
     SetMeridianTarget   set_meridian_target   = 1;
     BreakthroughRequest breakthrough_request  = 2;
-    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 / 灵田 / 矿石 ──────
+    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 / 矿石 ───────────
     AlchemyOpenFurnace        alchemy_open_furnace        = 3;
     AlchemyFeedSlot           alchemy_feed_slot           = 4;
     AlchemyTakeBack           alchemy_take_back           = 5;
@@ -256,12 +259,6 @@ message ClientRequestEnvelope {
     CraftStart                craft_start                 = 19;
     CraftCancel               craft_cancel                = 20;
     BotanyHarvestRequest      botany_harvest_request      = 21;
-    LingtianStartTill         lingtian_start_till         = 22;
-    LingtianStartRenew        lingtian_start_renew        = 23;
-    LingtianStartPlanting     lingtian_start_planting     = 24;
-    LingtianStartHarvest      lingtian_start_harvest      = 25;
-    LingtianStartReplenish    lingtian_start_replenish    = 26;
-    LingtianStartDrainQi      lingtian_start_drain_qi     = 27;
     MineralProbe              mineral_probe               = 28;
     // ─── P2 B2：战斗 / 暗器 / 技能栏 / 死亡 C2S ──────────────────
     Jiemai                    jiemai                      = 29;
@@ -359,6 +356,7 @@ message ClientRequestEnvelope {
     TechniqueBind               technique_bind                = 103;
     MaterialMove               material_move                = 104;
     ForgeStationOpenReq         forge_station_open            = 105;
+    AlchemyPlaceIncense         alchemy_place_incense         = 106;
   }
 }
 
@@ -810,6 +808,20 @@ message BreakthroughRequest {
 // P2 B1 — 炼丹 S2C
 // ═══════════════════════════════════════════════════════════════
 
+// 世界工位表现；附近玩家无需打开 UI 即可收到状态与动作。
+message AlchemyWorld {
+  repeated sint32 furnace_pos = 1;
+  double heat = 2;
+  bool incense = 3;
+  map<string, uint32> materials = 4;
+  string action = 5;
+  optional string item = 6;
+  optional uint32 count = 7;
+  optional string result = 8;
+  optional string name = 9;
+  repeated double source = 10;
+}
+
 // 与 Rust AlchemyFurnaceDataV1 精确对应。
 message AlchemyFurnace {
   optional int32 pos_x   = 1; // Rust Option<(i32,i32,i32)> 拆三字段
@@ -829,6 +841,13 @@ message AlchemyStageHint {
   string summary   = 3;
   bool   completed = 4;
   bool   missed    = 5;
+  repeated AlchemyIngredientHint ingredients = 6;
+}
+
+message AlchemyIngredientHint {
+  string material = 1;
+  uint32 required = 2;
+  uint32 inserted = 3;
 }
 
 // 与 Rust AlchemySessionDataV1 精确对应。
@@ -845,6 +864,16 @@ message AlchemySession {
   string                     status_label         = 10;
   repeated AlchemyStageHint  stages               = 11;
   repeated string            interventions_recent = 12;
+  optional AlchemyIncense     incense              = 13;
+}
+
+message AlchemyIncense {
+  string kind = 1;
+  uint32 remaining_ticks = 2;
+  uint32 duration_ticks = 3;
+  double temp_band_scale = 4;
+  double qi_cost_scale = 5;
+  string smoke_color = 6;
 }
 
 // 与 Rust AlchemyOutcomeForecastDataV1 精确对应。
@@ -1478,89 +1507,6 @@ message GatheringSession {
   bool                completed     = 9;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// P2 B1 — 灵田 S2C
-// ═══════════════════════════════════════════════════════════════
-
-// 与 Rust LingtianSessionKindV1 精确对应。
-enum LingtianSessionKind {
-  LINGTIAN_SESSION_KIND_UNSPECIFIED = 0;
-  LINGTIAN_SESSION_KIND_TILL        = 1;
-  LINGTIAN_SESSION_KIND_RENEW       = 2;
-  LINGTIAN_SESSION_KIND_PLANTING    = 3;
-  LINGTIAN_SESSION_KIND_HARVEST     = 4;
-  LINGTIAN_SESSION_KIND_REPLENISH   = 5;
-  LINGTIAN_SESSION_KIND_DRAIN_QI    = 6;
-}
-
-// 与 Rust LingtianSessionDataV1 精确对应。
-message LingtianSessionData {
-  bool                 active                    = 1;
-  LingtianSessionKind  kind                      = 2;
-  int32                pos_x                     = 3; // Rust [i32;3] 拆三字段
-  int32                pos_y                     = 4;
-  int32                pos_z                     = 5;
-  uint32               elapsed_ticks             = 6;
-  uint32               target_ticks              = 7;
-  optional string      plant_id                  = 8;
-  optional string      source                    = 9;
-  optional float       dye_contamination         = 10;
-  bool                 dye_contamination_warning  = 11;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// P2 B1 — 灵田 C2S
-// ═══════════════════════════════════════════════════════════════
-
-// 与 Rust ClientRequestV1::LingtianStartTill 精确对应。
-message LingtianStartTill {
-  int32  x                = 1;
-  int32  y                = 2;
-  int32  z                = 3;
-  uint64 hoe_instance_id  = 4;
-  string mode             = 5; // "manual" / "auto"
-}
-
-// 与 Rust ClientRequestV1::LingtianStartRenew 精确对应。
-message LingtianStartRenew {
-  int32  x                = 1;
-  int32  y                = 2;
-  int32  z                = 3;
-  uint64 hoe_instance_id  = 4;
-}
-
-// 与 Rust ClientRequestV1::LingtianStartPlanting 精确对应。
-message LingtianStartPlanting {
-  int32  x        = 1;
-  int32  y        = 2;
-  int32  z        = 3;
-  string plant_id = 4;
-}
-
-// 与 Rust ClientRequestV1::LingtianStartHarvest 精确对应。
-message LingtianStartHarvest {
-  int32  x    = 1;
-  int32  y    = 2;
-  int32  z    = 3;
-  string mode = 4; // "manual" / "auto"
-}
-
-// 与 Rust ClientRequestV1::LingtianStartReplenish 精确对应。
-message LingtianStartReplenish {
-  int32  x      = 1;
-  int32  y      = 2;
-  int32  z      = 3;
-  string source = 4;
-}
-
-// 与 Rust ClientRequestV1::LingtianStartDrainQi 精确对应。
-message LingtianStartDrainQi {
-  int32 x = 1;
-  int32 y = 2;
-  int32 z = 3;
-}
-
-// ═══════════════════════════════════════════════════════════════
 // P2 B1 — 矿石 C2S
 // ═══════════════════════════════════════════════════════════════
 
@@ -1630,6 +1576,8 @@ enum CastOutcome {
   CAST_OUTCOME_REJECT_TECHNIQUE_INACTIVE = 15;
   // plan-race-system-v1 P3a：种族门拒绝（本体 race_id / is_humanoid 未通过 RaceGate）。
   CAST_OUTCOME_REJECT_RACE_MISMATCH = 16;
+  // 有专属输入消费者的招式不由技能栏施放（dash 闪避键 / shield_block 持盾长按）。
+  CAST_OUTCOME_REJECT_DEDICATED_EXECUTION = 17;
 }
 
 // 与 Rust CastSyncV1 精确对应。
@@ -3730,6 +3678,14 @@ message AlchemyFurnacePlace {
   uint64 item_instance_id = 4;
 }
 
+// 与 Rust ClientRequestV1::AlchemyPlaceIncense 精确对应。
+message AlchemyPlaceIncense {
+  int32  furnace_pos_x    = 1;
+  int32  furnace_pos_y    = 2;
+  int32  furnace_pos_z    = 3;
+  uint64 item_instance_id = 4;
+}
+
 // 与 Rust ClientRequestV1::CoffinOpen 精确对应。
 message CoffinOpen {
   int32 x = 1;
@@ -3877,6 +3833,8 @@ message InventoryMoveIntent {
   // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
   // proto3 缺省 false = 未旋转，与 Rust `#[serde(default)]` 语义一致。
   bool              rotated     = 4;
+  // 缺省移动整堆；指定时仅移动该数量。
+  optional uint32   count       = 5;
 }
 
 // 与 Rust ClientRequestV1::EquipFalseSkin 精确对应。

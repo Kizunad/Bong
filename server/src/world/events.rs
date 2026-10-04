@@ -1,5 +1,13 @@
+//! 世界事件队列与运行时副作用编排。
+//!
+//! 本模块只负责把外部事件命令变成有序的活动事件，并在每个 tick
+//! 驱动雷劫、兽潮、坍缩和目标化灾厄的运行时效果。zone 的物理真元由
+//! [`ZoneRegistry`] 持有，账本审计通过既有 `QiTransfer` 路径完成；本模块不
+//! 重新定义真元所有权，也不改变事件的去重、优先级或过期规则。
+
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use valence::entity::lightning::LightningEntityBundle;
@@ -100,9 +108,13 @@ const REALM_COLLAPSE_BOUNDARY_VFX_SETTLE_STRENGTH: f32 = 1.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEvent {
+    /// 稳定的事件类型名称，作为 zone active_events 和事件去重键的一部分。
     pub event_name: String,
+    /// 事件作用的 zone 名称。
     pub zone_name: String,
+    /// 已推进的游戏 tick 数；达到 duration_ticks 后进入过期清理。
     pub elapsed_ticks: u64,
+    /// 事件运行时长，单位为游戏 tick。
     pub duration_ticks: u64,
     intensity: f64,
     target_player: Option<String>,
@@ -111,6 +123,74 @@ pub struct ActiveEvent {
     beast_tide: BeastTideRuntimeState,
     collapse: RealmCollapseRuntimeState,
     calamity_state: CalamityRuntimeState,
+}
+
+/// Durable portion of an active event. ECS entities and one-shot VFX/audio
+/// queues are intentionally excluded; they are rebuilt by the event lifecycle.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedActiveEvent {
+    pub event_name: String,
+    pub zone_name: String,
+    pub elapsed_ticks: u64,
+    pub duration_ticks: u64,
+    pub intensity: f64,
+    pub target_player: Option<String>,
+    pub calamity: Option<String>,
+    pub beast_tide_kind: Option<String>,
+    #[serde(default)]
+    pub thunder_runtime: Option<PersistedThunderRuntime>,
+    #[serde(default)]
+    pub beast_tide_runtime: Option<PersistedBeastTideRuntime>,
+    #[serde(default)]
+    pub collapse_runtime: Option<PersistedRealmCollapseRuntime>,
+    #[serde(default)]
+    pub calamity_runtime: Option<PersistedCalamityRuntime>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedThunderRuntime {
+    #[serde(default)]
+    pub emitted_strikes: Vec<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedBeastTideRuntime {
+    #[serde(default)]
+    pub spawn_points: Vec<[f64; 3]>,
+    #[serde(default)]
+    pub beast_kind: Option<BeastKind>,
+    #[serde(default)]
+    pub origin_zone: Option<String>,
+    #[serde(default)]
+    pub target_zone: Option<String>,
+    #[serde(default)]
+    pub front_position: Option<[f64; 3]>,
+    #[serde(default)]
+    pub front_velocity: Option<[f64; 3]>,
+    #[serde(default)]
+    pub drained_chunks: Vec<[i32; 2]>,
+    #[serde(default)]
+    pub group_alive: u32,
+    #[serde(default)]
+    pub active_window_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedRealmCollapseRuntime {
+    #[serde(default)]
+    pub completed: bool,
+    #[serde(default)]
+    pub evacuation_warning_emitted: bool,
+    #[serde(default)]
+    pub last_evacuation_reminder_bucket: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedCalamityRuntime {
+    #[serde(default)]
+    pub initialized: bool,
+    #[serde(default)]
+    pub spawn_completed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -242,6 +322,12 @@ impl BeastTideRuntimeState {
 
     fn refresh_locust_live_rats(&mut self, live_npcs: &HashSet<Entity>) {
         if let Self::LocustSwarm(state) = self {
+            // 重启恢复的兽潮没有可跨进程复用的 ECS Entity；保留持久化的
+            // group_alive，让前锋位置和 drained_chunks 继续推进，直到领域条件
+            // 自然结束事件。正常运行时仍以当前实体集合刷新真实存活数。
+            if state.spawned_rats.is_empty() {
+                return;
+            }
             state
                 .spawned_rats
                 .retain(|entity| live_npcs.contains(entity));
@@ -256,6 +342,7 @@ struct RealmCollapseRuntimeState {
     evacuation_warning_emitted: bool,
     last_evacuation_reminder_bucket: Option<u64>,
     evacuee_entities: HashSet<Entity>,
+    evacuee_snapshot_initialized: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -263,6 +350,7 @@ struct CalamityRuntimeState {
     initialized: bool,
     spawned_entities: Vec<Entity>,
     last_pulse_tick: u64,
+    spawn_completed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -288,13 +376,242 @@ type LiveNpcPositionQuery<'w, 's> = Query<
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MajorEventAlert {
+    /// 需要发送给客户端/agent 的事件类型。
     pub event_name: String,
+    /// 事件对应的 zone。
     pub zone_name: String,
+    /// 事件预计持续 tick 数。
     pub duration_ticks: u64,
+    /// 仅对需要展示的事件提供人类可读提示。
     pub message: Option<String>,
 }
 
 impl ActiveEvent {
+    fn persisted(&self) -> PersistedActiveEvent {
+        let beast_tide_kind =
+            (self.event_name == EVENT_BEAST_TIDE).then(|| match self.beast_tide {
+                BeastTideRuntimeState::Wandering(_) => "wandering".to_string(),
+                BeastTideRuntimeState::LocustSwarm(_) => "locust_swarm".to_string(),
+            });
+        let thunder_runtime = Some(PersistedThunderRuntime {
+            emitted_strikes: self
+                .thunder
+                .emitted_strikes
+                .iter()
+                .map(|position| dvec3_to_array(*position))
+                .collect(),
+        });
+        let beast_tide_runtime =
+            (self.event_name == EVENT_BEAST_TIDE).then(|| match &self.beast_tide {
+                BeastTideRuntimeState::Wandering(state) => PersistedBeastTideRuntime {
+                    spawn_points: state
+                        .spawn_points
+                        .iter()
+                        .copied()
+                        .map(dvec3_to_array)
+                        .collect(),
+                    beast_kind: state.beast_kind,
+                    ..Default::default()
+                },
+                BeastTideRuntimeState::LocustSwarm(state) => PersistedBeastTideRuntime {
+                    spawn_points: state
+                        .spawn_points
+                        .iter()
+                        .copied()
+                        .map(dvec3_to_array)
+                        .collect(),
+                    origin_zone: Some(state.origin_zone.clone()),
+                    target_zone: Some(state.target_zone.clone()),
+                    front_position: Some(dvec3_to_array(state.front_position)),
+                    front_velocity: Some(dvec3_to_array(state.front_velocity)),
+                    drained_chunks: state
+                        .drained_chunks
+                        .iter()
+                        .map(|chunk| [chunk.x, chunk.z])
+                        .collect(),
+                    group_alive: state.group_alive,
+                    active_window_size: Some(state.active_window_size),
+                    ..Default::default()
+                },
+            });
+        let collapse_runtime =
+            (self.event_name == EVENT_REALM_COLLAPSE).then_some(PersistedRealmCollapseRuntime {
+                completed: self.collapse.completed,
+                evacuation_warning_emitted: self.collapse.evacuation_warning_emitted,
+                last_evacuation_reminder_bucket: self.collapse.last_evacuation_reminder_bucket,
+            });
+        let calamity_runtime = self.calamity.is_some().then_some(PersistedCalamityRuntime {
+            initialized: self.calamity_state.initialized,
+            spawn_completed: self.calamity_state.spawn_completed,
+        });
+        PersistedActiveEvent {
+            event_name: self.event_name.clone(),
+            zone_name: self.zone_name.clone(),
+            elapsed_ticks: self.elapsed_ticks,
+            duration_ticks: self.duration_ticks,
+            intensity: self.intensity,
+            target_player: self.target_player.clone(),
+            calamity: self.calamity.map(|kind| kind.event_name().to_string()),
+            beast_tide_kind,
+            thunder_runtime,
+            beast_tide_runtime,
+            collapse_runtime,
+            calamity_runtime,
+        }
+    }
+
+    fn from_persisted(snapshot: &PersistedActiveEvent) -> Result<Self, String> {
+        let calamity = snapshot
+            .calamity
+            .as_deref()
+            .and_then(CalamityKind::from_event_name);
+        if snapshot.calamity.is_some() && calamity.is_none() {
+            return Err(format!(
+                "unknown calamity in active event `{}`",
+                snapshot.event_name
+            ));
+        }
+        let event_name = calamity
+            .map(CalamityKind::event_name)
+            .unwrap_or(snapshot.event_name.as_str());
+        if calamity.is_none() && !matches!(event_name, EVENT_BEAST_TIDE | EVENT_KARMA_BACKLASH) {
+            return Err(format!("unknown active event `{}`", snapshot.event_name));
+        }
+        if !snapshot.intensity.is_finite()
+            || !(0.0..=1.0).contains(&snapshot.intensity)
+            || snapshot.duration_ticks == 0
+        {
+            return Err(format!("invalid active event `{}`", snapshot.event_name));
+        }
+        let beast_tide_runtime = snapshot.beast_tide_runtime.as_ref();
+        let beast_tide = if event_name == EVENT_BEAST_TIDE {
+            match snapshot.beast_tide_kind.as_deref() {
+                Some("wandering") => {
+                    let runtime = beast_tide_runtime.cloned().unwrap_or_default();
+                    BeastTideRuntimeState::Wandering(WanderingTideState {
+                        spawned_beasts: Vec::new(),
+                        spawn_points: decode_positions(runtime.spawn_points)?,
+                        beast_kind: runtime.beast_kind,
+                    })
+                }
+                Some("locust_swarm") => {
+                    let runtime = beast_tide_runtime.cloned().unwrap_or_default();
+                    let front_position = runtime
+                        .front_position
+                        .map(dvec3_from_array)
+                        .unwrap_or(DVec3::ZERO);
+                    let front_velocity = runtime
+                        .front_velocity
+                        .map(dvec3_from_array)
+                        .unwrap_or(DVec3::ZERO);
+                    validate_position(
+                        front_position,
+                        "locust front_position",
+                        &snapshot.event_name,
+                    )?;
+                    validate_position(
+                        front_velocity,
+                        "locust front_velocity",
+                        &snapshot.event_name,
+                    )?;
+                    let target_zone = runtime
+                        .target_zone
+                        .filter(|zone| !zone.trim().is_empty())
+                        .unwrap_or_else(|| snapshot.zone_name.clone());
+                    let origin_zone = runtime
+                        .origin_zone
+                        .filter(|zone| !zone.trim().is_empty())
+                        .unwrap_or_else(|| snapshot.zone_name.clone());
+                    BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
+                        spawned_rats: Vec::new(),
+                        spawn_points: decode_positions(runtime.spawn_points)?,
+                        origin_zone,
+                        target_zone,
+                        front_position,
+                        front_velocity,
+                        drained_chunks: runtime
+                            .drained_chunks
+                            .into_iter()
+                            .map(|[x, z]| ChunkPos::new(x, z))
+                            .collect(),
+                        group_alive: runtime.group_alive,
+                        active_window_size: runtime
+                            .active_window_size
+                            .unwrap_or(LOCUST_SWARM_ACTIVE_WINDOW_SIZE)
+                            .max(1),
+                    })
+                }
+                other => {
+                    return Err(format!(
+                        "invalid beast tide kind {other:?} in active event `{}`",
+                        snapshot.event_name
+                    ));
+                }
+            }
+        } else {
+            BeastTideRuntimeState::default()
+        };
+        let calamity_runtime = snapshot.calamity_runtime.as_ref().cloned();
+        let calamity_state = calamity_runtime.unwrap_or(PersistedCalamityRuntime {
+            initialized: snapshot.elapsed_ticks > 0
+                && matches!(
+                    event_name,
+                    EVENT_MERIDIAN_SEAL | EVENT_ALL_WITHER | EVENT_HEAVENLY_FIRE
+                ),
+            // Legacy snapshots did not record whether Daoxiang had actually
+            // spawned. Keep it retryable instead of treating elapsed time as
+            // proof that the spawn completed.
+            spawn_completed: false,
+        });
+        let collapse_runtime = snapshot
+            .collapse_runtime
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let thunder_runtime = snapshot
+            .thunder_runtime
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let emitted_strikes = thunder_runtime
+            .emitted_strikes
+            .iter()
+            .copied()
+            .map(dvec3_from_array)
+            .collect::<Vec<_>>();
+        for strike in &emitted_strikes {
+            validate_position(*strike, "thunder emitted strike", &snapshot.event_name)?;
+        }
+
+        Ok(Self {
+            event_name: event_name.to_string(),
+            zone_name: snapshot.zone_name.clone(),
+            elapsed_ticks: snapshot.elapsed_ticks,
+            duration_ticks: snapshot.duration_ticks,
+            intensity: snapshot.intensity,
+            target_player: snapshot.target_player.clone(),
+            calamity,
+            thunder: ThunderRuntimeState { emitted_strikes },
+            beast_tide,
+            collapse: RealmCollapseRuntimeState {
+                completed: collapse_runtime.completed,
+                evacuation_warning_emitted: collapse_runtime.evacuation_warning_emitted,
+                last_evacuation_reminder_bucket: collapse_runtime.last_evacuation_reminder_bucket,
+                evacuee_entities: HashSet::new(),
+                // Entity IDs cannot survive a restart. Without a persisted
+                // warning-time identity snapshot, fail closed: keep the set
+                // empty so every entity observed after restart is an intruder.
+                evacuee_snapshot_initialized: collapse_runtime.evacuation_warning_emitted,
+            },
+            calamity_state: CalamityRuntimeState {
+                initialized: calamity_state.initialized,
+                spawned_entities: Vec::new(),
+                last_pulse_tick: 0,
+                spawn_completed: calamity_state.spawn_completed,
+            },
+        })
+    }
+
     fn from_spawn_command(command: &Command) -> Option<Self> {
         let requested_event_name = command.params.get("event")?.as_str()?;
         let calamity = CalamityKind::from_event_name(requested_event_name);
@@ -341,6 +658,7 @@ impl ActiveEvent {
     }
 }
 
+/// 保存已接受的世界事件及其待发送的跨系统副作用。
 #[derive(Default)]
 pub struct ActiveEventsResource {
     active_events: Vec<ActiveEvent>,
@@ -357,17 +675,25 @@ pub struct ActiveEventsResource {
     pending_qi_transfers: Vec<QiTransfer>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedActiveEvents {
+    pub events: Vec<PersistedActiveEvent>,
+    pub pending_qi_transfers: Vec<QiTransfer>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CalamityTargetRecord {
     tick: u64,
     target_key: String,
 }
 
+/// 记录低灵气 zone 连续低于阈值的 tick，避免重复排入坍缩事件。
 #[derive(Default)]
 pub struct RealmCollapseLowQiMonitor {
     low_qi_ticks_by_zone: HashMap<String, u64>,
 }
 
+/// 表示一个 zone 已完成坍缩，供 heartbeat 链式调度消费。
 #[derive(Debug, Clone, Event)]
 pub struct ZoneCollapsedEvent {
     pub zone_name: String,
@@ -442,6 +768,61 @@ impl RealmCollapseLowQiMonitor {
 }
 
 impl ActiveEventsResource {
+    pub(crate) fn persisted_snapshot(&self) -> PersistedActiveEvents {
+        PersistedActiveEvents {
+            events: self
+                .active_events
+                .iter()
+                .map(ActiveEvent::persisted)
+                .collect(),
+            pending_qi_transfers: self.pending_qi_transfers.clone(),
+        }
+    }
+
+    pub(crate) fn restore_persisted_snapshot(
+        &mut self,
+        snapshot: PersistedActiveEvents,
+        zones: Option<&mut ZoneRegistry>,
+    ) -> Result<(), String> {
+        let mut restored = Vec::with_capacity(snapshot.events.len());
+        for event in &snapshot.events {
+            if zones.as_ref().is_some_and(|registry| {
+                registry
+                    .find_zone_by_name(event.zone_name.as_str())
+                    .is_none()
+            }) {
+                return Err(format!(
+                    "active event `{}` references missing zone `{}`",
+                    event.event_name, event.zone_name
+                ));
+            }
+            restored.push(ActiveEvent::from_persisted(event)?);
+        }
+        if snapshot
+            .pending_qi_transfers
+            .iter()
+            .any(|transfer| !transfer.amount.is_finite() || transfer.amount < 0.0)
+        {
+            return Err("active event snapshot contains an invalid QiTransfer".to_string());
+        }
+        self.active_events = restored;
+        self.pending_qi_transfers = snapshot.pending_qi_transfers;
+        if let Some(zones) = zones {
+            for event in &self.active_events {
+                if let Some(zone) = zones.find_zone_mut(event.zone_name.as_str()) {
+                    if !zone
+                        .active_events
+                        .iter()
+                        .any(|name| name == &event.event_name)
+                    {
+                        zone.active_events.push(event.event_name.clone());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn enqueue_from_spawn_command(
         &mut self,
@@ -507,6 +888,11 @@ impl ActiveEventsResource {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// 按命令验证并排入一个世界事件。
+    ///
+    /// 调用方可传入可选的天道权能与灾厄兵库；缺少这些可选资源时仍沿用
+    /// 既有的季节和基础规则。返回 `true` 只表示事件已被接受进队列，运行时
+    /// 生成仍由 [`Self::tick`] 在后续 tick 处理。
     pub fn enqueue_from_spawn_command_with_karma_power_and_season_at_tick(
         &mut self,
         command: &Command,
@@ -558,112 +944,22 @@ impl ActiveEventsResource {
             return false;
         }
 
-        if let Some(kind) = event.calamity {
-            let attention =
-                attention_from_params(&command.params).unwrap_or(AttentionTier::Annihilate);
-            if let Some(arsenal) = calamity_arsenal {
-                if let Err(reason) = arsenal.allows(kind, attention, season) {
-                    tracing::info!(
-                        "[bong][world] rejected calamity {:?} for zone `{}`: {:?}",
-                        kind,
-                        event.zone_name,
-                        reason
-                    );
-                    return false;
-                }
-            } else if !kind.allowed_in_season(season) {
-                tracing::info!(
-                    "[bong][world] rejected calamity {:?} for zone `{}`: season {:?} is not allowed",
-                    kind,
-                    event.zone_name,
-                    season
-                );
-                return false;
-            }
-        }
-
-        if event.beast_tide.kind() == BeastTideKind::LocustSwarm
-            && !self
-                .locust_cooldown
-                .ready_at(event.zone_name.as_str(), tick)
-        {
-            tracing::info!(
-                "[bong][world] ignored locust_swarm for zone `{}` because cooldown is active",
-                event.zone_name
-            );
+        if !self.passes_schedule_gates(&event, command, season, tick, calamity_arsenal) {
             return false;
         }
-
-        if self.contains(event.zone_name.as_str(), event.event_name.as_str()) {
-            tracing::info!(
-                "[bong][world] ignored duplicate schedule for {} in zone `{}`",
-                event.event_name,
-                event.zone_name
-            );
-            return false;
-        }
-
         if let Some(kind) = event.calamity {
-            let active_calamities = self.calamity_count_for_zone(event.zone_name.as_str());
-            if active_calamities >= CALAMITY_ZONE_CONCURRENCY_LIMIT {
-                tracing::info!(
-                    "[bong][world] rejected calamity {:?} for zone `{}`: {} active calamities already scheduled",
-                    kind,
-                    event.zone_name,
-                    active_calamities
-                );
-                return false;
-            }
-
-            self.prune_calamity_target_log(tick);
-            let target = target_key(event.zone_name.as_str(), event.target_player.as_deref());
-            let target_count = self
-                .calamity_target_log
-                .iter()
-                .filter(|record| record.target_key == target)
-                .count();
-            if target_count >= CALAMITY_TARGET_WINDOW_LIMIT {
-                tracing::info!(
-                    "[bong][world] rejected calamity {:?} for `{}`: target hit {} times in {} ticks",
-                    kind,
-                    target,
-                    target_count,
-                    CALAMITY_TARGET_WINDOW_TICKS
-                );
-                return false;
-            }
-
-            if let Some(power) = tiandao_power {
-                let average_zone_qi = average_zone_qi(zone_registry);
-                power.regen_to_tick(tick, average_zone_qi, 0, season);
-                let cost = calamity_arsenal
-                    .and_then(|arsenal| arsenal.spec(kind))
-                    .map(|spec| spec.cost)
-                    .unwrap_or_else(|| kind.power_cost());
-                if let Err(CalamityRejectReason::PowerInsufficient { current, required }) = power
-                    .try_spend(
-                        kind,
-                        cost,
-                        target.clone(),
-                        reason_from_params(&command.params),
-                        tick,
-                    )
-                {
-                    tracing::info!(
-                        "[bong][world] rejected calamity {:?} for `{}`: tiandao power {:.2}/{:.2}",
-                        kind,
-                        target,
-                        current,
-                        required
-                    );
-                    return false;
-                }
-            }
-
-            self.calamity_target_log.push_back(CalamityTargetRecord {
+            if !self.passes_calamity_gates(
+                &event,
+                command,
+                zone_registry,
+                kind,
+                season,
                 tick,
-                target_key: target,
-            });
+                tiandao_power,
+                calamity_arsenal,
+            ) {
+                return false;
+            }
         }
 
         if event.event_name == EVENT_KARMA_BACKLASH {
@@ -840,17 +1136,165 @@ impl ActiveEventsResource {
             return true;
         }
 
-        let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) else {
-            return false;
-        };
+        self.activate_event(event, zone_registry, tick)
+    }
 
-        if !zone
-            .active_events
-            .iter()
-            .any(|name| name == &event.event_name)
-        {
-            zone.active_events.push(event.event_name.clone());
+    /// 检查所有事件共用的顺序门禁：季节、蝗潮冷却和区域内去重。
+    ///
+    /// 灾厄的并发、目标窗口和天道权能另由 Self::passes_calamity_gates 处理，
+    /// 这样普通兽潮与灾厄的拒绝原因在阅读上保持分界。
+    fn passes_schedule_gates(
+        &self,
+        event: &ActiveEvent,
+        command: &Command,
+        season: Season,
+        tick: u64,
+        calamity_arsenal: Option<&CalamityArsenal>,
+    ) -> bool {
+        if let Some(kind) = event.calamity {
+            let attention =
+                attention_from_params(&command.params).unwrap_or(AttentionTier::Annihilate);
+            if let Some(arsenal) = calamity_arsenal {
+                if let Err(reason) = arsenal.allows(kind, attention, season) {
+                    tracing::info!(
+                        "[bong][world] rejected calamity {:?} for zone `{}`: {:?}",
+                        kind,
+                        event.zone_name,
+                        reason
+                    );
+                    return false;
+                }
+            } else if !kind.allowed_in_season(season) {
+                tracing::info!(
+                    "[bong][world] rejected calamity {:?} for zone `{}`: season {:?} is not allowed",
+                    kind,
+                    event.zone_name,
+                    season
+                );
+                return false;
+            }
         }
+
+        if event.beast_tide.kind() == BeastTideKind::LocustSwarm
+            && !self
+                .locust_cooldown
+                .ready_at(event.zone_name.as_str(), tick)
+        {
+            tracing::info!(
+                "[bong][world] ignored locust_swarm for zone `{}` because cooldown is active",
+                event.zone_name
+            );
+            return false;
+        }
+
+        if self.contains(event.zone_name.as_str(), event.event_name.as_str()) {
+            tracing::info!(
+                "[bong][world] ignored duplicate schedule for {} in zone `{}`",
+                event.event_name,
+                event.zone_name
+            );
+            return false;
+        }
+
+        true
+    }
+
+    /// 检查灾厄专属的并发、目标频率和天道权能预算，并提交目标窗口记录。
+    #[allow(clippy::too_many_arguments)]
+    fn passes_calamity_gates(
+        &mut self,
+        event: &ActiveEvent,
+        command: &Command,
+        zone_registry: &ZoneRegistry,
+        kind: CalamityKind,
+        season: Season,
+        tick: u64,
+        tiandao_power: Option<&mut TiandaoPower>,
+        calamity_arsenal: Option<&CalamityArsenal>,
+    ) -> bool {
+        let active_calamities = self.calamity_count_for_zone(event.zone_name.as_str());
+        if active_calamities >= CALAMITY_ZONE_CONCURRENCY_LIMIT {
+            tracing::info!(
+                "[bong][world] rejected calamity {:?} for zone `{}`: {} active calamities already scheduled",
+                kind,
+                event.zone_name,
+                active_calamities
+            );
+            return false;
+        }
+
+        self.prune_calamity_target_log(tick);
+        let target = target_key(event.zone_name.as_str(), event.target_player.as_deref());
+        let target_count = self
+            .calamity_target_log
+            .iter()
+            .filter(|record| record.target_key == target)
+            .count();
+        if target_count >= CALAMITY_TARGET_WINDOW_LIMIT {
+            tracing::info!(
+                "[bong][world] rejected calamity {:?} for `{}`: target hit {} times in {} ticks",
+                kind,
+                target,
+                target_count,
+                CALAMITY_TARGET_WINDOW_TICKS
+            );
+            return false;
+        }
+
+        if let Some(power) = tiandao_power {
+            let average_zone_qi = average_zone_qi(zone_registry);
+            power.regen_to_tick(tick, average_zone_qi, 0, season);
+            let cost = calamity_arsenal
+                .and_then(|arsenal| arsenal.spec(kind))
+                .map(|spec| spec.cost)
+                .unwrap_or_else(|| kind.power_cost());
+            if let Err(CalamityRejectReason::PowerInsufficient { current, required }) = power
+                .try_spend(
+                    kind,
+                    cost,
+                    target.clone(),
+                    reason_from_params(&command.params),
+                    tick,
+                )
+            {
+                tracing::info!(
+                    "[bong][world] rejected calamity {:?} for `{}`: tiandao power {:.2}/{:.2}",
+                    kind,
+                    target,
+                    current,
+                    required
+                );
+                return false;
+            }
+        }
+
+        self.calamity_target_log.push_back(CalamityTargetRecord {
+            tick,
+            target_key: target,
+        });
+        true
+    }
+
+    /// 提交已通过门禁的事件，并把警报、VFX、音频和坍缩 omen 一次性排出。
+    fn activate_event(
+        &mut self,
+        event: ActiveEvent,
+        zone_registry: &mut ZoneRegistry,
+        tick: u64,
+    ) -> bool {
+        let zone_snapshot = {
+            let Some(zone) = zone_registry.find_zone_mut(event.zone_name.as_str()) else {
+                return false;
+            };
+            if !zone
+                .active_events
+                .iter()
+                .any(|name| name == &event.event_name)
+            {
+                zone.active_events.push(event.event_name.clone());
+            }
+            zone.clone()
+        };
 
         tracing::info!(
             "[bong][world] scheduled {} for zone `{}` (duration_ticks={})",
@@ -859,28 +1303,10 @@ impl ActiveEventsResource {
             event.duration_ticks
         );
 
-        let alert_message = if event.beast_tide.kind() == BeastTideKind::LocustSwarm {
-            Some(format!(
-                "灵蝗潮逼近区域 {}，噬元鼠群将沿灵气压差推进，预计持续 {} tick。",
-                event.zone_name, event.duration_ticks
-            ))
-        } else if let Some(kind) = event
-            .calamity
-            .filter(|kind| *kind != CalamityKind::RealmCollapse)
-        {
-            Some(calamity_alert_message(
-                kind,
-                event.zone_name.as_str(),
-                event.duration_ticks,
-            ))
-        } else {
-            None
-        };
-
+        let alert_message = event_alert_message(&event);
         if event.beast_tide.kind() == BeastTideKind::LocustSwarm {
             self.locust_cooldown.mark(event.zone_name.clone(), tick);
         }
-
         self.pending_major_alerts.push(MajorEventAlert {
             event_name: event.event_name.clone(),
             zone_name: event.zone_name.clone(),
@@ -889,7 +1315,7 @@ impl ActiveEventsResource {
         });
 
         if event.event_name == EVENT_REALM_COLLAPSE {
-            let center = zone.center();
+            let center = zone_snapshot.center();
             self.pending_tribulation_events
                 .push(TribulationEventV1::zone_collapse(
                     TribulationPhaseV1::Omen,
@@ -897,7 +1323,7 @@ impl ActiveEventsResource {
                     Some([center.x, center.y, center.z]),
                 ));
             self.pending_vfx_events.push(realm_collapse_boundary_vfx(
-                zone,
+                &zone_snapshot,
                 REALM_COLLAPSE_BOUNDARY_VFX_OMEN_STRENGTH,
             ));
         }
@@ -905,14 +1331,14 @@ impl ActiveEventsResource {
         if let Some(kind) = event.calamity {
             if kind != CalamityKind::RealmCollapse {
                 self.pending_vfx_events.push(calamity_vfx(
-                    zone,
+                    &zone_snapshot,
                     kind,
                     event.intensity,
                     event.duration_ticks,
                 ));
             }
             self.pending_audio_events
-                .push(calamity_audio_request(zone, kind));
+                .push(calamity_audio_request(&zone_snapshot, kind));
             self.record_recent_event(GameEvent {
                 event_type: GameEventType::EventTriggered,
                 tick,
@@ -932,18 +1358,98 @@ impl ActiveEventsResource {
         true
     }
 
+    /// 取出本轮新产生的重大事件提示。
+    fn process_pending_lightning_strikes(
+        &mut self,
+        layer_entity: Option<Entity>,
+        commands: Option<&mut Commands<'_, '_>>,
+    ) {
+        if self.pending_lightning_strikes.is_empty() {
+            return;
+        }
+
+        if let (Some(layer_entity), Some(commands)) = (layer_entity, commands) {
+            for strike_position in std::mem::take(&mut self.pending_lightning_strikes) {
+                spawn_lightning(commands, layer_entity, strike_position);
+            }
+        } else {
+            tracing::warn!(
+                "[bong][world] targeted local lightning skipped this tick: missing entity layer or Commands"
+            );
+        }
+    }
+
+    fn process_pending_daoxiang_spawns(
+        &mut self,
+        layer_entity: Option<Entity>,
+        commands: Option<&mut Commands<'_, '_>>,
+        npc_spawn_budget_by_zone: &mut Option<HashMap<String, usize>>,
+    ) {
+        if self.pending_daoxiang_spawns.is_empty() {
+            return;
+        }
+
+        if let (Some(layer_entity), Some(commands)) = (layer_entity, commands) {
+            let mut deferred_spawns = Vec::new();
+            for spawn in std::mem::take(&mut self.pending_daoxiang_spawns) {
+                if let Some(budget) = npc_spawn_budget_by_zone
+                    .as_mut()
+                    .and_then(|budgets| budgets.get_mut(spawn.zone_name.as_str()))
+                {
+                    if *budget == 0 {
+                        deferred_spawns.push(spawn);
+                        continue;
+                    }
+                    *budget = budget.saturating_sub(1);
+                }
+
+                let entity = spawn_targeted_daoxiang(
+                    commands,
+                    layer_entity,
+                    spawn.zone_name.as_str(),
+                    spawn.position,
+                );
+                self.record_recent_event(GameEvent {
+                    event_type: GameEventType::EventTriggered,
+                    tick: 0,
+                    player: spawn.target_player.clone(),
+                    target: Some("targeted_daoxiang_spawned".to_string()),
+                    zone: Some(spawn.zone_name.clone()),
+                    details: Some(HashMap::from([
+                        ("event".to_string(), Value::String("道伥刷新".to_string())),
+                        (
+                            "position".to_string(),
+                            json!([spawn.position.x, spawn.position.y, spawn.position.z]),
+                        ),
+                        ("qi_density_heat".to_string(), json!(spawn.qi_density_heat)),
+                        ("entity".to_string(), json!(format!("{entity:?}"))),
+                    ])),
+                });
+            }
+            self.pending_daoxiang_spawns.extend(deferred_spawns);
+        } else {
+            tracing::warn!(
+                "[bong][world] targeted daoxiang spawn skipped this tick: missing entity layer or Commands"
+            );
+        }
+    }
+
+    /// 取出本轮新产生的重大事件提示。
     pub fn drain_major_event_alerts(&mut self) -> Vec<MajorEventAlert> {
         std::mem::take(&mut self.pending_major_alerts)
     }
 
+    /// 取出待发送给天道/客户端的 tribulation omen。
     pub fn drain_tribulation_events(&mut self) -> Vec<TribulationEventV1> {
         std::mem::take(&mut self.pending_tribulation_events)
     }
 
+    /// 取出本轮待发送的视觉效果请求。
     pub fn drain_vfx_events(&mut self) -> Vec<VfxEventRequest> {
         std::mem::take(&mut self.pending_vfx_events)
     }
 
+    /// 取出本轮待发送的声音配方请求。
     pub fn drain_audio_events(&mut self) -> Vec<PlaySoundRecipeRequest> {
         std::mem::take(&mut self.pending_audio_events)
     }
@@ -953,6 +1459,7 @@ impl ActiveEventsResource {
         std::mem::take(&mut self.pending_qi_transfers)
     }
 
+    /// 记录最近事件并保持固定长度，供后续概率种子和观测快照使用。
     pub fn record_recent_event(&mut self, event: GameEvent) {
         self.recent_game_events.push(event);
 
@@ -962,6 +1469,7 @@ impl ActiveEventsResource {
         }
     }
 
+    /// 返回最近事件的独立快照，不暴露队列内部可变状态。
     pub fn recent_events_snapshot(&self) -> Vec<GameEvent> {
         self.recent_game_events.clone()
     }
@@ -1021,63 +1529,12 @@ impl ActiveEventsResource {
         };
         let mut recent_events = Vec::new();
 
-        if !self.pending_lightning_strikes.is_empty() {
-            if let (Some(layer_entity), Some(commands)) = (layer_entity, commands.as_deref_mut()) {
-                for strike_position in std::mem::take(&mut self.pending_lightning_strikes) {
-                    spawn_lightning(commands, layer_entity, strike_position);
-                }
-            } else {
-                tracing::warn!(
-                    "[bong][world] targeted local lightning skipped this tick: missing entity layer or Commands"
-                );
-            }
-        }
-
-        if !self.pending_daoxiang_spawns.is_empty() {
-            if let (Some(layer_entity), Some(commands)) = (layer_entity, commands.as_deref_mut()) {
-                let mut deferred_spawns = Vec::new();
-                for spawn in std::mem::take(&mut self.pending_daoxiang_spawns) {
-                    if let Some(budget) = npc_spawn_budget_by_zone
-                        .as_mut()
-                        .and_then(|budgets| budgets.get_mut(spawn.zone_name.as_str()))
-                    {
-                        if *budget == 0 {
-                            deferred_spawns.push(spawn);
-                            continue;
-                        }
-                        *budget = budget.saturating_sub(1);
-                    }
-
-                    let entity = spawn_targeted_daoxiang(
-                        commands,
-                        layer_entity,
-                        spawn.zone_name.as_str(),
-                        spawn.position,
-                    );
-                    self.record_recent_event(GameEvent {
-                        event_type: GameEventType::EventTriggered,
-                        tick: 0,
-                        player: spawn.target_player.clone(),
-                        target: Some("targeted_daoxiang_spawned".to_string()),
-                        zone: Some(spawn.zone_name.clone()),
-                        details: Some(HashMap::from([
-                            ("event".to_string(), Value::String("道伥刷新".to_string())),
-                            (
-                                "position".to_string(),
-                                json!([spawn.position.x, spawn.position.y, spawn.position.z]),
-                            ),
-                            ("qi_density_heat".to_string(), json!(spawn.qi_density_heat)),
-                            ("entity".to_string(), json!(format!("{entity:?}"))),
-                        ])),
-                    });
-                }
-                self.pending_daoxiang_spawns.extend(deferred_spawns);
-            } else {
-                tracing::warn!(
-                    "[bong][world] targeted daoxiang spawn skipped this tick: missing entity layer or Commands"
-                );
-            }
-        }
+        self.process_pending_lightning_strikes(layer_entity, commands.as_deref_mut());
+        self.process_pending_daoxiang_spawns(
+            layer_entity,
+            commands.as_deref_mut(),
+            &mut npc_spawn_budget_by_zone,
+        );
 
         for event in &mut self.active_events {
             if event.is_expired() {
@@ -1236,7 +1693,7 @@ impl ActiveEventsResource {
                     }
                 }
                 EVENT_DAOXIANG_WAVE => {
-                    if event.calamity_state.spawned_entities.is_empty() {
+                    if !event.calamity_state.spawn_completed {
                         let Some(layer_entity) = layer_entity else {
                             tracing::warn!(
                                 "[bong][world] daoxiang_wave runtime for zone `{}` skipped: missing entity layer",
@@ -1282,6 +1739,7 @@ impl ActiveEventsResource {
                             );
                             event.calamity_state.spawned_entities.push(entity);
                         }
+                        event.calamity_state.spawn_completed = true;
                         recent_events.push(GameEvent {
                             event_type: GameEventType::EventTriggered,
                             tick: event.elapsed_ticks,
@@ -1360,15 +1818,22 @@ impl ActiveEventsResource {
                             player: None,
                             target: Some("all_wither_zone".to_string()),
                             zone: Some(event.zone_name.clone()),
-                            details: Some(HashMap::from([
-                                ("botany_state".to_string(), json!("withered")),
-                                ("lingtian_state".to_string(), json!("withered")),
-                            ])),
+                            details: Some(HashMap::from([(
+                                "botany_state".to_string(),
+                                json!("withered"),
+                            )])),
                         });
                     }
                 }
                 EVENT_REALM_COLLAPSE => {
                     let next_elapsed = event.elapsed_ticks.saturating_add(1);
+                    if event.collapse.evacuation_warning_emitted
+                        && !event.collapse.evacuee_snapshot_initialized
+                    {
+                        event.collapse.evacuee_entities =
+                            realm_collapse_entities_in_zone(&zone, collapse_targets.unwrap_or(&[]));
+                        event.collapse.evacuee_snapshot_initialized = true;
+                    }
                     if !event.collapse.completed && next_elapsed < event.duration_ticks {
                         let remaining_ticks = event.duration_ticks.saturating_sub(next_elapsed);
                         if remaining_ticks <= REALM_COLLAPSE_EVACUATION_WINDOW_TICKS {
@@ -1381,6 +1846,7 @@ impl ActiveEventsResource {
                                     &zone,
                                     collapse_targets.unwrap_or(&[]),
                                 );
+                                event.collapse.evacuee_snapshot_initialized = true;
                                 self.pending_major_alerts.push(MajorEventAlert {
                                     event_name: event.event_name.clone(),
                                     zone_name: event.zone_name.clone(),
@@ -1622,6 +2088,21 @@ impl ActiveEventsResource {
     }
 }
 
+fn event_alert_message(event: &ActiveEvent) -> Option<String> {
+    if event.beast_tide.kind() == BeastTideKind::LocustSwarm {
+        return Some(format!(
+            "灵蝗潮逼近区域 {}，噬元鼠群将沿灵气压差推进，预计持续 {} tick。",
+            event.zone_name, event.duration_ticks
+        ));
+    }
+
+    event
+        .calamity
+        .filter(|kind| *kind != CalamityKind::RealmCollapse)
+        .map(|kind| calamity_alert_message(kind, event.zone_name.as_str(), event.duration_ticks))
+}
+
+/// 注册活动事件资源、低灵气监视器及其有序的 tick 系统。
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering active events scheduler");
     app.insert_resource(ActiveEventsResource::default());
@@ -1739,8 +2220,7 @@ fn tick_active_events(
             reserved_by_zone.insert(event.zone_name.clone(), reserved);
         }
         for event in active_events.active_events.iter().filter(|event| {
-            event.event_name == EVENT_DAOXIANG_WAVE
-                && event.calamity_state.spawned_entities.is_empty()
+            event.event_name == EVENT_DAOXIANG_WAVE && !event.calamity_state.spawn_completed
         }) {
             let desired = daoxiang_count_for_intensity(event.intensity);
             let reserved = registry.reserve_zone_batch(event.zone_name.as_str(), desired);
@@ -1825,6 +2305,33 @@ fn flush_collapse_qi_transfers(
     for transfer in active_events.drain_qi_transfers() {
         qi_transfer_events.send(transfer);
     }
+}
+
+fn dvec3_to_array(position: DVec3) -> [f64; 3] {
+    [position.x, position.y, position.z]
+}
+
+fn dvec3_from_array([x, y, z]: [f64; 3]) -> DVec3 {
+    DVec3::new(x, y, z)
+}
+
+fn validate_position(position: DVec3, label: &str, event_name: &str) -> Result<(), String> {
+    if position.is_finite() {
+        Ok(())
+    } else {
+        Err(format!("invalid {label} in active event `{event_name}`"))
+    }
+}
+
+fn decode_positions(positions: Vec<[f64; 3]>) -> Result<Vec<DVec3>, String> {
+    positions
+        .into_iter()
+        .map(|position| {
+            let position = dvec3_from_array(position);
+            validate_position(position, "position", "persisted runtime")?;
+            Ok(position)
+        })
+        .collect()
 }
 
 fn value_to_u64(value: Option<&Value>) -> Option<u64> {
@@ -2633,7 +3140,7 @@ fn advance_locust_swarm(
     death_events: Option<&mut EventWriter<DeathEvent>>,
     tick: u64,
 ) -> bool {
-    if state.spawned_rats.is_empty() {
+    if state.spawned_rats.is_empty() && state.group_alive == 0 {
         return true;
     }
 

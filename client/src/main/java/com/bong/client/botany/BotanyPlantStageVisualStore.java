@@ -29,6 +29,10 @@ public final class BotanyPlantStageVisualStore {
         VISUALS.clear();
     }
 
+    public static void remove(String key) {
+        VISUALS.remove(key);
+    }
+
     public static void clearOnDisconnect() {
         clear();
     }

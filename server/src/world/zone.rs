@@ -54,7 +54,8 @@ pub struct Zone {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BotanyZoneTag {
     Plains,
     Mountain,
@@ -209,9 +210,8 @@ pub struct ZoneRegistry {
     ///
     /// 只在 zone membership、dimension、AABB bounds 或其它 `find_zone` 几何
     /// 输入变化时递增；zone spirit qi、pressure、其它非几何字段更新不得
-    /// 递增。`auto_set_plot_zone` 以它作为 pending plot retry 触发器，替代
-    /// 粗粒度 `is_changed()`（后者被 heartbeat qi tick 的每 tick mutable
-    /// borrow 污染）。
+    /// 递增。空间查询缓存据此判断几何变化，不使用会被 heartbeat 真元更新
+    /// 标脏的粗粒度 `is_changed()`。
     pub spatial_revision: u64,
 }
 

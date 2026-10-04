@@ -132,5 +132,6 @@
       "type": "boolean"
     }
   },
-  "x-bong-typebox-source-sha256": "95a9c3180ebebbdcd5978590bec1dc3f88135b8a8ad900b6a84e75dccadb4a1f"
+  "x-bong-typebox-source-sha256": "95a9c3180ebebbdcd5978590bec1dc3f88135b8a8ad900b6a84e75dccadb4a1f",
+  "x-bong-schema-generation-version": "r6-p1-v1"
 }

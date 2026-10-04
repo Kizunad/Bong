@@ -171,6 +171,115 @@ fn ledger_to_zone_failures_leave_both_owners_and_audit_untouched() {
 }
 
 #[test]
+fn settle_era_decay_debits_source_without_creating_tiandao_balance() {
+    let mut ledger = WorldQiAccount::default();
+    let mut budget = WorldQiBudget::from_total(20.0);
+    let source = QiAccountId::container("carrier:decay");
+    ledger.set_balance(source.clone(), 12.0).unwrap();
+
+    let transfer = ledger
+        .settle_era_decay(&mut budget, source.clone(), 5.0)
+        .expect("finite decay should commit")
+        .expect("positive decay should emit a receipt");
+
+    assert_eq!(ledger.balance(&source), 7.0);
+    assert_eq!(ledger.balance(&QiAccountId::tiandao()), 0.0);
+    assert_eq!(budget.current_total, 15.0);
+    assert_eq!(budget.era_decay_accum, 5.0);
+    assert_eq!(transfer.from, source);
+    assert_eq!(transfer.to, QiAccountId::tiandao());
+    assert_eq!(transfer.reason, QiTransferReason::EraDecay);
+    assert_eq!(ledger.transfers(), &[transfer]);
+}
+
+#[test]
+fn settle_era_decay_rolls_back_owner_when_budget_is_short_within_epsilon() {
+    let mut ledger = WorldQiAccount::default();
+    let mut budget = WorldQiBudget::from_total(20.0);
+    let source = QiAccountId::container("carrier:epsilon");
+    let amount = budget.current_total + QI_EPSILON * 0.5;
+    ledger.set_balance(source.clone(), amount).unwrap();
+    let transfers_before = ledger.transfers().len();
+
+    let error = ledger
+        .settle_era_decay(&mut budget, source.clone(), amount)
+        .expect_err("budget shortfall must reject the complete decay transaction");
+
+    assert!(matches!(error, QiPhysicsError::InsufficientQi { .. }));
+    assert_eq!(ledger.balance(&source), amount);
+    assert_eq!(ledger.transfers().len(), transfers_before);
+    assert_eq!(budget.current_total, 20.0);
+    assert_eq!(budget.era_decay_accum, 0.0);
+}
+
+#[test]
+fn budget_accepts_owner_aligned_decay_amount() {
+    let mut budget = WorldQiBudget::from_total(20.0);
+    assert_eq!(budget.apply_era_decay_amount(3.5).unwrap(), 3.5);
+    assert_eq!(budget.current_total, 16.5);
+    assert_eq!(budget.era_decay_accum, 3.5);
+}
+
+#[test]
+fn probe_transaction_discards_overlay_balances_audits_and_external_zone_state() {
+    let source = QiAccountId::player("probe-source");
+    let target = QiAccountId::zone("spawn");
+    let mut ledger = WorldQiAccount::default();
+    ledger.set_balance(source.clone(), 12.0).unwrap();
+    ledger.push_transfer_audit(
+        QiTransfer::new(
+            QiAccountId::tiandao(),
+            source.clone(),
+            1.0,
+            QiTransferReason::ZoneInflow,
+        )
+        .unwrap(),
+    );
+    let zones = ZoneRegistry::fallback();
+    let zone_qi_before = zones.zones[0].spirit_qi;
+    let balances_before: Vec<_> = ledger
+        .iter_balances()
+        .map(|(account, balance)| (account.clone(), balance))
+        .collect();
+    let transfers_before = ledger.transfers().len();
+
+    let staged_transfer = ledger.probe_transaction(|transaction| {
+        let transfer = transaction
+            .transfer_external_qi_to_ledger(
+                source.clone(),
+                target.clone(),
+                3.0,
+                QiTransferReason::ReleaseToZone,
+            )
+            .unwrap()
+            .expect("positive probe transfer should produce an audit record");
+        transaction.push_transfer_audit(transfer.clone());
+        transfer
+    });
+
+    assert_eq!(staged_transfer.from, source);
+    assert_eq!(staged_transfer.to, target);
+    assert_eq!(staged_transfer.amount, 3.0);
+    assert_eq!(
+        ledger
+            .iter_balances()
+            .map(|(account, balance)| (account.clone(), balance))
+            .collect::<Vec<_>>(),
+        balances_before,
+        "只读账本探测不得提交任何余额 overlay"
+    );
+    assert_eq!(
+        ledger.transfers().len(),
+        transfers_before,
+        "只读账本探测不得追加 transfer 审计"
+    );
+    assert_eq!(
+        zones.zones[0].spirit_qi, zone_qi_before,
+        "只读账本探测不得改变外部 zone 灵气"
+    );
+}
+
+#[test]
 fn ledger_to_zone_rejects_audit_only_reasons_without_mutation() {
     let reasons = [
         QiTransferReason::HalfStepBuff,

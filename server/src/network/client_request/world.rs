@@ -1,13 +1,19 @@
-//! World/Formation C2S 请求分发。
+//! World C2S 请求分发。
 //!
 //! 顶层 ingress 负责 decode、版本、预算与 gate；本模块只把已经通过这些门禁的
-//! typed 请求转换为 zhenfa 领域事件。这里不读取或修改 inventory/world，也不使用
-//! 动态 registry、反射或字符串路由。
+//! typed 请求转换为世界、阵法和棺材领域事件。这里不读取或修改
+//! inventory/world，也不使用动态 registry、反射或字符串路由。
 
 use bevy_ecs::system::SystemParam;
 use valence::prelude::{bevy_ecs, Entity, Events, ResMut};
 
+use crate::coffin::{
+    CoffinBreakRequest, CoffinEnterRequest, CoffinLeaveRequest, CoffinMenuReclaimRequest,
+    CoffinPlaceRequest,
+};
 use crate::schema::client_request::ClientRequestV1;
+use crate::world::block_place::BlockPlaceRequest;
+use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::zhenfa::trap_content::TrapTargetFace;
 use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaDisarmRequest, ZhenfaKind,
@@ -24,6 +30,15 @@ pub(crate) struct WorldFormationRequestParams<'w> {
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
     pub qi_scatter_bead_use_tx: Option<ResMut<'w, Events<ScatterBeadUseRequest>>>,
+    pub coffin_open_tx: Option<ResMut<'w, Events<CoffinOpenRequest>>>,
+    pub coffin_place_tx: Option<ResMut<'w, Events<CoffinPlaceRequest>>>,
+    pub coffin_enter_tx: Option<ResMut<'w, Events<CoffinEnterRequest>>>,
+    pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
+    pub coffin_break_tx: Option<ResMut<'w, Events<CoffinBreakRequest>>>,
+    pub coffin_menu_reclaim_tx: Option<ResMut<'w, Events<CoffinMenuReclaimRequest>>>,
+    pub block_place_tx: Option<ResMut<'w, Events<BlockPlaceRequest>>>,
+    pub block_picker_give_tx:
+        Option<ResMut<'w, Events<crate::cmd::dev::block_picker::BlockPickerGiveIntent>>>,
 }
 
 /// 已通过 schema 解析的 World/Formation 请求。
@@ -215,6 +230,222 @@ pub(crate) fn dispatch_world_formation_request(
             });
             WorldFormationDispatchOutcome::Emitted
         }
+    }
+}
+
+/// 已通过 schema 解析的世界交互请求。
+///
+/// 阵法请求和世界交互请求共用一个 ingress 参数面，但保留独立 typed enum，
+/// 让每个域的 wire variant 都在编译期显式登记，避免顶层 handler 重新长回巨型 match。
+#[derive(Debug, PartialEq)]
+pub(crate) enum WorldInteractionRequest {
+    CoffinOpen {
+        pos: [i32; 3],
+    },
+    CoffinPlace {
+        pos: [i32; 3],
+        item_instance_id: u64,
+    },
+    BlockPlace {
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+        target_face: TrapTargetFace,
+    },
+    BlockPickerGive {
+        block_id: String,
+        count: u32,
+    },
+    CoffinEnter {
+        pos: [i32; 3],
+    },
+    CoffinLeave,
+    CoffinBreak {
+        pos: [i32; 3],
+    },
+    CoffinMenuReclaim {
+        pos: [i32; 3],
+    },
+}
+
+/// 从总的 C2S schema enum 提取世界交互域；非本域请求交还顶层 handler。
+pub(crate) fn try_into_world_interaction_request(
+    request: ClientRequestV1,
+) -> Result<WorldInteractionRequest, ClientRequestV1> {
+    match request {
+        ClientRequestV1::CoffinOpen { x, y, z, .. } => {
+            Ok(WorldInteractionRequest::CoffinOpen { pos: [x, y, z] })
+        }
+        ClientRequestV1::CoffinPlace {
+            x,
+            y,
+            z,
+            item_instance_id,
+            ..
+        } => Ok(WorldInteractionRequest::CoffinPlace {
+            pos: [x, y, z],
+            item_instance_id,
+        }),
+        ClientRequestV1::BlockPlace {
+            x,
+            y,
+            z,
+            item_instance_id,
+            target_face,
+            ..
+        } => Ok(WorldInteractionRequest::BlockPlace {
+            x,
+            y,
+            z,
+            item_instance_id,
+            target_face,
+        }),
+        ClientRequestV1::BlockPickerGive {
+            block_id, count, ..
+        } => Ok(WorldInteractionRequest::BlockPickerGive { block_id, count }),
+        ClientRequestV1::CoffinEnter { x, y, z, .. } => {
+            Ok(WorldInteractionRequest::CoffinEnter { pos: [x, y, z] })
+        }
+        ClientRequestV1::CoffinLeave { .. } => Ok(WorldInteractionRequest::CoffinLeave),
+        ClientRequestV1::CoffinBreak { x, y, z, .. } => {
+            Ok(WorldInteractionRequest::CoffinBreak { pos: [x, y, z] })
+        }
+        ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
+            Ok(WorldInteractionRequest::CoffinMenuReclaim { pos: [x, y, z] })
+        }
+        request => Err(request),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorldInteractionDispatchOutcome {
+    Emitted,
+    DroppedMissingEventResource,
+}
+
+fn emit_world_event<T: bevy_ecs::event::Event>(
+    tx: Option<&mut Events<T>>,
+    event: T,
+    request_name: &'static str,
+) -> WorldInteractionDispatchOutcome {
+    let Some(tx) = tx else {
+        tracing::warn!(
+            "[bong][network] dropped {request_name} because its event resource is missing"
+        );
+        return WorldInteractionDispatchOutcome::DroppedMissingEventResource;
+    };
+    tx.send(event);
+    WorldInteractionDispatchOutcome::Emitted
+}
+
+fn dispatch_coffin_interaction(
+    request: WorldInteractionRequest,
+    player: Entity,
+    tick: u64,
+    params: &mut WorldFormationRequestParams<'_>,
+) -> WorldInteractionDispatchOutcome {
+    match request {
+        WorldInteractionRequest::CoffinOpen { pos } => emit_world_event(
+            params.coffin_open_tx.as_deref_mut(),
+            CoffinOpenRequest { player, pos, tick },
+            "coffin_open",
+        ),
+        WorldInteractionRequest::CoffinPlace {
+            pos,
+            item_instance_id,
+        } => emit_world_event(
+            params.coffin_place_tx.as_deref_mut(),
+            CoffinPlaceRequest {
+                player,
+                pos: valence::prelude::BlockPos::new(pos[0], pos[1], pos[2]),
+                item_instance_id,
+                tick,
+            },
+            "coffin_place",
+        ),
+        WorldInteractionRequest::CoffinEnter { pos } => emit_world_event(
+            params.coffin_enter_tx.as_deref_mut(),
+            CoffinEnterRequest {
+                player,
+                pos: valence::prelude::BlockPos::new(pos[0], pos[1], pos[2]),
+                tick,
+            },
+            "coffin_enter",
+        ),
+        WorldInteractionRequest::CoffinLeave => emit_world_event(
+            params.coffin_leave_tx.as_deref_mut(),
+            CoffinLeaveRequest { player },
+            "coffin_leave",
+        ),
+        WorldInteractionRequest::CoffinBreak { pos } => emit_world_event(
+            params.coffin_break_tx.as_deref_mut(),
+            CoffinBreakRequest {
+                player,
+                pos: valence::prelude::BlockPos::new(pos[0], pos[1], pos[2]),
+                tick,
+            },
+            "coffin_break",
+        ),
+        WorldInteractionRequest::CoffinMenuReclaim { pos } => emit_world_event(
+            params.coffin_menu_reclaim_tx.as_deref_mut(),
+            CoffinMenuReclaimRequest {
+                player,
+                pos: valence::prelude::BlockPos::new(pos[0], pos[1], pos[2]),
+                tick,
+            },
+            "coffin_menu_reclaim",
+        ),
+        _ => unreachable!("coffin dispatcher received a non-coffin request"),
+    }
+}
+
+/// 分发一个 typed 世界交互请求并复用既有领域事件。
+///
+/// 这里仅写 event resource，保持拆分前的 fail-closed 行为；棺材和方块
+/// 的所有权、距离与业务校验仍由各自领域系统负责。
+pub(crate) fn dispatch_world_interaction_request(
+    request: WorldInteractionRequest,
+    player: Entity,
+    tick: u64,
+    params: &mut WorldFormationRequestParams<'_>,
+) -> WorldInteractionDispatchOutcome {
+    match request {
+        request @ (WorldInteractionRequest::CoffinOpen { .. }
+        | WorldInteractionRequest::CoffinPlace { .. }
+        | WorldInteractionRequest::CoffinEnter { .. }
+        | WorldInteractionRequest::CoffinLeave
+        | WorldInteractionRequest::CoffinBreak { .. }
+        | WorldInteractionRequest::CoffinMenuReclaim { .. }) => {
+            dispatch_coffin_interaction(request, player, tick, params)
+        }
+        WorldInteractionRequest::BlockPlace {
+            x,
+            y,
+            z,
+            item_instance_id,
+            target_face,
+        } => emit_world_event(
+            params.block_place_tx.as_deref_mut(),
+            BlockPlaceRequest {
+                client: player,
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+            },
+            "block_place",
+        ),
+        WorldInteractionRequest::BlockPickerGive { block_id, count } => emit_world_event(
+            params.block_picker_give_tx.as_deref_mut(),
+            crate::cmd::dev::block_picker::BlockPickerGiveIntent {
+                player,
+                block_id,
+                count,
+            },
+            "block_picker_give",
+        ),
     }
 }
 
@@ -567,6 +798,229 @@ mod tests {
             app.world().get::<WorldMarker>(player),
             Some(&WorldMarker(3)),
             "partial-coordinate rejection must not mutate world state"
+        );
+    }
+
+    #[derive(Resource, Default)]
+    struct PendingWorldInteractionRequest(Option<(Entity, u64, WorldInteractionRequest)>);
+
+    #[derive(Resource, Default)]
+    struct LastInteractionDispatchOutcome(Option<WorldInteractionDispatchOutcome>);
+
+    fn dispatch_pending_world_interaction_request(
+        mut pending: ResMut<PendingWorldInteractionRequest>,
+        mut outcome: ResMut<LastInteractionDispatchOutcome>,
+        mut params: WorldFormationRequestParams,
+    ) {
+        let Some((player, tick, request)) = pending.0.take() else {
+            return;
+        };
+        outcome.0 = Some(dispatch_world_interaction_request(
+            request,
+            player,
+            tick,
+            &mut params,
+        ));
+    }
+
+    fn world_interaction_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(PendingWorldInteractionRequest::default());
+        app.insert_resource(LastInteractionDispatchOutcome::default());
+        app.add_systems(Update, dispatch_pending_world_interaction_request);
+        app
+    }
+
+    fn send_interaction_request(
+        app: &mut App,
+        player: Entity,
+        tick: u64,
+        request: WorldInteractionRequest,
+    ) -> WorldInteractionDispatchOutcome {
+        app.world_mut()
+            .resource_mut::<PendingWorldInteractionRequest>()
+            .0 = Some((player, tick, request));
+        app.update();
+        app.world_mut()
+            .resource_mut::<LastInteractionDispatchOutcome>()
+            .0
+            .take()
+            .expect("world interaction dispatcher must report every typed request")
+    }
+
+    #[test]
+    fn typed_conversion_covers_all_world_interaction_variants() {
+        let cases = [
+            (
+                ClientRequestV1::CoffinOpen {
+                    v: 1,
+                    x: -1,
+                    y: 64,
+                    z: 2,
+                },
+                WorldInteractionRequest::CoffinOpen { pos: [-1, 64, 2] },
+            ),
+            (
+                ClientRequestV1::CoffinPlace {
+                    v: 1,
+                    x: 3,
+                    y: 65,
+                    z: -4,
+                    item_instance_id: 11,
+                },
+                WorldInteractionRequest::CoffinPlace {
+                    pos: [3, 65, -4],
+                    item_instance_id: 11,
+                },
+            ),
+            (
+                ClientRequestV1::BlockPlace {
+                    v: 1,
+                    x: 5,
+                    y: 66,
+                    z: 7,
+                    item_instance_id: 12,
+                    target_face: TrapTargetFace::North,
+                },
+                WorldInteractionRequest::BlockPlace {
+                    x: 5,
+                    y: 66,
+                    z: 7,
+                    item_instance_id: 12,
+                    target_face: TrapTargetFace::North,
+                },
+            ),
+            (
+                ClientRequestV1::BlockPickerGive {
+                    v: 1,
+                    block_id: "stone".to_owned(),
+                    count: 4,
+                },
+                WorldInteractionRequest::BlockPickerGive {
+                    block_id: "stone".to_owned(),
+                    count: 4,
+                },
+            ),
+            (
+                ClientRequestV1::CoffinEnter {
+                    v: 1,
+                    x: 8,
+                    y: 67,
+                    z: 9,
+                },
+                WorldInteractionRequest::CoffinEnter { pos: [8, 67, 9] },
+            ),
+            (
+                ClientRequestV1::CoffinLeave { v: 1 },
+                WorldInteractionRequest::CoffinLeave,
+            ),
+            (
+                ClientRequestV1::CoffinBreak {
+                    v: 1,
+                    x: 10,
+                    y: 68,
+                    z: 11,
+                },
+                WorldInteractionRequest::CoffinBreak { pos: [10, 68, 11] },
+            ),
+            (
+                ClientRequestV1::CoffinMenuReclaim {
+                    v: 1,
+                    x: 12,
+                    y: 69,
+                    z: 13,
+                },
+                WorldInteractionRequest::CoffinMenuReclaim { pos: [12, 69, 13] },
+            ),
+        ];
+        for (wire_request, expected) in cases {
+            assert_eq!(
+                try_into_world_interaction_request(wire_request).ok(),
+                Some(expected),
+                "each world interaction wire variant must enter its typed route"
+            );
+        }
+
+        assert!(matches!(
+            try_into_world_interaction_request(ClientRequestV1::BreakthroughRequest { v: 1 }),
+            Err(ClientRequestV1::BreakthroughRequest { v: 1 })
+        ));
+    }
+
+    #[test]
+    fn interaction_dispatch_preserves_domain_event_payloads() {
+        let mut app = world_interaction_app();
+        app.add_event::<CoffinPlaceRequest>();
+        app.add_event::<BlockPlaceRequest>();
+        let player = app.world_mut().spawn(WorldMarker(9)).id();
+
+        assert_eq!(
+            send_interaction_request(
+                &mut app,
+                player,
+                401,
+                WorldInteractionRequest::CoffinPlace {
+                    pos: [-3, 64, 5],
+                    item_instance_id: 77,
+                },
+            ),
+            WorldInteractionDispatchOutcome::Emitted
+        );
+        let coffin = app
+            .world_mut()
+            .resource_mut::<Events<CoffinPlaceRequest>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(coffin.len(), 1);
+        assert_eq!(coffin[0].player, player);
+        assert_eq!(coffin[0].pos, valence::prelude::BlockPos::new(-3, 64, 5));
+        assert_eq!(coffin[0].item_instance_id, 77);
+        assert_eq!(coffin[0].tick, 401);
+
+        assert_eq!(
+            send_interaction_request(
+                &mut app,
+                player,
+                402,
+                WorldInteractionRequest::BlockPlace {
+                    x: 6,
+                    y: 65,
+                    z: 7,
+                    item_instance_id: 78,
+                    target_face: TrapTargetFace::East,
+                },
+            ),
+            WorldInteractionDispatchOutcome::Emitted
+        );
+        let block = app
+            .world_mut()
+            .resource_mut::<Events<BlockPlaceRequest>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(block.len(), 1);
+        assert_eq!(block[0].client, player);
+        assert_eq!((block[0].x, block[0].y, block[0].z), (6, 65, 7));
+        assert_eq!(block[0].target_face, TrapTargetFace::East);
+
+        assert_eq!(
+            app.world().get::<WorldMarker>(player),
+            Some(&WorldMarker(9)),
+            "typed world dispatch must not mutate the player entity"
+        );
+    }
+
+    #[test]
+    fn missing_interaction_event_resource_is_fail_closed() {
+        let mut app = world_interaction_app();
+        let player = app.world_mut().spawn(WorldMarker(4)).id();
+        assert_eq!(
+            send_interaction_request(&mut app, player, 405, WorldInteractionRequest::CoffinLeave,),
+            WorldInteractionDispatchOutcome::DroppedMissingEventResource
+        );
+        assert_eq!(
+            app.world().get::<WorldMarker>(player),
+            Some(&WorldMarker(4)),
+            "missing world event resources must not mutate the player"
         );
     }
 }

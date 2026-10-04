@@ -1,3 +1,12 @@
+//! 社交运行时聚合：收集可见事件、更新关系与声望，并维护灵龛事务。
+//!
+//! 本模块把在线玩家的社交状态变化接到 ECS 事件、客户端 payload、Redis
+//! 发布和 SQLite 持久化。事件收集只负责形成带上下文的事件，关系/声望系统
+//! 负责应用状态，灵龛处理器负责物品、寿命与真元的事务边界。身份、功法、
+//! 经脉和身体部位的语义由各自模块维护；这里仅保留现有 `technique_hint`
+//! 字段的传递。持久化失败会记录并保留运行时状态，调用方的重试语义不在
+//! 本模块中偷偷改变。
+
 pub mod components;
 pub mod events;
 pub mod high_renown_tracker;
@@ -40,7 +49,7 @@ use crate::cultivation::components::{Cultivation, Karma, QiFlowError, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::identity::{reaction::npc_should_decline_trade, IdentityId, PlayerIdentities};
+use crate::identity::{IdentityId, IdentityPersistenceLoadFailed, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -67,8 +76,17 @@ use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+type SocialRenownPlayersQueryItem<'a> = (
+    &'a Username,
+    &'a Lifecycle,
+    &'a mut Renown,
+    Option<&'a mut PlayerIdentities>,
+    Option<&'a IdentityPersistenceLoadFailed>,
+);
+type SocialPlayersQueryFilter = With<Client>;
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
 const DEATH_EXPOSURE_RADIUS: f64 = 50.0;
@@ -107,6 +125,12 @@ type FactionMembershipSqlRow = (
 );
 type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, bool, String);
 
+struct PreparedSpiritNichePlacement {
+    staged_inventory: PlayerInventory,
+    niche: SpiritNiche,
+    previous_niche: Option<SpiritNiche>,
+}
+
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
     pair_seconds: HashMap<CompanionPairKey, u64>,
@@ -141,17 +165,20 @@ struct TradeOfferRegistry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+/// 社交系统之间需要显式顺序的调度集合。
 pub(crate) enum SocialSystemSet {
     TradeOfferResponse,
 }
 
 #[derive(Debug, Default, Resource)]
+/// 运行中的灵龛索引；持久化只在状态提交点同步，不承担事件排队。
 pub(crate) struct SpiritNicheRegistry {
     niches: HashMap<String, SpiritNiche>,
     hydrated: bool,
 }
 
 impl SpiritNicheRegistry {
+    /// 写入一个 owner 的最新灵龛快照，供放置、修复和识破流程共享。
     pub(crate) fn upsert(&mut self, niche: SpiritNiche) {
         self.niches.insert(niche.owner.clone(), niche);
     }
@@ -171,6 +198,7 @@ impl SpiritNicheRegistry {
     }
 }
 
+/// 注册社交事件、状态资源以及在线/持久化处理系统。
 pub fn register(app: &mut App) {
     app.init_resource::<CompanionProgress>();
     app.init_resource::<SparringInviteRegistry>();
@@ -259,9 +287,10 @@ pub fn register(app: &mut App) {
         Update,
         (
             handle_sparring_invite_responses.after(dispatch_sparring_invites),
-            dispatch_trade_offers,
+            dispatch_trade_offers.after(crate::world::dimension_transfer::DimensionTransferSet),
             handle_trade_offer_responses
                 .after(dispatch_trade_offers)
+                .after(crate::world::dimension_transfer::DimensionTransferSet)
                 .in_set(SocialSystemSet::TradeOfferResponse),
             expire_sparring_sessions.after(handle_sparring_invite_responses),
             expire_trade_offers.after(handle_trade_offer_responses),
@@ -1060,8 +1089,8 @@ fn dispatch_trade_offers(
             Entity,
             &Lifecycle,
             &Position,
+            Option<&CurrentDimension>,
             &PlayerInventory,
-            Option<&PlayerIdentities>,
         ),
         With<Client>,
     >,
@@ -1071,20 +1100,28 @@ fn dispatch_trade_offers(
         if request.initiator == request.target {
             continue;
         }
-        let Ok((_, initiator_lifecycle, initiator_pos, initiator_inventory, initiator_identities)) =
+        let Ok((_, initiator_lifecycle, initiator_pos, initiator_dimension, initiator_inventory)) =
             players.get(request.initiator)
         else {
             continue;
         };
-        let Ok((_, target_lifecycle, target_pos, target_inventory, _)) =
+        let Ok((_, target_lifecycle, target_pos, target_dimension, target_inventory)) =
             players.get(request.target)
         else {
             continue;
         };
         if initiator_lifecycle.state == LifecycleState::Terminated
             || target_lifecycle.state == LifecycleState::Terminated
-            || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
         {
+            continue;
+        }
+        if dimension_or_overworld(initiator_dimension) != dimension_or_overworld(target_dimension) {
+            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
+                initiator_client.send_chat_message("对方不在此界，无法交易");
+            }
+            continue;
+        }
+        if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
             continue;
         }
         let Some(offered_item) =
@@ -1094,15 +1131,6 @@ fn dispatch_trade_offers(
         };
         let requested_items = trade_item_summaries(target_inventory);
         if requested_items.is_empty() {
-            continue;
-        }
-        if initiator_identities
-            .and_then(PlayerIdentities::active)
-            .is_some_and(npc_should_decline_trade)
-        {
-            if let Ok(mut initiator_client) = clients.get_mut(request.initiator) {
-                initiator_client.send_chat_message("对方听过这张面孔的事，不愿交易");
-            }
             continue;
         }
         registry.pending.retain(|_, pending| {
@@ -1146,6 +1174,7 @@ fn handle_trade_offer_responses(
             Entity,
             &Lifecycle,
             &Position,
+            Option<&CurrentDimension>,
             &mut PlayerInventory,
             Option<&mut LifeRecord>,
         ),
@@ -1179,15 +1208,39 @@ fn handle_trade_offer_responses(
 
         let mut exchanged = false;
         if let Ok(
-            [(_, initiator_lifecycle, initiator_pos, mut initiator_inventory, initiator_life_record), (_, target_lifecycle, target_pos, mut target_inventory, target_life_record)],
+            [(
+                _,
+                initiator_lifecycle,
+                initiator_pos,
+                initiator_dimension,
+                mut initiator_inventory,
+                initiator_life_record,
+            ), (
+                _,
+                target_lifecycle,
+                target_pos,
+                target_dimension,
+                mut target_inventory,
+                target_life_record,
+            )],
         ) = players.get_many_mut([pending.initiator, pending.target])
         {
             if initiator_lifecycle.state == LifecycleState::Terminated
                 || target_lifecycle.state == LifecycleState::Terminated
                 || initiator_lifecycle.character_id != pending.initiator_char_id
                 || target_lifecycle.character_id != pending.target_char_id
-                || initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS
             {
+                continue;
+            }
+            if dimension_or_overworld(initiator_dimension)
+                != dimension_or_overworld(target_dimension)
+            {
+                if let Ok((_, mut client)) = clients.get_mut(response.player) {
+                    client.send_chat_message("交易双方不在同一界，无法交易");
+                }
+                continue;
+            }
+            if initiator_pos.get().distance(target_pos.get()) > CHAT_EXPOSURE_RADIUS {
                 continue;
             }
             let Some(offered_item) =
@@ -1253,6 +1306,12 @@ fn handle_trade_offer_responses(
             zone: None,
         });
     }
+}
+
+fn dimension_or_overworld(current_dimension: Option<&CurrentDimension>) -> DimensionKind {
+    current_dimension
+        .map(|dimension| dimension.0)
+        .unwrap_or_default()
 }
 
 fn trade_item_summary(item: &ItemInstance) -> TradeItemSummaryV1 {
@@ -1322,6 +1381,7 @@ fn expire_trade_offers(clock: Res<CombatClock>, mut registry: ResMut<TradeOfferR
         .retain(|_, pending| clock.tick <= pending.expires_at_tick);
 }
 
+/// 返回双方互相指向同一邀请的有效切磋会话。
 pub fn active_sparring_between(
     sessions: &Query<&SparringState>,
     left: Entity,
@@ -1338,6 +1398,7 @@ pub fn active_sparring_between(
     None
 }
 
+/// 结束切磋双方状态，并为落败者发送一次谦退效果意图。
 pub fn conclude_sparring_defeat(
     commands: &mut Commands,
     status_effect_intents: &mut EventWriter<ApplyStatusEffectIntent>,
@@ -1356,6 +1417,47 @@ pub fn conclude_sparring_defeat(
     });
 }
 
+fn social_relationship_pair(event: &SocialRelationshipEvent) -> (Relationship, Relationship) {
+    (
+        Relationship {
+            kind: event.left_kind,
+            peer: event.right.clone(),
+            since_tick: event.tick,
+            metadata: event.metadata.clone(),
+        },
+        Relationship {
+            kind: event.right_kind,
+            peer: event.left.clone(),
+            since_tick: event.tick,
+            metadata: event.metadata.clone(),
+        },
+    )
+}
+
+fn persist_social_relationship_pair(
+    persistence: &PersistenceSettings,
+    event: &SocialRelationshipEvent,
+    left_relationship: &Relationship,
+    right_relationship: &Relationship,
+) {
+    if let Err(error) =
+        persist_social_relationship(persistence, event.left.as_str(), left_relationship)
+    {
+        tracing::warn!(
+            "[bong][social] failed to persist relationship for `{}`: {error}",
+            event.left
+        );
+    }
+    if let Err(error) =
+        persist_social_relationship(persistence, event.right.as_str(), right_relationship)
+    {
+        tracing::warn!(
+            "[bong][social] failed to persist relationship for `{}`: {error}",
+            event.right
+        );
+    }
+}
+
 fn apply_social_relationships(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRelationshipEvent>,
@@ -1363,35 +1465,14 @@ fn apply_social_relationships(
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for event in events.read() {
-        let left_relationship = Relationship {
-            kind: event.left_kind,
-            peer: event.right.clone(),
-            since_tick: event.tick,
-            metadata: event.metadata.clone(),
-        };
-        let right_relationship = Relationship {
-            kind: event.right_kind,
-            peer: event.left.clone(),
-            since_tick: event.tick,
-            metadata: event.metadata.clone(),
-        };
+        let (left_relationship, right_relationship) = social_relationship_pair(event);
         if let Some(persistence) = persistence.as_deref() {
-            if let Err(error) =
-                persist_social_relationship(persistence, event.left.as_str(), &left_relationship)
-            {
-                tracing::warn!(
-                    "[bong][social] failed to persist relationship for `{}`: {error}",
-                    event.left
-                );
-            }
-            if let Err(error) =
-                persist_social_relationship(persistence, event.right.as_str(), &right_relationship)
-            {
-                tracing::warn!(
-                    "[bong][social] failed to persist relationship for `{}`: {error}",
-                    event.right
-                );
-            }
+            persist_social_relationship_pair(
+                persistence,
+                event,
+                &left_relationship,
+                &right_relationship,
+            );
         }
 
         let mut left_position = None;
@@ -1470,10 +1551,11 @@ fn emit_social_relationship_vfx(
     }
 }
 
+/// 应用声望事件并桥接在线或离线身份；持久化失败只记录，不回滚运行时事件。
 pub(crate) fn apply_social_renown_deltas(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRenownDeltaEvent>,
-    mut players: Query<(&Lifecycle, &mut Renown, Option<&mut PlayerIdentities>), With<Client>>,
+    mut players: Query<SocialRenownPlayersQueryItem<'_>, SocialPlayersQueryFilter>,
 ) {
     for event in events.read() {
         let mut persisted_renown = None;
@@ -1505,9 +1587,9 @@ pub(crate) fn apply_social_renown_deltas(
         }
 
         let mut identity_synced = false;
-        if let Some((_, mut renown, identities)) = players
+        if let Some((username, _, mut renown, identities, identity_load_failed)) = players
             .iter_mut()
-            .find(|(lifecycle, _, _)| lifecycle.character_id == event.char_id)
+            .find(|(_, lifecycle, _, _, _)| lifecycle.character_id == event.char_id)
         {
             if let Some(persisted_renown) = persisted_renown.as_ref() {
                 *renown = persisted_renown.clone();
@@ -1522,11 +1604,13 @@ pub(crate) fn apply_social_renown_deltas(
             if let Some(mut identities) = identities {
                 identity_synced =
                     apply_social_renown_delta_to_identity(event, &mut identities, "online");
-                if identity_synced {
+                if identity_synced && identity_load_failed.is_none() {
                     if let Some(persistence) = persistence.as_deref() {
+                        let identity_key =
+                            crate::player::state::canonical_player_id(username.0.as_str());
                         if let Err(error) = identity_db::save_player_identities(
                             persistence,
-                            event.char_id.as_str(),
+                            &identity_key,
                             &identities,
                         ) {
                             tracing::warn!(
@@ -1587,14 +1671,19 @@ fn apply_social_renown_delta_to_persisted_identity(
     persistence: &PersistenceSettings,
     event: &SocialRenownDeltaEvent,
 ) {
-    match identity_db::load_player_identities(persistence, event.char_id.as_str()) {
+    let username = crate::player::state::player_username_from_character_id(&event.char_id);
+    let identity_key = username
+        .map(crate::player::state::canonical_player_id)
+        .unwrap_or_else(|| event.char_id.clone());
+    let loaded = username
+        .map(|username| identity_db::load_player_identities_for_username(persistence, username))
+        .unwrap_or_else(|| identity_db::load_player_identities(persistence, &identity_key));
+    match loaded {
         Ok(Some(mut identities)) => {
             if apply_social_renown_delta_to_identity(event, &mut identities, "persistence") {
-                if let Err(error) = identity_db::save_player_identities(
-                    persistence,
-                    event.char_id.as_str(),
-                    &identities,
-                ) {
+                if let Err(error) =
+                    identity_db::save_player_identities(persistence, &identity_key, &identities)
+                {
                     tracing::warn!(
                         "[bong][social] failed to persist offline identity renown for `{}`: {error}",
                         event.char_id
@@ -1792,6 +1881,122 @@ fn apply_faction_membership_decisions(
     }
 }
 
+fn prepare_spirit_niche_placement(
+    owner: &str,
+    position: &Position,
+    inventory: &PlayerInventory,
+    event: &SpiritNichePlaceRequest,
+    registry: &SpiritNicheRegistry,
+) -> Result<PreparedSpiritNichePlacement, String> {
+    if !niche_place_target_is_close(position, event.pos) {
+        return Err(format!("target {:?} too far from player", event.pos));
+    }
+
+    let item_instance_id = event
+        .item_instance_id
+        .ok_or_else(|| "missing item instance".to_string())?;
+    let instance = inventory_item_by_instance(inventory, item_instance_id)
+        .ok_or_else(|| format!("missing instance {item_instance_id}"))?;
+    if instance.template_id != SPIRIT_NICHE_ITEM_TEMPLATE_ID {
+        return Err(format!(
+            "item `{}` is not a niche base",
+            instance.template_id
+        ));
+    }
+    if registry
+        .active_niches()
+        .any(|niche| niche.owner != owner && niche.pos == event.pos)
+    {
+        return Err(format!("target {:?} already occupied", event.pos));
+    }
+
+    let mut staged_inventory = inventory.clone();
+    consume_item_instance_once(&mut staged_inventory, item_instance_id)
+        .map_err(|error| format!("consume failed: {error}"))?;
+    let niche = SpiritNiche {
+        owner: owner.to_string(),
+        pos: event.pos,
+        placed_at_tick: event.tick,
+        revealed: false,
+        revealed_by: None,
+        is_damaged: false,
+        guardians: Vec::new(),
+    };
+    Ok(PreparedSpiritNichePlacement {
+        staged_inventory,
+        niche,
+        previous_niche: registry.niches.get(owner).cloned(),
+    })
+}
+
+fn apply_spirit_niche_world_effects(
+    event: &SpiritNichePlaceRequest,
+    lifecycle: &mut Lifecycle,
+    placement: &PreparedSpiritNichePlacement,
+    commands: &mut Commands,
+    registry: &mut SpiritNicheRegistry,
+    layers: &mut Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
+    lifecycle.spawn_anchor_damaged = false;
+    registry.upsert(placement.niche.clone());
+    commands
+        .entity(event.player)
+        .insert(placement.niche.clone());
+    if let Some(events) = vfx_events {
+        gameplay_vfx::send_spawn(
+            events,
+            gameplay_vfx::spawn_request(
+                gameplay_vfx::SOCIAL_NICHE_ESTABLISH,
+                gameplay_vfx::block_center(event.pos),
+                Some([0.0, 0.8, 0.0]),
+                "#C4E0FF",
+                0.8,
+                12,
+                60,
+            ),
+        );
+    }
+    if let Ok(mut layer) = layers.get_single_mut() {
+        if let Some(previous_niche) = placement.previous_niche.as_ref() {
+            if !previous_niche.revealed && previous_niche.pos != event.pos {
+                layer.set_block(block_pos_from_array(previous_niche.pos), BlockState::AIR);
+            }
+        }
+        layer.set_block(block_pos_from_array(event.pos), BlockState::LODESTONE);
+    }
+}
+
+fn persist_spirit_niche_placement(
+    persistence: Option<&PersistenceSettings>,
+    player_persistence: Option<&PlayerStatePersistence>,
+    username: Option<&Username>,
+    lifecycle: &Lifecycle,
+    niche: &SpiritNiche,
+) {
+    if let Some(persistence) = persistence {
+        if let Err(error) = persist_social_spirit_niche(persistence, niche) {
+            tracing::warn!(
+                "[bong][social] failed to persist spirit niche for `{}`: {error}",
+                lifecycle.character_id
+            );
+        }
+    }
+    if let (Some(player_persistence), Some(username)) = (player_persistence, username) {
+        if let Err(error) = save_player_shrine_anchor_slice(
+            player_persistence,
+            username.0.as_str(),
+            Some(spirit_niche_spawn_anchor(niche.pos)),
+        ) {
+            tracing::warn!(
+                "[bong][social] failed to persist shrine anchor for `{}`: {error}",
+                username.0
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn handle_spirit_niche_place_requests(
     persistence: Option<Res<PersistenceSettings>>,
@@ -1839,59 +2044,26 @@ fn handle_spirit_niche_place_requests(
         if entity != event.player || lifecycle.state == LifecycleState::Terminated {
             continue;
         }
-        if !niche_place_target_is_close(position, event.pos) {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: target {:?} too far from player",
-                lifecycle.character_id,
-                event.pos
-            );
-            continue;
-        }
 
         let Some(mut inventory) = inventory else {
             continue;
         };
-        let Some(item_instance_id) = event.item_instance_id else {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: missing item instance",
-                lifecycle.character_id
-            );
-            continue;
+        let placement = match prepare_spirit_niche_placement(
+            lifecycle.character_id.as_str(),
+            position,
+            &inventory,
+            event,
+            &registry,
+        ) {
+            Ok(placement) => placement,
+            Err(reason) => {
+                tracing::warn!(
+                    "[bong][social] spirit niche place rejected for `{}`: {reason}",
+                    lifecycle.character_id
+                );
+                continue;
+            }
         };
-        let Some(instance) = inventory_item_by_instance(&inventory, item_instance_id) else {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: missing instance {item_instance_id}",
-                lifecycle.character_id
-            );
-            continue;
-        };
-        if instance.template_id != SPIRIT_NICHE_ITEM_TEMPLATE_ID {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche base",
-                lifecycle.character_id,
-                instance.template_id
-            );
-            continue;
-        }
-        if registry
-            .active_niches()
-            .any(|niche| niche.owner != lifecycle.character_id && niche.pos == event.pos)
-        {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: target {:?} already occupied",
-                lifecycle.character_id,
-                event.pos
-            );
-            continue;
-        }
-        let mut staged_inventory = inventory.clone();
-        if let Err(error) = consume_item_instance_once(&mut staged_inventory, item_instance_id) {
-            tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: consume failed: {error}",
-                lifecycle.character_id
-            );
-            continue;
-        }
 
         // Extract zone_qi as a scalar first (immutable borrow), then drop the borrow before
         // the mutable release call below.  Fallback registry has spirit_qi=0.9, so the cost
@@ -1930,69 +2102,27 @@ fn handle_spirit_niche_place_requests(
                 continue;
             }
         }
-        *inventory = staged_inventory;
+        *inventory = placement.staged_inventory.clone();
         if let Some(mut lifespan) = lifespan {
             apply_spirit_niche_negative_lifespan_cost(zone_qi, &mut lifespan);
         }
 
-        let niche = SpiritNiche {
-            owner: lifecycle.character_id.clone(),
-            pos: event.pos,
-            placed_at_tick: event.tick,
-            revealed: false,
-            revealed_by: None,
-            is_damaged: false,
-            guardians: Vec::new(),
-        };
-        lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
-        lifecycle.spawn_anchor_damaged = false;
-        let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
-        registry.upsert(niche.clone());
-        commands.entity(event.player).insert(niche.clone());
-        if let Some(events) = vfx_events.as_deref_mut() {
-            gameplay_vfx::send_spawn(
-                events,
-                gameplay_vfx::spawn_request(
-                    gameplay_vfx::SOCIAL_NICHE_ESTABLISH,
-                    gameplay_vfx::block_center(event.pos),
-                    Some([0.0, 0.8, 0.0]),
-                    "#C4E0FF",
-                    0.8,
-                    12,
-                    60,
-                ),
-            );
-        }
-        if let Ok(mut layer) = layers.get_single_mut() {
-            if let Some(old_niche) = old_niche {
-                if !old_niche.revealed && old_niche.pos != event.pos {
-                    layer.set_block(block_pos_from_array(old_niche.pos), BlockState::AIR);
-                }
-            }
-            layer.set_block(block_pos_from_array(event.pos), BlockState::LODESTONE);
-        }
-        if let Some(persistence) = persistence.as_deref() {
-            if let Err(error) = persist_social_spirit_niche(persistence, &niche) {
-                tracing::warn!(
-                    "[bong][social] failed to persist spirit niche for `{}`: {error}",
-                    lifecycle.character_id
-                );
-            }
-        }
-        if let (Some(player_persistence), Some(username)) =
-            (player_persistence.as_deref(), username)
-        {
-            if let Err(error) = save_player_shrine_anchor_slice(
-                player_persistence,
-                username.0.as_str(),
-                Some(spirit_niche_spawn_anchor(event.pos)),
-            ) {
-                tracing::warn!(
-                    "[bong][social] failed to persist shrine anchor for `{}`: {error}",
-                    username.0
-                );
-            }
-        }
+        apply_spirit_niche_world_effects(
+            event,
+            &mut lifecycle,
+            &placement,
+            &mut commands,
+            &mut registry,
+            &mut layers,
+            vfx_events.as_deref_mut(),
+        );
+        persist_spirit_niche_placement(
+            persistence.as_deref(),
+            player_persistence.as_deref(),
+            username,
+            &lifecycle,
+            &placement.niche,
+        );
         if let (Some(mut client), Some(username), Some(player_state), Some(cultivation)) =
             (client, username, player_state, cultivation.as_deref())
         {
@@ -2391,6 +2521,7 @@ fn block_distance_squared(left: [i32; 3], right: [i32; 3]) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
+/// 判断坐标是否落在任一已登记且未识破灵龛的保护半径内。
 pub(crate) fn position_is_within_registered_active_spirit_niche(
     pos: DVec3,
     registry: &SpiritNicheRegistry,
@@ -2400,6 +2531,7 @@ pub(crate) fn position_is_within_registered_active_spirit_niche(
     })
 }
 
+/// 判断方块破坏是否受他人已登记灵龛保护。
 pub(crate) fn block_break_is_protected_by_registered_spirit_niche(
     actor_char_id: Option<&str>,
     block_pos: [i32; 3],
