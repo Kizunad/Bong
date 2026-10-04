@@ -552,7 +552,7 @@ impl ActiveEvent {
             BeastTideRuntimeState::default()
         };
         let calamity_runtime = snapshot.calamity_runtime.as_ref().cloned();
-        let calamity_state = calamity_runtime.unwrap_or_else(|| PersistedCalamityRuntime {
+        let calamity_state = calamity_runtime.unwrap_or(PersistedCalamityRuntime {
             initialized: snapshot.elapsed_ticks > 0
                 && matches!(
                     event_name,
