@@ -1,3 +1,9 @@
+//! Fauna 的区域迁徙与兽潮流场。
+//!
+//! 本模块根据 zone 灵气变化和邻接关系决定迁徙目标，再把迁徙意图交给普通 NPC 导航或
+//! 兽潮共享流场推进。它只读取 zone 灵气，不扣除、生成或搬运真元；迁徙事件的音频和
+//! 粒子请求在决策完成后统一发出，NPC 生命周期与真元结算仍归各自模块。
+
 use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +44,7 @@ const MIGRATION_REACH_DISTANCE: f64 = 2.0;
 const FLOW_FIELD_CELL_SIZE_BLOCKS: f64 = 1.0;
 const FLOW_FIELD_MAX_DIMENSION: usize = 256;
 
+/// 区域灵气持续下降到迁徙门槛时发出的诊断事件。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct ZoneDepletionEvent {
     pub zone: String,
@@ -46,6 +53,7 @@ pub struct ZoneDepletionEvent {
     pub tick: u64,
 }
 
+/// 迁徙开始时供 NPC 迁徙系统选择源区和目标区的通知。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct ZoneQiCriticalEvent {
     pub zone_id: String,
@@ -53,6 +61,7 @@ pub struct ZoneQiCriticalEvent {
     pub neighbors: Vec<(String, f64)>,
 }
 
+/// 一个源 zone 选定避难 zone 后的迁徙意图与计划持续时间。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct MigrationEvent {
     pub zone_id: String,
@@ -62,6 +71,7 @@ pub struct MigrationEvent {
     pub started_at_tick: u64,
 }
 
+/// 兽潮从集结到迁徙、消散或全灭的生命周期阶段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HordePhase {
@@ -71,6 +81,7 @@ pub enum HordePhase {
     Annihilated,
 }
 
+/// 同一源区兽群的聚集、迁徙或终态通知。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct BeastHordeEvent {
     pub source_zone: String,
@@ -80,6 +91,7 @@ pub struct BeastHordeEvent {
     pub tick: u64,
 }
 
+/// 供消费者观察的共享流场方向原型。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct FlowFieldPrototype {
     pub source_zone: String,
@@ -88,6 +100,7 @@ pub struct FlowFieldPrototype {
     pub computed_tick: u64,
 }
 
+/// 请求为源区与目标区生成一次共享 flow field。
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct FlowFieldComputeTask {
     pub source_zone: String,
@@ -95,6 +108,7 @@ pub struct FlowFieldComputeTask {
     pub computed_tick: u64,
 }
 
+/// 用于兽群远距离移动的二维共享路径向量网格。
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlowField {
     pub id: String,
@@ -109,16 +123,19 @@ pub struct FlowField {
     pub computed_tick: u64,
 }
 
+/// 以稳定迁徙意图 ID 索引的共享兽群流场。
 #[derive(Debug, Clone, Default, Resource)]
 pub struct FlowFields {
     fields_by_id: HashMap<String, FlowField>,
 }
 
 impl FlowFields {
+    /// 保存一张按自身 ID 替换的共享流场。
     pub fn insert(&mut self, field: FlowField) {
         self.fields_by_id.insert(field.id.clone(), field);
     }
 
+    /// 查找某次 source、target、tick 对应的共享流场。
     pub fn get(&self, id: &str) -> Option<&FlowField> {
         self.fields_by_id.get(id)
     }
@@ -133,6 +150,7 @@ impl FlowFields {
     }
 }
 
+/// 普通 NPC 一次迁徙的来源、目标、步进速度与开始 tick。
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct MigrationTarget {
     pub origin_zone: String,
@@ -142,12 +160,14 @@ pub struct MigrationTarget {
     pub started_at_tick: u64,
 }
 
+/// 兽潮成员用于选择共享流场的目标和可选流场 ID。
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct HordeMigrationComponent {
     pub target_zone: String,
     pub assigned_flow_field: Option<String>,
 }
 
+/// 记录每个 source zone 的持续下降窗口和当前迁徙计划。
 #[derive(Debug, Clone, Default, Resource)]
 pub struct FaunaMigrationState {
     critical_ticks_by_zone: HashMap<String, u64>,
@@ -156,6 +176,7 @@ pub struct FaunaMigrationState {
     last_tick: Option<u64>,
 }
 
+/// 记录每个 source zone 当前的兽潮阶段，避免重复触发。
 #[derive(Debug, Clone, Default, Resource)]
 pub struct BeastHordeState {
     phase_by_source_zone: HashMap<String, HordePhase>,
@@ -296,6 +317,96 @@ pub struct BeastHordeEventWriters<'w> {
     flow_field_tasks: EventWriter<'w, FlowFieldComputeTask>,
 }
 
+struct MigrationSignal {
+    depletion: ZoneDepletionEvent,
+    critical: ZoneQiCriticalEvent,
+    migration: MigrationEvent,
+}
+
+/// 根据一个 zone 的本轮观测推进持续窗口，并在达到门槛时生成迁徙意图。
+fn evaluate_zone_migration(
+    zone: &Zone,
+    zones: &[Zone],
+    graph: Option<&ZoneGraph>,
+    state: &mut FaunaMigrationState,
+    now: u64,
+    elapsed: u64,
+    spirit_qi_rate_of_change: f64,
+) -> Option<MigrationSignal> {
+    if zone.spirit_qi >= HORDE_TRIGGER_THRESHOLD {
+        state.critical_ticks_by_zone.remove(zone.name.as_str());
+        return None;
+    }
+    if spirit_qi_rate_of_change > 0.0 {
+        state.critical_ticks_by_zone.remove(zone.name.as_str());
+        return None;
+    }
+
+    let active_until = state
+        .active_until_by_zone
+        .get(zone.name.as_str())
+        .copied()
+        .unwrap_or_default();
+    if now < active_until {
+        return None;
+    }
+
+    let low_ticks = state
+        .critical_ticks_by_zone
+        .entry(zone.name.clone())
+        .or_default();
+    *low_ticks = low_ticks.saturating_add(elapsed);
+    if *low_ticks < MIGRATION_SUSTAIN_TICKS {
+        return None;
+    }
+
+    let target_zone = select_migration_target_zone(zone, zones, graph)?;
+    let duration = migration_duration_ticks(zone);
+    state
+        .active_until_by_zone
+        .insert(zone.name.clone(), now.saturating_add(duration as u64));
+    state.critical_ticks_by_zone.remove(zone.name.as_str());
+
+    Some(MigrationSignal {
+        critical: ZoneQiCriticalEvent {
+            zone_id: zone.name.clone(),
+            spirit_qi: zone.spirit_qi,
+            neighbors: migration_neighbors(zone, zones, graph),
+        },
+        migration: MigrationEvent {
+            zone_id: zone.name.clone(),
+            target_zone: target_zone.name.clone(),
+            direction: refuge_direction(zone, target_zone),
+            duration_ticks: duration,
+            started_at_tick: now,
+        },
+        depletion: ZoneDepletionEvent {
+            zone: zone.name.clone(),
+            spirit_qi: zone.spirit_qi,
+            spirit_qi_rate_of_change,
+            tick: now,
+        },
+    })
+}
+
+/// 将已经确认的迁徙决定发布给 gameplay、VFX 与音频消费者。
+fn emit_migration_signal(
+    zone: &Zone,
+    signal: MigrationSignal,
+    events: &mut FaunaMigrationEventWriters<'_>,
+) {
+    events.depletion_events.send(signal.depletion);
+    events.critical_events.send(signal.critical);
+    events.migration_events.send(signal.migration.clone());
+    events
+        .vfx_events
+        .send(migration_vfx_request(zone, &signal.migration));
+    events.audio_events.send(migration_rumble_request(zone));
+}
+
+/// 观测主世界 zone 灵气并发布满足持续窗口的迁徙决定。
+///
+/// 缺少 zone registry 时会清空短期下降观测，避免恢复后拿旧 tick 计算虚假的长间隔。
 pub fn fauna_migration_system(
     zones: Option<Res<ZoneRegistry>>,
     graph: Option<Res<ZoneGraph>>,
@@ -324,72 +435,21 @@ pub fn fauna_migration_system(
             .map(|previous| (zone.spirit_qi - previous) / elapsed.max(1) as f64)
             .unwrap_or(0.0);
 
-        if zone.spirit_qi >= HORDE_TRIGGER_THRESHOLD {
-            state.critical_ticks_by_zone.remove(zone.name.as_str());
-            continue;
-        }
-        if spirit_qi_rate_of_change > 0.0 {
-            state.critical_ticks_by_zone.remove(zone.name.as_str());
-            continue;
-        }
-
-        let active_until = state
-            .active_until_by_zone
-            .get(zone.name.as_str())
-            .copied()
-            .unwrap_or_default();
-        if now < active_until {
-            continue;
-        }
-
-        let low_ticks = state
-            .critical_ticks_by_zone
-            .entry(zone.name.clone())
-            .or_default();
-        *low_ticks = low_ticks.saturating_add(elapsed);
-        if *low_ticks < MIGRATION_SUSTAIN_TICKS {
-            continue;
-        }
-
-        let Some(target_zone) = select_migration_target_zone(zone, &zones.zones, graph.as_deref())
-        else {
-            continue;
-        };
-        let duration = migration_duration_ticks(zone);
-        state
-            .active_until_by_zone
-            .insert(zone.name.clone(), now.saturating_add(duration as u64));
-        state.critical_ticks_by_zone.remove(zone.name.as_str());
-
-        let critical_event = ZoneQiCriticalEvent {
-            zone_id: zone.name.clone(),
-            spirit_qi: zone.spirit_qi,
-            neighbors: migration_neighbors(zone, &zones.zones, graph.as_deref()),
-        };
-        let migration_event = MigrationEvent {
-            zone_id: zone.name.clone(),
-            target_zone: target_zone.name.clone(),
-            direction: refuge_direction(zone, target_zone),
-            duration_ticks: duration,
-            started_at_tick: now,
-        };
-        let depletion_event = ZoneDepletionEvent {
-            zone: zone.name.clone(),
-            spirit_qi: zone.spirit_qi,
+        if let Some(signal) = evaluate_zone_migration(
+            zone,
+            &zones.zones,
+            graph.as_deref(),
+            &mut state,
+            now,
+            elapsed,
             spirit_qi_rate_of_change,
-            tick: now,
-        };
-
-        events.depletion_events.send(depletion_event);
-        events.critical_events.send(critical_event);
-        events.migration_events.send(migration_event.clone());
-        events
-            .vfx_events
-            .send(migration_vfx_request(zone, &migration_event));
-        events.audio_events.send(migration_rumble_request(zone));
+        ) {
+            emit_migration_signal(zone, signal, &mut events);
+        }
     }
 }
 
+/// 把已确认的低灵气事件聚合为一次兽潮和共享流场请求。
 pub fn beast_horde_detect_system(
     mut depletion_events: EventReader<ZoneDepletionEvent>,
     zones: Option<Res<ZoneRegistry>>,
@@ -446,6 +506,7 @@ pub fn beast_horde_detect_system(
     }
 }
 
+/// 消费流场任务，为源区与目标区建立可复用的网格方向。
 pub fn flow_field_compute_system(
     mut tasks: EventReader<FlowFieldComputeTask>,
     zones: Option<Res<ZoneRegistry>>,
@@ -478,6 +539,7 @@ pub fn flow_field_compute_system(
     }
 }
 
+/// 把一次兽潮的目标和流场 ID 挂到源区内的野兽实体。
 pub fn horde_migration_assignment_system(
     mut commands: Commands,
     mut horde_events: EventReader<BeastHordeEvent>,
@@ -530,6 +592,58 @@ pub fn horde_migration_assignment_system(
     }
 }
 
+enum HordeMigrationAction {
+    ClearTarget,
+    SetPosition(DVec3),
+    SetNavigatorGoal(DVec3),
+    Wait,
+}
+
+/// 计算一个兽潮成员本 tick 的动作，不修改 ECS 或发出命令。
+fn horde_migration_action(
+    current: DVec3,
+    target_bounds: (DVec3, DVec3),
+    horde: &HordeMigrationComponent,
+    target: &MigrationTarget,
+    lod_tier: NpcLodTier,
+    now: u64,
+    flow_fields: &FlowFields,
+) -> HordeMigrationAction {
+    if zone_bounds_contain(target_bounds, current)
+        || current.distance(target.target_pos) <= MIGRATION_REACH_DISTANCE
+    {
+        return HordeMigrationAction::ClearTarget;
+    }
+
+    match lod_tier {
+        NpcLodTier::Dormant => HordeMigrationAction::SetPosition(target.target_pos),
+        NpcLodTier::Far | NpcLodTier::Mid => {
+            let interval = match lod_tier {
+                NpcLodTier::Far => 1_200,
+                NpcLodTier::Mid => 600,
+                NpcLodTier::Dormant | NpcLodTier::Near => unreachable!(),
+            };
+            if now.is_multiple_of(interval) {
+                let direction = horde_migration_direction(horde, flow_fields, current, target);
+                HordeMigrationAction::SetPosition(step_by_direction_preserving_y(
+                    current,
+                    direction,
+                    MIGRATION_FAR_STEP_BLOCKS,
+                ))
+            } else {
+                HordeMigrationAction::Wait
+            }
+        }
+        NpcLodTier::Near => {
+            let direction = horde_migration_direction(horde, flow_fields, current, target);
+            let next_waypoint =
+                step_by_direction_preserving_y(current, direction, MIGRATION_NEAR_STEP_BLOCKS);
+            HordeMigrationAction::SetNavigatorGoal(next_waypoint)
+        }
+    }
+}
+
+/// 应用兽潮成员已经计算出的动作；这里是唯一的 ECS Position/Navigator 写入口。
 pub fn horde_migration_system(
     mut commands: Commands,
     clock: Option<Res<CultivationClock>>,
@@ -557,56 +671,34 @@ pub fn horde_migration_system(
         let Some(target_bounds) = target_bounds else {
             continue;
         };
-        let current = position.get();
-        if zone_bounds_contain(target_bounds, current)
-            || current.distance(target.target_pos) <= MIGRATION_REACH_DISTANCE
-        {
-            commands
-                .entity(entity)
-                .remove::<HordeMigrationComponent>()
-                .remove::<MigrationTarget>();
-            continue;
-        }
-
-        match lod_tier.copied().unwrap_or_default() {
-            NpcLodTier::Dormant => {
-                position.set(target.target_pos);
+        let action = horde_migration_action(
+            position.get(),
+            target_bounds,
+            horde,
+            target,
+            lod_tier.copied().unwrap_or_default(),
+            now,
+            &flow_fields,
+        );
+        match action {
+            HordeMigrationAction::ClearTarget => {
+                commands
+                    .entity(entity)
+                    .remove::<HordeMigrationComponent>()
+                    .remove::<MigrationTarget>();
             }
-            NpcLodTier::Far => {
-                if now.is_multiple_of(1_200) {
-                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
-                    position.set(step_by_direction_preserving_y(
-                        current,
-                        direction,
-                        MIGRATION_FAR_STEP_BLOCKS,
-                    ));
-                }
-            }
-            NpcLodTier::Mid => {
-                if now.is_multiple_of(600) {
-                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
-                    position.set(step_by_direction_preserving_y(
-                        current,
-                        direction,
-                        MIGRATION_FAR_STEP_BLOCKS,
-                    ));
-                }
-            }
-            NpcLodTier::Near => {
+            HordeMigrationAction::SetPosition(next_position) => position.set(next_position),
+            HordeMigrationAction::SetNavigatorGoal(next_waypoint) => {
                 if let Some(mut navigator) = navigator {
-                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
-                    let next_waypoint = step_by_direction_preserving_y(
-                        current,
-                        direction,
-                        MIGRATION_NEAR_STEP_BLOCKS,
-                    );
                     navigator.set_goal(next_waypoint, target.speed_multiplier);
                 }
             }
+            HordeMigrationAction::Wait => {}
         }
     }
 }
 
+/// 把 zone 迁徙通知转换成普通 NPC 的 MigrationTarget。
 pub fn migration_trigger_system(
     mut commands: Commands,
     clock: Option<Res<CultivationClock>>,
@@ -649,6 +741,7 @@ pub fn migration_trigger_system(
     }
 }
 
+/// 按 NPC LOD 周期推进普通迁徙实体，Near 档交给 Navigator。
 pub fn migration_move_system(
     mut commands: Commands,
     clock: Option<Res<CultivationClock>>,
@@ -694,6 +787,7 @@ pub fn migration_move_system(
     }
 }
 
+/// 统计抵达目标 zone 的兽群并触发一次兽潮世界事件。
 pub fn migration_to_beast_tide_system(
     mut active_events: ResMut<ActiveEventsResource>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
@@ -967,6 +1061,7 @@ fn flow_field_id(source_zone: &str, target_zone: &str, computed_tick: u64) -> St
 }
 
 impl FlowField {
+    /// 根据两个 zone 的边界建立一张没有障碍物的初始共享流场。
     pub fn from_zones(source: &Zone, target: &Zone, computed_tick: u64) -> Self {
         let (min, max) = source.bounds;
         let width = grid_dimension((max.x - min.x).abs());
