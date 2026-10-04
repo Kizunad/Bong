@@ -1,0 +1,10 @@
+# 灵剑 (SpiritSword / spirit_sword) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[features]
+dark_iron_blade = { elements = ["blade_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 300 }
+diamond_guard   = { elements = ["guard_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 120 }
+bound_hilt      = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 200 }
+crystal_pommel  = { elements = ["pommel_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 80 }
