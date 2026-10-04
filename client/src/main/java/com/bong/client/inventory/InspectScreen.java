@@ -410,11 +410,33 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout buildInventoryColumn() {
         FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
         rightCol.gap(2);
-        containerSection = OwoXmlTemplateRegistry.production().require("inventory-container")
-            .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
-        rebuildContainerSection();
+        containerSection = buildContainerSection();
         rightCol.child(containerSection);
         return rightCol;
+    }
+
+    /**
+     * 在提交到 screen 字段前完成容器入口的构造。
+     *
+     * <p>模板展开或入口填充失败时，旧引用和旧定义都保持不变，并把原异常继续抛给调用方；
+     * 这样 UI 不会挂上一棵半成品树，调用方仍能按现有启动失败路径处理异常。</p>
+     */
+    private FlowLayout buildContainerSection() {
+        FlowLayout previousSection = containerSection;
+        java.util.List<InventoryModel.ContainerDef> previousDefs = filteredContainerDefs;
+        try {
+            FlowLayout candidate = OwoXmlTemplateRegistry.production().require("inventory-container")
+                .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
+            java.util.List<InventoryModel.ContainerDef> nextDefs = computeContainerDefs(model);
+            populateContainerEntries(candidate, nextDefs);
+            filteredContainerDefs = nextDefs;
+            containerSection = candidate;
+            return candidate;
+        } catch (RuntimeException | Error failure) {
+            containerSection = previousSection;
+            filteredContainerDefs = previousDefs;
+            throw failure;
+        }
     }
 
     /**
@@ -806,11 +828,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     /** 入口只请求打开统一窗口，不持有或重新挂载容器网格。 */
     private void rebuildContainerSection() {
         if (containerSection == null) return;
-        filteredContainerDefs = computeContainerDefs(model);
-        var entries = containerSection.childById(FlowLayout.class, "container-entries");
+        FlowLayout previousSection = containerSection;
+        java.util.List<InventoryModel.ContainerDef> previousDefs = filteredContainerDefs;
+        java.util.List<InventoryModel.ContainerDef> nextDefs = computeContainerDefs(model);
+        try {
+            populateContainerEntries(previousSection, nextDefs);
+            filteredContainerDefs = nextDefs;
+        } catch (RuntimeException | Error failure) {
+            containerSection = previousSection;
+            filteredContainerDefs = previousDefs;
+            throw failure;
+        }
+    }
+
+    /** 将入口定义填充到指定模板；调用方负责在成功后提交字段。 */
+    private void populateContainerEntries(
+        FlowLayout section,
+        java.util.List<InventoryModel.ContainerDef> definitions
+    ) {
+        var entries = section.childById(FlowLayout.class, "container-entries");
         entries.clearChildren();
         var template = OwoXmlTemplateRegistry.production().require("inventory-container");
-        for (var def : filteredContainerDefs) {
+        for (var def : definitions) {
             var button = template.expandTemplate(ButtonComponent.class, "container-entry", java.util.Map.of());
             button.setMessage(Text.literal(MinecraftClient.getInstance().textRenderer.trimToWidth(def.name(), 94)));
             button.tooltip(Text.literal(def.name()));
