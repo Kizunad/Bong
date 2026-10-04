@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use valence::prelude::{
     bevy_ecs, App, Client, Component, DVec3, Event, EventReader, EventWriter, Events,
@@ -85,7 +86,8 @@ const PSEUDO_VEIN_MIN_DISTANCE_BLOCKS: f64 = 500.0;
 const KARMA_BASE_ROLL_PROBABILITY: f64 = 0.003;
 const RECENT_BREAKTHROUGH_WINDOW_TICKS: u64 = 10 * TICKS_PER_MINUTE;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum HeartbeatEventKind {
     PseudoVein,
     BeastTide,
@@ -230,7 +232,8 @@ pub struct SeasonEventModifiers {
     pub karma_backlash_frequency: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum HeartbeatOverrideAction {
     Suppress,
     Accelerate,
@@ -248,13 +251,19 @@ impl HeartbeatOverrideAction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeartbeatOverride {
     pub action: HeartbeatOverrideAction,
     pub event_kind: HeartbeatEventKind,
     pub target_zone: String,
     pub expires_at_tick: u64,
     pub intensity_override: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedHeartbeatRuntime {
+    pub overrides: Vec<HeartbeatOverride>,
+    pub forced_events: Vec<(HeartbeatEventKind, String, f64)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -367,6 +376,47 @@ impl Default for WorldHeartbeat {
 }
 
 impl WorldHeartbeat {
+    pub(crate) fn persisted_runtime(&self) -> PersistedHeartbeatRuntime {
+        PersistedHeartbeatRuntime {
+            overrides: self.overrides.clone(),
+            forced_events: self
+                .forced_events
+                .iter()
+                .map(|event| (event.event_kind, event.target_zone.clone(), event.intensity))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn restore_persisted_runtime(
+        &mut self,
+        snapshot: PersistedHeartbeatRuntime,
+    ) -> Result<(), String> {
+        if snapshot.overrides.iter().any(|override_| {
+            override_
+                .intensity_override
+                .is_some_and(|intensity| !valid_persisted_intensity(intensity))
+        }) || snapshot
+            .forced_events
+            .iter()
+            .any(|(_, _, intensity)| !valid_persisted_intensity(*intensity))
+        {
+            return Err("heartbeat runtime snapshot contains invalid values".to_string());
+        }
+        self.overrides = snapshot.overrides;
+        self.forced_events = snapshot
+            .forced_events
+            .into_iter()
+            .map(
+                |(event_kind, target_zone, intensity)| ForcedHeartbeatEvent {
+                    event_kind,
+                    target_zone,
+                    intensity,
+                },
+            )
+            .collect();
+        Ok(())
+    }
+
     /// 将一次外部 heartbeat override 写入当前调度状态。
     ///
     /// Force 事件只进入待处理队列，Suppress/Accelerate 则按持续 tick
@@ -668,6 +718,10 @@ impl WorldHeartbeat {
             .rev()
             .find(|override_| override_.event_kind == kind && override_.target_zone == target_zone)
     }
+}
+
+fn valid_persisted_intensity(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
 fn dvec3_to_array(value: DVec3) -> [f64; 3] {

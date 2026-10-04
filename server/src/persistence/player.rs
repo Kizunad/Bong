@@ -2,6 +2,247 @@
 
 use super::*;
 
+type PlayerRuntimeAttachQueryItem<'a> = (Entity, &'a Username);
+type PlayerRuntimeAttachQueryFilter = (
+    With<Client>,
+    With<crate::player::state::PlayerState>,
+    Without<PlayerRuntimeSlicesLoaded>,
+);
+type PlayerRuntimeStateQueryItem<'a> = (
+    &'a Username,
+    Option<&'a crate::world::tiandao_hunt::TiandaoAttention>,
+    Option<&'a crate::cultivation::realm_taint::RealmTaintState>,
+    Option<&'a PlayerRuntimeSlicesLoadFailed>,
+    &'a PlayerRuntimeSlicesLoaded,
+);
+type PlayerRuntimeBatchEntry = (
+    String,
+    Option<crate::world::tiandao_hunt::TiandaoAttention>,
+    Option<crate::cultivation::realm_taint::RealmTaintState>,
+);
+
+pub(super) struct PlayerRuntimePersistenceSlice;
+
+impl PersistenceSlice for PlayerRuntimePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &PLAYER_RUNTIME_SLICE_DESCRIPTOR
+    }
+}
+
+const PLAYER_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("player.runtime_state"),
+    scope: SliceScope::PlayerEntity,
+    order: 20,
+    load_failure: LoadFailurePolicy::BlockWrites,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("player.runtime_state"),
+        WriteAuthority::new("persistence.player_runtime_state"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::EveryTicks(60 * crate::combat::components::TICKS_PER_SECOND),
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_player_runtime_slice),
+};
+
+#[derive(Component, Debug, Default)]
+pub(super) struct PlayerRuntimeSlicesLoaded;
+
+#[derive(Component, Debug, Default)]
+pub(super) struct PlayerRuntimeSlicesLoadFailed;
+
+pub(super) fn hydrate_player_runtime_slices(
+    mut commands: Commands,
+    settings: Res<PersistenceSettings>,
+    players: Query<PlayerRuntimeAttachQueryItem<'_>, PlayerRuntimeAttachQueryFilter>,
+) {
+    for (entity, username) in &players {
+        let mut failed = false;
+        match load_player_runtime_slice::<crate::world::tiandao_hunt::TiandaoAttention>(
+            &settings,
+            username.0.as_str(),
+            "player.tiandao_attention",
+        ) {
+            Ok(Some(attention)) if valid_tiandao_attention(&attention) => {
+                commands.entity(entity).insert(attention);
+            }
+            Ok(Some(_)) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to attach invalid TiandaoAttention for `{}`",
+                    username.0
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to overwrite TiandaoAttention for `{}` after load failure: {error}",
+                    username.0
+                );
+            }
+        }
+        match load_player_runtime_slice::<crate::cultivation::realm_taint::RealmTaintState>(
+            &settings,
+            username.0.as_str(),
+            "player.realm_taint",
+        ) {
+            Ok(Some(taint)) if valid_realm_taint_state(&taint) => {
+                commands.entity(entity).insert(taint);
+            }
+            Ok(Some(_)) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to attach invalid RealmTaintState for `{}`",
+                    username.0
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to overwrite RealmTaintState for `{}` after load failure: {error}",
+                    username.0
+                );
+            }
+        }
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert(PlayerRuntimeSlicesLoaded);
+        if failed {
+            entity_commands.remove::<crate::world::tiandao_hunt::TiandaoAttention>();
+            entity_commands.insert(PlayerRuntimeSlicesLoadFailed);
+        }
+    }
+}
+
+fn valid_tiandao_attention(attention: &crate::world::tiandao_hunt::TiandaoAttention) -> bool {
+    attention.level.is_finite()
+        && attention.level >= 0.0
+        && attention.accumulation_rate.is_finite()
+        && attention.accumulation_rate >= 0.0
+        && attention.peak_level.is_finite()
+        && attention.peak_level >= 0.0
+}
+
+fn valid_realm_taint_state(state: &crate::cultivation::realm_taint::RealmTaintState) -> bool {
+    state.qi_taint_severity.is_finite() && (0.0..=1.0).contains(&state.qi_taint_severity)
+}
+
+pub(super) fn autosave_player_runtime_slices(
+    settings: Res<PersistenceSettings>,
+    timer: Option<Res<crate::player::state::PlayerStateAutosaveTimer>>,
+    players: Query<PlayerRuntimeStateQueryItem<'_>, With<Client>>,
+) {
+    const RUNTIME_SLICE_FLUSH_INTERVAL_TICKS: u64 =
+        60 * crate::combat::components::TICKS_PER_SECOND;
+    let Some(timer) = timer else {
+        return;
+    };
+    if !timer
+        .ticks
+        .is_multiple_of(RUNTIME_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+    let entries = players
+        .iter()
+        .filter_map(|(username, attention, taint, load_failed, _loaded)| {
+            if load_failed.is_some() {
+                return None;
+            }
+            Some((username.0.clone(), attention.cloned(), taint.cloned()))
+        })
+        .collect::<Vec<_>>();
+    if let Err(error) = persist_player_runtime_batch(&settings, &entries) {
+        tracing::warn!("[bong][persistence] player runtime autosave batch failed: {error}");
+    }
+}
+
+pub(super) fn persist_disconnected_player_runtime_slices(
+    settings: Res<PersistenceSettings>,
+    mut disconnected: RemovedComponents<Client>,
+    players: Query<PlayerRuntimeStateQueryItem<'_>>,
+) {
+    let entries = disconnected
+        .read()
+        .filter_map(|entity| {
+            let Ok((username, attention, taint, load_failed, _loaded)) = players.get(entity) else {
+                return None;
+            };
+            load_failed
+                .is_none()
+                .then(|| (username.0.clone(), attention.cloned(), taint.cloned()))
+        })
+        .collect::<Vec<_>>();
+    if let Err(error) = persist_player_runtime_batch(&settings, &entries) {
+        tracing::warn!("[bong][persistence] disconnected player runtime flush failed: {error}");
+    }
+}
+
+fn persist_player_runtime_batch(
+    settings: &PersistenceSettings,
+    entries: &[PlayerRuntimeBatchEntry],
+) -> io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let wall_clock = current_unix_seconds();
+    for (username, attention, taint) in entries {
+        if let Some(attention) = attention {
+            let payload_json = serde_json::to_string(attention).map_err(io::Error::other)?;
+            save_player_runtime_slice_in_transaction(
+                &transaction,
+                username,
+                "player.tiandao_attention",
+                &payload_json,
+                wall_clock,
+            )?;
+        }
+        if let Some(taint) = taint {
+            let payload_json = serde_json::to_string(taint).map_err(io::Error::other)?;
+            save_player_runtime_slice_in_transaction(
+                &transaction,
+                username,
+                "player.realm_taint",
+                &payload_json,
+                wall_clock,
+            )?;
+        } else {
+            delete_player_runtime_slice_in_transaction(
+                &transaction,
+                username,
+                "player.realm_taint",
+            )?;
+        }
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn flush_player_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let mut query = world.query::<PlayerRuntimeStateQueryItem<'_>>();
+    let entries = query
+        .iter(world)
+        .filter_map(|(username, attention, taint, load_failed, _loaded)| {
+            if load_failed.is_some() {
+                return None;
+            }
+            Some((username.0.clone(), attention.cloned(), taint.cloned()))
+        })
+        .collect::<Vec<_>>();
+    persist_player_runtime_batch(&settings, &entries)
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("player runtime flush failed: {error}")))
+}
+
 pub(crate) fn upsert_player_cultivation_slice(
     transaction: &rusqlite::Transaction<'_>,
     username: &str,

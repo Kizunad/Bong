@@ -27,6 +27,7 @@ use crate::world::season::{Season, WorldSeasonState};
 use crate::world::territory::ZoneInfluenceMap;
 use crate::world::zone::ZoneRegistry;
 use crate::zhenfa::{DeceiveHeavenEvent, DeceiveHeavenExposedEvent, ZhenfaSystemSet};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use valence::prelude::{
@@ -49,7 +50,7 @@ pub const DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER: f64 = 4.0;
 pub const DECEIVE_HEAVEN_REVEAL_PENALTY: f64 = 20.0;
 const TIANDAO_MOVING_DISTANCE_EPSILON_BLOCKS: f64 = 0.1;
 
-#[derive(Debug, Clone, Component, PartialEq)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 pub struct TiandaoAttention {
     pub level: f64,
     pub response: TiandaoResponseLevel,
@@ -76,7 +77,8 @@ impl Default for TiandaoAttention {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum TiandaoResponseLevel {
     None,
     Watch,

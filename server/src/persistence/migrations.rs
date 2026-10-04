@@ -1476,6 +1476,34 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 49 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS world_runtime_slices (
+                slice_id TEXT PRIMARY KEY NOT NULL,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE IF NOT EXISTS player_runtime_slices (
+                username TEXT NOT NULL,
+                slice_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (username, slice_id)
+            );
+            PRAGMA user_version = 49;
+            ",
+        )?;
+        repair_runtime_slices_schema_if_needed(&transaction)?;
+        assert_runtime_slices_schema_ready(&transaction)?;
+        transaction.commit()?;
+    }
+
     let deceased_schema_transaction = connection.transaction()?;
     if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
         assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
@@ -1498,6 +1526,11 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     assert_player_status_effects_schema_ready(&player_status_effects_schema_transaction)?;
     player_status_effects_schema_transaction.commit()?;
 
+    let runtime_slices_schema_transaction = connection.transaction()?;
+    repair_runtime_slices_schema_if_needed(&runtime_slices_schema_transaction)?;
+    assert_runtime_slices_schema_ready(&runtime_slices_schema_transaction)?;
+    runtime_slices_schema_transaction.commit()?;
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1509,6 +1542,295 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     }
 
     Ok(())
+}
+
+pub(super) fn assert_runtime_slices_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    for (table, required) in [
+        (
+            "world_runtime_slices",
+            [
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+        (
+            "player_runtime_slices",
+            [
+                "username",
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        let columns = table_columns(transaction, table)?;
+        if let Some(missing) = required
+            .iter()
+            .find(|column| !columns.iter().any(|name| name == **column))
+        {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v49 migration completed but {table} column {missing} missing"
+                )),
+            )));
+        }
+
+        let expected_primary_key = if table == "world_runtime_slices" {
+            [("slice_id", 1)].as_slice()
+        } else {
+            [("username", 1), ("slice_id", 2)].as_slice()
+        };
+        let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+        let mut primary_key = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(3)?,
+                    row.get::<_, i32>(5)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|(_, _, pk_ordinal)| *pk_ordinal > 0)
+            .collect::<Vec<_>>();
+        primary_key.sort_by_key(|(_, _, pk_ordinal)| *pk_ordinal);
+        let expected_primary_key = expected_primary_key
+            .iter()
+            .map(|(name, ordinal)| ((*name).to_owned(), *ordinal))
+            .collect::<Vec<_>>();
+        let actual_primary_key = primary_key
+            .iter()
+            .map(|(name, _, pk_ordinal)| (name.clone(), *pk_ordinal))
+            .collect::<Vec<_>>();
+        if actual_primary_key != expected_primary_key {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v49 migration completed but {table} primary key mismatch: expected {expected_primary_key:?} got {actual_primary_key:?}"
+                )),
+            )));
+        }
+
+        let required_not_null = if table == "world_runtime_slices" {
+            [
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice()
+        } else {
+            [
+                "username",
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice()
+        };
+        let mut column_info = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+        let column_rows = column_info
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i32>(3)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((column, not_null)) = required_not_null.iter().find_map(|required| {
+            column_rows
+                .iter()
+                .find(|(name, _)| name == required)
+                .and_then(|(_, not_null)| (*not_null == 0).then_some((*required, *not_null)))
+        }) {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v49 migration completed but {table}.{column} must be NOT NULL (notnull={not_null})"
+                )),
+            )));
+        }
+
+        let create_sql: String = transaction.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |row| row.get(0),
+        )?;
+        let normalized_sql = create_sql
+            .to_ascii_lowercase()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        for required_check in ["schema_version>=1", "last_updated_wall>=0"] {
+            if !normalized_sql.contains(required_check) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    io::Error::other(format!(
+                        "v49 migration completed but {table} CHECK `{required_check}` missing"
+                    )),
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn repair_runtime_slices_schema_if_needed(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    for (table, required) in [
+        (
+            "world_runtime_slices",
+            [
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+        (
+            "player_runtime_slices",
+            [
+                "username",
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        if !table_exists(transaction, table)? {
+            continue;
+        }
+
+        let columns = table_columns(transaction, table)?;
+        if required
+            .iter()
+            .any(|column| !columns.iter().any(|name| name == *column))
+        {
+            continue;
+        }
+
+        let compatible = runtime_slice_table_constraints_match(transaction, table)?;
+        if compatible {
+            continue;
+        }
+
+        let legacy_table = format!("{table}_legacy_v49");
+        if table_exists(transaction, legacy_table.as_str())? {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "cannot repair {table}: legacy table {legacy_table} already exists"
+                )),
+            )));
+        }
+
+        let columns_sql = required.join(", ");
+        let create_sql = if table == "world_runtime_slices" {
+            "CREATE TABLE world_runtime_slices (\
+                slice_id TEXT PRIMARY KEY NOT NULL,\
+                payload_json TEXT NOT NULL,\
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),\
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)\
+            );"
+        } else {
+            "CREATE TABLE player_runtime_slices (\
+                username TEXT NOT NULL,\
+                slice_id TEXT NOT NULL,\
+                payload_json TEXT NOT NULL,\
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),\
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),\
+                PRIMARY KEY (username, slice_id)\
+            );"
+        };
+        transaction.execute_batch(&format!(
+            "ALTER TABLE {table} RENAME TO {legacy_table};\n{create_sql}\nINSERT INTO {table} ({columns_sql}) SELECT {columns_sql} FROM {legacy_table};\nDROP TABLE {legacy_table};"
+        ))?;
+    }
+    Ok(())
+}
+
+fn runtime_slice_table_constraints_match(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+) -> rusqlite::Result<bool> {
+    let expected_primary_key = if table == "world_runtime_slices" {
+        vec![("slice_id".to_owned(), 1)]
+    } else {
+        vec![("username".to_owned(), 1), ("slice_id".to_owned(), 2)]
+    };
+    let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut primary_key = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, _, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    primary_key.sort_by_key(|(_, _, pk_ordinal)| *pk_ordinal);
+    let actual_primary_key = primary_key
+        .iter()
+        .map(|(name, _, pk_ordinal)| (name.clone(), *pk_ordinal))
+        .collect::<Vec<_>>();
+    if actual_primary_key != expected_primary_key {
+        return Ok(false);
+    }
+
+    let required_not_null = if table == "world_runtime_slices" {
+        [
+            "slice_id",
+            "payload_json",
+            "schema_version",
+            "last_updated_wall",
+        ]
+        .as_slice()
+    } else {
+        [
+            "username",
+            "slice_id",
+            "payload_json",
+            "schema_version",
+            "last_updated_wall",
+        ]
+        .as_slice()
+    };
+    let mut column_info = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+    let column_rows = column_info
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(3)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if required_not_null.iter().any(|required| {
+        column_rows
+            .iter()
+            .find(|(name, _)| name == required)
+            .is_none_or(|(_, not_null)| *not_null == 0)
+    }) {
+        return Ok(false);
+    }
+
+    let create_sql: String = transaction.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table],
+        |row| row.get(0),
+    )?;
+    let normalized_sql = create_sql
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    Ok(["schema_version>=1", "last_updated_wall>=0"]
+        .iter()
+        .all(|required_check| normalized_sql.contains(required_check)))
 }
 
 pub(super) fn assert_runtime_clock_schema_ready(

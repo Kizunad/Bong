@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use valence::prelude::{bevy_ecs, Event, Resource};
 
 use crate::cultivation::components::Cultivation;
@@ -79,7 +81,8 @@ impl WorldQiBudget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum QiAccountKind {
     Player,
     Npc,
@@ -109,7 +112,7 @@ impl QiAccountKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QiAccountId {
     pub kind: QiAccountKind,
     pub id: String,
@@ -159,7 +162,8 @@ impl std::fmt::Display for QiAccountId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum QiTransferReason {
     CultivationRegen,
     Excretion,
@@ -474,7 +478,8 @@ pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 37] = [
 ///
 /// 定义在 ledger.rs 内（与 `QiTransferReason` 同级），避免 attrition.rs ↔ ledger.rs 循环依赖。
 /// attrition.rs 反向 use 此 enum。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum AttritionOpKind {
     /// 从地面拾起物品（base rate × 1.0 = 0.03）
     Pickup,
@@ -488,7 +493,7 @@ pub enum AttritionOpKind {
     AlchemyLoad,
 }
 
-#[derive(Debug, Clone, Event, PartialEq)]
+#[derive(Debug, Clone, Event, Serialize, Deserialize, PartialEq)]
 pub struct QiTransfer {
     pub from: QiAccountId,
     pub to: QiAccountId,

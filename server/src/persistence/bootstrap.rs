@@ -29,6 +29,9 @@ pub(super) fn bootstrap_persistence_system(
     mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
+    active_events: Option<ResMut<crate::world::events::ActiveEventsResource>>,
+    coffins: Option<ResMut<crate::supply_coffin::SupplyCoffinRegistry>>,
+    spirit_eyes: Option<ResMut<crate::world::spirit_eye::SpiritEyeRegistry>>,
 ) {
     let wall_clock = current_unix_seconds();
     daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
@@ -177,6 +180,20 @@ pub(super) fn bootstrap_persistence_system(
                 settings.db_path().display()
             ),
         }
+    }
+
+    if let Err(error) = hydrate_p4_world_runtime(
+        &settings,
+        active_events,
+        heartbeat,
+        coffins,
+        spirit_eyes,
+        zones,
+    ) {
+        panic!(
+            "[bong][persistence] refusing startup after P4 runtime hydrate failure at {}: {error}",
+            settings.db_path().display()
+        );
     }
 }
 

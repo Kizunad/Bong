@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 use valence::prelude::{
     bevy_ecs, App, Client, DVec3, Event, EventReader, EventWriter, IntoSystemConfigs, Position,
     Query, Res, ResMut, Resource, Update, Username, With,
@@ -36,10 +38,10 @@ pub const SPIRIT_EYE_PERIODIC_MIGRATE_TICKS: u64 = 72 * 60 * 60 * 20;
 const MIN_MIGRATION_DISTANCE: f64 = 500.0;
 const PERIODIC_DRIFT_BLOCKS: f64 = 50.0;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SpiritEyeId(pub String);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpiritEye {
     pub id: SpiritEyeId,
     pub dimension: DimensionKind,
@@ -67,6 +69,11 @@ pub struct SpiritEyeCandidate {
 pub struct SpiritEyeRegistry {
     pub eyes: Vec<SpiritEye>,
     pub candidates: Vec<SpiritEyeCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedSpiritEyeRegistry {
+    pub eyes: Vec<SpiritEye>,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -107,6 +114,31 @@ impl Default for SpiritEyeRegistry {
 }
 
 impl SpiritEyeRegistry {
+    pub(crate) fn persisted_snapshot(&self) -> PersistedSpiritEyeRegistry {
+        PersistedSpiritEyeRegistry {
+            eyes: self.eyes.clone(),
+        }
+    }
+
+    pub(crate) fn restore_persisted_snapshot(
+        &mut self,
+        snapshot: PersistedSpiritEyeRegistry,
+    ) -> Result<(), String> {
+        if snapshot.eyes.iter().any(|eye| {
+            !eye.pos.iter().all(|value| value.is_finite())
+                || !eye.radius.is_finite()
+                || eye.radius < 0.0
+                || !eye.qi_concentration.is_finite()
+                || eye.qi_concentration < 0.0
+                || !eye.usage_pressure.is_finite()
+                || eye.usage_pressure < 0.0
+        }) {
+            return Err("spirit eye snapshot contains non-finite or negative values".to_string());
+        }
+        self.eyes = snapshot.eyes;
+        Ok(())
+    }
+
     pub fn from_zones(zones: &ZoneRegistry, blood_valley_salt: u64) -> Self {
         let mut candidates = candidates_from_zones(zones);
         if candidates.is_empty() {

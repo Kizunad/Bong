@@ -106,6 +106,26 @@ fn heartbeat_override_suppress_and_force_are_stateful() {
 }
 
 #[test]
+fn persisted_heartbeat_runtime_rejects_out_of_range_intensity() {
+    let mut heartbeat = WorldHeartbeat::default();
+    let snapshot = PersistedHeartbeatRuntime {
+        overrides: vec![HeartbeatOverride {
+            action: HeartbeatOverrideAction::Accelerate,
+            event_kind: HeartbeatEventKind::BeastTide,
+            target_zone: "spawn".to_string(),
+            expires_at_tick: 100,
+            intensity_override: Some(-0.1),
+        }],
+        forced_events: vec![(HeartbeatEventKind::KarmaBacklash, "spawn".to_string(), 1.1)],
+    };
+
+    let error = heartbeat
+        .restore_persisted_runtime(snapshot)
+        .expect_err("persisted heartbeat intensity must stay within its gameplay range");
+    assert!(error.contains("invalid values"));
+}
+
+#[test]
 fn override_command_parses_agent_contract() {
     let mut heartbeat = WorldHeartbeat::default();
     let command = Command {
