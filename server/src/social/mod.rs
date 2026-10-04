@@ -1936,7 +1936,7 @@ fn apply_spirit_niche_world_effects(
     commands: &mut Commands,
     registry: &mut SpiritNicheRegistry,
     layers: &mut Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
-    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
     lifecycle.spawn_anchor_damaged = false;
