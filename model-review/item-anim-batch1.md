@@ -5,6 +5,23 @@
 
 ---
 
+## 2026-10-05 用户反馈后的更新（当前审阅产物）
+
+- 用户反馈「动画你做成玩家动画，你这个不好看」：方块人条带图不再作为审图产物，下面的 `batch1/` 方块人图已作废（保留在仓库里仅作历史）。
+- **当前审阅产物**：`/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/<anim_id>/`，每件一套：
+  - `use.gif`（3/4 循环）、`use.png`（FRONT / SIDE / 3/4 × 关键帧静帧）、`use_top.gif`（俯视，木杖与骨剑）；
+  - `vs_ref.gif`（与同类旧动画并排的 GIF）、`ref_<旧动画>.gif`（旧动画单独 GIF）；
+  - 每件一份 md：`model-review/anim/<anim_id>.md`（格式照 `axe_bone_v2.md`）。
+- 渲染工具：`modelScript/tools/preview_player_anim.py`（真玩家皮肤 + 带贴图的 v2 手持物 bbmodel）。
+- 本轮动作打磨（动作本体，不只换渲染）：
+  - 骨剑 `bone_sword_slash`：上一版是竖挥（pitch 从下往上抬），三视图里不是横切。改成横切靠 yaw：windup 右后侧拉回（yaw +75°）→ sweep 身前（+20°）→ impact 左前横扫（-62°），躯干先转、手臂 yaw 峰值比躯干晚、左手拉回再猛收（反相）、overshoot 再扫 ~10°。
+  - 骨镐 `pickaxe_bone_use`：左手（平衡手）加了 load-snap：windup 放松（bend 64°）、impact 猛收（pitch -66°、bend 84°）、overshoot 回弹（bend 78°）。
+  - 缠手两式、兵甲两式：动作未改。左式用镜像后的右式 JSON 渲染（预览只挂右手，镜像后拳套落在出拳手上）。
+  - 木杖 `wooden_staff_atk`：动作未改（双手横持已调度复审通过，改动会破坏左手贴杖的关键帧）。
+- 同类旧动画对照：缠手 → `fist_punch_left/right`，兵甲 → `fist_punch_left/right`，骨镐 → `pickaxe_iron_v2_use`，骨剑 → `iron_sword_v2_use`，木杖 → `club_sweep`（钝器横扫，比 `sword_swing_horiz` 更贴）。
+
+---
+
 ## 修订记录
 
 - 调度审（2b248af86）要求的三处修复已完成：

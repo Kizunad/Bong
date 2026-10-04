@@ -44,7 +44,8 @@ POSE = {
         head=dict(pitch=-4, yaw=+2),
         torso=dict(pitch=+4, yaw=-12),
         rightArm=dict(pitch=-110, yaw=+12, roll=+15, bend=30, axis=180),
-        leftArm=dict(pitch=-56, yaw=+14, roll=-12, bend=72, axis=180),
+        # 左手蓄势时放松（与右臂抬起反相）
+        leftArm=dict(pitch=-54, yaw=+14, roll=-12, bend=64, axis=180),
         rightLeg=dict(pitch=+8, yaw=+3, bend=11, z=+0.03),
         leftLeg=dict(pitch=-12, yaw=+3, bend=15, z=-0.07),
     ),
@@ -55,7 +56,8 @@ POSE = {
         head=dict(pitch=-2, yaw=+2),
         torso=dict(pitch=+12, yaw=-6),
         rightArm=dict(pitch=-40, yaw=+6, roll=-25, bend=20, axis=180),
-        leftArm=dict(pitch=-58, yaw=+10, roll=-14, bend=70, axis=180),
+        # 左手（平衡手）猛收，与啄下反相：pitch 前抬、bend 加深
+        leftArm=dict(pitch=-66, yaw=+10, roll=-14, bend=84, axis=180),
         rightLeg=dict(pitch=+10, yaw=+3, bend=15, z=+0.04),
         leftLeg=dict(pitch=-14, yaw=+3, bend=20, z=-0.09),
     ),
@@ -66,7 +68,8 @@ POSE = {
         head=dict(pitch=-1, yaw=+2),
         torso=dict(pitch=+13, yaw=-5),
         rightArm=dict(pitch=-48, yaw=+6, roll=-30, bend=22, axis=180),
-        leftArm=dict(pitch=-58, yaw=+10, roll=-14, bend=70, axis=180),
+        # 左手回弹：收紧后松开一半，过冲与回收同步
+        leftArm=dict(pitch=-62, yaw=+10, roll=-14, bend=78, axis=180),
         rightLeg=dict(pitch=+10, yaw=+3, bend=16, z=+0.04),
         leftLeg=dict(pitch=-14, yaw=+3, bend=21, z=-0.09),
     ),
