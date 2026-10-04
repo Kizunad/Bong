@@ -1476,6 +1476,32 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 49 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS world_runtime_slices (
+                slice_id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE IF NOT EXISTS player_runtime_slices (
+                username TEXT NOT NULL,
+                slice_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                PRIMARY KEY (username, slice_id)
+            );
+            PRAGMA user_version = 49;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let deceased_schema_transaction = connection.transaction()?;
     if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
         assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
@@ -1498,6 +1524,10 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
     assert_player_status_effects_schema_ready(&player_status_effects_schema_transaction)?;
     player_status_effects_schema_transaction.commit()?;
 
+    let runtime_slices_schema_transaction = connection.transaction()?;
+    assert_runtime_slices_schema_ready(&runtime_slices_schema_transaction)?;
+    runtime_slices_schema_transaction.commit()?;
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1508,6 +1538,47 @@ pub(super) fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<
         )));
     }
 
+    Ok(())
+}
+
+pub(super) fn assert_runtime_slices_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    for (table, required) in [
+        (
+            "world_runtime_slices",
+            [
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+        (
+            "player_runtime_slices",
+            [
+                "username",
+                "slice_id",
+                "payload_json",
+                "schema_version",
+                "last_updated_wall",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        let columns = table_columns(transaction, table)?;
+        if let Some(missing) = required
+            .iter()
+            .find(|column| !columns.iter().any(|name| name == **column))
+        {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v49 migration completed but {table} column {missing} missing"
+                )),
+            )));
+        }
+    }
     Ok(())
 }
 

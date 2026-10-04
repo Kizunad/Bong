@@ -2,6 +2,263 @@
 
 use super::*;
 
+type PlayerRuntimeAttachQueryItem<'a> = (Entity, &'a Username);
+type PlayerRuntimeAttachQueryFilter = (
+    With<Client>,
+    With<crate::player::state::PlayerState>,
+    Without<PlayerRuntimeSlicesLoaded>,
+);
+type PlayerRuntimeStateQueryItem<'a> = (
+    &'a Username,
+    Option<&'a crate::world::tiandao_hunt::TiandaoAttention>,
+    Option<&'a crate::cultivation::realm_taint::RealmTaintState>,
+    Option<&'a PlayerRuntimeSlicesLoadFailed>,
+    &'a PlayerRuntimeSlicesLoaded,
+);
+
+pub(super) struct PlayerRuntimePersistenceSlice;
+
+impl PersistenceSlice for PlayerRuntimePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &PLAYER_RUNTIME_SLICE_DESCRIPTOR
+    }
+}
+
+const PLAYER_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("player.runtime_state"),
+    scope: SliceScope::PlayerEntity,
+    order: 20,
+    load_failure: LoadFailurePolicy::BlockWrites,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("player.runtime_state"),
+        WriteAuthority::new("persistence.player_runtime_state"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::EveryTicks(60 * crate::combat::components::TICKS_PER_SECOND),
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_player_runtime_slice),
+};
+
+#[derive(Component, Debug, Default)]
+pub(super) struct PlayerRuntimeSlicesLoaded;
+
+#[derive(Component, Debug, Default)]
+pub(super) struct PlayerRuntimeSlicesLoadFailed;
+
+pub(super) fn hydrate_player_runtime_slices(
+    mut commands: Commands,
+    settings: Res<PersistenceSettings>,
+    players: Query<PlayerRuntimeAttachQueryItem<'_>, PlayerRuntimeAttachQueryFilter>,
+) {
+    for (entity, username) in &players {
+        let mut failed = false;
+        match load_player_runtime_slice::<crate::world::tiandao_hunt::TiandaoAttention>(
+            &settings,
+            username.0.as_str(),
+            "player.tiandao_attention",
+        ) {
+            Ok(Some(attention)) if valid_tiandao_attention(&attention) => {
+                commands.entity(entity).insert(attention);
+            }
+            Ok(Some(_)) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to attach invalid TiandaoAttention for `{}`",
+                    username.0
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to overwrite TiandaoAttention for `{}` after load failure: {error}",
+                    username.0
+                );
+            }
+        }
+        match load_player_runtime_slice::<crate::cultivation::realm_taint::RealmTaintState>(
+            &settings,
+            username.0.as_str(),
+            "player.realm_taint",
+        ) {
+            Ok(Some(taint)) if valid_realm_taint_state(&taint) => {
+                commands.entity(entity).insert(taint);
+            }
+            Ok(Some(_)) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to attach invalid RealmTaintState for `{}`",
+                    username.0
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                failed = true;
+                tracing::error!(
+                    "[bong][persistence] refusing to overwrite RealmTaintState for `{}` after load failure: {error}",
+                    username.0
+                );
+            }
+        }
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert(PlayerRuntimeSlicesLoaded);
+        if failed {
+            entity_commands.insert(PlayerRuntimeSlicesLoadFailed);
+        }
+    }
+}
+
+fn valid_tiandao_attention(attention: &crate::world::tiandao_hunt::TiandaoAttention) -> bool {
+    attention.level.is_finite()
+        && attention.level >= 0.0
+        && attention.accumulation_rate.is_finite()
+        && attention.accumulation_rate >= 0.0
+        && attention.peak_level.is_finite()
+        && attention.peak_level >= 0.0
+}
+
+fn valid_realm_taint_state(state: &crate::cultivation::realm_taint::RealmTaintState) -> bool {
+    state.qi_taint_severity.is_finite() && (0.0..=1.0).contains(&state.qi_taint_severity)
+}
+
+pub(super) fn autosave_player_runtime_slices(
+    settings: Res<PersistenceSettings>,
+    timer: Option<Res<crate::player::state::PlayerStateAutosaveTimer>>,
+    players: Query<PlayerRuntimeStateQueryItem<'_>, With<Client>>,
+) {
+    const RUNTIME_SLICE_FLUSH_INTERVAL_TICKS: u64 =
+        60 * crate::combat::components::TICKS_PER_SECOND;
+    let Some(timer) = timer else {
+        return;
+    };
+    if !timer
+        .ticks
+        .is_multiple_of(RUNTIME_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+    for (username, attention, taint, load_failed, _loaded) in &players {
+        if load_failed.is_some() {
+            continue;
+        }
+        if let Some(attention) = attention {
+            if let Err(error) = save_player_runtime_slice(
+                &settings,
+                username.0.as_str(),
+                "player.tiandao_attention",
+                attention,
+            ) {
+                tracing::warn!(
+                    "[bong][persistence] attention autosave failed for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
+        if let Some(taint) = taint {
+            if let Err(error) = save_player_runtime_slice(
+                &settings,
+                username.0.as_str(),
+                "player.realm_taint",
+                taint,
+            ) {
+                tracing::warn!(
+                    "[bong][persistence] realm taint autosave failed for `{}`: {error}",
+                    username.0
+                );
+            }
+        } else if let Err(error) =
+            delete_player_runtime_slice(&settings, username.0.as_str(), "player.realm_taint")
+        {
+            tracing::warn!(
+                "[bong][persistence] realm taint deletion failed for `{}`: {error}",
+                username.0
+            );
+        }
+    }
+}
+
+pub(super) fn persist_disconnected_player_runtime_slices(
+    settings: Res<PersistenceSettings>,
+    mut disconnected: RemovedComponents<Client>,
+    players: Query<PlayerRuntimeStateQueryItem<'_>>,
+) {
+    for entity in disconnected.read() {
+        let Ok((username, attention, taint, load_failed, _loaded)) = players.get(entity) else {
+            continue;
+        };
+        if load_failed.is_some() {
+            continue;
+        }
+        if let Err(error) =
+            persist_player_runtime_components(&settings, username.0.as_str(), attention, taint)
+        {
+            tracing::warn!(
+                "[bong][persistence] disconnected player runtime flush failed for `{}`: {error}",
+                username.0
+            );
+        }
+    }
+}
+
+fn persist_player_runtime_components(
+    settings: &PersistenceSettings,
+    username: &str,
+    attention: Option<&crate::world::tiandao_hunt::TiandaoAttention>,
+    taint: Option<&crate::cultivation::realm_taint::RealmTaintState>,
+) -> io::Result<()> {
+    let mut failures = Vec::new();
+    if let Some(attention) = attention {
+        if let Err(error) =
+            save_player_runtime_slice(settings, username, "player.tiandao_attention", attention)
+        {
+            failures.push(format!("TiandaoAttention: {error}"));
+        }
+    }
+    let taint_result = match taint {
+        Some(taint) => save_player_runtime_slice(settings, username, "player.realm_taint", taint),
+        None => delete_player_runtime_slice(settings, username, "player.realm_taint"),
+    };
+    if let Err(error) = taint_result {
+        failures.push(format!("RealmTaintState: {error}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(failures.join("; ")))
+    }
+}
+
+fn flush_player_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let mut query = world.query::<PlayerRuntimeStateQueryItem<'_>>();
+    let mut failures = Vec::new();
+    for (username, attention, taint, load_failed, _loaded) in query.iter(world) {
+        if load_failed.is_some() {
+            continue;
+        }
+        if let Err(error) =
+            persist_player_runtime_components(&settings, username.0.as_str(), attention, taint)
+        {
+            failures.push(format!("{}: {error}", username.0));
+        }
+    }
+    if failures.is_empty() {
+        Ok(SliceRunOutcome::Flushed)
+    } else {
+        Err(SliceRunError::new(format!(
+            "player runtime flush failed: {}",
+            failures.join(", ")
+        )))
+    }
+}
+
 pub(crate) fn upsert_player_cultivation_slice(
     transaction: &rusqlite::Transaction<'_>,
     username: &str,

@@ -7,6 +7,7 @@
 
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use valence::entity::lightning::LightningEntityBundle;
@@ -122,6 +123,20 @@ pub struct ActiveEvent {
     beast_tide: BeastTideRuntimeState,
     collapse: RealmCollapseRuntimeState,
     calamity_state: CalamityRuntimeState,
+}
+
+/// Durable portion of an active event. ECS entities and one-shot VFX/audio
+/// queues are intentionally excluded; they are rebuilt by the event lifecycle.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedActiveEvent {
+    pub event_name: String,
+    pub zone_name: String,
+    pub elapsed_ticks: u64,
+    pub duration_ticks: u64,
+    pub intensity: f64,
+    pub target_player: Option<String>,
+    pub calamity: Option<String>,
+    pub beast_tide_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -310,6 +325,79 @@ pub struct MajorEventAlert {
 }
 
 impl ActiveEvent {
+    fn persisted(&self) -> PersistedActiveEvent {
+        let beast_tide_kind =
+            (self.event_name == EVENT_BEAST_TIDE).then(|| match self.beast_tide {
+                BeastTideRuntimeState::Wandering(_) => "wandering".to_string(),
+                BeastTideRuntimeState::LocustSwarm(_) => "locust_swarm".to_string(),
+            });
+        PersistedActiveEvent {
+            event_name: self.event_name.clone(),
+            zone_name: self.zone_name.clone(),
+            elapsed_ticks: self.elapsed_ticks,
+            duration_ticks: self.duration_ticks,
+            intensity: self.intensity,
+            target_player: self.target_player.clone(),
+            calamity: self.calamity.map(|kind| kind.event_name().to_string()),
+            beast_tide_kind,
+        }
+    }
+
+    fn from_persisted(snapshot: &PersistedActiveEvent) -> Result<Self, String> {
+        let calamity = snapshot
+            .calamity
+            .as_deref()
+            .and_then(CalamityKind::from_event_name);
+        if snapshot.calamity.is_some() && calamity.is_none() {
+            return Err(format!(
+                "unknown calamity in active event `{}`",
+                snapshot.event_name
+            ));
+        }
+        let event_name = calamity
+            .map(CalamityKind::event_name)
+            .unwrap_or(snapshot.event_name.as_str());
+        if calamity.is_none() && !matches!(event_name, EVENT_BEAST_TIDE | EVENT_KARMA_BACKLASH) {
+            return Err(format!("unknown active event `{}`", snapshot.event_name));
+        }
+        if !snapshot.intensity.is_finite()
+            || !(0.0..=1.0).contains(&snapshot.intensity)
+            || snapshot.duration_ticks == 0
+        {
+            return Err(format!("invalid active event `{}`", snapshot.event_name));
+        }
+        let beast_tide = if event_name == EVENT_BEAST_TIDE
+            && snapshot.beast_tide_kind.as_deref() == Some("locust_swarm")
+        {
+            BeastTideRuntimeState::LocustSwarm(LocustSwarmState {
+                spawned_rats: Vec::new(),
+                spawn_points: Vec::new(),
+                origin_zone: snapshot.zone_name.clone(),
+                target_zone: snapshot.zone_name.clone(),
+                front_position: DVec3::ZERO,
+                front_velocity: DVec3::ZERO,
+                drained_chunks: HashSet::new(),
+                group_alive: 0,
+                active_window_size: LOCUST_SWARM_ACTIVE_WINDOW_SIZE,
+            })
+        } else {
+            BeastTideRuntimeState::default()
+        };
+        Ok(Self {
+            event_name: event_name.to_string(),
+            zone_name: snapshot.zone_name.clone(),
+            elapsed_ticks: snapshot.elapsed_ticks,
+            duration_ticks: snapshot.duration_ticks,
+            intensity: snapshot.intensity,
+            target_player: snapshot.target_player.clone(),
+            calamity,
+            thunder: ThunderRuntimeState::default(),
+            beast_tide,
+            collapse: RealmCollapseRuntimeState::default(),
+            calamity_state: CalamityRuntimeState::default(),
+        })
+    }
+
     fn from_spawn_command(command: &Command) -> Option<Self> {
         let requested_event_name = command.params.get("event")?.as_str()?;
         let calamity = CalamityKind::from_event_name(requested_event_name);
@@ -371,6 +459,12 @@ pub struct ActiveEventsResource {
     calamity_target_log: VecDeque<CalamityTargetRecord>,
     /// 坍缩 zone 灵气重分配时产生的 overflow QiTransfer 审计事件，由 drain_qi_transfers 消费。
     pending_qi_transfers: Vec<QiTransfer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedActiveEvents {
+    pub events: Vec<PersistedActiveEvent>,
+    pub pending_qi_transfers: Vec<QiTransfer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,6 +554,61 @@ impl RealmCollapseLowQiMonitor {
 }
 
 impl ActiveEventsResource {
+    pub(crate) fn persisted_snapshot(&self) -> PersistedActiveEvents {
+        PersistedActiveEvents {
+            events: self
+                .active_events
+                .iter()
+                .map(ActiveEvent::persisted)
+                .collect(),
+            pending_qi_transfers: self.pending_qi_transfers.clone(),
+        }
+    }
+
+    pub(crate) fn restore_persisted_snapshot(
+        &mut self,
+        snapshot: PersistedActiveEvents,
+        zones: Option<&mut ZoneRegistry>,
+    ) -> Result<(), String> {
+        let mut restored = Vec::with_capacity(snapshot.events.len());
+        for event in &snapshot.events {
+            if zones.as_ref().is_some_and(|registry| {
+                registry
+                    .find_zone_by_name(event.zone_name.as_str())
+                    .is_none()
+            }) {
+                return Err(format!(
+                    "active event `{}` references missing zone `{}`",
+                    event.event_name, event.zone_name
+                ));
+            }
+            restored.push(ActiveEvent::from_persisted(event)?);
+        }
+        if snapshot
+            .pending_qi_transfers
+            .iter()
+            .any(|transfer| !transfer.amount.is_finite() || transfer.amount < 0.0)
+        {
+            return Err("active event snapshot contains an invalid QiTransfer".to_string());
+        }
+        self.active_events = restored;
+        self.pending_qi_transfers = snapshot.pending_qi_transfers;
+        if let Some(zones) = zones {
+            for event in &self.active_events {
+                if let Some(zone) = zones.find_zone_mut(event.zone_name.as_str()) {
+                    if !zone
+                        .active_events
+                        .iter()
+                        .any(|name| name == &event.event_name)
+                    {
+                        zone.active_events.push(event.event_name.clone());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn enqueue_from_spawn_command(
         &mut self,

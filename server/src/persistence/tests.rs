@@ -4909,10 +4909,15 @@ fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
             .collect::<Vec<_>>(),
         vec![
             "player.known_techniques",
+            "player.runtime_state",
             "world.zone_runtime",
             "world.mineral_exhausted",
             "world.spiritwood_harvested",
             "world.zone_influence",
+            "world.active_events",
+            "world.heartbeat_runtime",
+            "world.supply_coffin",
+            "world.spirit_eyes",
         ],
         "production must install every wired production descriptor"
     );
@@ -8756,6 +8761,50 @@ fn zone_influence_persistence_round_trip() {
 }
 
 #[test]
+fn zone_influence_snapshot_replaces_deleted_entries_before_reload() {
+    use crate::world::territory::{PlayerInfluence, ZoneInfluenceEntry, ZoneInfluenceMap};
+
+    let (settings, root) = persistence_settings("zone-influence-replace");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let mut map = ZoneInfluenceMap::default();
+    let mut entry = ZoneInfluenceEntry::default();
+    entry.players.insert(
+        "offline:Retained".to_string(),
+        PlayerInfluence {
+            value: 10.0,
+            ..Default::default()
+        },
+    );
+    entry.players.insert(
+        "offline:Removed".to_string(),
+        PlayerInfluence {
+            value: 5.0,
+            ..Default::default()
+        },
+    );
+    map.zones.insert("spawn".to_string(), entry);
+    persist_zone_influence_snapshot(&settings, &map)
+        .expect("initial complete influence snapshot should persist");
+
+    map.zones
+        .get_mut("spawn")
+        .expect("spawn entry should exist")
+        .players
+        .remove("offline:Removed");
+    persist_zone_influence_snapshot(&settings, &map)
+        .expect("replacement influence snapshot should persist");
+
+    let restored = load_zone_influence_snapshot(&settings)
+        .expect("replacement influence snapshot should reload");
+    assert_eq!(restored.len(), 1, "deleted influence rows must not revive");
+    assert_eq!(restored[0].char_id, "offline:Retained");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn zone_influence_load_empty_returns_empty_vec() {
     let (settings, root) = persistence_settings("zone-influence-empty");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -8766,6 +8815,185 @@ fn zone_influence_load_empty_returns_empty_vec() {
         records.is_empty(),
         "空表 load 应返回 [], 实际 {:?}",
         records
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn runtime_slice_rows_round_trip_and_reject_corrupt_payloads() {
+    use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
+    use crate::supply_coffin::{
+        CoffinCooldown, PersistedSupplyCoffinRuntime, SupplyCoffinGrade, SupplyCoffinRegistry,
+    };
+    use crate::world::events::{
+        ActiveEventsResource, PersistedActiveEvent, PersistedActiveEvents, EVENT_KARMA_BACKLASH,
+    };
+    use crate::world::heartbeat::{
+        HeartbeatEventKind, HeartbeatOverride, HeartbeatOverrideAction, PersistedHeartbeatRuntime,
+    };
+    use crate::world::spirit_eye::{PersistedSpiritEyeRegistry, SpiritEyeRegistry};
+    use crate::world::zone::ZoneRegistry;
+
+    let (settings, root) = persistence_settings("runtime-slice-roundtrip");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should create runtime slice tables");
+
+    let heartbeat = PersistedHeartbeatRuntime {
+        overrides: vec![HeartbeatOverride {
+            action: HeartbeatOverrideAction::Suppress,
+            event_kind: HeartbeatEventKind::BeastTide,
+            target_zone: "spawn".to_string(),
+            expires_at_tick: 120,
+            intensity_override: None,
+        }],
+        forced_events: vec![(
+            HeartbeatEventKind::KarmaBacklash,
+            "blood_valley".to_string(),
+            0.8,
+        )],
+    };
+    save_world_runtime_slice(&settings, "world.heartbeat_runtime", &heartbeat)
+        .expect("world runtime slice should save atomically");
+    let restored =
+        load_world_runtime_slice::<PersistedHeartbeatRuntime>(&settings, "world.heartbeat_runtime")
+            .expect("world runtime slice should load")
+            .expect("saved world runtime row should exist");
+    assert_eq!(restored, heartbeat);
+
+    let active_events = PersistedActiveEvents {
+        events: vec![PersistedActiveEvent {
+            event_name: EVENT_KARMA_BACKLASH.to_string(),
+            zone_name: "spawn".to_string(),
+            elapsed_ticks: 12,
+            duration_ticks: 120,
+            intensity: 0.7,
+            target_player: Some("offline:RuntimePlayer".to_string()),
+            calamity: None,
+            beast_tide_kind: None,
+        }],
+        pending_qi_transfers: Vec::new(),
+    };
+    save_world_runtime_slice(&settings, "world.active_events", &active_events)
+        .expect("active event runtime should save");
+    let restored_events =
+        load_world_runtime_slice::<PersistedActiveEvents>(&settings, "world.active_events")
+            .expect("active event runtime should load")
+            .expect("saved active event row should exist");
+    let mut restored_event_resource = ActiveEventsResource::default();
+    let mut zones = ZoneRegistry::fallback();
+    restored_event_resource
+        .restore_persisted_snapshot(restored_events, Some(&mut zones))
+        .expect("active event runtime should restore against known zones");
+    assert_eq!(
+        restored_event_resource.elapsed_for_first("spawn", EVENT_KARMA_BACKLASH),
+        Some(12),
+        "active event elapsed ticks must survive restart"
+    );
+
+    let coffin_runtime = PersistedSupplyCoffinRuntime {
+        cooldowns: vec![CoffinCooldown {
+            grade: SupplyCoffinGrade::Rare,
+            broken_at_wall_secs: 123,
+        }],
+        rng_state: 0xfeed_beef,
+    };
+    save_world_runtime_slice(&settings, "world.supply_coffin", &coffin_runtime)
+        .expect("supply coffin runtime should save");
+    let restored_coffin =
+        load_world_runtime_slice::<PersistedSupplyCoffinRuntime>(&settings, "world.supply_coffin")
+            .expect("supply coffin runtime should load")
+            .expect("saved supply coffin row should exist");
+    assert_eq!(restored_coffin, coffin_runtime);
+    let mut restored_coffin_registry =
+        SupplyCoffinRegistry::new((DVec3::ZERO, DVec3::new(100.0, 100.0, 100.0)), 65.0, 0);
+    restored_coffin_registry
+        .restore_persisted_runtime(restored_coffin.clone())
+        .expect("supply coffin runtime should restore into its registry");
+    assert_eq!(restored_coffin_registry.persisted_runtime(), coffin_runtime);
+
+    let spirit_eyes = SpiritEyeRegistry::from_zones(&ZoneRegistry::fallback(), 0);
+    let spirit_eye_runtime = spirit_eyes.persisted_snapshot();
+    save_world_runtime_slice(&settings, "world.spirit_eyes", &spirit_eye_runtime)
+        .expect("spirit eye runtime should save");
+    let restored_spirit_eyes =
+        load_world_runtime_slice::<PersistedSpiritEyeRegistry>(&settings, "world.spirit_eyes")
+            .expect("spirit eye runtime should load")
+            .expect("saved spirit eye row should exist");
+    assert_eq!(restored_spirit_eyes, spirit_eye_runtime);
+    let mut restored_spirit_eye_registry = SpiritEyeRegistry::from_zones(&zones, 99);
+    restored_spirit_eye_registry
+        .restore_persisted_snapshot(restored_spirit_eyes.clone())
+        .expect("spirit eye runtime should restore into its registry");
+    assert_eq!(
+        restored_spirit_eye_registry.persisted_snapshot(),
+        spirit_eye_runtime
+    );
+
+    let attention = crate::world::tiandao_hunt::TiandaoAttention {
+        level: 42.0,
+        response: crate::world::tiandao_hunt::TiandaoResponseLevel::Pressure,
+        last_eval_tick: 88,
+        accumulation_rate: 0.5,
+        peak_level: 60.0,
+        last_response_tick: 80,
+        last_emitted_response: crate::world::tiandao_hunt::TiandaoResponseLevel::Watch,
+        narration_count: 3,
+    };
+    save_player_runtime_slice(
+        &settings,
+        "RuntimePlayer",
+        "player.tiandao_attention",
+        &attention,
+    )
+    .expect("player runtime slice should save");
+    let restored_attention = load_player_runtime_slice::<
+        crate::world::tiandao_hunt::TiandaoAttention,
+    >(&settings, "RuntimePlayer", "player.tiandao_attention")
+    .expect("player runtime slice should load")
+    .expect("saved player runtime row should exist");
+    assert_eq!(restored_attention, attention);
+
+    let taint = RealmTaintState {
+        kind: RealmTaintedKind::NicheIntrusion,
+        qi_taint_severity: 0.6,
+        last_tainted_at: 90,
+        wash_available_at: 100,
+    };
+    save_player_runtime_slice(&settings, "RuntimePlayer", "player.realm_taint", &taint)
+        .expect("realm taint runtime should save");
+    let restored_taint = load_player_runtime_slice::<RealmTaintState>(
+        &settings,
+        "RuntimePlayer",
+        "player.realm_taint",
+    )
+    .expect("realm taint runtime should load")
+    .expect("saved realm taint row should exist");
+    assert_eq!(restored_taint, taint);
+
+    let connection = open_persistence_connection(&settings).expect("db should open");
+    connection
+        .execute(
+            "UPDATE world_runtime_slices SET payload_json = '{broken' WHERE slice_id = 'world.heartbeat_runtime'",
+            [],
+        )
+        .expect("test should be able to corrupt the fixture row");
+    assert!(
+        load_world_runtime_slice::<PersistedHeartbeatRuntime>(&settings, "world.heartbeat_runtime")
+            .is_err(),
+        "corrupt runtime payload must fail closed instead of becoming a default value"
+    );
+
+    connection
+        .execute(
+            "UPDATE world_runtime_slices SET schema_version = 2 WHERE slice_id = 'world.active_events'",
+            [],
+        )
+        .expect("test should be able to install a future schema version");
+    assert!(
+        load_world_runtime_slice::<PersistedActiveEvents>(&settings, "world.active_events")
+            .is_err(),
+        "future runtime schema versions must fail closed instead of being decoded optimistically"
     );
 
     let _ = fs::remove_dir_all(root);
