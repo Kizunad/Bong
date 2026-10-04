@@ -138,6 +138,10 @@ def inject_single_face_coplanar(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """构造一对『仅共享一个面』且另两轴有正投影面积重叠的立方体对。
 
+    第二个立方体是该轴上零厚度的平片，整块落在基准立方体的外表面上，与基准体积没有任何交集。
+    厚度为正且同向共面的两个立方体，必然在三轴上都有正体积重叠，所以只有零厚度平片
+    才能构造出『无体积穿透、仅共享一个面』的场景，这正是历史三轴重叠判据漏判的情形。
+
     用于差分测试：验证共面判据能否准确捕获无正体积重叠、仅在单一表面重叠的情况。
     """
     if base is None:
@@ -157,14 +161,10 @@ def inject_single_face_coplanar(
         c2_from[a] = lo[a] + span * 0.25
         c2_to[a] = lo[a] + span * 0.75
 
-    if is_max:
-        # 共享最大面 (+面)
-        c2_from[axis] = hi[axis] - 1.0
-        c2_to[axis] = hi[axis]
-    else:
-        # 共享最小面 (-面)
-        c2_from[axis] = lo[axis]
-        c2_to[axis] = lo[axis] + 1.0
+    # 平片起止都在基准立方体的外表面坐标上：共享最大面 (+面) 或最小面 (-面)
+    face = hi[axis] if is_max else lo[axis]
+    c2_from[axis] = face
+    c2_to[axis] = face
 
     c2 = {"name": "injected_single_face_coplanar", "from": c2_from, "to": c2_to}
     return c1, c2
@@ -200,6 +200,22 @@ def inject_collinear_non_overlapping(
     return c1, c2
 
 
+def _legacy_three_axis_check(cubes: Sequence[Any], tol: float = 1e-4) -> list[str]:
+    """历史判据的复刻（仅用于差分自测，不得被生产路径调用）：三轴都有正体积重叠才检查共面。"""
+    violations: list[str] = []
+    for i in range(len(cubes)):
+        n1, a_min, a_max = _cube_bounds(cubes[i])
+        for j in range(i + 1, len(cubes)):
+            n2, b_min, b_max = _cube_bounds(cubes[j])
+            overlaps = [min(a_max[k], b_max[k]) - max(a_min[k], b_min[k]) for k in range(3)]
+            if not all(o > tol for o in overlaps):
+                continue
+            for k in range(3):
+                if abs(a_min[k] - b_min[k]) < tol or abs(a_max[k] - b_max[k]) < tol:
+                    violations.append(f"{n1} 与 {n2} 在 {'XYZ'[k]} 轴共面")
+    return violations
+
+
 def self_test_coplanar_gate() -> None:
     """运行共面门禁自身的差分自测试验。
 
@@ -220,6 +236,14 @@ def self_test_coplanar_gate() -> None:
     violations_max = check_coplanar_faces([c1_max, c2_max])
     if not violations_max or "+X" not in violations_max[0]:
         raise AssertionError(f"门禁自测试验失效：未能捕获 +X 面单面共面缺陷: {violations_max}")
+
+    # 差分证明：同一注入对，历史三轴体积重叠判据报不出，说明夹具真的是『只贴面』
+    for pair in ((c1, c2), (c1_max, c2_max)):
+        legacy = _legacy_three_axis_check(list(pair))
+        if legacy:
+            raise AssertionError(
+                f"门禁自测试验失效：单面共面夹具与基准立方体存在体积重叠，未覆盖只贴面场景: {legacy}"
+            )
 
     # 2. 注入同轴面坐标相同但另两轴不重叠 (边缘接触) → 不得误报
     c1_col, c2_col = inject_collinear_non_overlapping(shared_axis=2, collinear_axis=0)
