@@ -1930,8 +1930,7 @@ fn prepare_spirit_niche_placement(
 }
 
 fn apply_spirit_niche_world_effects(
-    player: Entity,
-    event_pos: [i32; 3],
+    event: &SpiritNichePlaceRequest,
     lifecycle: &mut Lifecycle,
     placement: &PreparedSpiritNichePlacement,
     commands: &mut Commands,
@@ -1939,16 +1938,18 @@ fn apply_spirit_niche_world_effects(
     layers: &mut Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
-    lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event_pos));
+    lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
     lifecycle.spawn_anchor_damaged = false;
     registry.upsert(placement.niche.clone());
-    commands.entity(player).insert(placement.niche.clone());
-    if let Some(events) = vfx_events.as_deref_mut() {
+    commands
+        .entity(event.player)
+        .insert(placement.niche.clone());
+    if let Some(events) = vfx_events {
         gameplay_vfx::send_spawn(
             events,
             gameplay_vfx::spawn_request(
                 gameplay_vfx::SOCIAL_NICHE_ESTABLISH,
-                gameplay_vfx::block_center(event_pos),
+                gameplay_vfx::block_center(event.pos),
                 Some([0.0, 0.8, 0.0]),
                 "#C4E0FF",
                 0.8,
@@ -1959,11 +1960,11 @@ fn apply_spirit_niche_world_effects(
     }
     if let Ok(mut layer) = layers.get_single_mut() {
         if let Some(previous_niche) = placement.previous_niche.as_ref() {
-            if !previous_niche.revealed && previous_niche.pos != event_pos {
+            if !previous_niche.revealed && previous_niche.pos != event.pos {
                 layer.set_block(block_pos_from_array(previous_niche.pos), BlockState::AIR);
             }
         }
-        layer.set_block(block_pos_from_array(event_pos), BlockState::LODESTONE);
+        layer.set_block(block_pos_from_array(event.pos), BlockState::LODESTONE);
     }
 }
 
@@ -2107,8 +2108,7 @@ fn handle_spirit_niche_place_requests(
         }
 
         apply_spirit_niche_world_effects(
-            event.player,
-            event.pos,
+            event,
             &mut lifecycle,
             &placement,
             &mut commands,
