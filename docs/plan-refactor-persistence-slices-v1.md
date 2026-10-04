@@ -204,6 +204,13 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 - 长期状态效果新增 `player_status_effects` v47 表并接入 join hydrate、autosave、断线/关服写屏障；identity 读取兼容 `offline:<username>:<character>` 历史键，写入统一使用 `offline:<username>`，损坏行带 marker 后禁止默认值覆盖。
 - 契约测试覆盖损坏 inventory / position / status-effects 行的单切片写保护、长期状态 round-trip、显式新角色重置清空 buff、旧 identity 键兼容读取；Bot 场景为 `scripts/bot/scenarios/restart_player_slices.py` 与显式启用的 `load_failure_guard.py`。Wounds/SkillSet 仍待冻结解除后的后续 P2 批次，因此本节不宣称 R3 P2 总体完成。
 
+## R3 P3 RF-12 本 PR 记录（2026-10-04）
+
+- 本批次先按 `origin/main` 逐项核实吸收表：保质期时钟已经由 runtime-clock 迁移闭环，recipe unlock 已有 AppExit → Last 接线；本 PR 没有重复安装这两处 writer，也没有触碰 SkillSet、Wounds、经脉、灵田、身体部位或暗器冻结域。
+- `server/src/persistence/world.rs` 新增 `world.mineral_exhausted`、`world.spiritwood_harvested` 与 `world.zone_influence` 三个 canonical world descriptor。它们保留原有节流 Update writer，只把最后一次 dirty snapshot 接入统一 shutdown registry，避免矿脉耗尽点、灵木采伐点和领地影响力在关服窗口丢失；每个 descriptor 都有独立 `WriteDomain` 与 `WriteAuthority`，没有旧 Last writer 双注册。
+- `server/src/persistence/bootstrap.rs` 在启动 hydrate 时把 `MineralTickClock` 对齐共享 runtime epoch；`persistence/void_actions.rs` 对旧库存中的绝对冷却 deadline 做有界 rebase，超过当前动作自身 cooldown 的旧进程 uptime 不再被重复计入。契约测试覆盖 world log 关服 flush、矿脉时钟对齐和化虚冷却旧 epoch 截断。
+- 尚未推广的玩家聚合 reconnect descriptor、dormant Redis ACK、coffin revision/CAS 属于后续 P3 批次；本记录不把它们误报为已接线，也不改变其现有失败/重试语义。
+
 ## R3 P1 本 PR 证据（2026-09-08）
 
 - 本 PR 最终净 diff 只完成 persistence 生产码的按域机械拆分：`server/src/persistence/mod.rs` 保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring；迁移链、SQL、表结构、事务边界、连接 ownership 和调用方均未改动。以 `169a70872` 为纯搬迁边界，`7fb558e91` 起的原子发布加固提交已用 `git revert` 翻回，没有 force-push。
