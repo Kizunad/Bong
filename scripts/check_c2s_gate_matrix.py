@@ -25,23 +25,9 @@ MATRIX_RE = re.compile(
     r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|(?:[^|\n]*\|){5}\s*$"
 )
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$", re.DOTALL)
-KNOWN_TYPEBOX_GAPS = frozenset(
-    {
-        "alchemy_learn_recipe_fragment",
-        "coffin_break",
-        "coffin_menu_reclaim",
-        "qi_scatter_bead_use",
-        "jiemai",
-        "supply_coffin_open",
-        "container_open",
-        "workbench_open",
-        "external_container_move",
-        "external_container_close",
-        "craft_start",
-        "craft_cancel",
-        "give_dan_to_elder",
-    }
-)
+# RF-28 R6 P4 已为当前 live C2S registry 补齐全部 TypeBox declarations。
+# 保留显式空基线，让未来新增 Rust variant 在未补 schema 时 fail closed。
+KNOWN_TYPEBOX_GAPS = frozenset()
 
 
 def _blank_non_newlines(masked: list[str], start: int, end: int) -> None:

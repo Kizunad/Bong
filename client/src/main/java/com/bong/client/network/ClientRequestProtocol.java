@@ -23,6 +23,7 @@ public final class ClientRequestProtocol {
     public static final String CHANNEL_PATH = "client_request";
     public static final int VERSION = 1;
     public static final int MAX_CRAFT_QUANTITY = 64;
+    private static final long JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L;
 
     /**
      * 服务端 {@code MeridianId} 的 PascalCase 字面量（serde 默认序列化）。
@@ -392,6 +393,18 @@ public final class ClientRequestProtocol {
     public static String encodeAlchemyLearnRecipe(String recipeId) {
         JsonObject obj = envelope("alchemy_learn_recipe");
         obj.addProperty("recipe_id", recipeId);
+        return obj.toString();
+    }
+
+    /** 使用丹方残卷学习碎片；server 以实例归属和内容校验为准。 */
+    public static String encodeAlchemyLearnRecipeFragment(long itemInstanceId) {
+        if (itemInstanceId < 0 || itemInstanceId > JS_SAFE_INTEGER_MAX) {
+            throw new IllegalArgumentException(
+                "itemInstanceId must be in [0, " + JS_SAFE_INTEGER_MAX + "], got " + itemInstanceId
+            );
+        }
+        JsonObject obj = envelope("alchemy_learn_recipe_fragment");
+        obj.addProperty("item_instance_id", itemInstanceId);
         return obj.toString();
     }
 
@@ -1116,6 +1129,13 @@ public final class ClientRequestProtocol {
     public static String encodeForgeBlueprintTurnPage(int delta) {
         JsonObject obj = envelope("forge_blueprint_turn_page");
         obj.addProperty("delta", delta);
+        return obj.toString();
+    }
+
+    /** 学习图谱残卷；server 负责确认图谱存在及玩家持有残卷。 */
+    public static String encodeForgeLearnBlueprint(String blueprintId) {
+        JsonObject obj = envelope("forge_learn_blueprint");
+        obj.addProperty("blueprint_id", requireNonBlank(blueprintId, "blueprintId"));
         return obj.toString();
     }
 

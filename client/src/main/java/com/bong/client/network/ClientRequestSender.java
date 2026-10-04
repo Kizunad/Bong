@@ -321,6 +321,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeBlueprintTurnPage(delta));
     }
 
+    /** 发送图谱学习请求，保持 C2S registry 中的 forge_learn_blueprint 入口可复用。 */
+    public static void sendForgeLearnBlueprint(String blueprintId) {
+        dispatch(ClientRequestProtocol.encodeForgeLearnBlueprint(blueprintId));
+    }
+
     public static void sendForgeStepAdvance(long sessionId) {
         dispatch(ClientRequestProtocol.encodeForgeStepAdvance(sessionId));
     }
@@ -450,6 +455,11 @@ public final class ClientRequestSender {
 
     public static void sendAlchemyLearnRecipe(String recipeId) {
         dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipe(recipeId));
+    }
+
+    /** 发送丹方残卷学习请求，实例归属与碎片内容由 server 校验。 */
+    public static void sendAlchemyLearnRecipeFragment(long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(itemInstanceId));
     }
 
     public static void sendAlchemyOpenFurnace(BlockPos pos) {
