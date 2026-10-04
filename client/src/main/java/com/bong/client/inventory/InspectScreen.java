@@ -847,14 +847,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         java.util.List<InventoryModel.ContainerDef> definitions
     ) {
         var entries = section.childById(FlowLayout.class, "container-entries");
-        entries.clearChildren();
         var template = OwoXmlTemplateRegistry.production().require("inventory-container");
+        List<io.wispforest.owo.ui.core.Component> nextChildren = new ArrayList<>();
         for (var def : definitions) {
             var button = template.expandTemplate(ButtonComponent.class, "container-entry", java.util.Map.of());
             button.setMessage(Text.literal(MinecraftClient.getInstance().textRenderer.trimToWidth(def.name(), 94)));
             button.tooltip(Text.literal(def.name()));
             button.onPress(ignored -> UiWindowRuntime.openContainer(def.id()));
-            entries.child(button);
+            nextChildren.add(button);
+        }
+
+        List<io.wispforest.owo.ui.core.Component> previousChildren = List.copyOf(entries.children());
+        try {
+            entries.clearChildren();
+            for (var child : nextChildren) entries.child(child);
+        } catch (RuntimeException | Error failure) {
+            try {
+                entries.clearChildren();
+                for (var child : previousChildren) entries.child(child);
+            } catch (RuntimeException | Error rollbackFailure) {
+                if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
         }
     }
 
