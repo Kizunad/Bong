@@ -107,7 +107,7 @@ fn jittered_relic_loot_pos(base: [f64; 3], loot_seed: u64, idx: u64) -> [f64; 3]
 /// - 脏 archetype 串（旧 schema / 手写 sqlite）→ `NpcArchetype::from_str` 返 None → 返回空 vec
 ///   （显式跳过，绝不静默掉僵尸 loot）。
 ///
-/// 返回 `Vec<DroppedLootEntry>`，由调用方 `registry.entries.insert` 落进 `DroppedLootRegistry`。
+/// 返回 `Vec<DroppedLootEntry>`，由调用方通过 `DroppedLootRegistry` 的 Public writer 发布。
 /// 纯函数零副作用（除 allocator 取 id），可被单测完全锁住。
 pub fn materialize_relic_loot(
     record: &PendingDormantRelicRecord,
@@ -149,6 +149,8 @@ pub fn materialize_relic_loot(
             source_col: 0,
             world_pos,
             dimension,
+            owner: None,
+            visibility: crate::inventory::DroppedLootVisibility::Public,
             item,
         });
     }
@@ -282,25 +284,24 @@ fn hydrate_pending_dormant_relics_system(
             let entries = materialize_relic_loot(&record, dimension, item_registry, allocator);
             let reveal_pos = DVec3::new(record.pos_x, record.pos_y, record.pos_z);
 
-            // **先删 sqlite pending 行确认消费，再插入 loot registry**（CodeRabbit Critical /
-            // Pi agent）：loot entry 的 instance_id 来自运行时 allocator，每次物化都不同 → 若
-            // 先插 registry 后删行、且 delete 失败，下轮 hydrate 会重新物化同一行、拿到新
-            // instance_id，造成**重复** loot（非幂等）。改为「先删后插」：delete 失败则 continue
-            // 跳过本行的 insert + 视听（至多丢一次遗物 loot，优于稳定复制）。即便 delete 成功后
-            // 后续 crash，sqlite 行已删也不会二次物化。
-            // 注：entries 为空（脏 archetype / 全部模板缺失）时也要删——它无法物化成任何东西，
-            // 留着只会每次玩家来都重试失败；删除成功后照常发 narration（"曾有厮杀"）。
-            if let Err(error) = delete_pending_dormant_relic(settings, &record.relic_id) {
+            // 先在 registry 副本上完成 bounded admission，再删除 pending 行；任一步失败都
+            // 保留 sqlite 行，下一轮可以安全重试，不形成单边 source mutation。
+            let mut staged_registry = loot_registry.clone();
+            if let Err(error) = staged_registry.try_insert_public_batch(entries) {
                 tracing::warn!(
-                    "[bong][npc] failed to delete consumed pending relic {}: {error}; skipping materialization this round to avoid duplicate loot (will retry next time the player enters)",
+                    "[bong][npc] pending relic {} dropped-loot admission failed: {error:?}; retaining pending row",
                     record.relic_id
                 );
                 continue;
             }
-
-            for entry in entries {
-                loot_registry.entries.insert(entry.instance_id, entry);
+            if let Err(error) = delete_pending_dormant_relic(settings, &record.relic_id) {
+                tracing::warn!(
+                    "[bong][npc] failed to delete consumed pending relic {}: {error}; retaining staged loot for retry",
+                    record.relic_id
+                );
+                continue;
             }
+            *loot_registry = staged_registry;
 
             // 视听：发现遗物的地表贴花 + 低沉揭示音效 + zone 感知叙事。
             if let Some(vfx_events) = vfx_events.as_deref_mut() {

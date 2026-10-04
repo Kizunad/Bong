@@ -1484,6 +1484,8 @@ mod tests {
                     source_col: 0,
                     world_pos: [0.0, 0.0, 0.0],
                     dimension: DimensionKind::Overworld,
+                    owner: None,
+                    visibility: crate::inventory::DroppedLootVisibility::Public,
                     item: item("existing", 1),
                 },
             );

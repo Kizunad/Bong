@@ -441,6 +441,15 @@ pub fn apply_craft_cancel_intents(
             if !drops.is_empty() && dropped_loot.is_none() {
                 continue;
             }
+            let mut staged_dropped_loot = dropped_loot.as_deref().cloned();
+            if let Some(dropped) = staged_dropped_loot.as_mut() {
+                if let Err(error) = dropped.try_insert_public_batch(drops.clone()) {
+                    tracing::warn!(
+                        "[bong][craft] preparation return dropped-loot admission failed: {error:?}"
+                    );
+                    continue;
+                }
+            }
             if let Some(persistence) = persistence.as_deref() {
                 let Ok(username) = names.get(intent.caster) else {
                     continue;
@@ -459,10 +468,10 @@ pub fn apply_craft_cancel_intents(
                 }
             }
             *inventory = staged;
-            if let Some(dropped) = dropped_loot.as_deref_mut() {
-                dropped
-                    .entries
-                    .extend(drops.into_iter().map(|entry| (entry.instance_id, entry)));
+            if let (Some(current), Some(staged)) =
+                (dropped_loot.as_deref_mut(), staged_dropped_loot)
+            {
+                *current = staged;
             }
             commands
                 .entity(intent.caster)
@@ -504,11 +513,12 @@ pub fn apply_craft_cancel_intents(
             continue;
         }
         if let Some(dropped) = staged_dropped_loot.as_mut() {
-            dropped.entries.extend(
-                prepared_drops
-                    .into_iter()
-                    .map(|entry| (entry.instance_id, entry)),
-            );
+            if let Err(error) = dropped.try_insert_public_batch(prepared_drops) {
+                tracing::warn!(
+                    "[bong][craft] preparation return dropped-loot admission failed: {error:?}"
+                );
+                continue;
+            }
         }
         let refund_summary = grant_refund_manifest_to_inventory_or_ground(
             &mut staged_inventory,

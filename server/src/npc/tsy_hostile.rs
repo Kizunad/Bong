@@ -2037,11 +2037,12 @@ pub fn handle_npc_death_drop(
         };
         let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.entity.index());
         let items = roll_drop_entry(entry, &ctx, item_registry, relic_pool, allocator, seed);
-        for (idx, item) in items.into_iter().enumerate() {
-            let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
-            let instance_id = item.instance_id;
-            loot_registry.entries.insert(
-                instance_id,
+        let entries = items
+            .into_iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
+                let instance_id = item.instance_id;
                 DroppedLootEntry {
                     instance_id,
                     source_container_id: format!("tsy_npc_drop:{family_id}:{drop_key}"),
@@ -2049,9 +2050,19 @@ pub fn handle_npc_death_drop(
                     source_col: 0,
                     world_pos,
                     dimension: DimensionKind::Tsy,
+                    owner: None,
+                    visibility: crate::inventory::DroppedLootVisibility::Public,
                     item,
-                },
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = loot_registry.try_insert_public_batch(entries) {
+            tracing::error!(
+                entity = ?event.entity,
+                ?error,
+                "[bong][tsy-hostile] drop admission failed; retaining terminal drop for retry"
             );
+            continue;
         }
         commands.entity(event.entity).insert(TsyNpcDropIssued);
     }

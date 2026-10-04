@@ -25,7 +25,10 @@ use valence::prelude::{bevy_ecs, Resource};
 #[cfg(test)]
 use super::ancient_relics::seed_ancient_relics;
 use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
-use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemRegistry};
+use super::{
+    DroppedLootEntry, DroppedLootRegistry, DroppedLootVisibility, InventoryInstanceIdAllocator,
+    ItemRegistry,
+};
 use crate::combat::CombatClock;
 use crate::fauna::drop::build_fauna_item_instance;
 use crate::world::dimension::DimensionKind;
@@ -236,6 +239,8 @@ pub fn tsy_loot_spawn_on_enter(
                                     source_col: 0,
                                     world_pos: [pos.x, pos.y, pos.z],
                                     dimension: DimensionKind::Tsy,
+                                    owner: None,
+                                    visibility: DroppedLootVisibility::Public,
                                     item: instance,
                                 };
                                 tracing::info!(
@@ -243,7 +248,13 @@ pub fn tsy_loot_spawn_on_enter(
                                     instance_id = entry.instance_id,
                                     "[bong][tsy-loot] spawned real yixing_scroll (SectRuins family)"
                                 );
-                                drops.entries.insert(entry.instance_id, entry);
+                                if let Err(error) = drops.try_insert_public(entry) {
+                                    tracing::warn!(
+                                        family = %ev.family_id,
+                                        ?error,
+                                        "[bong][tsy-loot] yixing_scroll admission failed; leaving family retryable"
+                                    );
+                                }
                             }
                             Err(err) => {
                                 tracing::warn!(
@@ -329,10 +340,21 @@ fn spawn_for_layer(
             source_col: 0,
             world_pos: [pos.x, pos.y, pos.z],
             dimension: DimensionKind::Tsy,
+            owner: None,
+            visibility: DroppedLootVisibility::Public,
             item: instance,
         };
-        placed_ids.push(entry.instance_id);
-        drops.entries.insert(entry.instance_id, entry);
+        let instance_id = entry.instance_id;
+        if let Err(error) = drops.try_insert_public(entry) {
+            tracing::warn!(
+                family = family_id,
+                ?depth,
+                ?error,
+                "[bong][tsy-loot] relic admission failed; stopping layer"
+            );
+            return;
+        }
+        placed_ids.push(instance_id);
     }
 }
 

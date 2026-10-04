@@ -8,8 +8,8 @@ use crate::combat::events::StatusEffectKind;
 use crate::cultivation::lifespan::LifespanCapTable;
 use crate::inventory::{
     move_equipped_item_to_first_container_slot, set_item_instance_durability, ContainerState,
-    DroppedLootEntry, InventoryRevision, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+    DroppedLootEntry, DroppedLootVisibility, InventoryRevision, ItemInstance, ItemRarity,
+    PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::agent_bridge::serialize_server_data_payload;
 use crate::persistence::bootstrap_sqlite;
@@ -1579,6 +1579,8 @@ fn craft_checkpoint_rolls_back_every_slice_when_durable_drop_write_fails() {
         source_col: 0,
         world_pos: [1.0, 64.0, 2.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_000, 1.0),
     };
 
@@ -1645,6 +1647,8 @@ fn durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup(
         source_col: 0,
         world_pos: [3.0, 65.0, 4.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_100, 1.0),
     };
     save_player_craft_checkpoint(
@@ -1701,6 +1705,52 @@ fn durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup(
 }
 
 #[test]
+fn durable_dropped_loot_loads_legacy_entry_without_metadata() {
+    let (persistence, data_dir) = sqlite_persistence("legacy-dropped-loot-metadata");
+    let entry = DroppedLootEntry {
+        instance_id: 9_099,
+        source_container_id: "legacy_drop".to_string(),
+        source_row: 2,
+        source_col: 3,
+        world_pos: [7.0, 66.0, -2.0],
+        dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: DroppedLootVisibility::Public,
+        item: iron_sword_instance(9_099, 0.73),
+    };
+    let mut legacy = serde_json::to_value(&entry).expect("drop should serialize");
+    let object = legacy
+        .as_object_mut()
+        .expect("serialized drop should be a JSON object");
+    object.remove("owner");
+    object.remove("visibility");
+    let legacy_json = serde_json::to_string(&legacy).expect("legacy drop should encode");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute(
+            "INSERT INTO dropped_loot (instance_id, entry_json, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+            params![9_099_i64, legacy_json, 1_i64, 1_i64],
+        )
+        .expect("legacy dropped-loot row should insert");
+    drop(connection);
+
+    let settings = crate::persistence::PersistenceSettings::with_db_path(
+        persistence.db_path(),
+        "legacy-dropped-loot-metadata",
+    );
+    let loaded = crate::persistence::load_durable_dropped_loot(&settings)
+        .expect("legacy dropped-loot row should remain readable");
+    let loaded_drop = loaded.get(&9_099).expect("legacy drop should be hydrated");
+    assert_eq!(loaded_drop.source_row, 2);
+    assert_eq!(loaded_drop.source_col, 3);
+    assert_eq!(loaded_drop.item.durability, 0.73);
+    assert_eq!(loaded_drop.owner, None);
+    assert_eq!(loaded_drop.visibility, DroppedLootVisibility::Public);
+
+    std::fs::remove_dir_all(data_dir).ok();
+}
+
+#[test]
 fn pickup_checkpoint_rolls_back_inventory_drop_and_zone_together() {
     let (persistence, data_dir) = sqlite_persistence("pickup-checkpoint-zone-rollback");
     save_player_state(&persistence, "Azure", &PlayerState::default())
@@ -1713,6 +1763,8 @@ fn pickup_checkpoint_rolls_back_inventory_drop_and_zone_together() {
         source_col: 0,
         world_pos: [3.0, 65.0, 4.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_101, 1.0),
     };
     save_player_craft_checkpoint(

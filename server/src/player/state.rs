@@ -2048,6 +2048,8 @@ fn persist_legacy_inventory_migration(
             source_col: 0,
             world_pos: spill_context.world_pos,
             dimension: spill_context.dimension,
+            owner: None,
+            visibility: crate::inventory::DroppedLootVisibility::Public,
             item: item.clone(),
         })
         .collect::<Vec<_>>();

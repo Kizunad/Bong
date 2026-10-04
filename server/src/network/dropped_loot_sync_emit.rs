@@ -190,6 +190,8 @@ mod tests {
             source_col: 0,
             world_pos: [1.0, 64.0, 1.0],
             dimension: DimensionKind::Overworld,
+            owner: None,
+            visibility: crate::inventory::DroppedLootVisibility::Public,
             item: ItemInstance {
                 instance_id,
                 template_id: "starter_talisman".to_string(),
