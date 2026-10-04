@@ -216,7 +216,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 - 前置核实：#2394（RF-12）已合入 `e502b0671`，P3 的 world shutdown descriptor、runtime clock 与 zone influence 原有 hydrate 均在当前 `origin/main`；本 PR 没有重复安装这些 writer。冻结区灵田、经脉、功法、身体部位、暗器均未修改。
 - v49 新增 `world_runtime_slices` 与 `player_runtime_slices`。`ActiveEventsResource`、heartbeat 的 season override/forced queue、`SupplyCoffinRegistry` cooldown/RNG、`SpiritEyeRegistry` 以及玩家 `TiandaoAttention`/`RealmTaintState` 均有 JSON snapshot、startup hydrate、运行中节流保存与关服/断线 flush；坏 JSON 或未来 schema version fail-closed，玩家失败切片通过 `PlayerRuntimeSlicesLoadFailed` 阻断默认值覆盖。
 - `persist_zone_influence_snapshot` 现在在同一事务先删除旧表行，再写入完整 `ZoneInfluenceMap` 快照；契约测试覆盖「删除 → 保存 → 重载不复活」。`RF-11` 已覆盖长期 `StatusEffects`/consumable 持久化，本 PR 不重复改动。
-- 契约测试覆盖 v49 运行态各 slice 的 round-trip、事件 zone/QiTransfer 校验、坏 JSON/未来版本拒绝，以及生产 descriptor 注册；server 本地 fmt、Clippy 和全量测试均需在主线合并后再次取证。当前仓库尚无可执行的 `scripts/bot/scenarios/restart_world_runtime.py`，因此 P4 仍标记为 ⏳，不宣称 bot/协议集成 gate 或阶段完成。
+- 契约测试覆盖 v49 运行态各 slice 的 round-trip、事件 zone/QiTransfer 校验、坏 JSON/未来版本拒绝，以及生产 descriptor 注册；`6f2fc617a` 已通过 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`（库 10283 passed、1 ignored；doc-tests 3 passed、5 ignored；其余 targets 全部通过）。随后 `git fetch origin && git merge origin/main` 已确认 Already up to date，因此无需因主线变更重复编译。当前仓库尚无可执行的 `scripts/bot/scenarios/restart_world_runtime.py`，因此 P4 仍标记为 ⏳，不宣称 bot/协议集成 gate 或阶段完成。
 
 ## R3 P1 本 PR 证据（2026-09-08）
 
