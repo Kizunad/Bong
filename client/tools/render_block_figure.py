@@ -59,7 +59,6 @@ CLIENT_ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = CLIENT_ROOT / "src/main/resources/assets/bong"
 ANIM_DIR = RESOURCES / "player_animation"
 ITEM_MODEL_DIR = RESOURCES / "models/item"
-ASSET_CONFIG_DIR = Path(__file__).resolve().parent / "asset_configs"
 
 BLOCK_PX = 16.0
 META_KEYS = frozenset({"tick", "easing", "comment", "turn"})
@@ -142,10 +141,8 @@ class ItemModel:
     """一件手持物的模型来源与显示参数来源。"""
 
     color: Tuple[int, int, int]
-    obj: Optional[str] = None               # 相对 models/item 的 OBJ 路径
-    box_blocks: Optional[float] = None      # 没有可用网格时，用这个边长（方块）的立方体示意
-    display_json: Optional[str] = None      # 物品模型 JSON（取 display 段）
-    override_json: Optional[str] = None     # asset_configs 覆盖
+    obj: str                                # 相对 models/item 的 OBJ 路径
+    display_json: Optional[str] = None      # 物品模型 JSON（取 display 段），没有则用 HANDHELD_DEFAULT
     note: str = ""
 
 
@@ -155,18 +152,20 @@ class ItemModel:
 #   - 骨镐：注册表 pickaxe_bone.obj 只有 16 个顶点（一块薄板），pickaxe_bone_v2 才是镐形。
 # 三处不一致都写进 model-review/item-anim-batch1.md，等调度定。
 ITEMS: Dict[str, ItemModel] = {
-    # 拳套不用 hand_wrap.obj：它是双手整套护甲网格（x 跨 3.75 格、z 跨 6 格），按现有
-    # asset_configs 的 scale 0.35 仍约 2 格长，远超手掌（约 0.25 格），画出来是一团布片，
-    # 判不了握法。这里用拳头尺寸的立方体示意，握点与出拳方向才是要看的东西。
+    # 审图一律用 v2 网格与它自己的 display（与生成器读的 JSON 一致）。注册表与 v2 的不一致
+    # （兵甲手套 objPath=null、木杖 / 骨镐登记的是旧 OBJ 等）留到接线阶段，见
+    # model-review/item-anim-batch1.md「模型台问题」。
     "hand_wrap": ItemModel(
+        obj="hand_wrap_v2/hand_wrap_v2.obj",
+        display_json="hand_wrap_v2/hand_wrap_v2.json",
         color=ITEM_COLORS["cloth"],
-        box_blocks=0.3,
-        note="示意拳面 0.3 格立方体：hand_wrap.obj 按现有配置约 2 格，不可用于判握法（见文档）",
+        note="缠手 v2 网格",
     ),
     "bing_jia_shou_tao": ItemModel(
+        obj="bing_jia_shou_tao_v2/bing_jia_shou_tao_v2.obj",
+        display_json="bing_jia_shou_tao_v2/bing_jia_shou_tao_v2.json",
         color=ITEM_COLORS["iron"],
-        box_blocks=0.34,
-        note="示意铁甲拳面 0.34 格立方体（注册表 objPath=null，实际为原版皮革 2D 贴图）",
+        note="兵甲手套 v2 网格",
     ),
     "pickaxe_bone_v2": ItemModel(
         obj="pickaxe_bone_v2/pickaxe_bone_v2.obj",
@@ -321,31 +320,11 @@ def _obj_triangles(path: Path) -> np.ndarray:
     return arr
 
 
-def _box_triangles(size_blocks: float) -> np.ndarray:
-    """中心在 (0.5, 0.5, 0.5)（方块坐标）的立方体三角形，与 OBJ 的坐标约定一致。"""
-    half = size_blocks / 2
-    corners = _box_corners((0.5 - half,) * 3, (0.5 + half,) * 3)
-    tris = []
-    for face in BOX_FACES:
-        tris.append([corners[face[0]], corners[face[1]], corners[face[2]]])
-        tris.append([corners[face[0]], corners[face[2]], corners[face[3]]])
-    return np.array(tris, dtype=np.float64)
-
-
-def _item_triangles(item: ItemModel) -> np.ndarray:
-    if item.box_blocks is not None:
-        return _box_triangles(item.box_blocks)
-    return _obj_triangles(ITEM_MODEL_DIR / item.obj)
-
-
 def _display_for(item: ItemModel, hand_key: str) -> dict:
     display = {k: list(v) for k, v in HANDHELD_DEFAULT[hand_key].items()}
     if item.display_json:
         src = json.loads((ITEM_MODEL_DIR / item.display_json).read_text(encoding="utf-8"))
         display.update(src["display"][hand_key])
-    if item.override_json:
-        cfg = json.loads((ASSET_CONFIG_DIR / item.override_json).read_text(encoding="utf-8"))
-        display.update(cfg.get(hand_key, {}))
     return display
 
 
@@ -421,7 +400,7 @@ def build_scene(kfs, tick: float, holds: Sequence[Tuple[str, str]]) -> Scene:
         center, bend = elbow_bends[hand_part]
         display = _display_for(item, f"thirdperson_{'righthand' if side == 'right' else 'lefthand'}")
         rot_disp, scale, trans_px = _display_transform(display)
-        verts = _item_triangles(item)
+        verts = _obj_triangles(ITEM_MODEL_DIR / item.obj)
         flat = verts.reshape(-1, 3)
         # 手持物自己的旋转（rightItem 关键帧）插在 display 之后、手持偏移之前。
         spin_part = "rightItem" if side == "right" else "leftItem"
@@ -496,11 +475,14 @@ def render_frame(kfs, tick: float, holds, title: str, font) -> Image.Image:
     return img
 
 
-def _load_font(size: int):
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
-    except OSError:
-        return ImageFont.load_default()
+# 标签含中文（正面 / 侧面 / 3/4 斜前 / 新动画 / 同类旧动画），必须用带 CJK 字形的字体，
+# 否则 PIL 默认字体会把中文画成方块。
+CJK_FONT_REGULAR = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+CJK_FONT_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+
+
+def _load_font(size: int, path: str = CJK_FONT_REGULAR):
+    return ImageFont.truetype(path, size)
 
 
 def render_strip(anim_id: str, holds, label: str) -> Image.Image:
@@ -512,7 +494,7 @@ def render_strip(anim_id: str, holds, label: str) -> Image.Image:
     kfs = collect_keyframes(emote)
     ticks = keyframe_ticks(kfs)
     font = _load_font(11)
-    head_font = _load_font(13)
+    head_font = _load_font(13, CJK_FONT_BOLD)
     frames = [render_frame(kfs, t, holds, f"t={t}", font) for t in ticks]
     width = sum(f.width for f in frames)
     header_h = 26

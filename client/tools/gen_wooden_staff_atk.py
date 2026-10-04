@@ -8,8 +8,9 @@
 而非垂直挑刺（那会和骨剑过于相似）。
 
 设计要点：
-  - **双手持杖**：右手主力（近握把端）、左手辅助（远端导向），
-    两臂的 pitch 不同步（右高左低），读作「滑握」动作。
+  - **双手持杖**：右手在近握把端，左手贴在杖身中段偏上（离右手约 6px，即 0.375 格），
+    每个关键帧左手都由 `tools/render_block_figure.py` 的手持链路反解过：左手前臂末端中心
+    与杖身轴线的距离在关键帧上 ≤ 1.5px。左臂 pitch 不与右臂同步，读作「滑握」动作。
   - **借杖长**：身体微侧转、手臂展开幅度大，展现杖身长度带来的宽扫弧。
   - **中速**：11 tick，比兵甲重拳(13)快、比缠手拳(8/9)慢，居中定位。
   - 使用 item_spin 辅助骨：由外部调用方决定，JSON 里只驱动躯干和手臂。
@@ -32,8 +33,8 @@ _GUARD_VALS = dict(
     torso=dict(pitch=+4, yaw=-16),            # 侧身站，右肩朝前
     # 右手近握把端，高位守着（杖头在右肩上方）
     rightArm=dict(pitch=-130, yaw=+10, roll=+14, bend=56, axis=180),
-    # 左手远端导向，中位
-    leftArm=dict(pitch=-70, yaw=+16, roll=-18, bend=72, axis=180),
+    # 左手贴杖身中段偏上（见文件头「双手持杖」），由杖轴反解
+    leftArm=dict(pitch=-165.0, yaw=+55.5, roll=-80.0, bend=20.0, axis=180),
     rightLeg=dict(pitch=+8, yaw=-4, bend=12, z=+0.04),
     leftLeg=dict(pitch=-16, yaw=+5, bend=22, z=-0.10),
 )
@@ -47,7 +48,7 @@ POSE = {
         head=dict(pitch=-2, yaw=+4),
         torso=dict(pitch=+2, yaw=-28),            # 右转加深
         rightArm=dict(pitch=-152, yaw=+14, roll=+18, bend=42, axis=180),
-        leftArm=dict(pitch=-80, yaw=+18, roll=-16, bend=60, axis=180),
+        leftArm=dict(pitch=-173.4, yaw=+49.2, roll=-82.0, bend=20.0, axis=180),
         rightLeg=dict(pitch=+10, yaw=-4, bend=14, z=+0.04),
         leftLeg=dict(pitch=-18, yaw=+4, bend=24, z=-0.11),
     ),
@@ -58,7 +59,7 @@ POSE = {
         head=dict(pitch=+2, yaw=-2),
         torso=dict(pitch=-2, yaw=-36),            # 右转顶点
         rightArm=dict(pitch=-166, yaw=+16, roll=+22, bend=34, axis=180),
-        leftArm=dict(pitch=-88, yaw=+20, roll=-14, bend=54, axis=180),
+        leftArm=dict(pitch=-180.0, yaw=+47.0, roll=-84.4, bend=20.0, axis=180),
         rightLeg=dict(pitch=+10, yaw=-3, bend=12, z=+0.04),
         leftLeg=dict(pitch=-16, yaw=+4, bend=20, z=-0.10),
     ),
@@ -70,8 +71,8 @@ POSE = {
         torso=dict(pitch=+14, yaw=+22),           # 反转总量 58°
         # 右臂随杖头扫到左下，pitch 大幅降低
         rightArm=dict(pitch=-58, yaw=-6, roll=+6, bend=24, axis=180),
-        # 左臂在上方导向（两臂不同步体现「滑握」）
-        leftArm=dict(pitch=-96, yaw=+6, roll=-8, bend=44, axis=180),
+        # 左手随杖身一起扫向左前上，仍在杖身中段偏上
+        leftArm=dict(pitch=-135.2, yaw=+85.5, roll=-71.2, bend=20.0, axis=180),
         rightLeg=dict(pitch=+14, yaw=-3, bend=28, z=+0.06),
         leftLeg=dict(pitch=-22, yaw=+4, bend=36, z=-0.12),
     ),
@@ -82,7 +83,7 @@ POSE = {
         head=dict(pitch=+4, yaw=-11),
         torso=dict(pitch=+15, yaw=+26),
         rightArm=dict(pitch=-42, yaw=-8, roll=+4, bend=28, axis=180),
-        leftArm=dict(pitch=-100, yaw=+4, roll=-6, bend=48, axis=180),
+        leftArm=dict(pitch=-120.5, yaw=+90.0, roll=-60.0, bend=20.0, axis=180),
         rightLeg=dict(pitch=+14, yaw=-3, bend=30, z=+0.06),
         leftLeg=dict(pitch=-22, yaw=+4, bend=38, z=-0.12),
     ),
@@ -91,10 +92,10 @@ POSE = {
 }
 
 DESCRIPTION = (
-    "木杖斜向截击：11 tick。双手持杖（右手近握把端、左手远端导向，两臂不同步体现滑握）。"
+    "木杖斜向截击：11 tick。双手持杖（右手近握把端、左手贴杖身中段偏上，离右手约 0.375 格）。"
     "guard 杖头在右肩上方守势、躯干右侧身 -16° → "
     "windup 右臂上举(-152°)、躯干右转 -28° → apex 杖头到最高点(-166°)、右转顶点 -36° → "
-    "impact 杖从右上扫到左下（右臂 -58°/左臂 -96°，两臂不同步）、躯干反转总量 58° → "
+    "impact 杖从右上扫到左下（右臂 -58°/左臂 -135°，两手都贴杖）、躯干反转总量 58° → "
     "overshoot 过扫 → 收回守势。"
     "识别特征：双手宽开持杖、大弧度扫击路径、两臂高低差异。"
 )
