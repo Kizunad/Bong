@@ -5010,6 +5010,32 @@ fn production_registry_flushes_world_logs_on_shutdown() {
 }
 
 #[test]
+fn zone_influence_shutdown_without_map_is_clean_even_without_settings() {
+    let mut registry = PersistenceSliceRegistry::empty();
+    registry
+        .register_slice::<ZoneInfluencePersistenceSlice>()
+        .expect("zone influence descriptor should remain valid");
+    let mut world = World::new();
+    world.insert_resource(registry);
+
+    let report = dispatch_shutdown_flushes(
+        &mut world,
+        ShutdownFlushRequest::Requested,
+        &ProductionSliceClock {
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+        },
+    )
+    .expect("shutdown dispatch should handle an absent influence map");
+    assert_eq!(
+        report.failures,
+        Vec::new(),
+        "a missing ZoneInfluenceMap is a clean no-op and must not require persistence settings"
+    );
+    assert_eq!(report.clean, 1);
+}
+
+#[test]
 fn last_persistence_without_shutdown_request_does_not_write_runtime_clock() {
     let (settings, root) = persistence_settings("runtime-clock-no-shutdown");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())

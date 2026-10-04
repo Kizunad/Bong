@@ -166,12 +166,12 @@ fn flush_spiritwood_harvested_slice(
 }
 
 fn flush_zone_influence_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
-    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
-        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
-    };
     let Some(influence_map) = world.get_resource::<crate::world::territory::ZoneInfluenceMap>()
     else {
         return Ok(SliceRunOutcome::Clean);
+    };
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
     };
     persist_zone_influence_snapshot(&settings, influence_map)
         .map(|()| SliceRunOutcome::Flushed)
