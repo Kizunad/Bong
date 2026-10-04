@@ -395,6 +395,16 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /** 使用丹方残卷学习碎片；server 以实例归属和内容校验为准。 */
+    public static String encodeAlchemyLearnRecipeFragment(long itemInstanceId) {
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        JsonObject obj = envelope("alchemy_learn_recipe_fragment");
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeAlchemyIgnite(BlockPos pos, String recipeId) {
         JsonObject obj = envelope("alchemy_ignite");
         addBlockPos(obj, pos);
@@ -1116,6 +1126,13 @@ public final class ClientRequestProtocol {
     public static String encodeForgeBlueprintTurnPage(int delta) {
         JsonObject obj = envelope("forge_blueprint_turn_page");
         obj.addProperty("delta", delta);
+        return obj.toString();
+    }
+
+    /** 学习图谱残卷；server 负责确认图谱存在及玩家持有残卷。 */
+    public static String encodeForgeLearnBlueprint(String blueprintId) {
+        JsonObject obj = envelope("forge_learn_blueprint");
+        obj.addProperty("blueprint_id", requireNonBlank(blueprintId, "blueprintId"));
         return obj.toString();
     }
 

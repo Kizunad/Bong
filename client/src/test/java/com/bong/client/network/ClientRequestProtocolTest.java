@@ -179,6 +179,22 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesAlchemyLearnRecipeFragment() {
+        assertEquals(
+            "{\"type\":\"alchemy_learn_recipe_fragment\",\"v\":1,\"item_instance_id\":3003}",
+            ClientRequestProtocol.encodeAlchemyLearnRecipeFragment(3003L)
+        );
+    }
+
+    @Test
+    void encodesForgeLearnBlueprint() {
+        assertEquals(
+            "{\"type\":\"forge_learn_blueprint\",\"v\":1,\"blueprint_id\":\"blueprint.stone\"}",
+            ClientRequestProtocol.encodeForgeLearnBlueprint("blueprint.stone")
+        );
+    }
+
+    @Test
     void encodesSkillConfigIntent() {
         JsonObject config = new JsonObject();
         config.addProperty("meridian_id", "Pericardium");
