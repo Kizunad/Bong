@@ -184,6 +184,12 @@
   "exit": 0,
   "outputs": {}
  },
+ "gen_flying_sword_feixuan.py": {
+  "exit": 0,
+  "outputs": {
+   "FlyingSwordFeixuanV2.bbmodel": "28c23d94e563b8b25d73ac0d4d7576fd01e39e2e0dc555cbacd3bbfbfb52cd9b"
+  }
+ },
  "gen_fu_chen_cao.py": {
   "exit": 0,
   "outputs": {
@@ -794,6 +800,12 @@
   "exit": 0,
   "outputs": {
    "ZhenyuanMine.bbmodel": "18d35232ed47a46e9f0ced1398a548699914a118add61ce42c12f34ad269598d"
+  }
+ },
+ "gen_zhinian.py": {
+  "exit": 0,
+  "outputs": {
+   "ZhinianV2.bbmodel": "d1f9466b8b380d1574c52bee664f9efd969bcdeb24ba15ca1efca867d0f84c1d"
   }
  },
  "gen_zhong_yan_teng.py": {
