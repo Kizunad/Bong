@@ -137,6 +137,39 @@ public final class BongAnimations {
     public static final Identifier HORSE_RIDE_BAREBACK = new Identifier(MOD_ID, "horse_ride_bareback");
     public static final Identifier HORSE_RIDE_STIRRUP = new Identifier(MOD_ID, "horse_ride_stirrup");
 
+    // plan-item-use-anim-v1 第 1 批：手持物攻击 / 使用动画。服务端 held_attack_anim 按手持物选用；
+    // 骨镐 pickaxe_bone_use 为循环动画，采集节拍待接线阶段核实。
+    public static final Identifier IRON_SWORD_V2_USE = new Identifier(MOD_ID, "iron_sword_v2_use");
+    public static final Identifier BRONZE_SABER_V2_USE = new Identifier(MOD_ID, "bronze_saber_v2_use");
+    public static final Identifier BONE_DAGGER_V2_USE = new Identifier(MOD_ID, "bone_dagger_v2_use");
+    public static final Identifier PICKAXE_IRON_V2_USE = new Identifier(MOD_ID, "pickaxe_iron_v2_use");
+    public static final Identifier AXE_BONE_V2_USE = new Identifier(MOD_ID, "axe_bone_v2_use");
+    public static final Identifier AXE_IRON_V2_USE = new Identifier(MOD_ID, "axe_iron_v2_use");
+    public static final Identifier WOODEN_STAFF_ATK = new Identifier(MOD_ID, "wooden_staff_atk");
+    public static final Identifier BONE_SWORD_SLASH = new Identifier(MOD_ID, "bone_sword_slash");
+    public static final Identifier PICKAXE_BONE_USE = new Identifier(MOD_ID, "pickaxe_bone_use");
+    public static final Identifier HAND_WRAP_JAB_LEFT = new Identifier(MOD_ID, "hand_wrap_jab_left");
+    public static final Identifier HAND_WRAP_JAB_RIGHT = new Identifier(MOD_ID, "hand_wrap_jab_right");
+    public static final Identifier BING_JIA_HEAVY_LEFT = new Identifier(MOD_ID, "bing_jia_heavy_left");
+    public static final Identifier BING_JIA_HEAVY_RIGHT = new Identifier(MOD_ID, "bing_jia_heavy_right");
+
+    /** 第 1 批手持物动画全集（含未接线的骨剑、骨镐循环），供资产清单测试逐个校验。 */
+    public static final List<Identifier> ITEM_USE_ANIMATIONS = List.of(
+        IRON_SWORD_V2_USE,
+        BRONZE_SABER_V2_USE,
+        BONE_DAGGER_V2_USE,
+        PICKAXE_IRON_V2_USE,
+        AXE_BONE_V2_USE,
+        AXE_IRON_V2_USE,
+        WOODEN_STAFF_ATK,
+        BONE_SWORD_SLASH,
+        PICKAXE_BONE_USE,
+        HAND_WRAP_JAB_LEFT,
+        HAND_WRAP_JAB_RIGHT,
+        BING_JIA_HEAVY_LEFT,
+        BING_JIA_HEAVY_RIGHT
+    );
+
     public static final Identifier HEIWUSHI_IDLE = new Identifier(MOD_ID, "heiwushi_idle");
     public static final Identifier HEIWUSHI_WALK = new Identifier(MOD_ID, "heiwushi_walk");
     public static final Identifier HEIWUSHI_DEATH = new Identifier(MOD_ID, "heiwushi_death");
