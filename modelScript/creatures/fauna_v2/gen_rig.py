@@ -175,6 +175,39 @@ SKULL_FIEND_BONES = (
          ("chain_rear_", "chain_weight_body_rear", "chain_weight_rivet_band_rear")),
 )
 
+# ================================================================ 执念
+# 拖地破袍的持剑残魂。髋是全身的根，躯干 / 双腿挂在髋上，头和两臂挂在躯干上。
+# 长袍的前 / 后 / 左 / 右四组布条各自一根骨，摆动才能错开相位；飘发（左 / 右 / 后脑）、
+# 双手爪、右手长剑也各自分骨。肩甲跟着上臂走。「l / r」沿用建模稿，l 在 +x 侧。
+# 终审稿面朝 +Z、中轴在原点（见 gen_zhinian.py 的 turn_to_plus_z / recenter_to_origin）。
+ZHINIAN_BONES = (
+    Bone("root", None, (0.0, 0.0, 0.0)),
+    Bone("hips", "root", (0.0, 13.2, 0.0),
+         ("core_pelvis", "robe_core", "robe_c_", "robe_waist", "belt_")),
+    Bone("leg_l", "hips", (2.0, 11.2, 0.0),
+         ("core_thigh", "core_knee", "core_shin", "core_ankle", "core_foot"), ("_l",)),
+    Bone("leg_r", "hips", (-2.0, 11.2, 0.0),
+         ("core_thigh", "core_knee", "core_shin", "core_ankle", "core_foot"), ("_r",)),
+    Bone("robe_front", "hips", (0.0, 13.4, 1.3), ("robe_f",)),
+    Bone("robe_back", "hips", (0.0, 13.4, -1.3), ("robe_b",)),
+    Bone("robe_side_l", "hips", (3.0, 13.4, 0.0), ("robe_l",)),
+    Bone("robe_side_r", "hips", (-3.0, 13.4, 0.0), ("robe_r",)),
+    Bone("torso", "hips", (0.0, 13.3, 0.0),
+         ("core_waist", "core_spine", "core_chest", "core_rib", "core_collar",
+          "core_shoulder", "wraps_under", "wrap_")),
+    Bone("head", "torso", (0.0, 21.8, 0.0), ("core_neck", "head_")),
+    Bone("hair_l", "head", (2.0, 24.5, -0.5), ("hair_l_",)),
+    Bone("hair_r", "head", (-2.0, 24.5, -0.5), ("hair_r_",)),
+    Bone("hair_back", "head", (0.0, 24.0, -1.8), ("hair_b_",)),
+    Bone("arm_l", "torso", (3.6, 20.8, 0.0), ("pauldron_l_", "arm_l_", "sleeve_l_")),
+    Bone("forearm_l", "arm_l", (3.9, 14.6, 0.1), ("arm_l_forearm", "arm_l_wrist")),
+    Bone("claw_l", "forearm_l", (3.5, 9.5, 1.2), ("claw_l_",)),
+    Bone("arm_r", "torso", (-3.6, 20.8, 0.0), ("pauldron_r_", "arm_r_", "sleeve_r_")),
+    Bone("forearm_r", "arm_r", (-3.9, 14.6, 0.1), ("arm_r_forearm", "arm_r_wrist")),
+    Bone("claw_r", "forearm_r", (-3.5, 9.5, 1.2), ("claw_r_",)),
+    Bone("sword", "forearm_r", (-3.6, 9.9, 0.55), ("sword_",)),
+)
+
 SPECIES = {
     "ash_spider_v2": Species("AshSpiderV2", ash_spider_bones),
     # 骨煞的终审稿在 #2325 落库时沿用了 SkullFiend.bbmodel 这个名字。
@@ -182,6 +215,7 @@ SPECIES = {
     "skull_fiend_v2": Species("SkullFiend", lambda source: SKULL_FIEND_BONES, lift=13.5),
     "daoxiang_v2": Species("DaoxiangV2", lambda source: DAOXIANG_BONES),
     "fuya_v2": Species("FuyaV2", lambda source: FUYA_BONES),
+    "zhinian_v2": Species("ZhinianV2", lambda source: ZHINIAN_BONES),
 }
 
 
@@ -208,13 +242,20 @@ def turn_to_minus_z(point: list[float], lift: float) -> list[float]:
 
 
 def turn_element(element: dict, lift: float) -> None:
-    """把一个 cube 绕 Y 转 180° 并上移，原地改写。"""
+    """把一个 cube 绕 Y 转 180° 并上移，原地改写。
+
+    带旋转的 cube 也能转：整件绕 Y 转 180° 是对称共轭，原先绕 X、Z 轴的转角反号，绕 Y 的不变，
+    即欧拉角 (rx, ry, rz) -> (-rx, ry, -rz)，旋转中心 origin 与几何同样转向。
+    """
 
     start, end = element["from"], element["to"]
     element["from"] = [-end[0], start[1] + lift, -end[2]]
     element["to"] = [-start[0], end[1] + lift, -start[2]]
     if element.get("rotation") and any(element["rotation"]):
-        raise ValueError(f"cube {element['name']!r} 自带旋转；本脚本只处理轴对齐 cube")
+        if "origin" not in element:
+            raise ValueError(f"cube {element['name']!r} 有旋转却没有 origin，无法转向")
+        rx, ry, rz = element["rotation"]
+        element["rotation"] = [-rx, ry, -rz]
     if "origin" in element:
         element["origin"] = turn_to_minus_z(element["origin"], lift)
 
