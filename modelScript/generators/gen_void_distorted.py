@@ -209,108 +209,215 @@ def _tag(cubes: list[dict], group: str) -> list[dict]:
 
 # 02 号部件挂在脊椎前端（最后一节椎骨的 +Z 面，z=9）。
 MAW_FRONT_Z = VERTEBRA_Z_REAR + VERTEBRA_LENGTH * len(VERTEBRA_BOTTOMS)
-MAW_DEPTH = 2.0
-# 肉圈按行堆成八边形：(y0, y1, 半宽, 该行是否被洞穿)。中间三行被洞穿，
-# 左右各留一块；上下各两行是整条。
-MAW_ROWS = [
-    (10.0, 11.0, 1.8, False),
-    (11.0, 11.6, 2.8, False),
-    (11.6, 12.8, 3.4, True),
-    (12.8, 14.2, 3.6, True),
-    (14.2, 15.4, 3.4, True),
-    (15.4, 16.2, 3.0, False),
-    (16.2, 17.0, 2.0, False),
-]
+MAW_OUTER_DEPTH = 2.0  # 外圈红肉：z0 .. z0+2.0（最靠前）
+MAW_MID_DEPTH = 1.4  # 内圈暗红肉：前缘比外圈缩进 0.6
+MAW_VOID_DEPTH = 0.8  # 中心虚空黑：再缩进 0.6，三级台阶就是漏斗
+MAW_HOLE_HALF_WIDTH = 2.6
 MAW_HOLE_BOTTOM = 11.6
 MAW_HOLE_TOP = 15.4
-MAW_HOLE_HALF_WIDTH = 2.2
-MAW_LINER = 0.5
-SKULL_INNER_X = 3.6
-SKULL_OUTER_X = 7.2
+MAW_MID_THICKNESS = 0.8
+
+# 外圈红肉按行堆成参差的八边形：(y0, y1, 左半宽, 右半宽, 该行是否被洞穿)。
+# 左右半宽故意不相等，边缘才不会像一个规整的框。
+MAW_ROWS = [
+    (9.9, 10.9, 1.4, 1.7, False),
+    (10.9, 11.6, 2.6, 2.3, False),
+    (11.6, 12.8, 3.4, 3.2, True),
+    (12.8, 14.2, 3.7, 3.5, True),
+    (14.2, 15.4, 3.2, 3.5, True),
+    (15.4, 16.2, 2.6, 2.9, False),
+    (16.2, 17.0, 1.7, 1.5, False),
+]
+# 外圈边缘的几块凸起肉瘤：(侧, y0, y1, 突出的半宽范围, z 前缘退让)
+MAW_NUBS = [
+    (-1, 13.0, 13.7, (3.7, 4.0)),
+    (1, 14.6, 15.2, (3.5, 3.8)),
+    (-1, 11.7, 12.3, (3.4, 3.7)),
+    (1, 11.9, 12.5, (3.2, 3.6)),
+]
+# 垂下的短肉须：(x 中心, 长度)。
+MAW_WHISKERS = [(-1.0, 1.3), (-0.2, 0.8), (0.6, 1.7), (1.3, 1.0)]
 
 
-def _maw_ring() -> list[dict]:
-    """红肉圈：按行堆成的八边形，口内壁再贴一圈暗红肉衬，口里嵌一块虚空黑。
+def _maw_funnel() -> list[dict]:
+    """层层往里收的血肉漏斗：外圈参差红肉 → 内圈暗红 → 中心虚空黑，边缘几条短肉须。
 
-    肉圈深 2.0；黑色虚空板只有 1.0 厚、缩在口内，所以正面看是有深度的黑洞。
-    上下各一道骨缘贴在肉圈正面，对应参考图里圈住黑洞的弧形骨片。
+    三层前缘依次缩进 0.6，正面看是有台阶的深洞，不是一个框。
     """
     z0 = MAW_FRONT_Z
-    z1 = z0 + MAW_DEPTH
-    hole = MAW_HOLE_HALF_WIDTH
+    outer_z1 = z0 + MAW_OUTER_DEPTH
     cubes = []
-    for index, (y0, y1, half, pierced) in enumerate(MAW_ROWS):
-        material = "flesh_red" if index % 2 == 0 else "flesh_dark"
+    hole = MAW_HOLE_HALF_WIDTH
+    for index, (y0, y1, left, right, pierced) in enumerate(MAW_ROWS):
+        # 外圈以亮红为主，只有两行暗红夹在里面做斑驳，和内圈的暗红拉开层次。
+        material = "flesh_dark" if index in (1, 5) else "flesh_red"
         if pierced:
-            cubes.append(_cube(f"maw_row{index}_l", (-half, y0, z0), (-hole, y1, z1), material))
-            cubes.append(_cube(f"maw_row{index}_r", (hole, y0, z0), (half, y1, z1), material))
+            cubes.append(_cube(f"maw_outer{index}_l", (-left, y0, z0), (-hole, y1, outer_z1), material))
+            cubes.append(_cube(f"maw_outer{index}_r", (hole, y0, z0), (right, y1, outer_z1), material))
         else:
-            cubes.append(_cube(f"maw_row{index}", (-half, y0, z0), (half, y1, z1), material))
-
-    liner_z1 = z1 - 0.4
-    inner = hole - MAW_LINER
-    bottom = MAW_HOLE_BOTTOM + MAW_LINER
-    top = MAW_HOLE_TOP - MAW_LINER
-    cubes += [
-        _cube("maw_liner_top", (-hole, top, z0), (hole, MAW_HOLE_TOP, liner_z1), "flesh_dark"),
-        _cube("maw_liner_bottom", (-hole, MAW_HOLE_BOTTOM, z0), (hole, bottom, liner_z1), "flesh_dark"),
-        _cube("maw_liner_left", (-hole, bottom, z0), (-inner, top, liner_z1), "flesh_dark"),
-        _cube("maw_liner_right", (inner, bottom, z0), (hole, top, liner_z1), "flesh_dark"),
-        _cube("maw_void", (-inner, bottom, z0), (inner, top, z0 + 1.0), "void_black"),
-    ]
-    # 骨缘：上、下各两片，贴在肉圈正面，向洞口方向斜着略微错位。
-    for side, sign in (("l", -1), ("r", 1)):
-        def rim(name, xs, ys):
-            lo, hi = (xs[0], xs[1]) if sign > 0 else (-xs[1], -xs[0])
-            return _cube(f"maw_rim_{name}_{side}", (lo, ys[0], z1), (hi, ys[1], z1 + 0.4), "bone")
-
-        cubes += [
-            rim("top_outer", (1.6, 3.0), (15.6, 16.2)),
-            rim("top_inner", (0.5, 1.6), (16.2, 16.8)),
-            rim("bottom_outer", (1.4, 2.8), (11.0, 11.6)),
-            rim("bottom_inner", (0.4, 1.4), (10.4, 11.0)),
-        ]
-    return cubes
-
-
-def _skull(side: str, sign: int) -> list[dict]:
-    """一颗独立的骷髅：颅盖 + 眉脊 + 下颌 + 垂下的几颗牙 + 两个黑眼窝。
-
-    骷髅贴在肉圈外侧（与肉圈外缘相接），朝正面（+Z）。左右两颗略有高低差，
-    避免镜像得太工整。
-    """
-    z0 = MAW_FRONT_Z - 0.2
-    z1 = z0 + 2.8
-    x0, x1 = SKULL_INNER_X, SKULL_OUTER_X
-    lift = 0.3 if sign > 0 else 0.0
-
-    def box(name, xs, ys, zs, material):
-        lo_x, hi_x = (xs[0], xs[1]) if sign > 0 else (-xs[1], -xs[0])
-        return _cube(f"skull_{side}_{name}", (lo_x, ys[0] + lift, zs[0]), (hi_x, ys[1] + lift, zs[1]), material)
-
-    cubes = [
-        box("cranium", (x0, x1), (12.4, 15.2), (z0, z1), "bone"),
-        box("brow", (x0 + 0.3, x1 - 0.3), (15.2, 15.9), (z0 + 0.4, z1 - 0.2), "bone_shadow"),
-        box("jaw", (x0 + 0.5, x1 - 0.3), (10.9, 12.4), (z0 + 0.6, z1 - 0.4), "bone_shadow"),
-        box("eye_a", (x0 + 0.7, x0 + 1.7), (13.2, 14.2), (z1, z1 + 0.15), "void_black"),
-        box("eye_b", (x0 + 2.0, x0 + 3.0), (13.2, 14.2), (z1, z1 + 0.15), "void_black"),
-        box("nose", (x0 + 1.7, x0 + 2.0), (12.6, 13.2), (z1, z1 + 0.15), "void_black"),
-    ]
-    # 牙：三根长短不一的细条挂在下颌下缘。
-    for tooth, (tx, length) in enumerate([(x0 + 0.8, 0.7), (x0 + 1.7, 1.0), (x0 + 2.6, 0.6)]):
+            cubes.append(_cube(f"maw_outer{index}", (-left, y0, z0), (right, y1, outer_z1), material))
+    for index, (sign, y0, y1, (x0, x1)) in enumerate(MAW_NUBS):
+        lo, hi = (x0, x1) if sign > 0 else (-x1, -x0)
         cubes.append(
-            box(f"tooth_{tooth}", (tx, tx + 0.4), (10.9 - length, 10.9), (z1 - 1.0, z1 - 0.6), "bone")
+            _cube(f"maw_nub{index}", (lo, y0, z0 + 0.4), (hi, y1, outer_z1 - 0.5), "flesh_red")
+        )
+
+    # 内圈暗红：贴着洞壁的一圈，前缘比外圈缩进。
+    mid_z1 = z0 + MAW_MID_DEPTH
+    inner = hole - MAW_MID_THICKNESS
+    bottom = MAW_HOLE_BOTTOM + MAW_MID_THICKNESS
+    top = MAW_HOLE_TOP - MAW_MID_THICKNESS
+    cubes += [
+        _cube("maw_mid_top", (-hole, top, z0), (hole, MAW_HOLE_TOP, mid_z1), "flesh_dark"),
+        _cube("maw_mid_bottom", (-hole, MAW_HOLE_BOTTOM, z0), (hole, bottom, mid_z1), "flesh_dark"),
+        _cube("maw_mid_left", (-hole, bottom, z0), (-inner, top, mid_z1), "flesh_dark"),
+        _cube("maw_mid_right", (inner, bottom, z0), (hole, top, mid_z1), "flesh_dark"),
+        _cube(
+            "maw_void",
+            (-inner, bottom, z0),
+            (inner, top, z0 + MAW_VOID_DEPTH),
+            "void_black",
+        ),
+    ]
+    # 洞口切角：四个角各塞一块暗红肉，把方洞削成近似八边形。块比内圈再缩进，
+    # 且不盖住虚空板正面（板在 z0+0.8，块的前缘在 z0+1.1）。
+    chamfer = 0.6
+    for corner, (sx, y_edge, sy) in enumerate(
+        [(-1, bottom, 1), (1, bottom, 1), (-1, top, -1), (1, top, -1)]
+    ):
+        x_far = sx * (inner + 0.2)
+        x_near = sx * (inner - chamfer)
+        y_near = y_edge + sy * chamfer
+        y_edge = y_edge - sy * 0.2
+        cubes.append(
+            _cube(
+                f"maw_chamfer_{corner}",
+                (min(x_far, x_near), min(y_edge, y_near), z0 + 0.3),
+                (max(x_far, x_near), max(y_edge, y_near), z0 + 1.1),
+                "flesh_dark",
+            )
+        )
+    # 肉须：从最下一行肉圈垂下，长短不一、粗细 0.5。
+    for index, (x_center, length) in enumerate(MAW_WHISKERS):
+        cubes.append(
+            _cube(
+                f"maw_whisker_{index}",
+                (x_center - 0.25, MAW_ROWS[0][0] - length, z0 + 1.0),
+                (x_center + 0.25, MAW_ROWS[0][0], z0 + 1.5),
+                "flesh_red" if index % 2 == 0 else "flesh_dark",
+            )
         )
     return cubes
 
 
-def part_void_maw_skulls() -> list[dict]:
-    """02 部件：正中被红肉圈住的虚空黑洞 + 左右各一颗独立骷髅，挂在脊椎前端。
+SKULL_INNER_X = 3.4  # 颅骨内缘到中轴的距离；比肉圈最宽处略小，让颅骨压住肉圈边缘
+SKULL_WIDTH = 3.8
+SKULL_Z0 = MAW_FRONT_Z - 0.2
+SKULL_Z1 = SKULL_Z0 + 2.6
 
-    对照 parts_ref/02_void_maw_skulls.png。肉圈外缘与骷髅内侧相接，肉圈上缘
-    顶着最后一节椎骨的前面；肉条（03）和骨刺冠不在本件内。
+# 颅骨自下而上的横截面：(y0, y1, 内缩, 外缩, 前缘后退)。内缩/外缩是相对
+# 颅骨最宽处的收进量，前三级（顶部）逐级收圆；颧骨那一行向外多凸 0.3（负外缩）。
+SKULL_ROWS = [
+    ("cheek", 11.8, 12.6, 0.5, 0.2, 0.3),
+    ("zygoma", 12.6, 13.4, 0.0, -0.3, 0.0),
+    ("brow", 13.4, 14.6, 0.0, 0.0, 0.0),
+    ("upper", 14.6, 15.4, 0.3, 0.3, 0.0),
+    ("dome1", 15.4, 16.1, 0.7, 0.7, 0.2),
+    ("dome2", 16.1, 16.6, 1.2, 1.2, 0.4),
+]
+# 眼窝在颅骨宽度上的位置（离内缘的距离范围）；中间 1.1 到 1.8 是鼻梁。
+SOCKET_RANGES = [(0.5, 1.5), (2.3, 3.3)]
+SOCKET_BOTTOM = 13.5
+SOCKET_RECESS = 0.8  # 眼窝黑块比颅骨前面缩进的深度
+
+
+def _skull(side: str, sign: int) -> list[dict]:
+    """真骷髅：颅顶三级收圆、颧骨外凸、深黑眼窝带骨缘、倒三角鼻孔、一排参差牙齿。
+
+    骨色以 bone 为主，bone_shadow 做斑驳，颅缝用 rust_light 细线。颅骨压在肉圈边缘上，
+    再用两块暗红肉连到肉圈，不是并排摆的三块东西。右颗比左颗略高。
     """
-    cubes = _maw_ring() + _skull("l", -1) + _skull("r", 1)
+    lift = 0.3 if sign > 0 else 0.0
+    inner = SKULL_INNER_X
+    outer = SKULL_INNER_X + SKULL_WIDTH
+
+    def box(name, xs, ys, zs, material):
+        lo, hi = (xs[0], xs[1]) if sign > 0 else (-xs[1], -xs[0])
+        return _cube(f"skull_{side}_{name}", (lo, ys[0] + lift, zs[0]), (hi, ys[1] + lift, zs[1]), material)
+
+    z0, z1 = SKULL_Z0, SKULL_Z1
+    cubes = []
+    for name, y0, y1, in_cut, out_cut, back in SKULL_ROWS:
+        material = "bone_shadow" if name in ("cheek", "dome2") else "bone"
+        x0, x1 = inner + in_cut, outer - out_cut
+        if name != "brow":
+            cubes.append(box(name, (x0, x1), (y0, y1), (z0, z1 - back), material))
+            continue
+        # 眉弓那一行被两个眼窝切开：外缘、鼻梁、内缘三块骨，眼窝里嵌深黑块。
+        (a0, a1), (b0, b1) = ((inner + lo, inner + hi) for lo, hi in SOCKET_RANGES)
+        cubes += [
+            box("brow_inner", (x0, a0), (y0, y1), (z0, z1), "bone"),
+            box("brow_bridge", (a1, b0), (y0, y1), (z0, z1), "bone_shadow"),
+            box("brow_outer", (b1, x1), (y0, y1), (z0, z1), "bone"),
+        ]
+        for index, (s0, s1) in enumerate(((a0, a1), (b0, b1))):
+            cubes.append(box(f"socket_{index}", (s0, s1), (SOCKET_BOTTOM, y1), (z0, z1 - SOCKET_RECESS), "void_black"))
+            # 骨缘：眼窝上沿和外沿各压一条凸出的细骨，让眼窝有边。
+            cubes.append(box(f"socket_{index}_rim_top", (s0 - 0.15, s1 + 0.15), (y1 - 0.15, y1 + 0.2), (z1 - 0.1, z1 + 0.2), "bone_shadow"))
+            cubes.append(box(f"socket_{index}_rim_low", (s0 - 0.15, s1 + 0.15), (SOCKET_BOTTOM - 0.25, SOCKET_BOTTOM), (z1 - 0.1, z1 + 0.15), "bone_shadow"))
+
+    # 倒三角鼻孔：贴在颧骨行前面的两级黑块，上宽下窄。
+    nose_c = inner + (SOCKET_RANGES[0][1] + SOCKET_RANGES[1][0]) / 2
+    cubes.append(box("nose_top", (nose_c - 0.45, nose_c + 0.45), (12.95, 13.4), (z1, z1 + 0.12), "void_black"))
+    cubes.append(box("nose_bottom", (nose_c - 0.2, nose_c + 0.2), (12.6, 12.95), (z1, z1 + 0.12), "void_black"))
+
+    # 骨色斑驳与颅缝：不同深浅的小块贴在颅骨前面，位置左右各异。
+    shift = 0.0 if sign > 0 else 0.6
+    for index, (px, py, pw, ph, material) in enumerate(
+        [
+            (0.2, 14.8, 0.8, 0.5, "bone_shadow"),
+            (2.6, 15.6, 0.7, 0.4, "bone_shadow"),
+            (1.65, 13.5, 0.4, 0.3, "rust_light"),
+            (3.0, 12.7, 0.6, 0.5, "bone_shadow"),
+        ]
+    ):
+        px = min(px + (0.0 if index == 2 else shift), SKULL_WIDTH - pw - 0.1)
+        cubes.append(box(f"patch_{index}", (inner + px, inner + px + pw), (py, py + ph), (z1 - 0.05, z1 + 0.1), material))
+    suture = inner + SKULL_WIDTH / 2
+    cubes.append(box("suture", (suture - 0.1, suture + 0.1), (15.5, 16.0), (z1 - 0.25, z1 - 0.1), "rust_light"))
+
+    # 一排参差牙齿：粗细不一、长短不一，有断齿。
+    teeth = [(0.6, 0.45, 0.9), (1.1, 0.35, 0.5), (1.55, 0.5, 1.1), (2.15, 0.35, 0.6), (2.6, 0.45, 1.0), (3.1, 0.35, 0.4)]
+    for index, (tx, width, length) in enumerate(teeth):
+        cubes.append(
+            box(
+                f"tooth_{index}",
+                (inner + tx, inner + tx + width),
+                (11.8 - length, 11.8),
+                (z1 - 1.2, z1 - 0.7),
+                "bone" if index % 2 == 0 else "bone_shadow",
+            )
+        )
+    return cubes
+
+
+def _sinews() -> list[dict]:
+    """暗红肉把颅骨和肉圈连起来：上下各一条，从肉圈边缘搭到颅骨内侧。"""
+    z0 = MAW_FRONT_Z
+    cubes = []
+    for side, sign in (("l", -1), ("r", 1)):
+        for name, y0, y1 in (("low", 11.4, 12.2), ("high", 14.75, 15.3)):
+            lo, hi = (2.8, 4.6) if sign > 0 else (-4.6, -2.8)
+            cubes.append(_cube(f"sinew_{side}_{name}", (lo, y0, z0 + 0.5), (hi, y1, z0 + 1.45), "flesh_dark"))
+    return cubes
+
+
+def part_void_maw_skulls() -> list[dict]:
+    """02 部件：层层收拢的血肉漏斗 + 左右各一颗真骷髅，暗红肉连成一体，挂在脊椎前端。
+
+    对照 parts_ref/02_void_maw_skulls.png。红肉条下垂（03）和骨冠不在本件内。
+    """
+    cubes = _maw_funnel() + _skull("l", -1) + _skull("r", 1) + _sinews()
     return _tag(cubes, "void_maw_skulls")
 
 
