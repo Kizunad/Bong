@@ -3318,6 +3318,36 @@ fn hand_wrap_alternates_left_and_right_with_its_own_ids() {
     );
 }
 
+/// 换拳套后第一拳从右式起：缠手打一拳（交替态已指向左）后换上兵甲手套，
+/// 第一拳必须是兵甲的右式，而不是继承缠手的交替态播左重拳。
+#[test]
+fn switching_glove_family_restarts_alternation_with_right_punch() {
+    let mut app = setup_fist_combo_app();
+    let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(held_weapon("hand_wrap"));
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Blunt),
+        "bong:hand_wrap_jab_right",
+        "缠手起手右式"
+    );
+
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(held_weapon("bing_jia_shou_tao"));
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 11, WoundKind::Blunt),
+        "bong:bing_jia_heavy_right",
+        "换兵甲手套后第一拳从右式起，不继承缠手交替态"
+    );
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 12, WoundKind::Blunt),
+        "bong:bing_jia_heavy_left",
+        "兵甲族内照常交替"
+    );
+}
+
 /// 未列入表的手持物（骨剑）回落到原伤口类型分支：Cut → 默认剑斩。
 #[test]
 fn unmapped_held_weapon_falls_back_to_wound_kind_animation() {

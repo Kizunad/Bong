@@ -230,6 +230,9 @@ const FIST_COMBO_RESET_TICKS: u64 = 40;
 /// pub(crate)：作为 `emit_attack_animation_triggers` 系统参数类型需对注册点可见。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FistComboState {
+    /// 当前连击所属的动画族，用其左式 id 标识（每族唯一）。换族（空手 ↔ 拳套、
+    /// 换另一副拳套）时交替态不能跨族继承，必须从右式重新起手。
+    family_left: &'static str,
     next_is_left: bool,
     last_punch_tick: u64,
 }
@@ -321,6 +324,7 @@ fn next_fist_punch_anim(
 }
 
 /// 左右交替的连击态机（空手拳与两手都戴的拳套共用）：起手为右，之后每击交替。
+/// 连击态按攻击者记，但每个动画族（由左式 id 区分）各自独立：超时或换族都从右式起手。
 fn next_alternating_anim(
     combo: &mut HashMap<Entity, FistComboState>,
     attacker: Entity,
@@ -329,11 +333,14 @@ fn next_alternating_anim(
     right: &'static str,
 ) -> &'static str {
     let state = combo.entry(attacker).or_insert(FistComboState {
+        family_left: left,
         next_is_left: false,
         last_punch_tick: now_tick,
     });
-    if now_tick.saturating_sub(state.last_punch_tick) > FIST_COMBO_RESET_TICKS {
+    let timed_out = now_tick.saturating_sub(state.last_punch_tick) > FIST_COMBO_RESET_TICKS;
+    if timed_out || state.family_left != left {
         state.next_is_left = false;
+        state.family_left = left;
     }
     state.last_punch_tick = now_tick;
     let anim_id = if state.next_is_left { left } else { right };
