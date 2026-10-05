@@ -5,6 +5,7 @@ use valence::testing::create_mock_client;
 
 use crate::combat::components::BodyPart;
 use crate::combat::events::AttackReach;
+use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
 use crate::cultivation::breakthrough::{BreakthroughError, BreakthroughSuccess};
 use crate::cultivation::components::Realm;
 
@@ -3223,4 +3224,112 @@ fn non_fist_wound_kinds_never_emit_left_punch() {
             "{wound_kind:?} 应走原 wound-kind 动画映射，与拳击交替无关"
         );
     }
+}
+
+// ── plan-item-use-anim-v1 第 1 批 —— 手持物攻击动画 ─────────────────────────
+
+/// 表驱动：手持物 template_id → 攻击动画。锁「物品 → 动画 id」与回落（未列出返回 None，
+/// 走原伤口类型分支）。
+#[test]
+fn held_attack_anim_table_maps_item_templates_and_falls_back() {
+    use HeldAttackAnim::{Alternating, Single};
+    let cases: &[(&str, Option<HeldAttackAnim>)] = &[
+        ("iron_sword", Some(Single("bong:iron_sword_v2_use"))),
+        ("bronze_saber", Some(Single("bong:bronze_saber_v2_use"))),
+        ("bone_dagger", Some(Single("bong:bone_dagger_v2_use"))),
+        ("wooden_staff", Some(Single("bong:wooden_staff_atk"))),
+        ("pickaxe_iron", Some(Single("bong:pickaxe_iron_v2_use"))),
+        ("axe_bone", Some(Single("bong:axe_bone_v2_use"))),
+        ("axe_iron", Some(Single("bong:axe_iron_v2_use"))),
+        (
+            "hand_wrap",
+            Some(Alternating {
+                left: "bong:hand_wrap_jab_left",
+                right: "bong:hand_wrap_jab_right",
+            }),
+        ),
+        (
+            "bing_jia_shou_tao",
+            Some(Alternating {
+                left: "bong:bing_jia_heavy_left",
+                right: "bong:bing_jia_heavy_right",
+            }),
+        ),
+        // 骨镐动画是循环（攻击不发 StopAnim 会卡住），骨剑暂走默认动画：两者都不进表。
+        ("pickaxe_bone", None),
+        ("bone_sword", None),
+    ];
+    for (template, expected) in cases {
+        assert_eq!(held_attack_anim(template), *expected, "template {template}");
+    }
+}
+
+fn held_weapon(template: &str) -> Weapon {
+    Weapon {
+        slot: EquipSlot::MainHand,
+        instance_id: 1,
+        template_id: template.to_string(),
+        weapon_kind: WeaponKind::Sword,
+        base_attack: 10.0,
+        quality_tier: 0,
+        durability: 100.0,
+        durability_max: 100.0,
+    }
+}
+
+/// 持铁剑普通近战（Cut）→ 铁剑自己的攻击动画，不再落伤口类型的默认剑斩。
+#[test]
+fn melee_with_held_iron_sword_plays_its_own_attack_animation() {
+    let mut app = setup_fist_combo_app();
+    let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(held_weapon("iron_sword"));
+
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Cut),
+        "bong:iron_sword_v2_use"
+    );
+}
+
+/// 拳套两手都戴：连续攻击左右交替，动画 id 用拳套自己的左右式。
+#[test]
+fn hand_wrap_alternates_left_and_right_with_its_own_ids() {
+    let mut app = setup_fist_combo_app();
+    let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(held_weapon("hand_wrap"));
+
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Blunt),
+        "bong:hand_wrap_jab_right",
+        "拳套起手右式"
+    );
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 11, WoundKind::Blunt),
+        "bong:hand_wrap_jab_left",
+        "第二击交替为左式"
+    );
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 12, WoundKind::Blunt),
+        "bong:hand_wrap_jab_right",
+        "第三击交替回右式"
+    );
+}
+
+/// 未列入表的手持物（骨剑）回落到原伤口类型分支：Cut → 默认剑斩。
+#[test]
+fn unmapped_held_weapon_falls_back_to_wound_kind_animation() {
+    let mut app = setup_fist_combo_app();
+    let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(held_weapon("bone_sword"));
+
+    assert_eq!(
+        punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Cut),
+        ANIM_SWORD_SLASH_DOWN,
+        "骨剑暂走默认动画，表外回落伤口分支"
+    );
 }

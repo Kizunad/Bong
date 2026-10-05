@@ -37,6 +37,7 @@ use crate::cultivation::technique_scroll::TechniqueLearnedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
 use crate::forge::events::TemperingHit;
 use crate::forge::session::{ForgeSessions, ForgeStep};
+use crate::inventory::PlayerInventory;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -253,6 +254,7 @@ pub fn emit_attack_animation_triggers(
     mut intents: EventReader<AttackIntent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
     weapons: Query<&Weapon>,
+    inventories: Query<&PlayerInventory>,
     clock: Res<CombatClock>,
     mut fist_combo: Local<HashMap<Entity, FistComboState>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
@@ -261,10 +263,26 @@ pub fn emit_attack_animation_triggers(
         if intent.source == AttackSource::BurstMeridian || is_sword_path_source(intent.source) {
             continue;
         }
-        let mut anim_id = attack_anim_for_source(intent.source, intent.wound_kind);
-        if anim_id == ANIM_FIST_PUNCH_RIGHT && weapons.get(intent.attacker).is_err() {
-            anim_id = next_fist_punch_anim(&mut fist_combo, intent.attacker, clock.tick);
-        }
+        // 普通近战且手持物有专属攻击动画（plan-item-use-anim-v1）：按手持物选，不走伤口类型分支。
+        let held = match intent.source {
+            AttackSource::Melee => {
+                held_attack_anim_for_attacker(intent.attacker, &weapons, &inventories)
+            }
+            _ => None,
+        };
+        let anim_id = match held {
+            Some(HeldAttackAnim::Single(anim)) => anim,
+            Some(HeldAttackAnim::Alternating { left, right }) => {
+                next_alternating_anim(&mut fist_combo, intent.attacker, clock.tick, left, right)
+            }
+            None => {
+                let mut anim = attack_anim_for_source(intent.source, intent.wound_kind);
+                if anim == ANIM_FIST_PUNCH_RIGHT && weapons.get(intent.attacker).is_err() {
+                    anim = next_fist_punch_anim(&mut fist_combo, intent.attacker, clock.tick);
+                }
+                anim
+            }
+        };
         emit_play_for_entity(
             intent.attacker,
             anim_id,
@@ -293,6 +311,23 @@ fn next_fist_punch_anim(
     attacker: Entity,
     now_tick: u64,
 ) -> &'static str {
+    next_alternating_anim(
+        combo,
+        attacker,
+        now_tick,
+        ANIM_FIST_PUNCH_LEFT,
+        ANIM_FIST_PUNCH_RIGHT,
+    )
+}
+
+/// 左右交替的连击态机（空手拳与两手都戴的拳套共用）：起手为右，之后每击交替。
+fn next_alternating_anim(
+    combo: &mut HashMap<Entity, FistComboState>,
+    attacker: Entity,
+    now_tick: u64,
+    left: &'static str,
+    right: &'static str,
+) -> &'static str {
     let state = combo.entry(attacker).or_insert(FistComboState {
         next_is_left: false,
         last_punch_tick: now_tick,
@@ -301,13 +336,62 @@ fn next_fist_punch_anim(
         state.next_is_left = false;
     }
     state.last_punch_tick = now_tick;
-    let anim_id = if state.next_is_left {
-        ANIM_FIST_PUNCH_LEFT
-    } else {
-        ANIM_FIST_PUNCH_RIGHT
-    };
+    let anim_id = if state.next_is_left { left } else { right };
     state.next_is_left = !state.next_is_left;
     anim_id
+}
+
+/// 手持物的普通攻击动画（plan-item-use-anim-v1 第 1 批）。键是手持物的 template_id。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeldAttackAnim {
+    /// 单段动画（一次挥击，非循环）。
+    Single(&'static str),
+    /// 两手都戴的拳套：左右交替，起手右。
+    Alternating {
+        left: &'static str,
+        right: &'static str,
+    },
+}
+
+/// template_id → 攻击动画。没有列出的手持物返回 None，走原来的伤口类型分支。
+///
+/// 骨镐 `pickaxe_bone_use` 与骨剑 `bone_sword`（骨剑暂按默认动画，见接线说明）不在表内：
+/// 骨镐的动画是循环（isLoop），攻击不会发 StopAnim，会一直循环卡住手臂。
+pub(crate) fn held_attack_anim(template_id: &str) -> Option<HeldAttackAnim> {
+    use HeldAttackAnim::{Alternating, Single};
+    Some(match template_id {
+        "iron_sword" => Single("bong:iron_sword_v2_use"),
+        "bronze_saber" => Single("bong:bronze_saber_v2_use"),
+        "bone_dagger" => Single("bong:bone_dagger_v2_use"),
+        "wooden_staff" => Single("bong:wooden_staff_atk"),
+        "pickaxe_iron" => Single("bong:pickaxe_iron_v2_use"),
+        "axe_bone" => Single("bong:axe_bone_v2_use"),
+        "axe_iron" => Single("bong:axe_iron_v2_use"),
+        "hand_wrap" => Alternating {
+            left: "bong:hand_wrap_jab_left",
+            right: "bong:hand_wrap_jab_right",
+        },
+        "bing_jia_shou_tao" => Alternating {
+            left: "bong:bing_jia_heavy_left",
+            right: "bong:bing_jia_heavy_right",
+        },
+        _ => return None,
+    })
+}
+
+/// 攻击者当前手持物的攻击动画。优先取 `Weapon`（武器类），没有则取主手持有物（工具类
+/// 不挂 `Weapon`，如铁镐、骨斧、兵甲手套）。
+fn held_attack_anim_for_attacker(
+    attacker: Entity,
+    weapons: &Query<&Weapon>,
+    inventories: &Query<&PlayerInventory>,
+) -> Option<HeldAttackAnim> {
+    if let Ok(weapon) = weapons.get(attacker) {
+        return held_attack_anim(&weapon.template_id);
+    }
+    let inventory = inventories.get(attacker).ok()?;
+    let held = inventory.equipped.get("main_hand")?.held.as_ref()?;
+    held_attack_anim(&held.template_id)
 }
 
 /// plan-skill-av-relink-v1 P1 — 「激活功法」时刻 → 流派架势动画。
