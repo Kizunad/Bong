@@ -72,6 +72,9 @@ import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimato
 from gif_timing import gif_schedule  # noqa: E402  两个预览工具共用的 GIF 时间表
 from bbmodel_maker.workbench.preview_armor_on_body import make_player_skin  # noqa: E402
 from bbmodel_maker.render.render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
+from cjk_font import load_font  # noqa: E402  标签字体带 CJK 字形，见 cjk_font.py
+
+LABEL_FONT = load_font(12)
 
 NS = uuid.UUID("6b1d0f3a-2c47-4e58-9a10-77c3f9e0b542")
 S_FLIP = np.diag([1.0, -1.0, 1.0])        # ModelPart(y↓) ↔ Bedrock(y↑) 的手性夹层
@@ -549,10 +552,10 @@ def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
         tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick, views)
         canvas = Image.new("RGB", (w, h), (16, 17, 20))
         draw = ImageDraw.Draw(canvas)
-        draw.text((6, h // 2), f"t{tick:4.1f}", fill=(232, 232, 224))
+        draw.text((6, h // 2), f"t{tick:4.1f}", fill=(232, 232, 224), font=LABEL_FONT)
         x = 54
         for label, img in tiles:
-            draw.text((x + 3, gap), label, fill=(198, 198, 190))
+            draw.text((x + 3, gap), label, fill=(198, 198, 190), font=LABEL_FONT)
             canvas.paste(img, (x, gap + lab))
             x += args.size + gap
         frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
@@ -652,10 +655,10 @@ def main() -> int:
     draw = ImageDraw.Draw(canvas)
     y = gap
     for tick, tiles in rows:
-        draw.text((6, y + args.size // 2), f"t{tick:g}", fill=(232, 232, 224))
+        draw.text((6, y + args.size // 2), f"t{tick:g}", fill=(232, 232, 224), font=LABEL_FONT)
         x = 54
         for label, img in tiles:
-            draw.text((x + 3, y), label, fill=(198, 198, 190))
+            draw.text((x + 3, y), label, fill=(198, 198, 190), font=LABEL_FONT)
             canvas.paste(img, (x, y + lab))
             x += args.size + gap
         y += args.size + lab + gap
