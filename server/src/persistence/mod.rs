@@ -15,8 +15,8 @@ use valence::prelude::bevy_ecs::event::{Events, ManualEventReader};
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
     Added, App, AppExit, Changed, Client, Commands, Component, DVec3, Despawned, Entity,
-    EntityKind, EventReader, IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource,
-    Startup, Update, Username, With, Without, World,
+    EntityKind, EventReader, IntoSystemConfigs, Last, Position, Query, RemovedComponents, Res,
+    ResMut, Resource, Startup, Update, Username, With, Without, World,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -87,8 +87,10 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据；
 /// v45 持久化跨重启的共享运行时 tick，供保质期绝对 tick 继续单调推进；
 /// v46 将 R1 的 Suspended checkpoint、ReconnectGuard 与 R6/R2 的 CraftRestoreGuard
-/// control frame 纳入同一持久化 seam。
-const CURRENT_USER_VERSION: i32 = 46;
+/// control frame 纳入同一持久化 seam；v47 持久化玩家长期状态效果切片；v48 为
+/// `player_identities` 增加可索引的 username 派生列，消除兼容回退的全表扫描；v49
+/// 增加世界/玩家运行态切片表，承载 P4 的 JSON 快照。
+const CURRENT_USER_VERSION: i32 = 49;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -142,6 +144,7 @@ mod migrations;
 mod models;
 mod npc;
 mod player;
+mod runtime;
 mod runtime_clock;
 mod session;
 mod social;
@@ -160,6 +163,7 @@ pub use life::*;
 pub use models::*;
 pub use npc::*;
 pub(crate) use player::*;
+pub(crate) use runtime::*;
 pub(crate) use runtime_clock::*;
 pub use session::*;
 pub use social::*;
@@ -176,6 +180,14 @@ pub fn register(app: &mut App) {
     slice_registry
         .register_slice::<ZoneRuntimePersistenceSlice>()
         .and_then(|()| slice_registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<MineralExhaustedPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<SpiritwoodHarvestedPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<ZoneInfluencePersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<ActiveEventsPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<HeartbeatRuntimePersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<SupplyCoffinPersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<SpiritEyePersistenceSlice>())
+        .and_then(|()| slice_registry.register_slice::<PlayerRuntimePersistenceSlice>())
         .expect("production persistence slice descriptors must be valid");
 
     app.insert_resource(slice_registry)
@@ -192,6 +204,7 @@ pub fn register(app: &mut App) {
         .init_resource::<RuntimeClockSnapshotState>()
         .init_resource::<ZoneRuntimeSnapshotState>()
         .init_resource::<ZoneInfluenceSnapshotState>()
+        .init_resource::<P4WorldRuntimeSnapshotState>()
         .add_systems(
             Startup,
             bootstrap_persistence_system
@@ -214,6 +227,13 @@ pub fn register(app: &mut App) {
                 persist_runtime_clock_system,
                 persist_zone_runtime_system,
                 persist_zone_influence_system,
+                persist_p4_world_runtime_system,
+                hydrate_player_runtime_slices
+                    .after(crate::player::attach_player_state_to_joined_clients)
+                    .after(crate::world::tiandao_hunt::attach_tiandao_attention),
+                autosave_player_runtime_slices.after(hydrate_player_runtime_slices),
+                persist_disconnected_player_runtime_slices
+                    .after(crate::player::despawn_disconnected_clients),
             ),
         )
         .add_systems(

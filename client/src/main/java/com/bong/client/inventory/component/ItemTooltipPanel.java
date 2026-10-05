@@ -16,6 +16,13 @@ import net.minecraft.text.Text;
 
 import java.util.Locale;
 
+/**
+ * 库存物品与装备槽的悬停提示面板。
+ *
+ * <p>面板只读取 {@link InventoryItem} 和装备槽快照，负责尺寸、图标、说明与约束提示的
+ * 绘制；它不发起库存请求，也不改变物品或装备状态。空槽提示与物品详情共用同一块面板，
+ * 但各自保持独立的绘制边界，避免把 tooltip 文案和拖放事务混在一起。</p>
+ */
 public class ItemTooltipPanel extends BaseComponent {
     private static final int PANEL_WIDTH = 196;
     /**
@@ -66,6 +73,7 @@ public class ItemTooltipPanel extends BaseComponent {
         this.sizing(Sizing.fixed(PANEL_WIDTH), Sizing.fixed(DEFAULT_HEIGHT));
     }
 
+    /** 将普通库存物品设为当前 hover 目标；传入 {@code null} 会恢复通用提示。 */
     public void setHoveredItem(InventoryItem item) {
         applyHover(item, null, 0);
     }
@@ -152,26 +160,11 @@ public class ItemTooltipPanel extends BaseComponent {
     @Override
     public void draw(OwoUIDrawContext context, int mouseX, int mouseY, float partialTicks, float delta) {
         int h = this.height;
-        float fade = fadeProgress(System.currentTimeMillis() - hoverChangedAtMillis);
-        context.fill(x, y, x + PANEL_WIDTH, y + h, applyFadeAlpha(BG_COLOR, fade));
-        GridSlotComponent.drawSlotBorder(context, x, y, PANEL_WIDTH, h, applyFadeAlpha(BORDER_COLOR, fade));
-        if (AncientRelicGlowRenderer.shouldGlow(hoveredItem)) {
-            AncientRelicGlowRenderer.drawGlowBorder(context, x, y, PANEL_WIDTH, h, System.currentTimeMillis());
-        }
+        drawPanelChrome(context, h);
 
         TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
 
-        if (hoveredItem == null || hoveredItem.isEmpty()) {
-            if (hoveredSlotType != null) {
-                // plan-inventory-hint-panel-v1 P2：空装备槽 hover——核心价值恰在此处（cap 预看，
-                // 不必等失败 toast 才知道）。不落回通用 "移动光标至物品查看详情" hint。
-                drawEmptySlotConstraint(context, textRenderer);
-                return;
-            }
-            String hint = "移动光标至物品查看详情";
-            int hintX = x + (PANEL_WIDTH - textRenderer.getWidth(hint)) / 2;
-            int hintY = y + (h - textRenderer.fontHeight) / 2;
-            context.drawTextWithShadow(textRenderer, Text.literal(hint), hintX, hintY, HINT_COLOR);
+        if (drawEmptyHover(context, textRenderer, h)) {
             return;
         }
 
@@ -285,28 +278,72 @@ public class ItemTooltipPanel extends BaseComponent {
             cy += textRenderer.fontHeight + BLOCK_LINE_STEP;
         }
 
+        drawDescriptionAndConstraint(context, textRenderer, h, cy, descLeft);
+    }
+
+    /** 绘制 tooltip 的底板、边框与需要动画的遗物高光。 */
+    private void drawPanelChrome(OwoUIDrawContext context, int height) {
+        float fade = fadeProgress(System.currentTimeMillis() - hoverChangedAtMillis);
+        context.fill(x, y, x + PANEL_WIDTH, y + height, applyFadeAlpha(BG_COLOR, fade));
+        GridSlotComponent.drawSlotBorder(context, x, y, PANEL_WIDTH, height, applyFadeAlpha(BORDER_COLOR, fade));
+        if (AncientRelicGlowRenderer.shouldGlow(hoveredItem)) {
+            AncientRelicGlowRenderer.drawGlowBorder(context, x, y, PANEL_WIDTH, height, System.currentTimeMillis());
+        }
+    }
+
+    /**
+     * 绘制空 hover 状态。
+     *
+     * @return 当前没有物品详情可画时返回 {@code true}
+     */
+    private boolean drawEmptyHover(OwoUIDrawContext context, TextRenderer textRenderer, int height) {
+        if (hoveredItem != null && !hoveredItem.isEmpty()) {
+            return false;
+        }
+        if (hoveredSlotType != null) {
+            // plan-inventory-hint-panel-v1 P2：空装备槽 hover——核心价值恰在此处（cap 预看，
+            // 不必等失败 toast 才知道）。不落回通用 "移动光标至物品查看详情" hint。
+            drawEmptySlotConstraint(context, textRenderer);
+            return true;
+        }
+        String hint = "移动光标至物品查看详情";
+        int hintX = x + (PANEL_WIDTH - textRenderer.getWidth(hint)) / 2;
+        int hintY = y + (height - textRenderer.fontHeight) / 2;
+        context.drawTextWithShadow(textRenderer, Text.literal(hint), hintX, hintY, HINT_COLOR);
+        return true;
+    }
+
+    /** 描述使用统一换行宽度，最后追加装备槽约束行。 */
+    private void drawDescriptionAndConstraint(
+        OwoUIDrawContext context,
+        TextRenderer textRenderer,
+        int height,
+        int currentY,
+        int descriptionLeft
+    ) {
         // Description —— 用 TextRenderer.wrapLines 做真正的 word-wrap（按字符宽度分行，不加 "…"）。
         // 为保证 wrap 宽度稳定，统一推到 icon 底部之下全宽显示，不再绕 icon 右侧。
+        int cy = currentY;
         int iconBottom = y + ICON_MARGIN + ICON_SIZE;
         String desc = hoveredItem.description();
         if (!desc.isEmpty()) {
             cy = Math.max(cy, iconBottom);
             int maxWidth = PANEL_WIDTH - ICON_MARGIN * 2;
             for (var line : textRenderer.wrapLines(Text.literal(desc), maxWidth)) {
-                if (cy > y + h - textRenderer.fontHeight - 2) break;
-                context.drawTextWithShadow(textRenderer, line, descLeft, cy, 0xFFAAAAAA);
+                if (cy > y + height - textRenderer.fontHeight - 2) break;
+                context.drawTextWithShadow(textRenderer, line, descriptionLeft, cy, 0xFFAAAAAA);
                 cy += textRenderer.fontHeight + DESC_LINE_STEP;
             }
         }
 
         // plan-inventory-hint-panel-v1 P2：装备槽 hover（有件的槽）—— 追加一行"约束说明"。
         if (hoveredSlotType != null) {
-            if (cy > y + h - textRenderer.fontHeight - PADDING_BOTTOM) {
-                cy = y + h - textRenderer.fontHeight - PADDING_BOTTOM;
+            if (cy > y + height - textRenderer.fontHeight - PADDING_BOTTOM) {
+                cy = y + height - textRenderer.fontHeight - PADDING_BOTTOM;
             }
             String constraintLine = slotConstraintLine(hoveredSlotType, hoveredSlotWornCount);
             int constraintColor = slotConstraintColor(hoveredSlotType, hoveredSlotWornCount);
-            context.drawTextWithShadow(textRenderer, Text.literal(constraintLine), descLeft, cy, constraintColor);
+            context.drawTextWithShadow(textRenderer, Text.literal(constraintLine), descriptionLeft, cy, constraintColor);
         }
     }
 
@@ -408,6 +445,7 @@ public class ItemTooltipPanel extends BaseComponent {
         };
     }
 
+    /** 返回真元、耐久与遗物充能的紧凑状态行；没有需要提示的状态时返回空串。 */
     public static String formatStatusLine(InventoryItem item) {
         if (item == null || item.isEmpty()) return "";
 
@@ -428,37 +466,44 @@ public class ItemTooltipPanel extends BaseComponent {
         return status.toString();
     }
 
+    /** 返回凡俗护甲的材质提示，非护甲或空物品返回空串。 */
     public static String armorMaterialLine(InventoryItem item) {
         if (item == null || item.isEmpty()) return "";
         return ArmorTintRegistry.materialLine(item.itemId());
     }
 
+    /** 返回凡俗护甲的防御提示，非护甲或空物品返回空串。 */
     public static String armorDefenseLine(InventoryItem item) {
         if (item == null || item.isEmpty()) return "";
         return ArmorTintRegistry.defenseLine(item.itemId());
     }
 
+    /** 返回凡俗护甲损坏时的不可穿戴提示。 */
     public static String armorBrokenLine(InventoryItem item) {
         if (item == null || item.isEmpty() || !ArmorTintRegistry.isMundaneArmor(item.itemId())) return "";
         return item.durability() <= 0.0 ? "已损坏·不可穿戴" : "";
     }
 
+    /** 返回凡俗护甲的修复提示，空物品返回空串。 */
     public static String armorRepairLine(InventoryItem item) {
         if (item == null || item.isEmpty()) return "";
         return ArmorTintRegistry.repairLine(item.itemId());
     }
 
+    /** 将物品灵质格式化为 tooltip 标签，空物品显示 0%。 */
     public static String spiritQualityLabel(InventoryItem item) {
         if (item == null || item.isEmpty()) return "灵质 0%";
         return String.format(Locale.ROOT, "灵质 %.0f%%", item.spiritQuality() * 100);
     }
 
+    /** 按 0 到 1 的灵质比例计算质量条填充宽度，并钳制异常输入。 */
     public static int qualityBarFillWidth(int totalWidth, double spiritQuality) {
         int safeWidth = Math.max(0, totalWidth);
         double clamped = Math.max(0.0, Math.min(1.0, spiritQuality));
         return (int) Math.round(safeWidth * clamped);
     }
 
+    /** 按灵质比例在灰/绿/橙三段之间插值质量条颜色。 */
     public static int qualityBarColor(double spiritQuality) {
         double clamped = Math.max(0.0, Math.min(1.0, spiritQuality));
         if (clamped < 0.5) {

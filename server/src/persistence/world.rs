@@ -17,6 +17,13 @@ pub(super) struct ZoneInfluenceSnapshotState {
 
 impl Resource for ZoneInfluenceSnapshotState {}
 
+#[derive(Debug, Default)]
+pub(super) struct P4WorldRuntimeSnapshotState {
+    pub(super) last_snapshot_wall: i64,
+}
+
+impl Resource for P4WorldRuntimeSnapshotState {}
+
 pub(super) struct ZoneRuntimePersistenceSlice;
 
 impl PersistenceSlice for ZoneRuntimePersistenceSlice {
@@ -44,6 +51,310 @@ const ZONE_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
     disconnect_save: None,
     shutdown_flush: Some(flush_zone_runtime_slice),
 };
+
+/// 矿脉耗尽日志的 canonical slice。
+///
+/// Update 中的节流写入只负责降低正常运行时的丢失窗口；关服时必须通过
+/// registry 强制 flush，确保最后一批 `MineralExhaustedEvent` 不会留在内存里。
+pub(super) struct MineralExhaustedPersistenceSlice;
+
+impl PersistenceSlice for MineralExhaustedPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &MINERAL_EXHAUSTED_SLICE_DESCRIPTOR
+    }
+}
+
+const MINERAL_EXHAUSTED_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.mineral_exhausted"),
+    scope: SliceScope::WorldResource,
+    order: 110,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.mineral_exhausted"),
+        WriteAuthority::new("persistence.mineral_exhausted"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_mineral_exhausted_slice),
+};
+
+/// 灵木采伐日志的 canonical slice。
+///
+/// 采伐日志在 Update 中按窗口节流，但窗口尚未到期时仍可能有 dirty 内容；
+/// shutdown dispatcher 是它唯一的关服强刷出口，避免重启后采伐点复活。
+pub(super) struct SpiritwoodHarvestedPersistenceSlice;
+
+impl PersistenceSlice for SpiritwoodHarvestedPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &SPIRITWOOD_HARVESTED_SLICE_DESCRIPTOR
+    }
+}
+
+const SPIRITWOOD_HARVESTED_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.spiritwood_harvested"),
+    scope: SliceScope::WorldResource,
+    order: 120,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.spiritwood_harvested"),
+        WriteAuthority::new("persistence.spiritwood_harvested"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_spiritwood_harvested_slice),
+};
+
+/// zone influence 的 canonical shutdown slice。
+///
+/// influence 仍保留既有 5 分钟节流快照；这里仅接管 AppExit → Last 的最后一次
+/// snapshot，不改变正常 Update 写入或失败重试语义。
+pub(super) struct ZoneInfluencePersistenceSlice;
+
+impl PersistenceSlice for ZoneInfluencePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &ZONE_INFLUENCE_SLICE_DESCRIPTOR
+    }
+}
+
+const ZONE_INFLUENCE_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.zone_influence"),
+    scope: SliceScope::WorldResource,
+    order: 130,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.zone_influence"),
+        WriteAuthority::new("persistence.zone_influence"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_zone_influence_slice),
+};
+
+macro_rules! world_runtime_slice {
+    ($name:ident, $descriptor:ident, $id:literal, $order:literal, $authority:literal, $flush:ident) => {
+        pub(super) struct $name;
+
+        impl PersistenceSlice for $name {
+            fn descriptor() -> &'static SliceDescriptor {
+                &$descriptor
+            }
+        }
+
+        const $descriptor: SliceDescriptor = SliceDescriptor {
+            id: SliceId::new($id),
+            scope: SliceScope::WorldResource,
+            order: $order,
+            load_failure: LoadFailurePolicy::RefuseStartup,
+            time_basis: TimeBasis::None,
+            write_binding: WriteBinding::new(
+                WriteDomain::new($id),
+                WriteAuthority::new($authority),
+            ),
+            write_ordering: WriteOrdering::Serialized,
+            autosave: AutosavePolicy::Disabled,
+            hydrate: None,
+            reconnect_preflight: None,
+            reconnect_cleanup: None,
+            rebase: None,
+            disconnect_save: None,
+            shutdown_flush: Some($flush),
+        };
+    };
+}
+
+world_runtime_slice!(
+    ActiveEventsPersistenceSlice,
+    ACTIVE_EVENTS_SLICE_DESCRIPTOR,
+    "world.active_events",
+    140,
+    "persistence.active_events",
+    flush_active_events_slice
+);
+world_runtime_slice!(
+    HeartbeatRuntimePersistenceSlice,
+    HEARTBEAT_RUNTIME_SLICE_DESCRIPTOR,
+    "world.heartbeat_runtime",
+    150,
+    "persistence.heartbeat_runtime",
+    flush_heartbeat_runtime_slice
+);
+world_runtime_slice!(
+    SupplyCoffinPersistenceSlice,
+    SUPPLY_COFFIN_SLICE_DESCRIPTOR,
+    "world.supply_coffin",
+    160,
+    "persistence.supply_coffin",
+    flush_supply_coffin_slice
+);
+world_runtime_slice!(
+    SpiritEyePersistenceSlice,
+    SPIRIT_EYE_SLICE_DESCRIPTOR,
+    "world.spirit_eyes",
+    170,
+    "persistence.spirit_eyes",
+    flush_spirit_eye_slice
+);
+
+fn flush_mineral_exhausted_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(mut log) = world.get_resource_mut::<crate::mineral::ExhaustedMineralsLog>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    log.flush()
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("mineral exhausted log flush failed: {error}")))
+}
+
+fn flush_spiritwood_harvested_slice(
+    world: &mut World,
+    _context: &SliceRunContext,
+) -> SliceRunResult {
+    let Some(mut logs) = world.get_resource_mut::<crate::spiritwood::SpiritWoodHarvestedLogs>()
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    logs.flush()
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| {
+            SliceRunError::new(format!("spiritwood harvested log flush failed: {error}"))
+        })
+}
+
+fn flush_zone_influence_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(influence_map) = world.get_resource::<crate::world::territory::ZoneInfluenceMap>()
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    persist_zone_influence_snapshot(&settings, influence_map)
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("zone influence flush failed: {error}")))
+}
+
+fn flush_active_events_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let Some(events) = world.get_resource::<crate::world::events::ActiveEventsResource>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    save_world_runtime_slice(
+        &settings,
+        "world.active_events",
+        &events.persisted_snapshot(),
+    )
+    .map(|()| SliceRunOutcome::Flushed)
+    .map_err(|error| SliceRunError::new(format!("active events flush failed: {error}")))
+}
+
+fn flush_heartbeat_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let Some(heartbeat) = world.get_resource::<WorldHeartbeat>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    save_world_runtime_slice(
+        &settings,
+        "world.heartbeat_runtime",
+        &heartbeat.persisted_runtime(),
+    )
+    .map(|()| SliceRunOutcome::Flushed)
+    .map_err(|error| SliceRunError::new(format!("heartbeat runtime flush failed: {error}")))
+}
+
+fn flush_supply_coffin_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let Some(coffins) = world.get_resource::<crate::supply_coffin::SupplyCoffinRegistry>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    save_world_runtime_slice(
+        &settings,
+        "world.supply_coffin",
+        &coffins.persisted_runtime(),
+    )
+    .map(|()| SliceRunOutcome::Flushed)
+    .map_err(|error| SliceRunError::new(format!("supply coffin flush failed: {error}")))
+}
+
+fn flush_spirit_eye_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    let Some(settings) = world.get_resource::<PersistenceSettings>().cloned() else {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    };
+    let Some(eyes) = world.get_resource::<crate::world::spirit_eye::SpiritEyeRegistry>() else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    save_world_runtime_slice(&settings, "world.spirit_eyes", &eyes.persisted_snapshot())
+        .map(|()| SliceRunOutcome::Flushed)
+        .map_err(|error| SliceRunError::new(format!("spirit eye flush failed: {error}")))
+}
+
+pub(super) fn persist_p4_world_runtime_slices(world: &World) -> io::Result<()> {
+    let settings = world
+        .get_resource::<PersistenceSettings>()
+        .ok_or_else(|| io::Error::other("PersistenceSettings is unavailable"))?;
+    let mut failures = Vec::new();
+    if let Some(events) = world.get_resource::<crate::world::events::ActiveEventsResource>() {
+        if let Err(error) = save_world_runtime_slice(
+            settings,
+            "world.active_events",
+            &events.persisted_snapshot(),
+        ) {
+            failures.push(format!("world.active_events: {error}"));
+        }
+    }
+    if let Some(heartbeat) = world.get_resource::<WorldHeartbeat>() {
+        if let Err(error) = save_world_runtime_slice(
+            settings,
+            "world.heartbeat_runtime",
+            &heartbeat.persisted_runtime(),
+        ) {
+            failures.push(format!("world.heartbeat_runtime: {error}"));
+        }
+    }
+    if let Some(coffins) = world.get_resource::<crate::supply_coffin::SupplyCoffinRegistry>() {
+        if let Err(error) = save_world_runtime_slice(
+            settings,
+            "world.supply_coffin",
+            &coffins.persisted_runtime(),
+        ) {
+            failures.push(format!("world.supply_coffin: {error}"));
+        }
+    }
+    if let Some(eyes) = world.get_resource::<crate::world::spirit_eye::SpiritEyeRegistry>() {
+        if let Err(error) =
+            save_world_runtime_slice(settings, "world.spirit_eyes", &eyes.persisted_snapshot())
+        {
+            failures.push(format!("world.spirit_eyes: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(failures.join("; ")))
+    }
+}
 
 pub(super) fn persist_zone_runtime_system(
     settings: Res<PersistenceSettings>,
@@ -143,6 +454,85 @@ pub(super) fn persist_zone_influence_system(
             settings.db_path().display()
         ),
     }
+}
+
+pub(super) fn persist_p4_world_runtime_system(world: &mut World) {
+    let wall_clock = current_unix_seconds();
+    world.resource_scope(
+        |world, mut state: valence::prelude::Mut<P4WorldRuntimeSnapshotState>| {
+            if state.last_snapshot_wall > 0
+                && wall_clock.saturating_sub(state.last_snapshot_wall)
+                    < ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS
+            {
+                false
+            } else {
+                match persist_p4_world_runtime_slices(world) {
+                    Ok(()) => {
+                        state.last_snapshot_wall = wall_clock;
+                    }
+                    Err(error) => tracing::warn!(
+                        "[bong][persistence] failed to persist P4 world runtime slices: {error}"
+                    ),
+                }
+                true
+            }
+        },
+    );
+}
+
+pub(super) fn hydrate_p4_world_runtime(
+    settings: &PersistenceSettings,
+    mut active_events: Option<ResMut<crate::world::events::ActiveEventsResource>>,
+    mut heartbeat: Option<ResMut<WorldHeartbeat>>,
+    mut coffins: Option<ResMut<crate::supply_coffin::SupplyCoffinRegistry>>,
+    mut spirit_eyes: Option<ResMut<crate::world::spirit_eye::SpiritEyeRegistry>>,
+    mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
+) -> io::Result<()> {
+    if let Some(snapshot) = load_world_runtime_slice::<crate::world::events::PersistedActiveEvents>(
+        settings,
+        "world.active_events",
+    )? {
+        let events = active_events
+            .as_deref_mut()
+            .ok_or_else(|| io::Error::other("ActiveEventsResource is unavailable"))?;
+        events
+            .restore_persisted_snapshot(snapshot, zones.as_deref_mut())
+            .map_err(io::Error::other)?;
+    }
+    if let Some(snapshot) = load_world_runtime_slice::<
+        crate::world::heartbeat::PersistedHeartbeatRuntime,
+    >(settings, "world.heartbeat_runtime")?
+    {
+        let heartbeat = heartbeat
+            .as_deref_mut()
+            .ok_or_else(|| io::Error::other("WorldHeartbeat is unavailable"))?;
+        heartbeat
+            .restore_persisted_runtime(snapshot)
+            .map_err(io::Error::other)?;
+    }
+    if let Some(snapshot) = load_world_runtime_slice::<
+        crate::supply_coffin::PersistedSupplyCoffinRuntime,
+    >(settings, "world.supply_coffin")?
+    {
+        let coffins = coffins
+            .as_deref_mut()
+            .ok_or_else(|| io::Error::other("SupplyCoffinRegistry is unavailable"))?;
+        coffins
+            .restore_persisted_runtime(snapshot)
+            .map_err(io::Error::other)?;
+    }
+    if let Some(snapshot) = load_world_runtime_slice::<
+        crate::world::spirit_eye::PersistedSpiritEyeRegistry,
+    >(settings, "world.spirit_eyes")?
+    {
+        let spirit_eyes = spirit_eyes
+            .as_deref_mut()
+            .ok_or_else(|| io::Error::other("SpiritEyeRegistry is unavailable"))?;
+        spirit_eyes
+            .restore_persisted_snapshot(snapshot)
+            .map_err(io::Error::other)?;
+    }
+    Ok(())
 }
 
 pub fn persist_zone_and_runtime_qi_snapshot(
@@ -484,6 +874,12 @@ pub fn persist_zone_influence_snapshot(
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
+    // `ZoneInfluenceMap` is the complete in-memory snapshot. Replace the table
+    // atomically so an influence entry removed in memory cannot be resurrected
+    // by the next restart. The delete and inserts share one transaction.
+    transaction
+        .execute("DELETE FROM zone_influence", [])
+        .map_err(io::Error::other)?;
     for (zone_id, entry) in &influence_map.zones {
         for (char_id, player_inf) in &entry.players {
             let is_dominant = entry

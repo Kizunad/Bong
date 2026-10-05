@@ -31,6 +31,16 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
+MODEL_SCRIPT_DIR = Path(__file__).resolve().parents[1]
+if str(MODEL_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MODEL_SCRIPT_DIR))
+
+import bbmodel_maker.gates
+_local_gates = str(MODEL_SCRIPT_DIR / "bbmodel_maker" / "gates")
+if _local_gates not in bbmodel_maker.gates.__path__:
+    bbmodel_maker.gates.__path__.append(_local_gates)
+
+from bbmodel_maker.gates.coplanar import assert_no_coplanar_faces
 BBMODEL_OUT = Path(__file__).resolve().parents[1] / "models" / "SpiritSword.bbmodel"
 PARTS_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/spirit_sword/parts")
 
@@ -359,47 +369,6 @@ def all_cubes() -> List[dict]:
     return cubes
 
 
-def _assert_no_coplanar_faces(cubes: List[dict]):
-    """门禁：严格检测任意两立方体之间的共面接触 (Z-fighting)。"""
-    n = len(cubes)
-    tol = 1e-4
-    for i in range(n):
-        c1 = cubes[i]
-        b1_min = c1["from"]
-        b1_max = c1["to"]
-        for j in range(i + 1, n):
-            c2 = cubes[j]
-            b2_min = c2["from"]
-            b2_max = c2["to"]
-
-            overlap_x = min(b1_max[0], b2_max[0]) - max(b1_min[0], b2_min[0])
-            overlap_y = min(b1_max[1], b2_max[1]) - max(b1_min[1], b2_min[1])
-            overlap_z = min(b1_max[2], b2_max[2]) - max(b1_min[2], b2_min[2])
-
-            if overlap_x > tol and overlap_y > tol and overlap_z > tol:
-                for axis, name in [(0, "X"), (1, "Y"), (2, "Z")]:
-                    if abs(b1_min[axis] - b2_min[axis]) < tol:
-                        other_axes = [a for a in range(3) if a != axis]
-                        oa_span = [
-                            min(b1_max[a], b2_max[a]) - max(b1_min[a], b2_min[a])
-                            for a in other_axes
-                        ]
-                        raise AssertionError(
-                            f"共面冲突: {c1['name']} 与 {c2['name']} 在 -{name} 面共面 "
-                            f"({b1_min[axis]:.4f}), 重叠区域 ({oa_span[0]:.3f}x{oa_span[1]:.3f})"
-                        )
-                    if abs(b1_max[axis] - b2_max[axis]) < tol:
-                        other_axes = [a for a in range(3) if a != axis]
-                        oa_span = [
-                            min(b1_max[a], b2_max[a]) - max(b1_min[a], b2_min[a])
-                            for a in other_axes
-                        ]
-                        raise AssertionError(
-                            f"共面冲突: {c1['name']} 与 {c2['name']} 在 +{name} 面共面 "
-                            f"({b1_max[axis]:.4f}), 重叠区域 ({oa_span[0]:.3f}x{oa_span[1]:.3f})"
-                        )
-
-
 def make_texture_atlas() -> Image.Image:
     """生成 64x64 Texture Atlas，满足贴图绘制纹理细节与视觉纪律。"""
     atlas = Image.new("RGBA", (RES, RES), (0, 0, 0, 0))
@@ -635,7 +604,7 @@ def build_bbmodel_data(cubes: List[dict], tex_img: Image.Image) -> dict:
 def generate_bbmodel(out_path: Path, cubes_override: List[dict] | None = None) -> Path:
     """输出完整的 SpiritSword.bbmodel 文件。"""
     cubes = cubes_override if cubes_override is not None else all_cubes()
-    _assert_no_coplanar_faces(cubes)
+    assert_no_coplanar_faces(cubes)
     tex_img = make_texture_atlas()
     doc = build_bbmodel_data(cubes, tex_img)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -724,9 +693,9 @@ def self_test():
     print("运行 gen_spirit_sword.py 差分自证...")
     cubes = all_cubes()
     try:
-        _assert_no_coplanar_faces(cubes)
+        assert_no_coplanar_faces(cubes)
         print("  [OK] 正常立方体集无共面冲突")
-    except AssertionError as e:
+    except (AssertionError, ValueError) as e:
         print(f"  [FAIL] 正常立方体集出现共面冲突: {e}")
         sys.exit(1)
 
@@ -740,10 +709,10 @@ def self_test():
         "material": "guard_stone_base",
     })
     try:
-        _assert_no_coplanar_faces(defect_cubes)
+        assert_no_coplanar_faces(defect_cubes)
         print("  [FAIL] 未能捕获注入的共面缺陷！")
         sys.exit(1)
-    except AssertionError as e:
+    except (AssertionError, ValueError) as e:
         print(f"  [OK] 成功捕获注入缺陷: {e}")
 
     print("✓ gen_spirit_sword.py 差分自证全绿")

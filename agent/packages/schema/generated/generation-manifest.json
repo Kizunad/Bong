@@ -1344,7 +1344,7 @@
       "registry_keys": [
         "clientRequestV1"
       ],
-      "source_sha256": "8f99124baa58fc7290d9654e7cc40d510753642f40c9eb2c76f81d5d182e4305",
+      "source_sha256": "e4f244da55ed5b75f75ef19a9e4803f84308e501db9a1937545f894da36b9900",
       "generation_version": "r6-p1-v1",
       "contract_version": "v1",
       "status": "declared",

@@ -120,11 +120,17 @@ pub struct ActiveSupplyCoffin {
 }
 
 /// 冷却中的槽位（碎裂后等待 `cooldown_secs` 才能再次刷新）。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CoffinCooldown {
     pub grade: SupplyCoffinGrade,
     /// 碎裂时的 wall-clock 秒。`broken_at + grade.cooldown_secs() <= now` 视为到期。
     pub broken_at_wall_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedSupplyCoffinRuntime {
+    pub cooldowns: Vec<CoffinCooldown>,
+    pub rng_state: u64,
 }
 
 impl CoffinCooldown {
@@ -155,6 +161,22 @@ pub struct SupplyCoffinRegistry {
 }
 
 impl SupplyCoffinRegistry {
+    pub(crate) fn persisted_runtime(&self) -> PersistedSupplyCoffinRuntime {
+        PersistedSupplyCoffinRuntime {
+            cooldowns: self.cooldowns.clone(),
+            rng_state: self.rng_state,
+        }
+    }
+
+    pub(crate) fn restore_persisted_runtime(
+        &mut self,
+        snapshot: PersistedSupplyCoffinRuntime,
+    ) -> Result<(), String> {
+        self.cooldowns = snapshot.cooldowns;
+        self.rng_state = snapshot.rng_state;
+        Ok(())
+    }
+
     pub fn new(zone_aabb: (DVec3, DVec3), spawn_y: f64, rng_seed: u64) -> Self {
         Self {
             active: HashMap::new(),

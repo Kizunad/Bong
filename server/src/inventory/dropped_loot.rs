@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// 掉落物可见性契约；它是 recipient-specific projection 的输入，而不是客户端权限。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DroppedLootVisibility {
     /// 同维且在授权观察范围内的普通掉落。
+    #[default]
     Public,
     /// 只向 owner 或 server-authorized administrator 投影的私人掉落。
     OwnerOnly,
@@ -32,6 +33,27 @@ impl Default for DroppedLootMetadata {
             owner: None,
             visibility: DroppedLootVisibility::Public,
         }
+    }
+}
+
+impl DroppedLootMetadata {
+    /// Validate the owner/visibility pair before a writer publishes it.
+    pub fn validate(&self) -> Result<(), DroppedLootMigrationError> {
+        validate_metadata_combination(self.owner.as_deref(), self.visibility)
+    }
+
+    /// Public drops deliberately carry no owner identity.
+    pub fn public() -> Self {
+        Self::default()
+    }
+
+    /// Build an owner-only metadata value from a canonical player identity.
+    pub fn owner_only(owner: impl Into<String>) -> Result<Self, DroppedLootMigrationError> {
+        let metadata = Self {
+            owner: Some(owner.into()),
+            visibility: DroppedLootVisibility::OwnerOnly,
+        };
+        metadata.validate().map(|()| metadata)
     }
 }
 
@@ -93,7 +115,7 @@ pub fn migrate_legacy_dropped_loot_entry(
 
 /// 将 metadata 编码为 entry JSON 字段，供后续 hydration/provider 复用。
 pub fn apply_dropped_loot_metadata(value: &mut Value, metadata: &DroppedLootMetadata) -> bool {
-    if validate_metadata_combination(metadata.owner.as_deref(), metadata.visibility).is_err() {
+    if metadata.validate().is_err() {
         return false;
     }
     let Some(root) = value.as_object_mut() else {

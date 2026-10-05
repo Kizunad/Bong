@@ -565,6 +565,7 @@ mod tests {
         app.insert_resource(crate::combat::CombatClock::default());
         app.insert_resource(crate::player::gameplay::GameplayTick::default());
         app.insert_resource(crate::shelflife::sweep::ShelflifeSweepTick::default());
+        app.insert_resource(crate::mineral::MineralTickClock::default());
         app.insert_resource(RuntimeClockSnapshotState::default());
         app.insert_resource(WorldQiAccount::default());
         app.add_systems(Startup, bootstrap_persistence_system);
@@ -591,6 +592,13 @@ mod tests {
                 .resource::<crate::shelflife::sweep::ShelflifeSweepTick>()
                 .0,
             cultivation_tick
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::mineral::MineralTickClock>()
+                .tick,
+            cultivation_tick,
+            "mineral respawn deadlines must share the hydrated runtime tick epoch"
         );
         assert_eq!(
             app.world()

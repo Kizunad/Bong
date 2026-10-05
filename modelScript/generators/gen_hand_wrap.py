@@ -39,6 +39,16 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
+MODEL_SCRIPT_DIR = Path(__file__).resolve().parents[1]
+if str(MODEL_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MODEL_SCRIPT_DIR))
+
+import bbmodel_maker.gates
+_local_gates = str(MODEL_SCRIPT_DIR / "bbmodel_maker" / "gates")
+if _local_gates not in bbmodel_maker.gates.__path__:
+    bbmodel_maker.gates.__path__.append(_local_gates)
+
+from bbmodel_maker.gates.coplanar import assert_no_coplanar_faces
 BBMODEL_OUT = Path(__file__).resolve().parents[1] / "models" / "HandWrap.bbmodel"
 PREVIEW_OUT = Path(__file__).resolve().parents[1] / "out" / "hand_wrap_preview.png"
 REVIEW_PARTS_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/hand_wrap/parts")
@@ -229,31 +239,6 @@ def all_cubes() -> list[tuple]:
     cubes.extend(part_palm_cross())
     cubes.extend(part_thumb_wrap())
     return cubes
-
-
-def _assert_no_coplanar_faces(cubes: list[tuple]) -> None:
-    """门禁：严格校验各立方体之间是否存在重叠或共面 Z-Fighting。"""
-    n = len(cubes)
-    tol = 1e-4
-    for i in range(n):
-        c1 = cubes[i]
-        b1_min = c1[3]
-        b1_max = c1[4]
-        for j in range(i + 1, n):
-            c2 = cubes[j]
-            b2_min = c2[3]
-            b2_max = c2[4]
-
-            overlap_x = min(b1_max[0], b2_max[0]) - max(b1_min[0], b2_min[0])
-            overlap_y = min(b1_max[1], b2_max[1]) - max(b1_min[1], b2_min[1])
-            overlap_z = min(b1_max[2], b2_max[2]) - max(b1_min[2], b2_min[2])
-
-            if overlap_x > tol and overlap_y > tol and overlap_z > tol:
-                for axis, name in [(0, "X"), (1, "Y"), (2, "Z")]:
-                    if abs(b1_min[axis] - b2_min[axis]) < tol:
-                        raise ValueError(f"共面冲突: {c1[2]} 与 {c2[2]} 在 -{name} 面共面 ({b1_min[axis]:.4f})")
-                    if abs(b1_max[axis] - b2_max[axis]) < tol:
-                        raise ValueError(f"共面冲突: {c1[2]} 与 {c2[2]} 在 +{name} 面共面 ({b1_max[axis]:.4f})")
 
 
 def make_texture_atlas() -> Image.Image:
@@ -497,7 +482,7 @@ def build_bbmodel(cubes: list[tuple], tex_img: Image.Image, model_name: str = "H
 def generate() -> Path:
     """执行标准生成流程。"""
     cubes = all_cubes()
-    _assert_no_coplanar_faces(cubes)
+    assert_no_coplanar_faces(cubes)
 
     BBMODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     PREVIEW_OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -526,7 +511,7 @@ def export_parts() -> None:
     from bbmodel_maker.render.render_bbmodel import render
     print("开始逐部件单件渲染 (5 大部件，中灰背景 122, 122, 122)...")
     for part_name, part_cubes, yaw, pitch in parts:
-        _assert_no_coplanar_faces(part_cubes)
+        assert_no_coplanar_faces(part_cubes)
         tmp_bb = REPO / "modelScript" / "out" / f"tmp_HandWrap_part_{part_name}.bbmodel"
         tmp_bb.parent.mkdir(parents=True, exist_ok=True)
         bb_json = build_bbmodel(part_cubes, tex, model_name=f"HandWrap_part_{part_name}")
@@ -596,10 +581,10 @@ def export_parts() -> None:
 
 
 def self_test() -> None:
-    """门禁差分自证：注入共面冲突，验证 _assert_no_coplanar_faces 能准确拦截。"""
+    """门禁差分自证：注入共面冲突，验证 assert_no_coplanar_faces 能准确拦截。"""
     print("运行 gen_hand_wrap.py 差分自证...")
     clean_cubes = all_cubes()
-    _assert_no_coplanar_faces(clean_cubes)
+    assert_no_coplanar_faces(clean_cubes)
     print("  [OK] 正常立方体集无共面冲突")
 
     bad_cubes = list(clean_cubes)
@@ -609,8 +594,8 @@ def self_test() -> None:
 
     caught = False
     try:
-        _assert_no_coplanar_faces(bad_cubes)
-    except ValueError as e:
+        assert_no_coplanar_faces(bad_cubes)
+    except (ValueError, AssertionError) as e:
         caught = True
         print(f"  [OK] 成功捕获注入共面缺陷: {e}")
 

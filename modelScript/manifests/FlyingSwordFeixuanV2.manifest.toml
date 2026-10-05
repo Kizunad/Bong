@@ -1,0 +1,17 @@
+# 飞玄剑 (FlyingSwordFeixuan / flying_sword_feixuan) 特征清单
+facing = "+z"
+mirror_x = 8.0
+size = 260
+
+[materials]
+blade_gunmetal = [58, 58, 66]          # 暗枪灰带灰白碎斑剑身
+guard_mottled = [106, 84, 68]          # 燕翼微翘剑格米白暗褐花斑
+silk_black = [32, 34, 38]              # 深黑紧致缠丝与剑穗
+metal_iron = [100, 104, 114]          # 握柄两端金属套箍
+pommel_iron = [62, 64, 70]             # 环首短链暗铁带米白花斑
+
+[features]
+aerodynamic_blade  = { elements = ["blade_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 300 }
+swallow_wing_guard = { elements = ["guard_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 100 }
+silk_wrapped_hilt  = { elements = ["grip_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 150 }
+tassel_pommel      = { elements = ["pommel_", "ring_", "chain_", "small_ring_", "tassel_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 120 }

@@ -7,7 +7,10 @@ use valence::prelude::{App, Client, EventReader, Query, Res, Update, Username};
 
 use crate::combat::components::{SkillBarBindings, SkillSlot};
 use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques, TechniqueRegistry};
-use crate::player::state::{update_player_ui_prefs, PlayerStatePersistence, SkillSlotPersist};
+use crate::player::state::{
+    update_player_ui_prefs, PlayerSlice, PlayerSliceLoadGuard, PlayerStatePersistence,
+    SkillSlotPersist,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TechniqueCmd {
@@ -98,6 +101,7 @@ type TechniqueCmdItem<'a> = (
     &'a mut Client,
     Option<&'a mut SkillBarBindings>,
     Option<&'a Username>,
+    Option<&'a PlayerSliceLoadGuard>,
 );
 
 pub fn handle_technique(
@@ -108,7 +112,8 @@ pub fn handle_technique(
 ) {
     let registry = registry.as_ref();
     for event in events.read() {
-        let Ok((mut techniques, mut client, skill_bar, username)) = players.get_mut(event.executor)
+        let Ok((mut techniques, mut client, skill_bar, username, load_guard)) =
+            players.get_mut(event.executor)
         else {
             continue;
         };
@@ -177,7 +182,10 @@ pub fn handle_technique(
                     registry,
                     skill_bar,
                     username,
-                    persistence.as_deref(),
+                    persistence.as_deref().filter(|_| {
+                        load_guard
+                            .is_none_or(|guard| guard.write_set().contains(PlayerSlice::UiPrefs))
+                    }),
                 );
                 client.send_chat_message(format!(
                     "[dev] technique `{id}` removed={removed} bindings_cleared={cleared}"

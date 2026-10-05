@@ -8,12 +8,15 @@
 //! ```sql
 //! CREATE TABLE IF NOT EXISTS player_identities (
 //!     char_id TEXT PRIMARY KEY,
+//!     username TEXT,
 //!     identities_json TEXT NOT NULL,           -- serde_json(Vec<IdentityProfile>)
 //!     active_identity_id INTEGER NOT NULL CHECK (active_identity_id >= 0),
 //!     last_switch_tick INTEGER NOT NULL CHECK (last_switch_tick >= 0),
 //!     schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
 //!     last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
 //! );
+//! CREATE INDEX idx_player_identities_username_updated
+//!     ON player_identities (username, last_updated_wall DESC, char_id DESC);
 //! ```
 
 use std::io;
@@ -23,6 +26,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::identity::{IdentityId, IdentityProfile, PlayerIdentities};
 use crate::persistence::{open_persistence_connection, PersistenceSettings};
+use crate::player::state::{canonical_player_id, player_username_from_character_id};
 
 const IDENTITY_ROW_SCHEMA_VERSION: i32 = 1;
 
@@ -60,6 +64,7 @@ pub fn save_player_identities(
 ) -> io::Result<()> {
     let identities_json = serde_json::to_string(&identities.identities)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let username = player_username_from_character_id(char_id);
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     transaction
@@ -67,13 +72,15 @@ pub fn save_player_identities(
             "
             INSERT INTO player_identities (
                 char_id,
+                username,
                 identities_json,
                 active_identity_id,
                 last_switch_tick,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(char_id) DO UPDATE SET
+                username = excluded.username,
                 identities_json = excluded.identities_json,
                 active_identity_id = excluded.active_identity_id,
                 last_switch_tick = excluded.last_switch_tick,
@@ -82,6 +89,7 @@ pub fn save_player_identities(
             ",
             params![
                 char_id,
+                username,
                 identities_json,
                 identities.active_identity_id.0,
                 identities.last_switch_tick,
@@ -94,12 +102,54 @@ pub fn save_player_identities(
     Ok(())
 }
 
-/// 读单玩家的 identity 集合；不存在 → `Ok(None)`（让调用方走默认创建）。
+/// 读指定 durable key 的 identity 集合；不存在 → `Ok(None)`（让调用方走默认创建）。
 pub fn load_player_identities(
     settings: &PersistenceSettings,
     char_id: &str,
 ) -> io::Result<Option<PlayerIdentities>> {
     let connection = open_persistence_connection(settings)?;
+    load_player_identities_from_connection(&connection, char_id)
+}
+
+/// 按玩家稳定键载入 identity，并兼容 RF-11 之前使用 `offline:<user>:<char_uuid>`
+/// 的历史行。若 canonical 行不存在，选择该玩家最近更新的旧行；后续写入统一落到
+/// `offline:<user>`，避免角色轮换继续制造多个 durable key。
+pub fn load_player_identities_for_username(
+    settings: &PersistenceSettings,
+    username: &str,
+) -> io::Result<Option<PlayerIdentities>> {
+    let connection = open_persistence_connection(settings)?;
+    let canonical_key = canonical_player_id(username);
+    if let Some(identities) = load_player_identities_from_connection(&connection, &canonical_key)? {
+        return Ok(Some(identities));
+    }
+
+    let legacy_key: Option<String> = connection
+        .query_row(
+            "
+            SELECT char_id
+            FROM player_identities
+            WHERE username = ?1
+              AND char_id <> ?2
+            ORDER BY last_updated_wall DESC, char_id DESC
+            LIMIT 1
+            ",
+            params![username, canonical_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    legacy_key
+        .as_deref()
+        .map(|key| load_player_identities_from_connection(&connection, key))
+        .transpose()
+        .map(|loaded| loaded.flatten())
+}
+
+fn load_player_identities_from_connection(
+    connection: &rusqlite::Connection,
+    char_id: &str,
+) -> io::Result<Option<PlayerIdentities>> {
     let row = connection
         .query_row(
             "
@@ -127,8 +177,10 @@ pub fn load_player_identities(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
     if identities.is_empty() {
-        // 损坏行（有 row 但 list 为空）→ 不当作"已加载"，让调用方重建默认。
-        return Ok(None);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("player_identities row `{char_id}` contains no identity profiles"),
+        ));
     }
 
     let requested_active_id = IdentityId(active_id_raw.max(0) as u32);
@@ -202,6 +254,89 @@ mod tests {
         let settings = fresh_settings();
         let loaded = load_player_identities(&settings, "offline:nobody").expect("load");
         assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn username_loader_reads_legacy_character_key() {
+        let settings = fresh_settings();
+        let identities = PlayerIdentities::with_default("kiz", 0);
+        save_player_identities(&settings, "offline:kiz:legacy-character", &identities)
+            .expect("legacy save");
+
+        let loaded = load_player_identities_for_username(&settings, "kiz")
+            .expect("legacy-compatible load")
+            .expect("legacy row should be visible through the stable username key");
+        assert_eq!(loaded, identities);
+    }
+
+    #[test]
+    fn v48_migration_backfills_username_for_legacy_identity_rows() {
+        let settings = fresh_settings();
+        let identities = PlayerIdentities::with_default("kiz", 0);
+        let identities_json = serde_json::to_string(&identities.identities).expect("serialize");
+        let connection = open_persistence_connection(&settings).expect("open sqlite");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE player_identities;
+                CREATE TABLE player_identities (
+                    char_id TEXT PRIMARY KEY,
+                    identities_json TEXT NOT NULL,
+                    active_identity_id INTEGER NOT NULL,
+                    last_switch_tick INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                PRAGMA user_version = 47;
+                ",
+            )
+            .expect("install v47 identity fixture");
+        connection
+            .execute(
+                "INSERT INTO player_identities (
+                    char_id, identities_json, active_identity_id, last_switch_tick,
+                    schema_version, last_updated_wall
+                 ) VALUES (?1, ?2, 0, 0, 1, 7)",
+                params!["offline:kiz:legacy-character", identities_json],
+            )
+            .expect("insert legacy identity row");
+        drop(connection);
+
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("v48 identity migration should succeed");
+
+        let connection = open_persistence_connection(&settings).expect("open migrated sqlite");
+        let username: String = connection
+            .query_row(
+                "SELECT username FROM player_identities WHERE char_id = ?1",
+                params!["offline:kiz:legacy-character"],
+                |row| row.get(0),
+            )
+            .expect("migration should backfill the username");
+        assert_eq!(username, "kiz");
+        let loaded = load_player_identities_for_username(&settings, "kiz")
+            .expect("legacy-compatible load")
+            .expect("backfilled legacy row should be visible");
+        assert_eq!(loaded, identities);
+    }
+
+    #[test]
+    fn empty_identity_row_is_a_load_failure_not_a_missing_row() {
+        let settings = fresh_settings();
+        let connection = open_persistence_connection(&settings).expect("open sqlite");
+        connection
+            .execute(
+                "INSERT INTO player_identities (
+                    char_id, identities_json, active_identity_id, last_switch_tick,
+                    schema_version, last_updated_wall
+                 ) VALUES (?1, '[]', 0, 0, 1, 0)",
+                params!["offline:empty"],
+            )
+            .expect("insert malformed identity row");
+
+        let error = load_player_identities(&settings, "offline:empty")
+            .expect_err("an existing empty row must be classified as failed");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]

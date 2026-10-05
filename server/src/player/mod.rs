@@ -8,11 +8,15 @@ use self::state::{
     canonical_player_id, load_player_slices_for_canonical_techniques, save_player_core_slice,
     save_player_inventory_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
-    save_player_slices_with_coffin, save_player_slow_slice, update_player_ui_prefs, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_slices_with_coffin_and_write_set, save_player_slow_slice,
+    save_player_status_effects_slice, update_player_ui_prefs, PlayerSlice, PlayerSliceLoadStatus,
+    PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence, WriteSet,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
-use crate::combat::components::{Lifecycle, UnlockedStyles, TICKS_PER_SECOND};
+use crate::combat::components::{
+    Lifecycle, LifecyclePersistenceLoadFailed, StatusEffects, StatusEffectsPersistenceLoadFailed,
+    UnlockedStyles, TICKS_PER_SECOND,
+};
 use crate::combat::woliu_v2::erosion::VoidErosion;
 use crate::combat::CombatClock;
 use crate::craft::CraftSession;
@@ -114,6 +118,25 @@ type ChangedInventoryClientsQueryFilter = (
 );
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
+type PlayerSlowAutosaveQueryItem<'a> = (
+    &'a Username,
+    &'a Position,
+    Option<&'a CurrentDimension>,
+    Option<&'a WriteSet>,
+);
+type PlayerLifespanAutosaveQueryItem<'a> = (
+    &'a Username,
+    &'a LifespanComponent,
+    Option<&'a CoffinComponent>,
+    Option<&'a WriteSet>,
+);
+type PlayerStatusEffectsAutosaveQueryItem<'a> = (
+    &'a Username,
+    &'a StatusEffects,
+    Option<&'a WriteSet>,
+    Option<&'a StatusEffectsPersistenceLoadFailed>,
+);
+type PlayerAutosaveQueryFilter = With<Client>;
 type CultivationBundleQueryItem<'a> = (
     &'a Username,
     &'a Cultivation,
@@ -165,6 +188,7 @@ pub fn register(app: &mut App) {
             autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
             autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
             autosave_player_lifecycle_slices.after(autosave_player_lifespan_slices),
+            autosave_player_status_effects.after(autosave_player_lifecycle_slices),
             flush_changed_player_skills.after(autosave_player_lifecycle_slices),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
@@ -278,6 +302,19 @@ pub(crate) fn attach_player_state_to_joined_clients(
             .remove::<ReconnectPersistencePending>();
         let mut persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
+        // 首次登录没有 durable core 行时，先建立角色锚点，供同一帧随后运行的
+        // cultivation attach 读取完整 `offline:<user>:<uuid>`。只写 Core；其它切片
+        // 仍由各自的 load guard 决定，不能用新玩家默认值覆盖未知存档。
+        if persisted.load_guard.status(PlayerSlice::Core) == PlayerSliceLoadStatus::Missing {
+            if let Err(error) =
+                save_player_core_slice(&persistence, username.0.as_str(), &persisted.state)
+            {
+                tracing::warn!(
+                    "[bong][player] failed to initialize core character anchor for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
         // 持久化的背包尺寸不是权限；在库存对网络请求可见之前按当前 OP 名单校准。
         if let Some(inventory) = persisted.inventory.as_ref() {
             match resources.operator_inventory.reconcile(
@@ -324,13 +361,21 @@ pub(crate) fn attach_player_state_to_joined_clients(
             .is_some_and(|registry| ui_prefs.sanitize_skill_bar_bindings(registry));
         if skill_bar_prefs_sanitized {
             let sanitized_skill_bar = ui_prefs.skill_bar.clone();
-            if let Err(error) = update_player_ui_prefs(&persistence, username.0.as_str(), |prefs| {
-                prefs.skill_bar = sanitized_skill_bar
-            }) {
-                tracing::warn!(
-                    "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
-                    username.0
-                );
+            if persisted
+                .load_guard
+                .write_set()
+                .contains(PlayerSlice::UiPrefs)
+            {
+                if let Err(error) =
+                    update_player_ui_prefs(&persistence, username.0.as_str(), |prefs| {
+                        prefs.skill_bar = sanitized_skill_bar
+                    })
+                {
+                    tracing::warn!(
+                        "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
+                        username.0
+                    );
+                }
             }
         }
         let quick_slot_bindings = ui_prefs.quick_slot_bindings(persisted.inventory.as_ref());
@@ -338,6 +383,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
             persisted.inventory.as_ref(),
             resources.technique_registry.as_deref(),
         );
+        let write_set = persisted.load_guard.write_set();
         if let (Some(store), Some(schemas)) = (
             resources.skill_config_store.as_deref_mut(),
             resources.skill_config_schemas.as_deref(),
@@ -354,6 +400,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
             CurrentDimension(last_dimension),
             quick_slot_bindings,
             skill_bar_bindings,
+            write_set,
+            persisted.load_guard,
             UnlockedStyles::default(),
         ));
         if let Some(player_inventory) = persisted.inventory {
@@ -447,6 +495,10 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&CoffinComponent>,
         Option<&CraftSession>,
         Option<&Lifecycle>,
+        Option<&WriteSet>,
+        Option<&StatusEffects>,
+        Option<&LifecyclePersistenceLoadFailed>,
+        Option<&StatusEffectsPersistenceLoadFailed>,
     )>,
     cultivation_bundle: Query<(
         &Cultivation,
@@ -486,6 +538,10 @@ pub(crate) fn despawn_disconnected_clients(
             coffin,
             craft_session,
             lifecycle,
+            write_set,
+            status_effects,
+            lifecycle_load_failed,
+            status_effects_load_failed,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -543,7 +599,11 @@ pub(crate) fn despawn_disconnected_clients(
                 load_player_slices_for_canonical_techniques(&persistence, username.0.as_str())
                     .craft_session;
             let craft_session_for_disconnect = durable_craft_session.as_ref().or(craft_session);
-            match save_player_slices_with_coffin(
+            let mut write_set = write_set.copied().unwrap_or_else(WriteSet::all);
+            if status_effects_load_failed.is_some() {
+                write_set = write_set.omit(PlayerSlice::LongTermBuff);
+            }
+            match save_player_slices_with_coffin_and_write_set(
                 &persistence,
                 username.0.as_str(),
                 player_state,
@@ -554,6 +614,8 @@ pub(crate) fn despawn_disconnected_clients(
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
                 craft_session_for_disconnect,
+                status_effects,
+                write_set,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -568,7 +630,7 @@ pub(crate) fn despawn_disconnected_clients(
             // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须落盘死亡/
             // 复活状态机，否则重连时 attach_combat_bundle_to_joined_clients 只能盲插
             // Lifecycle::default()，把 AwaitingRevival 玩家重置成满状态新角色。
-            if let Some(lifecycle) = lifecycle {
+            if let (Some(lifecycle), None) = (lifecycle, lifecycle_load_failed) {
                 if let Err(error) = save_player_lifecycle_slice(
                     &persistence,
                     username.0.as_str(),
@@ -619,6 +681,10 @@ fn flush_connected_players_on_shutdown(
             Option<&CoffinComponent>,
             Option<&CraftSession>,
             Option<&Lifecycle>,
+            Option<&WriteSet>,
+            Option<&StatusEffects>,
+            Option<&LifecyclePersistenceLoadFailed>,
+            Option<&StatusEffectsPersistenceLoadFailed>,
         ),
         With<Client>,
     >,
@@ -656,6 +722,10 @@ fn flush_connected_players_on_shutdown(
         coffin,
         craft_session,
         lifecycle,
+        write_set,
+        status_effects,
+        lifecycle_load_failed,
+        status_effects_load_failed,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -704,7 +774,11 @@ fn flush_connected_players_on_shutdown(
                 );
             }
         }
-        match save_player_slices_with_coffin(
+        let mut write_set = write_set.copied().unwrap_or_else(WriteSet::all);
+        if status_effects_load_failed.is_some() {
+            write_set = write_set.omit(PlayerSlice::LongTermBuff);
+        }
+        match save_player_slices_with_coffin_and_write_set(
             &persistence,
             username.0.as_str(),
             player_state,
@@ -715,6 +789,8 @@ fn flush_connected_players_on_shutdown(
             skill_set.unwrap_or(&SkillSet::default()),
             coffin.map(|c| c.grade),
             craft_session,
+            status_effects,
+            write_set,
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -729,7 +805,7 @@ fn flush_connected_players_on_shutdown(
         // bughunt player-lifecycle-relog-death-consequence-wipe：关服时同样要落盘死亡/
         // 复活状态机（同 despawn_disconnected_clients 的写路径），否则重启后重连会命中
         // 老档缺失行、回退到 Lifecycle::default() 抹掉关服前的待复活状态。
-        if let Some(lifecycle) = lifecycle {
+        if let (Some(lifecycle), None) = (lifecycle, lifecycle_load_failed) {
             if let Err(error) = save_player_lifecycle_slice(
                 &persistence,
                 username.0.as_str(),
@@ -748,7 +824,7 @@ fn flush_connected_players_on_shutdown(
 fn autosave_player_core_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &PlayerState), With<Client>>,
+    players: Query<(&Username, &PlayerState, Option<&WriteSet>), With<Client>>,
 ) {
     if !timer.ticks.is_multiple_of(CORE_SLICE_FLUSH_INTERVAL_TICKS) {
         return;
@@ -756,7 +832,14 @@ fn autosave_player_core_slices(
 
     let mut saved_count = 0usize;
 
-    for (username, player_state) in &players {
+    for (username, player_state, write_set) in &players {
+        if !write_set
+            .copied()
+            .unwrap_or_else(WriteSet::all)
+            .contains(PlayerSlice::Core)
+        {
+            continue;
+        }
         match save_player_core_slice(&persistence, username.0.as_str(), player_state) {
             Ok(_) => saved_count += 1,
             Err(error) => tracing::warn!(
@@ -774,7 +857,7 @@ fn autosave_player_core_slices(
 fn autosave_player_slow_and_ui_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &Position, Option<&CurrentDimension>), With<Client>>,
+    players: Query<PlayerSlowAutosaveQueryItem<'_>, PlayerAutosaveQueryFilter>,
 ) {
     if !timer
         .ticks
@@ -785,7 +868,14 @@ fn autosave_player_slow_and_ui_slices(
 
     let mut saved_count = 0usize;
 
-    for (username, position, current_dimension) in &players {
+    for (username, position, current_dimension, write_set) in &players {
+        if !write_set
+            .copied()
+            .unwrap_or_else(WriteSet::all)
+            .contains(PlayerSlice::Position)
+        {
+            continue;
+        }
         let last_dimension = current_dimension
             .map(|cd| cd.0)
             .unwrap_or(DimensionKind::default());
@@ -872,7 +962,7 @@ fn autosave_player_cultivation_bundles(
 fn autosave_player_lifespan_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<(&Username, &LifespanComponent, Option<&CoffinComponent>), With<Client>>,
+    players: Query<PlayerLifespanAutosaveQueryItem<'_>, PlayerAutosaveQueryFilter>,
 ) {
     if !timer
         .ticks
@@ -883,7 +973,14 @@ fn autosave_player_lifespan_slices(
 
     let mut saved_count = 0usize;
 
-    for (username, lifespan, coffin) in &players {
+    for (username, lifespan, coffin, write_set) in &players {
+        if !write_set
+            .copied()
+            .unwrap_or_else(WriteSet::all)
+            .contains(PlayerSlice::Lifespan)
+        {
+            continue;
+        }
         match save_player_lifespan_slice_with_coffin(
             &persistence,
             username.0.as_str(),
@@ -913,7 +1010,14 @@ fn autosave_player_lifecycle_slices(
     persistence: Res<PlayerStatePersistence>,
     timer: Res<PlayerStateAutosaveTimer>,
     combat_clock: Option<Res<CombatClock>>,
-    players: Query<(&Username, &Lifecycle), With<Client>>,
+    players: Query<
+        (
+            &Username,
+            &Lifecycle,
+            Option<&LifecyclePersistenceLoadFailed>,
+        ),
+        With<Client>,
+    >,
 ) {
     if !timer
         .ticks
@@ -925,7 +1029,10 @@ fn autosave_player_lifecycle_slices(
     let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     let mut saved_count = 0usize;
 
-    for (username, lifecycle) in &players {
+    for (username, lifecycle, load_failed) in &players {
+        if load_failed.is_some() {
+            continue;
+        }
         match save_player_lifecycle_slice(
             &persistence,
             username.0.as_str(),
@@ -945,12 +1052,55 @@ fn autosave_player_lifecycle_slices(
     );
 }
 
+/// 每分钟保存长期状态效果；载入失败的玩家只保留运行时默认值，禁止该默认值覆盖原始行。
+fn autosave_player_status_effects(
+    persistence: Res<PlayerStatePersistence>,
+    timer: Res<PlayerStateAutosaveTimer>,
+    players: Query<PlayerStatusEffectsAutosaveQueryItem<'_>, PlayerAutosaveQueryFilter>,
+) {
+    if !timer
+        .ticks
+        .is_multiple_of(SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+
+    for (username, status_effects, write_set, load_failed) in &players {
+        if load_failed.is_some()
+            || !write_set
+                .copied()
+                .unwrap_or_else(WriteSet::all)
+                .contains(PlayerSlice::LongTermBuff)
+        {
+            continue;
+        }
+        if let Err(error) =
+            save_player_status_effects_slice(&persistence, username.0.as_str(), status_effects)
+        {
+            tracing::warn!(
+                "[bong][player] 60s long-term status flush failed for `{}`: {error}",
+                username.0,
+            );
+        }
+    }
+}
+
 fn flush_changed_player_inventories(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
-    players: Query<ChangedInventoryClientsQueryItem<'_>, ChangedInventoryClientsQueryFilter>,
+    players: Query<
+        (ChangedInventoryClientsQueryItem<'_>, Option<&WriteSet>),
+        ChangedInventoryClientsQueryFilter,
+    >,
 ) {
-    for (entity, username, player_inventory) in &players {
+    for ((entity, username, player_inventory), write_set) in &players {
+        if !write_set
+            .copied()
+            .unwrap_or_else(WriteSet::all)
+            .contains(PlayerSlice::Inventory)
+        {
+            continue;
+        }
         match save_player_inventory_slice(&persistence, username.0.as_str(), Some(player_inventory))
         {
             Ok(_) => {

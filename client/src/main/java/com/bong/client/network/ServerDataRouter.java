@@ -5,6 +5,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * Routes the legacy JSON envelope produced by {@link ProtoServerDataBridge}.
+ *
+ * <p>The default table is assembled by domain registries. Those registries only
+ * register existing consumers; production traffic migration remains owned by
+ * the corresponding R6 merge unit.</p>
+ */
 public final class ServerDataRouter {
     private final Map<String, ServerDataHandler> handlers;
 
@@ -12,282 +19,27 @@ public final class ServerDataRouter {
         this.handlers = Map.copyOf(handlers);
     }
 
+    /**
+     * Builds the authoritative default type table from the domain registries.
+     *
+     * <p>Registry order is stable for diagnostics, while routing semantics and
+     * the registered type set remain the same as the pre-RF-26 table.</p>
+     */
     public static ServerDataRouter createDefault() {
-        LegacyMessageServerDataHandler legacyHandler = new LegacyMessageServerDataHandler();
-        NarrationHandler narrationHandler = new NarrationHandler();
-        ZoneInfoHandler zoneInfoHandler = new ZoneInfoHandler();
-        EventAlertHandler eventAlertHandler = new EventAlertHandler();
-        PlayerStateHandler playerStateHandler = new PlayerStateHandler();
-        UiOpenHandler uiOpenHandler = new UiOpenHandler();
-        CultivationDetailHandler cultivationDetailHandler = new CultivationDetailHandler();
-        QiColorObservedHandler qiColorObservedHandler = new QiColorObservedHandler();
-        InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
-        InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
-        DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
-        RemainsSyncHandler remainsSyncHandler = new RemainsSyncHandler();
-        BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
-        GatheringSessionHandler gatheringSessionHandler = new GatheringSessionHandler();
-        MiningProgressHandler miningProgressHandler = new MiningProgressHandler();
-        LumberProgressHandler lumberProgressHandler = new LumberProgressHandler();
-        BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
-        BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
-        HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
-        BreakthroughCinematicHandler breakthroughCinematicHandler = new BreakthroughCinematicHandler();
-        com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
-            new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
-        com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
-            new com.bong.client.network.alchemy.AlchemySessionHandler();
-        com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler alchemyForecastHandler =
-            new com.bong.client.network.alchemy.AlchemyOutcomeForecastHandler();
-        com.bong.client.network.alchemy.AlchemyRecipeBookHandler alchemyRecipeBookHandler =
-            new com.bong.client.network.alchemy.AlchemyRecipeBookHandler();
-        com.bong.client.network.alchemy.AlchemyContaminationHandler alchemyContaminationHandler =
-            new com.bong.client.network.alchemy.AlchemyContaminationHandler();
-        com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler alchemyOutcomeResolvedHandler =
-            new com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler();
-        com.bong.client.combat.handler.CombatEventHandler combatEventHandler =
-            new com.bong.client.combat.handler.CombatEventHandler();
-        KnockbackSyncHandler knockbackSyncHandler = new KnockbackSyncHandler();
-        com.bong.client.combat.handler.StatusSnapshotHandler statusSnapshotHandler =
-            new com.bong.client.combat.handler.StatusSnapshotHandler();
-        com.bong.client.combat.handler.DerivedAttrsHandler derivedAttrsHandler =
-            new com.bong.client.combat.handler.DerivedAttrsHandler();
-        com.bong.client.combat.handler.VortexStateHandler vortexStateHandler =
-            new com.bong.client.combat.handler.VortexStateHandler();
-        com.bong.client.combat.handler.DuguPoisonStateHandler duguPoisonStateHandler =
-            new com.bong.client.combat.handler.DuguPoisonStateHandler();
-        PoisonTraitServerDataHandler poisonTraitServerDataHandler = new PoisonTraitServerDataHandler();
-        com.bong.client.combat.handler.CarrierStateHandler carrierStateHandler =
-            new com.bong.client.combat.handler.CarrierStateHandler();
-        com.bong.client.combat.handler.FalseSkinStateHandler falseSkinStateHandler =
-            new com.bong.client.combat.handler.FalseSkinStateHandler();
-        com.bong.client.combat.handler.DeathScreenHandler deathScreenHandler =
-            new com.bong.client.combat.handler.DeathScreenHandler();
-        com.bong.client.combat.handler.TerminateScreenHandler terminateScreenHandler =
-            new com.bong.client.combat.handler.TerminateScreenHandler();
-        com.bong.client.combat.handler.WoundsSnapshotHandler woundsSnapshotHandler =
-            new com.bong.client.combat.handler.WoundsSnapshotHandler();
-        com.bong.client.combat.handler.TribulationBroadcastHandler tribulationBroadcastHandler =
-            new com.bong.client.combat.handler.TribulationBroadcastHandler();
-        com.bong.client.combat.handler.TribulationStateHandler tribulationStateHandler =
-            new com.bong.client.combat.handler.TribulationStateHandler();
-        com.bong.client.combat.handler.AscensionQuotaHandler ascensionQuotaHandler =
-            new com.bong.client.combat.handler.AscensionQuotaHandler();
-        CombatHudStateHandler combatHudStateHandler = new CombatHudStateHandler();
-        DefenseWindowHandler defenseWindowHandler = new DefenseWindowHandler();
-        CastSyncHandler castSyncHandler = new CastSyncHandler();
-        QuickSlotConfigHandler quickSlotConfigHandler = new QuickSlotConfigHandler();
-        SkillBarConfigHandler skillBarConfigHandler = new SkillBarConfigHandler();
-        TechniquesSnapshotHandler techniquesSnapshotHandler = new TechniquesSnapshotHandler();
-        SkillConfigSnapshotHandler skillConfigSnapshotHandler = new SkillConfigSnapshotHandler();
-        UnlocksSyncHandler unlocksSyncHandler = new UnlocksSyncHandler();
-        EventStreamPushHandler eventStreamPushHandler = new EventStreamPushHandler();
-        BurstMeridianHandler burstMeridianHandler = new BurstMeridianHandler();
-        FullPowerStateHandler fullPowerStateHandler = new FullPowerStateHandler();
-        WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
-        WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
-        ShieldBrokenHandler shieldBrokenHandler = new ShieldBrokenHandler();
-        ShieldBlockHitHandler shieldBlockHitHandler = new ShieldBlockHitHandler();
-        TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
-        RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
-        SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
-        ExtractServerDataHandler extractServerDataHandler = new ExtractServerDataHandler();
-        ContainerInteractionHandler containerInteractionHandler = new ContainerInteractionHandler();
-        SocialServerDataHandler socialServerDataHandler = new SocialServerDataHandler();
-        IdentityPanelStateHandler identityPanelStateHandler = new IdentityPanelStateHandler();
-        com.bong.client.network.processing.ProcessingServerDataHandler processingServerDataHandler =
-            new com.bong.client.network.processing.ProcessingServerDataHandler();
-        com.bong.client.yidao.YidaoServerDataHandler yidaoServerDataHandler =
-            new com.bong.client.yidao.YidaoServerDataHandler();
-        MovementStateHandler movementStateHandler = new MovementStateHandler();
-        CoffinStateHandler coffinStateHandler = new CoffinStateHandler();
-        com.bong.client.spirittreasure.SpiritTreasureStateHandler spiritTreasureStateHandler =
-            new com.bong.client.spirittreasure.SpiritTreasureStateHandler();
-        com.bong.client.spirittreasure.SpiritTreasureDialogueHandler spiritTreasureDialogueHandler =
-            new com.bong.client.spirittreasure.SpiritTreasureDialogueHandler();
-
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
-        handlers.put("welcome", legacyHandler);
-        handlers.put("heartbeat", legacyHandler);
-        handlers.put("narration", narrationHandler);
-        handlers.put("zone_info", zoneInfoHandler);
-        handlers.put("event_alert", eventAlertHandler);
-        handlers.put("player_state", playerStateHandler);
-        handlers.put("ui_open", uiOpenHandler);
-        handlers.put("cultivation_detail", cultivationDetailHandler);
-        // plan-race-system-v1 P2b — 动态部位/经脉面板布局元数据（BodyPlanLayoutStore 按 body_plan_id 缓存）
-        handlers.put("body_plan_layout", new BodyPlanLayoutHandler());
-        // plan-race-system-v1 P3c — 种族门元数据表（RaceGateMetaStore 缓存，装备格/功法条目置灰用）
-        handlers.put("race_gate_meta", new RaceGateMetaHandler());
-        // plan-race-system-v1 PR-5b — 易形状态表（MorphStateStore 缓存，渲染 mixin 消费）
-        handlers.put("morph_state", new MorphStateHandler());
-        handlers.put("qi_color_observed", qiColorObservedHandler);
-        handlers.put("inventory_snapshot", inventorySnapshotHandler);
-        handlers.put("inventory_event", inventoryEventHandler);
-        handlers.put("dropped_loot_sync", droppedLootSyncHandler);
-        handlers.put("remains_sync", remainsSyncHandler);
-        handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
-        handlers.put("gathering_session", gatheringSessionHandler);
-        handlers.put("mining_progress", miningProgressHandler);
-        handlers.put("lumber_progress", lumberProgressHandler);
-        handlers.put("botany_plant_v2_render_profiles", botanyPlantRenderProfileHandler);
-        handlers.put("botany_skill", botanySkillHandler);
-        handlers.put("alchemy_furnace", alchemyFurnaceHandler);
-        handlers.put("alchemy_world", new com.bong.client.network.alchemy.AlchemyWorldHandler());
-        handlers.put("alchemy_session", alchemySessionHandler);
-        handlers.put("alchemy_outcome_forecast", alchemyForecastHandler);
-        handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);
-        handlers.put("alchemy_contamination", alchemyContaminationHandler);
-        handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
-        handlers.put("breakthrough_cinematic", breakthroughCinematicHandler);
-        handlers.put("combat_event", combatEventHandler);
-        handlers.put("knockback_sync", knockbackSyncHandler);
-        handlers.put("status_snapshot", statusSnapshotHandler);
-        handlers.put("derived_attrs_sync", derivedAttrsHandler);
-        handlers.put("vortex_state", vortexStateHandler);
-        handlers.put("dugu_poison_state", duguPoisonStateHandler);
-        handlers.put("poison_dose_event", poisonTraitServerDataHandler);
-        handlers.put("poison_overdose_event", poisonTraitServerDataHandler);
-        handlers.put("poison_trait_state", poisonTraitServerDataHandler);
-        handlers.put("carrier_state", carrierStateHandler);
-        handlers.put("false_skin_state", falseSkinStateHandler);
-        handlers.put("death_screen", deathScreenHandler);
-        handlers.put("terminate_screen", terminateScreenHandler);
-        handlers.put("wounds_snapshot", woundsSnapshotHandler);
-        handlers.put("tribulation_state", tribulationStateHandler);
-        handlers.put("tribulation_broadcast", tribulationBroadcastHandler);
-        handlers.put("ascension_quota", ascensionQuotaHandler);
-        handlers.put("heart_demon_offer", heartDemonOfferHandler);
-        handlers.put("combat_hud_state", combatHudStateHandler);
-        handlers.put("defense_window", defenseWindowHandler);
-        handlers.put("cast_sync", castSyncHandler);
-        handlers.put("quickslot_config", quickSlotConfigHandler);
-        handlers.put("skillbar_config", skillBarConfigHandler);
-        handlers.put("techniques_snapshot", techniquesSnapshotHandler);
-        handlers.put("technique_proficiency_update", new TechniqueProficiencyUpdateHandler());
-        handlers.put("skill_config_snapshot", skillConfigSnapshotHandler);
-        handlers.put("unlocks_sync", unlocksSyncHandler);
-        handlers.put("event_stream_push", eventStreamPushHandler);
-        handlers.put("burst_meridian_event", burstMeridianHandler);
-        handlers.put("pill_buff_status", new PillBuffStatusHandler());
-        handlers.put("full_power_charging_state", fullPowerStateHandler);
-        handlers.put("full_power_release", fullPowerStateHandler);
-        handlers.put("full_power_exhausted_state", fullPowerStateHandler);
-        handlers.put("weapon_equipped", weaponEquippedHandler);
-        handlers.put("weapon_broken", weaponBrokenHandler);
-        // plan-shield-block-v1 §P3 — 破盾事件
-        handlers.put("shield_broken", shieldBrokenHandler);
-        // plan-shield-block-v1 §P4 — 格挡命中事件（视听四件套差异化，按 template_id 路由木/骨）
-        handlers.put("shield_block_hit", shieldBlockHitHandler);
-        handlers.put("treasure_equipped", treasureEquippedHandler);
-        handlers.put("realm_vision_params", realmVisionParamsHandler);
-        handlers.put("spiritual_sense_targets", spiritualSenseTargetsHandler);
-        handlers.put("rift_portal_state", extractServerDataHandler);
-        handlers.put("rift_portal_removed", extractServerDataHandler);
-        handlers.put("extract_started", extractServerDataHandler);
-        handlers.put("extract_progress", extractServerDataHandler);
-        handlers.put("extract_completed", extractServerDataHandler);
-        handlers.put("extract_aborted", extractServerDataHandler);
-        handlers.put("extract_failed", extractServerDataHandler);
-        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
-        handlers.put("container_state", containerInteractionHandler);
-        handlers.put("search_started", containerInteractionHandler);
-        handlers.put("search_progress", containerInteractionHandler);
-        handlers.put("search_completed", containerInteractionHandler);
-        handlers.put("search_aborted", containerInteractionHandler);
-        handlers.put("processing_session", processingServerDataHandler);
-        handlers.put("freshness_update", processingServerDataHandler);
-        handlers.put("healer_npc_ai_state", yidaoServerDataHandler);
-        handlers.put("yidao_hud_state", yidaoServerDataHandler);
-        handlers.put("movement_state", movementStateHandler);
-        handlers.put("spirit_treasure_state", spiritTreasureStateHandler);
-        handlers.put("spirit_treasure_dialogue", spiritTreasureDialogueHandler);
-        handlers.put("coffin_state", coffinStateHandler);
-        // plan-forge-v1 §4 — 炼器（武器）
-        com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =
-            new com.bong.client.network.forge.ForgeStationHandler();
-        com.bong.client.network.forge.ForgeSessionHandler forgeSessionHandler =
-            new com.bong.client.network.forge.ForgeSessionHandler();
-        com.bong.client.network.forge.ForgeOutcomeHandler forgeOutcomeHandler =
-            new com.bong.client.network.forge.ForgeOutcomeHandler();
-        com.bong.client.network.forge.ForgeBlueprintBookHandler forgeBlueprintBookHandler =
-            new com.bong.client.network.forge.ForgeBlueprintBookHandler();
-        handlers.put("forge_station", forgeStationHandler);
-        handlers.put("forge_session", forgeSessionHandler);
-        handlers.put("forge_outcome", forgeOutcomeHandler);
-        handlers.put("forge_blueprint_book", forgeBlueprintBookHandler);
-        // plan-social-v1 §7 — 匿名、暴露、关系、声名、切磋邀请。
-        handlers.put("social_anonymity", socialServerDataHandler);
-        handlers.put("social_exposure", socialServerDataHandler);
-        handlers.put("social_pact", socialServerDataHandler);
-        handlers.put("social_feud", socialServerDataHandler);
-        handlers.put("social_renown_delta", socialServerDataHandler);
-        handlers.put("niche_intrusion", socialServerDataHandler);
-        handlers.put("niche_guardian_fatigue", socialServerDataHandler);
-        handlers.put("niche_guardian_broken", socialServerDataHandler);
-        handlers.put("sparring_invite", socialServerDataHandler);
-        handlers.put("trade_offer", socialServerDataHandler);
-        // plan-identity-v1 P5 — 身份面板 / HUD 当前 identity 状态。
-        handlers.put("identity_panel_state", identityPanelStateHandler);
-        // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据
-        handlers.put("skill_xp_gain", SkillEventHandler.xpGainHandler());
-        handlers.put("skill_lv_up", SkillEventHandler.lvUpHandler());
-        handlers.put("skill_cap_changed", SkillEventHandler.capChangedHandler());
-        handlers.put("skill_scroll_used", SkillEventHandler.scrollUsedHandler());
-        handlers.put("skill_snapshot", new SkillSnapshotHandler());
-        // plan-craft-v1 P2 — 通用手搓 IPC（4 类）
-        handlers.put("craft_recipe_list", new CraftRecipeListHandler());
-        handlers.put("craft_session_state", new CraftSessionStateHandler());
-        handlers.put("craft_outcome", new CraftOutcomeHandler());
-        handlers.put("recipe_unlocked", new RecipeUnlockedHandler());
-        // plan-supply-coffin-loot-ui P1 — 外部容器（物资棺搜刮 UI）
-        LootContainerHandler lootContainerHandler = new LootContainerHandler();
-        handlers.put("loot_container_open", lootContainerHandler);
-        handlers.put("loot_container_update", lootContainerHandler);
-        handlers.put("loot_container_close", lootContainerHandler);
-        // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
-        handlers.put("workbench_open",
-            com.bong.client.craft.WorkbenchScreenBootstrap.handler());
-        // F9 跨层修复 — 出生引导棺权威坐标广播（取代 client 硬编码判定盒）
-        handlers.put("tutorial_coffin_pos", new TutorialCoffinPosHandler());
-        // plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD（echo/aim/charge/abrasion → AnqiHudStateStore）
-        com.bong.client.combat.handler.AnqiHudServerDataHandler anqiHudServerDataHandler =
-            new com.bong.client.combat.handler.AnqiHudServerDataHandler();
-        handlers.put("anqi_hud", anqiHudServerDataHandler);
-        // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD（per-dimension merge → DuguV2HudStateStore）
-        com.bong.client.combat.handler.DuguV2ServerDataHandler duguV2Handler =
-            new com.bong.client.combat.handler.DuguV2ServerDataHandler();
-        handlers.put("dugu_v2_skill_cast", duguV2Handler);
-        handlers.put("dugu_v2_self_cure", duguV2Handler);
-        handlers.put("dugu_v2_shroud_active", duguV2Handler);
-        handlers.put("permanent_qi_max_decay_applied", duguV2Handler);
-        // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD（SwordBondHudState → SwordBondHudStateStore → SwordPathHudPlanner）
-        handlers.put("sword_bond_hud_state",
-            new com.bong.client.combat.handler.SwordBondHudStateHandler());
-        // 震脉 5 招专属 HUD（parry/neutralize/multipoint/harden/sever_chain → ZhenmaiHudStateStore → ZhenmaiHudPlanner）。
-        // NOTE: server 侧需在 zhenmai_v2_event_bridge.rs 追加 S2C dual-emit（mirror dugu_v2_event_bridge），见 serverStateNeeded。
-        handlers.put("zhenmai_hud",
-            new com.bong.client.combat.handler.ZhenmaiHudServerDataHandler());
-        // plan-exploration-probe-return-v1 P0：神识感知矿脉回执（actionbar overlay + SFX）
-        handlers.put("mineral_probe_result", new MineralProbeResultHandler());
-        // plan-inventory-hint-panel-v1 P1：库存操作拒绝原因失败 toast（"天道警示：..."）
-        handlers.put("inventory_move_rejected", new InventoryMoveRejectedHandler());
-        // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
-        handlers.put("insight_offer", new InsightOfferHandler());
-        // plan-scroll-reading-v1 P1：可阅读残卷阅读屏（ScrollReadStore → ScrollReadScreen）
-        handlers.put("scroll_open", new ScrollOpenHandler());
-        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板
-        // NOTE: AgentUiRequest/AgentUiClose 已迁移到专属 JSON channel，
-        // 不再经 bong:server_data / proto 路径（proto_convert.rs 对这两个 variant 是 unreachable!()，
-        // 生产会 panic）。ServerDataRouter 不再注册 agent_ui_request/agent_ui_close。
-        // 接收和解析由 BongNetworkHandler.registerAgentUiChannels() 负责。
-        // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD
-        // NOTE: HalfStepRechallenge 已迁移到专属 bong:halfstep_rechallenge channel（JSON），
-        // 不再经 bong:server_data / proto 路径。ServerDataRouter 不再注册此 key。
-        // 接收和解析由 BongNetworkHandler.registerHalfStepRechallengeChannel() 负责。
+        CoreServerDataRegistry.register(handlers);
+        BotanyServerDataRegistry.register(handlers);
+        AlchemyServerDataRegistry.register(handlers);
+        CombatServerDataRegistry.register(handlers);
+        WorldActivityServerDataRegistry.register(handlers);
+        ForgeServerDataRegistry.register(handlers);
+        SocialServerDataRegistry.register(handlers);
+        CraftServerDataRegistry.register(handlers);
+        SpecializedServerDataRegistry.register(handlers);
         return new ServerDataRouter(handlers);
     }
 
+    /** Returns the immutable set of registered payload type names. */
     public Set<String> registeredTypes() {
         return handlers.keySet();
     }

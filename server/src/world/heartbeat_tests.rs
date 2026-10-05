@@ -106,6 +106,26 @@ fn heartbeat_override_suppress_and_force_are_stateful() {
 }
 
 #[test]
+fn persisted_heartbeat_runtime_rejects_out_of_range_intensity() {
+    let mut heartbeat = WorldHeartbeat::default();
+    let snapshot = PersistedHeartbeatRuntime {
+        overrides: vec![HeartbeatOverride {
+            action: HeartbeatOverrideAction::Accelerate,
+            event_kind: HeartbeatEventKind::BeastTide,
+            target_zone: "spawn".to_string(),
+            expires_at_tick: 100,
+            intensity_override: Some(-0.1),
+        }],
+        forced_events: vec![(HeartbeatEventKind::KarmaBacklash, "spawn".to_string(), 1.1)],
+    };
+
+    let error = heartbeat
+        .restore_persisted_runtime(snapshot)
+        .expect_err("persisted heartbeat intensity must stay within its gameplay range");
+    assert!(error.contains("invalid values"));
+}
+
+#[test]
 fn override_command_parses_agent_contract() {
     let mut heartbeat = WorldHeartbeat::default();
     let command = Command {
@@ -664,10 +684,16 @@ fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
     app.insert_resource(active_events);
     app.insert_resource(CultivationClock { tick: 1 });
     app.insert_resource(qi_ledger);
+    app.insert_resource(WorldQiBudget::from_total(TEST_QI_FIXTURE_TOTAL));
     app.add_event::<EventChainTrigger>();
     app.add_event::<QiTransfer>();
     app.add_systems(Update, heartbeat_tick);
 
+    let before = summarize_world_qi(app.world_mut());
+    assert_eq!(
+        before.budget_initial_total, TEST_QI_FIXTURE_TOTAL,
+        "heartbeat conservation snapshots must use the configured world qi budget"
+    );
     app.update();
 
     let heartbeat = app.world().resource::<WorldHeartbeat>();
@@ -709,6 +735,13 @@ fn heartbeat_tick_keeps_pseudo_vein_state_zone_and_ledger_in_lockstep() {
                 && transfer.amount > 0.0
         }),
         "expected one auditable PseudoVeinSettle transfer for the decay delta"
+    );
+    let after = summarize_world_qi(app.world_mut());
+    assert_conservation(&before, &after, 0.0)
+        .expect("heartbeat pseudo-vein settlement must conserve qi without era decay");
+    assert_eq!(
+        after.era_decay_accum, before.era_decay_accum,
+        "heartbeat evaluation must leave the separate era-decay budget unchanged"
     );
 }
 

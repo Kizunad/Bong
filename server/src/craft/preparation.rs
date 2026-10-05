@@ -198,6 +198,8 @@ pub fn return_materials(
                 source_col: 0,
                 world_pos,
                 dimension,
+                owner: None,
+                visibility: crate::inventory::DroppedLootVisibility::Public,
                 item: entry.item,
             });
         }

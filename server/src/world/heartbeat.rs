@@ -1,6 +1,14 @@
+//! 世界 heartbeat 的周期评估与 omen 编排。
+//!
+//! heartbeat 只决定事件何时出现、在哪个 zone 预告以及链式事件何时转发；
+//! 事件的实际生命周期由 [`crate::world::events`] 消费。伪灵脉衰减和回流
+//! 继续通过现有 `QiTransfer` / `WorldQiAccount` 入口，时代衰减预算也由
+//! qi_physics 账本维护，本模块不直接改写全服总量。
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use valence::prelude::{
     bevy_ecs, App, Client, Component, DVec3, Event, EventReader, EventWriter, Events,
@@ -78,7 +86,8 @@ const PSEUDO_VEIN_MIN_DISTANCE_BLOCKS: f64 = 500.0;
 const KARMA_BASE_ROLL_PROBABILITY: f64 = 0.003;
 const RECENT_BREAKTHROUGH_WINDOW_TICKS: u64 = 10 * TICKS_PER_MINUTE;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum HeartbeatEventKind {
     PseudoVein,
     BeastTide,
@@ -88,6 +97,7 @@ pub enum HeartbeatEventKind {
 }
 
 impl HeartbeatEventKind {
+    /// 将 agent/持久化协议中的事件名解析为 heartbeat 类型。
     pub fn from_wire(value: &str) -> Option<Self> {
         match value {
             "pseudo_vein" => Some(Self::PseudoVein),
@@ -133,6 +143,7 @@ impl OmenKind {
 
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct WorldEventOmen {
+    /// heartbeat 评估出的预告；到达 fires_at_tick 前不会触发实际事件。
     pub kind: OmenKind,
     pub zone_name: String,
     pub target_player: Option<String>,
@@ -169,6 +180,7 @@ pub struct EventCadence {
 }
 
 impl EventCadence {
+    /// 创建一个尚未触发过的周期计数器。
     pub const fn new(base_interval_ticks: u64) -> Self {
         Self {
             base_interval_ticks,
@@ -220,7 +232,8 @@ pub struct SeasonEventModifiers {
     pub karma_backlash_frequency: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum HeartbeatOverrideAction {
     Suppress,
     Accelerate,
@@ -238,13 +251,19 @@ impl HeartbeatOverrideAction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeartbeatOverride {
     pub action: HeartbeatOverrideAction,
     pub event_kind: HeartbeatEventKind,
     pub target_zone: String,
     pub expires_at_tick: u64,
     pub intensity_override: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct PersistedHeartbeatRuntime {
+    pub overrides: Vec<HeartbeatOverride>,
+    pub forced_events: Vec<(HeartbeatEventKind, String, f64)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -263,6 +282,7 @@ pub enum HeartbeatOverrideError {
 }
 
 impl HeartbeatOverrideError {
+    /// 返回稳定的拒绝标签，供 command handler 和测试记录契约结果。
     pub const fn result_label(&self) -> &'static str {
         match self {
             Self::MissingHeartbeat => "rejected_missing_heartbeat",
@@ -356,6 +376,51 @@ impl Default for WorldHeartbeat {
 }
 
 impl WorldHeartbeat {
+    pub(crate) fn persisted_runtime(&self) -> PersistedHeartbeatRuntime {
+        PersistedHeartbeatRuntime {
+            overrides: self.overrides.clone(),
+            forced_events: self
+                .forced_events
+                .iter()
+                .map(|event| (event.event_kind, event.target_zone.clone(), event.intensity))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn restore_persisted_runtime(
+        &mut self,
+        snapshot: PersistedHeartbeatRuntime,
+    ) -> Result<(), String> {
+        if snapshot.overrides.iter().any(|override_| {
+            override_
+                .intensity_override
+                .is_some_and(|intensity| !valid_persisted_intensity(intensity))
+        }) || snapshot
+            .forced_events
+            .iter()
+            .any(|(_, _, intensity)| !valid_persisted_intensity(*intensity))
+        {
+            return Err("heartbeat runtime snapshot contains invalid values".to_string());
+        }
+        self.overrides = snapshot.overrides;
+        self.forced_events = snapshot
+            .forced_events
+            .into_iter()
+            .map(
+                |(event_kind, target_zone, intensity)| ForcedHeartbeatEvent {
+                    event_kind,
+                    target_zone,
+                    intensity,
+                },
+            )
+            .collect();
+        Ok(())
+    }
+
+    /// 将一次外部 heartbeat override 写入当前调度状态。
+    ///
+    /// Force 事件只进入待处理队列，Suppress/Accelerate 则按持续 tick
+    /// 记录覆盖；实际 omen 仍在下一次 heartbeat 评估中按顺序消费。
     pub fn apply_override(
         &mut self,
         action: HeartbeatOverrideAction,
@@ -655,6 +720,10 @@ impl WorldHeartbeat {
     }
 }
 
+fn valid_persisted_intensity(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
 fn dvec3_to_array(value: DVec3) -> [f64; 3] {
     [value.x, value.y, value.z]
 }
@@ -752,6 +821,7 @@ fn heartbeat_pseudo_vein_index(zone_id: &str) -> Option<u64> {
         .and_then(|suffix| suffix.parse::<u64>().ok())
 }
 
+/// 注册 heartbeat 资源、周期系统和链式事件转发系统。
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering world heartbeat scheduler");
     app.insert_resource(WorldHeartbeat::default());
@@ -787,6 +857,7 @@ pub(crate) fn sync_active_pseudo_vein_state_system(
     heartbeat.sync_active_pseudo_vein_qi_from_zones(zones);
 }
 
+/// 返回指定季节的 heartbeat 频率、强度与世界压力修正。
 pub fn season_event_modifiers(season: Season) -> SeasonEventModifiers {
     match season {
         Season::Summer => SeasonEventModifiers {
@@ -819,6 +890,7 @@ pub fn season_event_modifiers(season: Season) -> SeasonEventModifiers {
     }
 }
 
+/// 解析 agent 的 heartbeat override 命令并更新调度器状态。
 pub fn apply_heartbeat_override_command(
     heartbeat: Option<&mut WorldHeartbeat>,
     command: &Command,
@@ -893,6 +965,7 @@ fn forward_realm_collapse_chain_triggers(
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+/// 按评估间隔推进 heartbeat，并发出 omen、QiTransfer 与链式触发事件。
 pub fn heartbeat_tick(
     mut heartbeat: ResMut<WorldHeartbeat>,
     clock: Option<Res<CultivationClock>>,
@@ -978,39 +1051,13 @@ pub fn heartbeat_tick(
         current_tick,
     };
 
-    maybe_queue_tide_sky_omen(
+    queue_heartbeat_omens(
         &mut heartbeat,
         zone_registry,
         season,
         season_boundary_tick,
-        rhythm_context,
-        vfx_events.as_deref_mut(),
-    );
-    maybe_queue_pseudo_vein(
-        &mut heartbeat,
-        zone_registry,
-        rhythm_context,
-        vfx_events.as_deref_mut(),
-    );
-    maybe_queue_beast_tide(
-        &mut heartbeat,
-        zone_registry,
         npc_registry.as_deref(),
         &active_events,
-        rhythm_context,
-        vfx_events.as_deref_mut(),
-    );
-    maybe_queue_realm_collapse(
-        &mut heartbeat,
-        zone_registry,
-        &player_samples,
-        &active_events,
-        rhythm_context,
-        vfx_events.as_deref_mut(),
-    );
-    maybe_queue_karma_backlash(
-        &mut heartbeat,
-        zone_registry,
         &player_samples,
         rhythm_context,
         vfx_events.as_deref_mut(),
@@ -1018,6 +1065,7 @@ pub fn heartbeat_tick(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 消费上一 tick 的链式触发，按 zone/季节规则排入后续世界事件。
 pub fn chain_reaction_tick(
     mut triggers: EventReader<EventChainTrigger>,
     mut heartbeat: ResMut<WorldHeartbeat>,
@@ -1170,6 +1218,61 @@ fn apply_season_modifiers(heartbeat: &mut WorldHeartbeat, modifiers: SeasonEvent
     heartbeat.beast_tide_cadence.seasonal_multiplier = modifiers.beast_tide_frequency;
     heartbeat.realm_collapse_cadence.seasonal_multiplier = modifiers.realm_collapse_frequency;
     heartbeat.karma_backlash_cadence.seasonal_multiplier = modifiers.karma_backlash_frequency;
+}
+
+/// 按固定顺序排入本轮 heartbeat omen。
+///
+/// 顺序本身是世界事件契约：季节边界提示先于伪灵脉、兽潮、坍缩和运道折耗；
+/// 每个 helper 只负责自己的触发条件，事件优先级仍由 events 模块消费。
+#[allow(clippy::too_many_arguments)]
+fn queue_heartbeat_omens(
+    heartbeat: &mut WorldHeartbeat,
+    zone_registry: &mut ZoneRegistry,
+    season: Season,
+    season_boundary_tick: Option<u64>,
+    npc_registry: Option<&NpcRegistry>,
+    active_events: &ActiveEventsResource,
+    player_samples: &[PlayerSample],
+    rhythm_context: HeartbeatRhythmContext,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    maybe_queue_tide_sky_omen(
+        heartbeat,
+        zone_registry,
+        season,
+        season_boundary_tick,
+        rhythm_context,
+        vfx_events.as_deref_mut(),
+    );
+    maybe_queue_pseudo_vein(
+        heartbeat,
+        zone_registry,
+        rhythm_context,
+        vfx_events.as_deref_mut(),
+    );
+    maybe_queue_beast_tide(
+        heartbeat,
+        zone_registry,
+        npc_registry,
+        active_events,
+        rhythm_context,
+        vfx_events.as_deref_mut(),
+    );
+    maybe_queue_realm_collapse(
+        heartbeat,
+        zone_registry,
+        player_samples,
+        active_events,
+        rhythm_context,
+        vfx_events.as_deref_mut(),
+    );
+    maybe_queue_karma_backlash(
+        heartbeat,
+        zone_registry,
+        player_samples,
+        rhythm_context,
+        vfx_events,
+    );
 }
 
 #[derive(Debug, Clone)]

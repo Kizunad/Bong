@@ -1,12 +1,15 @@
 #![allow(dead_code, unused_imports)]
 
 use super::*;
-use crate::combat::components::{Lifecycle, LifecycleState, RevivalDecision, TICKS_PER_SECOND};
+use crate::combat::components::{
+    ActiveStatusEffect, Lifecycle, LifecycleState, RevivalDecision, StatusEffects, TICKS_PER_SECOND,
+};
+use crate::combat::events::StatusEffectKind;
 use crate::cultivation::lifespan::LifespanCapTable;
 use crate::inventory::{
     move_equipped_item_to_first_container_slot, set_item_instance_durability, ContainerState,
-    DroppedLootEntry, InventoryRevision, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+    DroppedLootEntry, DroppedLootVisibility, InventoryRevision, ItemInstance, ItemRarity,
+    PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::agent_bridge::serialize_server_data_payload;
 use crate::persistence::bootstrap_sqlite;
@@ -93,6 +96,508 @@ fn empty_weapon_inventory() -> PlayerInventory {
         bone_coins: 17,
         max_weight: 45.0,
     }
+}
+
+#[test]
+fn failed_inventory_load_omits_only_inventory_from_aggregate_write_set() {
+    let (persistence, data_dir) = sqlite_persistence("player-slice-write-set");
+    let original_inventory = empty_weapon_inventory();
+    save_player_state(&persistence, "Guarded", &PlayerState::default())
+        .expect("core row should persist");
+    save_player_inventory_slice(&persistence, "Guarded", Some(&original_inventory))
+        .expect("inventory row should persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute(
+            "UPDATE inventories SET inventory_json = ?1 WHERE username = ?2",
+            params!["{broken-json", "Guarded"],
+        )
+        .expect("test should be able to corrupt the inventory payload");
+    drop(connection);
+
+    let loaded = load_player_slices(&persistence, "Guarded");
+    assert_eq!(
+        loaded.load_guard.status(PlayerSlice::Inventory),
+        PlayerSliceLoadStatus::Failed,
+        "decode failure must retain failed provenance"
+    );
+    assert!(
+        !loaded
+            .load_guard
+            .write_set()
+            .contains(PlayerSlice::Inventory),
+        "failed inventory must be omitted from aggregate writes"
+    );
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "Guarded",
+        &PlayerState {
+            karma: 0.8,
+            inventory_score: 0.2,
+        },
+        loaded.position,
+        loaded.last_dimension,
+        loaded.inventory.as_ref(),
+        loaded.lifespan.as_ref(),
+        &loaded.skill_set,
+        loaded.coffin_grade,
+        loaded.craft_session.as_ref(),
+        loaded.status_effects.as_ref(),
+        loaded.load_guard.write_set(),
+    )
+    .expect("healthy slices should still persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_inventory: String = connection
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params!["Guarded"],
+            |row| row.get(0),
+        )
+        .expect("failed inventory row should remain available for later recovery");
+    assert_eq!(persisted_inventory, "{broken-json");
+    let persisted_karma: f64 = connection
+        .query_row(
+            "SELECT karma FROM player_core WHERE username = ?1",
+            params!["Guarded"],
+            |row| row.get(0),
+        )
+        .expect("healthy core row should still be written");
+    approx_eq(persisted_karma, 0.8);
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn aggregate_writer_does_not_create_unverified_skill_set_row() {
+    let (persistence, data_dir) = sqlite_persistence("player-skill-write-barrier");
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "NewPlayer",
+        &PlayerState::default(),
+        [0.0, 70.0, 0.0],
+        DimensionKind::default(),
+        None,
+        None,
+        &SkillSet::default(),
+        None,
+        None,
+        None,
+        WriteSet::all(),
+    )
+    .expect("aggregate writer should persist guarded slices");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let skill_row_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_skills WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("skill row count should be queryable");
+    assert_eq!(
+        skill_row_count, 0,
+        "aggregate player writes must not persist an unverified SkillSet"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn core_anchor_initialization_does_not_overwrite_other_slices() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-anchor");
+    let inventory = empty_weapon_inventory();
+    save_player_inventory_slice(&persistence, "NewPlayer", Some(&inventory))
+        .expect("inventory fixture should persist without a core row");
+
+    let before_inventory: String = Connection::open(persistence.db_path())
+        .expect("sqlite db should open")
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("inventory row should exist");
+
+    save_player_core_slice(&persistence, "NewPlayer", &PlayerState::default())
+        .expect("missing core row should be initialized");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let current_char_id: String = connection
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("core initialization should create a character anchor");
+    Uuid::parse_str(&current_char_id).expect("core anchor should be a UUID");
+
+    let after_inventory: String = connection
+        .query_row(
+            "SELECT inventory_json FROM inventories WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("inventory row should remain available");
+    assert_eq!(
+        after_inventory, before_inventory,
+        "initializing Core must not rewrite another player slice"
+    );
+
+    let skill_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_skills WHERE username = ?1",
+            params!["NewPlayer"],
+            |row| row.get(0),
+        )
+        .expect("skill rows should be queryable");
+    assert_eq!(
+        skill_rows, 0,
+        "core initialization must not invent a SkillSet row"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn fresh_core_slice_save_matches_migrated_player_core_schema() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-fresh-schema");
+
+    save_player_core_slice(&persistence, "FreshPlayer", &PlayerState::default())
+        .expect("a fresh core save should satisfy the current migrated schema");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let legacy_column_count: i64 = connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM pragma_table_info('player_core')
+            WHERE name IN ('realm', 'spirit_qi', 'spirit_qi_max', 'experience')
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .expect("player_core schema should be inspectable");
+    assert_eq!(
+        legacy_column_count, 0,
+        "v13 migration removes legacy cultivation columns before core saves"
+    );
+
+    let persisted_row_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM player_core WHERE username = ?1",
+            params!["FreshPlayer"],
+            |row| row.get(0),
+        )
+        .expect("fresh player_core row should be queryable");
+    assert_eq!(
+        persisted_row_count, 1,
+        "fresh core save must create a durable row without legacy columns"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn core_slice_upsert_preserves_existing_character_anchor() {
+    let (persistence, data_dir) = sqlite_persistence("player-core-upsert");
+    save_player_core_slice(
+        &persistence,
+        "ExistingPlayer",
+        &PlayerState {
+            karma: 0.1,
+            inventory_score: 0.2,
+        },
+    )
+    .expect("initial core save should create the character anchor");
+
+    let initial_anchor: String = Connection::open(persistence.db_path())
+        .expect("sqlite db should open")
+        .query_row(
+            "SELECT current_char_id FROM player_core WHERE username = ?1",
+            params!["ExistingPlayer"],
+            |row| row.get(0),
+        )
+        .expect("initial character anchor should exist");
+
+    save_player_core_slice(
+        &persistence,
+        "ExistingPlayer",
+        &PlayerState {
+            karma: 0.8,
+            inventory_score: 0.6,
+        },
+    )
+    .expect("upsert should update an existing core row atomically");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let (updated_anchor, karma, inventory_score): (String, f64, f64) = connection
+        .query_row(
+            "
+            SELECT current_char_id, karma, inventory_score
+            FROM player_core
+            WHERE username = ?1
+            ",
+            params!["ExistingPlayer"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("updated core row should remain queryable");
+
+    assert_eq!(
+        updated_anchor, initial_anchor,
+        "core upsert must preserve the existing character anchor"
+    );
+    approx_eq(karma, 0.8);
+    approx_eq(inventory_score, 0.6);
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn long_term_status_effects_round_trip_as_a_guarded_player_slice() {
+    let (persistence, data_dir) = sqlite_persistence("player-status-effects");
+    let status_effects = StatusEffects {
+        active: vec![ActiveStatusEffect {
+            kind: StatusEffectKind::Humility,
+            magnitude: 0.5,
+            remaining_ticks: 6_000,
+            source_pill: None,
+        }],
+    };
+    save_player_status_effects_slice(&persistence, "Buffed", &status_effects)
+        .expect("status effects should persist");
+
+    let loaded = load_player_slices(&persistence, "Buffed");
+    assert_eq!(loaded.status_effects, Some(status_effects));
+    assert_eq!(
+        loaded.load_guard.status(PlayerSlice::LongTermBuff),
+        PlayerSliceLoadStatus::Loaded
+    );
+    assert!(loaded
+        .load_guard
+        .write_set()
+        .contains(PlayerSlice::LongTermBuff));
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn explicit_player_slice_reset_clears_persisted_status_effects() {
+    let (persistence, data_dir) = sqlite_persistence("player-status-effects-reset");
+    save_player_status_effects_slice(
+        &persistence,
+        "Resettable",
+        &StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Humility,
+                magnitude: 0.2,
+                remaining_ticks: 20,
+                source_pill: None,
+            }],
+        },
+    )
+    .expect("status effects should persist before reset");
+
+    save_player_slices(
+        &persistence,
+        "Resettable",
+        &PlayerState::default(),
+        [0.0, 70.0, 0.0],
+        DimensionKind::default(),
+        None,
+        None,
+        &SkillSet::default(),
+    )
+    .expect("explicit player reset should persist");
+
+    let loaded = load_player_slices(&persistence, "Resettable");
+    assert_eq!(
+        loaded.status_effects,
+        Some(StatusEffects::default()),
+        "新角色重置不能从旧 durable row 恢复长期状态效果"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn failed_long_term_status_load_omits_only_that_slice_from_aggregate_writes() {
+    let (persistence, data_dir) = sqlite_persistence("player-status-effects-guard");
+    save_player_state(&persistence, "Buffed", &PlayerState::default())
+        .expect("core row should persist");
+    save_player_status_effects_slice(
+        &persistence,
+        "Buffed",
+        &StatusEffects { active: Vec::new() },
+    )
+    .expect("status-effects row should persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute(
+            "UPDATE player_status_effects SET status_effects_json = ?1 WHERE username = ?2",
+            params!["{broken-json", "Buffed"],
+        )
+        .expect("test should be able to corrupt the status-effects payload");
+    drop(connection);
+
+    let loaded = load_player_slices(&persistence, "Buffed");
+    assert_eq!(
+        loaded.load_guard.status(PlayerSlice::LongTermBuff),
+        PlayerSliceLoadStatus::Failed,
+        "invalid long-term buff JSON must retain failed provenance"
+    );
+    assert!(
+        !loaded
+            .load_guard
+            .write_set()
+            .contains(PlayerSlice::LongTermBuff),
+        "failed long-term buff must be omitted from aggregate writes"
+    );
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "Buffed",
+        &PlayerState {
+            karma: 0.4,
+            inventory_score: 0.6,
+        },
+        loaded.position,
+        loaded.last_dimension,
+        loaded.inventory.as_ref(),
+        loaded.lifespan.as_ref(),
+        &loaded.skill_set,
+        loaded.coffin_grade,
+        loaded.craft_session.as_ref(),
+        loaded.status_effects.as_ref(),
+        loaded.load_guard.write_set(),
+    )
+    .expect("healthy slices should still persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_status: String = connection
+        .query_row(
+            "SELECT status_effects_json FROM player_status_effects WHERE username = ?1",
+            params!["Buffed"],
+            |row| row.get(0),
+        )
+        .expect("failed status-effects row should remain for recovery");
+    assert_eq!(persisted_status, "{broken-json");
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn invalid_position_dimension_is_failed_without_rewriting_the_row() {
+    let (persistence, data_dir) = sqlite_persistence("player-position-guard");
+    save_player_state(&persistence, "PositionGuarded", &PlayerState::default())
+        .expect("core row should persist");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute_batch("PRAGMA ignore_check_constraints = ON")
+        .expect("test fixture should be able to inject a legacy invalid dimension");
+    connection
+        .execute(
+            "UPDATE player_slow SET pos_x = ?1, pos_y = ?2, pos_z = ?3, last_dimension = ?4 WHERE username = ?5",
+            params![12.0_f64, 70.0_f64, -8.0_f64, "future_dimension", "PositionGuarded"],
+        )
+        .expect("test should be able to corrupt the position dimension");
+    drop(connection);
+
+    let loaded = load_player_slices(&persistence, "PositionGuarded");
+    assert_eq!(
+        loaded.load_guard.status(PlayerSlice::Position),
+        PlayerSliceLoadStatus::Failed,
+        "unknown dimension must be a failed position load, not an overwritable default"
+    );
+    assert!(!loaded
+        .load_guard
+        .write_set()
+        .contains(PlayerSlice::Position));
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "PositionGuarded",
+        &PlayerState::default(),
+        loaded.position,
+        loaded.last_dimension,
+        loaded.inventory.as_ref(),
+        loaded.lifespan.as_ref(),
+        &loaded.skill_set,
+        loaded.coffin_grade,
+        loaded.craft_session.as_ref(),
+        loaded.status_effects.as_ref(),
+        loaded.load_guard.write_set(),
+    )
+    .expect("healthy slices should still persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_dimension: String = connection
+        .query_row(
+            "SELECT last_dimension FROM player_slow WHERE username = ?1",
+            params!["PositionGuarded"],
+            |row| row.get(0),
+        )
+        .expect("position row should remain for recovery");
+    assert_eq!(persisted_dimension, "future_dimension");
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn out_of_bounds_position_is_failed_without_rewriting_the_row() {
+    let (persistence, data_dir) = sqlite_persistence("player-position-bounds-guard");
+    save_player_state(&persistence, "PositionGuarded", &PlayerState::default())
+        .expect("core row should persist");
+    save_player_slow_slice(
+        &persistence,
+        "PositionGuarded",
+        [12.0, 999.0, -8.0],
+        DimensionKind::default(),
+    )
+    .expect("position row should persist");
+
+    let loaded = load_player_slices(&persistence, "PositionGuarded");
+    assert_eq!(
+        loaded.load_guard.status(PlayerSlice::Position),
+        PlayerSliceLoadStatus::Failed,
+        "out-of-bounds position must remain write-blocked instead of saving spawn defaults"
+    );
+    assert!(!loaded
+        .load_guard
+        .write_set()
+        .contains(PlayerSlice::Position));
+
+    save_player_slices_with_coffin_and_write_set(
+        &persistence,
+        "PositionGuarded",
+        &PlayerState::default(),
+        loaded.position,
+        loaded.last_dimension,
+        loaded.inventory.as_ref(),
+        loaded.lifespan.as_ref(),
+        &loaded.skill_set,
+        loaded.coffin_grade,
+        loaded.craft_session.as_ref(),
+        loaded.status_effects.as_ref(),
+        loaded.load_guard.write_set(),
+    )
+    .expect("healthy slices should still persist");
+
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_y: f64 = connection
+        .query_row(
+            "SELECT pos_y FROM player_slow WHERE username = ?1",
+            params!["PositionGuarded"],
+            |row| row.get(0),
+        )
+        .expect("position row should remain for recovery");
+    approx_eq(persisted_y, 999.0);
+
+    let _ = fs::remove_dir_all(&data_dir);
 }
 
 /// 构造一个 v1 形态的 inventory JSON（每装备槽单件 object），仅含 equipped 段供 migrate 测试。
@@ -1074,6 +1579,8 @@ fn craft_checkpoint_rolls_back_every_slice_when_durable_drop_write_fails() {
         source_col: 0,
         world_pos: [1.0, 64.0, 2.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_000, 1.0),
     };
 
@@ -1140,6 +1647,8 @@ fn durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup(
         source_col: 0,
         world_pos: [3.0, 65.0, 4.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_100, 1.0),
     };
     save_player_craft_checkpoint(
@@ -1196,6 +1705,52 @@ fn durable_craft_drop_roundtrips_seeds_allocator_and_stays_deleted_after_pickup(
 }
 
 #[test]
+fn durable_dropped_loot_loads_legacy_entry_without_metadata() {
+    let (persistence, data_dir) = sqlite_persistence("legacy-dropped-loot-metadata");
+    let entry = DroppedLootEntry {
+        instance_id: 9_099,
+        source_container_id: "legacy_drop".to_string(),
+        source_row: 2,
+        source_col: 3,
+        world_pos: [7.0, 66.0, -2.0],
+        dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: DroppedLootVisibility::Public,
+        item: iron_sword_instance(9_099, 0.73),
+    };
+    let mut legacy = serde_json::to_value(&entry).expect("drop should serialize");
+    let object = legacy
+        .as_object_mut()
+        .expect("serialized drop should be a JSON object");
+    object.remove("owner");
+    object.remove("visibility");
+    let legacy_json = serde_json::to_string(&legacy).expect("legacy drop should encode");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    connection
+        .execute(
+            "INSERT INTO dropped_loot (instance_id, entry_json, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+            params![9_099_i64, legacy_json, 1_i64, 1_i64],
+        )
+        .expect("legacy dropped-loot row should insert");
+    drop(connection);
+
+    let settings = crate::persistence::PersistenceSettings::with_db_path(
+        persistence.db_path(),
+        "legacy-dropped-loot-metadata",
+    );
+    let loaded = crate::persistence::load_durable_dropped_loot(&settings)
+        .expect("legacy dropped-loot row should remain readable");
+    let loaded_drop = loaded.get(&9_099).expect("legacy drop should be hydrated");
+    assert_eq!(loaded_drop.source_row, 2);
+    assert_eq!(loaded_drop.source_col, 3);
+    assert_eq!(loaded_drop.item.durability, 0.73);
+    assert_eq!(loaded_drop.owner, None);
+    assert_eq!(loaded_drop.visibility, DroppedLootVisibility::Public);
+
+    std::fs::remove_dir_all(data_dir).ok();
+}
+
+#[test]
 fn pickup_checkpoint_rolls_back_inventory_drop_and_zone_together() {
     let (persistence, data_dir) = sqlite_persistence("pickup-checkpoint-zone-rollback");
     save_player_state(&persistence, "Azure", &PlayerState::default())
@@ -1208,6 +1763,8 @@ fn pickup_checkpoint_rolls_back_inventory_drop_and_zone_together() {
         source_col: 0,
         world_pos: [3.0, 65.0, 4.0],
         dimension: DimensionKind::Overworld,
+        owner: None,
+        visibility: crate::inventory::DroppedLootVisibility::Public,
         item: iron_sword_instance(9_101, 1.0),
     };
     save_player_craft_checkpoint(
