@@ -1,0 +1,27 @@
+# 执念 Zhinian —— 特征点名清单
+#
+# 依据 AI 参考图（概念图、三视图与爆炸分解图）及用户审定特征清单：
+# - shadowy_head_gaze：被死灰烟气与兜帽轮廓笼罩的头颅，眼眶透出冷白幽光与两侧飘发
+# - broken_war_plate：胸肩部位残留凝结的破碎残甲片与多层厚实锈褐肩甲
+# - ethereal_combat_arms：静立下垂的长爪双臂、袖口撕裂碎布条与右手所握长古剑
+# - trailing_soul_wisps：腰下及下肢部位拖地破烂长袍与数十条长短参差交错撕裂碎布条
+# - upright_battle_stance：身形挺拔戒备、背脊挺直、胸腹斜向交叉缠绕浅灰布带的高阶修士残魂剪影
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+soul_robe_dark   = [34, 32, 42]
+soul_robe_mid    = [56, 54, 66]
+soul_wrap_light  = [142, 144, 158]
+plate_rust_main  = [102, 68, 50]
+sword_steel      = [82, 86, 96]
+eye_cold_glow    = [225, 245, 255]
+
+[features]
+shadowy_head_gaze = { elements = ["head_hood_", "hair_", "eye_glow_"], must_show_in = ["FRONT", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 1000, SIDE_L = 500, SIDE_R = 500 } }
+broken_war_plate = { elements = ["pauldron_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 800, SIDE_L = 500 } }
+ethereal_combat_arms = { elements = ["arm_", "sword_"], must_show_in = ["FRONT", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 800, SIDE_R = 600 } }
+trailing_soul_wisps = { elements = ["robe_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 1500, BACK = 1500 } }
+upright_battle_stance = { elements = ["torso_", "wrap_band_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 600, BACK = 800 } }
