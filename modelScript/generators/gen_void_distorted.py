@@ -81,34 +81,32 @@ def _cube(
     }
 
 
-# 脊椎沿 Z 从后（低）向前（高）抬升；前端之后由 02 号部件的头颅接上。
-SPINE_Z_REAR = -9.0
-SPINE_Z_FRONT = 9.0
-SPINE_Y_REAR = 11.0
-SPINE_Y_FRONT = 17.0
+# 脊椎：9 节首尾贴合的椎骨，沿 Z 从后（低）向前拱起，前端略回落；
+# 前端之后由 02 号部件的头颅接上。相邻两节底面高差 ≤ 1.0 < 椎高，
+# 保证上下错位时仍有侧面相接，不会断成悬空块。
+VERTEBRA_BOTTOMS = [11.0, 11.8, 12.8, 13.8, 14.8, 15.6, 16.2, 16.4, 16.0]
+VERTEBRA_Z_REAR = -9.0
 VERTEBRA_LENGTH = 2.0
-VERTEBRA_PITCH = 2.4
+VERTEBRA_HEIGHT = 2.0
+SPIKE_HEIGHTS = [2.0, 2.6, 2.2, 3.0, 2.4, 2.8, 2.2, 3.0, 2.0]
 
 
-def _spine_y(z: float) -> float:
-    """脊椎底面在 z 处的高度：线性抬升，前段再略微拱起。"""
-    t = (z - SPINE_Z_REAR) / (SPINE_Z_FRONT - SPINE_Z_REAR)
-    return SPINE_Y_REAR + (SPINE_Y_FRONT - SPINE_Y_REAR) * t + 1.2 * np.sin(np.pi * t)
+def _vertebra_z(index: int) -> tuple[float, float]:
+    z0 = VERTEBRA_Z_REAR + index * VERTEBRA_LENGTH
+    return z0, z0 + VERTEBRA_LENGTH
 
 
 def _vertebrae() -> list[dict]:
-    """一节节宽窄交替的骨椎，节间留缝，轮廓是一条上抬的锯齿脊线。"""
+    """骨椎宽窄交替（±1.0 / ±1.2），节与节之间不留缝。"""
     cubes = []
-    count = int((SPINE_Z_FRONT - SPINE_Z_REAR) // VERTEBRA_PITCH) + 1
-    for index in range(count):
-        z0 = SPINE_Z_REAR + index * VERTEBRA_PITCH
-        y0 = float(_spine_y(z0 + VERTEBRA_LENGTH / 2))
-        half_width = 1.1 if index % 2 == 0 else 0.85
+    for index, bottom in enumerate(VERTEBRA_BOTTOMS):
+        z0, z1 = _vertebra_z(index)
+        half_width = 1.0 if index % 2 == 0 else 1.2
         cubes.append(
             _cube(
                 f"spine_vertebra_{index:02d}",
-                (-half_width, y0, z0),
-                (half_width, y0 + 1.5, z0 + VERTEBRA_LENGTH),
+                (-half_width, bottom, z0),
+                (half_width, bottom + VERTEBRA_HEIGHT, z1),
                 "bone" if index % 2 == 0 else "bone_shadow",
             )
         )
@@ -116,19 +114,17 @@ def _vertebrae() -> list[dict]:
 
 
 def _spine_spikes() -> list[dict]:
-    """每节椎骨顶上一根细长骨刺，高度参差；两侧再各有一排斜外倾的短刺。"""
+    """1×1 的骨刺立在每节椎骨顶面中线上，高度参差。"""
     cubes = []
-    count = int((SPINE_Z_FRONT - SPINE_Z_REAR) // VERTEBRA_PITCH) + 1
-    heights = [1.6, 2.4, 1.8, 2.6, 1.7, 2.2, 1.9, 2.8]
-    for index in range(count):
-        zc = SPINE_Z_REAR + index * VERTEBRA_PITCH + VERTEBRA_LENGTH / 2
-        top = float(_spine_y(zc)) + 1.5
-        height = heights[index % len(heights)]
+    for index, bottom in enumerate(VERTEBRA_BOTTOMS):
+        z0, z1 = _vertebra_z(index)
+        zc = (z0 + z1) / 2
+        top = bottom + VERTEBRA_HEIGHT
         cubes.append(
             _cube(
                 f"spine_spike_{index:02d}",
-                (-0.35, top, zc - 0.35),
-                (0.35, top + height, zc + 0.35),
+                (-0.5, top, zc - 0.5),
+                (0.5, top + SPIKE_HEIGHTS[index], zc + 0.5),
                 "bone",
             )
         )
@@ -149,76 +145,51 @@ def _mirrored_box(
     ]
 
 
-# 肋骨沿 X 向外一段段下落（x0, x1, 相对脊底下落量, 厚度）。整体是人字形拱，
-# 末段再接一小截垂直下挂的骨尖。
+# 每根肋骨 4 节：先向外、再向外下弯，最后一节向内收。每项 (x0, x1, 相对首节顶面的下落量)。
+# 相邻两节 x 范围相接或重叠、y 范围重叠 ≥0.4，所以连成一条连续的弧形骨条。
+RIB_THICKNESS = 1.3
+RIB_DEPTH = 1.0
 RIB_SEGMENTS = [
-    (1.0, 3.0, 0.2, 1.0),
-    (3.0, 5.0, 1.5, 1.0),
-    (5.0, 6.8, 3.0, 1.0),
-    (6.8, 8.0, 4.6, 1.0),
+    (1.0, 3.6, 0.0),
+    (3.6, 6.2, 0.6),
+    (6.0, 8.4, 1.6),
+    (5.6, 7.8, 2.8),
 ]
-RIB_REAR_LEAN = 0.5
-RIB_STATION_Z =[-7.6, -5.2, -2.8, -0.4, 2.0, 4.4, 6.8]
+# 肋骨长在第 1~7 节椎骨（共 7 对），首节顶面落在椎骨侧面内。
+RIB_VERTEBRA_INDICES = range(1, 8)
+RIB_REAR_LEAN = 0.3
 
 
 def _ribs() -> list[dict]:
-    """七对肋骨沿脊椎排开，中段最宽，前后收窄；上缘立短刺，末端垂尖。"""
+    """左右各 7 根，每根 4 节；从椎骨侧面长出，中段略宽，前后收窄。"""
     cubes = []
-    for index, zc in enumerate(RIB_STATION_Z):
-        reach = 1.0 - 0.07 * abs(index - 3)
-        depth = 0.9 if index % 2 == 0 else 0.7
-        spine_bottom = float(_spine_y(zc))
+    for index in RIB_VERTEBRA_INDICES:
+        z0, z1 = _vertebra_z(index)
+        zc = (z0 + z1) / 2
+        attach_top = VERTEBRA_BOTTOMS[index] + VERTEBRA_HEIGHT - 0.2
+        reach = 1.0 - 0.05 * abs(index - 4)
         material = "bone" if index % 2 == 0 else "bone_shadow"
-        for seg, (x0, x1, drop, thick) in enumerate(RIB_SEGMENTS):
-            x0 *= reach if seg else 1.0
-            x1 *= reach
-            y_top = spine_bottom - drop
-            # 越往外越向后倾，侧视时肋骨是斜条而不是竖杆。
+        for seg, (x0, x1, drop) in enumerate(RIB_SEGMENTS):
+            # 首节紧贴椎骨侧面（x0 不缩放），其后各节按 reach 缩放并逐节后倾。
+            x0 = x0 if seg == 0 else x0 * reach
             lean = RIB_REAR_LEAN * seg
-            z_range = (zc - depth / 2 - lean, zc + depth / 2 - lean)
+            y_top = attach_top - drop
             cubes += _mirrored_box(
-                f"rib_{index}_seg{seg}", (x0, x1), (y_top - thick, y_top), z_range, material
-            )
-        # 末端骨尖：窄而长，垂直下挂，各肋长短不一。
-        tip_x1 = RIB_SEGMENTS[-1][1] * reach
-        tip_top = spine_bottom - RIB_SEGMENTS[-1][2] - RIB_SEGMENTS[-1][3]
-        tip_len = 2.6 + 0.5 * (index % 3)
-        tip_lean = RIB_REAR_LEAN * (len(RIB_SEGMENTS) - 1)
-        cubes += _mirrored_box(
-            f"rib_{index}_tip",
-            (tip_x1 - 0.8, tip_x1 - 0.3),
-            (tip_top - tip_len, tip_top),
-            (zc - 0.25 - tip_lean, zc + 0.25 - tip_lean),
-            "bone_shadow",
-        )
-        # 上缘外倾短刺：两段错位，从拱面向外上方斜伸。
-        for seg in (1, 2):
-            x0, x1, drop, _ = RIB_SEGMENTS[seg]
-            y_top = spine_bottom - drop
-            base_x = (x0 + x1) / 2 * reach
-            cubes += _mirrored_box(
-                f"rib_{index}_spike{seg}_base",
-                (base_x - 0.3, base_x + 0.3),
-                (y_top, y_top + 1.1),
-                (zc - 0.3, zc + 0.3),
-                "bone",
-            )
-            cubes += _mirrored_box(
-                f"rib_{index}_spike{seg}_tip",
-                (base_x + 0.1, base_x + 0.6),
-                (y_top + 1.1, y_top + 2.0 + 0.4 * seg),
-                (zc - 0.22, zc + 0.22),
-                "bone",
+                f"rib_{index}_seg{seg}",
+                (x0, x1 * reach),
+                (y_top - RIB_THICKNESS, y_top),
+                (zc - RIB_DEPTH / 2 - lean, zc + RIB_DEPTH / 2 - lean),
+                material,
             )
     return cubes
 
 
 def part_spine_ribcage() -> list[dict]:
-    """01 部件：沿驼背上抬的骨脊 + 脊上细刺 + 向两侧斜垂的人字形肋笼。
+    """01 部件：连续拱形骨脊 + 脊顶骨刺 + 左右各 7 根弧形肋骨。
 
     坐标：X 左右、Y 向上、Z 朝向生物正面（前高后低）。对照
-    parts_ref/01_spine_ribcage.png：正面是倒 V 的拱，侧面是前高后低的斜脊。
-    红肉条属于 03 号部件，锈甲属于 04 号，本件不含。
+    parts_ref/01_spine_ribcage.png。红肉条属于 03 号部件，锈甲属于 04 号，
+    本件不含；肋骨之间的空隙留给 03 的肉条。
     """
     return _vertebrae() + _spine_spikes() + _ribs()
 
