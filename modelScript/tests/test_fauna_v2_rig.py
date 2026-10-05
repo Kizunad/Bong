@@ -82,6 +82,23 @@ class ZhinianRigTest(unittest.TestCase):
         self.assertEqual(len(bones), len({bone.name for bone in bones}), "骨名必须唯一")
 
 
+class TsySentinelRigTest(unittest.TestCase):
+    def test_every_cube_gets_a_bone(self) -> None:
+        """骨表必须认领全部 cube（含 1000 多块石碎片），漏认领会让导出直接报错。"""
+        _, rig, bones = gen_rig.load_species("tsy_sentinel_v2")
+        claimed = {uuid for group in _walk(rig["outliner"]) for uuid in group.get("children", []) if isinstance(uuid, str)}
+        self.assertEqual(len(rig["elements"]), len(claimed), "期望：每个 cube 挂在恰好一根骨下")
+        self.assertEqual(len(bones), len({bone.name for bone in bones}), "骨名必须唯一")
+
+    def test_face_ends_up_on_minus_z(self) -> None:
+        """建模源面朝 +Z（眉梁在 +Z 侧），绑定稿转向后必须朝游戏里的 -Z。"""
+        source, rig, _ = gen_rig.load_species("tsy_sentinel_v2")
+        brow_before = next(e for e in source["elements"] if e["name"] == "head_brow")
+        brow_after = next(e for e in rig["elements"] if e["name"] == "head_brow")
+        self.assertGreater(brow_before["from"][2], 0, "期望：终审稿眉梁在 +Z 侧（脸朝 +Z）")
+        self.assertLess(brow_after["to"][2], 0, "期望：转向后眉梁在 -Z 侧（脸朝游戏里的 -Z）；实际没转过去")
+
+
 def _walk(nodes: list) -> list[dict]:
     out = []
     for node in nodes:
