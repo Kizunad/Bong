@@ -1,0 +1,28 @@
+# 秘境守灵偶 TsySentinel —— 特征点名清单
+#
+# 依据 AI 参考图（概念图、三视图与爆炸分解图）及用户审定特征清单：
+# - stone_mask_head：线条平整方正的石雕面具头颅（带深陷暗眼窝、凸起眉梁与平直冷峻下颌）
+# - massive_stone_pauldron：宽厚耸立、向外大幅外挑、带有残缺边角的厚重玄石双肩甲
+# - formation_engravings：胸板与甲面上浅凹雕刻的残损古老阵纹凹槽
+# - stone_broadsword_arm：右臂结合或手持的厚重残破石巨剑（宽厚石剑身、带缺口、剑尖近地）
+# - blocky_pillar_legs：直立厚重、带有沉重脚掌与分节石榫关节的粗壮双腿
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+stone_armor_main  = [108, 106, 108]
+mask_stone_light  = [192, 184, 168]
+core_dark_slate   = [54, 46, 42]
+legs_slate_dark   = [36, 32, 32]
+rune_cyan_glow    = [72, 164, 156]
+stone_armor_lit   = [144, 142, 144]
+sword_edge_chip   = [156, 152, 148]
+
+[features]
+stone_mask_head = { elements = ["head_"], must_show_in = ["FRONT", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 1000, SIDE_L = 500, SIDE_R = 500 } }
+massive_stone_pauldron = { elements = ["pauldron_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4", "TOP"], min_px = { FRONT = 2000, TOP = 1200 } }
+formation_engravings = { elements = ["torso_rune_", "torso_chest_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 600 } }
+stone_broadsword_arm = { elements = ["arm_r_", "sword_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = { FRONT = 1000, SIDE_R = 1000 } }
+blocky_pillar_legs = { elements = ["leg_"], must_show_in = ["FRONT", "BACK", "SIDE_L", "SIDE_R", "3/4"], min_px = { FRONT = 1000, BACK = 1000 } }
