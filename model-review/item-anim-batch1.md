@@ -16,7 +16,9 @@
 - 本轮动作打磨（动作本体，不只换渲染）：
   - 骨剑 `bone_sword_slash`：上一版是竖挥（pitch 从下往上抬），三视图里不是横切。改成横切靠 yaw：windup 右后侧拉回（yaw +75°）→ sweep 身前（+20°）→ impact 左前横扫（-62°），躯干先转、手臂 yaw 峰值比躯干晚、左手拉回再猛收（反相）、overshoot 再扫 ~10°。
   - 骨镐 `pickaxe_bone_use`：左手（平衡手）加了 load-snap：windup 放松（bend 64°）、impact 猛收（pitch -66°、bend 84°）、overshoot 回弹（bend 78°）。
-  - 缠手两式、兵甲两式：动作未改。左式用镜像后的右式 JSON 渲染（预览只挂右手，镜像后拳套落在出拳手上）。
+  - 缠手两式（2026-10-05 第二轮）：右式重写为轻拳——护脸更紧（guard bend 128°）、出拳短（impact 肘收 26°）、腕翻 roll +34°→-24°、躯干只拧 6°、8 tick；左式由右式 `mirror_pose` 镜像生成，左右完全对称。
+  - 兵甲两式（第二轮）：右式重写为重拳要「沉」——load 先坐住（躯干左拧 +20°、身体下沉、重心后移、后腿屈 34°），coil 躯干拧到 +38°、拳收耳后，drive 腰胯带动躯干反拧到 -22°、手臂晚一拍，extension 到位，overshoot 过冲约 6°、rebound 回弹约 10°，settle 慢收，16 tick；左式由右式镜像生成，左右完全对称。
+  - 预览只能挂右手手持物（工具限制，已在各 md 写明）；左式的预览用镜像 JSON 渲染。
   - 木杖 `wooden_staff_atk`：动作未改（双手横持已调度复审通过，改动会破坏左手贴杖的关键帧）。
 - 同类旧动画对照：缠手 → `fist_punch_left/right`，兵甲 → `fist_punch_left/right`，骨镐 → `pickaxe_iron_v2_use`，骨剑 → `iron_sword_v2_use`，木杖 → `club_sweep`（钝器横扫，比 `sword_swing_horiz` 更贴）。
 
