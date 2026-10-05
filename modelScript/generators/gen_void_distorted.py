@@ -145,47 +145,53 @@ def _mirrored_box(
     ]
 
 
-# 每根肋骨 4 节：先向外、再向外下弯，最后一节向内收。每项 (x0, x1, 相对首节顶面的下落量)。
-# 相邻两节 x 范围相接或重叠、y 范围重叠 ≥0.4，所以连成一条连续的弧形骨条。
-RIB_THICKNESS = 1.3
-RIB_DEPTH = 1.0
-RIB_SEGMENTS = [
-    (1.0, 3.6, 0.0),
-    (3.6, 6.2, 0.6),
-    (6.0, 8.4, 1.6),
-    (5.6, 7.8, 2.8),
-]
-# 肋骨长在第 1~7 节椎骨（共 7 对），首节顶面落在椎骨侧面内。
-RIB_VERTEBRA_INDICES = range(1, 8)
-RIB_REAR_LEAN = 0.3
+# 肋骨：每根是一条 0.8×0.8 的细骨条，3 段拼成「⊃」形——
+# A 从椎骨侧面水平伸出，B 在外端垂直下挂，C 在 B 的底端向内钩回。
+# 6 对肋骨长在第 2~7 节椎骨上（7 是最靠近头部的一节），沿脊椎方向相邻肋骨之间
+# 的空隙 = 椎骨节距 − 肋宽 = 1.2，侧面能透过去。
+RIB_SECTION = 0.8
+RIB_OUT_LENGTH = 2.0
+RIB_VERTEBRA_INDICES = range(2, 8)
+RIB_DROP_REAR = 3.0
+RIB_DROP_STEP = 0.2
 
 
 def _ribs() -> list[dict]:
-    """左右各 7 根，每根 4 节；从椎骨侧面长出，中段略宽，前后收窄。"""
+    """左右各 6 根「⊃」形细肋，越靠前（头部方向）垂得越长。"""
     cubes = []
     for index in RIB_VERTEBRA_INDICES:
         z0, z1 = _vertebra_z(index)
         zc = (z0 + z1) / 2
-        attach_top = VERTEBRA_BOTTOMS[index] + VERTEBRA_HEIGHT - 0.2
-        reach = 1.0 - 0.05 * abs(index - 4)
+        z_range = (zc - RIB_SECTION / 2, zc + RIB_SECTION / 2)
+        half_width = 1.0 if index % 2 == 0 else 1.2
+        outer = half_width + RIB_OUT_LENGTH
+        top = VERTEBRA_BOTTOMS[index] + VERTEBRA_HEIGHT - 0.4
+        drop = RIB_DROP_REAR + RIB_DROP_STEP * (index - RIB_VERTEBRA_INDICES.start)
         material = "bone" if index % 2 == 0 else "bone_shadow"
-        for seg, (x0, x1, drop) in enumerate(RIB_SEGMENTS):
-            # 首节紧贴椎骨侧面（x0 不缩放），其后各节按 reach 缩放并逐节后倾。
-            x0 = x0 if seg == 0 else x0 * reach
-            lean = RIB_REAR_LEAN * seg
-            y_top = attach_top - drop
-            cubes += _mirrored_box(
-                f"rib_{index}_seg{seg}",
-                (x0, x1 * reach),
-                (y_top - RIB_THICKNESS, y_top),
-                (zc - RIB_DEPTH / 2 - lean, zc + RIB_DEPTH / 2 - lean),
-                material,
-            )
+        down_top = top - RIB_SECTION
+        down_bottom = down_top - drop
+        cubes += _mirrored_box(
+            f"rib_{index}_out", (half_width, outer), (down_top, top), z_range, material
+        )
+        cubes += _mirrored_box(
+            f"rib_{index}_down",
+            (outer - RIB_SECTION, outer),
+            (down_bottom, down_top),
+            z_range,
+            material,
+        )
+        cubes += _mirrored_box(
+            f"rib_{index}_hook",
+            (outer - 2 * RIB_SECTION, outer - RIB_SECTION),
+            (down_bottom, down_bottom + RIB_SECTION),
+            z_range,
+            material,
+        )
     return cubes
 
 
 def part_spine_ribcage() -> list[dict]:
-    """01 部件：连续拱形骨脊 + 脊顶骨刺 + 左右各 7 根弧形肋骨。
+    """01 部件：连续拱形骨脊 + 脊顶骨刺 + 左右各 6 根「⊃」形细肋。
 
     坐标：X 左右、Y 向上、Z 朝向生物正面（前高后低）。对照
     parts_ref/01_spine_ribcage.png。红肉条属于 03 号部件，锈甲属于 04 号，
