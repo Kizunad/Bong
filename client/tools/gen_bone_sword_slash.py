@@ -47,7 +47,7 @@ POSE = {
         leftArm=dict(pitch=+6, yaw=+8, roll=-8, bend=14, axis=180),
         rightLeg=dict(pitch=+10, yaw=-3, bend=14, z=+0.04),
         leftLeg=dict(pitch=-14, yaw=+4, bend=18, z=-0.08),
-        rightItem=dict(pitch=0, yaw=-20, roll=0),
+        rightItem=dict(pitch=+5, yaw=-30, roll=-30),
     ),
 
     5: dict(
@@ -59,7 +59,7 @@ POSE = {
         leftArm=dict(pitch=+4, yaw=+6, roll=-6, bend=12, axis=180),
         rightLeg=dict(pitch=+8, yaw=-2, bend=12, z=+0.03),
         leftLeg=dict(pitch=-12, yaw=+3, bend=16, z=-0.07),
-        rightItem=dict(pitch=0, yaw=-20, roll=+20),
+        rightItem=dict(pitch=+10, yaw=-15, roll=-60),
     ),
 
     6: dict(  # 横扫中段：剑沿弧线扫过身前，刃线需要单独对准（见 md 的逐帧检查）
@@ -71,7 +71,7 @@ POSE = {
         leftArm=dict(pitch=+8, yaw=+2, roll=-6, bend=15, axis=180),
         rightLeg=dict(pitch=+10, yaw=-2.5, bend=16, z=+0.04),
         leftLeg=dict(pitch=-15, yaw=+3.5, bend=23, z=-0.09),
-        rightItem=dict(pitch=0, yaw=-25, roll=+20),
+        rightItem=dict(pitch=+20, yaw=+0, roll=-60),
     ),
 
     7: dict(
@@ -83,7 +83,7 @@ POSE = {
         leftArm=dict(pitch=+12, yaw=-2, roll=-6, bend=18, axis=180),
         rightLeg=dict(pitch=+12, yaw=-3, bend=20, z=+0.05),
         leftLeg=dict(pitch=-18, yaw=+4, bend=30, z=-0.11),
-        rightItem=dict(pitch=0, yaw=-30, roll=+20),
+        rightItem=dict(pitch=+25, yaw=+20, roll=-60),
     ),
 
     8: dict(
@@ -95,7 +95,7 @@ POSE = {
         leftArm=dict(pitch=+14, yaw=-4, roll=-6, bend=20, axis=180),
         rightLeg=dict(pitch=+12, yaw=-3, bend=22, z=+0.05),
         leftLeg=dict(pitch=-20, yaw=+4, bend=34, z=-0.12),
-        rightItem=dict(pitch=0, yaw=-30, roll=+20),
+        rightItem=dict(pitch=+25, yaw=+20, roll=-60),
     ),
 
     9: dict(  # 与 tick 0 同值

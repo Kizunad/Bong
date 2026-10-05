@@ -387,21 +387,21 @@
         "tick": 2,
         "easing": "INOUTSINE",
         "rightItem": {
-          "pitch": 0.0
+          "pitch": 0.0872665
         }
       },
       {
         "tick": 2,
         "easing": "INOUTSINE",
         "rightItem": {
-          "yaw": -0.3490659
+          "yaw": -0.5235988
         }
       },
       {
         "tick": 2,
         "easing": "INOUTSINE",
         "rightItem": {
-          "roll": 0.0
+          "roll": -0.5235988
         }
       },
       {
@@ -583,21 +583,21 @@
         "tick": 5,
         "easing": "INOUTSINE",
         "rightItem": {
-          "pitch": 0.0
+          "pitch": 0.1745329
         }
       },
       {
         "tick": 5,
         "easing": "INOUTSINE",
         "rightItem": {
-          "yaw": -0.3490659
+          "yaw": -0.2617994
         }
       },
       {
         "tick": 5,
         "easing": "INOUTSINE",
         "rightItem": {
-          "roll": 0.3490659
+          "roll": -1.0471976
         }
       },
       {
@@ -779,21 +779,21 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "rightItem": {
-          "pitch": 0.0
+          "pitch": 0.3490659
         }
       },
       {
         "tick": 6,
         "easing": "INOUTSINE",
         "rightItem": {
-          "yaw": -0.4363323
+          "yaw": 0.0
         }
       },
       {
         "tick": 6,
         "easing": "INOUTSINE",
         "rightItem": {
-          "roll": 0.3490659
+          "roll": -1.0471976
         }
       },
       {
@@ -975,21 +975,21 @@
         "tick": 7,
         "easing": "OUTQUAD",
         "rightItem": {
-          "pitch": 0.0
+          "pitch": 0.4363323
         }
       },
       {
         "tick": 7,
         "easing": "OUTQUAD",
         "rightItem": {
-          "yaw": -0.5235988
+          "yaw": 0.3490659
         }
       },
       {
         "tick": 7,
         "easing": "OUTQUAD",
         "rightItem": {
-          "roll": 0.3490659
+          "roll": -1.0471976
         }
       },
       {
@@ -1171,21 +1171,21 @@
         "tick": 8,
         "easing": "OUTQUAD",
         "rightItem": {
-          "pitch": 0.0
+          "pitch": 0.4363323
         }
       },
       {
         "tick": 8,
         "easing": "OUTQUAD",
         "rightItem": {
-          "yaw": -0.5235988
+          "yaw": 0.3490659
         }
       },
       {
         "tick": 8,
         "easing": "OUTQUAD",
         "rightItem": {
-          "roll": 0.3490659
+          "roll": -1.0471976
         }
       },
       {

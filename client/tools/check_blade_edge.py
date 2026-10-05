@@ -6,10 +6,14 @@
   1. 逐 tick（含半 tick）用 PlayerAnimator 的插值（bbmodel_maker.rig.emote_anim）取 rightArm / rightItem 姿态；
   2. 手（挂点）世界位置 = R_arm·(pivot + B·(P·t − c) + c)，前臂弯折 B 绕肘中心 c；
   3. 挥击方向 = 相邻采样点的手位移方向（速度低于阈值的静止段不评）；
-  4. 刃线 = 模型 z 轴在世界中的方向：M·ẑ，M = R_arm·B·P·R_item·Rd；
-     刀面法线 = M·x̂，刃长 = M·ŷ（ŷ 朝上为正）。
-  5. 判据：挥击段（速度 > 阈值）内，|刃线·挥击方向| 的最小值 ≥ ALIGN_MIN，且刀面法线与挥击方向夹角足够小
-     （即刀面不是迎着挥击方向拍过去）。
+  4. 模型的刃线轴有两种来源，必须分开看：
+       - **bbmodel**（预览工具画的、用户审阅看的画面）：刃线沿模型 x 轴，刀面法线是 z 轴；
+       - **OBJ**（游戏加载的 bone_sword_v2.obj）：刃线沿模型 z 轴，刀面法线是 x 轴。
+     两者刀身相对护手转了 90°，见 model-review/item-anim-batch1.md「模型来源问题」。
+     M = R_arm·B·P·R_item·Rd；world 轴 = M·{x̂,ŷ,ẑ}（ŷ 为刃长，朝上为正）。
+  5. 判据（用 --edge-axis 指定，默认 x = bbmodel 画面）：挥击段（速度 > 阈值）内，
+     |刃线·挥击方向| 的最小值 ≥ ALIGN_MIN，且刀面法线与挥击方向的 |cos| 最大值 ≤ FACE_MAX。
+     同时报告另一种来源的刃线对齐，作为游戏 OBJ 的参考。
 
 用法：
     python3 client/tools/check_blade_edge.py <player_animation.json> --display <bone_sword_v2.json>
@@ -111,6 +115,8 @@ def main() -> int:
     ap.add_argument("anim", type=Path, help="player_animation JSON")
     ap.add_argument("--display", type=Path, required=True, help="物品模型 JSON（取 thirdperson_righthand）")
     ap.add_argument("--strike", default="", help="挥击段 tick 范围 a-b（缺省用全部有手速的帧）")
+    ap.add_argument("--edge-axis", choices=("x", "z"), default="x",
+                    help="判据用的刃线轴：x = bbmodel 画面（默认），z = 游戏 OBJ")
     args = ap.parse_args()
 
     emote = json.loads(args.anim.read_text(encoding="utf-8"))["emote"]
@@ -124,10 +130,13 @@ def main() -> int:
     frames = {t: frame_axes(kfs, t, rd) for t in samples}
     lo, hi = (float(v) for v in args.strike.split("-")) if args.strike else (0.0, end)
 
-    rows = []
+    edge_i = {"x": 0, "z": 2}[args.edge_axis]
+    flat_i = 2 if args.edge_axis == "x" else 0
+    other_i = 0 if args.edge_axis == "z" else 2   # 另一种来源的刃线轴（x↔z），只作参考
     worst = 1.0
     worst_face = 0.0
-    print(f"{'tick':>5} {'speed':>6} {'align|z·v|':>10} {'face|x·v|':>10} {'up(-y)':>7}  note")
+    worst_other = 1.0
+    print(f"{'tick':>5} {'speed':>6} {'edge|·v|':>9} {'flat|·v|':>9} {'ref|·v|':>8} {'up(-y)':>7}  note")
     for i, t in enumerate(samples):
         if i == 0 or i == len(samples) - 1:
             continue
@@ -135,27 +144,30 @@ def main() -> int:
         next_hand = frames[samples[i + 1]][3]
         vel = next_hand - prev_hand                      # 两个半 tick 的位移
         speed = float(np.linalg.norm(vel)) / 2.0         # 像素 / tick
-        x_ax, y_ax, z_ax, _ = frames[t]
-        up = -float(y_ax[1])
+        axes = frames[t]
+        up = -float(axes[1][1])
         if speed < SPEED_MIN:
-            print(f"{t:5.1f} {speed:6.2f} {'-':>10} {'-':>10} {up:+7.2f}  静止，不评")
+            print(f"{t:5.1f} {speed:6.2f} {'-':>9} {'-':>9} {'-':>8} {up:+7.2f}  静止，不评")
             continue
         v = vel / np.linalg.norm(vel)
-        align = abs(float(z_ax @ v))
-        face = abs(float(x_ax @ v))
+        align = abs(float(axes[edge_i] @ v))
+        face = abs(float(axes[flat_i] @ v))
+        other = abs(float(axes[other_i] @ v))
         in_strike = lo <= t <= hi
         if in_strike:
             worst = min(worst, align)
             worst_face = max(worst_face, face)
+            worst_other = min(worst_other, other)
         note = "挥击段" if in_strike else ""
-        print(f"{t:5.1f} {speed:6.2f} {align:10.3f} {face:10.3f} {up:+7.2f}  {note}")
-        rows.append((t, align, face))
+        print(f"{t:5.1f} {speed:6.2f} {align:9.3f} {face:9.3f} {other:8.3f} {up:+7.2f}  {note}")
 
     ok = worst >= ALIGN_MIN and worst_face <= FACE_MAX
     print()
     print(f"挥击段（{lo:g}-{hi:g} tick，手速 ≥ {SPEED_MIN} px/tick）：")
+    print(f"  判据刃线轴 = 模型 {args.edge_axis} 轴（{'bbmodel 画面' if args.edge_axis == 'x' else '游戏 OBJ'}）")
     print(f"  刃线与挥击方向 |cos| 最小值 = {worst:.3f}（要求 ≥ {ALIGN_MIN}）")
     print(f"  刀面法线与挥击方向 |cos| 最大值 = {worst_face:.3f}（要求 ≤ {FACE_MAX}）")
+    print(f"  参考：另一种来源（模型 {'z' if args.edge_axis == 'x' else 'x'} 轴）刃线 |cos| 最小值 = {worst_other:.3f}")
     print("  结论：" + ("通过" if ok else "不通过"))
     return 0 if ok else 1
 
