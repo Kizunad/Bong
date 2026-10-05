@@ -209,108 +209,73 @@ def _tag(cubes: list[dict], group: str) -> list[dict]:
 
 # 02 号部件挂在脊椎前端（最后一节椎骨的 +Z 面，z=9）。
 MAW_FRONT_Z = VERTEBRA_Z_REAR + VERTEBRA_LENGTH * len(VERTEBRA_BOTTOMS)
-MAW_OUTER_DEPTH = 2.0  # 外圈红肉：z0 .. z0+2.0（最靠前）
-MAW_MID_DEPTH = 1.4  # 内圈暗红肉：前缘比外圈缩进 0.6
-MAW_VOID_DEPTH = 0.8  # 中心虚空黑：再缩进 0.6，三级台阶就是漏斗
-MAW_HOLE_HALF_WIDTH = 2.6
-MAW_HOLE_BOTTOM = 11.6
-MAW_HOLE_TOP = 15.4
-MAW_MID_THICKNESS = 0.8
 
-# 外圈红肉按行堆成参差的八边形：(y0, y1, 左半宽, 右半宽, 该行是否被洞穿)。
-# 左右半宽故意不相等，边缘才不会像一个规整的框。
-MAW_ROWS = [
-    (9.9, 10.9, 1.4, 1.7, False),
-    (10.9, 11.6, 2.6, 2.3, False),
-    (11.6, 12.8, 3.4, 3.2, True),
-    (12.8, 14.2, 3.7, 3.5, True),
-    (14.2, 15.4, 3.2, 3.5, True),
-    (15.4, 16.2, 2.6, 2.9, False),
-    (16.2, 17.0, 1.7, 1.5, False),
-]
-# 外圈边缘的几块凸起肉瘤：(侧, y0, y1, 突出的半宽范围, z 前缘退让)
-MAW_NUBS = [
-    (-1, 13.0, 13.7, (3.7, 4.0)),
-    (1, 14.6, 15.2, (3.5, 3.8)),
-    (-1, 11.7, 12.3, (3.4, 3.7)),
-    (1, 11.9, 12.5, (3.2, 3.6)),
-]
-# 垂下的短肉须：(x 中心, 长度)。
-MAW_WHISKERS = [(-1.0, 1.3), (-0.2, 0.8), (0.6, 1.7), (1.3, 1.0)]
+# 虚空口按 7×7 网格摆：格边长 1.2，中心 (x=0, y=MAW_CENTER_Y)。
+# 三圈由外到内——外圈（max(|i|,|j|)==3，亮红）、中圈（==2，暗红）、内圈（==1，暗红）——
+# 前缘依次后退 MAW_STEP，中心一格是虚空黑，退得最深，所以侧视是往里收的台阶漏斗。
+MAW_CELL = 1.2
+MAW_CENTER_Y = 13.5
+MAW_STEP = 0.9
+MAW_OUTER_FRONT = 2.7  # 外圈前缘离 z0 的距离
+# 外圈不规则：四个角整格缺失，每边再缺 1~2 格；个别格子前缘多凸 / 少凸（格坐标 → 增量）。
+MAW_OUTER_MISSING = {
+    (-3, 3), (3, 3), (3, -3), (-3, -3),
+    (-3, 1), (2, 3), (3, -1), (-1, -3), (1, -3),
+}
+MAW_OUTER_DEPTH_SKEW = {(-3, -1): 0.4, (3, 2): 0.4, (-2, 3): -0.3, (3, 1): -0.25, (0, -3): 0.3}
+# 外圈下垂的肉须：(格 i, 须宽, 长度)，从最下一行外圈格子底下垂。须宽 0.6~0.8。
+MAW_WHISKERS = [(-2, 0.7, 2.2), (0, 0.6, 1.2), (1, 0.8, 3.0), (2, 0.6, 1.7)]
+
+
+def _cell_box(
+    name: str, i: int, j: int, z_back: float, z_front: float, material: str
+) -> dict:
+    x0 = i * MAW_CELL - MAW_CELL / 2
+    y0 = MAW_CENTER_Y + j * MAW_CELL - MAW_CELL / 2
+    return _cube(name, (x0, y0, z_back), (x0 + MAW_CELL, y0 + MAW_CELL, z_front), material)
 
 
 def _maw_funnel() -> list[dict]:
-    """层层往里收的血肉漏斗：外圈参差红肉 → 内圈暗红 → 中心虚空黑，边缘几条短肉须。
-
-    三层前缘依次缩进 0.6，正面看是有台阶的深洞，不是一个框。
-    """
+    """往里收的三圈血肉漏斗，中心虚空黑；外圈参差、下垂细肉须。"""
     z0 = MAW_FRONT_Z
-    outer_z1 = z0 + MAW_OUTER_DEPTH
     cubes = []
-    hole = MAW_HOLE_HALF_WIDTH
-    for index, (y0, y1, left, right, pierced) in enumerate(MAW_ROWS):
-        # 外圈以亮红为主，只有两行暗红夹在里面做斑驳，和内圈的暗红拉开层次。
-        material = "flesh_dark" if index in (1, 5) else "flesh_red"
-        if pierced:
-            cubes.append(_cube(f"maw_outer{index}_l", (-left, y0, z0), (-hole, y1, outer_z1), material))
-            cubes.append(_cube(f"maw_outer{index}_r", (hole, y0, z0), (right, y1, outer_z1), material))
-        else:
-            cubes.append(_cube(f"maw_outer{index}", (-left, y0, z0), (right, y1, outer_z1), material))
-    for index, (sign, y0, y1, (x0, x1)) in enumerate(MAW_NUBS):
-        lo, hi = (x0, x1) if sign > 0 else (-x1, -x0)
-        cubes.append(
-            _cube(f"maw_nub{index}", (lo, y0, z0 + 0.4), (hi, y1, outer_z1 - 0.5), "flesh_red")
-        )
-
-    # 内圈暗红：贴着洞壁的一圈，前缘比外圈缩进。
-    mid_z1 = z0 + MAW_MID_DEPTH
-    inner = hole - MAW_MID_THICKNESS
-    bottom = MAW_HOLE_BOTTOM + MAW_MID_THICKNESS
-    top = MAW_HOLE_TOP - MAW_MID_THICKNESS
-    cubes += [
-        _cube("maw_mid_top", (-hole, top, z0), (hole, MAW_HOLE_TOP, mid_z1), "flesh_dark"),
-        _cube("maw_mid_bottom", (-hole, MAW_HOLE_BOTTOM, z0), (hole, bottom, mid_z1), "flesh_dark"),
-        _cube("maw_mid_left", (-hole, bottom, z0), (-inner, top, mid_z1), "flesh_dark"),
-        _cube("maw_mid_right", (inner, bottom, z0), (hole, top, mid_z1), "flesh_dark"),
-        _cube(
-            "maw_void",
-            (-inner, bottom, z0),
-            (inner, top, z0 + MAW_VOID_DEPTH),
-            "void_black",
-        ),
-    ]
-    # 洞口切角：四个角各塞一块暗红肉，把方洞削成近似八边形。块比内圈再缩进，
-    # 且不盖住虚空板正面（板在 z0+0.8，块的前缘在 z0+1.1）。
-    chamfer = 0.6
-    for corner, (sx, y_edge, sy) in enumerate(
-        [(-1, bottom, 1), (1, bottom, 1), (-1, top, -1), (1, top, -1)]
+    for ring, front, material in (
+        (3, MAW_OUTER_FRONT, "flesh_red"),
+        (2, MAW_OUTER_FRONT - MAW_STEP, "flesh_dark"),
+        (1, MAW_OUTER_FRONT - 2 * MAW_STEP, "flesh_dark"),
     ):
-        x_far = sx * (inner + 0.2)
-        x_near = sx * (inner - chamfer)
-        y_near = y_edge + sy * chamfer
-        y_edge = y_edge - sy * 0.2
-        cubes.append(
-            _cube(
-                f"maw_chamfer_{corner}",
-                (min(x_far, x_near), min(y_edge, y_near), z0 + 0.3),
-                (max(x_far, x_near), max(y_edge, y_near), z0 + 1.1),
-                "flesh_dark",
-            )
-        )
-    # 肉须：从最下一行肉圈垂下，长短不一、粗细 0.5。
-    for index, (x_center, length) in enumerate(MAW_WHISKERS):
+        for i in range(-ring, ring + 1):
+            for j in range(-ring, ring + 1):
+                if max(abs(i), abs(j)) != ring:
+                    continue
+                if ring == 3 and (i, j) in MAW_OUTER_MISSING:
+                    continue
+                # 中圈四个角也缺掉，让内部轮廓偏圆。
+                if ring == 2 and abs(i) == 2 and abs(j) == 2:
+                    continue
+                skew = MAW_OUTER_DEPTH_SKEW.get((i, j), 0.0) if ring == 3 else 0.0
+                cubes.append(_cell_box(f"maw_r{ring}_{i}_{j}", i, j, z0, z0 + front + skew, material))
+    # 中心虚空黑：前缘比内圈再退 MAW_STEP，只比 z0 高一点点。
+    cubes.append(
+        _cell_box("maw_void", 0, 0, z0 - 0.4, z0 + MAW_OUTER_FRONT - 3 * MAW_STEP, "void_black")
+    )
+    # 细肉须：从最下一行外圈格子底边垂下，长短不一、宽 0.6~0.8。
+    bottom = MAW_CENTER_Y - 3.5 * MAW_CELL
+    for index, (i, width, length) in enumerate(MAW_WHISKERS):
+        x_center = i * MAW_CELL
+        z_mid = z0 + MAW_OUTER_FRONT / 2
         cubes.append(
             _cube(
                 f"maw_whisker_{index}",
-                (x_center - 0.25, MAW_ROWS[0][0] - length, z0 + 1.0),
-                (x_center + 0.25, MAW_ROWS[0][0], z0 + 1.5),
+                (x_center - width / 2, bottom - length, z_mid - width / 2),
+                (x_center + width / 2, bottom, z_mid + width / 2),
                 "flesh_red" if index % 2 == 0 else "flesh_dark",
             )
         )
     return cubes
 
 
-SKULL_INNER_X = 3.4  # 颅骨内缘到中轴的距离；比肉圈最宽处略小，让颅骨压住肉圈边缘
+SKULL_INNER_X = 4.0  # 颅骨内缘到中轴的距离；比外圈最宽处（4.2）略小，让颅骨压住肉圈边缘
 SKULL_WIDTH = 3.8
 SKULL_Z0 = MAW_FRONT_Z - 0.2
 SKULL_Z1 = SKULL_Z0 + 2.6
@@ -337,7 +302,7 @@ def _skull(side: str, sign: int) -> list[dict]:
     骨色以 bone 为主，bone_shadow 做斑驳，颅缝用 rust_light 细线。颅骨压在肉圈边缘上，
     再用两块暗红肉连到肉圈，不是并排摆的三块东西。右颗比左颗略高。
     """
-    lift = 0.3 if sign > 0 else 0.0
+    lift = 0.25 if sign > 0 else 0.0
     inner = SKULL_INNER_X
     outer = SKULL_INNER_X + SKULL_WIDTH
 
@@ -406,9 +371,9 @@ def _sinews() -> list[dict]:
     z0 = MAW_FRONT_Z
     cubes = []
     for side, sign in (("l", -1), ("r", 1)):
-        for name, y0, y1 in (("low", 11.4, 12.2), ("high", 14.75, 15.3)):
-            lo, hi = (2.8, 4.6) if sign > 0 else (-4.6, -2.8)
-            cubes.append(_cube(f"sinew_{side}_{name}", (lo, y0, z0 + 0.5), (hi, y1, z0 + 1.45), "flesh_dark"))
+        for name, y0, y1 in (("low", 11.5, 12.0), ("high", 14.55, 15.15)):
+            lo, hi = (3.8, 5.2) if sign > 0 else (-5.2, -3.8)
+            cubes.append(_cube(f"sinew_{side}_{name}", (lo, y0, z0 + 0.4), (hi, y1, z0 + 1.8), "flesh_dark"))
     return cubes
 
 
