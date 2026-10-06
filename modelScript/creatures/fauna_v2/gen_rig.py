@@ -208,6 +208,45 @@ ZHINIAN_BONES = (
     Bone("sword", "forearm_r", (-3.6, 9.9, 0.55), ("sword_",)),
 )
 
+# ================================================================ 秘境守灵
+# 石甲巨像：髋是全身的根，躯干 / 双腿挂在髋上，头和两臂挂在躯干上。
+# 每条臂拆两节（上臂 + 肩甲 + 肩环绕肩转；肘环 + 前臂 + 石拳绕肘转），每条腿拆两节
+# （髋环 + 大腿绕髋转；膝环 + 小腿 + 石座脚绕膝转）。腰带前襟 / 后襟 / 两侧碎布各自一根骨，
+# 两侧腰石片挂髋，摆动才能错开相位。「l / r」沿用建模稿的名字：r 在建模稿 +x 侧。
+# 终审稿面朝 +Z、中轴在原点（见 gen_tsy_sentinel.py 的 recenter_to_origin），不需要转向前的修正。
+def _sentinel_side_bones(side: str, sign: float) -> tuple[Bone, ...]:
+    return (
+        Bone(f"arm_{side}", "torso", (sign * 5.1, 26.5, 0.0),
+             (f"core_shoulder_{side}", f"core_upperarm_{side}", f"core_upperarm_strip_{side}",
+              f"core_upperarm_band_{side}", f"pauldron_{side}_", f"arm_{side}_upper")),
+        Bone(f"forearm_{side}", f"arm_{side}", (sign * 7.0, 20.3, 0.0),
+             (f"core_elbow_{side}", f"core_forearm_{side}", f"core_forearm_strip_{side}",
+              f"core_wrist_band_{side}", f"core_fist_{side}", f"arm_{side}_fore",
+              f"arm_{side}_wrist", f"arm_{side}_fist", f"arm_{side}_finger")),
+        Bone(f"leg_{side}", "hips", (sign * 2.8, 16.5, 0.0),
+             (f"core_hip_{side}", f"core_thigh_{side}", f"core_thigh_strip_{side}",
+              f"core_thigh_band_{side}", f"leg_{side}_thigh")),
+        Bone(f"shin_{side}", f"leg_{side}", (sign * 3.5, 9.7, 0.0),
+             (f"core_knee_{side}", f"core_shin_{side}", f"core_shin_strip_{side}",
+              f"core_ankle_band_{side}", f"leg_{side}_shin", f"leg_{side}_ankle",
+              f"leg_{side}_foot", f"leg_{side}_heel")),
+        Bone(f"hipguard_{side}", "hips", (sign * 4.0, 15.0, 4.0), (f"tabard_stone_{side}",)),
+        Bone(f"tabard_side_{side}", "hips", (sign * 5.6, 15.0, 0.0), (f"tabard_side_{side}",)),
+    )
+
+
+TSY_SENTINEL_BONES = (
+    Bone("root", None, (0.0, 0.0, 0.0)),
+    Bone("hips", "root", (0.0, 15.5, 0.0), ("core_pelvis", "belt_")),
+    Bone("torso", "hips", (0.0, 16.5, 0.0),
+         ("core_spine", "core_clavicle", "core_sternum", "core_rib", "core_chest_hollow", "chest_")),
+    Bone("head", "torso", (0.0, 27.4, 0.0), ("core_neck", "head_")),
+    Bone("tabard_front", "hips", (0.0, 15.0, 4.0), ("tabard_front",)),
+    Bone("tabard_back", "hips", (0.0, 15.0, -3.1), ("tabard_back",)),
+    *_sentinel_side_bones("r", 1.0),
+    *_sentinel_side_bones("l", -1.0),
+)
+
 SPECIES = {
     "ash_spider_v2": Species("AshSpiderV2", ash_spider_bones),
     # 骨煞的终审稿在 #2325 落库时沿用了 SkullFiend.bbmodel 这个名字。
@@ -216,6 +255,7 @@ SPECIES = {
     "daoxiang_v2": Species("DaoxiangV2", lambda source: DAOXIANG_BONES),
     "fuya_v2": Species("FuyaV2", lambda source: FUYA_BONES),
     "zhinian_v2": Species("ZhinianV2", lambda source: ZHINIAN_BONES),
+    "tsy_sentinel_v2": Species("TsySentinelV2", lambda source: TSY_SENTINEL_BONES),
 }
 
 

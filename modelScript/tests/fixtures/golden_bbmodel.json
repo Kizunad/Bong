@@ -660,6 +660,12 @@
    "TradeCrate.bbmodel": "bdc6e00833bdf335b95de8f3de6fb5320a2ddf9b45dc75caa6acc5014c91af9e"
   }
  },
+ "gen_tsy_sentinel.py": {
+  "exit": 0,
+  "outputs": {
+   "TsySentinelV2.bbmodel": "af812c9806dbe7c680ad2a6b44e5914ad63e57c7682086a45b93ecd65ba81417"
+  }
+ },
  "gen_tui_gu_teng.py": {
   "exit": 0,
   "outputs": {
