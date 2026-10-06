@@ -693,18 +693,31 @@ FLESH_LENGTHS = (2.5, 6.5, 3.5, 7.5, 3.0, 5.0, 2.8)
 FLESH_LONG_FROM = 6.0
 CURTAIN_Z_START = -1.5
 CURTAIN_Z_PITCH = 0.5
-PALM_WIDTH = 4.2
+# 爪：宽厚骨掌 + 4 根三节指。每指第 1 节平伸向前、第 2 节下折（约 35°，用台阶近似）、
+# 第 3 节更陡地下勾（约 60°+）并收细成钩尖；外侧（朝身体中线）一根略短当拇指。
+# 掌比腕宽（腕约 2.4）近一倍，所以掌上沿压进最后两节腕环里，掌侧露在腕外像一圈护腕。
+PALM_WIDTH = 5.0
 PALM_DEPTH = 2.6
-PALM_HEIGHT = 1.0
-FINGER_X = (-1.5, -0.5, 0.5, 1.5)
-FINGER_SEGMENT_SHARE = (0.5, 0.3, 0.2)  # 三节占指长的比例；第三节末再接一个钩尖
-FINGER_WIDTHS = (0.84, 0.76, 0.58)
-FINGER_OUTWARD = 0.2  # 外侧指每节向外散开多少
-FINGER_FORWARD = 0.45  # 每节向前（+z）弯多少
-HOOK_HEIGHT = 0.55
-HOOK_WIDTH = 0.35
-HOOK_INWARD = 0.15  # 钩尖向手心（指自己的内侧）收
-SEAM_HEIGHT = 0.18  # 指节间的暗缝
+PALM_HEIGHT = 1.5
+PALM_BOTTOM_Y = 2.75
+FINGER_X = (-1.875, -0.625, 0.625, 1.875)  # 局部 x，负值朝身体中线；第 0 根是拇指
+FINGER_WIDTH = 1.1
+FINGER_TOP_Y = 3.3
+FINGER_THICKNESS = 1.2  # 第 1 节的高
+SEG1_LEN = 1.9
+SEG2_LEN = 1.7
+SEG2_Z_OVERLAP = 0.5  # 第 2 节在 z 上压住第 1 节前端
+SEG2_DROP = 1.1  # 第 2 节整体比第 1 节低多少
+SEG3_TOP_Y = 1.3
+SEG3_WIDTH = 0.6
+SEG3_Z_LEN = 0.8
+SEG3_Z_OVERLAP = 0.3
+TIP_HEIGHT = 0.45  # 最末一小截（略暗），落到 y=0
+SEG2_SPREAD = 0.1  # 外侧指第 2 节向外散开
+SEG3_INWARD = 0.3  # 外侧指第 3 节向手心内勾
+THUMB_REACH = 0.7  # 拇指各节前伸长度的比例
+SEAM_PAD = 0.05  # 节间暗缝比指身宽出多少
+SEAM_HEIGHT = 0.2
 
 
 def _arm(side: str, sign: float, rng: random.Random) -> list[dict]:
@@ -802,37 +815,44 @@ def _arm(side: str, sign: float, rng: random.Random) -> list[dict]:
         cubes.append(box(f"curtain_thread_{index}", (x_hi - width + inset, x_hi - inset), (curtain_top - length, body_bottom + 0.1), (z_lo + inset, z_lo + inset + thread), other))
         cubes.append(box(f"curtain_drip_{index}", (x_hi - width / 2 - 0.35, x_hi - width / 2 + 0.35), (curtain_top - length - 0.7, curtain_top - length + 0.2), (z_lo + width / 2 - 0.35, z_lo + width / 2 + 0.35), "flesh_red"))
 
-    # 宽骨掌：比腕宽，暗缝一条横在掌心前缘。
     last_dz = z_offset(ARM_BAND_COUNT - 1)
-    wrist_bottom = ARM_TOP_Y - (ARM_BAND_COUNT - 1) * ARM_BAND_STEP - ARM_BAND_HEIGHT
     palm_dz = last_dz + FOREARM_Z_STEP
-    palm_top = wrist_bottom + 0.35
-    palm_bottom = palm_top - PALM_HEIGHT
-    cubes.append(box("palm", (-PALM_WIDTH / 2, PALM_WIDTH / 2), (palm_bottom, palm_top), (-PALM_DEPTH / 2, PALM_DEPTH / 2), "bone", palm_dz))
-    cubes.append(box("palm_knuckles", (-PALM_WIDTH / 2 - 0.1, PALM_WIDTH / 2 + 0.1), (palm_bottom - 0.05, palm_bottom + 0.35), (PALM_DEPTH / 2 - 0.2, PALM_DEPTH / 2 + 0.25), "bone_shadow", palm_dz))
-    cubes.append(box("palm_flesh", (-0.9, 0.9), (palm_bottom + 0.3, palm_top - 0.1), (PALM_DEPTH / 2 - 0.1, PALM_DEPTH / 2 + 0.12), "flesh_dark", palm_dz))
+    palm_top = PALM_BOTTOM_Y + PALM_HEIGHT
+    half_palm_w = PALM_WIDTH / 2
+    half_palm_d = PALM_DEPTH / 2
+    cubes.append(box("palm", (-half_palm_w, half_palm_w), (PALM_BOTTOM_Y, palm_top), (-half_palm_d, half_palm_d), "bone", palm_dz))
+    # 掌前下缘一条暗色指根（骨 bone_shadow），掌背留一块暗红肉。
+    cubes.append(box("palm_knuckles", (-half_palm_w - 0.1, half_palm_w + 0.1), (PALM_BOTTOM_Y - 0.05, PALM_BOTTOM_Y + 0.4), (half_palm_d - 0.25, half_palm_d + 0.25), "bone_shadow", palm_dz))
+    cubes.append(box("palm_back_flesh", (-1.5, 1.5), (PALM_BOTTOM_Y + 0.3, palm_top - 0.45), (-half_palm_d - 0.14, -half_palm_d + 0.1), "flesh_dark", palm_dz))
 
-    # 四根粗长三节爪：逐节变细、外侧指向外散开、每节向前弯，第三节末再接钩尖落到 y=0。
-    finger_top = palm_bottom + 0.2
-    finger_length = finger_top - HOOK_HEIGHT * 0.5  # 第三节底停在钩尖中部，钩尖再向下接地
     for finger, fx in enumerate(FINGER_X):
-        outward = 1.0 if fx > 0 else -1.0
-        y = finger_top
-        x_shift = 0.0
-        z_shift = 0.2
-        for segment, (share, width) in enumerate(zip(FINGER_SEGMENT_SHARE, FINGER_WIDTHS)):
-            y_bottom = y - finger_length * share
-            half = width / 2
-            x_mid = fx + outward * x_shift
-            cubes.append(box(f"finger_{finger}_{segment}", (x_mid - half, x_mid + half), (y_bottom, y + (0.0 if segment == 0 else 0.1)), (z_shift - half, z_shift + half), "bone", palm_dz))
-            if segment < 2:
-                seam = half + 0.05
-                cubes.append(box(f"finger_seam_{finger}_{segment}", (x_mid - seam, x_mid + seam), (y_bottom - 0.02, y_bottom - 0.02 + SEAM_HEIGHT), (z_shift - seam, z_shift + seam), "bone_shadow", palm_dz))
-            y = y_bottom
-            x_shift += FINGER_OUTWARD * (1.0 if abs(fx) > 1 else 0.4)
-            z_shift += FINGER_FORWARD
-        hook_x = fx + outward * (x_shift - HOOK_INWARD)
-        cubes.append(box(f"finger_hook_{finger}", (hook_x - HOOK_WIDTH / 2, hook_x + HOOK_WIDTH / 2), (0.0, HOOK_HEIGHT), (z_shift - HOOK_WIDTH / 2 + 0.1, z_shift + HOOK_WIDTH / 2 + 0.1), "bone_shadow", palm_dz))
+        reach = THUMB_REACH if finger == 0 else 1.0
+        outer = abs(fx) > 1.0
+        direction = 1.0 if fx > 0 else -1.0  # 局部 x 的正方向是朝外
+        half = FINGER_WIDTH / 2
+        z1 = half_palm_d - 0.3
+        z1_end = z1 + SEG1_LEN * reach
+        # 第 1 节：平伸向前。
+        cubes.append(box(f"finger_{finger}_0", (fx - half, fx + half), (FINGER_TOP_Y - FINGER_THICKNESS, FINGER_TOP_Y), (z1, z1_end), "bone", palm_dz))
+        # 第 2 节：下折，前端落在第 1 节前端下方，外侧指略向外散。
+        x2 = fx + (direction * SEG2_SPREAD if outer else 0.0)
+        y2_top = FINGER_TOP_Y - SEG2_DROP
+        z2 = z1_end - SEG2_Z_OVERLAP
+        z2_end = z2 + SEG2_LEN * reach
+        cubes.append(box(f"finger_{finger}_1", (x2 - half + 0.02, x2 + half - 0.02), (y2_top - FINGER_THICKNESS, y2_top), (z2, z2_end), "bone", palm_dz))
+        # 第 3 节：更陡下勾，收细，外侧指向手心内勾；末端再接一小截略暗的钩尖。
+        x3 = x2 - (direction * SEG3_INWARD if outer else 0.0)
+        z3 = z2_end - SEG3_Z_OVERLAP
+        z3_end = z3 + SEG3_Z_LEN
+        cubes.append(box(f"finger_{finger}_2", (x3 - SEG3_WIDTH / 2, x3 + SEG3_WIDTH / 2), (TIP_HEIGHT - 0.05, SEG3_TOP_Y), (z3, z3_end), "bone", palm_dz))
+        cubes.append(box(f"finger_tip_{finger}", (x3 - 0.22, x3 + 0.22), (0.0, TIP_HEIGHT), (z3 + 0.15, z3_end + 0.1), "bone_shadow", palm_dz))
+        # 关节暗缝：略宽于指身的薄片，包在第 1/2、2/3 节交界处。
+        for name, x, y, z0, z1_ in (
+            ("a", x2, y2_top + 0.05, z2 - 0.05, z1_end + 0.05),
+            ("b", x3, SEG3_TOP_Y - 0.15, z3 - 0.05, z2_end + 0.05),
+        ):
+            seam_half = (half if name == "a" else SEG3_WIDTH / 2 + 0.15) + SEAM_PAD
+            cubes.append(box(f"finger_seam_{finger}_{name}", (x - seam_half, x + seam_half), (y - SEAM_HEIGHT / 2, y + SEAM_HEIGHT / 2), (z0, z1_), "bone_shadow", palm_dz))
     return cubes
 
 
