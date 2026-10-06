@@ -393,88 +393,175 @@ def part_void_maw_skulls() -> list[dict]:
 STRAND_X_COLUMNS = [-2.4, -1.45, -0.5, 0.45, 1.4, 2.35]
 STRAND_Z_OFFSETS = (0.1, 1.05)  # 相对椎骨起点 z0 的两个槽
 STRAND_GROUND_CLEARANCE = 2.3  # 肉条最低端不低于这个高度，给后腿和前臂留出落地空间
-STRAND_LENGTH_RANGE = (3.0, 10.5)
-STRAND_TAIL_FRACTION = 0.3  # 末端这一段收细，像滴下来的肉丝
 BEAM_HEIGHT = 0.7
-# 骨片贴在肉条上：(椎骨序号, 列序号, z 槽序号, 骨片长度, 离肉条顶端的距离, 材质)
+# 肉条分三档：多数短而粗，一部分中等，少数细长到底。(长度范围, 宽度范围, 占比上限)
+STRAND_SHORT = ((2.0, 4.0), (0.7, 0.8))
+STRAND_MEDIUM = ((4.0, 6.0), (0.55, 0.7))
+STRAND_LONG = ((8.0, 11.0), (0.4, 0.5))
+STRAND_SHORT_SHARE = 0.65
+STRAND_MEDIUM_SHARE = 0.88  # 累计占比；剩下约 12% 是长条
+# 长条末端：最后 LONG_TAIL_FRACTION 收成细丝，丝尾挂一颗滴状肉球。
+LONG_TAIL_FRACTION = 0.25
+LONG_TAIL_WIDTH = 0.3
+DRIP_SIZE = (0.75, 0.9)  # 肉球的 水平边长, 高
+# 肉带上沿呈浅 V：|x| 超过 BAND_FLAT_HALF_WIDTH 后每向外 1 格上翘 BAND_V_SLOPE。
+BAND_FLAT_HALF_WIDTH = 0.5
+BAND_V_SLOPE = 0.5
+BAND_JITTER = 0.15  # 每块肉带高度的随机起伏，同时避免相邻块顶面共面
+BAND_OVERLAP = 0.12  # 相邻肉带块在 x 方向互相压住，不留缝
+# 大骨块：(椎骨序号, z 槽序号, 列序号, 朝向)。朝向 out = 向身体外侧凸出（侧视和正视都能看到），
+# rear = 向后（-z）凸出，后视能看到。块头约 1.5~2 格，露在肉条外面。
 STRAND_BONE_CHUNKS = [
-    (1, 0, 0, 2.2, 0.8, "bone"),
-    (2, 3, 1, 1.8, 1.4, "bone_shadow"),
-    (3, 1, 0, 2.6, 0.6, "bone"),
-    (4, 4, 1, 2.0, 1.0, "bone"),
-    (5, 2, 0, 1.6, 2.0, "bone_shadow"),
-    (6, 5, 1, 2.4, 0.7, "bone"),
-    (7, 0, 1, 1.8, 1.2, "bone_shadow"),
-    (8, 3, 0, 2.0, 0.5, "bone"),
+    (0, 0, 0, "out"),
+    (1, 1, 5, "out"),
+    (2, 0, 0, "out"),
+    (3, 1, 5, "out"),
+    (4, 0, 5, "out"),
+    (5, 1, 0, "out"),
+    (6, 0, 5, "out"),
+    (0, 0, 3, "rear"),
 ]
 
 
 def _flesh_strands() -> list[dict]:
+    """脊椎腹面一条起伏的 V 形肉带 + 垂下的长短悬殊的肉条 + 露在外面的大骨块。"""
     rng = random.Random(3)
-    chunks = {(v, c, s): (length, drop, material) for v, c, s, length, drop, material in STRAND_BONE_CHUNKS}
+    chunk_specs = {(v, s, c): facing for v, s, c, facing in STRAND_BONE_CHUNKS}
     cubes = []
     for vertebra, bottom in enumerate(VERTEBRA_BOTTOMS):
         z0, _ = _vertebra_z(vertebra)
         for slot, z_offset in enumerate(STRAND_Z_OFFSETS):
-            # 肉梁：横在椎骨底下，两端伸出到最外侧肉条之外。
-            beam_width = 0.8 + 0.05 * slot
-            beam_z = z0 + z_offset + 0.05 * slot
-            cubes.append(
-                _cube(
-                    f"strand_beam_{vertebra}_{slot}",
-                    (STRAND_X_COLUMNS[0] - 0.4, bottom - BEAM_HEIGHT, beam_z),
-                    (STRAND_X_COLUMNS[-1] + 0.4, bottom + 0.3, beam_z + beam_width),
-                    "flesh_dark",
-                )
-            )
-            for column, x_center in enumerate(STRAND_X_COLUMNS):
-                width = rng.uniform(0.5, 0.7)
-                x_center += rng.uniform(-0.05, 0.05)
-                z_start = z0 + z_offset + rng.uniform(0.0, 0.1)
-                length = rng.uniform(*STRAND_LENGTH_RANGE)
-                length = min(length, bottom - BEAM_HEIGHT - STRAND_GROUND_CLEARANCE)
-                top = bottom - BEAM_HEIGHT + 0.1
-                body_bottom = top - length * (1 - STRAND_TAIL_FRACTION)
-                material = "flesh_red" if rng.random() < 0.6 else "flesh_dark"
-                tail_material = "flesh_dark" if material == "flesh_red" else "flesh_red"
-                tag = f"{vertebra}_{column}_{slot}"
+            band_z = z0 + z_offset
+            band_width = 0.95 - 0.02 * slot
+            for column, x_nominal in enumerate(STRAND_X_COLUMNS):
+                x_center = x_nominal + rng.uniform(-0.04, 0.04)
+                v_lift = BAND_V_SLOPE * max(0.0, abs(x_nominal) - BAND_FLAT_HALF_WIDTH)
+                lift = v_lift + rng.uniform(0.0, BAND_JITTER)
+                band_bottom = bottom - BEAM_HEIGHT + lift
+                band_top = bottom + 0.3 + lift
+                z_jitter = rng.uniform(0.0, 0.05)  # 相邻肉带块前后面错开，避免共面
+                half_pitch = (STRAND_X_COLUMNS[1] - STRAND_X_COLUMNS[0]) / 2 + BAND_OVERLAP
+                tag = f"{vertebra}_{slot}_{column}"
                 cubes.append(
                     _cube(
-                        f"strand_{tag}",
-                        (x_center - width / 2, body_bottom, z_start),
-                        (x_center + width / 2, top, z_start + width),
-                        material,
+                        f"strand_band_{tag}",
+                        (x_nominal - half_pitch, band_bottom, band_z + z_jitter),
+                        (x_nominal + half_pitch, band_top, band_z + band_width - z_jitter),
+                        "flesh_dark",
                     )
                 )
-                tail_width = width * 0.65
-                inset = (width - tail_width) / 2
-                cubes.append(
-                    _cube(
-                        f"strand_tail_{tag}",
-                        (x_center - tail_width / 2, top - length, z_start + inset),
-                        (x_center + tail_width / 2, body_bottom + 0.1, z_start + inset + tail_width),
-                        tail_material,
-                    )
-                )
-                chunk = chunks.get((vertebra, column, slot))
-                if chunk:
-                    chunk_length, drop, chunk_material = chunk
-                    chunk_top = top - drop
+
+                roll = rng.random()
+                if roll < STRAND_SHORT_SHARE:
+                    (length_lo, length_hi), (width_lo, width_hi) = STRAND_SHORT
+                    kind = "short"
+                elif roll < STRAND_MEDIUM_SHARE:
+                    (length_lo, length_hi), (width_lo, width_hi) = STRAND_MEDIUM
+                    kind = "medium"
+                else:
+                    (length_lo, length_hi), (width_lo, width_hi) = STRAND_LONG
+                    kind = "long"
+                width = rng.uniform(width_lo, width_hi)
+                length = rng.uniform(length_lo, length_hi)
+                top = band_bottom + 0.15
+                length = min(length, top - STRAND_GROUND_CLEARANCE)
+                z_start = band_z + (band_width - width) / 2
+                material = "flesh_red" if rng.random() < 0.55 else "flesh_dark"
+                other = "flesh_dark" if material == "flesh_red" else "flesh_red"
+
+                if kind != "long":
                     cubes.append(
                         _cube(
-                            f"strand_bone_{tag}",
-                            (x_center - width / 2 - 0.12, chunk_top - chunk_length, z_start - 0.1),
-                            (x_center + width / 2 + 0.12, chunk_top, z_start + width + 0.1),
-                            chunk_material,
+                            f"strand_{tag}",
+                            (x_center - width / 2, top - length, z_start),
+                            (x_center + width / 2, top, z_start + width),
+                            material,
                         )
                     )
+                else:
+                    body_bottom = top - length * (1 - LONG_TAIL_FRACTION)
+                    thread_bottom = top - length
+                    thread_inset = (width - LONG_TAIL_WIDTH) / 2
+                    cubes.append(
+                        _cube(
+                            f"strand_{tag}",
+                            (x_center - width / 2, body_bottom, z_start),
+                            (x_center + width / 2, top, z_start + width),
+                            material,
+                        )
+                    )
+                    cubes.append(
+                        _cube(
+                            f"strand_thread_{tag}",
+                            (x_center - LONG_TAIL_WIDTH / 2, thread_bottom, z_start + thread_inset),
+                            (x_center + LONG_TAIL_WIDTH / 2, body_bottom + 0.1, z_start + thread_inset + LONG_TAIL_WIDTH),
+                            other,
+                        )
+                    )
+                    drip_side, drip_height = DRIP_SIZE
+                    z_mid = z_start + width / 2
+                    cubes.append(
+                        _cube(
+                            f"strand_drip_{tag}",
+                            (x_center - drip_side / 2, thread_bottom - drip_height + 0.2, z_mid - drip_side / 2),
+                            (x_center + drip_side / 2, thread_bottom + 0.2, z_mid + drip_side / 2),
+                            "flesh_red",
+                        )
+                    )
+
+                facing = chunk_specs.get((vertebra, slot, column))
+                if facing:
+                    cubes += _bone_chunk(tag, facing, x_nominal, x_center, band_bottom, band_top, band_z, band_width, rng)
     return cubes
 
 
-def part_flesh_strands() -> list[dict]:
-    """03 部件：肋笼下垂挂的许多细红肉条，长短不一，夹少量骨片。
+def _bone_chunk(
+    tag: str,
+    facing: str,
+    x_nominal: float,
+    x_center: float,
+    band_bottom: float,
+    band_top: float,
+    band_z: float,
+    band_width: float,
+    rng: random.Random,
+) -> list[dict]:
+    """成团的米色大骨块（亮面 + 一块暗面），压在肉带上并朝外凸出，不会被肉条盖住。"""
+    size = rng.uniform(1.5, 1.9)
+    height = rng.uniform(1.6, 2.0)
+    y_top = band_top + 0.35
+    y_bottom = y_top - height
+    z_mid = band_z + band_width / 2
+    if facing == "out":
+        sign = 1.0 if x_nominal > 0 else -1.0
+        inner = x_center - sign * 0.3
+        outer = x_center + sign * size
+        x_lo, x_hi = min(inner, outer), max(inner, outer)
+        z_lo, z_hi = z_mid - size * 0.45, z_mid + size * 0.45
+        shade = (x_lo, x_hi - size * 0.4, y_bottom, y_bottom + height * 0.45, z_lo, z_hi) if sign > 0 else (
+            x_lo + size * 0.4, x_hi, y_bottom, y_bottom + height * 0.45, z_lo, z_hi
+        )
+    else:
+        x_lo, x_hi = x_center - size * 0.45, x_center + size * 0.45
+        z_hi = z_mid + 0.3
+        z_lo = z_mid - size
+        shade = (x_lo, x_hi, y_bottom, y_bottom + height * 0.45, z_lo + size * 0.4, z_hi)
+    main = _cube(f"strand_bone_{tag}", (x_lo, y_bottom, z_lo), (x_hi, y_top, z_hi), "bone")
+    # 暗面块比亮面略宽略短，贴在块的下半部，露出一圈暗边，避免与亮面共面。
+    sx0, sx1, sy0, sy1, sz0, sz1 = shade
+    dark = _cube(
+        f"strand_bone_shade_{tag}",
+        (sx0 - 0.1, sy0 - 0.15, sz0 - 0.1),
+        (sx1 + 0.1, sy1, sz1 + 0.1),
+        "bone_shadow",
+    )
+    return [main, dark]
 
-    对照 parts_ref/03_flesh_strands.png。肉条沿驼背拱线由前高后低挂下，
+
+def part_flesh_strands() -> list[dict]:
+    """03 部件：V 形肉带下垂挂长短悬殊的肉条，带滴状肉球，嵌 8 块大骨块。
+
+    对照 parts_ref/03_flesh_strands.png。肉带随脊椎前高后低倾斜（侧视是斜坡），
     最低端离地不少于 STRAND_GROUND_CLEARANCE。
     """
     return _tag(_flesh_strands(), "flesh_strands")
