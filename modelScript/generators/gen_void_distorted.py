@@ -1258,7 +1258,7 @@ def self_test() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="生成渊空畸变体逐部件模型")
     parser.add_argument("--self-test", action="store_true", help="运行共面门禁差分自证")
-    parser.add_argument("--part", default=max(PARTS), choices=sorted(PARTS), help="要出图的部件编号")
+    parser.add_argument("--part", default=None, choices=sorted(PARTS), help="渲染指定编号部件的审阅图；缺省只写 bbmodel，不渲染")
     parser.add_argument("--out", type=Path, default=BBMODEL_OUT, help="输出 .bbmodel 路径")
     args = parser.parse_args()
 
@@ -1266,7 +1266,8 @@ def main() -> None:
         self_test()
         return
     generate_bbmodel(args.out)
-    render_part(args.part)
+    if args.part is not None:
+        render_part(args.part)
 
 
 if __name__ == "__main__":
