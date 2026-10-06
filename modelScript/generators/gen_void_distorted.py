@@ -18,6 +18,7 @@ import base64
 import io
 import json
 from pathlib import Path
+import random
 from typing import Iterable
 import uuid
 
@@ -386,10 +387,104 @@ def part_void_maw_skulls() -> list[dict]:
     return _tag(cubes, "void_maw_skulls")
 
 
+# 03 号部件：从脊椎腹面垂下的细红肉条，长短不一，夹几块骨片。
+# 每节椎骨下方有两个 z 槽、6 列 x，每个格子一条肉条；各椎骨底下先横一根短肉梁
+# 把外侧几列和脊椎接牢（外侧列的正上方没有骨头，没有肉梁就会悬空）。
+STRAND_X_COLUMNS = [-2.4, -1.45, -0.5, 0.45, 1.4, 2.35]
+STRAND_Z_OFFSETS = (0.1, 1.05)  # 相对椎骨起点 z0 的两个槽
+STRAND_GROUND_CLEARANCE = 2.3  # 肉条最低端不低于这个高度，给后腿和前臂留出落地空间
+STRAND_LENGTH_RANGE = (3.0, 10.5)
+STRAND_TAIL_FRACTION = 0.3  # 末端这一段收细，像滴下来的肉丝
+BEAM_HEIGHT = 0.7
+# 骨片贴在肉条上：(椎骨序号, 列序号, z 槽序号, 骨片长度, 离肉条顶端的距离, 材质)
+STRAND_BONE_CHUNKS = [
+    (1, 0, 0, 2.2, 0.8, "bone"),
+    (2, 3, 1, 1.8, 1.4, "bone_shadow"),
+    (3, 1, 0, 2.6, 0.6, "bone"),
+    (4, 4, 1, 2.0, 1.0, "bone"),
+    (5, 2, 0, 1.6, 2.0, "bone_shadow"),
+    (6, 5, 1, 2.4, 0.7, "bone"),
+    (7, 0, 1, 1.8, 1.2, "bone_shadow"),
+    (8, 3, 0, 2.0, 0.5, "bone"),
+]
+
+
+def _flesh_strands() -> list[dict]:
+    rng = random.Random(3)
+    chunks = {(v, c, s): (length, drop, material) for v, c, s, length, drop, material in STRAND_BONE_CHUNKS}
+    cubes = []
+    for vertebra, bottom in enumerate(VERTEBRA_BOTTOMS):
+        z0, _ = _vertebra_z(vertebra)
+        for slot, z_offset in enumerate(STRAND_Z_OFFSETS):
+            # 肉梁：横在椎骨底下，两端伸出到最外侧肉条之外。
+            beam_width = 0.8 + 0.05 * slot
+            beam_z = z0 + z_offset + 0.05 * slot
+            cubes.append(
+                _cube(
+                    f"strand_beam_{vertebra}_{slot}",
+                    (STRAND_X_COLUMNS[0] - 0.4, bottom - BEAM_HEIGHT, beam_z),
+                    (STRAND_X_COLUMNS[-1] + 0.4, bottom + 0.3, beam_z + beam_width),
+                    "flesh_dark",
+                )
+            )
+            for column, x_center in enumerate(STRAND_X_COLUMNS):
+                width = rng.uniform(0.5, 0.7)
+                x_center += rng.uniform(-0.05, 0.05)
+                z_start = z0 + z_offset + rng.uniform(0.0, 0.1)
+                length = rng.uniform(*STRAND_LENGTH_RANGE)
+                length = min(length, bottom - BEAM_HEIGHT - STRAND_GROUND_CLEARANCE)
+                top = bottom - BEAM_HEIGHT + 0.1
+                body_bottom = top - length * (1 - STRAND_TAIL_FRACTION)
+                material = "flesh_red" if rng.random() < 0.6 else "flesh_dark"
+                tail_material = "flesh_dark" if material == "flesh_red" else "flesh_red"
+                tag = f"{vertebra}_{column}_{slot}"
+                cubes.append(
+                    _cube(
+                        f"strand_{tag}",
+                        (x_center - width / 2, body_bottom, z_start),
+                        (x_center + width / 2, top, z_start + width),
+                        material,
+                    )
+                )
+                tail_width = width * 0.65
+                inset = (width - tail_width) / 2
+                cubes.append(
+                    _cube(
+                        f"strand_tail_{tag}",
+                        (x_center - tail_width / 2, top - length, z_start + inset),
+                        (x_center + tail_width / 2, body_bottom + 0.1, z_start + inset + tail_width),
+                        tail_material,
+                    )
+                )
+                chunk = chunks.get((vertebra, column, slot))
+                if chunk:
+                    chunk_length, drop, chunk_material = chunk
+                    chunk_top = top - drop
+                    cubes.append(
+                        _cube(
+                            f"strand_bone_{tag}",
+                            (x_center - width / 2 - 0.12, chunk_top - chunk_length, z_start - 0.1),
+                            (x_center + width / 2 + 0.12, chunk_top, z_start + width + 0.1),
+                            chunk_material,
+                        )
+                    )
+    return cubes
+
+
+def part_flesh_strands() -> list[dict]:
+    """03 部件：肋笼下垂挂的许多细红肉条，长短不一，夹少量骨片。
+
+    对照 parts_ref/03_flesh_strands.png。肉条沿驼背拱线由前高后低挂下，
+    最低端离地不少于 STRAND_GROUND_CLEARANCE。
+    """
+    return _tag(_flesh_strands(), "flesh_strands")
+
+
 # 建造顺序；编号就是调度的部件编号。后续部件按调度「过」之后逐件追加。
 PARTS = {
     "01": ("spine_ribcage", part_spine_ribcage),
     "02": ("void_maw_skulls", part_void_maw_skulls),
+    "03": ("flesh_strands", part_flesh_strands),
 }
 
 
