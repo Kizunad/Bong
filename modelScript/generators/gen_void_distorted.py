@@ -17,7 +17,6 @@ import argparse
 import base64
 import io
 import json
-import math
 from pathlib import Path
 import random
 from typing import Iterable
@@ -568,76 +567,101 @@ def part_flesh_strands() -> list[dict]:
     return _tag(_flesh_strands(), "flesh_strands")
 
 
-# 04 号部件：盖在脊椎两侧的破碎层叠锈暗甲片，像瓦片一样由内向外逐级降低。
-# 每节椎骨左右各一摞：LAYERS 由内到外，(x 起点, x 终点, 顶面相对椎骨底面的高度, 出现概率)。
-# 内层最高（略低于脊椎顶），外层逐级压低，相邻层在 x 上互相压住 0.2，所以侧面能看出台阶。
-PLATE_LAYERS = [
-    (1.25, 2.9, 1.9, 1.0),
-    (2.7, 4.3, 0.9, 1.0),
-    (4.1, 5.5, -0.2, 0.9),
-    (5.3, 6.4, -1.3, 0.6),
-]
-PLATE_THICKNESS = 1.3  # 大于层间落差（约 1.1），上下层在 y 方向压住 0.2 以上，不悬空
-PLATE_Z_OVERLAP = 0.3  # 前后相邻两片在 z 方向各伸出这么多，互相压住
-PLATE_JITTER = 0.2  # 顶面高度 / x 外缘 / z 端点的随机量，也避免相邻板共面
-# 肩宽随位置变化：中段两侧最宽，两端收窄（俯视是圆顶）。
-PLATE_SPREAD_BASE = 0.75
-PLATE_SPREAD_GAIN = 0.35
-PLATE_SPOT_CHANCE = 0.7
+# 04 号部件：沿脊椎两侧一片压一片的瓦状甲片。
+# 每侧 PLATE_ROWS 行，行从脊线向外铺：每行比上一行外移 PLATE_ROW_PITCH、下沉
+# PLATE_ROW_DROP，相邻行在 x 上压住。每片甲沿 z 一节椎骨一片，由两块板拼成——
+# 内半较高、外半低 PLATE_TILT，侧面看是向外下翻的斜面；外缘再压一道锈褐边。
+# 内缘从 x=PLATE_INNER_X 起，落在椎骨宽度（≤1.2）之内，所以紧贴脊椎、不留空沟。
+PLATE_ROWS = 5
+PLATE_INNER_X = 0.9
+PLATE_ROW_PITCH = 1.5
+PLATE_WIDTH = 2.1  # 大于行距，相邻行 x 上压住 0.6
+PLATE_ROW_DROP = 0.7
+PLATE_TOP_OFFSET = 1.7  # 第一行内半顶面相对椎骨底面的高度，略低于脊椎顶面
+PLATE_THICKNESS = 1.0  # 大于行落差 0.7，上下行在 y 上压住 0.3，不悬空
+PLATE_TILT = 0.35  # 同一片外半比内半低多少
+PLATE_RIM_WIDTH = 0.35
+PLATE_JITTER = 0.08
+GAP_CHANCE = 0.15  # 某片缩短，让出 0.5 的缝，缝里露暗红肉
+PEEK_CHANCE = 0.4  # 某片内缘下方露一小块暗红肉
+OUTER_ROW_CHANCE = 0.7  # 最外一行只在部分节上出现，边缘参差
 
 
 def _plating() -> list[dict]:
-    rng = random.Random(4)
-    count = len(VERTEBRA_BOTTOMS)
+    rng = random.Random(5)
     cubes = []
     for vertebra, bottom in enumerate(VERTEBRA_BOTTOMS):
         z0, z1 = _vertebra_z(vertebra)
-        spread = PLATE_SPREAD_BASE + PLATE_SPREAD_GAIN * math.sin(math.pi * (vertebra + 1) / (count + 1))
         for side, sign in (("l", -1.0), ("r", 1.0)):
-            for layer, (x_start, x_end, top_offset, chance) in enumerate(PLATE_LAYERS):
-                if rng.random() > chance:
+            for row in range(PLATE_ROWS):
+                if row == PLATE_ROWS - 1 and rng.random() > OUTER_ROW_CHANCE:
                     continue
-                if layer >= 2:
-                    x_end = x_start + (x_end - x_start) * spread
-                x_end += rng.uniform(-PLATE_JITTER, PLATE_JITTER)
-                x_start += rng.uniform(0.0, 0.1)  # 内缘错开，避免相邻板内缘共面
-                top = bottom + top_offset + rng.uniform(0.0, PLATE_JITTER)
-                plate_z0 = z0 - PLATE_Z_OVERLAP + rng.uniform(0.0, PLATE_JITTER)
-                plate_z1 = z1 + PLATE_Z_OVERLAP - rng.uniform(0.0, PLATE_JITTER)
-                x_lo, x_hi = sorted((sign * x_start, sign * x_end))
-                tag = f"{side}_{vertebra}_{layer}"
-                cubes.append(
-                    _cube(
-                        f"plate_{tag}",
-                        (x_lo, top - PLATE_THICKNESS, plate_z0),
-                        (x_hi, top, plate_z1),
-                        "rust_dark" if rng.random() < 0.55 else "rust_light",
+                tag = f"{side}_{vertebra}_{row}"
+                x_in = PLATE_INNER_X + row * PLATE_ROW_PITCH + rng.uniform(0.0, PLATE_JITTER)
+                x_out = x_in + PLATE_WIDTH + rng.uniform(-PLATE_JITTER, PLATE_JITTER)
+                x_mid = (x_in + x_out) / 2
+                top = bottom + PLATE_TOP_OFFSET - row * PLATE_ROW_DROP + rng.uniform(0.0, PLATE_JITTER)
+                short = rng.random() < GAP_CHANCE
+                plate_z1 = z1 - (0.5 if short else 0.0) + rng.uniform(0.0, PLATE_JITTER)
+                plate_z0 = z0 + rng.uniform(0.0, PLATE_JITTER)
+                body = "rust_light" if rng.random() < 0.75 else "rust_dark"
+
+                def slab(name, xa, xb, y_top, material, inset=0.0, z_pad=0.0):
+                    lo, hi = sorted((sign * xa, sign * xb))
+                    return _cube(
+                        f"plate_{name}_{tag}",
+                        (lo, y_top - PLATE_THICKNESS + inset, plate_z0 + inset - z_pad),
+                        (hi, y_top + (0.04 if inset else 0.0), plate_z1 - inset + z_pad),
+                        material,
                     )
-                )
-                # 锈斑：贴在板面上的小薄块，只有锈斑色。
-                for spot in range(2):
-                    if rng.random() > PLATE_SPOT_CHANCE:
-                        continue
-                    width = rng.uniform(0.35, 0.7)
-                    depth = rng.uniform(0.3, 0.6)
-                    spot_x = rng.uniform(x_lo + 0.1, max(x_lo + 0.1, x_hi - width - 0.1))
-                    spot_z = rng.uniform(plate_z0 + 0.1, plate_z1 - depth - 0.1)
+
+                outer_top = top - PLATE_TILT
+                cubes.append(slab("inner", x_in, x_mid + 0.1, top, body))
+                cubes.append(slab("outer", x_mid, x_out, outer_top, body, z_pad=0.04))  # 比内半略宽，前后面不共面
+                # 外缘锈褐边：略出头、略缩进，不与外半板共面。
+                cubes.append(slab("rim", x_out - PLATE_RIM_WIDTH, x_out + 0.1, outer_top, "rust_spot", inset=0.05))
+                # 大锈斑：2~3 块不同大小的薄块叠成不规则一团，高度各不相同。
+                spot_x = rng.uniform(x_in + 0.2, x_mid - 0.2)
+                spot_z = rng.uniform(plate_z0 + 0.2, plate_z1 - 0.9)
+                for blot in range(rng.randint(2, 3)):
+                    width = rng.uniform(0.5, 0.95)
+                    depth = rng.uniform(0.4, 0.8)
+                    dx = rng.uniform(-0.3, 0.3)
+                    dz = rng.uniform(-0.2, 0.35)
+                    xa, xb = sorted((sign * (spot_x + dx), sign * (spot_x + dx + width)))
                     cubes.append(
                         _cube(
-                            f"plate_spot_{tag}_{spot}",
-                            (spot_x, top - 0.05 - 0.02 * spot, spot_z),
-                            (spot_x + width, top + rng.uniform(0.06, 0.14), spot_z + depth),
+                            f"plate_blot_{tag}_{blot}",
+                            (xa, top - 0.05 - 0.02 * blot, spot_z + dz),
+                            (xb, top + 0.05 + 0.02 * (blot + 1), spot_z + dz + depth),
                             "rust_spot",
+                        )
+                    )
+                if short:
+                    # 缩短的片留出的缝里塞暗红肉，顶面比板面低 0.5。
+                    lo, hi = sorted((sign * x_in, sign * x_out))
+                    cubes.append(
+                        _cube(f"plate_gap_flesh_{tag}", (lo, top - 1.2, plate_z1 + 0.05), (hi, top - 0.4, z1 + 0.3 + 0.03 * row), "flesh_dark")
+                    )
+                if rng.random() < PEEK_CHANCE:
+                    # 板内缘下方露一小块暗红肉，从侧面和下方能看到。
+                    lo, hi = sorted((sign * (x_in + 0.1), sign * (x_in + 0.8)))
+                    cubes.append(
+                        _cube(
+                            f"plate_peek_flesh_{tag}",
+                            (lo, top - PLATE_THICKNESS - 0.5, plate_z0 + 0.3),
+                            (hi, top - PLATE_THICKNESS + 0.3, plate_z1 - 0.3),
+                            "flesh_dark",
                         )
                     )
     return cubes
 
 
 def part_back_plating() -> list[dict]:
-    """04 部件：脊椎两侧和肩上破碎层叠的锈暗甲片，由内向外逐级降低，板面带锈斑。
+    """04 部件：脊椎两侧每侧 5 行、一片压一片的瓦状锈铁甲，向外下斜铺，缝里露暗红肉。
 
-    对照 parts_ref/04_back_plating.png。板和脊椎侧面相贴、盖住肋骨上沿，
-    不遮脊椎顶上的骨刺；下方肉条（03）从板下露出。
+    对照 parts_ref/04_back_plating.png。内缘压住脊椎侧面，甲面主色 rust_light，
+    外缘锈褐边 + 大锈斑；外斜骨刺属于 01，本件不做。
     """
     return _tag(_plating(), "back_plating")
 
