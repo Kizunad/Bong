@@ -868,6 +868,130 @@ def part_front_arms_claws() -> list[dict]:
     return _tag(cubes, "front_arms_claws")
 
 
+# 06 号部件：两条细骨后腿，像鸟 / 兽腿一样反折——髋在脊椎后端下方，大腿向前下斜到膝，
+# 小腿从膝向后下斜到踝，脚掌四趾向前，趾尖落在 y=0。侧视是「S」形（z 向前为正）。
+# 髋是一团带锈斑的骨节，髋下垂暗红肉丝；膝、踝各是一团裹锈的骨节。
+LEG_CENTER_X = 3.9  # 让开 03 的肉条（x≤2.8）和 05 的臂（z≥2）
+HIP_Y = (9.3, 10.9)
+HIP_Z = (-9.2, -6.2)
+HIP_HALF_WIDTH = 1.3
+THIGH_SEGMENTS = ((8.5, 9.5, -7.4), (7.5, 8.6, -6.8), (6.5, 7.6, -6.2), (5.5, 6.6, -5.6))  # (y0, y1, z 中心)
+THIGH_WIDTH = 1.0
+KNEE_Y = (4.4, 6.3)
+KNEE_Z = (-6.3, -4.1)
+KNEE_HALF_WIDTH = 1.1
+SHIN_SEGMENTS = ((3.6, 4.5, -5.4), (2.9, 3.8, -5.9), (2.2, 3.1, -6.4))
+SHIN_WIDTH = 0.9
+ANKLE_Y = (1.5, 3.0)
+ANKLE_Z = (-7.4, -5.4)
+ANKLE_HALF_WIDTH = 1.0
+HEEL_Z = (-7.2, -5.6)
+HEEL_HALF_WIDTH = 1.1
+TOE_X = (-1.5, -0.5, 0.5, 1.5)
+TOE_WIDTH = 0.8
+TOE_OUTWARD = 0.2  # 外侧趾向外撇
+TOE_SEG1 = ((0.8, 1.9), (-5.6, -3.8))  # (y 范围, z 范围)：平伸向前
+TOE_SEG2 = ((0.0, 1.0), (-4.2, -3.0))  # 下勾落地
+TOE_SEG2_WIDTH = 0.6
+TOE_TIP_HEIGHT = 0.4  # 最末一小截略暗
+HIP_STRAND_COLUMNS = (-0.9, -0.3, 0.3, 0.9)
+HIP_STRAND_ROWS = (-9.0, -8.55, -8.1)  # 全在大腿（z 起 -7.9）后面
+HIP_STRAND_WIDTH = 0.4
+HIP_STRAND_LENGTHS = (4.2, 3.0, 5.0, 2.6, 3.6, 4.6, 2.2, 3.8, 5.2, 2.8, 4.0, 3.2)
+KNEE_STRAND_LENGTHS = (2.5, 1.6, 2.2)
+
+
+def _leg(side: str, sign: float) -> list[dict]:
+    cx = sign * LEG_CENTER_X
+    cubes = []
+
+    def box(name, x, y, z, material):
+        """x 以腿中线为原点、朝外为正，自动按 sign 镜像；z 是世界坐标（向前为正）。"""
+        xa, xb = sorted((cx + sign * x[0], cx + sign * x[1]))
+        return _cube(f"leg_{side}_{name}", (xa, y[0], z[0]), (xb, y[1], z[1]), material)
+
+    # 髋：带锈斑的骨节，下缘一圈暗骨边。
+    hw = HIP_HALF_WIDTH
+    cubes.append(box("hip", (-hw, hw), (HIP_Y[0] + 0.5, HIP_Y[1]), HIP_Z, "bone"))
+    cubes.append(box("hip_lower", (-hw - 0.1, hw + 0.1), (HIP_Y[0], HIP_Y[0] + 0.55), (HIP_Z[0] + 0.15, HIP_Z[1] - 0.15), "bone_shadow"))
+    cubes.append(box("hip_rust_outer", (hw, hw + 0.15), (HIP_Y[0] + 0.7, HIP_Y[1] - 0.3), (HIP_Z[0] + 0.5, HIP_Z[1] - 0.8), "rust_dark"))
+    cubes.append(box("hip_rust_spot", (hw + 0.08, hw + 0.22), (HIP_Y[0] + 1.0, HIP_Y[0] + 1.5), (HIP_Z[0] + 0.9, HIP_Z[0] + 1.6), "rust_spot"))
+    cubes.append(box("hip_rust_top", (-0.6, 0.9), (HIP_Y[1] - 0.05, HIP_Y[1] + 0.15), (HIP_Z[0] + 0.7, HIP_Z[1] - 0.6), "rust_dark"))
+    cubes.append(box("hip_rust_inner", (-hw - 0.12, -hw), (HIP_Y[0] + 0.8, HIP_Y[1] - 0.6), (HIP_Z[0] + 1.0, HIP_Z[1] - 0.5), "rust_dark"))
+
+    # 大腿：4 节细骨条逐节向前下斜，亮 / 暗骨交替。
+    half = THIGH_WIDTH / 2
+    for index, (y0, y1, zc) in enumerate(THIGH_SEGMENTS):
+        cubes.append(box(f"thigh_{index}", (-half + 0.02 * index, half + 0.03 * index), (y0, y1), (zc - half, zc + half), "bone" if index % 2 == 0 else "bone_shadow"))
+
+    # 膝：裹锈的骨节，下前方压一块暗锈甲，前面一块锈斑。
+    kw = KNEE_HALF_WIDTH
+    cubes.append(box("knee", (-kw, kw), (KNEE_Y[0] + 0.1, KNEE_Y[1]), (KNEE_Z[0] + 0.1, KNEE_Z[1] - 0.1), "bone"))
+    cubes.append(box("knee_rust_low", (-kw - 0.1, kw + 0.1), (KNEE_Y[0], KNEE_Y[0] + 0.8), KNEE_Z, "rust_dark"))
+    cubes.append(box("knee_rust_front", (-0.7, 0.8), (KNEE_Y[0] + 0.9, KNEE_Y[1] - 0.4), (KNEE_Z[1] - 0.12, KNEE_Z[1] + 0.12), "rust_spot"))
+    cubes.append(box("knee_rust_cap", (-kw - 0.08, kw + 0.08), (KNEE_Y[1] - 0.4, KNEE_Y[1] + 0.05), (KNEE_Z[0] + 0.3, KNEE_Z[1] - 0.3), "rust_dark"))
+
+    # 小腿：3 节更细的骨条向后下斜。
+    half = SHIN_WIDTH / 2
+    for index, (y0, y1, zc) in enumerate(SHIN_SEGMENTS):
+        cubes.append(box(f"shin_{index}", (-half + 0.02 * index, half + 0.03 * index), (y0, y1), (zc - half, zc + half), "bone" if index % 2 == 0 else "bone_shadow"))
+
+    # 踝 + 脚跟：踝骨节带锈斑，脚跟块落地。
+    aw = ANKLE_HALF_WIDTH
+    cubes.append(box("ankle", (-aw, aw), ANKLE_Y, ANKLE_Z, "bone_shadow"))
+    cubes.append(box("ankle_rust", (aw, aw + 0.12), (ANKLE_Y[0] + 0.3, ANKLE_Y[1] - 0.3), (ANKLE_Z[0] + 0.4, ANKLE_Z[1] - 0.4), "rust_dark"))
+    cubes.append(box("heel", (-HEEL_HALF_WIDTH, HEEL_HALF_WIDTH), (0.0, ANKLE_Y[0] + 0.1), HEEL_Z, "bone"))
+
+    # 四趾：第 1 节平伸向前，第 2 节收细下勾落地，趾尖一小截略暗；外侧趾向外撇。
+    for index, fx in enumerate(TOE_X):
+        outward = 1.0 if fx > 0 else -1.0
+        spread = TOE_OUTWARD if abs(fx) > 1.0 else 0.0
+        x1 = fx
+        x2 = fx + outward * spread
+        half = TOE_WIDTH / 2
+        cubes.append(box(f"toe_{index}_0", (x1 - half, x1 + half), TOE_SEG1[0], TOE_SEG1[1], "bone"))
+        half2 = TOE_SEG2_WIDTH / 2
+        cubes.append(box(f"toe_{index}_1", (x2 - half2, x2 + half2), (TOE_SEG2[0][0] + TOE_TIP_HEIGHT - 0.05, TOE_SEG2[0][1]), TOE_SEG2[1], "bone"))
+        cubes.append(box(f"toe_tip_{index}", (x2 - 0.22, x2 + 0.22), (0.0, TOE_TIP_HEIGHT), (TOE_SEG2[1][0] + 0.2, TOE_SEG2[1][1] + 0.15), "bone_shadow"))
+
+    # 髋下肉丝：12 条长短不一，垂在大腿后侧。
+    top = HIP_Y[0] + 0.1
+    for index, length in enumerate(HIP_STRAND_LENGTHS):
+        column = HIP_STRAND_COLUMNS[index % len(HIP_STRAND_COLUMNS)]
+        row = HIP_STRAND_ROWS[index // len(HIP_STRAND_COLUMNS)]
+        width = HIP_STRAND_WIDTH + 0.03 * (index % 3)
+        cubes.append(
+            box(
+                f"hip_strand_{index}",
+                (column - width / 2, column + width / 2),
+                (top - length, top - 0.02 * index),
+                (row - width / 2, row + width / 2),
+                "flesh_red" if index % 2 == 0 else "flesh_dark",
+            )
+        )
+    # 膝后几条短肉丝。
+    for index, length in enumerate(KNEE_STRAND_LENGTHS):
+        x = (-0.6, 0.0, 0.6)[index]
+        cubes.append(
+            box(
+                f"knee_strand_{index}",
+                (x - 0.2, x + 0.2),
+                (KNEE_Y[0] - length, KNEE_Y[0] + 0.15 - 0.03 * index),
+                (KNEE_Z[0] + 0.04 + 0.5 * index, KNEE_Z[0] + 0.5 + 0.5 * index),
+                "flesh_red" if index % 2 == 0 else "flesh_dark",
+            )
+        )
+    return cubes
+
+
+def part_hind_legs() -> list[dict]:
+    """06 部件：两条细骨后腿，大腿向前下斜、小腿向后下斜（反折），脚掌四趾向前，趾尖落地 y=0。
+
+    对照 parts_ref/06_hind_legs.png。髋在脊椎后端下方，带锈斑；髋下垂暗红肉丝。
+    """
+    return _tag(_leg("l", -1.0) + _leg("r", 1.0), "hind_legs")
+
+
 # 建造顺序；编号就是调度的部件编号。后续部件按调度「过」之后逐件追加。
 PARTS = {
     "01": ("spine_ribcage", part_spine_ribcage),
@@ -875,6 +999,7 @@ PARTS = {
     "03": ("flesh_strands", part_flesh_strands),
     "04": ("back_plating", part_back_plating),
     "05": ("front_arms_claws", part_front_arms_claws),
+    "06": ("hind_legs", part_hind_legs),
 }
 
 
