@@ -80,7 +80,7 @@ public class BongAnimationAssetManifestTest {
 
     @Test
     void itemUseAnimationAssetsAreValidPlayerAnimationJson() throws IOException {
-        assertEquals(13, BongAnimations.ITEM_USE_ANIMATIONS.size(), "第 1 批手持物动画数量");
+        assertEquals(16, BongAnimations.ITEM_USE_ANIMATIONS.size(), "第 1、2 批手持物动画数量");
         for (var id : BongAnimations.ITEM_USE_ANIMATIONS) {
             Path path = RESOURCE_ROOT.resolve(id.getPath() + ".json");
             assertTrue(Files.isRegularFile(path), "缺少手持物动画资源: " + path);

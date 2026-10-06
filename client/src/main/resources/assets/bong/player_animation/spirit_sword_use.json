@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "spirit_sword_use",
-  "description": "灵剑单手前刺（重心前送）：8 tick。剑按 display 自然握持，无 rightItem。guard 剑斜指胸前 → draw 肘屈起蓄力 → thrust 肘伸直、肩送出、躯干前倾直刺 → hold 停在最远点 → 回 guard。剑身 roll 0 朝前，判据看剑尖前送，不看刃线。与铁剑、骨剑的横扫与劈砍区分。只落资产未接线。",
+  "description": "灵剑单手前刺（重心前送）：8 tick。剑按 display 自然握持，无 rightItem。guard 剑斜指胸前 → draw 肘屈起蓄力 → thrust 肘伸直、肩送出、躯干前倾直刺 → hold 停在最远点 → 回 guard。剑身 roll 0 朝前，判据看剑尖前送，不看刃线。与铁剑、骨剑的横扫与劈砍区分。",
   "emote": {
     "beginTick": 0,
     "endTick": 8,

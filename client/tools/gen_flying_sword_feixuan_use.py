@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """flying_sword_feixuan_use —— 飞旋剑单手回旋撩斩（自下而上撩，带腰部转动）。
 
-只落资产，不接线：产出 player_animation/flying_sword_feixuan_use.json，没有任何代码播放它。
+产出 player_animation/flying_sword_feixuan_use.json。服务端 vfx_animation_trigger.rs 的 held_attack_anim 表按 flying_sword_feixuan 选用它。
 
 模型事实（决定了动作怎么设计）：
   - flying_sword_feixuan_v2 的手持 display 与 iron_sword_v2 完全相同（thirdperson rotation
@@ -95,7 +95,7 @@ DESCRIPTION = (
     "飞旋剑单手回旋撩斩（自下而上撩，带腰部转动）：10 tick。剑按 display 自然握持，无 rightItem。"
     "guard 剑在右侧低位 → scoop 右侧起撩、躯干右转 → rise 剑自下而上撩到身前，刃口朝上 → "
     "top 腰部回转、剑尖到左上 → spin 顶端回旋到左后上方 → 回 guard。"
-    "与铁剑过顶直劈（自上而下）、骨剑斜劈（右上到左下）区分。只落资产未接线。"
+    "与铁剑过顶直劈（自上而下）、骨剑斜劈（右上到左下）区分。"
 )
 
 if __name__ == "__main__":

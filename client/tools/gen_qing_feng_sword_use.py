@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """qing_feng_sword_use —— 青锋剑单手横扫（右到左，身形灵巧）。
 
-只落资产，不接线：产出 player_animation/qing_feng_sword_use.json，没有任何代码播放它。
+产出 player_animation/qing_feng_sword_use.json。服务端 vfx_animation_trigger.rs 的 held_attack_anim 表按 qing_feng_sword 选用它。
 
 模型事实（决定了动作怎么设计）：
   - qing_feng_sword_v2 的手持 display 与 iron_sword_v2 完全相同（thirdperson rotation
@@ -84,7 +84,7 @@ DESCRIPTION = (
     "青锋剑单手横扫（右到左）：8 tick。剑按 display 自然握持，无 rightItem。"
     "guard 剑平举身前偏右 → windup 剑收到右前方、躯干右转 → cut 剑横切过身前，刃线随手速 → "
     "overshoot 继续摆到左前方 → 回 guard。右臂 roll -90 把剑转成刃线横向、刀面朝上，"
-    "靠 pitch 摆动横切（不靠 yaw）。与铁剑过顶直劈、骨剑斜劈区分。只落资产未接线。"
+    "靠 pitch 摆动横切（不靠 yaw）。与铁剑过顶直劈、骨剑斜劈区分。"
 )
 
 if __name__ == "__main__":

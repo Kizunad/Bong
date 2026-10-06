@@ -153,7 +153,12 @@ public final class BongAnimations {
     public static final Identifier BING_JIA_HEAVY_LEFT = new Identifier(MOD_ID, "bing_jia_heavy_left");
     public static final Identifier BING_JIA_HEAVY_RIGHT = new Identifier(MOD_ID, "bing_jia_heavy_right");
 
-    /** 第 1 批手持物动画全集（含骨镐循环动画，它不进服务端攻击表），供资产清单测试逐个校验。 */
+    // plan-item-use-anim-v1 第 2 批：青锋剑 / 灵剑 / 飞旋剑，服务端 held_attack_anim 按 template_id 选用。
+    public static final Identifier QING_FENG_SWORD_USE = new Identifier(MOD_ID, "qing_feng_sword_use");
+    public static final Identifier SPIRIT_SWORD_USE = new Identifier(MOD_ID, "spirit_sword_use");
+    public static final Identifier FLYING_SWORD_FEIXUAN_USE = new Identifier(MOD_ID, "flying_sword_feixuan_use");
+
+    /** 第 1、2 批手持物动画全集（含骨镐循环动画，它不进服务端攻击表），供资产清单测试逐个校验。 */
     public static final List<Identifier> ITEM_USE_ANIMATIONS = List.of(
         IRON_SWORD_V2_USE,
         BRONZE_SABER_V2_USE,
@@ -167,7 +172,10 @@ public final class BongAnimations {
         HAND_WRAP_JAB_LEFT,
         HAND_WRAP_JAB_RIGHT,
         BING_JIA_HEAVY_LEFT,
-        BING_JIA_HEAVY_RIGHT
+        BING_JIA_HEAVY_RIGHT,
+        QING_FENG_SWORD_USE,
+        SPIRIT_SWORD_USE,
+        FLYING_SWORD_FEIXUAN_USE
     );
 
     public static final Identifier HEIWUSHI_IDLE = new Identifier(MOD_ID, "heiwushi_idle");

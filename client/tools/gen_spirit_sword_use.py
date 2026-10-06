@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """spirit_sword_use —— 灵剑单手前刺（重心前送，剑身朝前直出）。
 
-只落资产，不接线：产出 player_animation/spirit_sword_use.json，没有任何代码播放它。
+产出 player_animation/spirit_sword_use.json。服务端 vfx_animation_trigger.rs 的 held_attack_anim 表按 spirit_sword 选用它。
 
 模型事实（决定了动作怎么设计）：
   - spirit_sword_v2 的手持 display 与 iron_sword_v2 完全相同（thirdperson rotation
@@ -81,7 +81,7 @@ DESCRIPTION = (
     "灵剑单手前刺（重心前送）：8 tick。剑按 display 自然握持，无 rightItem。"
     "guard 剑斜指胸前 → draw 肘屈起蓄力 → thrust 肘伸直、肩送出、躯干前倾直刺 → "
     "hold 停在最远点 → 回 guard。剑身 roll 0 朝前，判据看剑尖前送，不看刃线。"
-    "与铁剑、骨剑的横扫与劈砍区分。只落资产未接线。"
+    "与铁剑、骨剑的横扫与劈砍区分。"
 )
 
 if __name__ == "__main__":
