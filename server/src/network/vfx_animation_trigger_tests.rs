@@ -3237,6 +3237,7 @@ fn held_attack_anim_table_maps_item_templates_and_falls_back() {
         ("iron_sword", Some(Single("bong:iron_sword_v2_use"))),
         ("bronze_saber", Some(Single("bong:bronze_saber_v2_use"))),
         ("bone_dagger", Some(Single("bong:bone_dagger_v2_use"))),
+        ("bone_sword", Some(Single("bong:bone_sword_slash"))),
         ("wooden_staff", Some(Single("bong:wooden_staff_atk"))),
         ("pickaxe_iron", Some(Single("bong:pickaxe_iron_v2_use"))),
         ("axe_bone", Some(Single("bong:axe_bone_v2_use"))),
@@ -3255,9 +3256,8 @@ fn held_attack_anim_table_maps_item_templates_and_falls_back() {
                 right: "bong:bing_jia_heavy_right",
             }),
         ),
-        // 骨镐动画是循环（攻击不发 StopAnim 会卡住），骨剑暂走默认动画：两者都不进表。
+        // 骨镐动画是循环（攻击不发 StopAnim 会卡住），不进表。
         ("pickaxe_bone", None),
-        ("bone_sword", None),
     ];
     for (template, expected) in cases {
         assert_eq!(held_attack_anim(template), *expected, "template {template}");
@@ -3348,18 +3348,18 @@ fn switching_glove_family_restarts_alternation_with_right_punch() {
     );
 }
 
-/// 未列入表的手持物（骨剑）回落到原伤口类型分支：Cut → 默认剑斩。
+/// 未列入表的手持物（骨镐，循环动画不进表）回落到原伤口类型分支：Cut → 默认剑斩。
 #[test]
 fn unmapped_held_weapon_falls_back_to_wound_kind_animation() {
     let mut app = setup_fist_combo_app();
     let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
     app.world_mut()
         .entity_mut(attacker)
-        .insert(held_weapon("bone_sword"));
+        .insert(held_weapon("pickaxe_bone"));
 
     assert_eq!(
         punch_anim_at_tick(&mut app, attacker, 10, WoundKind::Cut),
         ANIM_SWORD_SLASH_DOWN,
-        "骨剑暂走默认动画，表外回落伤口分支"
+        "表外手持物回落伤口分支"
     );
 }
