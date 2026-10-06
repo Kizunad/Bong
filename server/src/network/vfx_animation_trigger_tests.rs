@@ -3256,6 +3256,12 @@ fn held_attack_anim_table_maps_item_templates_and_falls_back() {
                 right: "bong:bing_jia_heavy_right",
             }),
         ),
+        ("qing_feng_sword", Some(Single("bong:qing_feng_sword_use"))),
+        ("spirit_sword", Some(Single("bong:spirit_sword_use"))),
+        (
+            "flying_sword_feixuan",
+            Some(Single("bong:flying_sword_feixuan_use")),
+        ),
         // 骨镐动画是循环（攻击不发 StopAnim 会卡住），不进表。
         ("pickaxe_bone", None),
     ];

@@ -348,7 +348,7 @@ fn next_alternating_anim(
     anim_id
 }
 
-/// 手持物的普通攻击动画（plan-item-use-anim-v1 第 1 批）。键是手持物的 template_id。
+/// 手持物的普通攻击动画（plan-item-use-anim-v1 第 1、2 批）。键是手持物的 template_id。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HeldAttackAnim {
     /// 单段动画（一次挥击，非循环）。
@@ -383,6 +383,9 @@ pub(crate) fn held_attack_anim(template_id: &str) -> Option<HeldAttackAnim> {
             left: "bong:bing_jia_heavy_left",
             right: "bong:bing_jia_heavy_right",
         },
+        "qing_feng_sword" => Single("bong:qing_feng_sword_use"),
+        "spirit_sword" => Single("bong:spirit_sword_use"),
+        "flying_sword_feixuan" => Single("bong:flying_sword_feixuan_use"),
         _ => return None,
     })
 }
