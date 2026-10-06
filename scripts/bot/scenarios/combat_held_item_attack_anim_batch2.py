@@ -80,7 +80,7 @@ def _swing_with(bot, weapon_id: str, expected_anim: str) -> None:
 
 
 def run(env) -> None:
-    with env.new_bot("HeldAnim") as bot:
+    with env.new_bot("HeldAnimB2") as bot:
         wait_for_ready(bot)
         for weapon_id, expected_anim in ATTACK_ANIMS:
             _swing_with(bot, weapon_id, expected_anim)

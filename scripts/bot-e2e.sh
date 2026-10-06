@@ -96,7 +96,7 @@ BOT_E2E_OPERATOR_TAGS=(
   FoSc AlScene
   DuxL DuxP DuxO ChatA ChatB
   TA TB DA DB SA
-  Charge Throw Switch HeldAnim
+  Charge Throw Switch HeldAnim HeldAnimB2
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
