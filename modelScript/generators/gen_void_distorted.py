@@ -666,12 +666,126 @@ def part_back_plating() -> list[dict]:
     return _tag(_plating(), "back_plating")
 
 
+# 05 号部件：两条粗长前臂，包锈暗甲，从肩甲下垂到地面，末端大骨爪。
+# 臂是 9 节自上而下逐节收窄的甲环（相邻节在 y 上压住，像鱼鳞往下盖），每节正面压一片
+# 带锈褐下沿的前甲；肩顶一簇骨刺，内侧垂几条暗红肉丝；手腕以下是骨掌和四根三节长弯指。
+ARM_CENTER_X = 5.2
+ARM_CENTER_Z = 4.8
+ARM_TOP_Y = 15.0  # 肩顶，藏在 04 的外侧甲片下面
+ARM_BAND_COUNT = 9
+ARM_BAND_STEP = 1.25  # 相邻两节顶面的落差
+ARM_BAND_HEIGHT = 1.65  # 大于落差，节间在 y 上压住 0.4
+ARM_BAND_WIDTH_TOP = 3.7
+ARM_BAND_WIDTH_SHRINK = 0.17
+ARM_BAND_DEPTH_TOP = 3.4
+ARM_BAND_DEPTH_SHRINK = 0.15
+ARM_JITTER = 0.08
+PALM_WIDTH = 3.2
+PALM_DEPTH = 2.4
+PALM_HEIGHT = 1.2
+# 指：x 偏移（相对臂中线）、三节的高度。中间两根最长，外侧两根略短。
+FINGER_X = (-1.28, -0.43, 0.43, 1.28)
+FINGER_LENGTHS = ((1.0, 0.8, 0.6), (1.1, 0.9, 0.7), (1.1, 0.9, 0.7), (1.0, 0.8, 0.6))
+FINGER_WIDTHS = (0.75, 0.65, 0.5)
+FINGER_OUTWARD = 0.18  # 每向下一节，外侧指向外偏多少，手指扇形散开
+FINGER_FORWARD = 0.35  # 每向下一节向前（+z）弯多少，让爪尖弯向前
+
+
+def _arm(side: str, sign: float, rng: random.Random) -> list[dict]:
+    cx = sign * ARM_CENTER_X
+    cz = ARM_CENTER_Z
+    cubes = []
+
+    def box(name, x, y, z, material):
+        """x、y、z 是 (起, 止)；x 以臂中线为原点、朝外为正，自动按 sign 镜像。"""
+        xa, xb = sorted((cx + sign * x[0], cx + sign * x[1]))
+        return _cube(f"arm_{side}_{name}", (xa, y[0], cz + z[0]), (xb, y[1], cz + z[1]), material)
+
+    for k in range(ARM_BAND_COUNT):
+        half_w = (ARM_BAND_WIDTH_TOP - ARM_BAND_WIDTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
+        half_d = (ARM_BAND_DEPTH_TOP - ARM_BAND_DEPTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
+        top = ARM_TOP_Y - k * ARM_BAND_STEP
+        bottom = top - ARM_BAND_HEIGHT
+        cubes.append(box(f"band_{k}", (-half_w, half_w), (bottom, top), (-half_d, half_d), "rust_dark" if k % 2 == 0 else "rust_light"))
+        # 前甲片：压在前面（+z），比环窄，略凸出；下沿一道锈褐边。
+        front_half_w = half_w - 0.45
+        cubes.append(box(f"plate_{k}", (-front_half_w, front_half_w), (bottom + 0.25, top - 0.1), (half_d - 0.05, half_d + 0.3), "rust_light" if k % 2 == 0 else "rust_dark"))
+        cubes.append(box(f"plate_rim_{k}", (-front_half_w - 0.08, front_half_w + 0.08), (bottom + 0.05, bottom + 0.4), (half_d + 0.05, half_d + 0.4), "rust_spot"))
+        # 一团不规则锈斑：两块高度不同的薄块。
+        for blot in range(2):
+            bx = rng.uniform(-front_half_w + 0.1, front_half_w - 0.8)
+            by = rng.uniform(bottom + 0.55, top - 0.7)
+            cubes.append(box(f"blot_{k}_{blot}", (bx, bx + rng.uniform(0.5, 0.9)), (by, by + rng.uniform(0.3, 0.5)), (half_d + 0.25 + 0.03 * blot, half_d + 0.4 + 0.03 * blot), "rust_spot"))
+        # 外侧每隔一节挑出一根短骨刺。
+        if k % 2 == 0 and k < 7:
+            spike_y = top - 0.9
+            cubes.append(box(f"side_spike_{k}", (half_w - 0.1, half_w + 0.8 - 0.1 * k / 2), (spike_y, spike_y + 0.5), (-0.25, 0.25), "bone"))
+
+    # 肩顶骨刺簇：5 根长短不一，中间一根最高；穿出 04 的甲片。
+    shoulder_half_w = ARM_BAND_WIDTH_TOP / 2
+    for index, (x, z, height) in enumerate([(-0.9, -0.5, 1.8), (0.0, 0.2, 2.8), (0.9, -0.4, 2.0), (-0.3, -1.0, 1.5), (0.5, 0.8, 1.7)]):
+        cubes.append(box(f"shoulder_spike_{index}", (x - 0.3, x + 0.3), (ARM_TOP_Y, ARM_TOP_Y + height), (z - 0.3, z + 0.3), "bone" if index % 2 == 0 else "bone_shadow"))
+
+    # 内侧垂下的暗红肉丝（朝身体中线一侧，x 为负）。
+    for index, (z, length, width) in enumerate([(-1.0, 3.5, 0.5), (-0.3, 5.5, 0.45), (0.4, 4.0, 0.5), (1.0, 6.5, 0.4), (1.5, 2.6, 0.55)]):
+        x_edge = -shoulder_half_w + 0.3 - 0.04 * index
+        cubes.append(box(f"flesh_{index}", (x_edge - width, x_edge), (ARM_TOP_Y - 0.4 - 0.05 * index - length, ARM_TOP_Y - 0.4 - 0.05 * index), (z - width / 2 + 0.03 * index, z + width / 2 + 0.03 * index), "flesh_red" if index % 2 == 0 else "flesh_dark"))
+
+    # 骨掌：压在最后一节腕环之下，带暗红肉衬。
+    wrist_bottom = ARM_TOP_Y - (ARM_BAND_COUNT - 1) * ARM_BAND_STEP - ARM_BAND_HEIGHT
+    palm_top = wrist_bottom + 0.35
+    palm_bottom = palm_top - PALM_HEIGHT
+    cubes.append(box("palm", (-PALM_WIDTH / 2, PALM_WIDTH / 2), (palm_bottom, palm_top), (-PALM_DEPTH / 2, PALM_DEPTH / 2), "bone_shadow"))
+    cubes.append(box("palm_flesh", (-0.9, 0.9), (palm_bottom + 0.2, palm_top - 0.2), (PALM_DEPTH / 2 - 0.1, PALM_DEPTH / 2 + 0.15), "flesh_dark"))
+
+    # 四根三节长弯指：逐节变细、向外散开、向前弯；末节落在 y=0（爪贴地）。
+    total_drop = [sum(lengths) for lengths in FINGER_LENGTHS]
+    for finger, (fx, lengths) in enumerate(zip(FINGER_X, FINGER_LENGTHS)):
+        y = palm_bottom + 0.3
+        outward = 1.0 if fx > 0 else -1.0
+        scale = (palm_bottom + 0.3) / total_drop[finger]  # 把三节拉伸到刚好落地
+        x_shift = 0.0
+        z_shift = 0.0
+        for segment, (length, width) in enumerate(zip(lengths, FINGER_WIDTHS)):
+            seg_height = length * scale
+            y_top = y
+            y_bottom = 0.0 if segment == 2 else y - seg_height
+            half = width / 2
+            x_mid = fx + outward * x_shift
+            cubes.append(
+                box(
+                    f"finger_{finger}_{segment}",
+                    (x_mid - half, x_mid + half),
+                    (y_bottom, y_top + (0.0 if segment == 0 else 0.1)),
+                    (z_shift - half, z_shift + half),
+                    "bone_shadow" if segment == 0 else "bone",
+                )
+            )
+            y = y_bottom
+            x_shift += FINGER_OUTWARD * (1.0 if abs(fx) > 1 else 0.5)
+            z_shift += FINGER_FORWARD
+    return cubes
+
+
+def part_front_arms_claws() -> list[dict]:
+    """05 部件：左右两条粗长前臂（9 节甲环 + 前甲片 + 锈边锈斑），肩顶骨刺，内侧肉丝，末端骨爪贴地。
+
+    对照 parts_ref/05_front_arms_claws.png。臂从 04 的外侧甲片下伸出，
+    左右各用独立随机序列，形状略有差异。
+    """
+    rng_left = random.Random(5)
+    rng_right = random.Random(7)
+    cubes = _arm("l", -1.0, rng_left) + _arm("r", 1.0, rng_right)
+    return _tag(cubes, "front_arms_claws")
+
+
 # 建造顺序；编号就是调度的部件编号。后续部件按调度「过」之后逐件追加。
 PARTS = {
     "01": ("spine_ribcage", part_spine_ribcage),
     "02": ("void_maw_skulls", part_void_maw_skulls),
     "03": ("flesh_strands", part_flesh_strands),
     "04": ("back_plating", part_back_plating),
+    "05": ("front_arms_claws", part_front_arms_claws),
 }
 
 
