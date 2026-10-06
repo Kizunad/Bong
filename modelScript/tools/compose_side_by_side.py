@@ -33,9 +33,10 @@ def _frames(path: Path) -> tuple[list[Image.Image], list[int]]:
     im = Image.open(path)
     frames: list[Image.Image] = []
     durations: list[int] = []
+    fallback = int(im.info.get("duration", 48))
     for frame in ImageSequence.Iterator(im):
         frames.append(frame.convert("RGB").copy())
-        durations.append(int(frame.info.get("duration", 48)))
+        durations.append(int(frame.info.get("duration", fallback)))
     return frames, durations
 
 
