@@ -247,6 +247,31 @@ TSY_SENTINEL_BONES = (
     *_sentinel_side_bones("l", -1.0),
 )
 
+# ================================================================ 渊空畸变体
+# 低伏兽躯：脊椎 / 肋笼 / 背甲 / 腹下肉条都挂 body，虚空口和左右骷髅挂 maw（整体可张合 / 扭动）。
+# 前臂每条拆两节：臂（肩顶骨刺 + 甲环 + 肉帘，绕肩转）+ 掌爪（掌 / 四指，绕腕转）；
+# 后腿每条拆两节：髋 + 大腿绕髋转，膝 + 小腿 + 脚趾绕膝转。四肢直接挂 root，身体起伏时爪和趾仍踩着地。
+# 终审稿面朝 +Z、中轴在原点。「l / r」沿用建模稿：r 在建模稿 +x 侧。
+def _void_distorted_side_bones(side: str, sign: float) -> tuple[Bone, ...]:
+    return (
+        Bone(f"arm_{side}", "body", (sign * 6.0, 15.0, 4.5), (f"arm_{side}_",)),
+        Bone(f"claw_{side}", f"arm_{side}", (sign * 6.0, 4.0, 6.0),
+             (f"arm_{side}_palm", f"arm_{side}_finger")),
+        Bone(f"leg_{side}", "root", (sign * 4.0, 10.4, -7.7),
+             (f"leg_{side}_hip", f"leg_{side}_thigh")),
+        Bone(f"shin_{side}", f"leg_{side}", (sign * 4.1, 5.3, -5.2), (f"leg_{side}_",)),
+    )
+
+
+VOID_DISTORTED_BONES = (
+    Bone("root", None, (0.0, 0.0, 0.0)),
+    Bone("body", "root", (0.0, 11.0, 0.0),
+         ("spine_", "rib_", "plate_", "strand", "sinew_")),
+    Bone("maw", "body", (0.0, 12.0, 8.6), ("maw_", "skull_")),
+    *_void_distorted_side_bones("r", 1.0),
+    *_void_distorted_side_bones("l", -1.0),
+)
+
 SPECIES = {
     "ash_spider_v2": Species("AshSpiderV2", ash_spider_bones),
     # 骨煞的终审稿在 #2325 落库时沿用了 SkullFiend.bbmodel 这个名字。
@@ -256,6 +281,7 @@ SPECIES = {
     "fuya_v2": Species("FuyaV2", lambda source: FUYA_BONES),
     "zhinian_v2": Species("ZhinianV2", lambda source: ZHINIAN_BONES),
     "tsy_sentinel_v2": Species("TsySentinelV2", lambda source: TSY_SENTINEL_BONES),
+    "void_distorted_v2": Species("VoidDistorted", lambda source: VOID_DISTORTED_BONES),
 }
 
 

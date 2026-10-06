@@ -672,6 +672,12 @@
    "TuiGuTeng.bbmodel": "b8458e336e2865f365b9cd605c44e0dbeac37834356354ab911bb02bab82bc42"
   }
  },
+ "gen_void_distorted.py": {
+  "exit": 0,
+  "outputs": {
+   "VoidDistorted.bbmodel": "c41a9d183d988c62be52d0640aeae15e027022dbe8f133e213793c521c30fbd2"
+  }
+ },
  "gen_wooden_club.py": {
   "exit": 0,
   "outputs": {
