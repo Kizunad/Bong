@@ -666,115 +666,184 @@ def part_back_plating() -> list[dict]:
     return _tag(_plating(), "back_plating")
 
 
-# 05 号部件：两条粗长前臂，包锈暗甲，从肩甲下垂到地面，末端大骨爪。
-# 臂是 9 节自上而下逐节收窄的甲环（相邻节在 y 上压住，像鱼鳞往下盖），每节正面压一片
-# 带锈褐下沿的前甲；肩顶一簇骨刺，内侧垂几条暗红肉丝；手腕以下是骨掌和四根三节长弯指。
-ARM_CENTER_X = 5.2
-ARM_CENTER_Z = 4.8
-ARM_TOP_Y = 15.0  # 肩顶，藏在 04 的外侧甲片下面
-ARM_BAND_COUNT = 9
-ARM_BAND_STEP = 1.25  # 相邻两节顶面的落差
-ARM_BAND_HEIGHT = 1.65  # 大于落差，节间在 y 上压住 0.4
-ARM_BAND_WIDTH_TOP = 3.7
-ARM_BAND_WIDTH_SHRINK = 0.17
-ARM_BAND_DEPTH_TOP = 3.4
-ARM_BAND_DEPTH_SHRINK = 0.15
+# 05 号部件：两条肩宽腕窄、肘部弯折前倾的两段前臂，瓦状叠甲，末端宽掌 + 粗长内勾骨爪。
+# 臂是 ARM_BAND_COUNT 节自上而下收窄的甲环，相邻节在 y 上压住。上臂每节略向后（-z），
+# 到 ELBOW_BAND 节是肘（最靠后、略鼓），前臂每节向前（+z）FOREARM_Z_STEP，侧视呈「>」形。
+# 每节正面压两片上下错开的前甲（下沿锈褐边 + 锯齿），外侧挑一片外翻甲角；肩顶斜刺一簇，
+# 肩内侧垂一帘暗红肉丝（做法同 03：长条收细成丝、丝尾挂肉球）；手腕下是宽骨掌和四根内勾粗爪。
+ARM_CENTER_X = 6.0
+ARM_CENTER_Z = 4.5
+ARM_TOP_Y = 15.0  # 肩顶，藏在 04 外侧甲片下面
+ARM_BAND_COUNT = 11
+ARM_BAND_STEP = 1.1  # 相邻两节顶面的落差
+ARM_BAND_HEIGHT = 1.45  # 大于落差，节间在 y 上压住 0.35
+ARM_WIDTH_TOP = 4.4
+ARM_WIDTH_SHRINK = 0.2  # 肩 4.4 → 腕 2.4，肩宽约为腕宽的 1.8 倍
+ARM_DEPTH_TOP = 3.6
+ARM_DEPTH_SHRINK = 0.14
+ELBOW_BAND = 5
+ELBOW_BULGE = 0.4
+UPPER_Z_STEP = -0.2  # 上臂每节向后挪
+FOREARM_Z_STEP = 0.5  # 前臂每节向前挪；0.5 / 1.1 约 24° 前倾
 ARM_JITTER = 0.08
-PALM_WIDTH = 3.2
-PALM_DEPTH = 2.4
-PALM_HEIGHT = 1.2
-# 指：x 偏移（相对臂中线）、三节的高度。中间两根最长，外侧两根略短。
-FINGER_X = (-1.28, -0.43, 0.43, 1.28)
-FINGER_LENGTHS = ((1.0, 0.8, 0.6), (1.1, 0.9, 0.7), (1.1, 0.9, 0.7), (1.0, 0.8, 0.6))
-FINGER_WIDTHS = (0.75, 0.65, 0.5)
-FINGER_OUTWARD = 0.18  # 每向下一节，外侧指向外偏多少，手指扇形散开
-FINGER_FORWARD = 0.35  # 每向下一节向前（+z）弯多少，让爪尖弯向前
+SHOULDER_SPIKE_LEAN = 0.5  # 肩刺每升一级向外挪多少，约 29°
+SHOULDER_SPIKE_BASES = ((-1.2, -0.6, 3), (-0.5, 0.5, 3), (0.2, -0.5, 2), (0.9, 0.4, 3), (1.6, -0.2, 2))
+SIDE_SPIKE_BANDS = (0, 2, 4, 7, 9)
+FLESH_LENGTHS = (2.5, 6.5, 3.5, 7.5, 3.0, 5.0, 2.8)
+FLESH_LONG_FROM = 6.0
+CURTAIN_Z_START = -1.5
+CURTAIN_Z_PITCH = 0.5
+PALM_WIDTH = 4.2
+PALM_DEPTH = 2.6
+PALM_HEIGHT = 1.0
+FINGER_X = (-1.5, -0.5, 0.5, 1.5)
+FINGER_SEGMENT_SHARE = (0.5, 0.3, 0.2)  # 三节占指长的比例；第三节末再接一个钩尖
+FINGER_WIDTHS = (0.84, 0.76, 0.58)
+FINGER_OUTWARD = 0.2  # 外侧指每节向外散开多少
+FINGER_FORWARD = 0.45  # 每节向前（+z）弯多少
+HOOK_HEIGHT = 0.55
+HOOK_WIDTH = 0.35
+HOOK_INWARD = 0.15  # 钩尖向手心（指自己的内侧）收
+SEAM_HEIGHT = 0.18  # 指节间的暗缝
 
 
 def _arm(side: str, sign: float, rng: random.Random) -> list[dict]:
     cx = sign * ARM_CENTER_X
-    cz = ARM_CENTER_Z
     cubes = []
 
-    def box(name, x, y, z, material):
-        """x、y、z 是 (起, 止)；x 以臂中线为原点、朝外为正，自动按 sign 镜像。"""
+    def box(name, x, y, z, material, dz=0.0):
+        """x 以臂中线为原点、朝外为正，自动按 sign 镜像；z 相对 ARM_CENTER_Z + dz。"""
         xa, xb = sorted((cx + sign * x[0], cx + sign * x[1]))
-        return _cube(f"arm_{side}_{name}", (xa, y[0], cz + z[0]), (xb, y[1], cz + z[1]), material)
+        return _cube(f"arm_{side}_{name}", (xa, y[0], ARM_CENTER_Z + dz + z[0]), (xb, y[1], ARM_CENTER_Z + dz + z[1]), material)
 
+    def z_offset(k: int) -> float:
+        if k <= ELBOW_BAND:
+            return UPPER_Z_STEP * k
+        return UPPER_Z_STEP * ELBOW_BAND + FOREARM_Z_STEP * (k - ELBOW_BAND)
+
+    inner_face = 0.0
     for k in range(ARM_BAND_COUNT):
-        half_w = (ARM_BAND_WIDTH_TOP - ARM_BAND_WIDTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
-        half_d = (ARM_BAND_DEPTH_TOP - ARM_BAND_DEPTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
+        dz = z_offset(k)
+        half_w = (ARM_WIDTH_TOP - ARM_WIDTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
+        half_d = (ARM_DEPTH_TOP - ARM_DEPTH_SHRINK * k) / 2 + rng.uniform(-ARM_JITTER, ARM_JITTER)
+        if k == ELBOW_BAND:
+            half_w += ELBOW_BULGE / 2
+            half_d += ELBOW_BULGE / 2
+        if k == 0:
+            inner_face = half_w
         top = ARM_TOP_Y - k * ARM_BAND_STEP
         bottom = top - ARM_BAND_HEIGHT
-        cubes.append(box(f"band_{k}", (-half_w, half_w), (bottom, top), (-half_d, half_d), "rust_dark" if k % 2 == 0 else "rust_light"))
-        # 前甲片：压在前面（+z），比环窄，略凸出；下沿一道锈褐边。
-        front_half_w = half_w - 0.45
-        cubes.append(box(f"plate_{k}", (-front_half_w, front_half_w), (bottom + 0.25, top - 0.1), (half_d - 0.05, half_d + 0.3), "rust_light" if k % 2 == 0 else "rust_dark"))
-        cubes.append(box(f"plate_rim_{k}", (-front_half_w - 0.08, front_half_w + 0.08), (bottom + 0.05, bottom + 0.4), (half_d + 0.05, half_d + 0.4), "rust_spot"))
-        # 一团不规则锈斑：两块高度不同的薄块。
+        even = k % 2 == 0
+        cubes.append(box(f"band_{k}", (-half_w, half_w), (bottom, top), (-half_d, half_d), "rust_dark" if even else "rust_light", dz))
+
+        # 前甲：上下错开的两片瓦，下沿锈褐边 + 两颗锯齿。
+        front_w = half_w - 0.4
+        for name, x, plate_bottom, plate_top, z_add, material in (
+            ("plate_a", (-front_w, 0.1 + 0.03 * k), bottom + 0.15, top - 0.15, 0.0, "rust_light" if even else "rust_dark"),
+            ("plate_b", (-0.1 - 0.03 * k, front_w), bottom + 0.05, top - 0.35, 0.03, "rust_dark" if even else "rust_light"),
+        ):
+            cubes.append(box(f"{name}_{k}", x, (plate_bottom, plate_top), (half_d - 0.05 + z_add, half_d + 0.3 + z_add), material, dz))
+            cubes.append(box(f"{name}_rim_{k}", (x[0] - 0.06, x[1] + 0.06), (plate_bottom - 0.05, plate_bottom + 0.32), (half_d + 0.05 + z_add, half_d + 0.42 + z_add), "rust_spot", dz))
+            for tooth in range(2):
+                tx = x[0] + 0.05 + tooth * (x[1] - x[0]) / 2 + rng.uniform(0.0, max(0.0, (x[1] - x[0]) / 2 - 0.7))  # 两颗齿分占左右半边
+                cubes.append(
+                    box(
+                        f"{name}_tooth_{k}_{tooth}",
+                        (tx, tx + rng.uniform(0.4, 0.6)),
+                        (plate_bottom - 0.4 - 0.03 * tooth, plate_bottom + 0.1 - 0.03 * tooth),
+                        (half_d + 0.1 + z_add, half_d + 0.34 + z_add),
+                        "rust_light" if material == "rust_dark" else "rust_dark",
+                        dz,
+                    )
+                )
+        # 大锈斑：两块高度不同的薄块。
         for blot in range(2):
-            bx = rng.uniform(-front_half_w + 0.1, front_half_w - 0.8)
-            by = rng.uniform(bottom + 0.55, top - 0.7)
-            cubes.append(box(f"blot_{k}_{blot}", (bx, bx + rng.uniform(0.5, 0.9)), (by, by + rng.uniform(0.3, 0.5)), (half_d + 0.25 + 0.03 * blot, half_d + 0.4 + 0.03 * blot), "rust_spot"))
-        # 外侧每隔一节挑出一根短骨刺。
-        if k % 2 == 0 and k < 7:
-            spike_y = top - 0.9
-            cubes.append(box(f"side_spike_{k}", (half_w - 0.1, half_w + 0.8 - 0.1 * k / 2), (spike_y, spike_y + 0.5), (-0.25, 0.25), "bone"))
+            bx = rng.uniform(-front_w + 0.1, front_w - 0.9)
+            by = rng.uniform(bottom + 0.6, top - 0.8)
+            cubes.append(box(f"blot_{k}_{blot}", (bx, bx + rng.uniform(0.5, 0.9)), (by, by + rng.uniform(0.3, 0.5)), (half_d + 0.28 + 0.03 * blot, half_d + 0.38 + 0.03 * blot), "rust_spot", dz))
+        # 外翻甲角：外侧挑出的一片甲，比环略窄。
+        cubes.append(box(f"flare_{k}", (half_w - 0.1, half_w + 0.5), (bottom + 0.25, top - 0.05 - 0.04 * k), (-half_d + 0.4, half_d - 0.4), "rust_light" if even else "rust_dark", dz))
 
-    # 肩顶骨刺簇：5 根长短不一，中间一根最高；穿出 04 的甲片。
-    shoulder_half_w = ARM_BAND_WIDTH_TOP / 2
-    for index, (x, z, height) in enumerate([(-0.9, -0.5, 1.8), (0.0, 0.2, 2.8), (0.9, -0.4, 2.0), (-0.3, -1.0, 1.5), (0.5, 0.8, 1.7)]):
-        cubes.append(box(f"shoulder_spike_{index}", (x - 0.3, x + 0.3), (ARM_TOP_Y, ARM_TOP_Y + height), (z - 0.3, z + 0.3), "bone" if index % 2 == 0 else "bone_shadow"))
+        # 外侧大骨刺：先水平挑出、尖端再上翘，侧视能看出是刺。
+        if k in SIDE_SPIKE_BANDS:
+            cubes.append(box(f"side_spike_{k}", (half_w + 0.4, half_w + 1.7), (top - 1.0, top - 0.3), (-0.35, 0.35), "bone", dz))
+            cubes.append(box(f"side_spike_tip_{k}", (half_w + 1.6, half_w + 2.4), (top - 0.75, top + 0.15), (-0.25, 0.25), "bone_shadow", dz))
+        if k == ELBOW_BAND:
+            # 肘刺：向后（-z）挑出，是侧视「>」形的尖。
+            cubes.append(box("elbow_spike", (-0.5, 0.5), (top - 1.2, top - 0.3), (-half_d - 1.8, -half_d + 0.2), "bone", dz))
+            cubes.append(box("elbow_spike_tip", (-0.35, 0.35), (top - 0.95, top + 0.05), (-half_d - 2.7, -half_d - 1.7), "bone_shadow", dz))
 
-    # 内侧垂下的暗红肉丝（朝身体中线一侧，x 为负）。
-    for index, (z, length, width) in enumerate([(-1.0, 3.5, 0.5), (-0.3, 5.5, 0.45), (0.4, 4.0, 0.5), (1.0, 6.5, 0.4), (1.5, 2.6, 0.55)]):
-        x_edge = -shoulder_half_w + 0.3 - 0.04 * index
-        cubes.append(box(f"flesh_{index}", (x_edge - width, x_edge), (ARM_TOP_Y - 0.4 - 0.05 * index - length, ARM_TOP_Y - 0.4 - 0.05 * index), (z - width / 2 + 0.03 * index, z + width / 2 + 0.03 * index), "flesh_red" if index % 2 == 0 else "flesh_dark"))
+    # 肩顶斜刺：一级一级向外挪，约 29° 外斜。
+    for index, (x, z, steps) in enumerate(SHOULDER_SPIKE_BASES):
+        y = ARM_TOP_Y - 0.03 * index  # 底面错开，避免相邻刺共面
+        for step in range(steps):
+            width = (0.75, 0.6, 0.45)[step]
+            height = 0.9 + 0.1 * index
+            x_center = x + SHOULDER_SPIKE_LEAN * step
+            cubes.append(box(f"shoulder_spike_{index}_{step}", (x_center - width / 2, x_center + width / 2), (y, y + height), (z - width / 2, z + width / 2), "bone" if (index + step) % 2 == 0 else "bone_shadow"))
+            y += height - 0.05
 
-    # 骨掌：压在最后一节腕环之下，带暗红肉衬。
+    # 肩内侧肉帘：一根肉梁挂 7 条长短不一的肉丝；长条下端收成细丝，丝尾挂肉球（同 03）。
+    curtain_top = ARM_TOP_Y - 0.7
+    cubes.append(box("curtain_beam", (-inner_face - 0.7, -inner_face + 0.2), (ARM_TOP_Y - 0.75, ARM_TOP_Y - 0.1), (-1.7, 1.7), "flesh_dark"))
+    for index, length in enumerate(FLESH_LENGTHS):
+        width = 0.4 + 0.02 * (index % 4)
+        x_hi = -inner_face - 0.05 - 0.06 * (index % 3)
+        z_lo = CURTAIN_Z_START + CURTAIN_Z_PITCH * index
+        material = "flesh_red" if index % 2 == 0 else "flesh_dark"
+        other = "flesh_dark" if material == "flesh_red" else "flesh_red"
+        if length < FLESH_LONG_FROM:
+            cubes.append(box(f"curtain_{index}", (x_hi - width, x_hi), (curtain_top - length, curtain_top), (z_lo, z_lo + width), material))
+            continue
+        body_bottom = curtain_top - length * 0.75
+        thread = 0.26
+        inset = (width - thread) / 2
+        cubes.append(box(f"curtain_{index}", (x_hi - width, x_hi), (body_bottom, curtain_top), (z_lo, z_lo + width), material))
+        cubes.append(box(f"curtain_thread_{index}", (x_hi - width + inset, x_hi - inset), (curtain_top - length, body_bottom + 0.1), (z_lo + inset, z_lo + inset + thread), other))
+        cubes.append(box(f"curtain_drip_{index}", (x_hi - width / 2 - 0.35, x_hi - width / 2 + 0.35), (curtain_top - length - 0.7, curtain_top - length + 0.2), (z_lo + width / 2 - 0.35, z_lo + width / 2 + 0.35), "flesh_red"))
+
+    # 宽骨掌：比腕宽，暗缝一条横在掌心前缘。
+    last_dz = z_offset(ARM_BAND_COUNT - 1)
     wrist_bottom = ARM_TOP_Y - (ARM_BAND_COUNT - 1) * ARM_BAND_STEP - ARM_BAND_HEIGHT
+    palm_dz = last_dz + FOREARM_Z_STEP
     palm_top = wrist_bottom + 0.35
     palm_bottom = palm_top - PALM_HEIGHT
-    cubes.append(box("palm", (-PALM_WIDTH / 2, PALM_WIDTH / 2), (palm_bottom, palm_top), (-PALM_DEPTH / 2, PALM_DEPTH / 2), "bone_shadow"))
-    cubes.append(box("palm_flesh", (-0.9, 0.9), (palm_bottom + 0.2, palm_top - 0.2), (PALM_DEPTH / 2 - 0.1, PALM_DEPTH / 2 + 0.15), "flesh_dark"))
+    cubes.append(box("palm", (-PALM_WIDTH / 2, PALM_WIDTH / 2), (palm_bottom, palm_top), (-PALM_DEPTH / 2, PALM_DEPTH / 2), "bone", palm_dz))
+    cubes.append(box("palm_knuckles", (-PALM_WIDTH / 2 - 0.1, PALM_WIDTH / 2 + 0.1), (palm_bottom - 0.05, palm_bottom + 0.35), (PALM_DEPTH / 2 - 0.2, PALM_DEPTH / 2 + 0.25), "bone_shadow", palm_dz))
+    cubes.append(box("palm_flesh", (-0.9, 0.9), (palm_bottom + 0.3, palm_top - 0.1), (PALM_DEPTH / 2 - 0.1, PALM_DEPTH / 2 + 0.12), "flesh_dark", palm_dz))
 
-    # 四根三节长弯指：逐节变细、向外散开、向前弯；末节落在 y=0（爪贴地）。
-    total_drop = [sum(lengths) for lengths in FINGER_LENGTHS]
-    for finger, (fx, lengths) in enumerate(zip(FINGER_X, FINGER_LENGTHS)):
-        y = palm_bottom + 0.3
+    # 四根粗长三节爪：逐节变细、外侧指向外散开、每节向前弯，第三节末再接钩尖落到 y=0。
+    finger_top = palm_bottom + 0.2
+    finger_length = finger_top - HOOK_HEIGHT * 0.5  # 第三节底停在钩尖中部，钩尖再向下接地
+    for finger, fx in enumerate(FINGER_X):
         outward = 1.0 if fx > 0 else -1.0
-        scale = (palm_bottom + 0.3) / total_drop[finger]  # 把三节拉伸到刚好落地
+        y = finger_top
         x_shift = 0.0
-        z_shift = 0.0
-        for segment, (length, width) in enumerate(zip(lengths, FINGER_WIDTHS)):
-            seg_height = length * scale
-            y_top = y
-            y_bottom = 0.0 if segment == 2 else y - seg_height
+        z_shift = 0.2
+        for segment, (share, width) in enumerate(zip(FINGER_SEGMENT_SHARE, FINGER_WIDTHS)):
+            y_bottom = y - finger_length * share
             half = width / 2
             x_mid = fx + outward * x_shift
-            cubes.append(
-                box(
-                    f"finger_{finger}_{segment}",
-                    (x_mid - half, x_mid + half),
-                    (y_bottom, y_top + (0.0 if segment == 0 else 0.1)),
-                    (z_shift - half, z_shift + half),
-                    "bone_shadow" if segment == 0 else "bone",
-                )
-            )
+            cubes.append(box(f"finger_{finger}_{segment}", (x_mid - half, x_mid + half), (y_bottom, y + (0.0 if segment == 0 else 0.1)), (z_shift - half, z_shift + half), "bone", palm_dz))
+            if segment < 2:
+                seam = half + 0.05
+                cubes.append(box(f"finger_seam_{finger}_{segment}", (x_mid - seam, x_mid + seam), (y_bottom - 0.02, y_bottom - 0.02 + SEAM_HEIGHT), (z_shift - seam, z_shift + seam), "bone_shadow", palm_dz))
             y = y_bottom
-            x_shift += FINGER_OUTWARD * (1.0 if abs(fx) > 1 else 0.5)
+            x_shift += FINGER_OUTWARD * (1.0 if abs(fx) > 1 else 0.4)
             z_shift += FINGER_FORWARD
+        hook_x = fx + outward * (x_shift - HOOK_INWARD)
+        cubes.append(box(f"finger_hook_{finger}", (hook_x - HOOK_WIDTH / 2, hook_x + HOOK_WIDTH / 2), (0.0, HOOK_HEIGHT), (z_shift - HOOK_WIDTH / 2 + 0.1, z_shift + HOOK_WIDTH / 2 + 0.1), "bone_shadow", palm_dz))
     return cubes
 
 
 def part_front_arms_claws() -> list[dict]:
-    """05 部件：左右两条粗长前臂（9 节甲环 + 前甲片 + 锈边锈斑），肩顶骨刺，内侧肉丝，末端骨爪贴地。
+    """05 部件：左右两条肩宽腕窄、肘部弯折前倾的前臂，瓦状叠甲，肩顶斜刺，肩内侧肉帘，宽掌 + 粗长内勾骨爪贴地。
 
     对照 parts_ref/05_front_arms_claws.png。臂从 04 的外侧甲片下伸出，
     左右各用独立随机序列，形状略有差异。
     """
     rng_left = random.Random(5)
-    rng_right = random.Random(7)
+    rng_right = random.Random(17)
     cubes = _arm("l", -1.0, rng_left) + _arm("r", 1.0, rng_right)
     return _tag(cubes, "front_arms_claws")
 
