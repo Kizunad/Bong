@@ -66,6 +66,7 @@ def main() -> int:
         draw.text((w + GAP + 8, 6), args.titles[1], fill=TEXT, font=TITLE_FONT)
         out_frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
 
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     out_frames[0].save(
         args.out,
         save_all=True,

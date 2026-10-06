@@ -33,7 +33,7 @@ class ComposeSideBySideDurationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             left = Path(tmp) / "left.gif"
             right = Path(tmp) / "right.gif"
-            out = Path(tmp) / "out.gif"
+            out = Path(tmp) / "review" / "bone_sword" / "vs_ref.gif"  # 目录尚不存在，工具负责创建
             _write_gif(left, DURATIONS)
             _write_gif(right, DURATIONS)
             argv = [
