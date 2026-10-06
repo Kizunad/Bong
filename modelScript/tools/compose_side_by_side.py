@@ -2,7 +2,7 @@
 """把两段预览 GIF 逐帧左右并排，标题用 CJK 字体，输出一段新 GIF（vs_ref 用）。
 
 两段 GIF 的帧数要一致（同一时间表：同样的 tick 与 gif_timing 产出的 duration）。
-帧时间取左边那段的 duration。
+帧时间逐帧取左边那段的 duration（含 --end-hold-ms 的收势停留帧）。
 
     python3 modelScript/tools/compose_side_by_side.py \\
         bone_sword_slash/use.gif iron_sword_v2_use/use.gif \\
@@ -28,10 +28,15 @@ BG = (20, 22, 26)
 TEXT = (230, 230, 230)
 
 
-def _frames(path: Path) -> tuple[list[Image.Image], int]:
+def _frames(path: Path) -> tuple[list[Image.Image], list[int]]:
+    """逐帧读出图像与各自的显示时长（毫秒）。预览工具的停留帧时长与其余帧不同，不能只取首帧。"""
     im = Image.open(path)
-    duration = int(im.info.get("duration", 48))
-    return [f.convert("RGB").copy() for f in ImageSequence.Iterator(im)], duration
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    for frame in ImageSequence.Iterator(im):
+        frames.append(frame.convert("RGB").copy())
+        durations.append(int(frame.info.get("duration", 48)))
+    return frames, durations
 
 
 def main() -> int:
@@ -42,7 +47,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
-    left, duration = _frames(args.left)
+    left, durations = _frames(args.left)
     right, _ = _frames(args.right)
     if len(left) != len(right):
         raise SystemExit(f"帧数不一致：{args.left} {len(left)} 帧，{args.right} {len(right)} 帧")
@@ -64,7 +69,7 @@ def main() -> int:
         args.out,
         save_all=True,
         append_images=out_frames[1:],
-        duration=duration,
+        duration=durations,
         loop=0,
         disposal=2,
     )
