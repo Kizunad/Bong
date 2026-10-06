@@ -362,14 +362,15 @@ pub(crate) enum HeldAttackAnim {
 
 /// template_id → 攻击动画。没有列出的手持物返回 None，走原来的伤口类型分支。
 ///
-/// 骨镐 `pickaxe_bone_use` 与骨剑 `bone_sword`（骨剑暂按默认动画，见接线说明）不在表内：
-/// 骨镐的动画是循环（isLoop），攻击不会发 StopAnim，会一直循环卡住手臂。
+/// 骨镐 `pickaxe_bone_use` 不在表内：它的动画是循环（isLoop），攻击不会发 StopAnim，
+/// 会一直循环卡住手臂。
 pub(crate) fn held_attack_anim(template_id: &str) -> Option<HeldAttackAnim> {
     use HeldAttackAnim::{Alternating, Single};
     Some(match template_id {
         "iron_sword" => Single("bong:iron_sword_v2_use"),
         "bronze_saber" => Single("bong:bronze_saber_v2_use"),
         "bone_dagger" => Single("bong:bone_dagger_v2_use"),
+        "bone_sword" => Single("bong:bone_sword_slash"),
         "wooden_staff" => Single("bong:wooden_staff_atk"),
         "pickaxe_iron" => Single("bong:pickaxe_iron_v2_use"),
         "axe_bone" => Single("bong:axe_bone_v2_use"),

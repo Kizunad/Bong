@@ -153,7 +153,7 @@ public final class BongAnimations {
     public static final Identifier BING_JIA_HEAVY_LEFT = new Identifier(MOD_ID, "bing_jia_heavy_left");
     public static final Identifier BING_JIA_HEAVY_RIGHT = new Identifier(MOD_ID, "bing_jia_heavy_right");
 
-    /** 第 1 批手持物动画全集（含未接线的骨剑、骨镐循环），供资产清单测试逐个校验。 */
+    /** 第 1 批手持物动画全集（含骨镐循环动画，它不进服务端攻击表），供资产清单测试逐个校验。 */
     public static final List<Identifier> ITEM_USE_ANIMATIONS = List.of(
         IRON_SWORD_V2_USE,
         BRONZE_SABER_V2_USE,

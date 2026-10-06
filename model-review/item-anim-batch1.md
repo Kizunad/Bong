@@ -1,14 +1,22 @@
 # item-use-anim 第 1 批 Round 1 接触表（修订版，2026-10-04）
 
-状态：gate-waiting（Round 2 人工闸门，等调度转用户；本轮未接线、未开 PR）
+状态：7 件均已过 Round 2 人工闸门。骨剑 `bone_sword_slash@UANIM4` 于 2026-10-06 用户通过，进入 Round 3 收尾；其余 6 件于 2026-10-05 收尾。
 执行：claude-anim（Sonnet 5）
 
 ---
 
+## Round 3 收尾（2026-10-06，骨剑 bone_sword_slash@UANIM4）
+
+- 用户 2026-10-06 审阅：「骨剑通过了」。通过版本即第 4 版（删除全部 rightItem、剑按 display 自然握持、右上到左下斜劈）。
+- 本轮不改动作：生成器 `client/tools/gen_bone_sword_slash.py` 重跑，产出的 `bone_sword_slash.json` 与已提交版本字节级一致；JSON 里 `rightItem` 关键帧数为 0（`rightItem` 字样只出现在 description 说明里）。
+- 检查（`check_blade_edge.py`，`--strike 5-6.5` 即本文档「设计与复核」第 7 条口径）：刃线 |cos| 最小 0.941（≥0.9），刀面 |cos| 最大 0.072（≤0.5），通过。
+- 已知局限（检查脚本口径，不是动作问题）：不带 `--strike` 时默认评全部有手速的帧，会把 tick 0.5–3 的起手上举计入「挥击段」；那段手在上举，刃线不对准挥击方向，判据报「不通过」。斩击本身在 3–6 tick，判据只在 5–6.5 tick 窗口内有意义。画面由用户按预览通过。
+- 接线：`bone_sword` 已接入服务端 `held_attack_anim` 表（`bong:bone_sword_slash`），不再走伤口类型默认动画。
+
 ## Round 3 收尾（2026-10-05，6 件通过）
 
 - 缠手左右、兵甲左右、骨镐、木杖：用户审阅无附加意见，状态改为 Round 3 收尾。动作不再改动。
-- 接线（同一 PR）：服务端 `held_attack_anim` 按手持物选普通近战动画（有 `Weapon` 取其 template_id，无则取主手持有物）；拳套左右交替；骨镐（循环）与骨剑（阻塞于模型来源问题）不进攻击表。
+- 接线（同一 PR）：服务端 `held_attack_anim` 按手持物选普通近战动画（有 `Weapon` 取其 template_id，无则取主手持有物）；拳套左右交替；骨镐（循环）不进攻击表；骨剑当时因模型来源问题未接线，该问题已撤回，2026-10-06 补接（见顶部）。
 - 采集（按手持工具选循环动画）：未接线。采集进度帧每 10 tick 发一次，每次重放 tick 动画，骨镐循环 8 tick，节拍对不上，按卡内规定停下报调度。
 
 ## 2026-10-05 10:2x 用户审阅结论与骨剑第 3 版
@@ -101,7 +109,7 @@ PlayerAnimator 的 `rightItem` 插在 display 之后、手持偏移之前（与 
 | 4 | `bing_jia_heavy_right` | 0,2,6,9,10,11,13 | 13 | 否 | 双手兵甲 `bing_jia_shou_tao_v2` | `fist_punch_right` |
 | 5 | `pickaxe_bone_use` | 0,3,5,6,8 | 8 | **是** | 右手 `pickaxe_bone_v2` | `pickaxe_iron_v2_use`（右手铁镐 v2） |
 | 6 | `wooden_staff_atk` | 0,2,5,8,9,11 | 11 | 否 | 右手 `wooden_staff_v2`（横持，右手握下段）；左手握中上段 | `sword_swing_horiz`（空手） |
-| 7 | `bone_sword_slash` | 0,2,5,7,8,9 | 9 | 否 | 右手 `bone_sword_v2`（含 rightItem 关键帧） | `iron_sword_v2_use`（右手铁剑 v2） |
+| 7 | `bone_sword_slash` | 0,3,5,6,7,10 | 10 | 否 | 右手 `bone_sword_v2`（无 rightItem 关键帧，按 display 握持） | `iron_sword_v2_use`（右手铁剑 v2） |
 
 ## 设计与复核（逐件）
 
@@ -152,11 +160,12 @@ PlayerAnimator 的 `rightItem` 插在 display 之后、手持偏移之前（与 
 - 攻击性质：guard → windup → apex 的杖尖从左向后、再向前左横扫，impact 杖尖指向身前做点戳，保留「横扫 + 点戳」。
 - 需要调度确认：原版只有右手能挂物品，左手在游戏里只是姿态；这里的贴合在审图里成立，接线时仍只挂右手。
 
-### 7. bone_sword_slash（骨剑单手竖劈，第三次返工：UANIM3）
-- 设计：9 tick，非循环；右手单持，左手自然放松。手臂 windup 举过头顶（pitch -150）→ impact 水平前伸（pitch -90，手速垂直向下）→ overshoot 下压到 -80 → 回守势。`rightItem` 整段固定 `(50, -60, -80)`：剑沿手臂朝前伸出，挥击瞬间刃口朝下、刀面不朝运动方向。
-- 为什么换竖劈：上一版横扫的刃线数值通过、画面不对。竖劈下刃口朝下、朝运动方向切入，和 `iron_sword_v2_use` 的过顶直劈（铁剑）形状接近，区分靠刃朝向与手臂轨迹（横伸→下压）；**这一点要看画面确认**，见下方「待审」。
-- 求解：`rightItem` 由 scratch 网格搜索得到（判据：挥击瞬间刃线与手速 |cos| ≥ 0.99，刀面 |cos| ≤ 0.05，刃长沿手臂）；检查脚本复核：挥击段（5.5–7 tick）刃线 |cos| 最小 0.940、刀面 |cos| 最大 0.303，通过。
-- 待审：预览里 t6 剑水平前伸，侧面俯视 t6–t7 剑斜向下，和检查数值读出的「水平」略有出入——预览与检查脚本的手持链路是否完全一致，调度需要确认。
+### 7. bone_sword_slash（骨剑单手斜劈，第四次返工：UANIM4，最后一次）
+- 根因（调度核实）：`bone_sword_v2` 与 `iron_sword_v2` 的手持 display 完全相同；通过的铁剑、青铜刀动画都没有 `rightItem` 关键帧，前三版骨剑的 15 处 `rightItem` 覆盖把剑在手里转歪了。本版**删掉全部 `rightItem`**，剑按 display 自然握持。
+- 设计：10 tick，非循环；右手单持，左手自然放松。windup 右臂过头向右外侧举起（pitch -172°、roll +74°）→ strike 斜劈起势（pitch -95°、roll +82°）→ impact 剑平伸向左（pitch -40°、roll +66°），身体前压左转 → overshoot 再下压 → 回守势。挥砍只靠右臂 + 躯干。
+- 和铁剑区分：铁剑是矢状面内的 pitch 挥动（过顶直劈，roll 约 +6°，刃线竖直）；骨剑向外侧倾斜的弧劈，impact 时剑平伸。
+- 检查：挥击段（5–6.5 tick）刃线 |cos| 最小 0.941、刀面 |cos| 最大 0.072，通过。与铁剑同 display 的同帧并排见 `model-review/anim/bone_sword_slash/vs_ref.gif`，静止帧握持一致。
+- 用户 2026-10-06 通过（见顶部 Round 3 收尾）。
 
 ---
 
