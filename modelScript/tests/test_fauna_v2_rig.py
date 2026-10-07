@@ -99,6 +99,23 @@ class TsySentinelRigTest(unittest.TestCase):
         self.assertLess(brow_after["to"][2], 0, "期望：转向后眉梁在 -Z 侧（脸朝游戏里的 -Z）；实际没转过去")
 
 
+class VoidDistortedRigTest(unittest.TestCase):
+    def test_every_cube_gets_a_bone(self) -> None:
+        """骨表必须认领全部 cube（1456 块），漏认领会让导出直接报错。"""
+        _, rig, bones = gen_rig.load_species("void_distorted_v2")
+        claimed = {uuid for group in _walk(rig["outliner"]) for uuid in group.get("children", []) if isinstance(uuid, str)}
+        self.assertEqual(len(rig["elements"]), len(claimed), "期望：每个 cube 挂在恰好一根骨下")
+        self.assertEqual(len(bones), len({bone.name for bone in bones}), "骨名必须唯一")
+
+    def test_maw_ends_up_on_minus_z(self) -> None:
+        """建模源面朝 +Z（虚空口在身体前端 +Z 侧），绑定稿转向后必须朝游戏里的 -Z。"""
+        source, rig, _ = gen_rig.load_species("void_distorted_v2")
+        before = next(e for e in source["elements"] if e["name"] == "maw_void")
+        after = next(e for e in rig["elements"] if e["name"] == "maw_void")
+        self.assertGreater(before["from"][2], 0, "期望：终审稿虚空口在 +Z 侧（面朝 +Z）")
+        self.assertLess(after["to"][2], 0, "期望：转向后虚空口在 -Z 侧（面朝游戏里的 -Z）；实际没转过去")
+
+
 def _walk(nodes: list) -> list[dict]:
     out = []
     for node in nodes:
