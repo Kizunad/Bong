@@ -383,7 +383,8 @@ pub(crate) fn held_attack_anim(template_id: &str) -> Option<HeldAttackAnim> {
             left: "bong:bing_jia_heavy_left",
             right: "bong:bing_jia_heavy_right",
         },
-        "qing_feng_sword" => Single("bong:qing_feng_sword_use"),
+        // 残次版与正品同一把剑，共用横扫；手持模型是原版石剑，刃口方向与铁剑一致。
+        "qing_feng_sword" | "qing_feng_sword_flawed" => Single("bong:qing_feng_sword_use"),
         "spirit_sword" => Single("bong:spirit_sword_use"),
         "flying_sword_feixuan" => Single("bong:flying_sword_feixuan_use"),
         _ => return None,
