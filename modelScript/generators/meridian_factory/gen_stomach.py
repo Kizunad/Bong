@@ -6,29 +6,36 @@
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-结构与规范落实：
-1. 外包围与尺寸：3 宽 × 3 高 × 2 深方块 (严格落在 48×48×32 px 空间内：x in [-24..24], y in [0..48], z in [-16..16])，
-   原点位于底面中心 (0.0, 0.0, 0.0)。
-2. 弯曲的肌肉囊（逐行坐标与宽度表，共 14 行，每行 2px 高，y in [10..38]）：
-   - 展现解剖学典型的 J 形弯曲囊腔：
-     - 顶部与贲门（y: 36..38）平滑承接顶部入口管；
-     - 胃底向左上方拱起（y: 32..38, x 展开至 -17.5px）；
-     - 胃体沿左侧大弯大幅外凸膨出（y: 20..30, x 展开至 -22.5px，宽度达 31.0px）；
-     - 下腹胃窦与幽门向右下方平滑弯曲回转收敛（y: 10..18, x 转向 +4..+14）。
-   - 前后厚度随高度自然阶梯收缩（下半部厚 26~28px，上半部厚 22~24px，顶行 15~19px）。
-3. 顶部入口管（食道/贲门入口）：
-   - 位于顶部偏右侧 (y: 38.0..48.0, x: 0.5..6.5, z: -3.0..3.0)；
-   - 包含 3 节分节软骨环（环骨色 #d8ccb0、环间凹缝 #6a5a48）与顶端骨口套圈、深色内腔。
-4. 正面开口露出琥珀色消化腔（胃液琥珀 #c88a30）：
-   - 正面 (+Z) 中段 (y: 20.0..30.0, x: -12.0..1.5) 开设有大型肌肉观视窗口；
-   - 内部深嵌充满波光与生机活性的琥珀色胃酸消化腔液 (#c88a30) 与高光酶核 (#e0a848)；
-   - 窗口外围环绕一圈有机起伏的亮肉粉黏膜外唇 (#b05050)。
-5. 侧下方输出端口（8×6 统一截面）：
-   - 严格遵循统一连接截面：内孔宽 8 px × 高 6 px、底边离地 2 px (x: 4.0..12.0, y: 2.0..8.0)；
-   - 外包 2px 厚肉质管套 (#8a2a2a，x: 2.0..14.0, y: 0.0..10.0, z: 8.0..16.0，底边贴地 y=0.0)；
-   - 朝向 +Z 延伸至 z = 16.0；
-   - 8×6 方口内壁衬有亮肉内壁衬层 (#b05050) 与琥珀流光内芯。
-6. 门禁要求：通过 _assert_no_coplanar_faces 自检，带 --self-test 差分缺陷拦截验证。
+调度审第 1 次修改落实：
+1. 顶部入口管（肉质食管）：
+   - 彻底移除骨环气管，改为 #8a2a2a 肉质圆管（6×6 截面，x in [6.0, 12.0], z in [-3.0, 3.0]）；
+   - 从胃囊右上方向上伸出约 8px 直达 y = 48.0；
+   - 顶端设有 2×2 空心开口与深色孔底；
+   - 配有一条从顶延伸而下的 #e8bca8 亮线内衬。
+2. 胃囊逐行轮廓（外包 48×48，每行 3px 高，从上往下严格按调度坐标建）：
+   - 行 0–3 (y: 36..48)：只有食管，x_disp 30–36 (x_ours: 6..12)；
+   - 行 4 (y: 33..36)：x_disp 18–40 (x_ours: -6..16)；
+   - 行 5 (y: 30..33)：x_disp 12–42 (x_ours: -12..18)；
+   - 行 6 (y: 27..30)：x_disp 8–44 (x_ours: -16..20)；
+   - 行 7 (y: 24..27)：x_disp 6–45 (x_ours: -18..21)；
+   - 行 8 (y: 21..24)：x_disp 4–45 (x_ours: -20..21)；
+   - 行 9 (y: 18..21)：x_disp 4–44 (x_ours: -20..20)；
+   - 行 10 (y: 15..18)：x_disp 4–43 (x_ours: -20..19)；
+   - 行 11 (y: 12..15)：x_disp 5–41 (x_ours: -19..17)；
+   - 行 12 (y: 9..12)：x_disp 7–38 (x_ours: -17..14)；
+   - 行 13 (y: 6..9)：x_disp 10–34 (x_ours: -14..10)；
+   - 前后厚度随高度变化：中间几行 28px (z in [-14, 14])，上下各收到 20~24px。
+3. 正面椭圆凹口露出琥珀色消化液：
+   - 位于行 6–11、x_disp 12–36 (x_ours: -12..12)，向内凹 3px；
+   - 凹底为充满活性的琥珀色胃酸消化液 #c88a30（带 #a86a20 斑驳）；
+   - 开口一圈配置 1px #e8bca8 亮线内衬。
+4. 沿外表弧线的完整 #e8bca8 亮衬线：
+   - 从食管右上方起步，沿胃大弯弧线一路向下弯转，直贯幽门出口。
+5. 幽门出口与 8×6 统一截面输出端口：
+   - 行 12–14 从 x_disp 30 向右伸到 x_disp 46 (x_ours: 6..22)，管径 6 (y: 2..8)；
+   - 末端在 x_ours: 14..22 配置 8×6 统一截面的输出端口，外包 2px 厚肉质管套 (#8a2a2a，x: 12..24, y: 0..10)；
+   - 端口向正面 +Z 延伸至 z = 16.0，方口内壁衬亮肉衬层 (#b05050) 与琥珀流光内芯；
+   - 彻底删除底部红色底板。
 """
 
 from __future__ import annotations
@@ -53,27 +60,23 @@ REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img
 
 # 调色板 (严格对齐 meridian_factory.md 色值表)
 PALETTE = {
-    "flesh_dark":    (90, 26, 26, 255),    # #5a1a1a 暗血肉 (裂隙、内腔、暗部基底)
-    "flesh_main":    (138, 42, 42, 255),   # #8a2a2a 血肉 (胃囊肌肉层主色、肉套外壁)
-    "flesh_lit":     (176, 80, 80, 255),   # #b05050 亮肉 / 黏膜粉 (窗口内唇、方口内壁)
-    "bone_main":     (216, 204, 176, 255), # #d8ccb0 骨 (入口骨环、加固骨肋)
-    "bone_dark":     (184, 168, 136, 255), # #b8a888 骨暗面
-    "bone_crevice":  (106, 90, 72, 255),   # #6a5a48 骨缝 / 环间凹槽
-    "amber_fluid":   (200, 138, 48, 255),  # #c88a30 胃液琥珀 (消化腔液)
-    "amber_glow":    (224, 168, 72, 255),  # 琥珀高光与酶核
-    "tendon_fascia": (217, 160, 140, 200), # #d9a08c 半透明肌腱束与韧带
+    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉
+    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉主色 (肉质食管、胃壁、肉套)
+    "flesh_lit":        (176, 80, 80, 255),   # #b05050 亮肉 / 黏膜粉 (方口内壁)
+    "tendon_highlight": (232, 188, 168, 255), # #e8bca8 亮线内衬 / 外表弧形亮线
+    "amber_fluid":      (200, 138, 48, 255),  # #c88a30 胃液琥珀 (消化腔液)
+    "amber_dark":       (168, 106, 32, 255),  # #a86a20 消化液深斑
+    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 端口光流
 }
 
 MAT_UV = {
-    "flesh_main":    [0, 0, 16, 16],
-    "flesh_lit":     [16, 0, 32, 16],
-    "flesh_dark":    [32, 0, 48, 16],
-    "bone_main":     [48, 0, 64, 16],
-    "bone_dark":     [0, 16, 16, 32],
-    "bone_crevice":  [16, 16, 32, 32],
-    "amber_fluid":   [32, 16, 48, 32],
-    "amber_glow":    [48, 16, 64, 32],
-    "tendon_fascia": [0, 32, 16, 48],
+    "flesh_main":       [0, 0, 16, 16],
+    "flesh_lit":        [16, 0, 32, 16],
+    "flesh_dark":       [32, 0, 48, 16],
+    "tendon_highlight": [48, 0, 64, 16],
+    "amber_fluid":      [0, 16, 16, 32],
+    "amber_dark":       [16, 16, 32, 32],
+    "qi_glow":          [32, 16, 48, 32],
 }
 
 RES = 64
@@ -83,264 +86,210 @@ RES = 64
 # 各部件几何定义 (part_* 拆分)
 # =============================================================================
 
-def part_01_entrance_tube() -> List[dict]:
-    """1. 顶部入口管（食道/贲门入口管）。
-
-    位于胃囊顶部偏右侧 (y: 38.0..48.0, x: 0.5..6.5, z: -3.0..3.0)。
-    顶端设有一圈空心骨口与内腔通道，中段包含 3 节分节软骨环与肌肉过渡喇叭口。
-    """
+def part_01_esophagus() -> List[dict]:
+    """1. 顶部入口管：肉质食管 (#8a2a2a, 圆管 6x6, 伸出约 8px, 顶端开口, #e8bca8 内衬亮线)。"""
     cubes = []
-    # ── 顶端空心骨口 (y: 46.8..48.0) ──
-    cubes.append({"name": "tube_rim_n", "from": [0.5, 46.8, -3.0], "to": [6.5, 48.0, -1.8], "group": "entrance_tube", "material": "bone_main"})
-    cubes.append({"name": "tube_rim_s", "from": [0.5, 46.8,  1.8], "to": [6.5, 48.0,  3.0], "group": "entrance_tube", "material": "bone_main"})
-    cubes.append({"name": "tube_rim_w", "from": [0.5, 46.8, -1.8], "to": [1.7, 48.0,  1.8], "group": "entrance_tube", "material": "bone_main"})
-    cubes.append({"name": "tube_rim_e", "from": [5.3, 46.8, -1.8], "to": [6.5, 48.0,  1.8], "group": "entrance_tube", "material": "bone_main"})
-    # 空心骨口内底
-    cubes.append({"name": "tube_stoma_floor", "from": [1.7, 45.6, -1.8], "to": [5.3, 46.6, 1.8], "group": "entrance_tube", "material": "flesh_dark"})
+    # 顶端空心开口外壁 (y: 46.8..48.0, x: 6.0..12.0, z: -3.0..3.0)
+    cubes.append({"name": "esophagus_rim_n", "from": [ 6.0, 46.8, -3.0], "to": [12.0, 48.0, -1.0], "group": "esophagus", "material": "flesh_main"})
+    cubes.append({"name": "esophagus_rim_s", "from": [ 6.0, 46.8,  1.0], "to": [12.0, 48.0,  3.0], "group": "esophagus", "material": "flesh_main"})
+    cubes.append({"name": "esophagus_rim_w", "from": [ 6.0, 46.8, -1.0], "to": [ 8.0, 48.0,  1.0], "group": "esophagus", "material": "flesh_main"})
+    cubes.append({"name": "esophagus_rim_e", "from": [10.0, 46.8, -1.0], "to": [12.0, 48.0,  1.0], "group": "esophagus", "material": "flesh_main"})
+    # 开口内腔深色孔底
+    cubes.append({"name": "esophagus_stoma_floor", "from": [8.0, 45.6, -1.0], "to": [10.0, 46.6, 1.0], "group": "esophagus", "material": "flesh_dark"})
 
-    # ── 分节软骨环与环间凹槽 (y: 40.6..46.8) ──
-    # Ring 3 (y: 45.4..46.7)
-    cubes.append({"name": "tube_ring_3", "from": [0.4, 45.4, -3.1], "to": [6.6, 46.7,  3.1], "group": "entrance_tube", "material": "bone_main"})
-    cubes.append({"name": "tube_joint_2", "from": [0.9, 44.4, -2.6], "to": [6.1, 45.4,  2.6], "group": "entrance_tube", "material": "bone_crevice"})
+    # 肉质食管主体 (y: 36.0..46.8, 6x6 截面)
+    cubes.append({"name": "esophagus_body_upper", "from": [6.0, 41.0, -3.0], "to": [12.0, 46.8, 3.0], "group": "esophagus", "material": "flesh_main"})
+    cubes.append({"name": "esophagus_body_lower", "from": [5.8, 36.0, -3.2], "to": [12.2, 41.0, 3.2], "group": "esophagus", "material": "flesh_main"})
 
-    # Ring 2 (y: 43.0..44.4)
-    cubes.append({"name": "tube_ring_2", "from": [0.4, 43.0, -3.1], "to": [6.6, 44.4,  3.1], "group": "entrance_tube", "material": "bone_main"})
-    cubes.append({"name": "tube_joint_1", "from": [0.9, 42.0, -2.6], "to": [6.1, 43.0,  2.6], "group": "entrance_tube", "material": "bone_crevice"})
-
-    # Ring 1 (y: 40.6..42.0)
-    cubes.append({"name": "tube_ring_1", "from": [0.3, 40.6, -3.2], "to": [6.7, 42.0,  3.2], "group": "entrance_tube", "material": "bone_main"})
-
-    # 肌肉过渡套筒 (y: 38.0..40.6, 外扩融入胃囊)
-    cubes.append({"name": "tube_muscle_flare", "from": [0.0, 38.0, -3.5], "to": [7.0, 40.6, 3.5], "group": "entrance_tube", "material": "flesh_main"})
+    # 食管内衬亮线 (#e8bca8, 沿食管正面直下, 宽 1px)
+    cubes.append({"name": "esophagus_lining_line", "from": [8.5, 36.5, 3.1], "to": [9.5, 47.5, 3.7], "group": "esophagus", "material": "tendon_highlight"})
 
     return cubes
 
 
 def part_02_stomach_sac() -> List[dict]:
-    """2. 弯曲的肌肉囊（stomach_sac）。
-
-    按 Y 轴分为 14 行，每行 2px 高（y in [10..38]）。
-    依逐行宽度与轮廓表建造，形成饱满有力的 J 形胃囊：
-    - 胃底在左上方拱起 (y: 32..38, x 达 -17.5)；
-    - 胃体在左侧大弯大幅外凸 (y: 20..30, x 达 -22.5，总宽 31.0px)；
-    - 胃窦与幽门向右下方回转延伸进入侧下方输出端口；
-    - 在中段 y: 20..30 正面预留大型矩形消化腔开口。
-    """
+    """2. 胃囊肌体：严格按调度审定逐行左右边界建 (行 4..13, 每行 3px 高)。"""
     cubes = []
-    # 逐行外廓表: (x_min, x_max, z_min, z_max)
-    rows = [
-        # Row 0: y in [10, 12] - 幽门管颈与输出端口过渡
-        (-2.0, 13.5, -9.0, 9.0),
-        # Row 1: y in [12, 14]
-        (-6.0, 13.0, -10.0, 10.0),
-        # Row 2: y in [14, 16]
-        (-10.0, 12.5, -11.0, 11.0),
-        # Row 3: y in [16, 18] - 下胃体弧形回扫
-        (-14.0, 11.5, -12.0, 12.0),
-        # Row 4: y in [18, 20]
-        (-17.5, 10.5, -13.0, 13.0),
-        # Row 5: y in [20, 22] - 最大腹径
-        (-20.5,  9.5, -13.5, 13.5),
-        # Row 6: y in [22, 24] - 胃大弯最大外凸点
-        (-22.5,  8.5, -14.0, 14.0),
-        # Row 7: y in [24, 26]
-        (-22.5,  8.0, -14.0, 14.0),
-        # Row 8: y in [26, 28] - 胃体中段琥珀窗口区
-        (-22.0,  7.5, -13.5, 13.5),
-        # Row 9: y in [28, 30]
-        (-21.0,  7.5, -13.0, 13.0),
-        # Row 10: y in [30, 32] - 上胃体收缩
-        (-19.5,  7.5, -12.0, 12.0),
-        # Row 11: y in [32, 34] - 胃底弧顶
-        (-17.5,  7.5, -11.0, 11.0),
-        # Row 12: y in [34, 36] - 胃底顶部收敛
-        (-15.0,  7.0, -9.5,  9.5),
-        # Row 13: y in [36, 38] - 贲门与胃底穹顶
-        (-11.5,  6.5, -7.5,  7.5),
+    # 逐行参数：(行号, y0, y1, x0_disp, x1_disp, depth)
+    rows_def = [
+        ( 4, 33.0, 36.0, 18, 40, 20.0),
+        ( 5, 30.0, 33.0, 12, 42, 22.0),
+        ( 6, 27.0, 30.0,  8, 44, 28.0),
+        ( 7, 24.0, 27.0,  6, 45, 28.0),
+        ( 8, 21.0, 24.0,  4, 45, 28.0),
+        ( 9, 18.0, 21.0,  4, 44, 28.0),
+        (10, 15.0, 18.0,  4, 43, 26.0),
+        (11, 12.0, 15.0,  5, 41, 24.0),
+        (12,  9.0, 12.0,  7, 38, 22.0),
+        (13,  6.0,  9.0, 10, 34, 20.0),
     ]
 
-    for i in range(14):
-        x0, x1, z0, z1 = rows[i]
-        y0 = 10.0 + i * 2.0
-        y1 = y0 + 2.0
+    # 视窗椭圆在各行 (行 6..11) 的 X 范围 (dispatcher 坐标 x: 12..36)
+    window_x_disp = {
+        6:  (18.0, 30.0),
+        7:  (15.0, 33.0),
+        8:  (12.0, 36.0),
+        9:  (12.0, 36.0),
+        10: (15.0, 33.0),
+        11: (18.0, 30.0),
+    }
 
-        # 行 5..9 (y: 20..30) 正面开口，为琥珀色消化腔预留窗口 (x in [-12.0, 1.5], z > 6.0)
-        if 5 <= i <= 9:
-            # 肌肉囊背侧与中腹实体
+    for r_idx, y0, y1, x0_d, x1_d, depth in rows_def:
+        x0 = float(x0_d - 24)
+        x1 = float(x1_d - 24)
+        hz = depth / 2.0
+        z0 = -hz
+        z1 = hz
+
+        if r_idx in window_x_disp:
+            wx0_d, wx1_d = window_x_disp[r_idx]
+            wx0 = float(wx0_d - 24)
+            wx1 = float(wx1_d - 24)
+
+            # 背侧主肌体 (从 z0 到凹槽前壁 z1 - 3.0)
             cubes.append({
-                "name": f"sac_row_{i}_back",
+                "name": f"sac_row_{r_idx}_back",
                 "from": [x0, y0, z0],
-                "to":   [x1, y1,  6.0],
+                "to":   [x1, y1, z1 - 3.0],
                 "group": "stomach_sac",
-                "material": "flesh_main" if i % 2 == 0 else "flesh_dark",
+                "material": "flesh_main" if r_idx % 2 == 0 else "flesh_dark",
             })
-            # 窗口左侧肌肉柱壁
-            if x0 < -12.0:
+            # 左侧肌柱
+            if wx0 > x0:
                 cubes.append({
-                    "name": f"sac_row_{i}_pillar_l",
-                    "from": [x0, y0, 6.0],
-                    "to":   [-12.0, y1, z1],
+                    "name": f"sac_row_{r_idx}_pillar_l",
+                    "from": [x0, y0, z1 - 3.0],
+                    "to":   [wx0, y1, z1],
                     "group": "stomach_sac",
                     "material": "flesh_main",
                 })
-            # 窗口右侧肌肉柱壁
-            if x1 > 1.5:
+            # 右侧肌柱
+            if x1 > wx1:
                 cubes.append({
-                    "name": f"sac_row_{i}_pillar_r",
-                    "from": [1.5, y0, 6.0],
+                    "name": f"sac_row_{r_idx}_pillar_r",
+                    "from": [wx1, y0, z1 - 3.0],
                     "to":   [x1, y1, z1],
                     "group": "stomach_sac",
                     "material": "flesh_main",
                 })
         else:
-            # 完整肌层实块
+            # 完整肌囊行
             cubes.append({
-                "name": f"sac_row_{i}",
+                "name": f"sac_row_{r_idx}",
                 "from": [x0, y0, z0],
                 "to":   [x1, y1, z1],
                 "group": "stomach_sac",
-                "material": "flesh_main" if i % 2 == 0 else "flesh_lit",
+                "material": "flesh_main" if r_idx % 2 == 0 else "flesh_lit",
             })
 
     return cubes
 
 
 def part_03_amber_cavity() -> List[dict]:
-    """3. 琥珀色消化腔与黏膜视窗 (amber_cavity)。
-
-    正面开口露出充满生机光泽的琥珀色消化腔液 (#c88a30) 与高光酶核 (#e0a848)。
-    外围配有起伏的亮肉粉黏膜外唇 (#b05050)，形成鲜明的视觉焦点。
-    """
+    """3. 正面椭圆凹口与琥珀色消化液 (行 6–11、x 12–36，向内凹 3px，开口 1px #e8bca8 内衬)。"""
     cubes = []
-    # 消化腔内深部琥珀色液体核心
-    cubes.append({
-        "name": "amber_fluid_core",
-        "from": [-11.8, 20.2, 6.2],
-        "to":   [  1.2, 29.8, 12.8],
-        "group": "amber_cavity",
-        "material": "amber_fluid",
-    })
-    # 消化液内部透亮高光流
-    cubes.append({
-        "name": "amber_fluid_glow",
-        "from": [-9.5, 22.0, 7.5],
-        "to":   [-1.5, 28.0, 12.2],
-        "group": "amber_cavity",
-        "material": "amber_glow",
-    })
+    window_x_disp = {
+        6:  (18.0, 30.0, 27.0, 30.0, 14.0),
+        7:  (15.0, 33.0, 24.0, 27.0, 14.0),
+        8:  (12.0, 36.0, 21.0, 24.0, 14.0),
+        9:  (12.0, 36.0, 18.0, 21.0, 14.0),
+        10: (15.0, 33.0, 15.0, 18.0, 13.0),
+        11: (18.0, 30.0, 12.0, 15.0, 12.0),
+    }
 
-    # 视窗外缘起伏黏膜唇圈 (#b05050)
-    # 底唇 (y: 19.8..21.2)
-    cubes.append({
-        "name": "amber_lip_bottom",
-        "from": [-12.2, 19.8, 12.5],
-        "to":   [  1.8, 21.2, 13.8],
-        "group": "amber_cavity",
-        "material": "flesh_lit",
-    })
-    # 顶唇 (y: 28.8..30.2)
-    cubes.append({
-        "name": "amber_lip_top",
-        "from": [-12.2, 28.8, 12.2],
-        "to":   [  1.8, 30.2, 13.5],
-        "group": "amber_cavity",
-        "material": "flesh_lit",
-    })
-    # 左唇 (x: -12.4..-11.2, y: 21.2..28.8)
-    cubes.append({
-        "name": "amber_lip_left",
-        "from": [-12.4, 21.2, 12.6],
-        "to":   [-11.2, 28.8, 13.9],
-        "group": "amber_cavity",
-        "material": "flesh_lit",
-    })
-    # 右唇 (x: 0.8..2.0, y: 21.2..28.8)
-    cubes.append({
-        "name": "amber_lip_right",
-        "from": [ 0.8, 21.2, 12.4],
-        "to":   [ 2.0, 28.8, 13.7],
-        "group": "amber_cavity",
-        "material": "flesh_lit",
-    })
+    for r_idx, (wx0_d, wx1_d, y0, y1, hz) in window_x_disp.items():
+        wx0 = float(wx0_d - 24)
+        wx1 = float(wx1_d - 24)
+        z1 = float(hz)
+
+        # 凹口内琥珀色消化液 (向内凹 3px 凹底，厚度 2.2px: z in [z1 - 3.0, z1 - 0.8])
+        cubes.append({
+            "name": f"amber_fluid_row_{r_idx}",
+            "from": [wx0 + 0.5, y0 + 0.2, z1 - 3.0],
+            "to":   [wx1 - 0.5, y1 - 0.2, z1 - 0.8],
+            "group": "amber_cavity",
+            "material": "amber_fluid",
+        })
+        # 视窗开口 1px 亮线内衬 (#e8bca8)
+        cubes.append({
+            "name": f"amber_lining_l_{r_idx}",
+            "from": [wx0 + 0.05, y0 + 0.15, z1 - 0.7],
+            "to":   [wx0 + 0.85, y1 - 0.15, z1 + 0.3],
+            "group": "amber_cavity",
+            "material": "tendon_highlight",
+        })
+        cubes.append({
+            "name": f"amber_lining_r_{r_idx}",
+            "from": [wx1 - 0.85, y0 + 0.15, z1 - 0.7],
+            "to":   [wx1 - 0.05, y1 - 0.15, z1 + 0.3],
+            "group": "amber_cavity",
+            "material": "tendon_highlight",
+        })
 
     return cubes
 
 
-def part_04_reinforcing_ribs() -> List[dict]:
-    """4. 加强骨肋与肌腱束 (reinforcing_ribs)。
-
-    大弯外侧弧形骨质加固卡箍 (#d8ccb0 / #b8a888) 与小弯侧肌腱束 (#d9a08c)。
-    强化经脉活体作坊的工业器官结构感。
-    """
+def part_04_curved_accent_line() -> List[dict]:
+    """4. 外表沿弧线 #e8bca8 亮线 (从食管一直弯到幽门)。"""
     cubes = []
-    # 胃大弯外侧加固骨肋
-    cubes.append({
-        "name": "bone_rib_curvature_upper",
-        "from": [-20.0, 29.0, -8.0],
-        "to":   [-18.8, 33.5,  8.0],
-        "group": "reinforcing_ribs",
-        "material": "bone_main",
-    })
-    cubes.append({
-        "name": "bone_rib_curvature_mid",
-        "from": [-23.2, 21.5, -9.0],
-        "to":   [-22.0, 27.5,  9.0],
-        "group": "reinforcing_ribs",
-        "material": "bone_main",
-    })
-    cubes.append({
-        "name": "bone_rib_curvature_lower",
-        "from": [-18.5, 15.0, -8.5],
-        "to":   [-17.2, 19.5,  8.5],
-        "group": "reinforcing_ribs",
-        "material": "bone_dark",
-    })
-
-    # 胃小弯内侧紧固肌腱束
-    cubes.append({
-        "name": "tendon_lesser_curv",
-        "from": [6.0, 25.8, -5.0],
-        "to":   [7.8, 33.8,  5.0],
-        "group": "reinforcing_ribs",
-        "material": "tendon_fascia",
-    })
+    curve_points = [
+        ( 8.5, 34.0, 10.4), # 食管交界
+        ( 3.0, 32.5, 11.4), # 上胃壁
+        (-3.0, 30.0, 14.4), # 大弯上弧
+        (-9.0, 27.0, 14.4), # 大弯左上
+        (-14.0, 23.0, 14.4),# 大弯最凸点外侧
+        (-15.0, 18.0, 14.4),# 大弯左下弧
+        (-12.0, 14.0, 13.4),# 胃体下弯
+        (-5.0, 11.0, 11.4), # 胃窦底部
+        ( 2.0,  8.5,  9.4), # 转向幽门
+        ( 8.0,  6.5,  8.4), # 幽门管道
+        (14.0,  5.0,  8.4), # 进入输出套管
+    ]
+    for i in range(len(curve_points) - 1):
+        p1 = curve_points[i]
+        p2 = curve_points[i + 1]
+        z_offset = 0.2 if i % 2 == 0 else 0.35
+        z_depth = 0.55 if i % 2 == 0 else 0.45
+        z_base = max(p1[2], p2[2])
+        x_min = min(p1[0], p2[0]) - (0.4 if i % 2 == 0 else 0.35)
+        x_max = max(p1[0], p2[0]) + (0.4 if i % 2 == 0 else 0.35)
+        y_min = min(p1[1], p2[1]) - (0.4 if i % 2 == 0 else 0.35)
+        y_max = max(p1[1], p2[1]) + (0.4 if i % 2 == 0 else 0.35)
+        cubes.append({
+            "name": f"sac_accent_line_{i}",
+            "from": [round(x_min, 2), round(y_min, 2), round(z_base + z_offset, 2)],
+            "to":   [round(x_max, 2), round(y_max, 2), round(z_base + z_offset + z_depth, 2)],
+            "group": "curved_accent_line",
+            "material": "tendon_highlight",
+        })
 
     return cubes
 
 
 def part_05_output_port() -> List[dict]:
-    """5. 侧下方输出端口（8×6 统一截面）。
-
-    幽门侧下方输出端口严格遵循统一连接截面：
-    内孔宽 8 px × 高 6 px、底边离地 2 px (x in [4.0, 12.0], y in [2.0, 8.0])。
-    外包一圈 2px 厚肉质管套 (#8a2a2a，x: 2.0..14.0, y: 0.0..10.0, z: 8.0..16.0，底边贴地 y=0.0)，
-    从右下方朝 +Z 伸出至 z = 16.0。方口内壁衬亮肉粉内壁 (#b05050) 与琥珀光芯。
-    """
+    """5. 幽门出口与 8x6 统一截面输出端口 (管径 6，末端为 8x6 统一截面 + 2px 肉质管套)。"""
     cubes = []
-    # ── 1. 肉质管套四壁 (厚度 2px, z: 8.0..16.0, 外框 12x10, 内孔 8x6) ──
-    # 左管套壁 (x: 2.0..4.0, y: 2.0..8.0)
-    cubes.append({"name": "port_sleeve_l", "from": [ 2.0, 2.0,  8.0], "to": [ 4.0, 8.0, 16.0], "group": "output_port", "material": "flesh_main"})
-    # 右管套壁 (x: 12.0..14.0, y: 2.0..8.0)
-    cubes.append({"name": "port_sleeve_r", "from": [12.0, 2.0,  8.0], "to": [14.0, 8.0, 16.0], "group": "output_port", "material": "flesh_main"})
-    # 顶管套壁 (x: 2.0..14.0, y: 8.0..10.0)
-    cubes.append({"name": "port_sleeve_t", "from": [ 2.0, 8.0,  8.0], "to": [14.0, 10.0, 16.0], "group": "output_port", "material": "flesh_main"})
-    # 底管套壁 (x: 2.0..14.0, y: 0.0..2.0, 贴地 y=0.0)
-    cubes.append({"name": "port_sleeve_b", "from": [ 2.0, 0.0,  8.0], "to": [14.0, 2.0, 16.0], "group": "output_port", "material": "flesh_main"})
+    # 幽门导管 (行 12-14 从 x 30 向右伸到 x 46，管径 6，y: 2..8, z: -3..3)
+    cubes.append({"name": "pylorus_duct_core", "from": [6.0, 2.0, -3.0], "to": [14.0, 8.0, 3.0], "group": "output_port", "material": "flesh_main"})
 
-    # ── 2. 亮肉方口内壁衬层 (带亮肉内壁的方口 #b05050) ──
-    cubes.append({"name": "port_lining_l", "from": [ 4.0, 2.0, 14.8], "to": [ 4.8, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
-    cubes.append({"name": "port_lining_r", "from": [11.2, 2.0, 14.8], "to": [12.0, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
-    cubes.append({"name": "port_lining_t", "from": [ 4.8, 7.2, 14.8], "to": [11.2, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
-    cubes.append({"name": "port_lining_b", "from": [ 4.8, 2.0, 14.8], "to": [11.2, 2.8, 16.0], "group": "output_port", "material": "flesh_lit"})
+    # 统一接口截面：宽 8px x 高 6px, 底边离地 2px (x: 14.0..22.0, y: 2.0..8.0)
+    # 外包 2px 厚肉质管套 (#8a2a2a): x in [12.0, 24.0], y in [0.0, 10.0], z in [8.0, 16.0]
+    cubes.append({"name": "port_sleeve_l", "from": [12.0, 2.0,  8.0], "to": [14.0, 8.0, 16.0], "group": "output_port", "material": "flesh_main"})
+    cubes.append({"name": "port_sleeve_r", "from": [22.0, 2.0,  8.0], "to": [24.0, 8.0, 16.0], "group": "output_port", "material": "flesh_main"})
+    cubes.append({"name": "port_sleeve_t", "from": [12.0, 8.0,  8.0], "to": [24.0, 10.0, 16.0], "group": "output_port", "material": "flesh_main"})
+    cubes.append({"name": "port_sleeve_b", "from": [12.0, 0.0,  8.0], "to": [24.0, 2.0, 16.0], "group": "output_port", "material": "flesh_main"})
 
-    # ── 3. 端口内腔琥珀色消化液与流光核 (z: 13.0..14.8) ──
-    cubes.append({"name": "port_lumen_amber", "from": [4.8, 2.8, 13.0], "to": [11.2, 7.2, 14.8], "group": "output_port", "material": "amber_fluid"})
+    # 亮肉内壁衬层 (方口内壁 #b05050)
+    cubes.append({"name": "port_lining_l", "from": [14.0, 2.0, 14.8], "to": [14.8, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
+    cubes.append({"name": "port_lining_r", "from": [21.2, 2.0, 14.8], "to": [22.0, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
+    cubes.append({"name": "port_lining_t", "from": [14.8, 7.2, 14.8], "to": [21.2, 8.0, 16.0], "group": "output_port", "material": "flesh_lit"})
+    cubes.append({"name": "port_lining_b", "from": [14.8, 2.0, 14.8], "to": [21.2, 2.8, 16.0], "group": "output_port", "material": "flesh_lit"})
 
-    # ── 4. 幽门汇流通道 (从胃体向右下方幽门管套倾斜导引, z: -2.0..8.0, y: 2.0..10.0) ──
-    cubes.append({"name": "pylorus_duct_main", "from": [1.0, 2.0, -2.0], "to": [13.0, 9.8, 8.0], "group": "output_port", "material": "flesh_dark"})
+    # 端口内腔琥珀消化液流光核 (z: 13.0..14.8)
+    cubes.append({"name": "port_lumen_amber", "from": [14.8, 2.8, 13.0], "to": [21.2, 7.2, 14.8], "group": "output_port", "material": "amber_fluid"})
 
-    # ── 5. 底部暗血肉锚定地面肉垫 ──
-    cubes.append({"name": "stomach_ground_bed", "from": [-16.0, 0.0, -10.0], "to": [14.0, 1.8, 8.0], "group": "output_port", "material": "flesh_dark"})
+    # 幽门转折连接块 (连接胃窦与输出端口, x: 10.0..16.0, y: 1.8..8.2, z: 2.0..8.2)
+    cubes.append({"name": "pylorus_elbow_flesh", "from": [10.0, 1.8, 2.0], "to": [16.0, 8.2, 8.2], "group": "output_port", "material": "flesh_dark"})
 
     return cubes
 
@@ -348,10 +297,10 @@ def part_05_output_port() -> List[dict]:
 def all_cubes() -> List[dict]:
     """汇总胃器官全部 5 大部件立方体。"""
     return (
-        part_01_entrance_tube()
+        part_01_esophagus()
         + part_02_stomach_sac()
         + part_03_amber_cavity()
-        + part_04_reinforcing_ribs()
+        + part_04_curved_accent_line()
         + part_05_output_port()
     )
 
@@ -428,15 +377,10 @@ def build_texture(res: int = RES) -> Image.Image:
                         g = int(np.clip(26 + noise, 0, 255))
                         b = int(np.clip(26 + noise, 0, 255))
                 elif mat_name == "amber_fluid":
-                    if (x + y * 3) % 7 == 0:
-                        r = int(np.clip(r + 15, 0, 255))
-                        g = int(np.clip(g + 12, 0, 255))
-                        b = int(np.clip(b + 10, 0, 255))
-                elif mat_name in ("bone_main", "bone_dark"):
-                    if (x + y * 2) % 5 == 0:
-                        r = int(np.clip(r - 8, 0, 255))
-                        g = int(np.clip(g - 8, 0, 255))
-                        b = int(np.clip(b - 6, 0, 255))
+                    if (x * 3 + y * 5) % 7 in (0, 1):
+                        r = int(np.clip(168 + noise, 0, 255))
+                        g = int(np.clip(106 + noise, 0, 255))
+                        b = int(np.clip(32 + noise, 0, 255))
 
                 arr[y, x] = [r, g, b, base_c[3]]
 
@@ -504,7 +448,7 @@ def build_bbmodel_doc(cubes: List[dict], tex: Image.Image) -> dict:
         elements.append(element)
 
     outliner = []
-    for g_name in ["entrance_tube", "stomach_sac", "amber_cavity", "reinforcing_ribs", "output_port"]:
+    for g_name in ["esophagus", "stomach_sac", "amber_cavity", "curved_accent_line", "output_port"]:
         if g_name in groups_map:
             outliner.append({
                 "name": g_name,
@@ -566,15 +510,15 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("FRONT (Curved Sac, Amber Cavity & Port)", im_front, 20, 20),
-        ("SIDE (Profile & Depth)",                  im_side, 540, 20),
-        ("3/4 ISOMETRIC (Organic Structure)",       im_iso, 20, 540),
-        ("TOP (Entrance Tube & Fundus Arch)",       im_top, 540, 540),
+        ("FRONT (Esophagus, Sac, Amber Window & Port)", im_front, 20, 20),
+        ("SIDE (Profile & Depth)",                      im_side, 540, 20),
+        ("3/4 ISOMETRIC (Organic Structure)",           im_iso, 20, 540),
+        ("TOP (Esophagus Tube & Fundus Arch)",          im_top, 540, 540),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 300, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 340, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
 
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
@@ -625,9 +569,9 @@ def self_test():
     # 注入测试缺陷
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [0.5, 46.8, -3.0],
-        "to":   [6.5, 48.0, -1.8],  # 与 tube_rim_n 完全重叠
-        "material": "bone_main",
+        "from": [6.0, 46.8, -3.0],
+        "to":   [12.0, 48.0, -1.0],  # 与 esophagus_rim_n 完全重叠
+        "material": "flesh_main",
     }]
     caught = False
     try:
