@@ -5,16 +5,14 @@ size = 500
 [materials]
 flesh_dark = [90, 26, 26]
 flesh_main = [138, 42, 42]
-flesh_lit = [176, 80, 80]
 bone_main = [216, 204, 176]
-bone_dark = [184, 168, 136]
 tendon_tube = [232, 216, 208]
 qi_glow = [244, 236, 224]
+tendon_fiber = [216, 196, 184]
 
 [features]
-flesh_skirt = { elements = ["flesh_skirt_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+flesh_collars = { elements = ["collar_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+ports = { elements = ["port_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 meridian_tube = { elements = ["tube_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-inner_qi_glow = { elements = ["inner_qi_glow_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-top_ports = { elements = ["port_top_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-bottom_ports = { elements = ["port_bot_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
-bone_clamps = { elements = ["bone_clamp_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+inner_qi_glow = { elements = ["inner_qi_core"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+diagonal_fibers = { elements = ["tendon_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
