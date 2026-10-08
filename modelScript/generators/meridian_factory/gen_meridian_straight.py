@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
-"""经脉工厂内景方块生成器 —— b01: meridian_straight (经脉内腔直段) [Round 1 第 1 次修改版]
+"""经脉工厂内景方块生成器 —— b01: meridian_straight (经脉内腔直段) [Round 1 第 2 次修改版]
 
-风格：A 有机型 (活体血肉、半透明筋管、旧损暗淡配色)
+风格：A 有机型 (活体血肉、暖粉半透明筋管、旧损暗淡配色)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md
 
-调度审第 1 次修改落实：
-1. 半透明筋管 + 内光芯 + 斜交筋丝：
-   - 管壁使用 #e8d8d0 半透明材质 (alpha~60%)；
-   - 管内沿长轴放一根细芯 #f4ece0 (宽2高2贯通Z轴) 作为灵流内光；
-   - 管壁外侧浮起 0.5px 配置两组斜交筋丝 (#d8c4b8)，立体交叉呈现鲜明 X 形纹。
-2. 两端四面包覆肉箍，彻底删除底部红板：
-   - 删掉原先底部的漂浮红板；
-   - 两端各设一圈四面包覆的肉箍 (#8a2a2a)，箍宽 3px (z: -7.5..-4.5 与 4.5..7.5)；
-   - 比管身四周各外凸 1px (x: -5..5, y: 1..9，四面均包覆)；
-   - 中间区段 (z: -4.5..4.5) 完全无红色，纯净展现半透明管身。
-3. 贴面小骨环端口：
-   - 端口改成贴在肉箍顶面 (y=9.0) 与底面 (y=1.0) 的贴面骨环 (#d8ccb0)；
-   - 外框 4×4、内孔 2×2 (孔内用 #5a1a1a 呈现深邃暗孔)，凸出 0.7px (严格不超过 1px)；
-   - 四个角各一个 (顶前、顶后、底前、底后)。
-4. 统一截面契约：
-   - 管腔外轮廓截面严格为 8 宽 × 6 高、居中、底边离地 2px (x: -4..4, y: 2..8)；
-   - 整件长度严格为 16px (z: -8..8)。
+调度审第 2 次修改落实：
+1. 配色表修订与管身透光：
+   - 筋管壁全面改用暖粉色 #d9a08c (tendon_tube, alpha~60%)；
+   - 管壁上下各保留 1px #e8bca8 (tendon_highlight) 亮边；
+   - 正面中段配置 6×2 (z: -3.0..3.0, y: 4.0..6.0) 晶莹透光的淡光斑 #f6dcc4 (qi_glow)；
+   - 管内贯穿细芯同步改用 #f6dcc4。
+2. 斜交筋丝连成两条完整对角线：
+   - 筋丝全面改用 #c07868 (tendon_fiber)；
+   - 浮起 0.5px，连贯平滑地跨越整个暴露管身 (z: -4.4..4.4, y: 2.4..7.6)，交叉形成完整 X 形纹。
+3. 骨环端口缩小：
+   - 端口尺寸严格缩小至：外 3×3、内孔 1×1、凸出 0.5px；
+   - 贴在肉箍顶面 (y: 9.0..9.5) 与底面 (y: 0.5..1.0)；
+   - 孔内采用 #5a1a1a (flesh_dark) 深色内底；
+   - 四个角各设一个 (顶前、顶后、底前、底后)。
+4. 结构保留：
+   - 两端四面包覆肉箍 (#8a2a2a, 宽 3px, 比管身四周各外凸 1px：x: -5..5, y: 1..9)；
+   - 中间无红色肉沿；
+   - 接口截面宽 8 × 高 6、底边离地 2px，全长 16px。
 """
 
 from __future__ import annotations
@@ -45,23 +46,25 @@ BBMODEL_OUT = REPO / "modelScript" / "models" / "meridian_factory" / "meridian_s
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/meridian_straight")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b01_meridian_straight.png")
 
-# 调色板 (严格对齐 meridian_factory.md 色值表)
+# 调色板 (严格对齐 2026-10-09 05:3x 调度审修订值)
 PALETTE = {
-    "flesh_dark":   (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔内深色底)
-    "flesh_main":   (138, 42, 42, 255),   # #8a2a2a 血肉 (两端肉箍主色)
-    "bone_main":    (216, 204, 176, 255), # #d8ccb0 骨 (贴面小骨环)
-    "tendon_tube":  (232, 216, 208, 150), # #e8d8d0 半透明筋管 (alpha 约 60%)
-    "qi_glow":      (244, 236, 224, 255), # #f4ece0 筋管内光细芯
-    "tendon_fiber": (216, 196, 184, 255), # #d8c4b8 斜交筋丝 (浮起 0.5px)
+    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔内深色底)
+    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉 (两端肉箍主色)
+    "bone_main":        (216, 204, 176, 255), # #d8ccb0 骨 (贴面小骨环)
+    "tendon_tube":      (217, 160, 140, 150), # #d9a08c 暖粉半透明筋管壁 (alpha 约 60%)
+    "tendon_highlight": (232, 188, 168, 255), # #e8bca8 筋管上下 1px 亮边
+    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 内光芯 / 6x2 淡光斑
+    "tendon_fiber":     (192, 120, 104, 255), # #c07868 斜交对角线筋丝 (浮起 0.5px)
 }
 
 MAT_UV = {
-    "flesh_dark":   [0, 0, 16, 16],
-    "flesh_main":   [16, 0, 32, 16],
-    "bone_main":    [32, 0, 48, 16],
-    "tendon_tube":  [48, 0, 64, 16],
-    "qi_glow":      [0, 16, 16, 32],
-    "tendon_fiber": [16, 16, 32, 32],
+    "flesh_dark":       [0, 0, 16, 16],
+    "flesh_main":       [16, 0, 32, 16],
+    "bone_main":        [32, 0, 48, 16],
+    "tendon_tube":      [48, 0, 64, 16],
+    "qi_glow":          [0, 16, 16, 32],
+    "tendon_fiber":     [16, 16, 32, 32],
+    "tendon_highlight": [32, 16, 48, 32],
 }
 
 RES = 64
@@ -72,81 +75,77 @@ RES = 64
 # =============================================================================
 
 def part_01_flesh_collars() -> List[dict]:
-    """两端四面包覆的肉箍：宽 3px，比管身外凸 1px，四周包覆，彻底删除底部红板。
-    管身外径：x: -4.0..4.0, y: 2.0..8.0
-    肉箍范围：x: -5.0..5.0, y: 1.0..9.0 (四周各外凸 1px)
-    后箍：z: -7.5..-4.5 (宽 3.0px)
-    前箍：z:  4.5..7.5  (宽 3.0px)
-    中间 (z: -4.5..4.5) 完全无红色肉箍，展现半透明管身。
+    """两端四面包覆的肉箍：宽 3px，比管身四周外凸 1px (x: -5..5, y: 1..9)。
+    后箍：z: -7.5..-4.5 (长 3.0px)
+    前箍：z:  4.5..7.5  (长 3.0px)
+    中间 (z: -4.5..4.5) 完全无红色肉块。
     """
     cubes = []
 
     for p_name, z_start, z_end in [("rear", -7.5, -4.5), ("front", 4.5, 7.5)]:
         cz = (z_start + z_end) / 2.0  # -6.0 或 6.0
 
-        # 1. 顶面肉层 (y: 8.0..9.0, 跨度 x: -5.0..5.0)
-        # 在中心留出骨环孔道 x: -1.0..1.0, z: cz-1.0..cz+1.0
+        # 1. 顶面肉层 (y: 8.0..9.0, 跨度 x: -5.0..5.0, 避让孔道 x: -0.5..0.5, z: cz-0.5..cz+0.5)
         cubes.append({
             "name": f"collar_{p_name}_top_left",
             "from": [-5.0, 8.0, z_start],
-            "to":   [-1.0, 9.0, z_end],
+            "to":   [-0.5, 9.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_top_right",
-            "from": [1.0, 8.0, z_start],
+            "from": [0.5, 8.0, z_start],
             "to":   [5.0, 9.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_top_mid_b",
-            "from": [-1.0, 8.0, z_start],
-            "to":   [1.0, 9.0, cz - 1.0],
+            "from": [-0.5, 8.0, z_start],
+            "to":   [0.5, 9.0, cz - 0.5],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_top_mid_f",
-            "from": [-1.0, 8.0, cz + 1.0],
-            "to":   [1.0, 9.0, z_end],
+            "from": [-0.5, 8.0, cz + 0.5],
+            "to":   [0.5, 9.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
 
-        # 2. 底面肉层 (y: 1.0..2.0, 跨度 x: -5.0..5.0)
-        # 在中心留出骨环孔道 x: -1.0..1.0, z: cz-1.0..cz+1.0
+        # 2. 底面肉层 (y: 1.0..2.0, 跨度 x: -5.0..5.0, 避让孔道 x: -0.5..0.5, z: cz-0.5..cz+0.5)
         cubes.append({
             "name": f"collar_{p_name}_bot_left",
             "from": [-5.0, 1.0, z_start],
-            "to":   [-1.0, 2.0, z_end],
+            "to":   [-0.5, 2.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_bot_right",
-            "from": [1.0, 1.0, z_start],
+            "from": [0.5, 1.0, z_start],
             "to":   [5.0, 2.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_bot_mid_b",
-            "from": [-1.0, 1.0, z_start],
-            "to":   [1.0, 2.0, cz - 1.0],
+            "from": [-0.5, 1.0, z_start],
+            "to":   [0.5, 2.0, cz - 0.5],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
         cubes.append({
             "name": f"collar_{p_name}_bot_mid_f",
-            "from": [-1.0, 1.0, cz + 1.0],
-            "to":   [1.0, 2.0, z_end],
+            "from": [-0.5, 1.0, cz + 0.5],
+            "to":   [0.5, 2.0, z_end],
             "group": "flesh_collars",
             "material": "flesh_main",
         })
 
-        # 3. 左右侧面包覆肉层 (y: 2.0..8.0，厚 1px，紧扣管身侧壁)
+        # 3. 左右侧面包覆肉层 (y: 2.0..8.0，厚 1px，紧贴管壁)
         cubes.append({
             "name": f"collar_{p_name}_side_l",
             "from": [-5.0, 2.0, z_start],
@@ -166,88 +165,88 @@ def part_01_flesh_collars() -> List[dict]:
 
 
 def part_02_ports() -> List[dict]:
-    """贴在肉箍顶面/底面的骨环：外 4×4、内孔 2×2，孔里深色 #5a1a1a，凸出不超过 1px。
+    """贴在肉箍顶底面的缩小骨环：外 3×3、内孔 1×1，孔里用 #5a1a1a，凸出 0.5px。
     四个角各一个：顶前、顶后、底前、底后。
     """
     cubes = []
 
     for p_name, z_start, z_end in [("rear", -7.5, -4.5), ("front", 4.5, 7.5)]:
         cz = (z_start + z_end) / 2.0  # -6.0 或 6.0
-        # 外 4x4: x: -2.0..2.0, z: cz-2.0..cz+2.0
-        # 内孔 2x2: x: -1.0..1.0, z: cz-1.0..cz+1.0
+        # 外 3x3: x: -1.5..1.5, z: cz-1.5..cz+1.5
+        # 内孔 1x1: x: -0.5..0.5, z: cz-0.5..cz+0.5
 
-        # --- A. 顶面贴面骨环 (y: 9.0..9.7，凸出 0.7px) ---
+        # --- A. 顶面小骨环 (y: 9.0..9.5，凸出 0.5px) ---
         cubes.append({
-            "name": f"port_top_{p_name}_north",
-            "from": [-2.0, 9.0, cz - 2.0],
-            "to":   [2.0, 9.7, cz - 1.0],
+            "name": f"port_top_{p_name}_n",
+            "from": [-1.5, 9.0, cz - 1.5],
+            "to":   [1.5, 9.5, cz - 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_top_{p_name}_south",
-            "from": [-2.0, 9.0, cz + 1.0],
-            "to":   [2.0, 9.7, cz + 2.0],
+            "name": f"port_top_{p_name}_s",
+            "from": [-1.5, 9.0, cz + 0.5],
+            "to":   [1.5, 9.5, cz + 1.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_top_{p_name}_west",
-            "from": [-2.0, 9.0, cz - 1.0],
-            "to":   [-1.0, 9.7, cz + 1.0],
+            "name": f"port_top_{p_name}_w",
+            "from": [-1.5, 9.0, cz - 0.5],
+            "to":   [-0.5, 9.5, cz + 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_top_{p_name}_east",
-            "from": [1.0, 9.0, cz - 1.0],
-            "to":   [2.0, 9.7, cz + 1.0],
+            "name": f"port_top_{p_name}_e",
+            "from": [0.5, 9.0, cz - 0.5],
+            "to":   [1.5, 9.5, cz + 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         # 顶面孔内深色底 (#5a1a1a)
         cubes.append({
-            "name": f"port_top_{p_name}_dark_core",
-            "from": [-0.98, 8.0, cz - 0.98],
-            "to":   [0.98, 8.95, cz + 0.98],
+            "name": f"port_top_{p_name}_core",
+            "from": [-0.48, 8.0, cz - 0.48],
+            "to":   [0.48, 8.95, cz + 0.48],
             "group": "ports",
             "material": "flesh_dark",
         })
 
-        # --- B. 底面贴面骨环 (y: 0.3..1.0，向下凸出 0.7px) ---
+        # --- B. 底面小骨环 (y: 0.5..1.0，向下凸出 0.5px) ---
         cubes.append({
-            "name": f"port_bot_{p_name}_north",
-            "from": [-2.0, 0.3, cz - 2.0],
-            "to":   [2.0, 1.0, cz - 1.0],
+            "name": f"port_bot_{p_name}_n",
+            "from": [-1.5, 0.5, cz - 1.5],
+            "to":   [1.5, 1.0, cz - 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_bot_{p_name}_south",
-            "from": [-2.0, 0.3, cz + 1.0],
-            "to":   [2.0, 1.0, cz + 2.0],
+            "name": f"port_bot_{p_name}_s",
+            "from": [-1.5, 0.5, cz + 0.5],
+            "to":   [1.5, 1.0, cz + 1.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_bot_{p_name}_west",
-            "from": [-2.0, 0.3, cz - 1.0],
-            "to":   [-1.0, 1.0, cz + 1.0],
+            "name": f"port_bot_{p_name}_w",
+            "from": [-1.5, 0.5, cz - 0.5],
+            "to":   [-0.5, 1.0, cz + 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         cubes.append({
-            "name": f"port_bot_{p_name}_east",
-            "from": [1.0, 0.3, cz - 1.0],
-            "to":   [2.0, 1.0, cz + 1.0],
+            "name": f"port_bot_{p_name}_e",
+            "from": [0.5, 0.5, cz - 0.5],
+            "to":   [1.5, 1.0, cz + 0.5],
             "group": "ports",
             "material": "bone_main",
         })
         # 底面孔内深色底 (#5a1a1a)
         cubes.append({
-            "name": f"port_bot_{p_name}_dark_core",
-            "from": [-0.98, 1.05, cz - 0.98],
-            "to":   [0.98, 2.0, cz + 0.98],
+            "name": f"port_bot_{p_name}_core",
+            "from": [-0.48, 1.05, cz - 0.48],
+            "to":   [0.48, 2.0, cz + 0.48],
             "group": "ports",
             "material": "flesh_dark",
         })
@@ -256,28 +255,97 @@ def part_02_ports() -> List[dict]:
 
 
 def part_03_meridian_tube() -> List[dict]:
-    """矩形半透明筋管主体：宽 8 (x: -4..4), 高 6 (y: 2..8), 长 16 (z: -8..8)。
-    材质：tendon_tube (#e8d8d0 半透明)。
+    """暖粉半透明筋管主体：宽 8 (x: -4..4), 高 6 (y: 2..8), 长 16 (z: -8..8)。
+    管壁上下各留 1px #e8bca8 亮边，正面中段开有一块 6×2 的 #f6dcc4 淡光斑。
     """
     cubes = []
 
-    # 左侧壁
+    # ── 左侧管壁 (x: -4.0..-3.2, y: 2.0..8.0, z: -8.0..8.0) ──
     cubes.append({
-        "name": "tube_wall_left",
+        "name": "tube_wall_l",
         "from": [-4.0, 2.0, -8.0],
         "to":   [-3.2, 8.0, 8.0],
         "group": "meridian_tube",
         "material": "tendon_tube",
     })
-    # 右侧壁
+
+    # ── 右侧管壁 (正面观察面) ──
+    # 两端隐藏段 (z: -8.0..-4.5 与 4.5..8.0)
     cubes.append({
-        "name": "tube_wall_right",
+        "name": "tube_wall_r_rear",
         "from": [3.2, 2.0, -8.0],
+        "to":   [4.0, 8.0, -4.5],
+        "group": "meridian_tube",
+        "material": "tendon_tube",
+    })
+    cubes.append({
+        "name": "tube_wall_r_front",
+        "from": [3.2, 2.0, 4.5],
         "to":   [4.0, 8.0, 8.0],
         "group": "meridian_tube",
         "material": "tendon_tube",
     })
-    # 底壁
+
+    # 中间暴露段 (z: -4.5..4.5) 上下 1px #e8bca8 亮边
+    # 底部 1px 亮边 (y: 2.0..3.0)
+    cubes.append({
+        "name": "tube_wall_r_mid_bot_rim",
+        "from": [3.2, 2.0, -4.5],
+        "to":   [4.0, 3.0, 4.5],
+        "group": "meridian_tube",
+        "material": "tendon_highlight",
+    })
+    # 顶部 1px 亮边 (y: 7.0..8.0)
+    cubes.append({
+        "name": "tube_wall_r_mid_top_rim",
+        "from": [3.2, 7.0, -4.5],
+        "to":   [4.0, 8.0, 4.5],
+        "group": "meridian_tube",
+        "material": "tendon_highlight",
+    })
+
+    # 中部侧翼暖粉管身 (z: -4.5..-3.0 与 3.0..4.5, y: 3.0..7.0)
+    cubes.append({
+        "name": "tube_wall_r_mid_flank_b",
+        "from": [3.2, 3.0, -4.5],
+        "to":   [4.0, 7.0, -3.0],
+        "group": "meridian_tube",
+        "material": "tendon_tube",
+    })
+    cubes.append({
+        "name": "tube_wall_r_mid_flank_f",
+        "from": [3.2, 3.0, 3.0],
+        "to":   [4.0, 7.0, 4.5],
+        "group": "meridian_tube",
+        "material": "tendon_tube",
+    })
+
+    # 正面 6×2 淡光斑上下垫块 (y: 3.0..4.0 与 6.0..7.0, z: -3.0..3.0)
+    cubes.append({
+        "name": "tube_wall_r_mid_sub_bot",
+        "from": [3.2, 3.0, -3.0],
+        "to":   [4.0, 4.0, 3.0],
+        "group": "meridian_tube",
+        "material": "tendon_tube",
+    })
+    cubes.append({
+        "name": "tube_wall_r_mid_sub_top",
+        "from": [3.2, 6.0, -3.0],
+        "to":   [4.0, 7.0, 3.0],
+        "group": "meridian_tube",
+        "material": "tendon_tube",
+    })
+
+    # 正面中段 6×2 淡光斑 (#f6dcc4 qi_glow, z: -3.0..3.0, y: 4.0..6.0)
+    cubes.append({
+        "name": "tube_wall_r_glow_window",
+        "from": [3.2, 4.0, -3.0],
+        "to":   [4.0, 6.0, 3.0],
+        "group": "meridian_tube",
+        "material": "qi_glow",
+    })
+
+    # 底壁与顶壁
     cubes.append({
         "name": "tube_wall_bottom",
         "from": [-3.2, 2.0, -8.0],
@@ -285,7 +353,6 @@ def part_03_meridian_tube() -> List[dict]:
         "group": "meridian_tube",
         "material": "tendon_tube",
     })
-    # 顶壁
     cubes.append({
         "name": "tube_wall_top",
         "from": [-3.2, 7.2, -8.0],
@@ -298,7 +365,7 @@ def part_03_meridian_tube() -> List[dict]:
 
 
 def part_04_inner_qi_glow() -> List[dict]:
-    """管内沿长轴细芯淡光 (#f4ece0 qi_glow)：长轴 z: -8.0..8.0 贯通，截面 x: -1.0..1.0, y: 4.0..6.0。"""
+    """管内沿长轴细芯淡光 (#f6dcc4 qi_glow)：截面 x: -1.0..1.0, y: 4.0..6.0, 长轴 z: -8.0..8.0 贯通。"""
     cubes = []
     cubes.append({
         "name": "inner_qi_core",
@@ -311,81 +378,65 @@ def part_04_inner_qi_glow() -> List[dict]:
 
 
 def part_05_diagonal_fibers() -> List[dict]:
-    """管壁外侧斜交筋丝 (#d8c4b8 tendon_fiber，0.5px 浮起，X 形纹)。"""
+    """斜交筋丝 (#c07868 tendon_fiber，0.5px 浮起，连成两条完整贯穿对角线)。"""
     cubes = []
 
-    def make_cross_fibers(is_left: bool = False) -> List[dict]:
-        fiber_cubes = []
-        x_inner = -4.38 if is_left else 4.38
-        x_outer = -4.52 if is_left else 4.52
+    def make_diagonal_x(is_left: bool = False) -> List[dict]:
+        diag_cubes = []
         x_base = -4.0 if is_left else 4.0
-
-        x0 = min(x_base, x_inner)
-        x1 = max(x_base, x_inner)
+        x_in = -4.36 if is_left else 4.36
+        x_out = -4.50 if is_left else 4.50
+        x0 = min(x_base, x_in)
+        x1 = max(x_base, x_in)
+        x_br0 = min(x_in, x_out)
+        x_br1 = max(x_in, x_out)
         pfx = "l_" if is_left else "r_"
 
-        # 筋丝 1（底层斜向上，从 z=-4.2 到 4.2）
-        f1_pts = [
-            (-4.2, -2.8, 2.5, 3.3),
-            (-2.8, -1.4, 3.3, 4.2),
-            (-1.4,  0.0, 4.2, 5.0),
-            ( 0.0,  1.4, 5.0, 5.8),
-            ( 1.4,  2.8, 5.8, 6.7),
-            ( 2.8,  4.2, 6.7, 7.5),
-        ]
-        for i, (z0, z1, y0, y1) in enumerate(f1_pts):
-            fiber_cubes.append({
-                "name": f"tendon_{pfx}x1_seg_{i+1}",
-                "from": [x0, y0, z0],
-                "to":   [x1, y1, z1],
+        steps = 8
+        z_min, z_max = -4.4, 4.4
+        y_min, y_max = 2.4, 7.6
+        z_s = np.linspace(z_min, z_max, steps + 1)
+        y_s = np.linspace(y_min, y_max, steps + 1)
+
+        # 贯穿对角线 1 (底层筋丝，斜向上：从 z=-4.4, y=2.4 到 z=4.4, y=7.6)
+        for i in range(steps):
+            diag_cubes.append({
+                "name": f"tendon_{pfx}diag1_seg_{i+1}",
+                "from": [x0, round(y_s[i], 3), round(z_s[i], 3)],
+                "to":   [x1, round(y_s[i+1], 3), round(z_s[i+1], 3)],
                 "group": "diagonal_fibers",
                 "material": "tendon_fiber",
             })
 
-        # 筋丝 2（顶层斜向下，交叉点外架跨越桥）
-        f2_upper = [
-            (-4.2, -2.8, 6.7, 7.5),
-            (-2.8, -1.4, 5.8, 6.7),
-            (-1.4, -0.6, 5.3, 5.8),
-        ]
-        for i, (z0, z1, y0, y1) in enumerate(f2_upper):
-            fiber_cubes.append({
-                "name": f"tendon_{pfx}x2_up_{i+1}",
-                "from": [x0, y0, z0],
-                "to":   [x1, y1, z1],
-                "group": "diagonal_fibers",
-                "material": "tendon_fiber",
-            })
+        # 贯穿对角线 2 (顶层筋丝，斜向下：从 z=-4.4, y=7.6 到 z=4.4, y=2.4，中心段跨越外层)
+        for i in range(steps):
+            y0_i = round(y_s[steps - i - 1], 3)
+            y1_i = round(y_s[steps - i], 3)
+            z0_i = round(z_s[i], 3)
+            z1_i = round(z_s[i+1], 3)
 
-        # 中心跨越节 (在 x1 外层跨越，z: -0.6..0.6, y: 4.65..5.35)
-        x_br0 = min(x_inner, x_outer)
-        x_br1 = max(x_inner, x_outer)
-        fiber_cubes.append({
-            "name": f"tendon_{pfx}x2_bridge",
-            "from": [x_br0, 4.65, -0.6],
-            "to":   [x_br1, 5.35,  0.6],
-            "group": "diagonal_fibers",
-            "material": "tendon_fiber",
-        })
+            # 中心段 (i=3, 4) 跨越
+            if i in (3, 4):
+                diag_cubes.append({
+                    "name": f"tendon_{pfx}diag2_bridge_{i+1}",
+                    "from": [x_br0, y0_i, z0_i],
+                    "to":   [x_br1, y1_i, z1_i],
+                    "group": "diagonal_fibers",
+                    "material": "tendon_fiber",
+                })
+            else:
+                diag_cubes.append({
+                    "name": f"tendon_{pfx}diag2_seg_{i+1}",
+                    "from": [x0, y0_i, z0_i],
+                    "to":   [x1, y1_i, z1_i],
+                    "group": "diagonal_fibers",
+                    "material": "tendon_fiber",
+                })
 
-        f2_lower = [
-            ( 0.6,  1.4, 4.2, 4.7),
-            ( 1.4,  2.8, 3.3, 4.2),
-            ( 2.8,  4.2, 2.5, 3.3),
-        ]
-        for i, (z0, z1, y0, y1) in enumerate(f2_lower):
-            fiber_cubes.append({
-                "name": f"tendon_{pfx}x2_dn_{i+1}",
-                "from": [x0, y0, z0],
-                "to":   [x1, y1, z1],
-                "group": "diagonal_fibers",
-                "material": "tendon_fiber",
-            })
+        return diag_cubes
 
-        return fiber_cubes
-
-    cubes.extend(make_cross_fibers(is_left=False))
-    cubes.extend(make_cross_fibers(is_left=True))
+    cubes.extend(make_diagonal_x(is_left=False))
+    cubes.extend(make_diagonal_x(is_left=True))
     return cubes
 
 
@@ -449,7 +500,7 @@ def _assert_no_coplanar_faces(cubes: List[dict]):
 # =============================================================================
 
 def build_texture(res: int = RES) -> Image.Image:
-    """生成 64×64 RGBA 贴图，严格使用 meridian_factory.md 的有机型配色。"""
+    """生成 64×64 RGBA 贴图，严格使用 meridian_factory.md 修订后的暖粉配色。"""
     im = Image.new("RGBA", (res, res), (0, 0, 0, 0))
     rng = np.random.RandomState(42)
 
@@ -461,22 +512,26 @@ def build_texture(res: int = RES) -> Image.Image:
         tile[:, :] = base_color
 
         if mat_name == "tendon_tube":
-            # 半透明筋管壁：带纵向浅淡粉膜与半透明渐变，保持 ~60% 透明度
+            # 暖粉半透明筋管壁：纵向柔韧筋膜微纹，保持约 60% 透明度
             for x in range(w):
                 fib = rng.randint(-8, 8)
                 tile[:, x, 0] = np.clip(tile[:, x, 0].astype(int) + fib, 0, 255)
                 tile[:, x, 1] = np.clip(tile[:, x, 1].astype(int) + fib, 0, 255)
                 tile[:, x, 2] = np.clip(tile[:, x, 2].astype(int) + fib, 0, 255)
                 tile[:, x, 3] = np.clip(base_color[3] + rng.randint(-10, 10), 125, 175)
+        elif mat_name == "tendon_highlight":
+            # 筋管上下亮边反光
+            for y in range(h):
+                tile[y, :, :3] = np.clip(tile[y, :, :3].astype(int) + rng.randint(-6, 6), 0, 255)
         elif mat_name == "qi_glow":
-            # 晶莹淡光核心：中心稍亮向外微晕
+            # 晶莹淡光核心 / 6x2 透光斑：中心明亮微光晕
             for y in range(h):
                 for x in range(w):
                     r_dist = np.hypot(x - w / 2, y - h / 2) / (w / 2)
-                    glow = int(12 * (1.0 - np.clip(r_dist, 0.0, 1.0)))
+                    glow = int(14 * (1.0 - np.clip(r_dist, 0.0, 1.0)))
                     tile[y, x, :3] = np.clip(tile[y, x, :3].astype(int) + glow, 0, 255)
         elif mat_name == "tendon_fiber":
-            # 斜交筋丝高光质感
+            # 斜交筋丝韧带高光
             for y in range(h):
                 tile[y, :, :3] = np.clip(tile[y, :, :3].astype(int) + rng.randint(-6, 6), 0, 255)
         elif "flesh" in mat_name:
@@ -574,13 +629,9 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
     bg_color = (119, 119, 119)  # 严格对齐参考图的中性灰底色 (119, 119, 119)
 
     # 1. 渲染四视角 (正视、侧视、3/4 等轴、俯视)
-    # 正视 (看 +Z 输出端截面：显示宽8高6接口与外围肉箍)
     im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
-    # 侧视 (看整个 16px 长管道侧身：两端红箍+中间半透明管身与斜交X筋丝)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
-    # 3/4 等轴透视 (立体观察斜交筋丝与顶面贴面骨环)
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
-    # 俯视 (看顶面两端贴面小骨环与中间管身)
     im_top, _ = render(bbmodel_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
 
     # 2. 拼装 render.png (2x2 网格)
@@ -593,7 +644,7 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
         ("FRONT (+Z Output)", im_front, 20, 20),
         ("SIDE (Length 16px)", im_side, 540, 20),
         ("3/4 ISOMETRIC", im_iso, 20, 540),
-        ("TOP (Dual Bone Rings)", im_top, 540, 540),
+        ("TOP (3x3 Bone Rings)", im_top, 540, 540),
     ]
 
     for title, im_v, px, py in views:

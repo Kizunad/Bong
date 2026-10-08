@@ -6,9 +6,10 @@ size = 500
 flesh_dark = [90, 26, 26]
 flesh_main = [138, 42, 42]
 bone_main = [216, 204, 176]
-tendon_tube = [232, 216, 208]
-qi_glow = [244, 236, 224]
-tendon_fiber = [216, 196, 184]
+tendon_tube = [217, 160, 140]
+tendon_highlight = [232, 188, 168]
+qi_glow = [246, 220, 196]
+tendon_fiber = [192, 120, 104]
 
 [features]
 flesh_collars = { elements = ["collar_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
