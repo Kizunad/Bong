@@ -14,7 +14,6 @@ tendon_fiber = [192, 120, 104]
 [features]
 flesh_collars = { elements = ["collar_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 ports = { elements = ["port_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-meridian_tube = { elements = ["tube_", "wall_", "fl_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+meridian_tube = { elements = ["tube_", "stub_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 inner_qi_glow = { elements = ["qi_core_"], must_show_in = ["SIDE_R", "3/4"], min_px = 1 }
-diagonal_fibers = { elements = ["fib_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
-flesh_skirt = { elements = ["skirt_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+diagonal_fibers = { elements = ["tendon_fiber_"], must_show_in = ["FRONT", "SIDE_L", "3/4", "TOP"], min_px = 1 }

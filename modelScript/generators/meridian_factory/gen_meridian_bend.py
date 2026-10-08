@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
-"""经脉工厂内景方块生成器 —— b02: meridian_bend (经脉内腔 90° 弯段)
+"""经脉工厂内景方块生成器 —— b02: meridian_bend (经脉内腔 90° 弯段) [Round 1 第 1 次返工版]
 
 风格：A 有机型 (活体血肉、暖粉半透明筋管、旧损暗淡配色)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md
-- 参考图：model-review/img/meridian_factory/refs/b02_meridian_bend.png
 
-规范落实：
-1. 统一约定与截面契约：
-   - 输入端位于 -Z 侧 (z = -8.0)，截面居中宽 8px × 高 6px、底边离地 2px (x: -4..4, y: 2..8)；
-   - 输出端位于 +X 侧 (x = 8.0)，截面居中宽 8px × 高 6px、底边离地 2px (z: -4..4, y: 2..8)；
-   - 管道 90° 平滑弯转，整体严格落在 16×16×16 方块空间内。
-2. 两端四面包覆肉箍与小骨环端口 (完全继承 b01)：
-   - 两端各一圈肉箍 (#8a2a2a)，宽 3px (输入端 z: -7.5..-4.5，输出端 x: 4.5..7.5)；
-   - 比管身四周各外凸 1px (截面外廓宽 10px、高 8px，四面全包覆)；
-   - 贴面小骨环端口 (#d8ccb0)：外 3×3、内孔 1×1、微凸 0.5px，孔底深色 (#5a1a1a)，四个角各一个 (顶前、顶后、底前、底后)。
-3. 暖粉半透明筋管与透光内芯：
-   - 筋管壁全面使用暖粉色 #d9a08c (tendon_tube, alpha~60%)；
-   - 外弧侧壁上下各留 1px 亮边 #e8bca8 (tendon_highlight)；
-   - 外弧中央设有一块 6×2 晶莹透光的淡光斑 #f6dcc4 (qi_glow)；
-   - 管内长轴细芯采用 #f6dcc4 沿中线 90° 贯穿。
-4. 斜交筋丝与连续肉沿：
-   - 外弧浮起 0.5px 配置斜交筋丝 #c07868 (tendon_fiber)，连成完整对角线 X 形交织；
-   - 贴地 (y: 0.0..1.2) 配置暗血肉 #5a1a1a 连续肉沿，平滑连接两端肉箍。
-5. 门禁验证：_assert_no_coplanar_faces 0 共面冲突，--self-test 缺陷拦截自测全绿。
+调度审第 1 次修改落实：
+1. 坐标与圆弧中心线：
+   - 方块内居中建模 [-8, 8] (对应 0-16 空间)；
+   - 管从 -Z 面中心进 (入口截面中心 x=0, z=-8)，从 +X 面中心出 (出口截面中心 x=8, z=0)；
+   - 中心线是以 (8, -8) 为圆心、半径 8 的四分之一圆弧；
+2. 4 段旋转直管拼弧：
+   - 每段沿切线方向放一节 8×6 截面的管 (暖粉 #d9a08c，上下 1px #e8bca8 亮边)；
+   - 段与段之间转 22.5° (绕 Y 旋转原点 (8.0, 5.0, -8.0)，四段分别 11.25°、33.75°、56.25°、78.75°)；
+   - 相邻两段在转角处重叠约 1px，严丝合缝不留缝；
+   - 整件严格落在 16×16×16 内，绝对不越界。
+3. 两端肉箍与小骨环端口 (同 b01)：
+   - 两端各一圈包管肉箍 (#8a2a2a，宽 3px，比管身外凸 1px：输入端 z: -7.5..-4.5，输出端 x: 4.5..7.5)；
+   - 骨环端口贴在两个肉箍顶面 (y: 9.0..9.5) 与底面 (y: 0.5..1.0) 各一个 (外 3×3、内孔 1×1、凸 0.5px、深色底 #5a1a1a)。
+4. 弧线外侧正面加一条连续的筋丝 #c07868：
+   - 随 4 段直管一同旋转，在外弧侧壁表面 (浮起 0.5px) 连成一条完整的连续弧形筋丝。
+5. 管内沿长轴放一根细芯 #f6dcc4 (截面 2×2)，随圆弧贯穿直通。
 """
 
 from __future__ import annotations
@@ -47,14 +44,15 @@ BBMODEL_OUT = REPO / "modelScript" / "models" / "meridian_factory" / "meridian_b
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/meridian_bend")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b02_meridian_bend.png")
 
+# 调色板 (严格对齐 2026-10-09 05:3x 调度审修订值)
 PALETTE = {
-    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉
-    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉
-    "bone_main":        (216, 204, 176, 255), # #d8ccb0 骨
-    "tendon_tube":      (217, 160, 140, 150), # #d9a08c 暖粉半透明筋管壁 (alpha 60%)
-    "tendon_highlight": (232, 188, 168, 255), # #e8bca8 亮边
-    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 内光细芯 / 6x2 淡光斑
-    "tendon_fiber":     (192, 120, 104, 255), # #c07868 斜交筋丝
+    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔内深色底)
+    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉 (两端肉箍主色)
+    "bone_main":        (216, 204, 176, 255), # #d8ccb0 骨 (贴面小骨环)
+    "tendon_tube":      (217, 160, 140, 150), # #d9a08c 暖粉半透明筋管壁 (alpha 约 60%)
+    "tendon_highlight": (232, 188, 168, 255), # #e8bca8 筋管上下 1px 亮边
+    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 内光细芯
+    "tendon_fiber":     (192, 120, 104, 255), # #c07868 外弧连续筋丝 (浮起 0.5px)
 }
 
 MAT_UV = {
@@ -68,247 +66,235 @@ MAT_UV = {
 }
 
 RES = 64
+BEND_ORIGIN = [8.0, 5.0, -8.0]
+
+
+# =============================================================================
+# 各部件几何定义 (part_* 拆分)
+# =============================================================================
 
 def part_01_flesh_collars() -> List[dict]:
-    """两端四面包覆的肉箍：宽 3px，比管身外凸 1px。"""
+    """两端四面包覆的肉箍：宽 3px，比管身外凸 1px，四周包覆 (同 b01)。
+    输入端肉箍 (-Z): z: -7.5..-4.5，外轮廓 x: -5.0..4.45, y: 1.0..9.0
+    输出端肉箍 (+X): x:  4.5.. 7.5，外轮廓 z: -4.45..5.0, y: 1.0..9.0
+    """
     cubes = []
-    # Part 1: 肉箍 (两端四面包覆，外凸 1px，宽 3px)
-    # 输入端肉箍 (-Z): z: -7.5..-4.5, x 范围取 [-5.0, 4.45] 避免与输出肉箍 corner 碰上
-    # 输出端肉箍 (+X): x:  4.5.. 7.5, z 范围取 [-4.45, 5.0]
-    # =========================================================================
-    cz_in = -6.0
-    # 输入端顶板 (y: 8.0..9.0)
+
+    # ── 1. -Z 输入端肉箍 (z: -7.5..-4.5) ──
+    # 顶板 (y: 8.0..9.0, 跨度 x: -5.0..4.45, 避让孔道 x: -0.5..0.5, z: -6.5..-5.5)
     cubes.append({"name": "collar_in_top_l", "from": [-5.0, 8.0, -7.5], "to": [-0.5, 9.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_top_r", "from": [0.5, 8.0, -7.5], "to": [4.45, 9.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_top_mb", "from": [-0.5, 8.0, -7.5], "to": [0.5, 9.0, -6.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_top_mf", "from": [-0.5, 8.0, -5.5], "to": [0.5, 9.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
 
-    # 输入端底板 (y: 1.0..2.0)
+    # 底板 (y: 1.0..2.0)
     cubes.append({"name": "collar_in_bot_l", "from": [-5.0, 1.0, -7.5], "to": [-0.5, 2.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_bot_r", "from": [0.5, 1.0, -7.5], "to": [4.45, 2.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_bot_mb", "from": [-0.5, 1.0, -7.5], "to": [0.5, 2.0, -6.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_bot_mf", "from": [-0.5, 1.0, -5.5], "to": [0.5, 2.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
 
-    # 输入端左右侧板 (y: 2.0..8.0)
+    # 左右侧板 (y: 2.0..8.0, 厚 1px)
     cubes.append({"name": "collar_in_side_l", "from": [-5.0, 2.0, -7.5], "to": [-4.0, 8.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_in_side_r", "from": [4.0, 2.0, -7.5], "to": [4.45, 8.0, -4.5], "group": "flesh_collars", "material": "flesh_main"})
 
-    # 输出端 (+X 端, x: 4.5..7.5)
-    cx_out = 6.0
-    # 输出端顶板 (y: 8.0..9.0, z: -4.45..5.0)
+    # ── 2. +X 输出端肉箍 (x: 4.5..7.5) ──
+    # 顶板 (y: 8.0..9.0, 跨度 z: -4.45..5.0, 避让孔道 x: 5.5..6.5, z: -0.5..0.5)
     cubes.append({"name": "collar_out_top_b", "from": [4.5, 8.0, -4.45], "to": [7.5, 9.0, -0.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_top_f", "from": [4.5, 8.0, 0.5], "to": [7.5, 9.0, 5.0], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_top_ml", "from": [4.5, 8.0, -0.5], "to": [5.5, 9.0, 0.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_top_mr", "from": [6.5, 8.0, -0.5], "to": [7.5, 9.0, 0.5], "group": "flesh_collars", "material": "flesh_main"})
 
-    # 输出端底板 (y: 1.0..2.0)
+    # 底板 (y: 1.0..2.0)
     cubes.append({"name": "collar_out_bot_b", "from": [4.5, 1.0, -4.45], "to": [7.5, 2.0, -0.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_bot_f", "from": [4.5, 1.0, 0.5], "to": [7.5, 2.0, 5.0], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_bot_ml", "from": [4.5, 1.0, -0.5], "to": [5.5, 2.0, 0.5], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_bot_mr", "from": [6.5, 1.0, -0.5], "to": [7.5, 2.0, 0.5], "group": "flesh_collars", "material": "flesh_main"})
 
-    # 输出端前后侧板 (y: 2.0..8.0)
+    # 前后侧板 (y: 2.0..8.0, 厚 1px)
     cubes.append({"name": "collar_out_side_b", "from": [4.5, 2.0, -4.45], "to": [7.5, 8.0, -4.0], "group": "flesh_collars", "material": "flesh_main"})
     cubes.append({"name": "collar_out_side_f", "from": [4.5, 2.0, 4.0], "to": [7.5, 8.0, 5.0], "group": "flesh_collars", "material": "flesh_main"})
 
-    # =========================================================================
     return cubes
 
+
 def part_02_ports() -> List[dict]:
-    """四个贴面小骨环端口，外 3x3, 内孔 1x1, 凸出 0.5px。"""
+    """贴面小骨环端口：外 3×3、内孔 1×1，凸出 0.5px，深色底 #5a1a1a (同 b01)。
+    四个角各一个：输入端顶底各一、输出端顶底各一。
+    """
     cubes = []
-    # Part 2: 端口贴面骨环 (外 3x3, 内孔 1x1, 凸出 0.5px)
-    # =========================================================================
-    # 输入端端口 (x=0, z=-6.0)
+
+    # ── A. 输入端端口 (中心 x=0, z=-6.0) ──
+    # 顶面端口 (y: 9.0..9.5)
     cubes.append({"name": "port_in_top_n", "from": [-1.5, 9.0, -7.5], "to": [1.5, 9.5, -6.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_top_s", "from": [-1.5, 9.0, -5.5], "to": [1.5, 9.5, -4.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_top_w", "from": [-1.5, 9.0, -6.5], "to": [-0.5, 9.5, -5.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_top_e", "from": [0.5, 9.0, -6.5], "to": [1.5, 9.5, -5.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_top_core", "from": [-0.48, 8.0, -6.48], "to": [0.48, 8.95, -5.52], "group": "ports", "material": "flesh_dark"})
 
+    # 底面端口 (y: 0.5..1.0)
     cubes.append({"name": "port_in_bot_n", "from": [-1.5, 0.5, -7.5], "to": [1.5, 1.0, -6.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_bot_s", "from": [-1.5, 0.5, -5.5], "to": [1.5, 1.0, -4.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_bot_w", "from": [-1.5, 0.5, -6.5], "to": [-0.5, 1.0, -5.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_bot_e", "from": [0.5, 0.5, -6.5], "to": [1.5, 1.0, -5.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_in_bot_core", "from": [-0.48, 1.05, -6.48], "to": [0.48, 2.0, -5.52], "group": "ports", "material": "flesh_dark"})
 
-    # 输出端端口 (x=6.0, z=0)
+    # ── B. 输出端端口 (中心 x=6.0, z=0) ──
+    # 顶面端口 (y: 9.0..9.5)
     cubes.append({"name": "port_out_top_w", "from": [4.5, 9.0, -1.5], "to": [5.5, 9.5, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_top_e", "from": [6.5, 9.0, -1.5], "to": [7.5, 9.5, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_top_s", "from": [5.5, 9.0, -1.5], "to": [6.5, 9.5, -0.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_top_n", "from": [5.5, 9.0, 0.5], "to": [6.5, 9.5, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_top_core", "from": [5.52, 8.0, -0.48], "to": [6.48, 8.95, 0.48], "group": "ports", "material": "flesh_dark"})
 
+    # 底面端口 (y: 0.5..1.0)
     cubes.append({"name": "port_out_bot_w", "from": [4.5, 0.5, -1.5], "to": [5.5, 1.0, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_bot_e", "from": [6.5, 0.5, -1.5], "to": [7.5, 1.0, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_bot_s", "from": [5.5, 0.5, -1.5], "to": [6.5, 1.0, -0.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_bot_n", "from": [5.5, 0.5, 0.5], "to": [6.5, 1.0, 1.5], "group": "ports", "material": "bone_main"})
     cubes.append({"name": "port_out_bot_core", "from": [5.52, 1.05, -0.48], "to": [6.48, 2.0, 0.48], "group": "ports", "material": "flesh_dark"})
 
-    # =========================================================================
     return cubes
 
-def part_03_meridian_tube() -> List[dict]:
-    """90° 弯管主体：暖粉半透明筋管 #d9a08c，外弧半径大，内弧半径小。"""
+
+def part_03_interface_stubs() -> List[dict]:
+    """两端 0.5px 标准接口露出段：严格居中为宽 8px x 高 6px、离地 2px，保证对接契约。"""
     cubes = []
-    # Part 3: 管道与分层无共面设计
-    # 底板厚度: y: 2.0..2.8 (底板由若干不重叠 XZ 块铺成)
-    # 顶板厚度: y: 7.2..8.0 (顶板由完全相同的 XZ 块铺成)
-    # 侧壁高度: y: 2.8..7.2 (只做中间高度，绝不碰 2.0 与 8.0！)
-    # =========================================================================
-    # ── 顶底板网格切分 (XZ 平面互不重叠，由输入口到输出口覆盖完整弯管) ──
-    # 1. 输入直通段: x: [-4.0, 4.0], z: [-8.0, -4.5]
-    # 2. 中段弯曲扇面分 4 个阶梯步：
-    #    步 1: x: [-4.0,  4.0], z: [-4.5, -2.0]
-    #    步 2: x: [-2.5,  4.5], z: [-2.0,  0.5]
-    #    步 3: x: [-0.5,  4.5], z: [ 0.5,  2.5]
-    #    步 4: x: [ 1.5,  4.5], z: [ 2.5,  4.0]
-    # 3. 输出直通段: x: [ 4.5, 8.0], z: [-4.0,  4.0]
-    floor_grid = [
-        ("fl_in_pipe",  -4.0,  4.0, -8.0, -4.5),
-        ("fl_bend_st1", -4.0,  4.0, -4.5, -2.0),
-        ("fl_bend_st2", -2.5,  4.5, -2.0,  0.5),
-        ("fl_bend_st3", -0.5,  4.5,  0.5,  2.5),
-        ("fl_bend_st4",  1.5,  4.5,  2.5,  4.0),
-        ("fl_out_pipe",  4.5,  8.0, -4.0,  4.0),
-    ]
-    for gname, gx0, gx1, gz0, gz1 in floor_grid:
-        # 底板
-        cubes.append({"name": f"{gname}_bot", "from": [gx0, 2.0, gz0], "to": [gx1, 2.8, gz1], "group": "meridian_tube", "material": "tendon_tube"})
-        # 顶板
-        cubes.append({"name": f"{gname}_top", "from": [gx0, 7.2, gz0], "to": [gx1, 8.0, gz1], "group": "meridian_tube", "material": "tendon_tube"})
+    # 输入端 (z: -8.0..-7.5, x: -4..4, y: 2..8)
+    cubes.append({"name": "in_stub_l", "from": [-4.0, 2.8, -8.0], "to": [-3.2, 7.2, -7.5], "group": "meridian_tube", "material": "tendon_tube"})
+    cubes.append({"name": "in_stub_r", "from": [3.2, 2.8, -8.0], "to": [4.0, 7.2, -7.5], "group": "meridian_tube", "material": "tendon_tube"})
+    cubes.append({"name": "in_stub_bot", "from": [-4.0, 2.0, -8.0], "to": [4.0, 2.8, -7.5], "group": "meridian_tube", "material": "tendon_highlight"})
+    cubes.append({"name": "in_stub_top", "from": [-4.0, 7.2, -8.0], "to": [4.0, 8.0, -7.5], "group": "meridian_tube", "material": "tendon_highlight"})
 
-    # ── 侧壁 (高度严格限制在 y: 2.8..7.2，厚 0.8px) ──
-    # 1. 输入口暴露壁段 (z: -8.0..-7.5)
-    cubes.append({"name": "wall_in_l", "from": [-4.0, 2.8, -8.0], "to": [-3.2, 7.2, -7.5], "group": "meridian_tube", "material": "tendon_tube"})
-    cubes.append({"name": "wall_in_r", "from": [3.2, 2.8, -8.0], "to": [4.0, 7.2, -7.5], "group": "meridian_tube", "material": "tendon_tube"})
-
-    # 2. 输出口暴露壁段 (x: 7.5..8.0)
-    cubes.append({"name": "wall_out_b", "from": [7.5, 2.8, -4.0], "to": [8.0, 7.2, -3.2], "group": "meridian_tube", "material": "tendon_tube"})
-    cubes.append({"name": "wall_out_f", "from": [7.5, 2.8, 3.2], "to": [8.0, 7.2, 4.0], "group": "meridian_tube", "material": "tendon_tube"})
-
-    # 3. 外弧侧壁 (凸侧大弧度：顺着外边缘 x=-4 -> x=-2.5 -> x=-0.5 -> x=1.5 -> z=4.0)
-    # y: 2.8..7.2，厚 0.8px
-    outer_walls = [
-        ("wall_out_seg1", -4.0, -3.2, -7.5, -2.0),
-        ("wall_out_cor1", -3.2, -2.5, -2.0, -1.2),
-        ("wall_out_seg2", -2.5, -1.7, -2.0,  0.5),
-        ("wall_out_cor2", -1.7, -0.5,  0.5,  1.3),
-        ("wall_out_seg3", -0.5,  0.3,  0.5,  2.5),
-        ("wall_out_cor3",  0.3,  1.5,  2.5,  3.2),
-        ("wall_out_seg4",  1.5,  4.5,  3.2,  4.0),
-        ("wall_out_seg5",  4.5,  7.5,  3.2,  4.0),
-    ]
-    for wname, wx0, wx1, wz0, wz1 in outer_walls:
-        # 下亮边 (y: 2.8..3.5)
-        cubes.append({"name": f"{wname}_rim_b", "from": [wx0, 2.8, wz0], "to": [wx1, 3.5, wz1], "group": "meridian_tube", "material": "tendon_highlight"})
-        # 中间主体 (y: 3.5..6.5)
-        cubes.append({"name": f"{wname}_mid", "from": [wx0, 3.5, wz0], "to": [wx1, 6.5, wz1], "group": "meridian_tube", "material": "tendon_tube"})
-        # 上亮边 (y: 6.5..7.2)
-        cubes.append({"name": f"{wname}_rim_t", "from": [wx0, 6.5, wz0], "to": [wx1, 7.2, wz1], "group": "meridian_tube", "material": "tendon_highlight"})
-
-    # 4. 内弧侧壁 (凹侧紧凑内角：在 x: 3.2..4.0, z: -4.5..-2.0 及内角处)
-    inner_walls = [
-        ("wall_in_seg1", 3.2, 4.0, -7.5, -4.5),
-        ("wall_in_seg2", 3.2, 4.0, -4.5, -2.0),
-        ("wall_in_cor",  4.0, 4.5, -2.0, -1.2),
-        ("wall_in_seg3", 4.5, 7.5, -4.0, -3.2),
-    ]
-    for iname, ix0, ix1, iz0, iz1 in inner_walls:
-        cubes.append({"name": iname, "from": [ix0, 2.8, iz0], "to": [ix1, 7.2, iz1], "group": "meridian_tube", "material": "tendon_tube"})
-
-    # 5. 外弧正面 6×2 淡光斑 (#f6dcc4 qi_glow)
-    # 贴在外弧中央最凸面 (wall_out_seg2 外侧 x: -2.55..-2.45, y: 4.0..6.0, z: -1.0..1.0)
-    cubes.append({
-        "name": "tube_bend_glow_window",
-        "from": [-2.54, 4.0, -1.0],
-        "to":   [-2.00, 6.0,  1.0],
-        "group": "meridian_tube",
-        "material": "qi_glow",
-    })
-
-    # =========================================================================
+    # 输出端 (x: 7.5..8.0, z: -4..4, y: 2..8)
+    cubes.append({"name": "out_stub_b", "from": [7.5, 2.8, -4.0], "to": [8.0, 7.2, -3.2], "group": "meridian_tube", "material": "tendon_tube"})
+    cubes.append({"name": "out_stub_f", "from": [7.5, 2.8, 3.2], "to": [8.0, 7.2, 4.0], "group": "meridian_tube", "material": "tendon_tube"})
+    cubes.append({"name": "out_stub_bot", "from": [7.5, 2.0, -4.0], "to": [8.0, 2.8, 4.0], "group": "meridian_tube", "material": "tendon_highlight"})
+    cubes.append({"name": "out_stub_top", "from": [7.5, 7.2, -4.0], "to": [8.0, 8.0, 4.0], "group": "meridian_tube", "material": "tendon_highlight"})
     return cubes
 
-def part_04_inner_qi_glow() -> List[dict]:
-    """管内长轴弧形贯穿细芯淡光 #f6dcc4，截面 2.0x2.0。"""
+
+def part_04_rotary_arc_tube() -> List[dict]:
+    """用 4 段直管旋转 22.5° 拼合出半径 8px 的四分之一圆弧：
+    段 1: 11.25°, 段 2: 33.75°, 段 3: 56.25°, 段 4: 78.75°。
+    相邻两段在转角处重叠约 1px，严丝合缝不留缝。
+    暖粉管壁 #d9a08c，上下各留 1px #e8bca8 亮边。
+    """
     cubes = []
-    # Part 4: 内光细芯 (#f6dcc4 qi_glow)
-    # y: 4.0..6.0, 宽 2.0, 沿弯管中线贯通
-    # =========================================================================
-    qi_segments = [
-        ("qi_core_1", -1.0, 1.0, -8.0, -3.5),
-        ("qi_core_2", -0.5, 2.0, -3.5, -1.0),
-        ("qi_core_3",  0.8, 3.5, -1.0,  1.2),
-        ("qi_core_4",  3.5, 8.0, -1.0,  1.0),
-    ]
-    for qname, qx0, qx1, qz0, qz1 in qi_segments:
-        cubes.append({"name": qname, "from": [qx0, 4.0, qz0], "to": [qx1, 6.0, qz1], "group": "inner_qi_glow", "material": "qi_glow"})
+    angles = [11.25, 33.75, 56.25, 78.75]
+    z_ranges = [(-8.6, -5.7), (-10.0, -6.0), (-10.0, -6.0), (-10.3, -7.4)]
 
-    # =========================================================================
+    for i, (ang, (z0, z1)) in enumerate(zip(angles, z_ranges)):
+        rot = [0, ang, 0]
+        pfx = f"seg_{i+1}"
+        # 1. 底部 1px 亮边 (y: 2.0..2.8)
+        cubes.append({
+            "name": f"tube_{pfx}_bot_rim",
+            "from": [-4.0, 2.0, z0],
+            "to":   [4.0, 2.8, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "meridian_tube",
+            "material": "tendon_highlight",
+        })
+        # 2. 顶部 1px 亮边 (y: 7.2..8.0)
+        cubes.append({
+            "name": f"tube_{pfx}_top_rim",
+            "from": [-4.0, 7.2, z0],
+            "to":   [4.0, 8.0, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "meridian_tube",
+            "material": "tendon_highlight",
+        })
+        # 3. 外弧侧壁 (x: -4.0..-3.2, y: 2.8..7.2, 暖粉色 #d9a08c)
+        cubes.append({
+            "name": f"tube_{pfx}_wall_out",
+            "from": [-4.0, 2.8, z0],
+            "to":   [-3.2, 7.2, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "meridian_tube",
+            "material": "tendon_tube",
+        })
+        # 4. 内弧侧壁 (x: 3.2..4.0, y: 2.8..7.2, 暖粉色 #d9a08c)
+        cubes.append({
+            "name": f"tube_{pfx}_wall_in",
+            "from": [3.2, 2.8, z0],
+            "to":   [4.0, 7.2, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "meridian_tube",
+            "material": "tendon_tube",
+        })
+
     return cubes
 
-def part_05_diagonal_fibers() -> List[dict]:
-    """斜交筋丝 #c07868，浮起 0.5px，立体交叉成完整 X。"""
+
+def part_05_inner_qi_glow() -> List[dict]:
+    """管内沿长轴细芯淡光 #f6dcc4 (截面 2x2, y: 4.0..6.0)：随 4 段直管一同旋转贯穿圆弧。"""
     cubes = []
-    # Part 5: 斜交筋丝 (#c07868 tendon_fiber，浮起 0.5px，立体交叉成完整 X)
-    # 在外弧凸面上对角交叉
-    # =========================================================================
-    # 对角线 1 (斜向上)
-    cubes.append({"name": "fib_d1_1", "from": [-4.45, 2.5, -4.2], "to": [-3.98, 3.8, -2.2], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d1_2", "from": [-2.95, 3.8, -2.2], "to": [-2.48, 5.0, -0.2], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d1_3", "from": [-0.95, 5.0, -0.2], "to": [-0.48, 6.2,  1.8], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d1_4", "from": [ 1.05, 6.2,  1.8], "to": [ 1.52, 7.5,  3.8], "group": "diagonal_fibers", "material": "tendon_fiber"})
+    angles = [11.25, 33.75, 56.25, 78.75]
+    z_ranges = [(-8.6, -5.7), (-10.0, -6.0), (-10.0, -6.0), (-10.3, -7.4)]
 
-    # 对角线 2 (斜向下，中心段微外浮跨越)
-    cubes.append({"name": "fib_d2_1", "from": [-4.45, 6.2, -4.2], "to": [-3.98, 7.5, -2.2], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d2_2", "from": [-2.95, 5.0, -2.2], "to": [-2.48, 6.2, -0.2], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d2_3_bridge", "from": [-1.05, 3.8, -0.2], "to": [-0.38, 5.0, 1.8], "group": "diagonal_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_d2_4", "from": [ 1.05, 2.5,  1.8], "to": [ 1.52, 3.8,  3.8], "group": "diagonal_fibers", "material": "tendon_fiber"})
-
-    # =========================================================================
+    for i, (ang, (z0, z1)) in enumerate(zip(angles, z_ranges)):
+        rot = [0, ang, 0]
+        pfx = f"seg_{i+1}"
+        cubes.append({
+            "name": f"qi_core_{pfx}",
+            "from": [-1.0, 4.0, z0],
+            "to":   [1.0, 6.0, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "inner_qi_glow",
+            "material": "qi_glow",
+        })
     return cubes
 
-def part_06_flesh_skirt() -> List[dict]:
-    """连续肉沿：沿外弧与内弧连续铺展，贴地 y: 0.0..1.2。"""
+
+def part_06_diagonal_fibers() -> List[dict]:
+    """弧线外侧正面连续筋丝 #c07868 (浮起 0.5px)：随管身一同旋转，连成完整对角弧形筋丝。"""
     cubes = []
-    # Part 6: 连续肉沿 (贴地 y: 0.0..1.2，沿外弧和内弧连续铺开，暗血肉 #5a1a1a)
-    # =========================================================================
-    # 外弧连续肉沿
-    skirt_outer = [
-        ("skirt_out_1", -5.8, -4.0, -6.5, -2.0),
-        ("skirt_out_2", -4.5, -2.2, -2.0,  0.5),
-        ("skirt_out_3", -2.2,  0.5,  0.5,  2.8),
-        ("skirt_out_4",  0.5,  3.5,  2.8,  4.8),
-        ("skirt_out_5",  3.5,  6.5,  4.0,  5.8),
-    ]
-    for sname, sx0, sx1, sz0, sz1 in skirt_outer:
-        cubes.append({"name": sname, "from": [sx0, 0.0, sz0], "to": [sx1, 1.2, sz1], "group": "flesh_skirt", "material": "flesh_dark"})
+    angles = [11.25, 33.75, 56.25, 78.75]
+    z_ranges = [(-8.6, -5.7), (-10.0, -6.0), (-10.0, -6.0), (-10.3, -7.4)]
 
-    # 内弧肉托
-    cubes.append({"name": "skirt_inner_anchor", "from": [4.0, 0.0, -5.5], "to": [5.5, 1.2, -4.0], "group": "flesh_skirt", "material": "flesh_dark"})
+    for i, (ang, (z0, z1)) in enumerate(zip(angles, z_ranges)):
+        rot = [0, ang, 0]
+        pfx = f"seg_{i+1}"
+        cubes.append({
+            "name": f"tendon_fiber_{pfx}",
+            "from": [-4.5, 4.6, z0],
+            "to":   [-4.0, 5.4, z1],
+            "origin": BEND_ORIGIN,
+            "rotation": rot,
+            "group": "diagonal_fibers",
+            "material": "tendon_fiber",
+        })
     return cubes
-
 
 
 def all_cubes() -> List[dict]:
-    """汇总所有 6 个部件的立方体。"""
+    """汇总所有部件的立方体。"""
     return (
         part_01_flesh_collars()
         + part_02_ports()
-        + part_03_meridian_tube()
-        + part_04_inner_qi_glow()
-        + part_05_diagonal_fibers()
-        + part_06_flesh_skirt()
+        + part_03_interface_stubs()
+        + part_04_rotary_arc_tube()
+        + part_05_inner_qi_glow()
+        + part_06_diagonal_fibers()
     )
 
 
+# =============================================================================
+# 门禁与无共面面核验
+# =============================================================================
+
 def _assert_no_coplanar_faces(cubes: List[dict]):
-    """检查立方体集是否存在严格同向同坐标且重叠的共面冲突。"""
-    faces: Dict[Tuple[str, float], List[dict]] = {}
+    """检查立方体集是否存在严格同向同坐标同旋转且重叠的共面冲突。"""
+    faces: Dict[Tuple[str, float, tuple], List[dict]] = {}
     for c in cubes:
         f = c["from"]
         t = c["to"]
+        rot = tuple(c.get("rotation", [0, 0, 0]))
         for side, axis, val in [
             ("-X", 0, f[0]), ("+X", 0, t[0]),
             ("-Y", 1, f[1]), ("+Y", 1, t[1]),
@@ -320,11 +306,11 @@ def _assert_no_coplanar_faces(cubes: List[dict]):
                 rect = (f[0], f[2], t[0], t[2])
             else:
                 rect = (f[0], f[1], t[0], t[1])
-            key = (side, round(val, 4))
+            key = (side, round(val, 4), rot)
             faces.setdefault(key, []).append((c["name"], rect))
 
     conflicts = []
-    for (side, val), entries in faces.items():
+    for (side, val, rot), entries in faces.items():
         if len(entries) < 2:
             continue
         for i in range(len(entries)):
@@ -337,11 +323,15 @@ def _assert_no_coplanar_faces(cubes: List[dict]):
                 v1 = min(r1[3], r2[3])
                 if u1 - u0 > 0.001 and v1 - v0 > 0.001:
                     conflicts.append(
-                        f"共面冲突: {n1} 与 {n2} 在 {side} 面共面 ({val}), 重叠区域 ({(u1-u0):.3f}x{(v1-v0):.3f})"
+                        f"共面冲突: {n1} 与 {n2} 在 {side} 面共面 ({val}, rot={rot}), 重叠区域 ({(u1-u0):.3f}x{(v1-v0):.3f})"
                     )
     if conflicts:
         raise AssertionError("\n".join(conflicts))
 
+
+# =============================================================================
+# 贴图与 bbmodel 序列化
+# =============================================================================
 
 def build_texture(res: int = RES) -> Image.Image:
     """生成 64×64 RGBA 贴图，严格使用 meridian_factory.md 修订后的暖粉配色。"""
@@ -417,6 +407,11 @@ def generate_bbmodel(out_path: Path = BBMODEL_OUT, cubes_override: List[dict] | 
             "faces": faces,
             "uuid": str(uuid.uuid4()),
         }
+        if "rotation" in c:
+            elem["rotation"] = c["rotation"]
+        if "origin" in c:
+            elem["origin"] = c["origin"]
+
         elements.append(elem)
 
     groups_map: Dict[str, List[str]] = {}
@@ -455,6 +450,10 @@ def generate_bbmodel(out_path: Path = BBMODEL_OUT, cubes_override: List[dict] | 
     return out_path
 
 
+# =============================================================================
+# 渲染与并排对标卡输出
+# =============================================================================
+
 def render_views(bbmodel_path: Path = BBMODEL_OUT):
     """输出四视角拼图 render.png 与左右并排对照卡 check.png 到 model-review。"""
     from bbmodel_maker.render.render_bbmodel import render
@@ -465,6 +464,7 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
     im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
+    # 俯视图：一眼看清四分之一圆弧
     im_top, _ = render(bbmodel_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
 
     canvas_w = 1040
@@ -476,12 +476,12 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
         ("FRONT (+Z View)", im_front, 20, 20),
         ("SIDE (+X Output)", im_side, 540, 20),
         ("3/4 ISOMETRIC", im_iso, 20, 540),
-        ("TOP (90-Deg Bend)", im_top, 540, 540),
+        ("TOP (Quarter Arc Bend)", im_top, 540, 540),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 230, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 250, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
 
     render_path = REVIEW_DIR / "render.png"
@@ -527,7 +527,7 @@ def self_test():
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
         "from": [-4.0, 2.0, -8.0],
-        "to":   [4.0, 2.8, -4.5],
+        "to":   [-4.0, 8.0, -7.5],
         "material": "flesh_main",
     }]
     caught = False
