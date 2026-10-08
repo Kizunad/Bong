@@ -497,12 +497,337 @@ def fuya_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
     }
 
 
+# ================================================================ 执念
+# 拖地长袍的持剑残魂：双腿各只一节骨（没有膝），走动只能靠髋部摆腿，像幽魂拖着一具
+# 不听使唤的躯壳。长袍前 / 后 / 两侧四片、三绺飘发各自一根骨，摆动才能错开相位；
+# 右手虎口始终扣着剑柄——idle 里那只手会无征兆地一紧，是「执念」放不下的意象。
+ZHINIAN_SINK = -2.6  # 死态髋部下沉量，由 check_ground() 反推
+
+
+def zhinian_robe(poser: Poser, pose: Pose, t: float, cycles: float, amount: float, lag: float = 0.0) -> None:
+    poser.turn(pose, "robe_front", rot=(amount * wave(t, cycles, lag), 0, 0))
+    poser.turn(pose, "robe_back", rot=(-amount * 0.85 * wave(t, cycles, lag + 0.3), 0, 0))
+    poser.turn(pose, "robe_side_l", rot=(0, 0, amount * 0.6 * wave(t, cycles, lag + 0.15)))
+    poser.turn(pose, "robe_side_r", rot=(0, 0, -amount * 0.6 * wave(t, cycles, lag + 0.45)))
+
+
+def zhinian_hair(poser: Poser, pose: Pose, t: float, cycles: float, amount: float, drag: float = 0.0) -> None:
+    poser.turn(pose, "hair_l", rot=(drag + amount * wave(t, cycles, 0.1), 0, 0))
+    poser.turn(pose, "hair_r", rot=(drag + amount * wave(t, cycles, 0.4), 0, 0))
+    poser.turn(pose, "hair_back", rot=(drag + amount * 0.7 * wave(t, cycles, 0.25), 0, 0))
+
+
+def zhinian_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
+    def idle(t: float) -> Pose:
+        pose = Pose()
+        poser.turn(pose, "hips", pos=(0, 0.2 * wave(t, 1), 0))
+        poser.turn(pose, "torso", rot=(2 + 1.3 * wave(t, 1, 0.1), 0, 0))
+        twitch = math.sin(math.pi * smooth((t - 0.58) / 0.08)) if 0.58 < t < 0.66 else 0.0
+        poser.turn(pose, "head", rot=(3 * wave(t, 1, 0.2), 10 * twitch, 0))
+        for side, phase in (("l", 0.0), ("r", 0.4)):
+            poser.turn(pose, f"arm_{side}", rot=(2 * wave(t, 1, phase), 0, 0))
+            poser.turn(pose, f"claw_{side}", rot=(5 * wave(t, 2, phase), 0, 0))
+        # 右手无征兆地一紧——放不下的执念
+        grip = math.sin(math.pi * smooth((t - 0.22) / 0.1)) if 0.22 < t < 0.32 else 0.0
+        poser.turn(pose, "forearm_r", rot=(-8 * grip, 0, 0))
+        poser.turn(pose, "sword", rot=(14 * grip, 0, 0))
+        zhinian_robe(poser, pose, t, cycles=1, amount=5)
+        zhinian_hair(poser, pose, t, cycles=1, amount=4)
+        return pose
+
+    def walk(t: float) -> Pose:
+        pose = Pose()
+        step = wave(t, 1)  # >0 = 左腿在前
+        poser.turn(pose, "hips", rot=(0, 7 * step, 2 * wave(t, 1, 0.25)),
+                   pos=(0, -0.35 * abs(wave(t, 1, 0.25)), 0))
+        poser.turn(pose, "leg_l", rot=(-18 * step, 0, 0))
+        poser.turn(pose, "leg_r", rot=(18 * step, 0, 0))
+        poser.turn(pose, "torso", rot=(9, -4 * step, 0))
+        poser.turn(pose, "head", rot=(-3, 4 * step, 0))
+        poser.turn(pose, "arm_l", rot=(12 * step, 0, 0))
+        poser.turn(pose, "claw_l", rot=(4 * wave(t, 1, 0.2), 0, 0))
+        poser.turn(pose, "arm_r", rot=(-5 * step, 0, 0))  # 持剑手摆幅收着，剑不乱甩
+        poser.turn(pose, "forearm_r", rot=(-3 * wave(t, 1, 0.1), 0, 0))
+        zhinian_robe(poser, pose, t, cycles=2, amount=8, lag=-0.12)
+        zhinian_hair(poser, pose, t, cycles=2, amount=7, drag=-6)
+        return pose
+
+    def attack(t: float) -> Pose:
+        pose = Pose()
+        poser.turn(pose, "hips", rot=(0, keys(t, [(0, 0), (0.35, -12), (0.55, 20), (0.7, 14), (1, 0)]), 0),
+                   pos=(0, 0, keys(t, [(0, 0), (0.35, -0.6), (0.55, 1.8), (1, 0)])))
+        poser.turn(pose, "torso", rot=(keys(t, [(0, 0), (0.35, -6), (0.55, 10), (0.7, 6), (1, 0)]),
+                                       keys(t, [(0, 0), (0.35, -20), (0.55, 26), (0.7, 18), (1, 0)]), 0))
+        poser.turn(pose, "head", rot=(0, keys(t, [(0, 0), (0.35, -10), (0.55, 14), (1, 0)]), 0))
+        poser.turn(pose, "arm_r", rot=(keys(t, [(0, 0), (0.35, -75), (0.55, 35), (0.7, 10), (1, 0)]), 0,
+                                       keys(t, [(0, 0), (0.35, 22), (0.55, -42), (0.7, -14), (1, 0)])))
+        poser.turn(pose, "forearm_r", rot=(keys(t, [(0, 0), (0.35, -28), (0.55, 55), (0.7, 12), (1, 0)]), 0, 0))
+        poser.turn(pose, "claw_r", rot=(keys(t, [(0, 0), (0.55, -18), (1, 0)]), 0, 0))
+        poser.turn(pose, "sword", rot=(keys(t, [(0, 0), (0.35, 14), (0.55, -10), (1, 0)]), 0, 0))
+        poser.turn(pose, "arm_l", rot=(keys(t, [(0, 0), (0.35, 16), (0.55, -22), (1, 0)]), 0, 0))
+        zhinian_robe(poser, pose, t, cycles=1, amount=11, lag=0.08)
+        zhinian_hair(poser, pose, t, cycles=1, amount=11, drag=keys(t, [(0, 0), (0.55, 16), (1, 0)]))
+        return pose
+
+    def hurt(t: float) -> Pose:
+        pose = Pose()
+        hit = math.sin(math.pi * t)
+        poser.turn(pose, "torso", rot=(-14 * hit, 0, 0))
+        poser.turn(pose, "head", rot=(-10 * hit, 0, 8 * math.sin(math.tau * 1.5 * t)))
+        poser.turn(pose, "hips", pos=(0, 0, -1.0 * hit))
+        poser.turn(pose, "arm_l", rot=(-18 * hit, 0, 0))
+        poser.turn(pose, "arm_r", rot=(-10 * hit, 0, 6 * hit))
+        poser.turn(pose, "sword", rot=(-12 * hit, 0, 0))
+        zhinian_robe(poser, pose, t, cycles=1, amount=16 * hit)
+        zhinian_hair(poser, pose, t, cycles=1, amount=16 * hit)
+        return pose
+
+    def death(t: float) -> Pose:
+        # 执念散尽：先一个趔趄（握剑的手先一松），再整个人往前折叠塌下去，长袍摊平、
+        # 发丝垂落；腿没有膝关节，只在髋部略向外撇，不做屈膝。
+        pose = Pose()
+        stagger = keys(t, [(0, 0), (0.22, 1.0), (0.4, 0.5)])
+        fold = keys(t, [(0.3, 0), (1, 1.0)])
+        poser.turn(pose, "hips", rot=(20 * fold, 0, 0), pos=(0, ZHINIAN_SINK * fold, 2.0 * fold))
+        poser.turn(pose, "torso", rot=(10 * stagger + 55 * fold, 0, 0))
+        poser.turn(pose, "head", rot=(15 * fold, 0, keys(t, [(0.2, 0), (0.6, 10), (1, 16)])))
+        poser.turn(pose, "leg_l", rot=(-14 * fold, 0, -8 * fold))
+        poser.turn(pose, "leg_r", rot=(-14 * fold, 0, 8 * fold))
+        poser.turn(pose, "arm_l", rot=(-22 * fold, 0, 0))
+        poser.turn(pose, "arm_r", rot=(-30 * stagger - 10 * fold, 0, 0))
+        poser.turn(pose, "forearm_r", rot=(keys(t, [(0, 0), (0.22, -14), (1, 20)]), 0, 0))
+        poser.turn(pose, "claw_r", rot=(30 * fold, 0, 0))
+        poser.turn(pose, "sword", rot=(keys(t, [(0, 0), (0.22, 10), (1, -24)]), 0, 0))
+        zhinian_robe(poser, pose, t, cycles=1, amount=10 * (1 - fold) + 4, lag=0.1)
+        zhinian_hair(poser, pose, t, cycles=1, amount=6 * (1 - fold), drag=20 * fold)
+        return pose
+
+    return {
+        "idle": (3.6, True, idle), "walk": (1.4, True, walk), "attack": (0.85, False, attack),
+        "hurt": (0.42, False, hurt), "death": (1.8, False, death),
+    }
+
+
+# ================================================================ 秘境守灵
+# 石甲巨像守卫：重甲披挂，动作沉、慢、方——要的是巨像苏醒时的重量感，不是生物的呼吸感。
+# 腰带前 / 后襟与两侧腰石片各自一根骨，错相摆才不会像一整块布在晃。
+TSY_SINK = -4.0  # 死态下沉量（倒地），由 check_ground() 反推
+
+
+def tsy_cloth(poser: Poser, pose: Pose, t: float, cycles: float, amount: float, drag: float = 0.0) -> None:
+    poser.turn(pose, "tabard_front", rot=(drag + amount * wave(t, cycles, 0.1), 0, 0))
+    poser.turn(pose, "tabard_back", rot=(drag + amount * 0.85 * wave(t, cycles, 0.35), 0, 0))
+    for side, phase in (("l", 0.2), ("r", 0.45)):
+        sign = -1.0 if side == "l" else 1.0
+        poser.turn(pose, f"tabard_side_{side}", rot=(0, 0, sign * amount * 0.6 * wave(t, cycles, phase)))
+        poser.turn(pose, f"hipguard_{side}", rot=(drag * 0.6 + amount * 0.5 * wave(t, cycles, phase + 0.1), 0, 0))
+
+
+def tsy_sentinel_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
+    def idle(t: float) -> Pose:
+        pose = Pose()
+        shift = wave(t, 1)
+        poser.turn(pose, "hips", rot=(0, 0, 2 * shift), pos=(0, 0.15 * wave(t, 2), 0))
+        poser.turn(pose, "torso", rot=(1.5 + 0.8 * wave(t, 1, 0.15), -2 * shift, 0))
+        poser.turn(pose, "head", rot=(0, 10 * wave(t, 1, 0.3), 0))
+        for side, phase in (("l", 0.0), ("r", 0.5)):
+            poser.turn(pose, f"arm_{side}", rot=(1.5 * wave(t, 1, phase), 0, 0))
+            poser.turn(pose, f"forearm_{side}", rot=(2 * wave(t, 2, phase), 0, 0))
+        tsy_cloth(poser, pose, t, cycles=1, amount=3)
+        return pose
+
+    def walk(t: float) -> Pose:
+        pose = Pose()
+        step = wave(t, 1)  # >0 = 右腿在前
+        bend_r = max(0.0, -wave(t, 1, 0.2))
+        bend_l = max(0.0, wave(t, 1, 0.2))
+        thud = abs(math.cos(math.tau * t)) ** 6  # 每次落脚身体顿一下，一步两次
+        poser.turn(pose, "hips", rot=(0, 10 * step, 3 * wave(t, 1, 0.25)), pos=(0, -0.5 * thud, 0))
+        poser.turn(pose, "torso", rot=(6, -8 * step, 0))
+        poser.turn(pose, "head", rot=(3 * thud, 4 * step, 0))
+        poser.turn(pose, "leg_r", rot=(-26 * step, 0, 0))
+        poser.turn(pose, "shin_r", rot=(30 * bend_r, 0, 0))
+        poser.turn(pose, "leg_l", rot=(26 * step, 0, 0))
+        poser.turn(pose, "shin_l", rot=(30 * bend_l, 0, 0))
+        poser.turn(pose, "arm_r", rot=(-14 * step, 0, 0))
+        poser.turn(pose, "arm_l", rot=(14 * step, 0, 0))
+        tsy_cloth(poser, pose, t, cycles=2, amount=10, drag=-6)
+        return pose
+
+    def attack(t: float) -> Pose:
+        pose = Pose()
+        poser.turn(pose, "hips", pos=(0, 0, keys(t, [(0, 0), (0.4, -1.0), (0.55, 2.4), (1, 0)])))
+        poser.turn(pose, "torso", rot=(keys(t, [(0, 0), (0.4, -4), (0.55, 14), (0.75, 10), (1, 0)]),
+                                       keys(t, [(0, 0), (0.4, -24), (0.55, 20), (0.75, 10), (1, 0)]), 0))
+        poser.turn(pose, "head", rot=(keys(t, [(0, 0), (0.4, -6), (0.55, 10), (1, 0)]), 0, 0))
+        poser.turn(pose, "arm_r", rot=(keys(t, [(0, 0), (0.4, -100), (0.55, 40), (0.7, 10), (1, 0)]), 0,
+                                       keys(t, [(0, 0), (0.4, 18), (0.55, -8), (1, 0)])))
+        poser.turn(pose, "forearm_r", rot=(keys(t, [(0, 0), (0.4, -20), (0.55, 70), (0.7, 15), (1, 0)]), 0, 0))
+        poser.turn(pose, "arm_l", rot=(keys(t, [(0, 0), (0.4, 30), (0.55, -20), (1, 0)]), 0, 0))
+        poser.turn(pose, "leg_r", rot=(keys(t, [(0, 0), (0.4, -8), (0.55, 10), (1, 0)]), 0, 0))
+        poser.turn(pose, "shin_r", rot=(keys(t, [(0, 0), (0.55, 14), (1, 0)]), 0, 0))
+        tsy_cloth(poser, pose, t, cycles=1, amount=14, drag=keys(t, [(0, 0), (0.55, -10), (1, 0)]))
+        return pose
+
+    def hurt(t: float) -> Pose:
+        pose = Pose()
+        hit = math.sin(math.pi * t)
+        poser.turn(pose, "torso", rot=(-10 * hit, 0, 0))
+        poser.turn(pose, "head", rot=(-14 * hit, 0, 0))
+        poser.turn(pose, "hips", pos=(0, 0, -1.0 * hit))
+        poser.turn(pose, "arm_l", rot=(-8 * hit, 0, 0))
+        poser.turn(pose, "arm_r", rot=(-8 * hit, 0, 0))
+        tsy_cloth(poser, pose, t, cycles=1, amount=14 * hit)
+        return pose
+
+    def death(t: float) -> Pose:
+        # 先一个前栽的踉跄（重心前冲），膝盖撑不住后彻底向前扑倒——石像倒塌没有缓冲。
+        pose = Pose()
+        stagger = keys(t, [(0, 0), (0.25, 1.0), (0.4, 0.6)])
+        topple = keys(t, [(0.3, 0), (1, 1.0)])
+        poser.turn(pose, "hips", rot=(22 * topple, 0, 0), pos=(0, TSY_SINK * topple, 3.0 * topple))
+        poser.turn(pose, "torso", rot=(14 * stagger + 60 * topple, 0, 0))
+        poser.turn(pose, "head", rot=(20 * topple, 0, 10 * stagger))
+        poser.turn(pose, "leg_r", rot=(-30 * topple, 0, 0))
+        poser.turn(pose, "leg_l", rot=(-30 * topple, 0, 0))
+        poser.turn(pose, "shin_r", rot=(70 * topple, 0, 0))
+        poser.turn(pose, "shin_l", rot=(70 * topple, 0, 0))
+        poser.turn(pose, "arm_r", rot=(-40 * topple, 0, 0))
+        poser.turn(pose, "arm_l", rot=(-40 * topple, 0, 0))
+        poser.turn(pose, "forearm_r", rot=(20 * topple, 0, 0))
+        poser.turn(pose, "forearm_l", rot=(20 * topple, 0, 0))
+        tsy_cloth(poser, pose, t, cycles=1, amount=6, drag=-24 * topple)
+        return pose
+
+    return {
+        "idle": (4.4, True, idle), "walk": (1.8, True, walk), "attack": (1.1, False, attack),
+        "hurt": (0.45, False, hurt), "death": (2.1, False, death),
+    }
+
+
+# ================================================================ 渊空畸变体
+# 低伏爬行的虚空畸变躯体：前肢（爪，挂在 body 上）探地抓拽，后腿（挂在 root 上）蹬地
+# 推进，对角步态（右前爪配左后腿、左前爪配右后腿）。虚空口无规律地张合、两侧前肢
+# 偶尔各自不同步地抽搐——「畸变」的辨识度就在不对称，不追求生物该有的协调感。
+VOID_SINK = -2.2  # 死态下沉量，由 check_ground() 反推
+
+
+def void_front_limb(poser: Poser, pose: Pose, t: float, side: str, phase: float,
+                     reach: float, lift: float) -> None:
+    u = frac(t + phase)
+    if u < 0.5:  # 抓握相：往前探、压低
+        s = u / 0.5
+        sweep = reach * (2 * smooth(s) - 1)
+        raise_y = 0.0
+    else:  # 收回相：抬起向后甩回
+        s = (u - 0.5) / 0.5
+        sweep = reach * (1 - 2 * s)
+        raise_y = lift * math.sin(math.pi * s)
+    poser.turn(pose, f"arm_{side}", rot=(sweep, 0, 0), pos=(0, raise_y, 0))
+    poser.turn(pose, f"claw_{side}", rot=(-raise_y * 1.6, 0, 0))
+
+
+def void_rear_leg(poser: Poser, pose: Pose, t: float, side: str, phase: float,
+                   stride: float, lift: float) -> None:
+    u = frac(t + phase)
+    if u < 0.5:  # 摆动相：屈膝前送
+        s = u / 0.5
+        sweep = -stride * (2 * smooth(s) - 1)
+        knee = lift * math.sin(math.pi * s)
+    else:  # 支撑相：蹬地往后划
+        s = (u - 0.5) / 0.5
+        sweep = -stride * (1 - 2 * s)
+        knee = 0.0
+    poser.turn(pose, f"leg_{side}", rot=(sweep, 0, 0))
+    poser.turn(pose, f"shin_{side}", rot=(knee, 0, 0))
+
+
+VOID_GAIT = {"arm_r": 0.0, "leg_l": 0.0, "arm_l": 0.5, "leg_r": 0.5}  # 对角步态相位
+
+
+def void_distorted_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
+    def idle(t: float) -> Pose:
+        pose = Pose()
+        poser.turn(pose, "body", rot=(2 * wave(t, 1), 0, 1.5 * wave(t, 1, 0.3)), pos=(0, 0.3 * wave(t, 2), 0))
+        # 虚空口无规律地张合，两次不等长的开合
+        gape1 = math.sin(math.pi * smooth((t - 0.15) / 0.15)) if 0.15 < t < 0.30 else 0.0
+        gape2 = math.sin(math.pi * smooth((t - 0.62) / 0.08)) if 0.62 < t < 0.70 else 0.0
+        poser.turn(pose, "maw", rot=(-26 * gape1 - 14 * gape2, 4 * wave(t, 1, 0.4), 0))
+        # 两侧前肢各自不同步地抽搐——不对称才是畸变
+        twitch_r = math.sin(math.pi * smooth((t - 0.4) / 0.08)) if 0.4 < t < 0.48 else 0.0
+        twitch_l = math.sin(math.pi * smooth((t - 0.75) / 0.1)) if 0.75 < t < 0.85 else 0.0
+        poser.turn(pose, "arm_r", rot=(10 * twitch_r, 0, 6 * twitch_r))
+        poser.turn(pose, "claw_r", rot=(-14 * twitch_r, 0, 0))
+        poser.turn(pose, "arm_l", rot=(8 * twitch_l, 0, -5 * twitch_l))
+        poser.turn(pose, "claw_l", rot=(-12 * twitch_l, 0, 0))
+        for side, phase in (("l", 0.2), ("r", 0.55)):
+            poser.turn(pose, f"leg_{side}", rot=(1.5 * wave(t, 1, phase), 0, 0))
+        return pose
+
+    def walk(t: float) -> Pose:
+        pose = Pose()
+        void_front_limb(poser, pose, t, "r", VOID_GAIT["arm_r"], reach=10, lift=8)
+        void_front_limb(poser, pose, t, "l", VOID_GAIT["arm_l"], reach=10, lift=8)
+        void_rear_leg(poser, pose, t, "r", VOID_GAIT["leg_r"], stride=12, lift=10)
+        void_rear_leg(poser, pose, t, "l", VOID_GAIT["leg_l"], stride=12, lift=10)
+        poser.turn(pose, "body", rot=(3 * wave(t, 2), 0, 2 * wave(t, 1)), pos=(0, 0.4 * abs(wave(t, 2)), 0))
+        poser.turn(pose, "maw", rot=(4 * wave(t, 2, 0.1), 3 * wave(t, 1), 0))
+        return pose
+
+    def attack(t: float) -> Pose:
+        pose = Pose()
+        lunge = keys(t, [(0, 0), (0.35, -0.8), (0.55, 3.2), (0.7, 2.6), (1, 0)])
+        rise = keys(t, [(0, 0), (0.35, 0.8), (0.55, -0.4), (1, 0)])
+        poser.turn(pose, "body", rot=(keys(t, [(0, 0), (0.35, -6), (0.55, 10), (0.7, 6), (1, 0)]), 0, 0),
+                   pos=(0, rise, lunge))
+        poser.turn(pose, "maw", rot=(keys(t, [(0, 0), (0.35, -34), (0.55, 8), (0.65, 2), (1, 0)]), 0, 0))
+        for side in ("l", "r"):
+            poser.turn(pose, f"arm_{side}", rot=(keys(t, [(0, 0), (0.35, -14), (0.55, 24), (0.7, 10), (1, 0)]), 0, 0))
+            poser.turn(pose, f"claw_{side}", rot=(keys(t, [(0, 0), (0.55, -30), (0.7, -8), (1, 0)]), 0, 0))
+            poser.turn(pose, f"leg_{side}", rot=(keys(t, [(0, 0), (0.35, 10), (0.55, -12), (1, 0)]), 0, 0))
+        return pose
+
+    def hurt(t: float) -> Pose:
+        pose = Pose()
+        hit = math.sin(math.pi * t)
+        poser.turn(pose, "body", rot=(-10 * hit, 0, 8 * math.sin(math.tau * 2 * t)), pos=(0, -0.6 * hit, -1.0 * hit))
+        poser.turn(pose, "maw", rot=(18 * hit, 0, 0))
+        for side in ("l", "r"):
+            sign = 1.0 if side == "r" else -1.0
+            poser.turn(pose, f"arm_{side}", rot=(0, 0, sign * 16 * hit))
+            poser.turn(pose, f"claw_{side}", rot=(-20 * hit, 0, 0))
+        return pose
+
+    def death(t: float) -> Pose:
+        # 整个身体瘫下去贴地，前肢爪子摊开松爪，后腿向外滑开，虚空口张开后不再合拢
+        pose = Pose()
+        sink = keys(t, [(0, 0), (0.2, 0.4), (1, 1.0)])
+        poser.turn(pose, "body", rot=(8 * sink, 0, 6 * sink),
+                   pos=(0, keys(t, [(0, 0), (0.2, 0.6), (1, VOID_SINK)]), 0))
+        poser.turn(pose, "maw", rot=(keys(t, [(0, 0), (0.3, -30), (1, -20)]), 0, 0))
+        for side in ("l", "r"):
+            sign = 1.0 if side == "r" else -1.0
+            poser.turn(pose, f"arm_{side}", rot=(10 * sink, 0, sign * 20 * sink))
+            poser.turn(pose, f"claw_{side}", rot=(-24 * sink, 0, 0))
+            poser.turn(pose, f"leg_{side}", rot=(0, 0, sign * 22 * sink))
+            poser.turn(pose, f"shin_{side}", rot=(18 * sink, 0, 0))
+        return pose
+
+    return {
+        "idle": (4.0, True, idle), "walk": (1.3, True, walk), "attack": (0.9, False, attack),
+        "hurt": (0.4, False, hurt), "death": (1.8, False, death),
+    }
+
+
 # ---------------------------------------------------------------- 导出
 CLIPS = {
     "ash_spider_v2": ash_spider_clips,
     "skull_fiend_v2": skull_fiend_clips,
     "daoxiang_v2": daoxiang_clips,
     "fuya_v2": fuya_clips,
+    "zhinian_v2": zhinian_clips,
+    "tsy_sentinel_v2": tsy_sentinel_clips,
+    "void_distorted_v2": void_distorted_clips,
 }
 
 
