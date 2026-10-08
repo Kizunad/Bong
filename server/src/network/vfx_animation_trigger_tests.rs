@@ -3481,6 +3481,31 @@ fn beast_melee_hit_for_species_with_dedicated_av_trigger_does_not_emit() {
 }
 
 #[test]
+fn beast_melee_hit_for_species_with_looping_attack_clip_does_not_emit() {
+    // JungleScorpion/LivingPillar/PoisonDragon/BoneDragon 的 attack 段在动画文件里是
+    // loop:true——当一次性攻击动作播会播完不停、卡在循环里，暂不收录进表（需要先补一段
+    // one-shot 版本，不在本次接线范围）。
+    for kind in [
+        FaunaVisualKind::JungleScorpion,
+        FaunaVisualKind::LivingPillar,
+        FaunaVisualKind::PoisonDragon,
+        FaunaVisualKind::BoneDragon,
+    ] {
+        let mut app = setup_beast_melee_app();
+        let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
+
+        app.world_mut()
+            .send_event(beast_melee_hit_event(attacker, 1.0));
+        app.update();
+
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "{kind:?} 的 attack 段是循环动画，本表不应收录"
+        );
+    }
+}
+
+#[test]
 fn player_attacker_without_fauna_visual_kind_does_not_emit() {
     // 玩家 AttackSource::Melee 也会走到同一条 CombatEvent，但玩家没有
     // FaunaVisualKind 组件——查询天然不命中，不会误把玩家攻击当成野兽攻击。
@@ -3573,7 +3598,7 @@ fn beast_melee_anim_duration_matches_animation_file() {
     }
 
     assert_eq!(
-        checked, 17,
+        checked, 13,
         "本轮收录的攻击动画映射条目数变化了，更新本测试的期望值（同时检查是否漏测新物种）"
     );
 }

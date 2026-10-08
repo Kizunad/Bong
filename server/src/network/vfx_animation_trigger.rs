@@ -527,12 +527,17 @@ pub fn emit_hit_recoil_animation_triggers(
 /// （或该物种已有的近战段，如灰烬蛛 `bite`）的物种；没有对应段的物种返回 `None`，不 emit——
 /// 宁可缺动画也不能播一个不存在的 clip 名（client `Profile.find` 查不到会静默无动作）。
 ///
-/// 以下物种**不**收录：各自已有专属 AV trigger，在此表重复映射会与其自身动画双重触发
-/// （fauna Marker 实体动作机只认"最后一次 trigger"，无优先级通道，会互相打断）：
-/// - `DainuLion` / `FuyuVulture` / `Horse` —— `fauna::wildlife::skills::animate`（技能起手播放）
-/// - `DevourRat` —— `network::rat_av_trigger`（peck/claw/pounce 三态）
-/// - `Heiwushi` —— `network::heiwushi_av_trigger`（boss 招式表，含 MeleeSlash → attack）
-/// - `HybridBeast` —— 三头位各自 bite 段走专属渲染/子 Profile 切换管线，不走本表
+/// 以下物种**不**收录，原因各不相同：
+///
+/// 1. 各自已有专属 AV trigger，在此表重复映射会与其自身动画双重触发（fauna Marker
+///    实体动作机只认"最后一次 trigger"，无优先级通道，会互相打断）：
+///    - `DainuLion` / `FuyuVulture` / `Horse` —— `fauna::wildlife::skills::animate`（技能起手播放）
+///    - `DevourRat` —— `network::rat_av_trigger`（peck/claw/pounce 三态）
+///    - `Heiwushi` —— `network::heiwushi_av_trigger`（boss 招式表，含 MeleeSlash → attack）
+///    - `HybridBeast` —— 三头位各自 bite 段走专属渲染/子 Profile 切换管线，不走本表
+/// 2. 动画文件里的 `attack` 段本身是**循环**动画（`loop:true`），不能当一次性攻击动作播
+///    （播完不会自动停，会一直循环卡住）。需要先补一段 one-shot 版本才能收录，不在本次
+///    接线范围——`JungleScorpion` / `LivingPillar` / `PoisonDragon` / `BoneDragon` 四只。
 ///
 /// tick 数 = 对应 `client/src/main/resources/assets/bong/animations/*.animation.json` 里
 /// `animation_length`(秒) × 20 向上取整（与 client `FaunaAnimations.read()` 换算规则一致），
@@ -544,27 +549,28 @@ fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
         FaunaVisualKind::AshSpider => Some(("animation.bong.ash_spider.bite", 11)),
         FaunaVisualKind::GreenSpider => Some(("animation.bong.green_spider.attack", 9)),
         FaunaVisualKind::BlueSpider => Some(("animation.bong.blue_spider.attack", 9)),
-        FaunaVisualKind::JungleScorpion => Some(("animation.bong.jungle_scorpion.attack", 37)),
         FaunaVisualKind::IceScorpion => Some(("animation.bong.ice_scorpion.attack", 24)),
         FaunaVisualKind::CockadeSnake => Some(("animation.bong.cockade_snake.attack", 18)),
         FaunaVisualKind::MandrakeSnake => Some(("animation.bong.mandrake_snake.attack", 18)),
         FaunaVisualKind::DarkTiger => Some(("animation.bong.dark_tiger.attack", 18)),
-        FaunaVisualKind::LivingPillar => Some(("animation.bong.living_pillar.attack", 84)),
-        FaunaVisualKind::PoisonDragon => Some(("animation.bong.poison_dragon.attack", 32)),
-        FaunaVisualKind::BoneDragon => Some(("animation.bong.bone_dragon.attack", 32)),
         FaunaVisualKind::VoidDistorted => Some(("animation.bong.void_distorted_v2.attack", 18)),
         FaunaVisualKind::Daoxiang => Some(("animation.bong.daoxiang_v2.attack", 18)),
         FaunaVisualKind::Zhinian => Some(("animation.bong.zhinian_v2.attack", 17)),
         FaunaVisualKind::TsySentinel => Some(("animation.bong.tsy_sentinel_v2.attack", 22)),
         FaunaVisualKind::Fuya => Some(("animation.bong.fuya_v2.attack", 20)),
         FaunaVisualKind::SkullFiend => Some(("animation.bong.skull_fiend_v2.attack", 18)),
-        // 已有专属 AV trigger 或共用子 Profile 渲染管线：不进本表（见上方 doc 注释）。
+        // 已有专属 AV trigger / 共用子 Profile 渲染管线，或 attack 段是循环动画暂不可用
+        // （见上方 doc 注释两条分类）。
         FaunaVisualKind::DainuLion
         | FaunaVisualKind::FuyuVulture
         | FaunaVisualKind::Horse
         | FaunaVisualKind::DevourRat
         | FaunaVisualKind::HybridBeast
-        | FaunaVisualKind::Heiwushi => None,
+        | FaunaVisualKind::Heiwushi
+        | FaunaVisualKind::JungleScorpion
+        | FaunaVisualKind::LivingPillar
+        | FaunaVisualKind::PoisonDragon
+        | FaunaVisualKind::BoneDragon => None,
     }
 }
 
