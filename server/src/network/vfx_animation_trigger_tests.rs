@@ -3257,6 +3257,10 @@ fn held_attack_anim_table_maps_item_templates_and_falls_back() {
             }),
         ),
         ("qing_feng_sword", Some(Single("bong:qing_feng_sword_use"))),
+        (
+            "qing_feng_sword_flawed",
+            Some(Single("bong:qing_feng_sword_use")),
+        ),
         ("spirit_sword", Some(Single("bong:spirit_sword_use"))),
         (
             "flying_sword_feixuan",
