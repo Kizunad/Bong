@@ -846,6 +846,9 @@ pub(crate) fn register_app_wiring(app: &mut App) {
                 .after(crate::combat::resolve::apply_defense_intents),
             vfx_animation_trigger::emit_hit_recoil_animation_triggers
                 .after(crate::combat::resolve::resolve_attack_intents),
+            // 生物动画接线第二阶段任务 1 —— 妖兽近战命中 → 攻击者 GeckoLib 攻击动画。
+            vfx_animation_trigger::emit_beast_melee_animation_triggers
+                .after(crate::combat::resolve::resolve_attack_intents),
             vfx_animation_trigger::emit_breakthrough_animation_triggers
                 .after(crate::cultivation::breakthrough::breakthrough_system),
             vfx_animation_trigger::emit_tribulation_animation_triggers

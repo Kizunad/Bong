@@ -28,22 +28,27 @@ const VFX_HEIWUSHI_DEATH: &str = "bong:heiwushi_death";
 const VFX_HEIWUSHI_SWORD_INTENT: &str = "bong:heiwushi_dark_barrage";
 
 // ── GeckoLib 实体招式动画名（必须与 client heiwushi.animation.json key 精确一致）────
-// 仅这几招有对应 GeckoLib 动画；MeleeSlash / Death 无专属动画，不 emit PlayEntityAnim。
+// 仅这几招有对应 GeckoLib 动画；Death 无专属动画，不 emit PlayEntityAnim（死亡动画由
+// client FaunaEntity.tick() 按 hpRatio 通用触发，见 docs 任务卡"第二阶段"章节）。
 const ANIM_HEIWUSHI_DARK_BARRAGE: &str = "animation.bong.heiwushi.dark_barrage";
 const ANIM_HEIWUSHI_DARK_VORTEX: &str = "animation.bong.heiwushi.dark_vortex";
 const ANIM_HEIWUSHI_TRANSFORM: &str = "animation.bong.heiwushi.transform";
 // SwordIntent（boss 飞剑）复用 dark_barrage 挥击动画。
 const ANIM_HEIWUSHI_SWORD_INTENT: &str = "animation.bong.heiwushi.dark_barrage";
+/// 生物动画补齐 C 组（PR #2405）新增的基础近战段——此前 MeleeSlash 无对应 GeckoLib 动画，
+/// 只靠粒子+音效呈现；现补上实体挥击动画。
+const ANIM_HEIWUSHI_MELEE_SLASH: &str = "animation.bong.heiwushi.attack";
 
 /// kind → (GeckoLib 动画名, 动画占用 tick)。返回 None 表示该招无对应实体动画（跳过 emit）。
 fn heiwushi_entity_anim_for(kind: HeiwushiActionKind) -> Option<(&'static str, u16)> {
     match kind {
+        HeiwushiActionKind::MeleeSlash => Some((ANIM_HEIWUSHI_MELEE_SLASH, 16)),
         HeiwushiActionKind::DarkBarrage => Some((ANIM_HEIWUSHI_DARK_BARRAGE, 15)),
         HeiwushiActionKind::DarkVortex => Some((ANIM_HEIWUSHI_DARK_VORTEX, 21)),
         HeiwushiActionKind::ShadowTransform => Some((ANIM_HEIWUSHI_TRANSFORM, 16)),
         HeiwushiActionKind::SwordIntent => Some((ANIM_HEIWUSHI_SWORD_INTENT, 15)),
-        // 无 GeckoLib 招式动画 → 仅靠粒子 + 音效呈现。
-        HeiwushiActionKind::MeleeSlash | HeiwushiActionKind::Death => None,
+        // 无 GeckoLib 招式动画 → 仅靠粒子 + 音效呈现（死亡动画走通用 hpRatio 触发）。
+        HeiwushiActionKind::Death => None,
     }
 }
 
@@ -308,7 +313,7 @@ mod tests {
     // ── PlayEntityAnim：黑武士招式 → GeckoLib 实体动画 ─────────────────────────
 
     /// 表驱动：每个有 GeckoLib 动画的招式 emit 正确 (anim, duration)，且 entity_id 取自
-    /// boss 的 `EntityId.get()`。MeleeSlash / Death 在下一条用例验证"不 emit"。
+    /// boss 的 `EntityId.get()`。Death 在下一条用例验证"不 emit"。
     #[test]
     fn action_emits_entity_anim_with_correct_anim_duration_and_entity_id() {
         let cases = [
@@ -332,6 +337,12 @@ mod tests {
                 HeiwushiActionKind::SwordIntent,
                 "animation.bong.heiwushi.dark_barrage",
                 15,
+            ),
+            (
+                // 生物动画补齐 C 组（PR #2405）补上的基础近战段。
+                HeiwushiActionKind::MeleeSlash,
+                "animation.bong.heiwushi.attack",
+                16,
             ),
         ];
         for (kind, expected_anim, expected_duration) in cases {
@@ -364,20 +375,20 @@ mod tests {
     }
 
     #[test]
-    fn melee_and_death_do_not_emit_entity_anim() {
-        for kind in [HeiwushiActionKind::MeleeSlash, HeiwushiActionKind::Death] {
-            let mut app = make_app();
-            let boss = spawn_boss_with_entity_id(&mut app);
-            send_action_from(&mut app, boss, kind);
-            app.update();
-            assert!(
-                drain_entity_anim(&app).is_empty(),
-                "{kind:?} 无 GeckoLib 招式动画，不应 emit PlayEntityAnim，实际: {:?}",
-                drain_entity_anim(&app)
-            );
-            // 但仍应 emit 粒子（确认只是没接动画，不是整条没跑）。
-            assert!(!drain_vfx(&app).is_empty(), "{kind:?} 仍应 emit 粒子 VFX");
-        }
+    fn death_does_not_emit_entity_anim() {
+        // 死亡动画走 client FaunaEntity.tick() 通用 hpRatio 触发，boss 招式表故意不发
+        // PlayEntityAnim，否则会与 client 的通用死亡判定重复 trigger。
+        let mut app = make_app();
+        let boss = spawn_boss_with_entity_id(&mut app);
+        send_action_from(&mut app, boss, HeiwushiActionKind::Death);
+        app.update();
+        assert!(
+            drain_entity_anim(&app).is_empty(),
+            "Death 无对应 GeckoLib 招式动画，不应 emit PlayEntityAnim，实际: {:?}",
+            drain_entity_anim(&app)
+        );
+        // 但仍应 emit 粒子（确认只是没接动画，不是整条没跑）。
+        assert!(!drain_vfx(&app).is_empty(), "Death 仍应 emit 粒子 VFX");
     }
 
     #[test]

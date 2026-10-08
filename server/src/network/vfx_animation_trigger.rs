@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use valence::entity::EntityId;
 use valence::prelude::{Entity, EventReader, EventWriter, Local, Position, Query, Res, UniqueId};
 
 use crate::botany::components::HarvestTerminalEvent;
@@ -35,6 +36,7 @@ use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
 use crate::cultivation::technique_scroll::TechniqueLearnedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
+use crate::fauna::visual::FaunaVisualKind;
 use crate::forge::events::TemperingHit;
 use crate::forge::session::{ForgeSessions, ForgeStep};
 use crate::inventory::PlayerInventory;
@@ -516,6 +518,84 @@ pub fn emit_hit_recoil_animation_triggers(
             &players,
             &mut vfx_events,
         );
+    }
+}
+
+/// 妖兽近战命中 → 攻击者 GeckoLib 攻击动画表驱动映射（第二阶段任务 1）。
+///
+/// `FaunaVisualKind` → (GeckoLib 动画全名, 占用 tick)。只收录**动画文件里真有** attack
+/// （或该物种已有的近战段，如灰烬蛛 `bite`）的物种；没有对应段的物种返回 `None`，不 emit——
+/// 宁可缺动画也不能播一个不存在的 clip 名（client `Profile.find` 查不到会静默无动作）。
+///
+/// 以下物种**不**收录：各自已有专属 AV trigger，在此表重复映射会与其自身动画双重触发
+/// （fauna Marker 实体动作机只认"最后一次 trigger"，无优先级通道，会互相打断）：
+/// - `DainuLion` / `FuyuVulture` / `Horse` —— `fauna::wildlife::skills::animate`（技能起手播放）
+/// - `DevourRat` —— `network::rat_av_trigger`（peck/claw/pounce 三态）
+/// - `Heiwushi` —— `network::heiwushi_av_trigger`（boss 招式表，含 MeleeSlash → attack）
+/// - `HybridBeast` —— 三头位各自 bite 段走专属渲染/子 Profile 切换管线，不走本表
+///
+/// tick 数 = 对应 `client/src/main/resources/assets/bong/animations/*.animation.json` 里
+/// `animation_length`(秒) × 20 向上取整（与 client `FaunaAnimations.read()` 换算规则一致），
+/// 逐条来源核对见本模块 `beast_melee_anim_duration_matches_animation_file` 测试。
+/// `VoidDistorted` / `Daoxiang` / `Zhinian` / `TsySentinel` / `Fuya` / `SkullFiend` 六只已切
+/// v2 资源（`FaunaVisualKind`(client) 构造参数），故动画全名含 `_v2`；v1 文件没有 attack 段。
+fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
+    match kind {
+        FaunaVisualKind::AshSpider => Some(("animation.bong.ash_spider.bite", 11)),
+        FaunaVisualKind::GreenSpider => Some(("animation.bong.green_spider.attack", 9)),
+        FaunaVisualKind::BlueSpider => Some(("animation.bong.blue_spider.attack", 9)),
+        FaunaVisualKind::JungleScorpion => Some(("animation.bong.jungle_scorpion.attack", 37)),
+        FaunaVisualKind::IceScorpion => Some(("animation.bong.ice_scorpion.attack", 24)),
+        FaunaVisualKind::CockadeSnake => Some(("animation.bong.cockade_snake.attack", 18)),
+        FaunaVisualKind::MandrakeSnake => Some(("animation.bong.mandrake_snake.attack", 18)),
+        FaunaVisualKind::DarkTiger => Some(("animation.bong.dark_tiger.attack", 18)),
+        FaunaVisualKind::LivingPillar => Some(("animation.bong.living_pillar.attack", 84)),
+        FaunaVisualKind::PoisonDragon => Some(("animation.bong.poison_dragon.attack", 32)),
+        FaunaVisualKind::BoneDragon => Some(("animation.bong.bone_dragon.attack", 32)),
+        FaunaVisualKind::VoidDistorted => Some(("animation.bong.void_distorted_v2.attack", 18)),
+        FaunaVisualKind::Daoxiang => Some(("animation.bong.daoxiang_v2.attack", 18)),
+        FaunaVisualKind::Zhinian => Some(("animation.bong.zhinian_v2.attack", 17)),
+        FaunaVisualKind::TsySentinel => Some(("animation.bong.tsy_sentinel_v2.attack", 22)),
+        FaunaVisualKind::Fuya => Some(("animation.bong.fuya_v2.attack", 20)),
+        FaunaVisualKind::SkullFiend => Some(("animation.bong.skull_fiend_v2.attack", 18)),
+        // 已有专属 AV trigger 或共用子 Profile 渲染管线：不进本表（见上方 doc 注释）。
+        FaunaVisualKind::DainuLion
+        | FaunaVisualKind::FuyuVulture
+        | FaunaVisualKind::Horse
+        | FaunaVisualKind::DevourRat
+        | FaunaVisualKind::HybridBeast
+        | FaunaVisualKind::Heiwushi => None,
+    }
+}
+
+/// Resolved beast melee hit -> attacker GeckoLib attack animation.
+///
+/// 读与 [`emit_hit_recoil_animation_triggers`] 相同的 `CombatEvent`（已结算、真伤 > 0 才算
+/// "命中"），但目标换成攻击者；玩家攻击者没有 `FaunaVisualKind` 组件，查询天然不命中、
+/// 直接跳过——两套系统各管一侧，互不冲突。
+pub fn emit_beast_melee_animation_triggers(
+    mut events: EventReader<CombatEvent>,
+    attackers: Query<(&Position, &EntityId, &FaunaVisualKind)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in events.read() {
+        if event.damage + event.physical_damage <= 0.0 {
+            continue;
+        }
+        let Ok((position, entity_id, visual_kind)) = attackers.get(event.attacker) else {
+            continue;
+        };
+        let Some((anim, duration_ticks)) = beast_melee_anim_for(*visual_kind) else {
+            continue;
+        };
+        vfx_events.send(VfxEventRequest::new(
+            position.get(),
+            VfxEventPayloadV1::PlayEntityAnim {
+                entity_id: entity_id.get(),
+                anim: anim.to_string(),
+                duration_ticks,
+            },
+        ));
     }
 }
 
