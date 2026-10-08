@@ -1,0 +1,18 @@
+# 经脉工厂器官 o02: 胃 (Stomach / stomach) 特征清单
+facing = "+z"
+size = 500
+
+[materials]
+flesh_main = [138, 42, 42]     # #8a2a2a 血肉主色
+flesh_lit = [176, 80, 80]       # #b05050 亮肉 / 黏膜粉
+flesh_dark = [90, 26, 26]       # #5a1a1a 暗血肉
+bone_main = [216, 204, 176]     # #d8ccb0 骨
+bone_dark = [184, 168, 136]     # #b8a888 骨暗面与环缝
+amber_fluid = [200, 138, 48]    # #c88a30 胃液琥珀
+
+[features]
+entrance_tube = { elements = ["tube_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 60 }
+stomach_sac = { elements = ["sac_row_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 200 }
+amber_cavity = { elements = ["amber_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
+output_port = { elements = ["port_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
+reinforcing_ribs = { elements = ["bone_rib_", "tendon_"], must_show_in = ["FRONT", "3/4"], min_px = 30 }
