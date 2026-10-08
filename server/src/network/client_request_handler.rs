@@ -4945,7 +4945,12 @@ pub(crate) fn handle_alchemy_intervention(
                     } else {
                         AlchemyWorldAction::FireLower
                     };
-                    AlchemyWorldEffect::emit(world_effects, furnace_pos, Some(session), action);
+                    AlchemyWorldEffect::emit(
+                        world_effects,
+                        furnace_pos,
+                        Some(session.domain_session()),
+                        action,
+                    );
                 }
             }
             if let Some(events) = vfx_events {
@@ -5117,7 +5122,7 @@ pub(crate) fn settle_alchemy_inject_qi_requests(
         AlchemyWorldEffect::emit(
             world_effects.as_deref_mut(),
             furnace_pos,
-            Some(session),
+            Some(session.domain_session()),
             AlchemyWorldAction::InjectQi {
                 source: [
                     f64::from(furnace_pos.0) + 0.5,
@@ -5247,7 +5252,10 @@ pub(crate) fn settle_finished_alchemy_furnace_qi(
                 if let Err(error) = crate::alchemy::qi::refund_furnace_qi_to_player(
                     owner,
                     &mut cultivation,
-                    furnace.session.as_mut(),
+                    furnace
+                        .session
+                        .as_mut()
+                        .map(|session| session.domain_session_mut()),
                     furnace_entity,
                     ledger,
                 ) {
@@ -5259,7 +5267,10 @@ pub(crate) fn settle_finished_alchemy_furnace_qi(
         }
         let result = crate::alchemy::qi::release_furnace_qi_to_overflow(
             furnace_entity,
-            furnace.session.as_mut(),
+            furnace
+                .session
+                .as_mut()
+                .map(|session| session.domain_session_mut()),
             ledger,
         );
         match result {
@@ -5359,6 +5370,13 @@ pub(crate) fn refund_alchemy_qi_on_disconnect(
             {
                 continue;
             }
+            if furnace.session.as_ref().is_some_and(|session| {
+                session.record.state == crate::session::SessionState::Suspended
+            }) {
+                // checkpointed session 已由 alchemy lifecycle reducer 落盘；保留炉体
+                // 账户，等待 guarded restore，不能在断线兜底里提前退款或进 overflow。
+                continue;
+            }
             let account = crate::alchemy::qi::furnace_qi_account(furnace_entity);
             if ledger.balance(&account) <= 0.0 {
                 reservations.forget(furnace_entity);
@@ -5367,7 +5385,10 @@ pub(crate) fn refund_alchemy_qi_on_disconnect(
             let Ok(mut cultivation) = cultivations.get_mut(player) else {
                 if let Err(error) = crate::alchemy::qi::release_furnace_qi_to_overflow(
                     furnace_entity,
-                    furnace.session.as_mut(),
+                    furnace
+                        .session
+                        .as_mut()
+                        .map(|session| session.domain_session_mut()),
                     ledger,
                 ) {
                     tracing::error!(
@@ -5380,7 +5401,10 @@ pub(crate) fn refund_alchemy_qi_on_disconnect(
             if let Err(error) = crate::alchemy::qi::refund_furnace_qi_to_player(
                 player_id.as_str(),
                 &mut cultivation,
-                furnace.session.as_mut(),
+                furnace
+                    .session
+                    .as_mut()
+                    .map(|session| session.domain_session_mut()),
                 furnace_entity,
                 ledger,
             ) {
@@ -5391,7 +5415,10 @@ pub(crate) fn refund_alchemy_qi_on_disconnect(
             if ledger.balance(&account) > 0.0 {
                 if let Err(error) = crate::alchemy::qi::release_furnace_qi_to_overflow(
                     furnace_entity,
-                    furnace.session.as_mut(),
+                    furnace
+                        .session
+                        .as_mut()
+                        .map(|session| session.domain_session_mut()),
                     ledger,
                 ) {
                     tracing::error!(
@@ -5436,48 +5463,57 @@ pub(crate) fn handle_alchemy_ignite(
         send_alchemy_error(&mut client, &player_id, message);
         return;
     }
-    let result = with_owned_furnace_mut(entity, &player_id, furnace_pos, furnaces, |furnace| {
-        if !furnace.can_run(recipe.furnace_tier_min) {
-            send_alchemy_error(
-                &mut client,
-                &player_id,
-                format!("炉阶不足或炉体已损：需要 t{}", recipe.furnace_tier_min),
-            );
-            return;
-        }
-        if furnace.is_busy() {
-            send_alchemy_error(&mut client, &player_id, "炉中已有丹火".to_string());
-            return;
-        }
-        let session = AlchemySession::new(recipe.id.clone(), player_id.clone());
-        if let Err(error) = furnace.start_session(session) {
-            send_alchemy_error(&mut client, &player_id, format!("起炉失败：{error}"));
-            return;
-        }
-        tracing::info!(
+    let result = with_owned_furnace_mut_with_entity(
+        entity,
+        &player_id,
+        furnace_pos,
+        furnaces,
+        |furnace_entity, furnace| {
+            if !furnace.can_run(recipe.furnace_tier_min) {
+                send_alchemy_error(
+                    &mut client,
+                    &player_id,
+                    format!("炉阶不足或炉体已损：需要 t{}", recipe.furnace_tier_min),
+                );
+                return;
+            }
+            if furnace.is_busy() {
+                send_alchemy_error(&mut client, &player_id, "炉中已有丹火".to_string());
+                return;
+            }
+            let session = AlchemySession::new(recipe.id.clone(), player_id.clone());
+            if let Err(error) = furnace.start_session_at(furnace_entity, session) {
+                send_alchemy_error(&mut client, &player_id, format!("起炉失败：{error}"));
+                return;
+            }
+            tracing::info!(
             "[bong][network][alchemy] `{player_id}` ignite `{recipe_id}` at pos={furnace_pos:?}"
         );
-        AlchemyWorldEffect::emit(
-            world_effects,
-            furnace_pos,
-            furnace.session.as_ref(),
-            AlchemyWorldAction::Ignite,
-        );
-        publish_alchemy_session_start(
-            redis,
-            furnace_pos,
-            furnace.tier,
-            recipe_id.as_str(),
-            player_id.as_str(),
-        );
-        alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
-        alchemy_snapshot_emit::send_session_from_furnace(
-            &mut client,
-            &player_id,
-            furnace,
-            registry,
-        );
-    });
+            AlchemyWorldEffect::emit(
+                world_effects,
+                furnace_pos,
+                furnace
+                    .session
+                    .as_ref()
+                    .map(|session| session.domain_session()),
+                AlchemyWorldAction::Ignite,
+            );
+            publish_alchemy_session_start(
+                redis,
+                furnace_pos,
+                furnace.tier,
+                recipe_id.as_str(),
+                player_id.as_str(),
+            );
+            alchemy_snapshot_emit::send_furnace_from_furnace(&mut client, &player_id, furnace);
+            alchemy_snapshot_emit::send_session_from_furnace(
+                &mut client,
+                &player_id,
+                furnace,
+                registry,
+            );
+        },
+    );
     log_or_send_route_error(result, &mut client, &player_id, furnace_pos, "ignite");
 }
 
@@ -5709,7 +5745,7 @@ pub(crate) fn handle_alchemy_feed_slot(
         AlchemyWorldEffect::emit(
             world_effects,
             furnace_pos,
-            Some(session),
+            Some(session.domain_session()),
             AlchemyWorldAction::Feed {
                 item: material.clone(),
                 count,
@@ -5808,7 +5844,7 @@ pub(crate) fn handle_alchemy_place_incense(
         AlchemyWorldEffect::emit(
             world_effects,
             furnace_pos,
-            Some(session),
+            Some(session.domain_session()),
             AlchemyWorldAction::Incense,
         );
         alchemy_snapshot_emit::send_session_from_furnace(

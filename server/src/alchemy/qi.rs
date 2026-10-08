@@ -243,10 +243,26 @@ pub(crate) fn flush_furnace_qi_on_shutdown(
         return;
     };
     for (furnace_entity, mut furnace) in furnaces.iter_mut() {
+        if furnace
+            .session
+            .as_ref()
+            .is_some_and(|session| session.record.state == crate::session::SessionState::Suspended)
+        {
+            // durable checkpoint 已经由 lifecycle 系统落盘；保留炉体账户，等待 guarded
+            // restore，不能在关服兜底里提前把余额转入 overflow。
+            continue;
+        }
         if ledger.balance(&furnace_qi_account(furnace_entity)) <= 0.0 {
             continue;
         }
-        match release_furnace_qi_to_overflow(furnace_entity, furnace.session.as_mut(), ledger) {
+        match release_furnace_qi_to_overflow(
+            furnace_entity,
+            furnace
+                .session
+                .as_mut()
+                .map(|session| session.domain_session_mut()),
+            ledger,
+        ) {
             Ok(_) => {
                 if let Some(reservations) = reservations.as_deref_mut() {
                     reservations.forget(furnace_entity);
@@ -265,6 +281,7 @@ mod tests {
 
     use crate::alchemy::furnace::AlchemyFurnace;
     use crate::cultivation::components::Cultivation;
+    use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
     use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
     use crate::qi_physics::WorldQiBudget;
     use crate::schema::common::TEST_QI_FIXTURE_TOTAL;
@@ -428,10 +445,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(2, 64, 3), 1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         let before = summarize_world_qi(app.world_mut());
         app.world_mut()
@@ -496,10 +515,12 @@ mod tests {
             })
             .id();
         let mut furnace = AlchemyFurnace::new(1);
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
             .resource_mut::<Events<InjectQiRequest>>()
@@ -569,7 +590,7 @@ mod tests {
             AlchemySession::new("hui_yuan_pill_v0".to_string(), "offline:Alice".to_string());
         session.record_paid_qi(20.0);
         session.finished = true;
-        furnace.session = Some(session);
+        furnace.start_session(session).unwrap();
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
             .resource_mut::<WorldQiAccount>()
@@ -731,10 +752,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::new(1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(20.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
@@ -791,10 +814,12 @@ mod tests {
             .id();
         let mut furnace = AlchemyFurnace::new(1);
         furnace.owner = Some("offline:Alice".to_string());
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(20.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
@@ -836,10 +861,12 @@ mod tests {
         app.add_systems(Last, flush_furnace_qi_on_shutdown);
 
         let mut furnace = AlchemyFurnace::new(1);
-        furnace.session = Some(AlchemySession::new(
-            "hui_yuan_pill_v0".to_string(),
-            "offline:Alice".to_string(),
-        ));
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
         furnace.session.as_mut().unwrap().record_paid_qi(9.0);
         let furnace_entity = app.world_mut().spawn(furnace).id();
         app.world_mut()
@@ -864,6 +891,57 @@ mod tests {
                 .resource::<WorldQiAccount>()
                 .balance(&qi_flow_overflow_account()),
             9.0
+        );
+    }
+
+    #[test]
+    fn shutdown_keeps_checkpointed_furnace_balance_for_guarded_restore() {
+        let mut app = App::new();
+        // 该关服路径验证生产默认预算；局部注灵测试仍使用小夹具以保持测试轻量。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
+        app.insert_resource(WorldQiAccount::default());
+        app.init_resource::<AlchemyQiReservationBook>();
+        app.add_event::<AppExit>();
+        app.add_systems(Last, flush_furnace_qi_on_shutdown);
+
+        let mut furnace = AlchemyFurnace::new(1);
+        furnace
+            .start_session(AlchemySession::new(
+                "hui_yuan_pill_v0".to_string(),
+                "offline:Alice".to_string(),
+            ))
+            .unwrap();
+        furnace.session.as_mut().unwrap().record_paid_qi(9.0);
+        let mut lifecycle_context = crate::session::SessionLifecycleCtx::default();
+        furnace
+            .session
+            .as_mut()
+            .unwrap()
+            .suspend_for_shutdown(&mut lifecycle_context)
+            .expect("a running furnace must produce a shutdown checkpoint");
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(furnace_qi_account(furnace_entity), 9.0)
+            .unwrap();
+        let before = summarize_world_qi(app.world_mut());
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("checkpointed furnace balance must remain conserved at shutdown");
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&furnace_qi_account(furnace_entity)),
+            9.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&qi_flow_overflow_account()),
+            0.0
         );
     }
 }

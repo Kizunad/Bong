@@ -275,7 +275,15 @@ pub fn send_session_from_furnace(
     furnace: &crate::alchemy::AlchemyFurnace,
     registry: &RecipeRegistry,
 ) {
-    send_session(client, player_id, furnace.session.as_ref(), registry);
+    send_session(
+        client,
+        player_id,
+        furnace
+            .session
+            .as_ref()
+            .map(|session| session.domain_session()),
+        registry,
+    );
 }
 
 /// 收炉后的 session 已从炉组件移除；仍向客户端推送一次完整的 inactive 结束快照。
@@ -660,10 +668,9 @@ mod tests {
         session.staged.completed_stages = vec![0];
         session.staged.missed_stages = vec![1];
         session.interventions.push(Intervention::AdjustTemp(0.58));
-        AlchemyFurnace {
-            session: Some(session),
-            ..AlchemyFurnace::default()
-        }
+        let mut furnace = AlchemyFurnace::default();
+        furnace.start_session(session).unwrap();
+        furnace
     }
 
     fn expected_active_data(active: bool, status_label: &str) -> AlchemySessionDataV1 {
@@ -735,7 +742,13 @@ mod tests {
             .as_mut()
             .expect("fixture furnace must contain an alchemy session")
             .finished = finished;
-        let data = build_session_data(furnace.session.as_ref(), &test_registry());
+        let data = build_session_data(
+            furnace
+                .session
+                .as_ref()
+                .map(|session| session.domain_session()),
+            &test_registry(),
+        );
         let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemySession(Box::new(data)));
 
         serialize_server_data_payload_proto(&payload)
@@ -939,7 +952,13 @@ mod tests {
     #[test]
     fn active_session_snapshot_uses_complete_recipe_contract_in_declared_stage_order() {
         let furnace = active_furnace();
-        let data = build_session_data(furnace.session.as_ref(), &test_registry());
+        let data = build_session_data(
+            furnace
+                .session
+                .as_ref()
+                .map(|session| session.domain_session()),
+            &test_registry(),
+        );
 
         assert_eq!(
             data,
@@ -1018,7 +1037,13 @@ mod tests {
         let mut furnace = active_furnace();
         furnace.session.as_mut().unwrap().recipe = "missing_recipe".into();
 
-        let data = build_session_data(furnace.session.as_ref(), &RecipeRegistry::new());
+        let data = build_session_data(
+            furnace
+                .session
+                .as_ref()
+                .map(|session| session.domain_session()),
+            &RecipeRegistry::new(),
+        );
 
         assert!(!data.active);
         assert_eq!(data.recipe_id.as_deref(), Some("missing_recipe"));
@@ -1035,7 +1060,13 @@ mod tests {
         let mut furnace = active_furnace();
         furnace.session.as_mut().unwrap().finished = true;
 
-        let data = build_session_data(furnace.session.as_ref(), &test_registry());
+        let data = build_session_data(
+            furnace
+                .session
+                .as_ref()
+                .map(|session| session.domain_session()),
+            &test_registry(),
+        );
 
         assert_eq!(
             data,
