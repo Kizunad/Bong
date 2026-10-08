@@ -713,18 +713,27 @@ VOID_SINK = -2.2  # 死态下沉量，由 check_ground() 反推
 
 
 def void_front_limb(poser: Poser, pose: Pose, t: float, side: str, phase: float,
-                     reach: float, lift: float) -> None:
+                     reach: float, curl: float) -> None:
+    """前肢只在肩部小幅摆动（前臂始终朝下）；收回靠爪子自己的关节往回勾，不抬肩。
+
+    Round 1 曾经用 ``pos=(0, lift, 0)`` 直接把肩关节的枢轴往上平移，幅度一大就等于
+    把整条前肢从肩窝里拔出来悬在半空——肩部摆动角本身很小反而不是主因，是「平移
+    枢轴」这个手法本身不对。改成只转不平移：肩部摆幅收窄，收回相的「抬起」完全交给
+    爪子关节自己往上勾（类似膝 / 踝折的手法），爪尖最多也只能勾到腕关节的高度，
+    结构上就做不到甩过肩。
+    """
+
     u = frac(t + phase)
-    if u < 0.5:  # 抓握相：往前探、压低
+    if u < 0.5:  # 抓握相：往前探、压低，前臂仍朝下
         s = u / 0.5
         sweep = reach * (2 * smooth(s) - 1)
-        raise_y = 0.0
-    else:  # 收回相：抬起向后甩回
+        bend = 0.0
+    else:  # 收回相：爪子关节往回勾，把爪子收到身下
         s = (u - 0.5) / 0.5
         sweep = reach * (1 - 2 * s)
-        raise_y = lift * math.sin(math.pi * s)
-    poser.turn(pose, f"arm_{side}", rot=(sweep, 0, 0), pos=(0, raise_y, 0))
-    poser.turn(pose, f"claw_{side}", rot=(-raise_y * 1.6, 0, 0))
+        bend = curl * math.sin(math.pi * s)
+    poser.turn(pose, f"arm_{side}", rot=(sweep, 0, 0))
+    poser.turn(pose, f"claw_{side}", rot=(bend, 0, 0))
 
 
 def void_rear_leg(poser: Poser, pose: Pose, t: float, side: str, phase: float,
@@ -765,11 +774,12 @@ def void_distorted_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]
         return pose
 
     def walk(t: float) -> Pose:
+        # 两条对角线故意给不一样的步幅和屈曲量——畸变的步态不该左右对称协调。
         pose = Pose()
-        void_front_limb(poser, pose, t, "r", VOID_GAIT["arm_r"], reach=10, lift=8)
-        void_front_limb(poser, pose, t, "l", VOID_GAIT["arm_l"], reach=10, lift=8)
-        void_rear_leg(poser, pose, t, "r", VOID_GAIT["leg_r"], stride=12, lift=10)
-        void_rear_leg(poser, pose, t, "l", VOID_GAIT["leg_l"], stride=12, lift=10)
+        void_front_limb(poser, pose, t, "r", VOID_GAIT["arm_r"], reach=9, curl=46)
+        void_front_limb(poser, pose, t, "l", VOID_GAIT["arm_l"], reach=6, curl=34)
+        void_rear_leg(poser, pose, t, "r", VOID_GAIT["leg_r"], stride=11, lift=13)
+        void_rear_leg(poser, pose, t, "l", VOID_GAIT["leg_l"], stride=15, lift=9)
         poser.turn(pose, "body", rot=(3 * wave(t, 2), 0, 2 * wave(t, 1)), pos=(0, 0.4 * abs(wave(t, 2)), 0))
         poser.turn(pose, "maw", rot=(4 * wave(t, 2, 0.1), 3 * wave(t, 1), 0))
         return pose
