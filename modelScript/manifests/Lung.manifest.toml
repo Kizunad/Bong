@@ -6,12 +6,12 @@ size = 500
 flesh_main = [138, 42, 42]     # #8a2a2a 血肉主色
 flesh_lit = [176, 80, 80]       # #b05050 亮肉 / 肺泡粉
 flesh_dark = [90, 26, 26]       # #5a1a1a 暗血肉
-bone_main = [216, 204, 176]     # #d8ccb0 骨环与端口加固骨箍
-bone_dark = [184, 168, 136]     # #b8a888 骨暗面
+bone_main = [216, 204, 176]     # #d8ccb0 骨环与支气管
+bone_dark = [184, 168, 136]     # #b8a888 骨暗面与环缝
 
 [features]
 trachea = { elements = ["trachea_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 60 }
-right_lobe = { elements = ["lobe_r_"], must_show_in = ["FRONT", "SIDE_R", "3/4"], min_px = 200 }
-left_lobe = { elements = ["lobe_l_"], must_show_in = ["FRONT", "SIDE_L", "3/4"], min_px = 200 }
-hilum_vessels = { elements = ["hilum_"], must_show_in = ["FRONT", "3/4"], min_px = 30 }
+bronchial_tree = { elements = ["bronchus_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
+right_lobe = { elements = ["lobe_r_"], must_show_in = ["FRONT", "3/4"], min_px = 200 }
+left_lobe = { elements = ["lobe_l_"], must_show_in = ["FRONT", "3/4"], min_px = 200 }
 output_port = { elements = ["port_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }

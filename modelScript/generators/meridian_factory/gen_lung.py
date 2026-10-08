@@ -6,20 +6,29 @@
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-统一约定落实：
-1. 尺寸与外包围：3 宽 × 3 高 × 2 深方块 (严格落在 48×48×32 px 空间内：x: -24..24, y: 0..48, z: -16..16)。
-   原点放在底面中心 (0, 0, 0)。
-2. 朝向：正面朝向 +Z，输入端位于 -Z/顶部气管，输出端口位于 +Z 侧底部。
-3. 连接面：底部输出端口严格遵循统一接口截面：
-   宽 8 px × 高 6 px、居中 (x: -4.0..4.0)、底边离地 2 px (y: 2.0..8.0)，朝向 +Z 延伸至 z = 16.0，
-   配有坚实骨环卡箍领圈 (#d8ccb0) 与输出内腔通道 (#5a1a1a / #f4ece0)。
-4. 结构要点：
-   - 顶部骨环气管 (骨环 #d8ccb0 与深色凹槽 #6a5a48) 以及气管隆嵴分支支气管；
-   - 一对海绵状肺叶（左右略不对称，右肺三叶偏丰满展开，左肺两叶带近心切迹）；
-   - 肺泡海绵状粉红凸起簇 (#b05050)、血肉主基底 (#8a2a2a) 与裂隙暗部 (#5a1a1a)；
-   - 肺门脉管组织与半透明筋膜 (#e8d8d0)；
-   - 底部汇流管腔与统一截面输出端口。
-5. 门禁要求：通过 _assert_no_coplanar_faces 自检，带 --self-test 差分缺陷拦截验证。
+调度审第 1 次针对性返工落实：
+1. 肺叶轮廓（上窄下宽、顶部收圆）：
+   - 按 Y 轴分 5 级台阶，顶上两级（Tier 4 与 Tier 5）明显收窄；
+   - 顶部圆拱收尖（dome apex），消除扁平方盒感；
+   - 两叶之间保留清晰中缝（宽约 3~5px）；
+   - 左叶略小于右叶（左肺两叶、右肺三叶），左叶内侧明显凹进形成近心切迹（cardiac notch）。
+2. 正面 Y 形分叉支气管系统：
+   - 气管底部分叉形成 Y 形主支气管，延伸贴附于两叶正面；
+   - 两侧各自分支 2~3 次（主干 → 二级支气管 → 三级终末细支）；
+   - 骨色 #d8ccb0 与暗面 #b8a888，宽约 1.0px，在叶片正表面微凸起浮起约 0.4~0.5px。
+3. 顶部气管（长气管、分节软骨环与骨口）：
+   - 气管从两肺叶顶部明显向上伸出约 6px（伸出段 y: 42.0..48.0）；
+   - 由 6 节清晰分节软骨环（环 #d8ccb0、环缝 #6a5a48 / #b8a888）构成；
+   - 顶端设有一圈空心骨口与内部幽深暗腔通道。
+4. 海绵斑点表面质感：
+   - 血肉主基底 #8a2a2a；
+   - 散布小块肺泡粉斑点 #b05050 与凸起海绵结节；
+   - 边缘与裂隙深凹暗部 #5a1a1a，拒绝大面积单色扁平。
+5. 底部统一截面输出端口：
+   - 严格遵循统一连接截面：宽 8 px × 高 6 px、居中（x: -4.0..4.0）、底边离地 2 px（y: 2.0..8.0）；
+   - 端口外围包裹一圈 2px 厚度的肉质管套（#8a2a2a，外廓 12 宽 × 10 高，底边贴地 y=0.0）；
+   - 从两叶下方中央向前朝 +Z 伸出至 z = 16.0；
+   - 方口内壁衬有明亮的亮肉粉内衬（#b05050）与真元灵流光芯（#f4ece0）。
 """
 
 from __future__ import annotations
@@ -45,11 +54,11 @@ REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img
 # 调色板 (严格对齐 meridian_factory.md 色值表)
 PALETTE = {
     "flesh_dark":   (90, 26, 26, 255),    # #5a1a1a 暗血肉 (裂隙、内腔、暗部基底)
-    "flesh_main":   (138, 42, 42, 255),   # #8a2a2a 血肉 (肺叶主色、肌肉管壁)
-    "flesh_lit":    (176, 80, 80, 255),   # #b05050 亮肉 / 肺泡粉 (海绵状肺泡簇、表层结节)
-    "bone_main":    (216, 204, 176, 255), # #d8ccb0 骨 (气管环、端口外环、加固卡箍)
-    "bone_dark":    (184, 168, 136, 255), # #b8a888 骨暗面
-    "bone_crevice": (106, 90, 72, 255),   # #6a5a48 骨缝 / 阴影
+    "flesh_main":   (138, 42, 42, 255),   # #8a2a2a 血肉 (肺叶主色、肉套外壁)
+    "flesh_lit":    (176, 80, 80, 255),   # #b05050 亮肉 / 肺泡粉 (海绵肺泡簇、表层结节、方口内壁)
+    "bone_main":    (216, 204, 176, 255), # #d8ccb0 骨 (气管软骨环、支气管前脊)
+    "bone_dark":    (184, 168, 136, 255), # #b8a888 骨暗面 / 支气管底面
+    "bone_crevice": (106, 90, 72, 255),   # #6a5a48 骨缝 / 环间凹槽
     "tendon_fascia":(232, 216, 208, 180), # #e8d8d0 半透明筋膜 (alpha 约 60~70%)
     "qi_glow":      (244, 236, 224, 255), # #f4ece0 筋管内光 (淡光流)
 }
@@ -73,472 +82,721 @@ RES = 64
 # =============================================================================
 
 def part_01_trachea() -> List[dict]:
-    """1. 顶部骨环气管与分支支气管 (trachea)。
+    """1. 顶部骨环气管与骨口 (trachea)。
 
-    气管由 4 节环状骨环与深色凹槽节段交替构成，下接主支气管分叉伸入左右肺门。
+    气管向上伸出叶顶约 6px（肺顶 y=42.0，气管顶端 y=48.0）。
+    由 6 节清晰分节软骨环（环 #d8ccb0、环缝 #6a5a48）交替构成，顶端设有一圈空心骨口与内腔通道。
     """
     cubes = []
-    # ── 顶部气管主干 (y: 39.0..48.0, x: -3.5..3.5, z: -4.5..2.5) ──
-    # 骨环 1 (顶环, y: 46.5..48.0)
+    # ── 顶部空心气管口 (y: 46.8..48.0, 顶端一圈骨口) ──
     cubes.append({
-        "name": "trachea_ring_1",
-        "from": [-3.5, 46.5, -4.5],
-        "to":   [ 3.5, 48.0,  2.5],
+        "name": "trachea_rim_north",
+        "from": [-3.2, 46.8, -4.2],
+        "to":   [ 3.2, 48.0, -2.8],
         "group": "trachea",
         "material": "bone_main",
     })
-    # 环间深色凹槽 1 (y: 45.5..46.5)
     cubes.append({
-        "name": "trachea_crevice_1",
-        "from": [-3.1, 45.5, -4.1],
-        "to":   [ 3.1, 46.5,  2.1],
-        "group": "trachea",
-        "material": "bone_crevice",
-    })
-    # 骨环 2 (y: 44.0..45.5)
-    cubes.append({
-        "name": "trachea_ring_2",
-        "from": [-3.5, 44.0, -4.5],
-        "to":   [ 3.5, 45.5,  2.5],
+        "name": "trachea_rim_south",
+        "from": [-3.2, 46.8,  0.8],
+        "to":   [ 3.2, 48.0,  2.2],
         "group": "trachea",
         "material": "bone_main",
     })
-    # 环间深色凹槽 2 (y: 43.0..44.0)
     cubes.append({
-        "name": "trachea_crevice_2",
-        "from": [-3.1, 43.0, -4.1],
-        "to":   [ 3.1, 44.0,  2.1],
-        "group": "trachea",
-        "material": "bone_crevice",
-    })
-    # 骨环 3 (y: 41.5..43.0)
-    cubes.append({
-        "name": "trachea_ring_3",
-        "from": [-3.5, 41.5, -4.5],
-        "to":   [ 3.5, 43.0,  2.5],
+        "name": "trachea_rim_west",
+        "from": [-3.2, 46.8, -2.8],
+        "to":   [-1.8, 48.0,  0.8],
         "group": "trachea",
         "material": "bone_main",
     })
-    # 环间深色凹槽 3 (y: 40.5..41.5)
     cubes.append({
-        "name": "trachea_crevice_3",
-        "from": [-3.1, 40.5, -4.1],
-        "to":   [ 3.1, 41.5,  2.1],
+        "name": "trachea_rim_east",
+        "from": [ 1.8, 46.8, -2.8],
+        "to":   [ 3.2, 48.0,  0.8],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_lumen_floor",
+        "from": [-1.8, 45.8, -2.8],
+        "to":   [ 1.8, 46.6,  0.8],
+        "group": "trachea",
+        "material": "flesh_dark",
+    })
+
+    # ── 分节软骨环 (环 #d8ccb0, 缝 #6a5a48) ──
+    # Ring 6 (y: 45.6..46.7)
+    cubes.append({
+        "name": "trachea_ring_6",
+        "from": [-3.25, 45.6, -4.25],
+        "to":   [ 3.25, 46.7,  2.25],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_joint_5",
+        "from": [-2.7, 44.6, -3.7],
+        "to":   [ 2.7, 45.6,  1.7],
         "group": "trachea",
         "material": "bone_crevice",
     })
-    # 骨环 4 / 气管隆嵴底座 (y: 39.0..40.8)
+    # Ring 5 (y: 43.4..44.6)
+    cubes.append({
+        "name": "trachea_ring_5",
+        "from": [-3.2, 43.4, -4.2],
+        "to":   [ 3.2, 44.6,  2.2],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_joint_4",
+        "from": [-2.7, 42.4, -3.7],
+        "to":   [ 2.7, 43.4,  1.7],
+        "group": "trachea",
+        "material": "bone_crevice",
+    })
+    # Ring 4 (y: 41.2..42.4, 此处对应肺尖水平线 y=42.0)
     cubes.append({
         "name": "trachea_ring_4",
-        "from": [-3.6, 39.0, -4.6],
-        "to":   [ 3.6, 40.8,  2.6],
+        "from": [-3.2, 41.2, -4.2],
+        "to":   [ 3.2, 42.4,  2.2],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_joint_3",
+        "from": [-2.7, 40.2, -3.7],
+        "to":   [ 2.7, 41.2,  1.7],
+        "group": "trachea",
+        "material": "bone_crevice",
+    })
+    # Ring 3 (y: 39.0..40.2)
+    cubes.append({
+        "name": "trachea_ring_3",
+        "from": [-3.2, 39.0, -4.2],
+        "to":   [ 3.2, 40.2,  2.2],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_joint_2",
+        "from": [-2.7, 38.0, -3.7],
+        "to":   [ 2.7, 39.0,  1.7],
+        "group": "trachea",
+        "material": "bone_crevice",
+    })
+    # Ring 2 (y: 36.6..38.0)
+    cubes.append({
+        "name": "trachea_ring_2",
+        "from": [-3.3, 36.6, -4.3],
+        "to":   [ 3.3, 38.0,  2.3],
+        "group": "trachea",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "trachea_joint_1",
+        "from": [-2.8, 35.6, -3.8],
+        "to":   [ 2.8, 36.6,  1.8],
+        "group": "trachea",
+        "material": "bone_crevice",
+    })
+    # 隆嵴底座 (y: 34.0..35.6)
+    cubes.append({
+        "name": "trachea_carina_base",
+        "from": [-3.6, 34.0, -4.5],
+        "to":   [ 3.6, 35.6,  2.5],
         "group": "trachea",
         "material": "bone_main",
     })
 
-    # ── 左右主支气管分叉 (y: 33.8..39.0) ──
-    # 右肺主支气管 (向 -X 倾斜伸入右肺)
+    return cubes
+
+
+def part_02_bronchial_tree() -> List[dict]:
+    """2. 正面 Y 形分叉支气管系统 (bronchial_tree)。
+
+    从气管底部分出 Y 形主支气管伸进两叶，再各自分出 2~3 次叉，贴在叶片正面。
+    骨色 #d8ccb0 / 暗面 #b8a888，宽约 1.0px，在叶片正表面微凸起浮起约 0.4~0.5px。
+    """
+    cubes = []
+    # ── 右肺支气管系统 (伸向右肺叶正面 x < 0) ──
+    # 右主干 (从隆嵴伸向右叶正表面)
     cubes.append({
-        "name": "trachea_bronchus_r_top",
-        "from": [-7.5, 36.5, -4.0],
-        "to":   [-3.4, 39.0,  2.0],
-        "group": "trachea",
+        "name": "bronchus_r_trunk_1",
+        "from": [-4.5, 33.6, 3.2],
+        "to":   [-0.5, 35.1, 4.3],
+        "group": "bronchial_tree",
         "material": "bone_main",
     })
     cubes.append({
-        "name": "trachea_bronchus_r_mid",
-        "from": [-11.0, 33.8, -3.6],
-        "to":   [-7.3,  36.5,  1.6],
-        "group": "trachea",
+        "name": "bronchus_r_trunk_2",
+        "from": [-8.2, 31.2, 7.6],
+        "to":   [-4.0, 33.5, 8.8],
+        "group": "bronchial_tree",
         "material": "bone_dark",
     })
-    # 左肺主支气管 (向 +X 倾斜伸入左肺)
+
+    # 右上分叉 (深入上叶)
     cubes.append({
-        "name": "trachea_bronchus_l_top",
-        "from": [ 3.4, 36.5, -3.9],
-        "to":   [ 7.5, 39.0,  1.9],
-        "group": "trachea",
+        "name": "bronchus_r_sec_up",
+        "from": [-12.2, 33.4, 7.7],
+        "to":   [-7.5,  35.7, 8.7],
+        "group": "bronchial_tree",
         "material": "bone_main",
     })
     cubes.append({
-        "name": "trachea_bronchus_l_mid",
-        "from": [ 7.3, 33.8, -3.5],
-        "to":   [10.5, 36.5,  1.5],
-        "group": "trachea",
+        "name": "bronchus_r_twig_a1",
+        "from": [-15.2, 35.9, 6.3],
+        "to":   [-11.5, 38.1, 7.4],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
+    })
+    cubes.append({
+        "name": "bronchus_r_twig_a2",
+        "from": [-14.0, 32.4, 7.8],
+        "to":   [-10.8, 34.3, 8.9],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+
+    # 右中分叉 (深入中叶)
+    cubes.append({
+        "name": "bronchus_r_sec_mid",
+        "from": [-14.2, 28.6,  8.9],
+        "to":   [-8.0,  31.1, 10.1],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "bronchus_r_twig_b1",
+        "from": [-18.2, 27.4,  9.1],
+        "to":   [-13.5, 29.3, 10.2],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
+    })
+    cubes.append({
+        "name": "bronchus_r_twig_b2",
+        "from": [-17.2, 24.6,  9.5],
+        "to":   [-13.0, 27.1, 10.6],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+
+    # 右下分叉 (深入下叶)
+    cubes.append({
+        "name": "bronchus_r_sec_low",
+        "from": [-10.8, 22.6,  9.3],
+        "to":   [-7.0,  28.4, 10.4],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "bronchus_r_twig_c1",
+        "from": [-11.8, 16.6,  9.8],
+        "to":   [-8.5,  22.4, 10.8],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
+    })
+    cubes.append({
+        "name": "bronchus_r_twig_c2",
+        "from": [-16.2, 18.6,  9.3],
+        "to":   [-11.0, 20.7, 10.3],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+
+    # ── 左肺支气管系统 (伸向左肺叶正面 x > 0) ──
+    # 左主干
+    cubes.append({
+        "name": "bronchus_l_trunk_1",
+        "from": [ 0.5, 33.6, 3.2],
+        "to":   [ 4.5, 35.1, 4.3],
+        "group": "bronchial_tree",
+        "material": "bone_main",
+    })
+    cubes.append({
+        "name": "bronchus_l_trunk_2",
+        "from": [ 3.8, 31.2, 7.1],
+        "to":   [ 7.8, 33.5, 8.3],
+        "group": "bronchial_tree",
         "material": "bone_dark",
     })
 
-    return cubes
-
-
-def part_02_right_lobe() -> List[dict]:
-    """2. 海绵状右肺叶 (right_lobe, 前视图左侧 x < 0)。
-
-    解剖学三叶结构（上叶、中叶、下叶），体积较左侧更丰满开阔，中叶向外拱出达 x = -22.5px，
-    表面呈海绵状肺泡簇起伏。
-    """
-    cubes = []
-    # ── 右肺上叶 (y: 28.5..42.0) ──
-    # 肺尖圆拱 (apex)
+    # 左上分叉
     cubes.append({
-        "name": "lobe_r_upper_apex",
-        "from": [-16.0, 38.0, -9.0],
-        "to":   [-4.0,  42.0,  8.0],
-        "group": "right_lobe",
-        "material": "flesh_lit",
+        "name": "bronchus_l_sec_up",
+        "from": [ 7.0, 33.4, 7.2],
+        "to":   [11.2, 35.7, 8.2],
+        "group": "bronchial_tree",
+        "material": "bone_main",
     })
-    # 上叶主核体
     cubes.append({
-        "name": "lobe_r_upper_core",
-        "from": [-19.5, 32.0, -11.0],
-        "to":   [-3.0,  38.0,  10.0],
-        "group": "right_lobe",
-        "material": "flesh_main",
-    })
-    # 上叶前凸海绵状肺泡结节簇
-    cubes.append({
-        "name": "lobe_r_upper_nodule_f",
-        "from": [-18.5, 34.0,  9.8],
-        "to":   [-6.0,  39.0, 12.0],
-        "group": "right_lobe",
-        "material": "flesh_lit",
-    })
-    # 上叶背侧暗部隆起
-    cubes.append({
-        "name": "lobe_r_upper_nodule_b",
-        "from": [-18.5, 33.5, -13.0],
-        "to":   [-6.0,  38.5, -10.8],
-        "group": "right_lobe",
-        "material": "flesh_dark",
-    })
-    # 上叶外侧海绵突
-    cubes.append({
-        "name": "lobe_r_upper_lat",
-        "from": [-21.2, 33.0, -8.0],
-        "to":   [-19.2, 37.5,  7.0],
-        "group": "right_lobe",
-        "material": "flesh_lit",
-    })
-    # 水平裂浅凹槽 (分割上叶与中叶)
-    cubes.append({
-        "name": "lobe_r_fissure_horiz",
-        "from": [-20.0, 28.5, -11.5],
-        "to":   [-3.2,  32.0,  10.5],
-        "group": "right_lobe",
-        "material": "flesh_dark",
+        "name": "bronchus_l_twig_a1",
+        "from": [10.5, 35.6, 5.8],
+        "to":   [13.8, 37.9, 6.9],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
     })
 
-    # ── 右肺中叶 (y: 19.0..29.5, 整个肺部横向最宽凸起) ──
-    # 中叶主体
+    # 左中分叉
     cubes.append({
-        "name": "lobe_r_mid_core",
-        "from": [-21.5, 20.0, -12.5],
-        "to":   [-3.5,  29.5,  11.5],
-        "group": "right_lobe",
-        "material": "flesh_main",
+        "name": "bronchus_l_sec_mid",
+        "from": [ 7.0, 28.2, 8.6],
+        "to":   [12.2, 30.7, 9.8],
+        "group": "bronchial_tree",
+        "material": "bone_main",
     })
-    # 中叶外侧弧拱 (外扩至 x = -22.5px)
     cubes.append({
-        "name": "lobe_r_mid_bulge_lat",
-        "from": [-22.5, 21.5, -9.0],
-        "to":   [-21.2, 28.0,  8.0],
-        "group": "right_lobe",
-        "material": "flesh_lit",
+        "name": "bronchus_l_twig_b1",
+        "from": [11.8, 27.2, 8.7],
+        "to":   [16.2, 29.1, 9.9],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
     })
-    # 中叶正面海绵隆起
     cubes.append({
-        "name": "lobe_r_mid_bulge_f",
-        "from": [-19.0, 21.0, 11.3],
-        "to":   [-6.0,  28.5, 13.5],
-        "group": "right_lobe",
-        "material": "flesh_main",
-    })
-    # 中叶背侧隆起
-    cubes.append({
-        "name": "lobe_r_mid_bulge_b",
-        "from": [-19.0, 21.0, -14.2],
-        "to":   [-6.0,  28.5, -12.3],
-        "group": "right_lobe",
-        "material": "flesh_dark",
-    })
-    # 斜裂凹槽 (分割中叶与下叶)
-    cubes.append({
-        "name": "lobe_r_fissure_oblique",
-        "from": [-21.0, 18.0, -11.8],
-        "to":   [-3.6,  20.2,  10.8],
-        "group": "right_lobe",
-        "material": "flesh_dark",
+        "name": "bronchus_l_twig_b2",
+        "from": [11.5, 24.2, 9.0],
+        "to":   [15.2, 26.9, 10.1],
+        "group": "bronchial_tree",
+        "material": "bone_main",
     })
 
-    # ── 右肺下叶 (y: 6.0..19.0) ──
-    # 下叶主核
+    # 左下分叉
     cubes.append({
-        "name": "lobe_r_low_core",
-        "from": [-20.0, 10.4, -12.0],
-        "to":   [-3.0,  18.5,  11.0],
-        "group": "right_lobe",
-        "material": "flesh_main",
+        "name": "bronchus_l_sec_low",
+        "from": [ 6.5, 22.3,  8.8],
+        "to":   [ 9.8, 27.9, 10.0],
+        "group": "bronchial_tree",
+        "material": "bone_main",
     })
-    # 下叶外侧翼缘
     cubes.append({
-        "name": "lobe_r_low_lat",
-        "from": [-21.5, 11.0, -8.5],
-        "to":   [-19.8, 17.5,  7.5],
-        "group": "right_lobe",
-        "material": "flesh_lit",
+        "name": "bronchus_l_twig_c1",
+        "from": [ 7.5, 16.2,  9.0],
+        "to":   [10.5, 21.8, 10.1],
+        "group": "bronchial_tree",
+        "material": "bone_dark",
     })
-    # 下叶底座弧面 (向内下方收缩)
     cubes.append({
-        "name": "lobe_r_low_base",
-        "from": [-18.0,  6.0, -10.0],
-        "to":   [-3.5,  10.4,   9.0],
-        "group": "right_lobe",
-        "material": "flesh_dark",
+        "name": "bronchus_l_twig_c2",
+        "from": [10.0, 18.2,  8.8],
+        "to":   [14.2, 20.5,  9.8],
+        "group": "bronchial_tree",
+        "material": "bone_main",
     })
 
     return cubes
 
 
-def part_03_left_lobe() -> List[dict]:
-    """3. 海绵状左肺叶 (left_lobe, 前视图右侧 x > 0)。
+def part_03_right_lobe() -> List[dict]:
+    """3. 海绵状右肺叶 (right_lobe, 前视图左侧 x < 0)。
 
-    两叶结构（上叶、下叶），内侧保留近心切迹凹陷，下端带有狭长向外延伸的外展下叶，
-    与右肺形成不对称。
+    按 Y 轴分 5 级台阶，呈现上窄下宽、顶部收圆的解剖结构。
+    体积偏大偏饱满，最大宽度在 Tier 2（腹部）展开至 x = -22.5px，带有起伏肺泡粉结节簇。
     """
     cubes = []
-    # ── 左肺上叶 (y: 27.0..40.4, 略微紧凑) ──
-    # 左肺尖圆拱 (apex)
+    # ── Tier 5: 肺尖圆拱 (Apex, y: 37.0..42.0, 顶上收圆收窄) ──
     cubes.append({
-        "name": "lobe_l_upper_apex",
-        "from": [ 3.5, 37.0, -8.5],
-        "to":   [15.5, 40.4,  7.5],
-        "group": "left_lobe",
+        "name": "lobe_r_t5_dome",
+        "from": [-10.5, 40.5, -4.5],
+        "to":   [-4.0,  42.0,  4.5],
+        "group": "right_lobe",
         "material": "flesh_lit",
     })
-    # 上叶主核 (内侧为心切迹凹槽留空 x < 3.0)
     cubes.append({
-        "name": "lobe_l_upper_core",
-        "from": [ 3.0, 30.0, -10.5],
-        "to":   [18.5, 37.2,   9.5],
-        "group": "left_lobe",
+        "name": "lobe_r_t5_body",
+        "from": [-13.5, 37.0, -6.5],
+        "to":   [-2.2,  40.5,  6.5],
+        "group": "right_lobe",
         "material": "flesh_main",
     })
-    # 上叶前凸肺泡结节
     cubes.append({
-        "name": "lobe_l_upper_nodule_f",
-        "from": [ 5.5, 32.0,  9.3],
-        "to":   [17.5, 38.0, 11.5],
-        "group": "left_lobe",
+        "name": "lobe_r_t5_nod_f",
+        "from": [-12.0, 37.4,  6.5],
+        "to":   [-3.5,  40.2,  7.3],
+        "group": "right_lobe",
         "material": "flesh_lit",
     })
-    # 上叶背凸
     cubes.append({
-        "name": "lobe_l_upper_nodule_b",
-        "from": [ 5.5, 31.5, -12.5],
-        "to":   [17.5, 37.5, -10.3],
-        "group": "left_lobe",
-        "material": "flesh_dark",
-    })
-    # 上叶外侧弧拱
-    cubes.append({
-        "name": "lobe_l_upper_lat",
-        "from": [18.2, 31.0, -7.5],
-        "to":   [20.0, 36.5,  6.5],
-        "group": "left_lobe",
-        "material": "flesh_lit",
-    })
-    # 斜裂深凹槽
-    cubes.append({
-        "name": "lobe_l_fissure_oblique",
-        "from": [ 3.2, 27.0, -11.0],
-        "to":   [19.0, 30.2,  10.0],
-        "group": "left_lobe",
+        "name": "lobe_r_t5_nod_b",
+        "from": [-12.0, 37.4, -7.3],
+        "to":   [-3.5,  40.2, -6.5],
+        "group": "right_lobe",
         "material": "flesh_dark",
     })
 
-    # ── 左肺下叶 (y: 6.0..28.5) ──
-    # 下叶主核
+    # ── Tier 4: 上叶 (Upper Lobe, y: 30.0..37.0, 明显收窄过渡段) ──
     cubes.append({
-        "name": "lobe_l_low_core",
-        "from": [ 3.5, 12.0, -12.0],
-        "to":   [19.5, 28.5,  11.0],
-        "group": "left_lobe",
+        "name": "lobe_r_t4_body",
+        "from": [-17.5, 30.0, -8.5],
+        "to":   [-1.8,  37.0,  8.5],
+        "group": "right_lobe",
         "material": "flesh_main",
     })
-    # 下叶向外展延的狭长侧翼 (x 展至 21.0px)
     cubes.append({
-        "name": "lobe_l_low_lat",
-        "from": [19.2, 12.5, -8.0],
-        "to":   [21.0, 22.0,  7.5],
-        "group": "left_lobe",
+        "name": "lobe_r_t4_nod_f",
+        "from": [-16.0, 30.8,  8.5],
+        "to":   [-3.0,  36.3,  9.6],
+        "group": "right_lobe",
         "material": "flesh_lit",
     })
-    # 下叶正面饱满肉隆
     cubes.append({
-        "name": "lobe_l_low_front",
-        "from": [ 5.0, 11.6, 10.8],
-        "to":   [18.0, 23.0, 12.8],
-        "group": "left_lobe",
+        "name": "lobe_r_t4_nod_b",
+        "from": [-16.0, 30.8, -9.6],
+        "to":   [-3.0,  36.3, -8.5],
+        "group": "right_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_r_t4_lat",
+        "from": [-18.8, 30.8, -6.5],
+        "to":   [-17.4, 36.2,  6.5],
+        "group": "right_lobe",
         "material": "flesh_main",
     })
-    # 下叶背侧隆起
+
+    # ── Tier 3: 中叶 (Middle Lobe, y: 22.0..30.0, 中段展开) ──
     cubes.append({
-        "name": "lobe_l_low_back",
-        "from": [ 5.0, 11.6, -13.5],
-        "to":   [18.0, 23.0, -11.8],
-        "group": "left_lobe",
+        "name": "lobe_r_t3_body",
+        "from": [-21.0, 22.0, -10.0],
+        "to":   [-1.5,  30.0,  10.0],
+        "group": "right_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_r_t3_nod_f",
+        "from": [-19.5, 22.8,  10.1],
+        "to":   [-3.0,  29.2,  11.3],
+        "group": "right_lobe",
+        "material": "flesh_lit",
+    })
+    cubes.append({
+        "name": "lobe_r_t3_nod_b",
+        "from": [-19.5, 22.8, -11.3],
+        "to":   [-3.0,  29.2, -10.1],
+        "group": "right_lobe",
         "material": "flesh_dark",
     })
-    # 下叶底座
     cubes.append({
-        "name": "lobe_l_low_base",
-        "from": [ 3.2,  6.0, -10.0],
-        "to":   [17.0, 12.2,   9.5],
-        "group": "left_lobe",
+        "name": "lobe_r_t3_lat",
+        "from": [-22.4, 22.8, -8.0],
+        "to":   [-20.9, 29.2,  8.0],
+        "group": "right_lobe",
+        "material": "flesh_lit",
+    })
+
+    # ── Tier 2: 下叶上腹 (Lower Lobe Upper, y: 14.0..22.0, 最大宽度展开至 x = -22.5) ──
+    cubes.append({
+        "name": "lobe_r_t2_body",
+        "from": [-22.5, 14.0, -10.5],
+        "to":   [-1.2,  22.0,  10.5],
+        "group": "right_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_r_t2_nod_f",
+        "from": [-21.0, 14.8,  10.6],
+        "to":   [-2.5,  21.2,  11.9],
+        "group": "right_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_r_t2_nod_b",
+        "from": [-21.0, 14.8, -11.9],
+        "to":   [-2.5,  21.2, -10.6],
+        "group": "right_lobe",
         "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_r_t2_lat",
+        "from": [-23.6, 14.8, -8.5],
+        "to":   [-22.4, 21.2,  8.5],
+        "group": "right_lobe",
+        "material": "flesh_lit",
+    })
+
+    # ── Tier 1: 肺底座 (Lung Base, y: 7.0..14.0, 底部圆润收敛) ──
+    cubes.append({
+        "name": "lobe_r_t1_body",
+        "from": [-20.5,  7.0, -9.0],
+        "to":   [-1.8,  14.0,  9.0],
+        "group": "right_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_r_t1_base",
+        "from": [-18.5,  6.0, -8.0],
+        "to":   [-2.5,  7.5,   7.8],
+        "group": "right_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_r_t1_lat",
+        "from": [-21.8,  8.5, -7.0],
+        "to":   [-20.4, 13.0,  7.0],
+        "group": "right_lobe",
+        "material": "flesh_lit",
     })
 
     return cubes
 
 
-def part_04_hilum_vessels() -> List[dict]:
-    """4. 肺门脉管组织与深层筋膜 (hilum_vessels)。
+def part_04_left_lobe() -> List[dict]:
+    """4. 海绵状左肺叶 (left_lobe, 前视图右侧 x > 0)。
 
-    两肺叶之间的纵隔连接体、肺动静脉主干与半透明筋膜脉管束。
+    按 Y 轴分 5 级台阶，同样上窄下宽、顶部收圆。
+    略小于右叶，内侧形成明显的近心切迹（cardiac notch，向内凹陷凹槽）。
     """
     cubes = []
-    # 纵隔核心脉管柱
+    # ── Tier 5: 肺尖圆拱 (Apex, y: 37.0..42.0, 顶上收圆收窄) ──
     cubes.append({
-        "name": "hilum_core_vascular",
-        "from": [-3.2, 22.0, -4.5],
-        "to":   [ 3.2, 34.0,  4.5],
-        "group": "hilum_vessels",
+        "name": "lobe_l_t5_dome",
+        "from": [ 3.5, 40.5, -4.0],
+        "to":   [ 9.5, 42.0,  4.0],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+    cubes.append({
+        "name": "lobe_l_t5_body",
+        "from": [ 2.2, 37.0, -6.0],
+        "to":   [12.5, 40.5,  6.0],
+        "group": "left_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_l_t5_nod_f",
+        "from": [ 3.5, 37.4,  6.0],
+        "to":   [11.5, 40.2,  6.8],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+    cubes.append({
+        "name": "lobe_l_t5_nod_b",
+        "from": [ 3.5, 37.4, -6.8],
+        "to":   [11.5, 40.2, -6.0],
+        "group": "left_lobe",
         "material": "flesh_dark",
     })
-    # 跨叶连接筋膜板 (半透明筋膜)
+
+    # ── Tier 4: 上叶 (Upper Lobe, y: 30.0..37.0, 明显收窄过渡段) ──
     cubes.append({
-        "name": "hilum_fascia_mid",
-        "from": [-3.0, 16.0, -4.0],
-        "to":   [ 3.0, 22.2,  4.0],
-        "group": "hilum_vessels",
-        "material": "tendon_fascia",
-    })
-    # 内部真元流光核心柱
-    cubes.append({
-        "name": "hilum_qi_core",
-        "from": [-1.5, 17.0, -2.0],
-        "to":   [ 1.5, 33.0,  2.0],
-        "group": "hilum_vessels",
-        "material": "qi_glow",
-    })
-    # 右肺血管分支斜伸
-    cubes.append({
-        "name": "hilum_branch_r",
-        "from": [-6.5, 24.0, -3.0],
-        "to":   [-3.1, 28.0,  3.0],
-        "group": "hilum_vessels",
+        "name": "lobe_l_t4_body",
+        "from": [ 1.8, 30.0, -8.0],
+        "to":   [16.0, 37.0,  8.0],
+        "group": "left_lobe",
         "material": "flesh_main",
     })
-    # 左肺血管分支斜伸
     cubes.append({
-        "name": "hilum_branch_l",
-        "from": [ 3.1, 23.0, -2.5],
-        "to":   [ 6.5, 27.0,  2.5],
-        "group": "hilum_vessels",
+        "name": "lobe_l_t4_nod_f",
+        "from": [ 2.8, 30.8,  8.1],
+        "to":   [14.5, 36.3,  9.1],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+    cubes.append({
+        "name": "lobe_l_t4_nod_b",
+        "from": [ 2.8, 30.8, -9.1],
+        "to":   [14.5, 36.3, -8.1],
+        "group": "left_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_l_t4_lat",
+        "from": [15.9, 30.8, -6.0],
+        "to":   [17.2, 36.2,  6.0],
+        "group": "left_lobe",
         "material": "flesh_main",
+    })
+
+    # ── Tier 3: 中段 (Mid, y: 22.0..30.0, 心切迹凹槽开始出现，内缘退至 x=3.0) ──
+    cubes.append({
+        "name": "lobe_l_t3_body",
+        "from": [ 3.0, 22.0, -9.5],
+        "to":   [18.5, 30.0,  9.5],
+        "group": "left_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_l_t3_nod_f",
+        "from": [ 3.8, 22.8,  9.6],
+        "to":   [17.0, 29.2, 10.7],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+    cubes.append({
+        "name": "lobe_l_t3_nod_b",
+        "from": [ 3.8, 22.8, -10.7],
+        "to":   [17.0, 29.2, -9.6],
+        "group": "left_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_l_t3_lat",
+        "from": [18.4, 22.8, -7.5],
+        "to":   [19.8, 29.2,  7.5],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+
+    # ── Tier 2: 下叶腹部 (Lower Lobe Belly, y: 14.0..22.0, 心切迹最深处，内缘退至 x=3.8) ──
+    cubes.append({
+        "name": "lobe_l_t2_body",
+        "from": [ 3.8, 14.0, -10.0],
+        "to":   [20.0, 22.0,  10.0],
+        "group": "left_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_l_t2_nod_f",
+        "from": [ 4.5, 14.8,  10.1],
+        "to":   [18.5, 21.2,  11.3],
+        "group": "left_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_l_t2_nod_b",
+        "from": [ 4.5, 14.8, -11.3],
+        "to":   [18.5, 21.2, -10.1],
+        "group": "left_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_l_t2_lat",
+        "from": [19.9, 14.8, -8.0],
+        "to":   [21.2, 21.2,  8.0],
+        "group": "left_lobe",
+        "material": "flesh_lit",
+    })
+
+    # ── Tier 1: 肺底座 (Lung Base, y: 7.0..14.0, 底部圆润收敛) ──
+    cubes.append({
+        "name": "lobe_l_t1_body",
+        "from": [ 2.5,  7.0, -8.5],
+        "to":   [18.0, 14.0,  8.5],
+        "group": "left_lobe",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "lobe_l_t1_base",
+        "from": [ 3.5,  6.0, -7.5],
+        "to":   [16.5,  7.5,   7.8],
+        "group": "left_lobe",
+        "material": "flesh_dark",
+    })
+    cubes.append({
+        "name": "lobe_l_t1_lat",
+        "from": [17.9,  8.5, -6.5],
+        "to":   [19.4, 13.0,  6.5],
+        "group": "left_lobe",
+        "material": "flesh_lit",
     })
 
     return cubes
 
 
 def part_05_output_port() -> List[dict]:
-    """5. 底部汇流管腔与统一截面输出端口 (output_port)。
+    """5. 底部统一截面输出端口 (output_port)。
 
-    汇流两叶底部的输出管腔，并严格以统一连接截面延伸至 +Z 侧端面：
-    截面：宽 8 px × 高 6 px、居中 (x: -4.0..4.0)、底边离地 2 px (y: 2.0..8.0)，延伸至 z = 16.0，
-    配有加固骨箍领圈与输出内腔开口，下方配有与地面贴合的暗血肉锚定底座 (y: 0.0..2.0)。
+    统一接口截面：宽 8 px × 高 6 px、居中 (x: -4.0..4.0)、底边离地 2 px (y: 2.0..8.0)。
+    外面一圈肉质管套 (#8a2a2a，厚度 2px，外廓宽 12px × 高 10px，底边贴地 y=0.0)，
+    从两叶下方中央向前朝 +Z 伸出至 z = 16.0，内部带有亮肉内壁衬层 (#b05050) 与真元光流核 (#f4ece0)。
     """
     cubes = []
-    # ── 1. 底部汇流漏斗体 ──
+    # ── 1. 汇流漏斗连接颈 (y: 6.0..12.5, z: 0.0..7.8) ──
     cubes.append({
-        "name": "port_funnel_upper",
-        "from": [-5.5,  9.6, -5.0],
-        "to":   [ 5.5, 16.2,  8.0],
+        "name": "port_duct_upper",
+        "from": [-5.2, 7.8, -0.4],
+        "to":   [ 5.2, 12.5, 7.8],
         "group": "output_port",
         "material": "flesh_main",
     })
     cubes.append({
-        "name": "port_funnel_neck",
-        "from": [-4.5,  4.0,  0.0],
-        "to":   [ 4.5, 10.6, 10.0],
+        "name": "port_duct_lower",
+        "from": [-5.0, 2.1,  0.2],
+        "to":   [ 5.0, 7.8,  7.9],
         "group": "output_port",
         "material": "flesh_dark",
     })
 
-    # ── 2. 统一截面输出管体 (严格宽 8px x 高 6px, x in -4..4, y in 2..8, z in 9.8..15.2) ──
+    # ── 2. 统一截面肉质管套 (外面一圈肉质管套 #8a2a2a, 2px 厚, z: 8.0..16.0) ──
+    # 标准端口内孔为 x: -4..4, y: 2..8
+    # 左套壁 (x: -6.0..-4.0, y: 2.0..8.0)
     cubes.append({
-        "name": "port_sleeve_main",
-        "from": [-4.0, 2.0,  9.8],
-        "to":   [ 4.0, 8.0, 15.2],
+        "name": "port_sleeve_left",
+        "from": [-6.0, 2.0,  8.0],
+        "to":   [-4.0, 8.0, 16.0],
+        "group": "output_port",
+        "material": "flesh_main",
+    })
+    # 右套壁 (x: 4.0..6.0, y: 2.0..8.0)
+    cubes.append({
+        "name": "port_sleeve_right",
+        "from": [ 4.0, 2.0,  8.0],
+        "to":   [ 6.0, 8.0, 16.0],
+        "group": "output_port",
+        "material": "flesh_main",
+    })
+    # 顶套壁 (x: -6.0..6.0, y: 8.0..10.0)
+    cubes.append({
+        "name": "port_sleeve_top",
+        "from": [-6.0,  8.0,  8.0],
+        "to":   [ 6.0, 10.0, 16.0],
+        "group": "output_port",
+        "material": "flesh_main",
+    })
+    # 底套壁 (x: -6.0..6.0, y: 0.0..2.0, 贴地 y=0.0)
+    cubes.append({
+        "name": "port_sleeve_bot",
+        "from": [-6.0, 0.0,  8.0],
+        "to":   [ 6.0, 2.0, 16.0],
         "group": "output_port",
         "material": "flesh_main",
     })
 
-    # ── 3. 输出端口外围加固骨箍 (z: 14.8..16.0) ──
-    # 顶骨梁 (y: 7.8..8.4, x: -4.5..4.5)
+    # ── 3. 亮肉方口内壁衬层 (带亮肉内壁的方口 #b05050, 位于 8x6 方口内缘) ──
     cubes.append({
-        "name": "port_bone_collar_top",
-        "from": [-4.5, 7.8, 14.8],
-        "to":   [ 4.5, 8.4, 16.0],
+        "name": "port_lining_left",
+        "from": [-4.0, 2.0, 14.5],
+        "to":   [-3.2, 8.0, 16.0],
         "group": "output_port",
-        "material": "bone_main",
+        "material": "flesh_lit",
     })
-    # 底骨梁 (y: 1.6..2.2, x: -4.5..4.5)
     cubes.append({
-        "name": "port_bone_collar_bot",
-        "from": [-4.5, 1.6, 14.8],
-        "to":   [ 4.5, 2.2, 16.0],
+        "name": "port_lining_right",
+        "from": [ 3.2, 2.0, 14.5],
+        "to":   [ 4.0, 8.0, 16.0],
         "group": "output_port",
-        "material": "bone_main",
+        "material": "flesh_lit",
     })
-    # 左骨柱 (x: -4.4..-3.8, y: 2.2..7.8, z: 14.9..15.9)
     cubes.append({
-        "name": "port_bone_collar_left",
-        "from": [-4.4, 2.2, 14.9],
-        "to":   [-3.8, 7.8, 15.9],
+        "name": "port_lining_top",
+        "from": [-3.2, 7.2, 14.5],
+        "to":   [ 3.2, 8.0, 16.0],
         "group": "output_port",
-        "material": "bone_dark",
+        "material": "flesh_lit",
     })
-    # 右骨柱 (x: 3.8..4.4, y: 2.2..7.8, z: 14.9..15.9)
     cubes.append({
-        "name": "port_bone_collar_right",
-        "from": [ 3.8, 2.2, 14.9],
-        "to":   [ 4.4, 7.8, 15.9],
+        "name": "port_lining_bot",
+        "from": [-3.2, 2.0, 14.5],
+        "to":   [ 3.2, 2.8, 16.0],
         "group": "output_port",
-        "material": "bone_dark",
+        "material": "flesh_lit",
     })
 
-    # ── 4. 输出端口内腔通道与真元光 (z: 15.2..16.0, x: -2.8..2.8, y: 3.2..6.8) ──
+    # ── 4. 内腔真元光流核与深部暗腔 (z: 12.0..14.5) ──
     cubes.append({
         "name": "port_lumen_glow",
-        "from": [-2.8, 3.2, 15.2],
-        "to":   [ 2.8, 6.8, 16.0],
+        "from": [-3.2, 2.8, 12.0],
+        "to":   [ 3.2, 7.2, 14.5],
         "group": "output_port",
         "material": "qi_glow",
     })
 
-    # ── 5. 底面暗血肉锚定底座 (两层阶梯式底座沿 Y 轴堆叠，y: 0.0..0.8 与 y: 0.8..2.0) ──
+    # ── 5. 底部暗血肉锚定肉垫 ──
     cubes.append({
         "name": "port_base_footing",
-        "from": [-15.5, 0.0, -10.5],
-        "to":   [ 15.5, 0.8,  11.8],
-        "group": "output_port",
-        "material": "flesh_dark",
-    })
-    cubes.append({
-        "name": "port_base_pedestal",
-        "from": [-13.0, 0.8,  -8.0],
-        "to":   [ 13.0, 2.0,   9.8],
+        "from": [-15.0, 0.0, -8.0],
+        "to":   [ 15.0, 1.8,  8.0],
         "group": "output_port",
         "material": "flesh_dark",
     })
@@ -550,19 +808,19 @@ def all_cubes() -> List[dict]:
     """汇总肺器官全部 5 大部件立方体。"""
     return (
         part_01_trachea()
-        + part_02_right_lobe()
-        + part_03_left_lobe()
-        + part_04_hilum_vessels()
+        + part_02_bronchial_tree()
+        + part_03_right_lobe()
+        + part_04_left_lobe()
         + part_05_output_port()
     )
 
 
 # =============================================================================
-# 门禁与无共面面核验
+# 门禁与共面冲突自检
 # =============================================================================
 
 def _assert_no_coplanar_faces(cubes: List[dict]):
-    """检查立方体集是否存在严格同向同坐标且重叠的共面冲突。"""
+    """严格检查立方体集是否存在同向同坐标且投影相交的共面冲突 (Z-fighting)。"""
     faces: Dict[Tuple[str, float], List[dict]] = {}
     for c in cubes:
         f = c["from"]
@@ -602,12 +860,11 @@ def _assert_no_coplanar_faces(cubes: List[dict]):
 
 
 # =============================================================================
-# 贴图与 Blockbench 序列化
+# 贴图与 Blockbench 序列化 (海绵质感丰富着色)
 # =============================================================================
 
 def build_texture(res: int = RES) -> Image.Image:
-    """生成 64×64 RGBA 贴图，严格使用 meridian_factory.md 的有机型配色。"""
-    im = Image.new("RGBA", (res, res), (0, 0, 0, 0))
+    """生成 64×64 RGBA 贴图，严格使用有机型配色，并强化海绵状斑点与微孔质感。"""
     rng = np.random.default_rng(20261009)
     arr = np.zeros((res, res, 4), dtype=np.uint8)
 
@@ -619,20 +876,29 @@ def build_texture(res: int = RES) -> Image.Image:
                 r = int(np.clip(base_c[0] + noise, 0, 255))
                 g = int(np.clip(base_c[1] + noise, 0, 255))
                 b = int(np.clip(base_c[2] + noise, 0, 255))
-                
-                # 有机海绵状肺泡与气管纹理增强
-                if mat_name in ("flesh_main", "flesh_lit"):
-                    if (x * 3 + y * 5) % 7 == 0:
-                        r = int(np.clip(r - 8, 0, 255))
-                        g = int(np.clip(g - 4, 0, 255))
-                    elif (x * 2 - y * 3) % 9 == 0:
-                        r = int(np.clip(r + 8, 0, 255))
-                        g = int(np.clip(g + 6, 0, 255))
+
+                # 肺叶血肉质感：#8a2a2a 为主，散布 #b05050 肺泡斑点，#5a1a1a 孔隙暗部
+                if mat_name == "flesh_main":
+                    # 散布 #b05050 小斑点 (约 20% 面积)
+                    if (x * 7 + y * 11) % 13 in (0, 1, 2):
+                        r = int(np.clip(176 + noise, 0, 255))
+                        g = int(np.clip(80 + noise, 0, 255))
+                        b = int(np.clip(80 + noise, 0, 255))
+                    # 散布 #5a1a1a 暗孔隙 (约 15% 面积)
+                    elif (x * 5 + y * 3) % 11 in (0, 1):
+                        r = int(np.clip(90 + noise, 0, 255))
+                        g = int(np.clip(26 + noise, 0, 255))
+                        b = int(np.clip(26 + noise, 0, 255))
+                elif mat_name == "flesh_lit":
+                    if (x * 4 + y * 6) % 9 in (0, 1):
+                        r = int(np.clip(r + 12, 0, 255))
+                        g = int(np.clip(g + 10, 0, 255))
+                        b = int(np.clip(b + 10, 0, 255))
                 elif mat_name in ("bone_main", "bone_dark"):
-                    if (x + y * 2) % 6 == 0:
-                        r = int(np.clip(r - 6, 0, 255))
-                        g = int(np.clip(g - 6, 0, 255))
-                        b = int(np.clip(b - 4, 0, 255))
+                    if (x + y * 2) % 5 == 0:
+                        r = int(np.clip(r - 8, 0, 255))
+                        g = int(np.clip(g - 8, 0, 255))
+                        b = int(np.clip(b - 6, 0, 255))
 
                 arr[y, x] = [r, g, b, base_c[3]]
 
@@ -700,7 +966,7 @@ def build_bbmodel_doc(cubes: List[dict], tex: Image.Image) -> dict:
         elements.append(element)
 
     outliner = []
-    for g_name in ["trachea", "right_lobe", "left_lobe", "hilum_vessels", "output_port"]:
+    for g_name in ["trachea", "bronchial_tree", "right_lobe", "left_lobe", "output_port"]:
         if g_name in groups_map:
             outliner.append({
                 "name": g_name,
@@ -749,34 +1015,28 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     REVIEW_DIR_ALIAS.mkdir(parents=True, exist_ok=True)
-    bg_color = (119, 119, 119)  # 严格对齐参考图的中性灰底色
+    bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
 
     # 1. 渲染四视角 (正视、侧视、3/4 等轴、俯视)
-    # 正视 (看 +Z 输出端口与正面肺叶)
     im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
-    # 侧视 (看整个 32px 深度的纵深与肺叶侧缘)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
-    # 3/4 等轴透视
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
-    # 俯视 (看顶部气管骨环与双肺叶顶面开展)
     im_top, _ = render(bbmodel_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
 
     # 2. 拼装 render.png (2x2 网格)
-    canvas_w = 1040
-    canvas_h = 1040
-    canvas = Image.new("RGB", (canvas_w, canvas_h), (35, 36, 40))
+    canvas = Image.new("RGB", (1040, 1040), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("FRONT (+Z Output Port & Lobes)", im_front, 20, 20),
-        ("SIDE (Depth 32px Profile)",       im_side, 540, 20),
-        ("3/4 ISOMETRIC (Organic Structure)", im_iso, 20, 540),
-        ("TOP (Trachea & Apices)",          im_top, 540, 540),
+        ("FRONT (Lobes, Bronchial Tree & Port)", im_front, 20, 20),
+        ("SIDE (Depth 32px Profile)",            im_side, 540, 20),
+        ("3/4 ISOMETRIC (Organic Structure)",    im_iso, 20, 540),
+        ("TOP (Cartilage Rings & Apex)",         im_top, 540, 540),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 250, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 300, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
 
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
@@ -827,8 +1087,8 @@ def self_test():
     # 注入测试缺陷
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [-3.5, 46.5, -4.5],
-        "to":   [ 3.5, 48.0,  2.5],  # 与 trachea_ring_1 完全重叠
+        "from": [-3.2, 46.8, -4.2],
+        "to":   [ 3.2, 48.0, -2.8],  # 与 trachea_rim_north 完全重叠
         "material": "bone_main",
     }]
     caught = False
