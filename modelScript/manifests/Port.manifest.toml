@@ -1,0 +1,15 @@
+facing = "+z"
+mirror_x = 0.0
+size = 500
+
+[materials]
+flesh_dark = [90, 26, 26]
+flesh_main = [138, 42, 42]
+bone_main = [216, 204, 176]
+flesh_lit = [176, 80, 80]
+
+[features]
+base = { elements = ["in_base_", "out_base_", "base_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+bone_collar = { elements = ["in_bone_", "out_bone_", "bone_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+flesh_socket = { elements = ["in_socket_", "out_socket_", "socket_", "in_port_dark", "out_port_dark"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+ridges = { elements = ["in_ridge_", "out_ridge_", "ridge_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
