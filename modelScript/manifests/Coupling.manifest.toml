@@ -14,7 +14,7 @@ tendon_fiber = [192, 120, 104]
 qi_glow = [246, 220, 196]
 
 [features]
-inlet = { elements = ["inlet_tube", "collar_flesh"], must_show_in = ["SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
-bone_clamp = { elements = ["clamp_ring", "clamp_ear"], must_show_in = ["SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
-flaring_bell = { elements = ["bell_step", "bell_lining", "bell_chamfer", "core_qi_glow"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
+inlet = { elements = ["inlet_tube", "inlet_hl", "collar_"], must_show_in = ["SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+bone_clamp = { elements = ["clamp_frame", "clamp_ear"], must_show_in = ["SIDE_R", "SIDE_L", "3/4"], min_px = 1 }
+flaring_bell = { elements = ["shell1_", "shell2_", "shell3_", "bell_core_qi"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }
 fibers = { elements = ["fiber_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4", "TOP"], min_px = 1 }

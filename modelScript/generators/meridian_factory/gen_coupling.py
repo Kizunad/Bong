@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """经脉工厂内景方块生成器 —— b08: coupling (耦合接口)
 
-风格：A 有机型 (活体血肉、暖粉筋管、肉箍骨夹耳、三级肉质喇叭口、内壁亮红衬层、中心真元内光、放射筋丝)
+风格：A 有机型 (活体血肉、暖粉筋管、肉箍骨夹耳、三节逐级外扩空心壳喇叭口、内壁衬层、底部内光、紧贴外壳放射筋丝)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md
 - 参考图：model-review/img/meridian_factory/refs/b08_coupling.png
-
-调度要求（整格 16×16×16，长轴沿 z 方向）：
-1. -Z 端：8×6 统一截面的经脉接口（暖粉筋管短节 #d9a08c + b01 同款肉箍 #8a2a2a，底边离地 2px: x in [-4, 4], y in [2, 8]）；
-   窄端外面一圈骨夹箍（#d8ccb0，宽 2px，左右两侧各一个 2×3 的骨夹耳）。
-2. 往 +Z 逐渐外扩成肉质喇叭口（#8a2a2a，3 级台阶：截面 8×6 → 12×10 → 14×14，最外圈边缘切角）：
-   - 喇叭口内壁 #b05050，中心 #f6dcc4 一块当内光。
-3. 喇叭外表面 6~8 条 #c07868 放射筋丝从窄端连到宽端。
-4. 渲染图要求：render.png（3/4 + 侧视 + 正对喇叭口）/ check.png。
+- 调度审第 1 次修改意见（2026-10-09 15:4x 严格对齐给定坐标）：
+  * 沿 z 走向，0 是接经脉的窄端 (-Z 端)，16 是喇叭口 (+Z 端)；
+  * z 0–3 (z_model: -8..-5)：筋管短节 x 4–12 (x: -4..4)、y 2–8 (暖粉 #d9a08c)，外包肉箍 z 1–3 (z: -7..-5)、x 3–13 (x: -5..5)、y 1–9 (#8a2a2a)；
+  * z 3–5 (z_model: -5..-3)：骨夹箍，外框 x 2–14 (x: -6..6)、y 0–10，壁厚 2 (#d8ccb0)，左右各一个骨夹耳 x 0–2 / 14–16 (x: -8..-6 / 6..8)、y 3–7、z 3–5；
+  * 喇叭口用 3 节空心壳（壁厚 2，#8a2a2a，内壁面 #b05050）：
+    - 第 1 节：z 5–9 (z: -3..1) 外 x 2–14 (x: -6..6)、y 1–11；
+    - 第 2 节：z 9–13 (z: 1..5) 外 x 1–15 (x: -7..7)、y 0–13；
+    - 第 3 节：z 13–16 (z: 5..8) 外 x 0–16 (x: -8..8)、y 0–15，最外一节四个竖角各切 1×1；
+  * 喇叭底（z=5 / z_model=-3 处，壳内）一块 #f6dcc4 4×4 当内光，中心对着经脉；
+  * 外表面 8 条 #c07868 放射筋丝：上、下、左、右、四个斜角各一条，每条从 z 5 沿外壳表面走到 z 16，贴面浮 0.5px，跟着三节外壳逐级外扩，不漂在外面；
+  * 删掉所有浮板。
 """
 
 from __future__ import annotations
@@ -38,15 +41,15 @@ REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img
 
 # 配色表 (完全对齐 meridian_factory.md)
 PALETTE = {
-    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉 (肉箍主体、三级肉质喇叭口)
-    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉 (接口深孔内壁/深陷孔底)
-    "flesh_lit":        (176, 80, 80, 255),   # #b05050 亮肉红 (喇叭口内壁衬层)
+    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉 (肉箍主体、三节肉质外壳)
+    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉 (内腔深处阴影)
+    "flesh_lit":        (176, 80, 80, 255),   # #b05050 亮肉红 (喇叭口内壁面衬层)
     "bone_main":        (216, 204, 176, 255), # #d8ccb0 骨 (骨夹箍、左右骨夹耳)
     "bone_dark":        (184, 168, 136, 255), # #b8a888 骨暗面 (骨夹耳暗纹插销)
     "tendon_tube":      (217, 160, 140, 255), # #d9a08c 筋管暖粉 (-Z端8x6筋管短节)
     "tendon_highlight": (232, 188, 168, 255), # #e8bca8 筋膜亮粉 (接口上下 1px 亮边)
-    "tendon_fiber":     (192, 120, 104, 255), # #c07868 筋丝 (喇叭外表面 8 条放射筋丝)
-    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 真元内光 (喇叭口中心内光核)
+    "tendon_fiber":     (192, 120, 104, 255), # #c07868 筋丝 (紧贴外壳走台阶的 8 条放射筋丝)
+    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 真元内光 (喇叭口底部 4x4 内光)
 }
 
 MAT_UV = {
@@ -65,150 +68,309 @@ RES = 64
 
 
 # =============================================================================
-# 各部件几何定义 (part_* 拆分)
+# 各部件几何定义 (part_* 严格按调度给定坐标构建)
 # =============================================================================
 
 def part_01_narrow_inlet() -> List[dict]:
-    """-Z 端 8×6 统一截面的经脉接口：
-    - 暖粉筋管短节 #d9a08c (z: -8.0..-7.5，暴露 0.5px，截面 8×6: x in [-4, 4], y in [2, 8])；
-    - 上下各 1px 亮边 #e8bca8；
-    - b01 同款四面包覆肉箍 #8a2a2a (z: -7.5..-4.5，宽 3px，四周外凸 1px: x in [-5, 5], y in [1, 9])。
+    """z 0–3 (z_model: -8..-5)：
+    - 筋管短节 x 4–12 (x: -4..4)、y 2–8 (暖粉 #d9a08c)；
+    - 上下各附 1px 亮粉高光边 #e8bca8；
+    - 外包肉箍 z 1–3 (z: -7..-5)、x 3–13 (x: -5..5)、y 1–9 (#8a2a2a)。
     """
     cubes = []
 
-    # 1. 暖粉筋管短节 (z in [-8.0, -7.5], 宽 8px, 高 6px, 底边离地 2px)
-    cubes.append({"name": "inlet_tube", "from": [-4.0, 2.0, -8.0], "to": [4.0, 8.0, -7.5], "group": "inlet", "material": "tendon_tube"})
+    # 1. 筋管短节 (z in [-8.0, -5.0]，x in [-4.0, 4.0]，y in [2.0, 8.0])
+    cubes.append({
+        "name": "inlet_tube",
+        "from": [-4.0, 2.0, -8.0],
+        "to":   [ 4.0, 8.0, -5.0],
+        "group": "inlet",
+        "material": "tendon_tube",
+    })
 
-    # 上下各 1px 亮边 (#e8bca8 tendon_highlight，贴于顶底表面微凸 0.05px，z in [-7.95, -7.55] 避开端面共面)
-    cubes.append({"name": "inlet_tube_hl_bot", "from": [-3.9, 1.95, -7.95], "to": [3.9, 2.8, -7.55], "group": "inlet", "material": "tendon_highlight"})
-    cubes.append({"name": "inlet_tube_hl_top", "from": [-3.9, 7.2, -7.95], "to": [3.9, 8.05, -7.55], "group": "inlet", "material": "tendon_highlight"})
+    # 上下 1px 亮粉高光边 (贴于外露端面 z in [-8.0, -7.05])
+    cubes.append({
+        "name": "inlet_hl_bot",
+        "from": [-3.9, 1.95, -7.95],
+        "to":   [ 3.9, 2.8,  -7.05],
+        "group": "inlet",
+        "material": "tendon_highlight",
+    })
+    cubes.append({
+        "name": "inlet_hl_top",
+        "from": [-3.9, 7.2,  -7.95],
+        "to":   [ 3.9, 8.05, -7.05],
+        "group": "inlet",
+        "material": "tendon_highlight",
+    })
 
-    # 2. b01 同款肉箍四段包壁 (z in [-7.5, -4.5]，宽 3px，外廓 x in [-5, 5], y in [1, 9])
-    # 底管套 (y: 1.0..2.0, x: -5..5)
-    cubes.append({"name": "collar_flesh_bot", "from": [-5.0, 1.0, -7.5], "to": [ 5.0, 2.0, -4.5], "group": "inlet", "material": "flesh_main"})
-    # 顶管套 (y: 8.0..9.0, x: -5..5)
-    cubes.append({"name": "collar_flesh_top", "from": [-5.0, 8.0, -7.5], "to": [ 5.0, 9.0, -4.5], "group": "inlet", "material": "flesh_main"})
-    # 左管套 (x: -5.0..-4.0, y: 2.0..8.0)
-    cubes.append({"name": "collar_flesh_l",   "from": [-5.0, 2.0, -7.5], "to": [-4.0, 8.0, -4.5], "group": "inlet", "material": "flesh_main"})
-    # 右管套 (x: 4.0..5.0, y: 2.0..8.0)
-    cubes.append({"name": "collar_flesh_r",   "from": [ 4.0, 2.0, -7.5], "to": [ 5.0, 8.0, -4.5], "group": "inlet", "material": "flesh_main"})
+    # 2. 外包肉箍：z 1–3 (z in [-7.0, -5.0])，外廓 x in [-5.0, 5.0]，y in [1.0, 9.0]
+    # 底套 (y in [1.0, 2.0], x in [-5.0, 5.0])
+    cubes.append({
+        "name": "collar_bot",
+        "from": [-5.0, 1.0, -7.0],
+        "to":   [ 5.0, 2.0, -5.0],
+        "group": "inlet",
+        "material": "flesh_main",
+    })
+    # 顶套 (y in [8.0, 9.0], x in [-5.0, 5.0])
+    cubes.append({
+        "name": "collar_top",
+        "from": [-5.0, 8.0, -7.0],
+        "to":   [ 5.0, 9.0, -5.0],
+        "group": "inlet",
+        "material": "flesh_main",
+    })
+    # 左套 (x in [-5.0, -4.0], y in [2.0, 8.0])
+    cubes.append({
+        "name": "collar_l",
+        "from": [-5.0, 2.0, -7.0],
+        "to":   [-4.0, 8.0, -5.0],
+        "group": "inlet",
+        "material": "flesh_main",
+    })
+    # 右套 (x in [4.0, 5.0], y in [2.0, 8.0])
+    cubes.append({
+        "name": "collar_r",
+        "from": [ 4.0, 2.0, -7.0],
+        "to":   [ 5.0, 8.0, -5.0],
+        "group": "inlet",
+        "material": "flesh_main",
+    })
 
     return cubes
 
 
 def part_02_bone_clamp() -> List[dict]:
-    """窄端外面一圈骨夹箍（#d8ccb0，宽 2px，左右两侧各一个 2×3 的骨夹耳）。
-    位于 z in [-6.5, -4.5]（宽 2px），环绕在肉箍外周并向两侧伸出坚固夹耳。
+    """z 3–5 (z_model: -5..-3)：
+    - 骨夹箍：外框 x 2–14 (x: -6..6)、y 0–10，壁厚 2 (#d8ccb0)；内腔对齐 x -4..4, y 2..8；
+    - 左右各一个骨夹耳：x 0–2 / 14–16 (x: -8..-6 / 6..8)、y 3–7、z 3–5 (z: -5..-3)。
     """
     cubes = []
 
-    # 1. 骨夹箍外圈环带 (z in [-6.5, -4.5]，高 2px，厚 0.4px，外廓微凸出肉箍表面)
-    # 底环板: y in [0.6, 1.0], x in [-5.0, 5.0]
-    cubes.append({"name": "clamp_ring_bot", "from": [-5.0, 0.6, -6.5], "to": [ 5.0, 1.0, -4.5], "group": "bone_clamp", "material": "bone_main"})
-    # 顶环板: y in [9.0, 9.4], x in [-5.0, 5.0]
-    cubes.append({"name": "clamp_ring_top", "from": [-5.0, 9.0, -6.5], "to": [ 5.0, 9.4, -4.5], "group": "bone_clamp", "material": "bone_main"})
-    # 左立板: x in [-5.4, -5.0], y in [1.0, 9.0]
-    cubes.append({"name": "clamp_ring_l",   "from": [-5.4, 1.0, -6.5], "to": [-5.0, 9.0, -4.5], "group": "bone_clamp", "material": "bone_main"})
-    # 右立板: x in [5.0, 5.4], y in [1.0, 9.0]
-    cubes.append({"name": "clamp_ring_r",   "from": [ 5.0, 1.0, -6.5], "to": [ 5.4, 9.0, -4.5], "group": "bone_clamp", "material": "bone_main"})
+    # 1. 骨夹箍外框 4 块壁 (z in [-5.0, -3.0], 壁厚 2px)
+    # 底壁 (y in [0.0, 2.0], x in [-6.0, 6.0])
+    cubes.append({
+        "name": "clamp_frame_bot",
+        "from": [-6.0, 0.0, -5.0],
+        "to":   [ 6.0, 2.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
+    # 顶壁 (y in [8.0, 10.0], x in [-6.0, 6.0])
+    cubes.append({
+        "name": "clamp_frame_top",
+        "from": [-6.0, 8.0, -5.0],
+        "to":   [ 6.0, 10.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
+    # 左壁 (x in [-6.0, -4.0], y in [2.0, 8.0])
+    cubes.append({
+        "name": "clamp_frame_l",
+        "from": [-6.0, 2.0, -5.0],
+        "to":   [-4.0, 8.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
+    # 右壁 (x in [4.0, 6.0], y in [2.0, 8.0])
+    cubes.append({
+        "name": "clamp_frame_r",
+        "from": [ 4.0, 2.0, -5.0],
+        "to":   [ 6.0, 8.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
 
-    # 2. 左右两侧各一个 2×3 的骨夹耳 (厚 2px: z in [-6.5, -4.5])
-    # 西侧夹耳 (宽 2px: x in [-7.4, -5.4], 高 3px: y in [3.5, 6.5])
-    cubes.append({"name": "clamp_ear_w", "from": [-7.4, 3.5, -6.5], "to": [-5.4, 6.5, -4.5], "group": "bone_clamp", "material": "bone_main"})
-    # 西夹耳锁孔暗纹 (#b8a888 bone_dark，贴于侧面)
-    cubes.append({"name": "clamp_ear_w_pin", "from": [-7.45, 4.5, -5.9], "to": [-5.35, 5.5, -5.1], "group": "bone_clamp", "material": "bone_dark"})
+    # 2. 左右各一个骨夹耳 (z in [-5.0, -3.0], y in [3.0, 7.0])
+    # 西侧骨夹耳 (x in [-8.0, -6.0])
+    cubes.append({
+        "name": "clamp_ear_w",
+        "from": [-8.0, 3.0, -5.0],
+        "to":   [-6.0, 7.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
+    # 西夹耳锁销暗纹 (#b8a888 bone_dark，微浮出 0.05px)
+    cubes.append({
+        "name": "clamp_ear_w_pin",
+        "from": [-8.05, 4.2, -4.6],
+        "to":   [-5.95, 5.8, -3.4],
+        "group": "bone_clamp",
+        "material": "bone_dark",
+    })
 
-    # 东侧夹耳 (宽 2px: x in [5.4, 7.4], 高 3px: y in [3.5, 6.5])
-    cubes.append({"name": "clamp_ear_e", "from": [ 5.4, 3.5, -6.5], "to": [ 7.4, 6.5, -4.5], "group": "bone_clamp", "material": "bone_main"})
-    # 东夹耳锁孔暗纹
-    cubes.append({"name": "clamp_ear_e_pin", "from": [ 5.35, 4.5, -5.9], "to": [ 7.45, 5.5, -5.1], "group": "bone_clamp", "material": "bone_dark"})
+    # 东侧骨夹耳 (x in [6.0, 8.0])
+    cubes.append({
+        "name": "clamp_ear_e",
+        "from": [ 6.0, 3.0, -5.0],
+        "to":   [ 8.0, 7.0, -3.0],
+        "group": "bone_clamp",
+        "material": "bone_main",
+    })
+    # 东夹耳锁销暗纹
+    cubes.append({
+        "name": "clamp_ear_e_pin",
+        "from": [ 5.95, 4.2, -4.6],
+        "to":   [ 8.05, 5.8, -3.4],
+        "group": "bone_clamp",
+        "material": "bone_dark",
+    })
 
     return cubes
 
 
 def part_03_flaring_bell() -> List[dict]:
-    """往 +Z 逐渐外扩成肉质喇叭口（#8a2a2a，3 级台阶：截面 8×6 → 12×10 → 14×14，最外圈边缘切角）。
-    内壁使用 #b05050 (flesh_lit)，中心嵌入一块 #f6dcc4 (qi_glow) 当真元内光。
+    """喇叭口用 3 节空心壳（壁厚 2，#8a2a2a，内壁面 #b05050）：
+    - 喇叭底（z=5 / z_model: -3.0 处，壳内）：一块 #f6dcc4 4×4 当内光，中心对着经脉；
+    - 第 1 节：z 5–9 (z_model: -3..1) 外 x 2–14 (x: -6..6)、y 1–11；内腔 x in [-4, 4], y in [3, 9]；
+    - 第 2 节：z 9–13 (z_model: 1..5) 外 x 1–15 (x: -7..7)、y 0–13；内腔 x in [-5, 5], y in [2, 11]；
+    - 第 3 节：z 13–16 (z_model: 5..8) 外 x 0–16 (x: -8..8)、y 0–15，最外一节四个竖角各切 1×1；内腔 x in [-6, 6], y in [2, 13]。
     """
     cubes = []
 
-    # ═══════════ 第 1 级台阶 (过渡颈段：z in [-4.5, -0.5]，外 10x8，内 8x6) ═══════════
-    # 外截面：x in [-5, 5], y in [1, 9]；内孔：x in [-4, 4], y in [2, 8]
-    cubes.append({"name": "bell_step1_bot", "from": [-5.0, 1.0, -4.5], "to": [ 5.0, 2.0, -0.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step1_top", "from": [-5.0, 8.0, -4.5], "to": [ 5.0, 9.0, -0.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step1_l",   "from": [-5.0, 2.0, -4.5], "to": [-4.0, 8.0, -0.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step1_r",   "from": [ 4.0, 2.0, -4.5], "to": [ 5.0, 8.0, -0.5], "group": "flaring_bell", "material": "flesh_main"})
+    # ═══════════ 喇叭底内光 (#f6dcc4 qi_glow，4x4 居中对齐经脉中心 y=5) ═══════════
+    # 位于 z_model = -3.0 处壳内，x in [-2.0, 2.0], y in [3.0, 7.0], z in [-3.0, -2.6]
+    cubes.append({
+        "name": "bell_core_qi",
+        "from": [-2.0, 3.0, -3.0],
+        "to":   [ 2.0, 7.0, -2.6],
+        "group": "flaring_bell",
+        "material": "qi_glow",
+    })
 
-    # 第 1 级内壁衬层 (#b05050 flesh_lit)
-    cubes.append({"name": "bell_lining1_bot", "from": [-4.0, 2.0, -4.5], "to": [ 4.0, 2.1, -0.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining1_top", "from": [-4.0, 7.9, -4.5], "to": [ 4.0, 8.0, -0.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining1_l",   "from": [-4.0, 2.1, -4.5], "to": [-3.9, 7.9, -0.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining1_r",   "from": [ 3.9, 2.1, -4.5], "to": [ 4.0, 7.9, -0.5], "group": "flaring_bell", "material": "flesh_lit"})
+    # ═══════════ 第 1 节空心壳 (z in [-3.0, 1.0]，外 12x10: x in [-6, 6], y in [1, 11]) ═══════════
+    # 壁厚 2px: 外层 1.8px #8a2a2a，内表面层 0.2px #b05050 (无缝实心结构，杜绝浮板)
+    # 底壁：外层 y in [1.0, 2.8]，内层 y in [2.8, 3.0]
+    cubes.append({"name": "shell1_bot_out", "from": [-6.0, 1.0, -3.0], "to": [ 6.0, 2.8,  1.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell1_bot_in",  "from": [-6.0, 2.8, -3.0], "to": [ 6.0, 3.0,  1.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 顶壁：内层 y in [9.0, 9.2]，外层 y in [9.2, 11.0]
+    cubes.append({"name": "shell1_top_in",  "from": [-6.0, 9.0, -3.0], "to": [ 6.0, 9.2,  1.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell1_top_out", "from": [-6.0, 9.2, -3.0], "to": [ 6.0, 11.0, 1.0], "group": "flaring_bell", "material": "flesh_main"})
+    # 左壁：外层 x in [-6.0, -4.2]，内层 x in [-4.2, -4.0]，y in [3.0, 9.0]
+    cubes.append({"name": "shell1_l_out",   "from": [-6.0, 3.0, -3.0], "to": [-4.2, 9.0,  1.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell1_l_in",    "from": [-4.2, 3.0, -3.0], "to": [-4.0, 9.0,  1.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 右壁：内层 x in [4.0, 4.2]，外层 x in [4.2, 6.0]，y in [3.0, 9.0]
+    cubes.append({"name": "shell1_r_in",    "from": [ 4.0, 3.0, -3.0], "to": [ 4.2, 9.0,  1.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell1_r_out",   "from": [ 4.2, 3.0, -3.0], "to": [ 6.0, 9.0,  1.0], "group": "flaring_bell", "material": "flesh_main"})
 
-    # ═══════════ 第 2 级台阶 (中段扩口：z in [-0.5, 3.5]，外 12x10，内 10x8) ═══════════
-    # 外截面：x in [-6, 6], y in [0.5, 10.5]；内孔：x in [-5, 5], y in [1.5, 9.5]
-    cubes.append({"name": "bell_step2_bot", "from": [-6.0, 0.5, -0.5], "to": [ 6.0, 1.5,  3.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step2_top", "from": [-6.0, 9.5, -0.5], "to": [ 6.0, 10.5, 3.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step2_l",   "from": [-6.0, 1.5, -0.5], "to": [-5.0, 9.5,  3.5], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_step2_r",   "from": [ 5.0, 1.5, -0.5], "to": [ 6.0, 9.5,  3.5], "group": "flaring_bell", "material": "flesh_main"})
+    # ═══════════ 第 2 节空心壳 (z in [1.0, 5.0]，外 14x13: x in [-7, 7], y in [0, 13]) ═══════════
+    # 内腔：x in [-5, 5], y in [2, 11]
+    # 底壁：外层 y in [0.0, 1.8]，内层 y in [1.8, 2.0]
+    cubes.append({"name": "shell2_bot_out", "from": [-7.0, 0.0,  1.0], "to": [ 7.0, 1.8,  5.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell2_bot_in",  "from": [-7.0, 1.8,  1.0], "to": [ 7.0, 2.0,  5.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 顶壁：内层 y in [11.0, 11.2]，外层 y in [11.2, 13.0]
+    cubes.append({"name": "shell2_top_in",  "from": [-7.0, 11.0, 1.0], "to": [ 7.0, 11.2, 5.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell2_top_out", "from": [-7.0, 11.2, 1.0], "to": [ 7.0, 13.0, 5.0], "group": "flaring_bell", "material": "flesh_main"})
+    # 左壁：外层 x in [-7.0, -5.2]，内层 x in [-5.2, -5.0]，y in [2.0, 11.0]
+    cubes.append({"name": "shell2_l_out",   "from": [-7.0, 2.0,  1.0], "to": [-5.2, 11.0, 5.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell2_l_in",    "from": [-5.2, 2.0,  1.0], "to": [-5.0, 11.0, 5.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 右壁：内层 x in [5.0, 5.2]，外层 x in [5.2, 7.0]，y in [2.0, 11.0]
+    cubes.append({"name": "shell2_r_in",    "from": [ 5.0, 2.0,  1.0], "to": [ 5.2, 11.0, 5.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell2_r_out",   "from": [ 5.2, 2.0,  1.0], "to": [ 7.0, 11.0, 5.0], "group": "flaring_bell", "material": "flesh_main"})
 
-    # 第 2 级内壁衬层 (#b05050 flesh_lit)
-    cubes.append({"name": "bell_lining2_bot", "from": [-5.0, 1.5, -0.5], "to": [ 5.0, 1.6, 3.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining2_top", "from": [-5.0, 9.4, -0.5], "to": [ 5.0, 9.5, 3.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining2_l",   "from": [-5.0, 1.6, -0.5], "to": [-4.9, 9.4, 3.5], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining2_r",   "from": [ 4.9, 1.6, -0.5], "to": [ 5.0, 9.4, 3.5], "group": "flaring_bell", "material": "flesh_lit"})
+    # ═══════════ 第 3 节空心壳 (z in [5.0, 8.0]，外 16x15: x in [-8, 8], y in [0, 15]，四竖角切 1x1) ═══════════
+    # 内腔：x in [-6, 6], y in [2, 13]
+    # 底壁 (主体 x in [-6, 6], y in [0, 2]，切角避让后外层/内层)
+    cubes.append({"name": "shell3_bot_out", "from": [-6.0, 0.0,  5.0], "to": [ 6.0, 1.8,  8.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell3_bot_in",  "from": [-6.0, 1.8,  5.0], "to": [ 6.0, 2.0,  8.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 底壁左右斜切阶梯角 (左下切角保留 x in [-7, -6], y in [0, 2]，切掉 x in [-8, -7] 的 y in [0, 1])
+    cubes.append({"name": "shell3_bl_chamfer", "from": [-7.0, 0.0, 5.0], "to": [-6.0, 2.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell3_br_chamfer", "from": [ 6.0, 0.0, 5.0], "to": [ 7.0, 2.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
 
-    # ═══════════ 第 3 级台阶 (大喇叭敞口：z in [3.5, 8.0]，外 14x14 边缘切角，内 12x12) ═══════════
-    # 外截面：x in [-7, 7], y in [0, 14]，四个竖角切除 2x2 做圆钝八边形喇叭花轮廓
-    # 底壁 (y: 0..1, x in [-5, 5])
-    cubes.append({"name": "bell_step3_bot", "from": [-5.0, 0.0, 3.5], "to": [ 5.0, 1.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    # 顶壁 (y: 13..14, x in [-5, 5])
-    cubes.append({"name": "bell_step3_top", "from": [-5.0, 13.0, 3.5], "to": [ 5.0, 14.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    # 左壁 (x: -7..-6, y in [2, 12])
-    cubes.append({"name": "bell_step3_l",   "from": [-7.0, 2.0, 3.5], "to": [-6.0, 12.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    # 右壁 (x: 6..7, y in [2, 12])
-    cubes.append({"name": "bell_step3_r",   "from": [ 6.0, 2.0, 3.5], "to": [ 7.0, 12.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
+    # 顶壁 (主体 x in [-6, 6], y in [13, 15])
+    cubes.append({"name": "shell3_top_in",  "from": [-6.0, 13.0, 5.0], "to": [ 6.0, 13.2, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell3_top_out", "from": [-6.0, 13.2, 5.0], "to": [ 6.0, 15.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
+    # 顶壁左右斜切阶梯角 (左上切角保留 x in [-7, -6], y in [13, 15]，切掉 x in [-8, -7] 的 y in [14, 15])
+    cubes.append({"name": "shell3_tl_chamfer", "from": [-7.0, 13.0, 5.0], "to": [-6.0, 15.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell3_tr_chamfer", "from": [ 6.0, 13.0, 5.0], "to": [ 7.0, 15.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
 
-    # 四个切角圆钝过渡块 (在四个角切角处垫角)
-    cubes.append({"name": "bell_chamfer_bl", "from": [-6.0, 1.0, 3.5], "to": [-5.0, 2.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_chamfer_br", "from": [ 5.0, 1.0, 3.5], "to": [ 6.0, 2.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_chamfer_tl", "from": [-6.0, 12.0, 3.5], "to": [-5.0, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-    cubes.append({"name": "bell_chamfer_tr", "from": [ 5.0, 12.0, 3.5], "to": [ 6.0, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
-
-    # 第 3 级内壁衬层 (#b05050 flesh_lit)
-    cubes.append({"name": "bell_lining3_bot", "from": [-5.0, 1.0, 3.5], "to": [ 5.0, 1.1, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining3_top", "from": [-5.0, 12.9, 3.5], "to": [ 5.0, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining3_l",   "from": [-6.0, 2.0, 3.5], "to": [-5.9, 12.0, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
-    cubes.append({"name": "bell_lining3_r",   "from": [ 5.9, 2.0, 3.5], "to": [ 6.0, 12.0, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
-
-    # ═══════════ 中心真元内光 (#f6dcc4 qi_glow，深陷于喇叭深部) ═══════════
-    # 位于 z in [-0.4, 2.0]，截面 3.6x3.6: x in [-1.8, 1.8], y in [3.7, 7.3]
-    cubes.append({"name": "core_qi_glow", "from": [-1.8, 3.7, -0.4], "to": [1.8, 7.3, 2.0], "group": "flaring_bell", "material": "qi_glow"})
+    # 左壁 (主体 x in [-8, -6], y in [2, 13])
+    cubes.append({"name": "shell3_l_out",   "from": [-8.0, 2.0,  5.0], "to": [-6.2, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
+    cubes.append({"name": "shell3_l_in",    "from": [-6.2, 2.0,  5.0], "to": [-6.0, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
+    # 右壁 (主体 x in [6, 8], y in [2, 13])
+    cubes.append({"name": "shell3_r_in",    "from": [ 6.0, 2.0,  5.0], "to": [ 6.2, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_lit"})
+    cubes.append({"name": "shell3_r_out",   "from": [ 6.2, 2.0,  5.0], "to": [ 8.0, 13.0, 8.0], "group": "flaring_bell", "material": "flesh_main"})
 
     return cubes
 
 
 def part_04_radiating_fibers() -> List[dict]:
-    """喇叭外表面 8 条 #c07868 放射筋丝从窄端连到宽端。
-    微浮出外壁 0.08px，由窄端 (-Z = -4.5) 向宽端 (+Z = 7.8) 斜向外展放射贯穿全长。
+    """外表面 8 条 #c07868 放射筋丝：
+    上、下、左、右、四个斜角各一条，每条从 z 5 (z_model: -3.0) 沿外壳表面走到 z 16 (z_model: 8.0)，
+    贴面浮 0.5px，跟着三节外壳逐级外扩，紧密贴合外表面，绝不悬空漂浮！
     """
     cubes = []
 
-    # 顶面 2 条 (微浮出顶壁 y in [14.05, 14.12], z in [-4.5, 7.8])
-    cubes.append({"name": "fiber_top_l", "from": [-3.5, 14.05, -4.5], "to": [-1.0, 14.12, 7.8], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_top_r", "from": [ 1.0, 14.05, -4.5], "to": [ 3.5, 14.12, 7.8], "group": "fibers", "material": "tendon_fiber"})
+    # ═══════════ 1. 上筋丝 (中轴 x in [-0.5, 0.5]) ═══════════
+    # 第 1 节顶面 (y=11.0 贴面浮 0.5px: y in [11.0, 11.5], z in [-2.95, 0.95])
+    cubes.append({"name": "fiber_top_s1", "from": [-0.5, 11.0, -2.95], "to": [0.5, 11.5, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 1->2 爬升竖段 (在 z=1 处外壳前立面贴紧 y in [11.25, 13.25])
+    cubes.append({"name": "fiber_top_step1", "from": [-0.5, 11.25, 0.95], "to": [0.5, 13.25, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 2 节顶面 (y=13.0 贴面浮 0.5px: y in [13.0, 13.5], z in [1.05, 4.95])
+    cubes.append({"name": "fiber_top_s2", "from": [-0.5, 13.0, 1.05], "to": [0.5, 13.5, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 2->3 爬升竖段 (在 z=5 处外壳立面贴紧 y in [13.25, 15.25])
+    cubes.append({"name": "fiber_top_step2", "from": [-0.5, 13.25, 4.95], "to": [0.5, 15.25, 5.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 3 节顶面 (y=15.0 贴面浮 0.5px: y in [15.0, 15.5], z in [5.05, 7.95])
+    cubes.append({"name": "fiber_top_s3", "from": [-0.5, 15.0, 5.05], "to": [0.5, 15.5, 7.95], "group": "fibers", "material": "tendon_fiber"})
 
-    # 底面 2 条 (微浮出底壁 y in [-0.12, -0.05], z in [-4.5, 7.8])
-    cubes.append({"name": "fiber_bot_l", "from": [-3.5, -0.12, -4.5], "to": [-1.0, -0.05, 7.8], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_bot_r", "from": [ 1.0, -0.12, -4.5], "to": [ 3.5, -0.05, 7.8], "group": "fibers", "material": "tendon_fiber"})
+    # ═══════════ 2. 下筋丝 (中轴 x in [-0.5, 0.5]) ═══════════
+    # 第 1 节底面 (y=1.0 贴面浮 0.5px: y in [0.5, 1.0], z in [-2.95, 0.95])
+    cubes.append({"name": "fiber_bot_s1", "from": [-0.5, 0.5, -2.95], "to": [0.5, 1.0, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 1->2 下延竖段 (在 z=1 处外壳立面贴紧 y in [-0.25, 0.75])
+    cubes.append({"name": "fiber_bot_step1", "from": [-0.5, -0.25, 0.95], "to": [0.5, 0.75, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 2、3 节底面保持 y=0.0 (贴面浮 0.5px: y in [-0.5, 0.0], z in [1.05, 7.95])
+    cubes.append({"name": "fiber_bot_s2", "from": [-0.5, -0.5, 1.05], "to": [0.5, 0.0, 7.95], "group": "fibers", "material": "tendon_fiber"})
 
-    # 西侧面 (-X) 2 条 (微浮出外壁 x in [-7.12, -7.05], z in [-4.5, 7.8])
-    cubes.append({"name": "fiber_w_top", "from": [-7.12, 9.0, -4.5], "to": [-7.05, 11.5, 7.8], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_w_bot", "from": [-7.12, 2.5, -4.5], "to": [-7.05,  5.0, 7.8], "group": "fibers", "material": "tendon_fiber"})
+    # ═══════════ 3. 左筋丝 (-X 侧，中轴 y in [5.5, 6.5]) ═══════════
+    # 第 1 节左壁 (x=-6.0 贴面浮 0.5px: x in [-6.5, -6.0], z in [-2.95, 0.95])
+    cubes.append({"name": "fiber_l_s1", "from": [-6.5, 5.5, -2.95], "to": [-6.0, 6.5, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 1->2 外展横段 (在 z=1 处立面贴紧 x in [-7.25, -5.75])
+    cubes.append({"name": "fiber_l_step1", "from": [-7.25, 5.6, 0.95], "to": [-5.75, 6.4, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 2 节左壁 (x=-7.0 贴面浮 0.5px: x in [-7.5, -7.0], z in [1.05, 4.95])
+    cubes.append({"name": "fiber_l_s2", "from": [-7.5, 5.5, 1.05], "to": [-7.0, 6.5, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 2->3 外展横段 (在 z=5 处立面贴紧 x in [-8.25, -6.75])
+    cubes.append({"name": "fiber_l_step2", "from": [-8.25, 5.6, 4.95], "to": [-6.75, 6.4, 5.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 3 节左壁 (x=-8.0 贴面浮 0.5px: x in [-8.5, -8.0], z in [5.05, 7.95])
+    cubes.append({"name": "fiber_l_s3", "from": [-8.5, 5.5, 5.05], "to": [-8.0, 6.5, 7.95], "group": "fibers", "material": "tendon_fiber"})
 
-    # 东侧面 (+X) 2 条 (微浮出外壁 x in [7.05, 7.12], z in [-4.5, 7.8])
-    cubes.append({"name": "fiber_e_top", "from": [ 7.05, 9.0, -4.5], "to": [ 7.12, 11.5, 7.8], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_e_bot", "from": [ 7.05, 2.5, -4.5], "to": [ 7.12,  5.0, 7.8], "group": "fibers", "material": "tendon_fiber"})
+    # ═══════════ 4. 右筋丝 (+X 侧，中轴 y in [5.5, 6.5]) ═══════════
+    # 第 1 节右壁 (x=6.0 贴面浮 0.5px: x in [6.0, 6.5], z in [-2.95, 0.95])
+    cubes.append({"name": "fiber_r_s1", "from": [ 6.0, 5.5, -2.95], "to": [ 6.5, 6.5, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 1->2 外展横段 (在 z=1 处立面贴紧 x in [5.75, 7.25])
+    cubes.append({"name": "fiber_r_step1", "from": [ 5.75, 5.6, 0.95], "to": [ 7.25, 6.4, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 2 节右壁 (x=7.0 贴面浮 0.5px: x in [7.0, 7.5], z in [1.05, 4.95])
+    cubes.append({"name": "fiber_r_s2", "from": [ 7.0, 5.5, 1.05], "to": [ 7.5, 6.5, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    # 台阶 2->3 外展横段 (在 z=5 处立面贴紧 x in [6.75, 8.25])
+    cubes.append({"name": "fiber_r_step2", "from": [ 6.75, 5.6, 4.95], "to": [ 8.25, 6.4, 5.05], "group": "fibers", "material": "tendon_fiber"})
+    # 第 3 节右壁 (x=8.0 贴面浮 0.5px: x in [8.0, 8.5], z in [5.05, 7.95])
+    cubes.append({"name": "fiber_r_s3", "from": [ 8.0, 5.5, 5.05], "to": [ 8.5, 6.5, 7.95], "group": "fibers", "material": "tendon_fiber"})
+
+    # ═══════════ 5. 右上斜角筋丝 (贴于右上拐角) ═══════════
+    cubes.append({"name": "fiber_tr_s1", "from": [ 5.6, 10.6, -2.95], "to": [ 6.1, 11.1, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tr_step1", "from": [ 5.8, 10.8, 0.95], "to": [ 7.1, 13.1, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tr_s2", "from": [ 6.6, 12.6, 1.05], "to": [ 7.1, 13.1, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tr_step2", "from": [ 6.8, 12.8, 4.95], "to": [ 8.1, 14.6, 5.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tr_s3", "from": [ 6.8, 13.6, 5.05], "to": [ 7.3, 14.1, 7.95], "group": "fibers", "material": "tendon_fiber"})
+
+    # ═══════════ 6. 左上斜角筋丝 (贴于左上拐角) ═══════════
+    cubes.append({"name": "fiber_tl_s1", "from": [-6.1, 10.6, -2.95], "to": [-5.6, 11.1, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tl_step1", "from": [-7.1, 10.8, 0.95], "to": [-5.8, 13.1, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tl_s2", "from": [-7.1, 12.6, 1.05], "to": [-6.6, 13.1, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tl_step2", "from": [-8.1, 12.8, 4.95], "to": [-6.8, 14.6, 5.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_tl_s3", "from": [-7.3, 13.6, 5.05], "to": [-6.8, 14.1, 7.95], "group": "fibers", "material": "tendon_fiber"})
+
+    # ═══════════ 7. 右下斜角筋丝 (贴于右下拐角) ═══════════
+    cubes.append({"name": "fiber_br_s1", "from": [ 5.6, 0.9, -2.95], "to": [ 6.1, 1.4, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_br_step1", "from": [ 5.8, -0.2, 0.95], "to": [ 7.1, 1.1, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_br_s2", "from": [ 6.6, -0.1, 1.05], "to": [ 7.1, 0.4, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_br_s3", "from": [ 6.8, 0.9, 5.05], "to": [ 7.3, 1.4, 7.95], "group": "fibers", "material": "tendon_fiber"})
+
+    # ═══════════ 8. 左下斜角筋丝 (贴于左下拐角) ═══════════
+    cubes.append({"name": "fiber_bl_s1", "from": [-6.1, 0.9, -2.95], "to": [-5.6, 1.4, 0.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_bl_step1", "from": [-7.1, -0.2, 0.95], "to": [-5.8, 1.1, 1.05], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_bl_s2", "from": [-7.1, -0.1, 1.05], "to": [-6.6, 0.4, 4.95], "group": "fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_bl_s3", "from": [-7.3, 0.9, 5.05], "to": [-6.8, 1.4, 7.95], "group": "fibers", "material": "tendon_fiber"})
 
     return cubes
 
@@ -375,20 +537,20 @@ def generate_bbmodel(out_path: Path) -> Path:
 # =============================================================================
 
 def render_views(model_p: Path):
-    """输出包含（3/4 视 + 侧视 + 正对喇叭口直视 + 背部接口视）的综合拼图 render.png 与左右并排对照卡 check.png。"""
+    """输出包含（3/4 视 + 侧视 + 正对喇叭口直视 + 背面接口视）的综合拼图 render.png 与左右并排对照卡 check.png。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)
 
     # 1. 渲染各视角：
-    # 3/4 等轴视 (看外扩喇叭全貌、骨夹箍夹耳、放射筋丝)
+    # 3/4 等轴视 (看三节阶梯空心外扩喇叭口全貌、骨夹箍夹耳、紧贴外壳放射筋丝)
     im_iso, _ = render(model_p, yaw=-35.0, pitch=30.0, size=500, bg=bg_color)
-    # 侧视 (SIDE: yaw=90, pitch=0 看从 -Z 到 +Z 阶梯外扩与放射筋丝)
+    # 侧视 (SIDE: yaw=90, pitch=0 看从 -Z 到 +Z 三级阶梯逐级外扩与放射筋丝紧贴走台阶)
     im_side, _ = render(model_p, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
-    # 正对喇叭口直视 (yaw=180, pitch=0 从 +Z 正面直视 14x14 喇叭口内壁与真元内光)
+    # 正对喇叭口直视 (yaw=180, pitch=0 从 +Z 正面直视 16x15 切角喇叭口内壁与底部 4x4 真元内光)
     im_mouth, _ = render(model_p, yaw=180.0, pitch=0.0, size=500, bg=bg_color)
-    # 背面直视 (yaw=0, pitch=0 从 -Z 直视 8x6 统一截面经脉接口与骨夹耳)
+    # 背面直视 (yaw=0, pitch=0 从 -Z 直视 8x6 统一截面经脉接口与骨夹箍耳)
     im_inlet, _ = render(model_p, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
 
     # 2. 拼装 render.png (2x2 网格拼版：3/4 等轴视、侧视、正对喇叭口、背面接口)
@@ -400,14 +562,14 @@ def render_views(model_p: Path):
 
     views = [
         ("3/4 ISOMETRIC (Flaring Bell & Bone Clamp)", im_iso, 10, 10),
-        ("SIDE VIEW (8x6 -> 12x10 -> 14x14 Flaring)", im_side, cell_w + 20, 10),
+        ("SIDE VIEW (Stepped Flaring 8x6 -> 12x10 -> 16x15)", im_side, cell_w + 20, 10),
         ("FRONT VIEW (+Z Straight Into Bell Mouth & Qi)", im_mouth, 10, cell_h + 20),
         ("BACK VIEW (-Z Standard 8x6 Inlet & Clamps)", im_inlet, cell_w + 20, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 420, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 440, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(235, 235, 235))
 
     render_path = REVIEW_DIR / "render.png"
@@ -456,7 +618,7 @@ def self_test():
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
         "from": [-4.0, 2.0, -8.0],
-        "to":   [ 4.0, 8.0, -7.5],
+        "to":   [ 4.0, 8.0, -5.0],
         "material": "tendon_tube",
     }]
     caught = False
