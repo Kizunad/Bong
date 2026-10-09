@@ -81,54 +81,54 @@ def part_01_coupling_sockets() -> List[dict]:
     """1. 双骨环 + 两个 8x6 统一截面耦合插口 (z: 0..2)。
 
     插口开口在 z=0 端面，严格遵循统一接口规范：
-    - 左右两个插口，中间保留 6px 空隙；
-    - 左孔 x in [-11.0, -3.0], y in [2.0, 8.0] (宽 8px × 高 6px，底边离地 2px)；
-    - 右孔 x in [ 3.0, 11.0], y in [2.0, 8.0] (宽 8px × 高 6px，底边离地 2px)；
+    - 左右两个插口向两侧外偏 6~8px (中心在 x = ±13.0)，中间留出大阔度 Y 形分叉空隙；
+    - 左孔 x in [-17.0, -9.0], y in [2.0, 8.0] (宽 8px × 高 6px，底边离地 2px)；
+    - 右孔 x in [ 9.0, 17.0], y in [2.0, 8.0] (宽 8px × 高 6px，底边离地 2px)；
     - 外包骨环 #d8ccb0，方孔内壁贴 #b05050 衬层，中心真元内光 #f6dcc4。
     """
     cubes = []
 
-    # ── 左插口 (x in [-11.0, -3.0]) ──
-    cubes.append({"name": "socket_ring_l_out", "from": [-12.2, 0.8, 0.0], "to": [-11.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_in",  "from": [ -3.0, 0.8, 0.0], "to": [ -1.8, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_top", "from": [-11.0, 8.0, 0.0], "to": [ -3.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_bot", "from": [-11.0, 0.8, 0.0], "to": [ -3.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    # ── 左插口 (中心在 x = -13.0, x in [-17.0, -9.0]) ──
+    cubes.append({"name": "socket_ring_l_out", "from": [-18.2, 0.8, 0.0], "to": [-17.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_l_in",  "from": [ -9.0, 0.8, 0.0], "to": [ -7.8, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_l_top", "from": [-17.0, 8.0, 0.0], "to": [ -9.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_l_bot", "from": [-17.0, 0.8, 0.0], "to": [ -9.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
 
-    cubes.append({"name": "socket_lining_l_l", "from": [-11.0, 2.0, 0.0], "to": [-10.2, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_r", "from": [ -3.8, 2.0, 0.0], "to": [ -3.0, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_t", "from": [-10.2, 7.2, 0.0], "to": [ -3.8, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_b", "from": [-10.2, 2.0, 0.0], "to": [ -3.8, 2.8, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lumen_l",    "from": [-10.2, 2.8, 1.0], "to": [ -3.8, 7.2, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
+    cubes.append({"name": "socket_lining_l_l", "from": [-17.0, 2.0, 0.0], "to": [-16.2, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_l_r", "from": [ -9.8, 2.0, 0.0], "to": [ -9.0, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_l_t", "from": [-16.2, 7.2, 0.0], "to": [ -9.8, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_l_b", "from": [-16.2, 2.0, 0.0], "to": [ -9.8, 2.8, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lumen_l",    "from": [-16.2, 2.8, 1.0], "to": [ -9.8, 7.2, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
 
-    # ── 右插口 (x in [3.0, 11.0]) ──
-    cubes.append({"name": "socket_ring_r_in",  "from": [  1.8, 0.8, 0.0], "to": [  3.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_out", "from": [ 11.0, 0.8, 0.0], "to": [ 12.2, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_top", "from": [  3.0, 8.0, 0.0], "to": [ 11.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_bot", "from": [  3.0, 0.8, 0.0], "to": [ 11.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    # ── 右插口 (中心在 x = 13.0, x in [9.0, 17.0]) ──
+    cubes.append({"name": "socket_ring_r_in",  "from": [  7.8, 0.8, 0.0], "to": [  9.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_r_out", "from": [ 17.0, 0.8, 0.0], "to": [ 18.2, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_r_top", "from": [  9.0, 8.0, 0.0], "to": [ 17.0, 9.2, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_r_bot", "from": [  9.0, 0.8, 0.0], "to": [ 17.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
 
-    cubes.append({"name": "socket_lining_r_l", "from": [ 3.0, 2.0, 0.0], "to": [ 3.8, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_r", "from": [10.2, 2.0, 0.0], "to": [11.0, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_t", "from": [ 3.8, 7.2, 0.0], "to": [10.2, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_b", "from": [ 3.8, 2.0, 0.0], "to": [10.2, 2.8, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lumen_r",    "from": [ 3.8, 2.8, 1.0], "to": [10.2, 7.2, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
+    cubes.append({"name": "socket_lining_r_l", "from": [  9.0, 2.0, 0.0], "to": [  9.8, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_r_r", "from": [ 16.2, 2.0, 0.0], "to": [ 17.0, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_r_t", "from": [  9.8, 7.2, 0.0], "to": [ 16.2, 8.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_r_b", "from": [  9.8, 2.0, 0.0], "to": [ 16.2, 2.8, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lumen_r",    "from": [  9.8, 2.8, 1.0], "to": [ 16.2, 7.2, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
 
     return cubes
 
 
 def part_02_bifurcated_tendons() -> List[dict]:
-    """2. 左右两条肌腱 (z: 2..12, Y 形分叉，中间留空隙)。"""
+    """2. 左右两条肌腱 (z: 2..12, 向外偏展呈鲜明大角 Y 形分叉)。"""
     cubes = []
-    # ── 左肌腱 (中心在 x ≈ -7.0) ──
-    cubes.append({"name": "tendon_l_seg1", "from": [-10.8, 2.0, 2.0], "to": [-3.2, 8.0, 6.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
-    cubes.append({"name": "tendon_l_seg2", "from": [-11.5, 2.0, 6.0], "to": [-3.0, 9.0, 12.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
-    cubes.append({"name": "tendon_l_hl1",  "from": [-7.4, 8.05, 2.0], "to": [-6.6, 8.35, 6.0], "group": "bifurcated_tendons", "material": "qi_glow"})
-    cubes.append({"name": "tendon_l_hl2",  "from": [-7.7, 9.05, 6.0], "to": [-6.9, 9.35, 11.9], "group": "bifurcated_tendons", "material": "qi_glow"})
+    # ── 左肌腱 (从外展端 x=-13 斜向收敛至中心肌腹 x=-7) ──
+    cubes.append({"name": "tendon_l_seg1", "from": [-16.8, 2.0, 2.0], "to": [ -9.2, 8.0, 6.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
+    cubes.append({"name": "tendon_l_seg2", "from": [-14.5, 2.0, 6.0], "to": [ -4.5, 9.0, 12.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
+    cubes.append({"name": "tendon_l_hl1",  "from": [-13.4, 8.05, 2.0], "to": [-12.6, 8.35, 6.0], "group": "bifurcated_tendons", "material": "qi_glow"})
+    cubes.append({"name": "tendon_l_hl2",  "from": [-10.2, 9.05, 6.0], "to": [ -9.4, 9.35, 11.9], "group": "bifurcated_tendons", "material": "qi_glow"})
 
-    # ── 右肌腱 (中心在 x ≈ 7.0) ──
-    cubes.append({"name": "tendon_r_seg1", "from": [ 3.2, 2.0, 2.0], "to": [10.8, 8.0, 6.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
-    cubes.append({"name": "tendon_r_seg2", "from": [ 3.0, 2.0, 6.0], "to": [11.5, 9.0, 12.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
-    cubes.append({"name": "tendon_r_hl1",  "from": [ 6.6, 8.05, 2.0], "to": [ 7.4, 8.35, 6.0], "group": "bifurcated_tendons", "material": "qi_glow"})
-    cubes.append({"name": "tendon_r_hl2",  "from": [ 6.9, 9.05, 6.0], "to": [ 7.7, 9.35, 11.9], "group": "bifurcated_tendons", "material": "qi_glow"})
+    # ── 右肌腱 (从外展端 x=13 斜向收敛至中心肌腹 x=7) ──
+    cubes.append({"name": "tendon_r_seg1", "from": [  9.2, 2.0, 2.0], "to": [ 16.8, 8.0, 6.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
+    cubes.append({"name": "tendon_r_seg2", "from": [  4.5, 2.0, 6.0], "to": [ 14.5, 9.0, 12.0], "group": "bifurcated_tendons", "material": "tendon_trans"})
+    cubes.append({"name": "tendon_r_hl1",  "from": [ 12.6, 8.05, 2.0], "to": [ 13.4, 8.35, 6.0], "group": "bifurcated_tendons", "material": "qi_glow"})
+    cubes.append({"name": "tendon_r_hl2",  "from": [  9.4, 9.05, 6.0], "to": [ 10.2, 9.35, 11.9], "group": "bifurcated_tendons", "material": "qi_glow"})
 
     return cubes
 
@@ -214,7 +214,7 @@ def part_03_muscle_bundles() -> List[dict]:
         {
             "name": "b5",
             "z": [11.7, 19.6, 29.6, 44.3],
-            "ext": 1.0,
+            "ext": 1.1,
             "outer": True,
             "secs": [
                 ( 4.7,  9.7, 4.8,  9.8),
@@ -291,36 +291,48 @@ def part_03_muscle_bundles() -> List[dict]:
                 "material": "flesh_lit",
             })
 
-        # 延伸段 (z 44 那头错开 0-4px，外圈束外角切角做圆钝肌腹)
-        if ext > 0.05:
-            x0, x1, y0, y1 = secs[2]
-            z_end_s1 = zs[3]
-            dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
-            if is_outer:
-                if dx_sign < 0:
-                    x0_cut, x1_cut = x0 + 1.2, x1 - 0.2
-                else:
-                    x0_cut, x1_cut = x0 + 0.25, x1 - 1.2
-                y0_cut, y1_cut = y0 + 0.6, y1 - 0.6
-            else:
-                x0_cut, x1_cut = x0 + 0.4, x1 - 0.4
-                y0_cut, y1_cut = y0 + 0.4, y1 - 0.4
+        # 延伸段 (z 44 那头长度错开 0-4px，两级阶梯切角做饱满圆钝肌腹，杜绝平切)
+        ext_len = ext if ext > 0.05 else 1.2
+        x0, x1, y0, y1 = secs[2]
+        z_end_s1 = zs[3]
+        dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
 
-            cubes.append({
-                "name": f"{b_name}_ext",
-                "from": [x0_cut, y0_cut, z_end_s1],
-                "to":   [x1_cut, y1_cut, z_end_s1 + ext],
-                "group": "muscle_bundles",
-                "material": "flesh_main",
-            })
-            x_mid_c = (x0_cut + x1_cut) / 2.0
-            cubes.append({
-                "name": f"{b_name}_ext_hl",
-                "from": [x_mid_c - 0.45, y1_cut + 0.05, z_end_s1],
-                "to":   [x_mid_c + 0.45, y1_cut + 0.35, z_end_s1 + ext],
-                "group": "muscle_bundles",
-                "material": "flesh_lit",
-            })
+        if is_outer:
+            x0_c1 = x0 + 1.2 if dx_sign < 0 else x0 + 0.3
+            x1_c1 = x1 - 0.3 if dx_sign < 0 else x1 - 1.2
+            y0_c1, y1_c1 = y0 + 0.6, y1 - 0.6
+        else:
+            x0_c1, x1_c1 = x0 + 0.5, x1 - 0.5
+            y0_c1, y1_c1 = y0 + 0.5, y1 - 0.5
+
+        z_m1 = z_end_s1 + ext_len * 0.6
+        cubes.append({
+            "name": f"{b_name}_ext1",
+            "from": [round(x0_c1, 2), round(y0_c1, 2), round(z_end_s1, 2)],
+            "to":   [round(x1_c1, 2), round(y1_c1, 2), round(z_m1, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_main",
+        })
+        x_mid_c1 = (x0_c1 + x1_c1) / 2.0
+        cubes.append({
+            "name": f"{b_name}_ext1_hl",
+            "from": [x_mid_c1 - 0.45, y1_c1 + 0.05, round(z_end_s1, 2)],
+            "to":   [x_mid_c1 + 0.45, y1_c1 + 0.35, round(z_m1, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_lit",
+        })
+
+        # 级 2 进一步收缩圆钝顶帽
+        x0_c2, x1_c2 = x0_c1 + 0.8, x1_c1 - 0.8
+        y0_c2, y1_c2 = y0_c1 + 0.5, y1_c1 - 0.5
+        z_m2 = z_end_s1 + ext_len
+        cubes.append({
+            "name": f"{b_name}_ext2_dome",
+            "from": [round(x0_c2, 2), round(y0_c2, 2), round(z_m1, 2)],
+            "to":   [round(x1_c2, 2), round(y1_c2, 2), round(z_m2, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_main",
+        })
 
     # 束缝底衬暗色芯 (#5a1a1a)
     cubes.append({"name": "fissure_core_mid", "from": [-3.0, 6.6, 13.0], "to": [3.0, 13.4, 29.0], "group": "muscle_bundles", "material": "flesh_dark"})

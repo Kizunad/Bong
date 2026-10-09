@@ -254,36 +254,48 @@ def part_03_muscle_bundles() -> List[dict]:
                 "material": "flesh_lit",
             })
 
-        # 延伸段 (z 44 那头错开 0-4px，外圈束外角切 1px)
-        if ext > 0.05:
-            x0, x1, y0, y1 = secs[3]
-            z_end_s1 = zs[4]
-            dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
-            if b_name != "b0":
-                if dx_sign < 0:
-                    x0_cut, x1_cut = x0 + 1.0, x1 - 0.2
-                else:
-                    x0_cut, x1_cut = x0 + 0.2, x1 - 1.0
-                y0_cut, y1_cut = y0 + 0.5, y1 - 0.5
-            else:
-                x0_cut, x1_cut = x0 + 0.5, x1 - 0.5
-                y0_cut, y1_cut = y0 + 0.5, y1 - 0.5
+        # 延伸段 (z 44 那头长度错开 0-4px，两级阶梯切角做饱满圆钝的半球肌腹)
+        ext_len = ext if ext > 0.05 else 1.2
+        x0, x1, y0, y1 = secs[3]
+        z_end_s1 = zs[4]
+        dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
 
-            cubes.append({
-                "name": f"{b_name}_ext",
-                "from": [x0_cut, y0_cut, z_end_s1],
-                "to":   [x1_cut, y1_cut, z_end_s1 + ext],
-                "group": "muscle_bundles",
-                "material": "flesh_main",
-            })
-            x_mid_c = (x0_cut + x1_cut) / 2.0
-            cubes.append({
-                "name": f"{b_name}_ext_hl",
-                "from": [x_mid_c - 0.45, y1_cut + 0.05, z_end_s1],
-                "to":   [x_mid_c + 0.45, y1_cut + 0.35, z_end_s1 + ext],
-                "group": "muscle_bundles",
-                "material": "flesh_lit",
-            })
+        if b_name != "b0":
+            x0_c1 = x0 + 1.2 if dx_sign < 0 else x0 + 0.3
+            x1_c1 = x1 - 0.3 if dx_sign < 0 else x1 - 1.2
+            y0_c1, y1_c1 = y0 + 0.6, y1 - 0.6
+        else:
+            x0_c1, x1_c1 = x0 + 0.6, x1 - 0.6
+            y0_c1, y1_c1 = y0 + 0.6, y1 - 0.6
+
+        z_m1 = z_end_s1 + ext_len * 0.6
+        cubes.append({
+            "name": f"{b_name}_ext1",
+            "from": [round(x0_c1, 2), round(y0_c1, 2), round(z_end_s1, 2)],
+            "to":   [round(x1_c1, 2), round(y1_c1, 2), round(z_m1, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_main",
+        })
+        x_mid_c1 = (x0_c1 + x1_c1) / 2.0
+        cubes.append({
+            "name": f"{b_name}_ext1_hl",
+            "from": [x_mid_c1 - 0.45, y1_c1 + 0.05, round(z_end_s1, 2)],
+            "to":   [x_mid_c1 + 0.45, y1_c1 + 0.35, round(z_m1, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_lit",
+        })
+
+        # 级 2 进一步收缩圆钝顶帽
+        x0_c2, x1_c2 = x0_c1 + 0.8, x1_c1 - 0.8
+        y0_c2, y1_c2 = y0_c1 + 0.5, y1_c1 - 0.5
+        z_m2 = z_end_s1 + ext_len
+        cubes.append({
+            "name": f"{b_name}_ext2_dome",
+            "from": [round(x0_c2, 2), round(y0_c2, 2), round(z_m1, 2)],
+            "to":   [round(x1_c2, 2), round(y1_c2, 2), round(z_m2, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_main",
+        })
 
     # 束缝底衬暗色芯 (#5a1a1a)
     cubes.append({"name": "fissure_core_mid", "from": [-2.0, 7.0, 13.0], "to": [2.0, 11.0, 29.0], "group": "muscle_bundles", "material": "flesh_dark"})

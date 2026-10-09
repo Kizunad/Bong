@@ -86,7 +86,7 @@ def build_floor_flesh_cubes() -> List[dict]:
     # ── 满格实心基底 (主色 #8a2a2a, y in [0, 16]) ──
     cubes.append({"name": "flesh_block", "from": [-8.0, 0.0, -8.0], "to": [8.0, 16.0, 8.0], "group": "base_block", "material": "flesh_main"})
 
-    # ── 调度指定固定路径血管网络 (#b05050, 浮起 0.5px: y in [16.0, 16.5], 1x1 方块连续走线) ──
+    # ── 调度指定固定路径血管网络 (#b05050, 浮起 0.5px: y in [16.0, 16.5], 加粗至 2px 宽管条) ──
     # 主血管 A: (0,5)(1,5)(2,6)(3,6)(4,7)(5,7)(6,8)(7,8)(8,8)(9,9)(10,9)(11,10)(12,10)(13,11)(14,11)(15,12)
     path_a = [(0, 5), (1, 5), (2, 6), (3, 6), (4, 7), (5, 7), (6, 8), (7, 8), (8, 8), (9, 9), (10, 9), (11, 10), (12, 10), (13, 11), (14, 11), (15, 12)]
     # 支 B (从 A 的 (7,8) 分出向上至北缘 (10,0)): (7,7)(7,6)(8,5)(8,4)(9,3)(9,2)(10,1)(10,0)
@@ -96,8 +96,25 @@ def build_floor_flesh_cubes() -> List[dict]:
     # 细支 D (从 A 的 (2,6) 分出向西至西缘 (0,10)): (2,7)(1,8)(1,9)(0,10)
     path_d = [(2, 7), (1, 8), (1, 9), (0, 10)]
 
-    vein_cells = set(path_a + path_b + path_c + path_d)
-    for idx, (gx, gz) in enumerate(sorted(vein_cells)):
+    w2_cells = set()
+    for (x, z) in path_a:
+        w2_cells.add((x, z))
+        if z - 1 >= 0:
+            w2_cells.add((x, z - 1))
+    for (x, z) in path_b:
+        w2_cells.add((x, z))
+        if x - 1 >= 0:
+            w2_cells.add((x - 1, z))
+    for (x, z) in path_c:
+        w2_cells.add((x, z))
+        if x + 1 < 16:
+            w2_cells.add((x + 1, z))
+    for (x, z) in path_d:
+        w2_cells.add((x, z))
+        if z + 1 < 16:
+            w2_cells.add((x, z + 1))
+
+    for idx, (gx, gz) in enumerate(sorted(w2_cells)):
         cubes.append({
             "name": f"vein_cell_{idx}",
             "from": [float(gx - 8), 16.0, float(gz - 8)],

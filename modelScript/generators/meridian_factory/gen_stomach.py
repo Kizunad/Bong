@@ -124,14 +124,14 @@ def part_02_stomach_sac() -> List[dict]:
         (13,  6.0,  9.0, 10, 34, 20.0),
     ]
 
-    # 视窗椭圆在各行 (行 6..11) 的 X 范围 (dispatcher 坐标 x: 12..36)
+    # 视窗椭圆在各行 (行 6..11) 的 X 范围 (圆化椭圆：上下两端收窄，中央展开)
     window_x_disp = {
-        6:  (18.0, 30.0),
+        6:  (20.0, 28.0),  # 顶端收窄
         7:  (15.0, 33.0),
         8:  (12.0, 36.0),
         9:  (12.0, 36.0),
         10: (15.0, 33.0),
-        11: (18.0, 30.0),
+        11: (20.0, 28.0),  # 底端收窄
     }
 
     for r_idx, y0, y1, x0_d, x1_d, depth in rows_def:
@@ -182,6 +182,22 @@ def part_02_stomach_sac() -> List[dict]:
                 "material": "flesh_main" if r_idx % 2 == 0 else "flesh_lit",
             })
 
+    # ── 左下向上勾的胃底大弯加强肌束 (强化 J 形大弯回勾轮廓) ──
+    cubes.append({
+        "name": "great_curvature_hook_1",
+        "from": [-22.0, 4.8, -8.0],
+        "to":   [-14.5, 9.2,  8.0],
+        "group": "stomach_sac",
+        "material": "flesh_main",
+    })
+    cubes.append({
+        "name": "great_curvature_hook_2",
+        "from": [-23.6, 8.2, -7.0],
+        "to":   [-17.2, 13.5, 7.0],
+        "group": "stomach_sac",
+        "material": "flesh_lit",
+    })
+
     return cubes
 
 
@@ -189,12 +205,12 @@ def part_03_amber_cavity() -> List[dict]:
     """3. 正面椭圆凹口与琥珀色消化液 (行 6–11、x 12–36，向内凹 3px，开口 1px #e8bca8 内衬)。"""
     cubes = []
     window_x_disp = {
-        6:  (18.0, 30.0, 27.0, 30.0, 14.0),
+        6:  (20.0, 28.0, 27.0, 30.0, 14.0),
         7:  (15.0, 33.0, 24.0, 27.0, 14.0),
         8:  (12.0, 36.0, 21.0, 24.0, 14.0),
         9:  (12.0, 36.0, 18.0, 21.0, 14.0),
         10: (15.0, 33.0, 15.0, 18.0, 13.0),
-        11: (18.0, 30.0, 12.0, 15.0, 12.0),
+        11: (20.0, 28.0, 12.0, 15.0, 12.0),
     }
 
     for r_idx, (wx0_d, wx1_d, y0, y1, hz) in window_x_disp.items():
