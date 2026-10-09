@@ -1,0 +1,16 @@
+# 经脉工厂器官 o04: 下肢肌肉组 (LegMuscle / leg_muscle) 特征清单
+facing = "+z"
+size = 500
+
+[materials]
+flesh_main = [138, 42, 42]        # #8a2a2a 红肌纤维主色
+flesh_lit = [176, 80, 80]          # #b05050 顶面高光条
+flesh_dark = [90, 26, 26]          # #5a1a1a 束间细缝与暗部
+tendon_trans = [232, 188, 168]     # #e8bca8 渐变白色肌腱
+bone_main = [216, 204, 176]        # #d8ccb0 骨环
+qi_glow = [246, 220, 196]          # #f6dcc4 肌腱亮线与真元内光
+
+[features]
+muscle_bundles = { elements = ["b0_", "b1_", "b2_", "b3_", "b4_", "b5_", "b6_", "b7_", "b8_", "fissure_"], must_show_in = ["FRONT", "SIDE_R", "3/4", "TOP"], min_px = 200 }
+bifurcated_tendons = { elements = ["tendon_"], must_show_in = ["SIDE_R", "3/4", "TOP"], min_px = 60 }
+coupling_sockets = { elements = ["socket_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
