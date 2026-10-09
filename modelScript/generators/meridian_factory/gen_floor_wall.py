@@ -81,38 +81,36 @@ RES = 64
 # =============================================================================
 
 def build_floor_flesh_cubes() -> List[dict]:
-    """1. floor_flesh (血肉地砖，主色 #8a2a2a，斜向逐格血管纹 + 大暗斑 + 亮点)。"""
+    """1. floor_flesh (血肉地砖，主色 #8a2a2a，调度指定连续血管网 + 3 块暗斑 + 2 个亮点)。"""
     cubes = []
     # ── 满格实心基底 (主色 #8a2a2a, y in [0, 16]) ──
     cubes.append({"name": "flesh_block", "from": [-8.0, 0.0, -8.0], "to": [8.0, 16.0, 8.0], "group": "base_block", "material": "flesh_main"})
 
-    # ── 4 条连续斜向逐格走的血管纹 (#b05050, 浮起 0.45px: y in [16.0, 16.45]) ──
-    # 路径 1: 西缘 x=-8 (z=0) 蜿蜒贯穿至东缘 x=8 (z=0)
-    p1 = [(-8, 0), (-7, 0), (-6, 1), (-5, 1), (-4, 2), (-3, 2), (-2, 1), (-1, 1), (0, 0), (1, 0), (2, -1), (3, -1), (4, -2), (5, -1), (6, -1), (7, 0)]
-    # 路径 2: 北缘 z=-8 (x=-3) 蜿蜒贯穿至南缘 z=8 (x=-3)
-    p2 = [(-3, -8), (-3, -7), (-4, -6), (-4, -5), (-5, -4), (-4, -3), (-4, -2), (-3, -1), (-3, 0), (-2, 2), (-2, 3), (-3, 4), (-3, 5), (-3, 6), (-3, 7)]
-    # 路径 3: 北缘 z=-8 (x=4) 蜿蜒贯穿至南缘 z=8 (x=4)
-    p3 = [(4, -8), (4, -7), (5, -6), (5, -5), (6, -4), (5, -3), (5, -2), (4, -1), (4, 1), (5, 2), (5, 3), (4, 4), (4, 5), (4, 6), (4, 7)]
-    # 路径 4: 西南角分支从西缘 x=-8 (z=-5) 蜿蜒至南缘 z=8 (x=-6)
-    p4 = [(-8, -5), (-7, -5), (-6, -4), (-6, -3), (-7, -2), (-7, -1), (-6, 2), (-6, 3), (-5, 4), (-5, 5), (-6, 6), (-6, 7)]
+    # ── 调度指定固定路径血管网络 (#b05050, 浮起 0.5px: y in [16.0, 16.5], 1x1 方块连续走线) ──
+    # 主血管 A: (0,5)(1,5)(2,6)(3,6)(4,7)(5,7)(6,8)(7,8)(8,8)(9,9)(10,9)(11,10)(12,10)(13,11)(14,11)(15,12)
+    path_a = [(0, 5), (1, 5), (2, 6), (3, 6), (4, 7), (5, 7), (6, 8), (7, 8), (8, 8), (9, 9), (10, 9), (11, 10), (12, 10), (13, 11), (14, 11), (15, 12)]
+    # 支 B (从 A 的 (7,8) 分出向上至北缘 (10,0)): (7,7)(7,6)(8,5)(8,4)(9,3)(9,2)(10,1)(10,0)
+    path_b = [(7, 7), (7, 6), (8, 5), (8, 4), (9, 3), (9, 2), (10, 1), (10, 0)]
+    # 支 C (从 A 的 (11,10) 分出向下至南缘 (9,15)): (11,11)(11,12)(10,13)(10,14)(9,15)
+    path_c = [(11, 11), (11, 12), (10, 13), (10, 14), (9, 15)]
+    # 细支 D (从 A 的 (2,6) 分出向西至西缘 (0,10)): (2,7)(1,8)(1,9)(0,10)
+    path_d = [(2, 7), (1, 8), (1, 9), (0, 10)]
 
-    vein_set = set(p1 + p2 + p3 + p4)
-    for idx, (gx, gz) in enumerate(sorted(vein_set)):
+    vein_cells = set(path_a + path_b + path_c + path_d)
+    for idx, (gx, gz) in enumerate(sorted(vein_cells)):
         cubes.append({
             "name": f"vein_cell_{idx}",
-            "from": [float(gx), 16.0, float(gz)],
-            "to":   [float(gx + 1), 16.45, float(gz + 1)],
+            "from": [float(gx - 8), 16.0, float(gz - 8)],
+            "to":   [float(gx - 7), 16.5, float(gz - 7)],
             "group": "veins",
             "material": "flesh_lit",
         })
 
-    # ── 大块不规则暗斑 (#5a1a1a, 3~5px 见方, y in [16.0, 16.15]) ──
-    # 严格位于无血管的空白网格区内
+    # ── 3 块大暗斑 (#5a1a1a, y in [16.0, 16.15]): 4x3, 3x4, 3x3 (避开血管空白区) ──
     spots = [
-        ("dark_spot_nw", -8.0, -5.0, -8.0, -6.0),  # 3x2, 西北角
-        ("dark_spot_ne",  0.0,  3.0, -6.0, -3.0),  # 3x3, 东北区
-        ("dark_spot_s",   0.0,  3.0,  4.0,  7.0),  # 3x3, 中南区
-        ("dark_spot_e",   6.0,  8.0,  2.0,  5.0),  # 2x3, 远东区
+        ("dark_spot_4x3", -7.0, -3.0, -7.0, -4.0),  # x in [1, 5], z in [1, 4] -> 4x3
+        ("dark_spot_3x4",  4.0,  7.0, -6.0, -2.0),  # x in [12, 15], z in [2, 6] -> 3x4
+        ("dark_spot_3x3", -4.0, -1.0,  3.0,  6.0),  # x in [4, 7], z in [11, 14] -> 3x3
     ]
     for sname, x0, x1, z0, z1 in spots:
         cubes.append({
@@ -123,11 +121,10 @@ def build_floor_flesh_cubes() -> List[dict]:
             "material": "flesh_dark",
         })
 
-    # ── 3 个 1x1 亮点 (#c88a7a, y in [16.0, 16.25]) ──
+    # ── 2 个 1x1 亮点 (#c88a7a, y in [16.0, 16.25]) ──
     sparkles = [
-        ("sparkle_1",  1.0, -2.0),
-        ("sparkle_2", -1.0,  3.0),
-        ("sparkle_3",  6.0, -6.0),
+        ("sparkle_1", -5.0, 2.0),  # 网格 (3, 10)
+        ("sparkle_2",  5.0, 0.0),  # 网格 (13, 8)
     ]
     for sp_name, sx, sz in sparkles:
         cubes.append({
@@ -309,10 +306,11 @@ def build_texture(model_type: str, res: int = RES) -> Image.Image:
                 g = int(np.clip(base_c[1] + noise, 0, 255))
                 b = int(np.clip(base_c[2] + noise, 0, 255))
 
-                if mat_name == "flesh_main":
-                    if (x * 3 + y * 7) % 11 == 0:
-                        r = int(np.clip(r + 10, 0, 255))
-                        g = int(np.clip(g + 4, 0, 255))
+                if model_type == "floor_flesh" and mat_name == "flesh_main":
+                    # 侧面保持纯 #8a2a2a，上沿 1px 设置 #5a1a1a
+                    if y == v0 + 15:
+                        dark_c = PALETTE["flesh_dark"]
+                        r, g, b = dark_c[0], dark_c[1], dark_c[2]
                 elif mat_name == "bone_main":
                     if (x + y * 3) % 9 in (0, 1):
                         r = int(np.clip(r - 8, 0, 255))
@@ -363,10 +361,21 @@ def build_bbmodel_doc(cubes: List[dict], tex: Image.Image, model_id: str, mat_uv
         uv_v = v0 + (idx * 5) % span_y
         uv_box = [float(uv_u), float(uv_v), float(uv_u + 4), float(uv_v + 4)]
 
-        faces = {
-            face_name: {"uv": uv_box, "texture": 0}
-            for face_name in ("north", "east", "south", "west", "up", "down")
-        }
+        if c["name"] == "flesh_block":
+            # 满格底座：侧面贴满 0..16 呈现纯 #8a2a2a + 顶端 1px #5a1a1a 上沿；顶底面贴 0..15 纯红
+            faces = {
+                "north": {"uv": [0.0, 0.0, 16.0, 16.0], "texture": 0},
+                "east":  {"uv": [0.0, 0.0, 16.0, 16.0], "texture": 0},
+                "south": {"uv": [0.0, 0.0, 16.0, 16.0], "texture": 0},
+                "west":  {"uv": [0.0, 0.0, 16.0, 16.0], "texture": 0},
+                "up":    {"uv": [0.0, 0.0, 16.0, 15.0], "texture": 0},
+                "down":  {"uv": [0.0, 0.0, 16.0, 15.0], "texture": 0},
+            }
+        else:
+            faces = {
+                face_name: {"uv": uv_box, "texture": 0}
+                for face_name in ("north", "east", "south", "west", "up", "down")
+            }
 
         element = {
             "name": c["name"],
