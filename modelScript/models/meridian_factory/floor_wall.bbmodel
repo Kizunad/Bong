@@ -95,7 +95,7 @@
         }
       },
       "type": "cube",
-      "uuid": "18e54d1d-be5a-474f-95ef-70d686d830c9"
+      "uuid": "aeec9431-fcef-4075-a23b-e1dae2c5f7d6"
     },
     {
       "name": "vein_cell_0",
@@ -176,7 +176,7 @@
         }
       },
       "type": "cube",
-      "uuid": "2248c609-4b2e-4954-8a39-f39597e80137"
+      "uuid": "b96ccb5b-85aa-4254-97e1-2b8412a2833b"
     },
     {
       "name": "vein_cell_1",
@@ -257,7 +257,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a068aa58-081f-4927-abd7-296d1ee735f6"
+      "uuid": "4cedcb2d-ed30-4524-8e4b-ae9613475496"
     },
     {
       "name": "vein_cell_2",
@@ -338,7 +338,7 @@
         }
       },
       "type": "cube",
-      "uuid": "7f27743a-28c6-43df-a6f2-563f432e16ab"
+      "uuid": "39ca0498-359d-4b1e-b099-0f3e27b53599"
     },
     {
       "name": "vein_cell_3",
@@ -419,7 +419,7 @@
         }
       },
       "type": "cube",
-      "uuid": "04a77feb-fde0-4cc8-8bf9-e8b5655aba10"
+      "uuid": "528f97ac-6ecf-491b-8875-1b5d1f4cbc3b"
     },
     {
       "name": "vein_cell_4",
@@ -500,7 +500,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a4ef3623-e63b-48c8-896e-016fc30333d1"
+      "uuid": "7dd397d1-20a9-4baf-8123-447aadcb4c5a"
     },
     {
       "name": "vein_cell_5",
@@ -581,7 +581,7 @@
         }
       },
       "type": "cube",
-      "uuid": "8128f3ec-b8c6-4532-8737-ddd262aaef2b"
+      "uuid": "00a894b4-2a8b-4bfc-82ee-a9198d5067e6"
     },
     {
       "name": "vein_cell_6",
@@ -662,7 +662,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6506facd-d715-4123-9a08-7971f3626826"
+      "uuid": "5470e745-6b04-43f4-9b91-ddaa496d9d09"
     },
     {
       "name": "vein_cell_7",
@@ -743,7 +743,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f266c5d4-c0b2-4a5d-a522-20edc9bb80d4"
+      "uuid": "1c677236-807b-403a-a4a4-a125d524778c"
     },
     {
       "name": "vein_cell_8",
@@ -824,7 +824,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cacad9ec-68af-4767-8271-e7af9e2ade45"
+      "uuid": "12750afc-595b-4a7b-9a4e-ed10e31117e0"
     },
     {
       "name": "vein_cell_9",
@@ -905,7 +905,7 @@
         }
       },
       "type": "cube",
-      "uuid": "baa30c9e-0f93-4def-871c-2135c490b988"
+      "uuid": "4ccf9995-fbbc-4654-929d-71a6b0403524"
     },
     {
       "name": "vein_cell_10",
@@ -986,7 +986,7 @@
         }
       },
       "type": "cube",
-      "uuid": "d2204091-687d-4a31-a030-b26cb3e5a667"
+      "uuid": "4dbc3390-9ab9-4d88-a115-ff4443091ff7"
     },
     {
       "name": "vein_cell_11",
@@ -1067,7 +1067,7 @@
         }
       },
       "type": "cube",
-      "uuid": "8c4c990f-81bb-49d2-a0cc-dba81e5595fd"
+      "uuid": "b27cf3c5-a59b-4ce1-98b0-e6334691c511"
     },
     {
       "name": "vein_cell_12",
@@ -1148,7 +1148,7 @@
         }
       },
       "type": "cube",
-      "uuid": "ca9e1965-f451-4695-a06c-097df9525c84"
+      "uuid": "ac1ea671-9b26-4f1b-a87a-3004cca15c17"
     },
     {
       "name": "vein_cell_13",
@@ -1229,7 +1229,7 @@
         }
       },
       "type": "cube",
-      "uuid": "adf946a2-3ab5-4095-baee-e4fc0865e665"
+      "uuid": "45abd31f-a411-4a2e-a3c1-777f86c2119d"
     },
     {
       "name": "vein_cell_14",
@@ -1310,7 +1310,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a7b7f77d-9137-4194-9fbf-f232ee3c40bf"
+      "uuid": "c089b092-08b7-49a3-8681-f78458cf7664"
     },
     {
       "name": "vein_cell_15",
@@ -1391,7 +1391,7 @@
         }
       },
       "type": "cube",
-      "uuid": "17f47363-fad3-469d-a179-c8b880645dda"
+      "uuid": "80c303e4-2fc9-4ed5-816d-a4d682303099"
     },
     {
       "name": "vein_cell_16",
@@ -1472,7 +1472,7 @@
         }
       },
       "type": "cube",
-      "uuid": "01848777-3973-4df1-96b8-d45a3a7d59b1"
+      "uuid": "9723e7f4-cf2e-4731-aea7-09de5904ccac"
     },
     {
       "name": "vein_cell_17",
@@ -1553,7 +1553,7 @@
         }
       },
       "type": "cube",
-      "uuid": "d4ec4651-55f3-419f-8c07-6414634f6124"
+      "uuid": "9d4dff07-19c1-4921-9242-aca2c0731263"
     },
     {
       "name": "vein_cell_18",
@@ -1634,7 +1634,7 @@
         }
       },
       "type": "cube",
-      "uuid": "fd160098-8ce2-43b7-b217-912ccfadf7bc"
+      "uuid": "eec02168-1999-4f70-869f-280a52d4a88c"
     },
     {
       "name": "vein_cell_19",
@@ -1715,7 +1715,7 @@
         }
       },
       "type": "cube",
-      "uuid": "5a17537d-6052-479d-8e02-cdee2e9eb2ff"
+      "uuid": "fa5d61b6-32d5-4961-b176-bdae86f50843"
     },
     {
       "name": "vein_cell_20",
@@ -1796,7 +1796,7 @@
         }
       },
       "type": "cube",
-      "uuid": "067689b1-5166-469c-8d59-8e1c12208cbd"
+      "uuid": "11b5b639-ec9e-4c7d-a3b4-a33059dcf35b"
     },
     {
       "name": "vein_cell_21",
@@ -1877,7 +1877,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3985d6ef-23d4-4a29-b18e-c94fe44811d1"
+      "uuid": "8b268bde-89ad-496e-a8bf-5522b5452055"
     },
     {
       "name": "vein_cell_22",
@@ -1958,7 +1958,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6a54a4dd-f255-469c-a947-eb2daea4282a"
+      "uuid": "1bd0fa32-b6d2-40e7-906b-c982e2748bfc"
     },
     {
       "name": "vein_cell_23",
@@ -2039,7 +2039,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f6801d16-0ea6-495d-b567-fffbb2f714ff"
+      "uuid": "084c05a8-7510-4bbd-9746-da3b7a9b5f72"
     },
     {
       "name": "vein_cell_24",
@@ -2120,7 +2120,7 @@
         }
       },
       "type": "cube",
-      "uuid": "4a18e1d0-5c8f-4e36-a72f-1e33f2a2de09"
+      "uuid": "3dc3b864-822c-41e4-944a-7728f829e02f"
     },
     {
       "name": "vein_cell_25",
@@ -2201,7 +2201,7 @@
         }
       },
       "type": "cube",
-      "uuid": "39d4c8bc-a4af-40cf-9935-fed3922aa312"
+      "uuid": "74c2beab-6e48-4f71-a62a-5de58452d4bf"
     },
     {
       "name": "vein_cell_26",
@@ -2282,7 +2282,7 @@
         }
       },
       "type": "cube",
-      "uuid": "7ad1a019-b78e-48f4-b566-542153f59dc9"
+      "uuid": "6aad7455-372e-4295-b7cf-d25bdd3d4f93"
     },
     {
       "name": "vein_cell_27",
@@ -2363,7 +2363,7 @@
         }
       },
       "type": "cube",
-      "uuid": "0f7f2210-5939-4ef1-9e62-021d328ce1cf"
+      "uuid": "f12156d4-cc5a-477a-a593-e5f7703567f8"
     },
     {
       "name": "vein_cell_28",
@@ -2444,7 +2444,7 @@
         }
       },
       "type": "cube",
-      "uuid": "4366c7b4-8023-44a7-aba4-316a2622ee14"
+      "uuid": "b067e7bc-a663-417c-954a-13990ffff124"
     },
     {
       "name": "vein_cell_29",
@@ -2525,7 +2525,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f436975b-c24d-488e-8e90-3b05dbd708af"
+      "uuid": "8062e073-1dd7-4827-9958-c2b9726b1071"
     },
     {
       "name": "vein_cell_30",
@@ -2606,7 +2606,7 @@
         }
       },
       "type": "cube",
-      "uuid": "d863b1e5-f8dc-44c6-80b9-8cf59f73baa9"
+      "uuid": "85e169fc-6b7d-4f7d-8811-36126e8db6b6"
     },
     {
       "name": "vein_cell_31",
@@ -2687,7 +2687,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f3b2d52d-9581-4a6e-93bb-22bd59efe2c3"
+      "uuid": "73ab3f57-0440-4d25-8b3f-35c47cd205b5"
     },
     {
       "name": "vein_cell_32",
@@ -2768,7 +2768,7 @@
         }
       },
       "type": "cube",
-      "uuid": "bac30dbb-9911-4088-afb1-7346c02dd9f4"
+      "uuid": "7e7eb8e8-b908-4397-921b-84fc275356fc"
     },
     {
       "name": "dark_spot_4x3",
@@ -2849,7 +2849,7 @@
         }
       },
       "type": "cube",
-      "uuid": "755a8ead-12b5-4ba7-94cc-27e5914d616d"
+      "uuid": "c5aa3157-bf34-418c-a234-626dbc9284ea"
     },
     {
       "name": "dark_spot_3x4",
@@ -2930,7 +2930,7 @@
         }
       },
       "type": "cube",
-      "uuid": "147f15cc-5a44-4ec5-8cd0-7dbf23d20c09"
+      "uuid": "5ba973f0-c23a-47a1-9d15-6cb92b4e002f"
     },
     {
       "name": "dark_spot_3x3",
@@ -3011,7 +3011,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6833ea3c-3235-4360-8587-7a7e02c0b497"
+      "uuid": "0d542b3f-4cfd-4365-9058-816dba6ea142"
     },
     {
       "name": "sparkle_1",
@@ -3092,7 +3092,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c1058d32-b4d4-4feb-b50d-267c9067994b"
+      "uuid": "8c69ffcf-0c2f-42c8-9c15-2a72dbf80949"
     },
     {
       "name": "sparkle_2",
@@ -3173,7 +3173,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cb4b5cc6-9eff-48b0-acfa-f71070be509e"
+      "uuid": "a70ad09e-933a-411c-b2db-03d86fdfdcb3"
     }
   ],
   "outliner": [
@@ -3185,10 +3185,10 @@
         0.0
       ],
       "color": 0,
-      "uuid": "faedb17e-3004-4f61-ad67-d8e99300c198",
+      "uuid": "3099f964-f329-48aa-b2cf-a1af9c9b7e3a",
       "isOpen": true,
       "children": [
-        "18e54d1d-be5a-474f-95ef-70d686d830c9"
+        "aeec9431-fcef-4075-a23b-e1dae2c5f7d6"
       ]
     },
     {
@@ -3199,42 +3199,42 @@
         0.0
       ],
       "color": 0,
-      "uuid": "ed5f3bb5-c55b-4aa7-8d25-6641438983e4",
+      "uuid": "5db449fc-fdbb-437a-a721-30e88ebce19a",
       "isOpen": true,
       "children": [
-        "2248c609-4b2e-4954-8a39-f39597e80137",
-        "a068aa58-081f-4927-abd7-296d1ee735f6",
-        "7f27743a-28c6-43df-a6f2-563f432e16ab",
-        "04a77feb-fde0-4cc8-8bf9-e8b5655aba10",
-        "a4ef3623-e63b-48c8-896e-016fc30333d1",
-        "8128f3ec-b8c6-4532-8737-ddd262aaef2b",
-        "6506facd-d715-4123-9a08-7971f3626826",
-        "f266c5d4-c0b2-4a5d-a522-20edc9bb80d4",
-        "cacad9ec-68af-4767-8271-e7af9e2ade45",
-        "baa30c9e-0f93-4def-871c-2135c490b988",
-        "d2204091-687d-4a31-a030-b26cb3e5a667",
-        "8c4c990f-81bb-49d2-a0cc-dba81e5595fd",
-        "ca9e1965-f451-4695-a06c-097df9525c84",
-        "adf946a2-3ab5-4095-baee-e4fc0865e665",
-        "a7b7f77d-9137-4194-9fbf-f232ee3c40bf",
-        "17f47363-fad3-469d-a179-c8b880645dda",
-        "01848777-3973-4df1-96b8-d45a3a7d59b1",
-        "d4ec4651-55f3-419f-8c07-6414634f6124",
-        "fd160098-8ce2-43b7-b217-912ccfadf7bc",
-        "5a17537d-6052-479d-8e02-cdee2e9eb2ff",
-        "067689b1-5166-469c-8d59-8e1c12208cbd",
-        "3985d6ef-23d4-4a29-b18e-c94fe44811d1",
-        "6a54a4dd-f255-469c-a947-eb2daea4282a",
-        "f6801d16-0ea6-495d-b567-fffbb2f714ff",
-        "4a18e1d0-5c8f-4e36-a72f-1e33f2a2de09",
-        "39d4c8bc-a4af-40cf-9935-fed3922aa312",
-        "7ad1a019-b78e-48f4-b566-542153f59dc9",
-        "0f7f2210-5939-4ef1-9e62-021d328ce1cf",
-        "4366c7b4-8023-44a7-aba4-316a2622ee14",
-        "f436975b-c24d-488e-8e90-3b05dbd708af",
-        "d863b1e5-f8dc-44c6-80b9-8cf59f73baa9",
-        "f3b2d52d-9581-4a6e-93bb-22bd59efe2c3",
-        "bac30dbb-9911-4088-afb1-7346c02dd9f4"
+        "b96ccb5b-85aa-4254-97e1-2b8412a2833b",
+        "4cedcb2d-ed30-4524-8e4b-ae9613475496",
+        "39ca0498-359d-4b1e-b099-0f3e27b53599",
+        "528f97ac-6ecf-491b-8875-1b5d1f4cbc3b",
+        "7dd397d1-20a9-4baf-8123-447aadcb4c5a",
+        "00a894b4-2a8b-4bfc-82ee-a9198d5067e6",
+        "5470e745-6b04-43f4-9b91-ddaa496d9d09",
+        "1c677236-807b-403a-a4a4-a125d524778c",
+        "12750afc-595b-4a7b-9a4e-ed10e31117e0",
+        "4ccf9995-fbbc-4654-929d-71a6b0403524",
+        "4dbc3390-9ab9-4d88-a115-ff4443091ff7",
+        "b27cf3c5-a59b-4ce1-98b0-e6334691c511",
+        "ac1ea671-9b26-4f1b-a87a-3004cca15c17",
+        "45abd31f-a411-4a2e-a3c1-777f86c2119d",
+        "c089b092-08b7-49a3-8681-f78458cf7664",
+        "80c303e4-2fc9-4ed5-816d-a4d682303099",
+        "9723e7f4-cf2e-4731-aea7-09de5904ccac",
+        "9d4dff07-19c1-4921-9242-aca2c0731263",
+        "eec02168-1999-4f70-869f-280a52d4a88c",
+        "fa5d61b6-32d5-4961-b176-bdae86f50843",
+        "11b5b639-ec9e-4c7d-a3b4-a33059dcf35b",
+        "8b268bde-89ad-496e-a8bf-5522b5452055",
+        "1bd0fa32-b6d2-40e7-906b-c982e2748bfc",
+        "084c05a8-7510-4bbd-9746-da3b7a9b5f72",
+        "3dc3b864-822c-41e4-944a-7728f829e02f",
+        "74c2beab-6e48-4f71-a62a-5de58452d4bf",
+        "6aad7455-372e-4295-b7cf-d25bdd3d4f93",
+        "f12156d4-cc5a-477a-a593-e5f7703567f8",
+        "b067e7bc-a663-417c-954a-13990ffff124",
+        "8062e073-1dd7-4827-9958-c2b9726b1071",
+        "85e169fc-6b7d-4f7d-8811-36126e8db6b6",
+        "73ab3f57-0440-4d25-8b3f-35c47cd205b5",
+        "7e7eb8e8-b908-4397-921b-84fc275356fc"
       ]
     },
     {
@@ -3245,12 +3245,12 @@
         0.0
       ],
       "color": 0,
-      "uuid": "ad0cd005-62b5-43bc-859d-e60be988cd30",
+      "uuid": "43e2f9ea-36ad-4e46-b0b8-875e4a27abea",
       "isOpen": true,
       "children": [
-        "755a8ead-12b5-4ba7-94cc-27e5914d616d",
-        "147f15cc-5a44-4ec5-8cd0-7dbf23d20c09",
-        "6833ea3c-3235-4360-8587-7a7e02c0b497"
+        "c5aa3157-bf34-418c-a234-626dbc9284ea",
+        "5ba973f0-c23a-47a1-9d15-6cb92b4e002f",
+        "0d542b3f-4cfd-4365-9058-816dba6ea142"
       ]
     },
     {
@@ -3261,11 +3261,11 @@
         0.0
       ],
       "color": 0,
-      "uuid": "fc97de57-b35b-4695-af81-8f69b7952272",
+      "uuid": "40505277-b055-499b-b68b-37b546c267d4",
       "isOpen": true,
       "children": [
-        "c1058d32-b4d4-4feb-b50d-267c9067994b",
-        "cb4b5cc6-9eff-48b0-acfa-f71070be509e"
+        "8c69ffcf-0c2f-42c8-9c15-2a72dbf80949",
+        "a70ad09e-933a-411c-b2db-03d86fdfdcb3"
       ]
     }
   ],
@@ -3280,7 +3280,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": true,
-      "uuid": "8eac4fb5-02b6-45db-9af0-df9f2dd70d32",
+      "uuid": "8631696a-4ea3-4d35-a67e-1752fd9894b3",
       "source": "data:image/png;base64,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",
       "width": 64,
       "height": 64
