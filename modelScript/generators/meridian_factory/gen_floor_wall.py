@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """经脉工厂内景构件生成器 —— b09: floor_wall (血肉地砖与多孔骨壁砖，2 件套)
 
-风格：A 有机型 (活体血肉、多孔骨壁、旧损暗淡配色)
+风格：A 有机型 (活体血肉、骨梁嵌红肉壁砖、旧损暗淡配色)
 规范出处：
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-结构与规范落实：
-1. 尺寸：两件都是满格 16×16×16 实心立方体 (x/z in [-8, 8], y in [0, 16])，
-   中心对齐方块网格，原点位于底面中心 (0.0, 0.0, 0.0)，绝不镂空，细节靠浅凹凸（最多 1px）。
-2. floor_flesh (血肉地砖)：
-   - 主色 #5a1a1a (flesh_dark) 暗血肉满格基底；
-   - 顶面 (y=16) 用 #8a2a2a (flesh_main) 做 3~4 条弯曲血管纹（宽 1.0px、浮起 0.5px: y in [16.0, 16.5]），
-     连续不断开，且跨越边缘对接点，以便 2×2 拼贴时跨缝连通；
-   - 顶面散布几块 #6a2020 (flesh_spot) 的 2×2 浅浮斑块 (y in [16.0, 16.2])。
-3. wall_bone (多孔骨壁砖)：
-   - 主色 #d8ccb0 (bone_main) 骨色实心方块；
-   - 四个侧面与顶面各做 5~7 个 #b8a888 / #6a5a48 的小凹孔（尺寸 1~2px，向内凹陷 1px），
-     孔底露出深色骨核 #6a5a48，展现质朴古旧的多孔骨质感；
-   - 拐角采用榫卯避让结构，彻底消除棱角共面冲突。
-4. 交付要求：
+调度审第 1 次严格修改落实：
+1. wall_bone (骨梁格架嵌红肉壁砖，更正说明版)：
+   - 满格实心 16×16×16 立方体，绝不镂空；
+   - 中心实心血肉核 (尺寸 12×12×14, y in [0, 14], 材质 #8a2a2a flesh_main)，凹底位于外表面向内凹 2px 处 (±6.0)；
+   - 外层骨梁格架 (#d8ccb0 bone_main，厚度 2px: 在 ±6.0..±8.0 之间)：
+     四根 2×2 骨质角柱通高到 y=16；
+     四个侧面各由竖梁、横梁交织，交点加粗，梁走向带 1px 弯折；
+     格架之间形成 4 个不规则大凹格 (每个 4~6px 见方，四角切掉 1px 显得圆润)，真实向内凹陷 2px；
+   - 凹底露出的血肉上有 2 条 #b05050 弯曲细血管 (浮起 0.35px)；
+   - 顶面做成骨梁截面 (全 #d8ccb0 带 #b8a888 斑)。
+2. floor_flesh (血肉地砖，调亮与斜向血管纹版)：
+   - 主色改 #8a2a2a (flesh_main)，满格实心方块 (y: 0..16)；
+   - 表面用 #5a1a1a (flesh_dark) 铺设 4 块大尺寸不规则暗斑 (3~5px 见方，厚度 0.15px)；
+   - 血管纹改 #b05050 (flesh_lit)，每条用 1×1 方块斜向逐格走 (每步 dx=±1 或 dz=±1，连续自然弯曲)，
+     共 4 条，从西、东、北、南四边缘跨边进出，以便相邻地砖无缝对接；
+   - 表面点缀 3 个 #c88a7a (flesh_glow) 的 1×1 亮点。
+3. 交付要求：
    - 出 render.png (两件各单块 3/4 视 + 2×2 拼贴接缝预览)；
    - 出 check.png (左参考图，右渲染图等高对标)；
    - 门禁自证全绿 (0 共面冲突，--self-test 拦截注入缺陷)；
@@ -48,24 +51,26 @@ REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img
 
 # 调色板 (严格对齐 meridian_factory.md 色值表)
 PALETTE = {
-    "flesh_dark":   (90, 26, 26, 255),    # #5a1a1a 暗血肉地砖主色
-    "flesh_main":   (138, 42, 42, 255),   # #8a2a2a 顶面血管纹
-    "flesh_spot":   (106, 32, 32, 255),   # #6a2020 顶面斑块
-    "bone_main":    (216, 204, 176, 255), # #d8ccb0 骨壁主色
-    "bone_dark":    (184, 168, 136, 255), # #b8a888 骨孔暗面
-    "bone_crevice": (106, 90, 72, 255),   # #6a5a48 骨凹孔深色孔底
+    "flesh_main":    (138, 42, 42, 255),   # #8a2a2a 地砖主色与壁砖凹底血肉
+    "flesh_dark":    (90, 26, 26, 255),    # #5a1a1a 地砖大块暗斑
+    "flesh_lit":     (176, 80, 80, 255),   # #b05050 顶面斜向血管纹与壁砖凹格细血管
+    "flesh_glow":    (200, 138, 122, 255), # #c88a7a 地砖 1x1 亮点
+    "bone_main":     (216, 204, 176, 255), # #d8ccb0 骨壁梁架与角柱
+    "bone_dark":     (184, 168, 136, 255), # #b8a888 骨壁暗面与顶板斑块
 }
 
 MAT_UV_FLESH = {
-    "flesh_dark": [0,  0, 32, 32],
-    "flesh_main": [32, 0, 64, 32],
-    "flesh_spot": [0, 32, 32, 64],
+    "flesh_main": [0,  0, 32, 32],
+    "flesh_dark": [32, 0, 64, 32],
+    "flesh_lit":  [0, 32, 32, 64],
+    "flesh_glow": [32, 32, 64, 64],
 }
 
 MAT_UV_BONE = {
-    "bone_main":    [0,  0, 32, 32],
-    "bone_dark":    [32, 0, 64, 32],
-    "bone_crevice": [0, 32, 32, 64],
+    "bone_main":  [0,  0, 32, 32],
+    "bone_dark":  [32, 0, 64, 32],
+    "flesh_main": [0, 32, 32, 64],
+    "flesh_lit":  [32, 32, 64, 64],
 }
 
 RES = 64
@@ -76,97 +81,167 @@ RES = 64
 # =============================================================================
 
 def build_floor_flesh_cubes() -> List[dict]:
-    """1. floor_flesh (血肉地砖，满格 16×16×16，顶面 3~4 条弯曲跨边血管纹 + 2×2 斑块)。"""
+    """1. floor_flesh (血肉地砖，主色 #8a2a2a，斜向逐格血管纹 + 大暗斑 + 亮点)。"""
     cubes = []
-    # ── 满格实心主体 (16x16x16, 主色 #5a1a1a) ──
-    cubes.append({"name": "flesh_block", "from": [-8.0, 0.0, -8.0], "to": [8.0, 16.0, 8.0], "group": "base_block", "material": "flesh_dark"})
+    # ── 满格实心基底 (主色 #8a2a2a, y in [0, 16]) ──
+    cubes.append({"name": "flesh_block", "from": [-8.0, 0.0, -8.0], "to": [8.0, 16.0, 8.0], "group": "base_block", "material": "flesh_main"})
 
-    # ── 顶面血管纹 (y: 16.0..16.5, 宽 1.0, #8a2a2a, 跨边连通且避免同层相交重叠) ──
-    # 血管 1: 从西边缘 x=-8 (z in [-0.5, 0.5]) 经中心节点曲折连至东边缘 x=8 (z in [-0.5, 0.5])
-    cubes.append({"name": "vein_1_1", "from": [-8.0, 16.0, -0.5], "to": [-4.0, 16.5,  0.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_1_2", "from": [-4.0, 16.0,  0.5], "to": [-3.0, 16.5,  2.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_1_3a", "from": [-3.0, 16.0, 1.5], "to": [-1.5, 16.5,  2.5], "group": "veins", "material": "flesh_main"})
-    # 节点交叉块 (vein_cross 位于 [-1.5, -0.5] x [1.5, 2.5])
-    cubes.append({"name": "vein_cross", "from": [-1.5, 16.0, 1.5], "to": [-0.5, 16.5, 2.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_1_3b", "from": [-0.5, 16.0, 1.5], "to": [ 1.0, 16.5,  2.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_1_4", "from": [ 1.0, 16.0, -0.5], "to": [ 2.0, 16.5,  1.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_1_5", "from": [ 2.0, 16.0, -0.5], "to": [ 8.0, 16.5,  0.5], "group": "veins", "material": "flesh_main"})
+    # ── 4 条连续斜向逐格走的血管纹 (#b05050, 浮起 0.45px: y in [16.0, 16.45]) ──
+    # 路径 1: 西缘 x=-8 (z=0) 蜿蜒贯穿至东缘 x=8 (z=0)
+    p1 = [(-8, 0), (-7, 0), (-6, 1), (-5, 1), (-4, 2), (-3, 2), (-2, 1), (-1, 1), (0, 0), (1, 0), (2, -1), (3, -1), (4, -2), (5, -1), (6, -1), (7, 0)]
+    # 路径 2: 北缘 z=-8 (x=-3) 蜿蜒贯穿至南缘 z=8 (x=-3)
+    p2 = [(-3, -8), (-3, -7), (-4, -6), (-4, -5), (-5, -4), (-4, -3), (-4, -2), (-3, -1), (-3, 0), (-2, 2), (-2, 3), (-3, 4), (-3, 5), (-3, 6), (-3, 7)]
+    # 路径 3: 北缘 z=-8 (x=4) 蜿蜒贯穿至南缘 z=8 (x=4)
+    p3 = [(4, -8), (4, -7), (5, -6), (5, -5), (6, -4), (5, -3), (5, -2), (4, -1), (4, 1), (5, 2), (5, 3), (4, 4), (4, 5), (4, 6), (4, 7)]
+    # 路径 4: 西南角分支从西缘 x=-8 (z=-5) 蜿蜒至南缘 z=8 (x=-6)
+    p4 = [(-8, -5), (-7, -5), (-6, -4), (-6, -3), (-7, -2), (-7, -1), (-6, 2), (-6, 3), (-5, 4), (-5, 5), (-6, 6), (-6, 7)]
 
-    # 血管 2: 从北边缘 z=-8 (x in [-1.5, -0.5]) 经节点连至南边缘 z=8 (x in [-1.5, -0.5])
-    cubes.append({"name": "vein_2_1", "from": [-1.5, 16.0, -8.0], "to": [-0.5, 16.5, -3.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_2_2", "from": [-2.5, 16.0, -3.0], "to": [-0.5, 16.5, -2.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_2_3a", "from": [-1.5, 16.0, -2.0], "to": [-0.5, 16.5, 1.5], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_2_3b", "from": [-1.5, 16.0,  2.5], "to": [-0.5, 16.5, 4.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_2_4", "from": [-2.5, 16.0,  3.0], "to": [-1.5, 16.5, 4.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_2_5", "from": [-2.5, 16.0,  4.0], "to": [-1.5, 16.5, 8.0], "group": "veins", "material": "flesh_main"})
+    vein_set = set(p1 + p2 + p3 + p4)
+    for idx, (gx, gz) in enumerate(sorted(vein_set)):
+        cubes.append({
+            "name": f"vein_cell_{idx}",
+            "from": [float(gx), 16.0, float(gz)],
+            "to":   [float(gx + 1), 16.45, float(gz + 1)],
+            "group": "veins",
+            "material": "flesh_lit",
+        })
 
-    # 血管 3: 分支连向南边缘 z=8 (x in [4.5, 5.5])
-    cubes.append({"name": "vein_3_1", "from": [ 3.5, 16.0,  0.5], "to": [ 4.5, 16.5,  5.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_3_2", "from": [ 3.5, 16.0,  5.0], "to": [ 5.5, 16.5,  6.0], "group": "veins", "material": "flesh_main"})
-    cubes.append({"name": "vein_3_3", "from": [ 4.5, 16.0,  6.0], "to": [ 5.5, 16.5,  8.0], "group": "veins", "material": "flesh_main"})
+    # ── 大块不规则暗斑 (#5a1a1a, 3~5px 见方, y in [16.0, 16.15]) ──
+    # 严格位于无血管的空白网格区内
+    spots = [
+        ("dark_spot_nw", -8.0, -5.0, -8.0, -6.0),  # 3x2, 西北角
+        ("dark_spot_ne",  0.0,  3.0, -6.0, -3.0),  # 3x3, 东北区
+        ("dark_spot_s",   0.0,  3.0,  4.0,  7.0),  # 3x3, 中南区
+        ("dark_spot_e",   6.0,  8.0,  2.0,  5.0),  # 2x3, 远东区
+    ]
+    for sname, x0, x1, z0, z1 in spots:
+        cubes.append({
+            "name": sname,
+            "from": [x0, 16.0, z0],
+            "to":   [x1, 16.15, z1],
+            "group": "spots",
+            "material": "flesh_dark",
+        })
 
-    # ── 3. 顶面 2x2 斑块 (#6a2020, 浮起 0.2px: y in [16.0, 16.2]) ──
-    cubes.append({"name": "spot_1", "from": [-6.5, 16.0, -6.5], "to": [-4.5, 16.2, -4.5], "group": "spots", "material": "flesh_spot"})
-    cubes.append({"name": "spot_2", "from": [ 3.5, 16.0, -6.0], "to": [ 5.5, 16.2, -4.0], "group": "spots", "material": "flesh_spot"})
-    cubes.append({"name": "spot_3", "from": [-6.5, 16.0,  3.5], "to": [-4.5, 16.2,  5.5], "group": "spots", "material": "flesh_spot"})
-    cubes.append({"name": "spot_4", "from": [ 4.0, 16.0, -2.5], "to": [ 6.0, 16.2, -0.5], "group": "spots", "material": "flesh_spot"})
+    # ── 3 个 1x1 亮点 (#c88a7a, y in [16.0, 16.25]) ──
+    sparkles = [
+        ("sparkle_1",  1.0, -2.0),
+        ("sparkle_2", -1.0,  3.0),
+        ("sparkle_3",  6.0, -6.0),
+    ]
+    for sp_name, sx, sz in sparkles:
+        cubes.append({
+            "name": sp_name,
+            "from": [sx, 16.0, sz],
+            "to":   [sx + 1.0, 16.25, sz + 1.0],
+            "group": "sparkles",
+            "material": "flesh_glow",
+        })
 
     return cubes
 
 
 def build_wall_bone_cubes() -> List[dict]:
-    """2. wall_bone (多孔骨壁砖，满格 16×16×16，五个面各做 5~7 个小凹孔向内凹 1px)。"""
+    """2. wall_bone (骨梁格架嵌红肉壁砖，4 个侧面凹 2px 露血肉 + 细血管，顶面骨梁截面)。"""
     cubes = []
-    # ── 内部深色骨核 (#6a5a48, x/z in [-7, 7], y in [0, 15]) ──
-    cubes.append({"name": "bone_core", "from": [-7.0, 0.0, -7.0], "to": [7.0, 15.0, 7.0], "group": "core", "material": "bone_crevice"})
+    # ── 1. 中心实心血肉核 (凹底在 +/-6.0, 尺寸 12x12x14, y in [0, 14], 主色 #8a2a2a) ──
+    cubes.append({"name": "flesh_core", "from": [-6.0, 0.0, -6.0], "to": [6.0, 14.0, 6.0], "group": "flesh_core", "material": "flesh_main"})
 
-    # 16 块骨板的通用局部条带划分: u in [u_min, u_max], v in [v_min, v_max]
-    def get_strips(u_min, u_max, v_min, v_max):
-        u_span = u_max - u_min
-        v_span = v_max - v_min
-        return [
-            # 顶带
-            (u_min, u_max, v_min + 0.8125 * v_span, v_max),
-            # 上孔带
-            (u_min, u_max, v_min + 0.75 * v_span, v_min + 0.8125 * v_span),
-            (u_min, u_max, v_min + 0.5625 * v_span, v_min + 0.625 * v_span),
-            (u_min, u_min + 0.1875 * u_span, v_min + 0.625 * v_span, v_min + 0.75 * v_span),
-            (u_min + 0.3125 * u_span, u_min + 0.625 * u_span, v_min + 0.625 * v_span, v_min + 0.75 * v_span),
-            (u_min + 0.75 * u_span, u_max, v_min + 0.625 * v_span, v_min + 0.75 * v_span),
-            # 中带
-            (u_min, u_max, v_min + 0.40625 * v_span, v_min + 0.5625 * v_span),
-            # 下孔带
-            (u_min, u_max, v_min + 0.34375 * v_span, v_min + 0.40625 * v_span),
-            (u_min, u_max, v_min + 0.15625 * v_span, v_min + 0.21875 * v_span),
-            (u_min, u_min + 0.25 * u_span, v_min + 0.21875 * v_span, v_min + 0.34375 * v_span),
-            (u_min + 0.375 * u_span, u_min + 0.5 * u_span, v_min + 0.21875 * v_span, v_min + 0.34375 * v_span),
-            (u_min + 0.5 * u_span, u_min + 0.5625 * u_span, v_min + 0.3125 * v_span, v_min + 0.34375 * v_span),
-            (u_min + 0.5 * u_span, u_min + 0.5625 * u_span, v_min + 0.21875 * v_span, v_min + 0.25 * v_span),
-            (u_min + 0.5625 * u_span, u_min + 0.75 * u_span, v_min + 0.21875 * v_span, v_min + 0.34375 * v_span),
-            (u_min + 0.875 * u_span, u_max, v_min + 0.21875 * v_span, v_min + 0.34375 * v_span),
-            # 底带
-            (u_min, u_max, v_min, v_min + 0.15625 * v_span),
+    # ── 2. 四根 2x2 骨质角柱 (通高 y in [0, 16], #d8ccb0, 完美封闭四角并消除侧面棱共面) ──
+    cubes.append({"name": "pillar_nw", "from": [-8.0, 0.0, -8.0], "to": [-6.0, 16.0, -6.0], "group": "bone_frame", "material": "bone_main"})
+    cubes.append({"name": "pillar_ne", "from": [ 6.0, 0.0, -8.0], "to": [ 8.0, 16.0, -6.0], "group": "bone_frame", "material": "bone_main"})
+    cubes.append({"name": "pillar_sw", "from": [-8.0, 0.0,  6.0], "to": [-6.0, 16.0,  8.0], "group": "bone_frame", "material": "bone_main"})
+    cubes.append({"name": "pillar_se", "from": [ 6.0, 0.0,  6.0], "to": [ 8.0, 16.0,  8.0], "group": "bone_frame", "material": "bone_main"})
+
+    # ── 3. 顶盖 (y in [14, 16], x/z in [-6, 6], 全 #d8ccb0 带 #b8a888 斑) ──
+    cubes.append({"name": "top_bone_plate", "from": [-6.0, 14.0, -6.0], "to": [6.0, 16.0, 6.0], "group": "top_plate", "material": "bone_main"})
+    cubes.append({"name": "top_spot_1", "from": [-4.0, 15.9, -4.0], "to": [-2.0, 16.05, -2.0], "group": "top_plate", "material": "bone_dark"})
+    cubes.append({"name": "top_spot_2", "from": [ 1.0, 15.9,  1.0], "to": [ 4.0, 16.05,  3.0], "group": "top_plate", "material": "bone_dark"})
+
+    # ── 4. 四个侧面的骨梁格架 (厚度 2px: 在 ±6.0..±8.0 之间) ──
+    def add_side_grid(side_name: str, axis: str, sign: int, bend: float = 1.0):
+        # 中间竖梁上段向一侧微弯折 0.5px，下段向相反方向微弯折 0.5px，交点加粗
+        u_u0 = -1.5 + bend * 0.5
+        u_u1 =  0.5 + bend * 0.5
+        u_d0 = -0.5 - bend * 0.5
+        u_d1 =  1.5 - bend * 0.5
+
+        raw_parts = [
+            ("beam_bot",   -6.0,  6.0,  0.0,  2.5),  # 底横梁
+            ("beam_top",   -6.0,  6.0, 12.0, 14.0),  # 顶横梁
+            ("beam_mid_l", -6.0, -1.5,  6.5,  8.5),  # 中腰梁左段
+            ("beam_mid_r",  1.5,  6.0,  6.5,  8.5),  # 中腰梁右段
+            ("beam_knot",  -1.5,  1.5,  6.0,  9.0),  # 中间交叉节点 (加粗)
+            ("beam_v_up",  u_u0, u_u1,  9.0, 12.0),  # 上竖梁 (带微弯折)
+            ("beam_v_dn",  u_d0, u_d1,  2.5,  6.0),  # 下竖梁 (带微弯折)
+            # 4 个凹格四角切角 (补 1x1x2 小块，切掉四角显得圆润):
+            ("cor_lu_1", -6.0, -5.0, 11.0, 12.0),
+            ("cor_lu_2", -6.0, -5.0,  8.5,  9.5),
+            ("cor_ru_1",  5.0,  6.0, 11.0, 12.0),
+            ("cor_ru_2",  5.0,  6.0,  8.5,  9.5),
+            ("cor_ld_1", -6.0, -5.0,  5.5,  6.5),
+            ("cor_ld_2", -6.0, -5.0,  2.5,  3.5),
+            ("cor_rd_1",  5.0,  6.0,  5.5,  6.5),
+            ("cor_rd_2",  5.0,  6.0,  2.5,  3.5),
         ]
 
-    # 1. 北面 (-Z): 全宽 x in [-8, 8], y in [0, 15], z in [-8, -7]
-    for idx, (u0, u1, v0, v1) in enumerate(get_strips(-8.0, 8.0, 0.0, 15.0)):
-        cubes.append({"name": f"wall_n_{idx}", "from": [round(u0, 4), round(v0, 4), -8.0], "to": [round(u1, 4), round(v1, 4), -7.0], "group": "bone_plates", "material": "bone_main"})
+        for pname, u0, u1, v0, v1 in raw_parts:
+            if axis == 'z':
+                z0 = -8.0 if sign < 0 else 6.0
+                z1 = -6.0 if sign < 0 else 8.0
+                cubes.append({
+                    "name": f"{side_name}_{pname}",
+                    "from": [round(u0, 2), round(v0, 2), z0],
+                    "to":   [round(u1, 2), round(v1, 2), z1],
+                    "group": "bone_frame",
+                    "material": "bone_main",
+                })
+            elif axis == 'x':
+                x0 = -8.0 if sign < 0 else 6.0
+                x1 = -6.0 if sign < 0 else 8.0
+                cubes.append({
+                    "name": f"{side_name}_{pname}",
+                    "from": [x0, round(v0, 2), round(u0, 2)],
+                    "to":   [x1, round(v1, 2), round(u1, 2)],
+                    "group": "bone_frame",
+                    "material": "bone_main",
+                })
 
-    # 2. 南面 (+Z): 全宽 x in [-8, 8], y in [0, 15], z in [7, 8]
-    for idx, (u0, u1, v0, v1) in enumerate(get_strips(-8.0, 8.0, 0.0, 15.0)):
-        cubes.append({"name": f"wall_s_{idx}", "from": [round(u0, 4), round(v0, 4), 7.0], "to": [round(u1, 4), round(v1, 4), 8.0], "group": "bone_plates", "material": "bone_main"})
+        # ── 凹底血肉上的 2 条弯曲细血管 (#b05050, 浮起 0.35px) ──
+        vein_steps = [
+            # 左上格弯曲血管 (对角相连)
+            (-4.2, -3.2,  9.5, 10.5),
+            (-3.2, -2.2, 10.5, 11.5),
+            # 右下格弯曲血管 (对角相连)
+            ( 2.5,  3.5,  3.8,  4.8),
+            ( 3.5,  4.5,  4.5,  5.5),
+        ]
+        for v_idx, (vu0, vu1, vv0, vv1) in enumerate(vein_steps):
+            if axis == 'z':
+                vz0 = -6.35 if sign < 0 else 6.0
+                vz1 = -6.0  if sign < 0 else 6.35
+                cubes.append({
+                    "name": f"recess_vein_{side_name}_{v_idx}",
+                    "from": [vu0, vv0, vz0],
+                    "to":   [vu1, vv1, vz1],
+                    "group": "recess_veins",
+                    "material": "flesh_lit",
+                })
+            elif axis == 'x':
+                vx0 = -6.35 if sign < 0 else 6.0
+                vx1 = -6.0  if sign < 0 else 6.35
+                cubes.append({
+                    "name": f"recess_vein_{side_name}_{v_idx}",
+                    "from": [vx0, vv0, vu0],
+                    "to":   [vx1, vv1, vu1],
+                    "group": "recess_veins",
+                    "material": "flesh_lit",
+                })
 
-    # 3. 西面 (-X): 榫卯收缩避让 z in [-7, 7], y in [0, 15], x in [-8, -7]
-    for idx, (u0, u1, v0, v1) in enumerate(get_strips(-7.0, 7.0, 0.0, 15.0)):
-        cubes.append({"name": f"wall_w_{idx}", "from": [-8.0, round(v0, 4), round(u0, 4)], "to": [-7.0, round(v1, 4), round(u1, 4)], "group": "bone_plates", "material": "bone_main"})
-
-    # 4. 东面 (+X): 榫卯收缩避让 z in [-7, 7], y in [0, 15], x in [7, 8]
-    for idx, (u0, u1, v0, v1) in enumerate(get_strips(-7.0, 7.0, 0.0, 15.0)):
-        cubes.append({"name": f"wall_e_{idx}", "from": [7.0, round(v0, 4), round(u0, 4)], "to": [8.0, round(v1, 4), round(u1, 4)], "group": "bone_plates", "material": "bone_main"})
-
-    # 5. 顶面 (+Y): 全盘覆盖 x in [-8, 8], z in [-8, 8], y in [15, 16]
-    for idx, (u0, u1, v0, v1) in enumerate(get_strips(-8.0, 8.0, -8.0, 8.0)):
-        cubes.append({"name": f"wall_t_{idx}", "from": [round(u0, 4), 15.0, round(v0, 4)], "to": [round(u1, 4), 16.0, round(v1, 4)], "group": "bone_plates", "material": "bone_main"})
+    add_side_grid("wall_n", "z", -1, bend=1.0)
+    add_side_grid("wall_s", "z",  1, bend=-1.0)
+    add_side_grid("wall_w", "x", -1, bend=-1.0)
+    add_side_grid("wall_e", "x",  1, bend=1.0)
 
     return cubes
 
@@ -234,9 +309,9 @@ def build_texture(model_type: str, res: int = RES) -> Image.Image:
                 g = int(np.clip(base_c[1] + noise, 0, 255))
                 b = int(np.clip(base_c[2] + noise, 0, 255))
 
-                if mat_name == "flesh_dark":
+                if mat_name == "flesh_main":
                     if (x * 3 + y * 7) % 11 == 0:
-                        r = int(np.clip(r + 12, 0, 255))
+                        r = int(np.clip(r + 10, 0, 255))
                         g = int(np.clip(g + 4, 0, 255))
                 elif mat_name == "bone_main":
                     if (x + y * 3) % 9 in (0, 1):
@@ -358,6 +433,7 @@ def generate_all_bbmodels() -> Dict[str, Path]:
     p_def.write_text(json.dumps(doc_f, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # 4. 2x2 拼贴模型 (用于真实 3D 渲染看接缝)
+    # floor_flesh 2x2 (平铺在 XZ 平面上: [-8, 24] x [-8, 24])
     cubes_f_2x2 = []
     for dx, dz in [(0, 0), (16, 0), (0, 16), (16, 16)]:
         for c in cubes_f:
@@ -374,6 +450,7 @@ def generate_all_bbmodels() -> Dict[str, Path]:
     p_f_2x2 = MODEL_DIR / "floor_flesh_2x2.bbmodel"
     p_f_2x2.write_text(json.dumps(doc_f_2x2, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    # wall_bone 2x2 (平铺在 XY 平面上构成一面高 32px 宽 32px 的骨墙: [-8, 24] x [0, 32])
     cubes_w_2x2 = []
     for dx, dy in [(0, 0), (16, 0), (0, 16), (16, 16)]:
         for c in cubes_w:
@@ -413,7 +490,7 @@ def render_views(model_paths: Dict[str, Path]):
     bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
 
     # 1. 渲染两件单块 3/4 视
-    im_flesh_iso, _ = render(model_paths["floor_flesh"], yaw=-35.0, pitch=30.0, size=400, bg=bg_color)
+    im_flesh_iso, _ = render(model_paths["floor_flesh"], yaw=-35.0, pitch=35.0, size=400, bg=bg_color)
     im_bone_iso, _  = render(model_paths["wall_bone"],   yaw=-35.0, pitch=25.0, size=400, bg=bg_color)
 
     # 2. 渲染两件 2x2 拼贴接缝预览
@@ -429,20 +506,20 @@ def render_views(model_paths: Dict[str, Path]):
     # 左列: floor_flesh
     canvas.paste(im_flesh_iso, (24, 40))
     draw.rectangle([24, 40, 424, 64], fill=(24, 25, 28))
-    draw.text((32, 45), "floor_flesh (Single Block 3/4 View)", fill=(220, 220, 220))
+    draw.text((32, 45), "floor_flesh (Single Block 3/4 View: #8a2a2a & Veins)", fill=(220, 220, 220))
 
     canvas.paste(im_flesh_2x2, (24, 470))
     draw.rectangle([24, 470, 424, 494], fill=(24, 25, 28))
-    draw.text((32, 475), "floor_flesh 2x2 Tiling (Seam & Vein Continuity)", fill=(180, 220, 200))
+    draw.text((32, 475), "floor_flesh 2x2 Tiling (Seam & Diagonal Veins)", fill=(180, 220, 200))
 
     # 右列: wall_bone
     canvas.paste(im_bone_iso, (456, 40))
     draw.rectangle([456, 40, 856, 64], fill=(24, 25, 28))
-    draw.text((464, 45), "wall_bone (Single Block 3/4 View: 1px Recessed Holes)", fill=(220, 220, 220))
+    draw.text((464, 45), "wall_bone (Single Block 3/4: Bone Grid & Red Recesses)", fill=(220, 220, 220))
 
     canvas.paste(im_bone_2x2, (456, 470))
     draw.rectangle([456, 470, 856, 494], fill=(24, 25, 28))
-    draw.text((464, 475), "wall_bone 2x2 Tiling (Bone Wall Assembly & Seam)", fill=(180, 200, 220))
+    draw.text((464, 475), "wall_bone 2x2 Tiling (Bone Grid Wall Assembly & Seam)", fill=(180, 200, 220))
 
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
         r_path = target_dir / "render.png"
@@ -475,7 +552,7 @@ def render_views(model_paths: Dict[str, Path]):
         c_draw.text((16, 6), "REFERENCE (b09_floor_wall.png: Top=wall_bone / Bottom=floor_flesh)", fill=(210, 200, 180))
 
         check_cv.paste(right_cv, (ref_w + 20, 28))
-        c_draw.text((ref_w + 20, 6), "NOW RENDER (floor_flesh & wall_bone)", fill=(180, 220, 210))
+        c_draw.text((ref_w + 20, 6), "NOW RENDER (floor_flesh & wall_bone Grid)", fill=(180, 220, 210))
 
         for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
             c_path = target_dir / "check.png"
@@ -498,7 +575,7 @@ def self_test():
         "name": "inject_coplanar_fail",
         "from": [-8.0, 0.0, -8.0],
         "to":   [ 8.0, 16.0,  8.0],  # 与 flesh_block 完全重叠
-        "material": "flesh_dark",
+        "material": "flesh_main",
     }]
     caught = False
     try:
