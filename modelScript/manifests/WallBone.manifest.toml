@@ -1,0 +1,11 @@
+# 经脉工厂构件 b09: 多孔骨壁砖 (WallBone)
+facing = "+z"
+size = 500
+
+[materials]
+bone_main = [216, 204, 176]
+bone_crevice = [106, 90, 72]
+
+[features]
+core = { elements = ["bone_core"], must_show_in = ["3/4", "TOP"], min_px = 60 }
+bone_plates = { elements = ["wall_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 200 }
