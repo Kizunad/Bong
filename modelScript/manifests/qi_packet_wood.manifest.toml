@@ -1,0 +1,11 @@
+# 经脉工厂载荷 p01: 真元载荷包 (变体: wood)
+facing = "+z"
+size = 500
+
+[materials]
+shell = [90, 160, 96]
+core = [58, 122, 64]
+
+[features]
+qi_core = { elements = ["core"], must_show_in = ["TOP"], min_px = 60 }
+crystal_shell = { elements = ["shell_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 200 }
