@@ -6,21 +6,30 @@
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-结构与规范落实：
-1. 外包围与尺寸：2 宽 × 2 高 × 3 长方块 (严格落在 32×32×48 px 空间内：x in [-16..16], y in [0..32], z in [-24..24])，
-   原点位于底面中心 (0.0, 0.0, 0.0)。
-2. 7 束长红肌纤维束 (6~8 束)：
-   - #8a2a2a (flesh_main) 红肌主色，每束由一串沿长轴 Z 逐渐收细的长方块构成；
-   - 束间嵌有 #5a1a1a (flesh_dark) 细缝，突出多束肌纤维编织立体感；
-   - 表面隆起棱线上配有 #b05050 (flesh_lit) 纵向高光条；
-   - 另一端 (z = -24.0) 纤维呈散开、圆钝的饱满肌腹头端。
-3. 白色肌腱收拢汇聚段：
-   - 向 +Z 端逐渐收细汇拢，由渐变暖粉白 #e8bca8 (tendon_trans) 汇入坚实致密的白色骨化肌腱 #d8ccb0 (bone_main)。
-4. 骨环 + 8×6 统一截面耦合插口：
-   - 肌腱末端位于 +Z 侧端面 (z = 24.0)；
-   - 严格遵循统一连接截面：内孔宽 8 px × 高 6 px、底边离地 2 px (整件底面 y=0.0，所以孔径在 y in [2.0, 8.0], x in [-4.0, 4.0])；
-   - 外周紧扣四面一体的骨环外箍 (#d8ccb0 / #b8a888)，插口内衬亮色内衬并透出淡光内芯 (#f6dcc4)。
-5. 门禁要求：通过 _assert_no_coplanar_faces 自检，带 --self-test 差分缺陷拦截验证。
+调度审第 1 次修改精确指标落实：
+1. 外包围与尺寸：2 宽 × 2 高 × 3 长方块 (严格落在 32×32×48 px 空间内：x in [-16..16], y in [0..32], z in [0..48])，
+   长轴为 z 轴，肌腱端在 z = 0，肌腹端在 z = 44..48。
+2. 7 束肌纤维按 3-2-2 排列（上 3、中 2、下 2）：
+   - 上 3: 束 0 (中上), 束 1 (左上), 束 2 (右上)
+   - 中 2: 束 3 (中左), 束 4 (中右)
+   - 下 2: 束 5 (下左), 束 6 (下右)
+   - 每束由 4 节沿 z 首尾相接的长方块组成：
+     - 节 1 (z 30–44): 截面 8×8
+     - 节 2 (z 20–30): 截面 7×7
+     - 节 3 (z 12–20): 截面 5×5
+     - 节 4 (z 8–12): 截面 3×3
+     并且每节往中心轴收 1px，让整束在肌腱端完美汇拢为 8×8 截面。
+   - 各束末端（z 44 那头）长度错开 0–4px（z 到 44.0..47.5px），外圈束外角切 1px，做出饱满圆钝的肌腹。
+3. 高光条与束缝：
+   - 每束顶面沿长轴一条 1px 宽 #b05050 高光条，各节立体隆起；
+   - 束与束之间的缝隙露出内部衬垫的暗血肉 #5a1a1a。
+4. 肌腱汇拢段 (z 8–2)：
+   - 截面从 8×8 (z=8) 渐缩收到 6×6 (z=2)，材质 #e8bca8；
+   - 表面正中配置一条 1px 宽贯通的 #f6dcc4 亮线。
+5. 骨环插口 (z 2–0)：
+   - 骨环 #d8ccb0 四面包覆 8×6 统一截面开口（内孔宽 8px × 高 6px、居中 x in [-4, 4]、底边离地 2px y in [2, 8]）；
+   - 方口内壁衬亮肉粉 #b05050，中心嵌入真元内光 #f6dcc4。
+6. 门禁要求：通过 _assert_no_coplanar_faces 严格自检（0 共面冲突），带 --self-test 差分缺陷拦截验证。
 """
 
 from __future__ import annotations
@@ -47,11 +56,11 @@ REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img
 PALETTE = {
     "flesh_dark":    (90, 26, 26, 255),    # #5a1a1a 束间细缝与暗部
     "flesh_main":    (138, 42, 42, 255),   # #8a2a2a 红肌纤维主色
-    "flesh_lit":     (176, 80, 80, 255),   # #b05050 肌纤维高光条与圆钝端光泽
-    "tendon_trans":  (232, 188, 168, 255), # #e8bca8 渐变白色肌腱 (过渡)
-    "bone_main":     (216, 204, 176, 255), # #d8ccb0 骨环与坚实致密肌腱
+    "flesh_lit":     (176, 80, 80, 255),   # #b05050 顶面高光条与插口内衬
+    "tendon_trans":  (232, 188, 168, 255), # #e8bca8 肌腱白色/暖粉白
+    "bone_main":     (216, 204, 176, 255), # #d8ccb0 骨环
     "bone_dark":     (184, 168, 136, 255), # #b8a888 骨暗面
-    "qi_glow":       (246, 220, 196, 255), # #f6dcc4 插口光流
+    "qi_glow":       (246, 220, 196, 255), # #f6dcc4 肌腱亮线与真元内光
 }
 
 MAT_UV = {
@@ -71,145 +80,214 @@ RES = 64
 # 各部件几何定义 (part_* 拆分)
 # =============================================================================
 
-def part_01_muscle_bundles() -> List[dict]:
-    """1. 7 束长红肌纤维束（沿长轴渐变收细，含高光条、束间细缝与散开圆钝端）。
+def part_01_coupling_socket() -> List[dict]:
+    """1. 骨环 + 8x6 统一截面耦合插口 (z: 0..2)。
 
-    7 束纤维环绕肌腹核心排列，向 -Z 端散开圆钝，向 +Z 端收细汇拢：
-    - 束 0: 中央核心主束
-    - 束 1: 背侧上肌束 (带背脊高光条)
-    - 束 2: 腹侧底肌束 (靠地暗面)
-    - 束 3: 左外侧肌束 (大弧外凸，带侧面高光)
-    - 束 4: 右外侧肌束 (大弧外凸，带侧面高光)
-    - 束 5: 左上斜向肌束
-    - 束 6: 右上斜向肌束
+    插口开口在 z=0 端面，严格遵循统一接口规范：
+    - 内孔宽 8 px × 高 6 px、居中 (x in [-4.0, 4.0])、底边离地 2 px (整件底面 y=0.0，y in [2.0, 8.0])；
+    - 外包四面骨环外箍 #d8ccb0；
+    - 方孔内壁贴 #b05050 亮肉衬层，中心一块 #f6dcc4 当内光。
     """
     cubes = []
+    # ── 骨环四面外框 (四角精准无重叠对接) ──
+    # 左右骨柱 (x: [-5.5..-4.0] 与 [4.0..5.5], y: 0.5..9.5)
+    cubes.append({"name": "socket_ring_l", "from": [-5.5, 0.5, 0.0], "to": [-4.0, 9.5, 2.0], "group": "coupling_socket", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_r", "from": [ 4.0, 0.5, 0.0], "to": [ 5.5, 9.5, 2.0], "group": "coupling_socket", "material": "bone_main"})
+    # 顶底横骨梁 (x: [-4.0..4.0], y: 8.0..9.5 与 0.5..2.0)
+    cubes.append({"name": "socket_ring_t", "from": [-4.0, 8.0, 0.0], "to": [ 4.0, 9.5, 2.0], "group": "coupling_socket", "material": "bone_main"})
+    cubes.append({"name": "socket_ring_b", "from": [-4.0, 0.5, 0.0], "to": [ 4.0, 2.0, 2.0], "group": "coupling_socket", "material": "bone_main"})
 
-    # ── 束 0: 中央主束 (core) ──
-    # z: -23.8 -> -14.0 -> -2.0 -> 10.0 -> 17.5
-    cubes.append({"name": "b0_seg_1", "from": [-3.5, 10.0, -23.8], "to": [ 3.5, 17.0, -14.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b0_seg_2", "from": [-4.5, 11.0, -14.0], "to": [ 4.5, 19.0,  -2.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b0_seg_3", "from": [-3.5,  8.0,  -2.0], "to": [ 3.5, 14.5,  10.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b0_seg_4", "from": [-2.5,  5.5,  10.0], "to": [ 2.5, 10.0,  17.5], "group": "muscle_bundles", "material": "flesh_lit"})
+    # ── 8x6 内壁衬层 (#b05050) ──
+    cubes.append({"name": "socket_lining_l", "from": [-4.0, 2.0, 0.0], "to": [-3.2, 8.0, 1.2], "group": "coupling_socket", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_r", "from": [ 3.2, 2.0, 0.0], "to": [ 4.0, 8.0, 1.2], "group": "coupling_socket", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_t", "from": [-3.2, 7.2, 0.0], "to": [ 3.2, 8.0, 1.2], "group": "coupling_socket", "material": "flesh_lit"})
+    cubes.append({"name": "socket_lining_b", "from": [-3.2, 2.0, 0.0], "to": [ 3.2, 2.8, 1.2], "group": "coupling_socket", "material": "flesh_lit"})
 
-    # ── 束 1: 背侧上束 (dorsal top) ──
-    # z: -23.0 -> -13.2 -> -1.2 -> 10.8 -> 17.8
-    cubes.append({"name": "b1_seg_1", "from": [-3.0, 17.5, -23.0], "to": [ 3.0, 23.5, -13.2], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b1_hl_1",  "from": [-1.5, 23.6, -22.2], "to": [ 1.5, 24.6, -13.6], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b1_seg_2", "from": [-3.8, 19.5, -13.2], "to": [ 3.8, 26.5,  -1.2], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b1_hl_2",  "from": [-1.8, 26.6, -12.8], "to": [ 1.8, 27.8,  -1.6], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b1_seg_3", "from": [-2.8, 15.0,  -1.2], "to": [ 2.8, 20.5,  10.8], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b1_hl_3",  "from": [-1.2, 20.6,  -0.8], "to": [ 1.2, 21.6,  10.2], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b1_seg_4", "from": [-1.8, 10.2,  10.8], "to": [ 1.8, 14.5,  17.8], "group": "muscle_bundles", "material": "tendon_trans"})
-
-    # ── 束 2: 腹侧底束 (ventral bottom) ──
-    # z: -23.2 -> -14.8 -> -2.8 -> 9.2 -> 17.2
-    cubes.append({"name": "b2_seg_1", "from": [-3.0,  3.5, -23.2], "to": [ 3.0,  9.5, -14.8], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "b2_seg_2", "from": [-3.8,  3.0, -14.8], "to": [ 3.8, 10.5,  -2.8], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "b2_seg_3", "from": [-3.0,  2.0,  -2.8], "to": [ 3.0,  7.5,   9.2], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "b2_seg_4", "from": [-2.2,  1.8,   9.2], "to": [ 2.2,  5.2,  17.2], "group": "muscle_bundles", "material": "flesh_main"})
-
-    # ── 束 3: 左外侧束 (lateral left, x < 0) ──
-    # z: -23.5 -> -13.6 -> -1.6 -> 10.4 -> 17.4
-    cubes.append({"name": "b3_seg_1", "from": [-11.5,  8.5, -23.5], "to": [-4.0, 16.5, -13.6], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b3_hl_1",  "from": [-12.6, 11.5, -22.5], "to": [-11.6, 14.5, -14.0], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b3_seg_2", "from": [-14.5,  9.5, -13.6], "to": [-5.0, 18.5,  -1.6], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b3_hl_2",  "from": [-15.7, 12.5, -13.0], "to": [-14.6, 16.0,  -2.2], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b3_seg_3", "from": [-10.5,  7.0,  -1.6], "to": [-3.8, 14.0,  10.4], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b3_hl_3",  "from": [-11.4,  9.5,  -1.0], "to": [-10.6, 12.5,   9.8], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b3_seg_4", "from": [ -6.5,  4.5,  10.4], "to": [-2.8,  9.5,  17.4], "group": "muscle_bundles", "material": "tendon_trans"})
-
-    # ── 束 4: 右外侧束 (lateral right, x > 0) ──
-    # z: -23.5 -> -14.4 -> -2.4 -> 9.6 -> 17.6
-    cubes.append({"name": "b4_seg_1", "from": [ 4.0,  8.5, -23.5], "to": [11.5, 16.5, -14.4], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b4_hl_1",  "from": [11.6, 11.5, -22.5], "to": [12.6, 14.5, -14.8], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b4_seg_2", "from": [ 5.0,  9.5, -14.4], "to": [14.5, 18.5,  -2.4], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b4_hl_2",  "from": [14.6, 12.5, -13.8], "to": [15.7, 16.0,  -2.8], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b4_seg_3", "from": [ 3.8,  7.0,  -2.4], "to": [10.5, 14.0,   9.6], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b4_hl_3",  "from": [10.6,  9.5,  -1.8], "to": [11.4, 12.5,   9.0], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b4_seg_4", "from": [ 2.8,  4.5,   9.6], "to": [ 6.5,  9.3,  17.6], "group": "muscle_bundles", "material": "tendon_trans"})
-
-    # ── 束 5: 左上斜束 (dorso-lateral left) ──
-    # z: -22.8 -> -13.0 -> -1.0 -> 11.0 -> 18.0
-    cubes.append({"name": "b5_seg_1", "from": [-9.0, 15.5, -22.8], "to": [-3.2, 21.5, -13.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b5_hl_1",  "from": [-9.8, 19.0, -22.0], "to": [-6.5, 22.2, -13.5], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b5_seg_2", "from": [-11.0, 17.5, -13.0], "to": [-4.0, 24.5,  -1.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b5_hl_2",  "from": [-12.0, 22.0, -12.5], "to": [-8.0, 25.4,  -1.5], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b5_seg_3", "from": [ -8.0, 13.0,  -1.0], "to": [-3.0, 18.5,  11.0], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b5_hl_3",  "from": [ -8.8, 16.5,  -0.5], "to": [-5.5, 19.4,  10.4], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b5_seg_4", "from": [ -5.0,  8.5,  11.0], "to": [-2.0, 13.0,  18.0], "group": "muscle_bundles", "material": "tendon_trans"})
-
-    # ── 束 6: 右上斜束 (dorso-lateral right) ──
-    # z: -22.8 -> -14.2 -> -2.2 -> 9.8 -> 17.0
-    cubes.append({"name": "b6_seg_1", "from": [ 3.2, 15.5, -22.8], "to": [ 9.0, 21.5, -14.2], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b6_hl_1",  "from": [ 6.5, 19.0, -22.0], "to": [ 9.8, 22.2, -14.6], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b6_seg_2", "from": [ 4.0, 17.5, -14.2], "to": [11.0, 24.5,  -2.2], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b6_hl_2",  "from": [ 8.0, 22.0, -13.8], "to": [12.0, 25.4,  -2.6], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b6_seg_3", "from": [ 3.0, 13.0,  -2.2], "to": [ 8.0, 18.5,   9.8], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "b6_hl_3",  "from": [ 5.5, 16.5,  -1.8], "to": [ 8.8, 19.4,   9.2], "group": "muscle_bundles", "material": "flesh_lit"})
-
-    cubes.append({"name": "b6_seg_4", "from": [ 2.0,  8.5,   9.8], "to": [ 5.0, 13.0,  17.0], "group": "muscle_bundles", "material": "tendon_trans"})
-
-    # ── 束间深色细缝 (#5a1a1a) ──
-    cubes.append({"name": "fissure_dorsal_l",  "from": [-3.6, 16.8, -17.5], "to": [-2.9, 19.8, 3.5], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "fissure_dorsal_r",  "from": [ 2.9, 16.8, -17.5], "to": [ 3.6, 19.8, 3.5], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "fissure_lateral_l", "from": [-8.1, 10.6, -17.5], "to": [-4.6, 11.4, 3.5], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "fissure_lateral_r", "from": [ 4.6, 10.6, -17.5], "to": [ 8.1, 11.4, 3.5], "group": "muscle_bundles", "material": "flesh_dark"})
-
-    # ── 另一端散开圆钝端帽 (z: -24.0..-22.6) ──
-    cubes.append({"name": "blunt_cap_core",    "from": [-3.0, 10.5, -24.0], "to": [ 3.0, 16.5, -22.8], "group": "muscle_bundles", "material": "flesh_main"})
-    cubes.append({"name": "blunt_cap_left",    "from": [-10.0, 9.5, -23.8], "to": [-4.5, 15.5, -22.6], "group": "muscle_bundles", "material": "flesh_lit"})
-    cubes.append({"name": "blunt_cap_right",   "from": [  4.5, 9.5, -23.8], "to": [10.0, 15.5, -22.6], "group": "muscle_bundles", "material": "flesh_lit"})
-    cubes.append({"name": "blunt_cap_top",     "from": [-2.5, 17.6, -23.2], "to": [ 2.5, 22.4, -22.2], "group": "muscle_bundles", "material": "flesh_lit"})
+    # ── 中心真元内光 (#f6dcc4) ──
+    cubes.append({"name": "socket_lumen_glow", "from": [-3.2, 2.8, 1.0], "to": [ 3.2, 7.2, 2.0], "group": "coupling_socket", "material": "qi_glow"})
 
     return cubes
 
 
 def part_02_tendon_core() -> List[dict]:
-    """2. 白色肌腱汇拢段 (z: 17.5..21.0, #e8bca8 -> #d8ccb0)。"""
+    """2. 白色肌腱 (z: 2..8, 截面从 8x8 收到 6x6, #e8bca8, 中间一条 #f6dcc4 亮线)。"""
     cubes = []
-    # 渐变过渡肌腱外鞘 (z: 17.5..19.2, 暖粉白 #e8bca8)
-    cubes.append({"name": "tendon_sheath_trans", "from": [-4.8, 1.8, 17.5], "to": [4.8, 9.5, 19.2], "group": "tendon_core", "material": "tendon_trans"})
-    # 紧致汇拢坚实白色肌腱核心 (z: 19.2..21.0, 骨白 #d8ccb0)
-    cubes.append({"name": "tendon_dense_core",   "from": [-4.6, 1.9, 19.2], "to": [4.6, 9.1, 21.0], "group": "tendon_core", "material": "bone_main"})
+    # 段 1: z 2..5 截面 6x6 (x: -3.0..3.0, y: 2.0..8.0)
+    cubes.append({"name": "tendon_seg_1", "from": [-3.0, 2.0, 2.0], "to": [3.0, 8.0, 5.0], "group": "tendon_core", "material": "tendon_trans"})
+    # 段 2: z 5..8 截面渐扩至 8x8 (x: -4.0..4.0, y: 2.0..10.0)
+    cubes.append({"name": "tendon_seg_2", "from": [-4.0, 2.0, 5.0], "to": [4.0, 10.0, 8.0], "group": "tendon_core", "material": "tendon_trans"})
+
+    # 中间一条 #f6dcc4 贯通亮线 (宽 0.8px, 浮起 0.3px)
+    cubes.append({"name": "tendon_hl_1", "from": [-0.4, 8.05, 2.0], "to": [0.4, 8.35, 5.0], "group": "tendon_core", "material": "qi_glow"})
+    cubes.append({"name": "tendon_hl_2", "from": [-0.4, 10.05, 5.0], "to": [0.4, 10.35, 7.9], "group": "tendon_core", "material": "qi_glow"})
+
     return cubes
 
 
-def part_03_coupling_socket() -> List[dict]:
-    """3. 骨环 + 8x6 统一截面耦合插口 (z: 21.0..24.0)。
+def part_03_muscle_bundles() -> List[dict]:
+    """3. 7 束肌纤维按 3-2-2 排列（上 3、中 2、下 2）。
 
-    统一接口截面：宽 8 px × 高 6 px、居中 (x: -4.0..4.0)、底边离地 2 px (整件底面 y=0.0，y in [2.0, 8.0])。
-    肌腱末端包扣四面骨环框架 (#d8ccb0 / #b8a888)，插口开孔朝向 +Z (z=24.0)，内壁衬亮色内衬并透出淡光内芯 (#f6dcc4)。
+    每束由 4 节沿 z 首尾相接的长方块组成：
+    - z 44–30 截面 8×8 (节 1)
+    - z 30–20 截面 7×7 (节 2)
+    - z 20–12 截面 5×5 (节 3)
+    - z 12–8 截面 3×3 (节 4)
+    并且每节往中心轴收 1px，让整束在肌腱端 (z=8) 汇拢为 8×8 截面。
+    各束末端（z 44 那头）长度错开 0–4px，外圈束的外角切 1px 做圆钝肌腹。
+    每束顶面沿长轴一条 1px 宽 #b05050 高光条，束与束之间露出 #5a1a1a 细缝。
+    各束节间 Z 切面微幅错开，彻底避免同向同坐标共面。
     """
     cubes = []
-    # ── 骨环外箍框架 (左右两侧通高 y: 0.5..9.5，上下两边横扣 x: -4.0..4.0，四角精准无重叠对接) ──
-    cubes.append({"name": "socket_bone_ring_l", "from": [-5.5, 0.5, 21.0], "to": [-4.0, 9.5, 24.0], "group": "coupling_socket", "material": "bone_main"})
-    cubes.append({"name": "socket_bone_ring_r", "from": [ 4.0, 0.5, 21.0], "to": [ 5.5, 9.5, 24.0], "group": "coupling_socket", "material": "bone_main"})
-    cubes.append({"name": "socket_bone_ring_t", "from": [-4.0, 8.0, 21.0], "to": [ 4.0, 9.5, 24.0], "group": "coupling_socket", "material": "bone_main"})
-    cubes.append({"name": "socket_bone_ring_b", "from": [-4.0, 0.5, 21.0], "to": [ 4.0, 2.0, 24.0], "group": "coupling_socket", "material": "bone_main"})
 
-    # ── 耦合插口 8x6 内壁衬层 (开孔范围 x: -4.0..4.0, y: 2.0..8.0, z: 22.8..24.0) ──
-    cubes.append({"name": "socket_lining_l", "from": [-4.0, 2.0, 22.8], "to": [-3.4, 8.0, 24.0], "group": "coupling_socket", "material": "tendon_trans"})
-    cubes.append({"name": "socket_lining_r", "from": [ 3.4, 2.0, 22.8], "to": [ 4.0, 8.0, 24.0], "group": "coupling_socket", "material": "tendon_trans"})
-    cubes.append({"name": "socket_lining_t", "from": [-3.4, 7.4, 22.8], "to": [ 3.4, 8.0, 24.0], "group": "coupling_socket", "material": "tendon_trans"})
-    cubes.append({"name": "socket_lining_b", "from": [-3.4, 2.0, 22.8], "to": [ 3.4, 2.6, 24.0], "group": "coupling_socket", "material": "tendon_trans"})
+    bundle_configs = [
+        # 束 0: 上中 (Top-Center)
+        {
+            "name": "b0",
+            "z": [8.0, 12.0, 20.0, 30.0, 44.0],
+            "ext": 3.0,
+            "secs": [
+                (-1.5, 1.5, 7.1, 10.1),    # 3x3
+                (-2.5, 2.5, 10.2, 15.2),   # 5x5
+                (-3.5, 3.5, 13.2, 20.2),   # 7x7
+                (-4.0, 4.0, 15.6, 23.6),   # 8x8
+            ]
+        },
+        # 束 1: 上左 (Top-Left)
+        {
+            "name": "b1",
+            "z": [8.2, 12.3, 20.3, 30.3, 44.2],
+            "ext": 1.5,
+            "secs": [
+                (-4.3, -1.3, 6.3, 9.3),
+                (-6.8, -1.8, 8.8, 13.8),
+                (-9.7, -2.7, 11.4, 18.4),
+                (-11.8, -3.8, 13.7, 21.7),
+            ]
+        },
+        # 束 2: 上右 (Top-Right)
+        {
+            "name": "b2",
+            "z": [7.8, 11.7, 19.7, 29.7, 43.8],
+            "ext": 2.0,
+            "secs": [
+                ( 1.3, 4.3, 6.3, 9.3),
+                ( 1.8, 6.8, 8.8, 13.8),
+                ( 2.7, 9.7, 11.4, 18.4),
+                ( 3.8, 11.8, 13.7, 21.7),
+            ]
+        },
+        # 束 3: 中左 (Mid-Left)
+        {
+            "name": "b3",
+            "z": [8.3, 12.5, 20.5, 30.5, 43.9],
+            "ext": 0.0,
+            "secs": [
+                (-4.2, -1.2, 3.4, 6.4),
+                (-8.15, -3.2, 5.2, 10.2),
+                (-12.3, -5.3, 6.2, 13.2),
+                (-15.2, -7.2, 7.2, 15.2),
+            ]
+        },
+        # 束 4: 中右 (Mid-Right)
+        {
+            "name": "b4",
+            "z": [7.7, 11.5, 19.5, 29.5, 44.1],
+            "ext": 0.5,
+            "secs": [
+                ( 1.2, 4.2, 3.4, 6.4),
+                ( 3.2, 8.15, 5.2, 10.2),
+                ( 5.3, 12.3, 6.2, 13.2),
+                ( 7.2, 15.2, 7.2, 15.2),
+            ]
+        },
+        # 束 5: 下左 (Bottom-Left)
+        {
+            "name": "b5",
+            "z": [8.1, 12.2, 20.2, 30.2, 44.3],
+            "ext": 3.5,
+            "secs": [
+                (-3.2, -0.2, 1.6, 4.6),
+                (-5.7, -0.7, 1.6, 6.6),
+                (-8.25, -1.2, 1.2, 8.2),
+                (-9.7, -1.7, 1.2, 9.2),
+            ]
+        },
+        # 束 6: 下右 (Bottom-Right)
+        {
+            "name": "b6",
+            "z": [7.9, 11.8, 19.8, 29.8, 43.7],
+            "ext": 2.5,
+            "secs": [
+                ( 0.2, 3.2, 1.6, 4.6),
+                ( 0.7, 5.7, 1.6, 6.6),
+                ( 1.2, 8.25, 1.2, 8.2),
+                ( 1.7, 9.7, 1.2, 9.2),
+            ]
+        },
+    ]
 
-    # ── 插口深部内腔真元光芯 (z: 21.0..22.8) ──
-    cubes.append({"name": "socket_lumen_glow", "from": [-3.4, 2.6, 21.0], "to": [ 3.4, 7.4, 22.8], "group": "coupling_socket", "material": "qi_glow"})
+    for b in bundle_configs:
+        b_name = b["name"]
+        zs = b["z"]
+        secs = b["secs"]
+        ext = b["ext"]
+
+        # 4 节
+        for s_idx in range(4):
+            x0, x1, y0, y1 = secs[s_idx]
+            z0 = zs[s_idx]
+            z1 = zs[s_idx + 1]
+            cubes.append({
+                "name": f"{b_name}_s{4-s_idx}",
+                "from": [x0, y0, z0],
+                "to":   [x1, y1, z1],
+                "group": "muscle_bundles",
+                "material": "flesh_main",
+            })
+            # 顶面沿长轴 1px 宽 #b05050 高光条 (浮起 0.25px)
+            x_mid = (x0 + x1) / 2.0
+            cubes.append({
+                "name": f"{b_name}_s{4-s_idx}_hl",
+                "from": [x_mid - 0.45, y1 + 0.05, z0],
+                "to":   [x_mid + 0.45, y1 + 0.35, z1],
+                "group": "muscle_bundles",
+                "material": "flesh_lit",
+            })
+
+        # 延伸段 (z 44 那头错开 0-4px，外圈束外角切 1px)
+        if ext > 0.05:
+            x0, x1, y0, y1 = secs[3]
+            z_end_s1 = zs[4]
+            dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
+            if b_name != "b0":
+                if dx_sign < 0:
+                    x0_cut, x1_cut = x0 + 1.0, x1 - 0.2
+                else:
+                    x0_cut, x1_cut = x0 + 0.2, x1 - 1.0
+                y0_cut, y1_cut = y0 + 0.5, y1 - 0.5
+            else:
+                x0_cut, x1_cut = x0 + 0.5, x1 - 0.5
+                y0_cut, y1_cut = y0 + 0.5, y1 - 0.5
+
+            cubes.append({
+                "name": f"{b_name}_ext",
+                "from": [x0_cut, y0_cut, z_end_s1],
+                "to":   [x1_cut, y1_cut, z_end_s1 + ext],
+                "group": "muscle_bundles",
+                "material": "flesh_main",
+            })
+            x_mid_c = (x0_cut + x1_cut) / 2.0
+            cubes.append({
+                "name": f"{b_name}_ext_hl",
+                "from": [x_mid_c - 0.45, y1_cut + 0.05, z_end_s1],
+                "to":   [x_mid_c + 0.45, y1_cut + 0.35, z_end_s1 + ext],
+                "group": "muscle_bundles",
+                "material": "flesh_lit",
+            })
+
+    # 束缝底衬暗色芯 (#5a1a1a)
+    cubes.append({"name": "fissure_core_mid", "from": [-2.0, 7.0, 13.0], "to": [2.0, 11.0, 29.0], "group": "muscle_bundles", "material": "flesh_dark"})
+    cubes.append({"name": "fissure_core_fat", "from": [-3.0, 9.0, 31.0], "to": [3.0, 15.0, 42.0], "group": "muscle_bundles", "material": "flesh_dark"})
 
     return cubes
 
@@ -217,9 +295,9 @@ def part_03_coupling_socket() -> List[dict]:
 def all_cubes() -> List[dict]:
     """汇总上肢肌肉组全部 3 大部件立方体。"""
     return (
-        part_01_muscle_bundles()
+        part_01_coupling_socket()
         + part_02_tendon_core()
-        + part_03_coupling_socket()
+        + part_03_muscle_bundles()
     )
 
 
@@ -362,7 +440,7 @@ def build_bbmodel_doc(cubes: List[dict], tex: Image.Image) -> dict:
         elements.append(element)
 
     outliner = []
-    for g_name in ["muscle_bundles", "tendon_core", "coupling_socket"]:
+    for g_name in ["coupling_socket", "tendon_core", "muscle_bundles"]:
         if g_name in groups_map:
             outliner.append({
                 "name": g_name,
@@ -413,26 +491,30 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
     REVIEW_DIR_ALIAS.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
 
-    # 1. 渲染四视角 (正视、侧视、3/4 等轴、俯视)
-    im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
+    # 1. 渲染四视角 (插口直视、长轴侧视、3/4 等轴、俯视)
+    # yaw=180: 从 -Z 看向 +Z，直视 z=0 处的 8x6 骨环耦合插口
+    im_socket, _ = render(bbmodel_path, yaw=180.0, pitch=0.0, size=500, bg=bg_color)
+    # yaw=90: 从 +X 看向 -X，左侧为红肌腹、右侧为肌腱插口，与参考图左视完全对齐
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
-    im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
-    im_top, _ = render(bbmodel_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
+    # yaw=145, pitch=25: 从 (+X, +Y, -Z) 俯瞰，左前方为白色肌腱插口，右后方为延伸肌腹，与参考图右视 3/4 完全对齐
+    im_iso, _ = render(bbmodel_path, yaw=145.0, pitch=25.0, size=500, bg=bg_color)
+    # yaw=90, pitch=89.9: 俯视长轴
+    im_top, _ = render(bbmodel_path, yaw=90.0, pitch=89.9, size=500, bg=bg_color)
 
     # 2. 拼装 render.png (2x2 网格)
     canvas = Image.new("RGB", (1040, 1040), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("FRONT (Socket, Tendon & Bundles)", im_front, 20, 20),
-        ("SIDE (Full Length 48px Profile)",  im_side, 540, 20),
-        ("3/4 ISOMETRIC (Fusiform Fascicles)",im_iso, 20, 540),
-        ("TOP (Longitudinal Convergence)",   im_top, 540, 540),
+        ("SOCKET (Bone Ring & 8x6 Port at z=0)", im_socket, 20, 20),
+        ("SIDE (Full 48px Profile: Left Sac, Right Tendon)", im_side, 540, 20),
+        ("3/4 ISOMETRIC (3-2-2 Bundles Converging)", im_iso, 20, 540),
+        ("TOP (Longitudinal Convergence)",       im_top, 540, 540),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 300, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 360, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
 
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
@@ -447,25 +529,25 @@ def render_views(bbmodel_path: Path = BBMODEL_OUT):
         ref_w = int(ref_im.width * target_h / ref_im.height)
         ref_scaled = ref_im.resize((ref_w, target_h), Image.Resampling.LANCZOS)
 
-        front_scale_w = int(im_front.width * target_h / im_front.height)
+        side_scale_w = int(im_side.width * target_h / im_side.height)
         iso_scale_w = int(im_iso.width * target_h / im_iso.height)
-        front_scaled = im_front.resize((front_scale_w, target_h), Image.Resampling.LANCZOS)
+        side_scaled = im_side.resize((side_scale_w, target_h), Image.Resampling.LANCZOS)
         iso_scaled = im_iso.resize((iso_scale_w, target_h), Image.Resampling.LANCZOS)
 
-        right_w = front_scale_w + iso_scale_w + 16
+        right_w = side_scale_w + iso_scale_w + 16
         total_w = ref_w + right_w + 32
         check_cv = Image.new("RGB", (total_w, target_h + 40), (28, 29, 33))
         c_draw = ImageDraw.Draw(check_cv)
 
         # 贴左参考
         check_cv.paste(ref_scaled, (12, 30))
-        c_draw.text((16, 8), "REFERENCE (o03_arm_muscle.png: Left FRONT / Right 3/4)", fill=(210, 200, 180))
+        c_draw.text((16, 8), "REFERENCE (o03_arm_muscle.png: Left SIDE / Right 3/4)", fill=(210, 200, 180))
 
-        # 贴右渲染
+        # 贴右渲染 (SIDE VIEW + 3/4 ISOMETRIC VIEW 与参考图严格左右对应)
         rx = ref_w + 24
-        check_cv.paste(front_scaled, (rx, 30))
-        check_cv.paste(iso_scaled, (rx + front_scale_w + 8, 30))
-        c_draw.text((rx + 4, 8), "NOW RENDER (FRONT VIEW + 3/4 ISOMETRIC VIEW)", fill=(180, 220, 210))
+        check_cv.paste(side_scaled, (rx, 30))
+        check_cv.paste(iso_scaled, (rx + side_scale_w + 8, 30))
+        c_draw.text((rx + 4, 8), "NOW RENDER (SIDE VIEW + 3/4 ISOMETRIC VIEW)", fill=(180, 220, 210))
 
         for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
             c_path = target_dir / "check.png"
@@ -483,9 +565,9 @@ def self_test():
     # 注入测试缺陷
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [-3.5, 10.0, -23.8],
-        "to":   [ 3.5, 17.0, -14.0],  # 与 b0_seg_1 完全重叠
-        "material": "flesh_main",
+        "from": [-5.5, 0.5, 0.0],
+        "to":   [-4.0, 9.5, 2.0],  # 与 socket_ring_l 完全重叠
+        "material": "bone_main",
     }]
     caught = False
     try:
