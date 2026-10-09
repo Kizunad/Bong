@@ -177,126 +177,121 @@ def part_03_bone_collar(is_in_port: bool = True) -> List[dict]:
 def part_04_radial_ridges(is_in_port: bool = True) -> List[dict]:
     """碗壁上 8 条 1px 宽 #c07868 浮起 0.5px 的线：
     四个正方向 + 四个斜方向。
-    - port_in：每条线外宽内窄，靠孔一端加一个 2px 的 V 形尖头指向孔心；
-    - port_out：尖头朝外、指向碗沿。
+    - port_in：每条线外宽内窄，靠孔一端加一个 3px 的粗大鲜明 V 形尖头指向孔心；
+    - port_out：尖头朝外、指向碗沿，3px 粗大 V 尖。
     """
     cubes = []
     pfx = "in_" if is_in_port else "out_"
 
     if is_in_port:
         # ═══════════════════════════════════════════════════════════════
-        # port_in: 尖头指向孔心 (向心流向，靠孔心端为锋利 V 尖)
+        # port_in: 尖头指向孔心 (向心流向，靠孔心端为 3px 粗大 V 尖)
         # ═══════════════════════════════════════════════════════════════
 
         # 1. 北向 (z 负向 -> 朝 +Z 孔心)
-        # 台阶2外段 (y 5.2..5.68, z: -4.8..-3.8) 宽 1.4
         cubes.append({"name": f"{pfx}ridge_n_outer", "from": [-0.7, 5.2, -4.8], "to": [0.7, 5.68, -3.8], "group": "ridges", "material": "tendon_fiber"})
-        # 台阶1内段 (y 4.2..4.68, z: -3.8..-3.0) 宽 1.0
         cubes.append({"name": f"{pfx}ridge_n_inner", "from": [-0.5, 4.2, -3.8], "to": [0.5, 4.68, -3.0], "group": "ridges", "material": "tendon_fiber"})
-        # 2px V形尖头 (指向孔心 +Z，尖端在 z=-2.1，两翼宽 2.0 在 z=-2.9)
-        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.0, 4.2, -3.0], "to": [-0.3, 4.70, -2.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.3, 4.2, -3.0], "to": [ 1.0, 4.70, -2.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.35, 4.2, -2.4], "to": [0.35, 4.72, -1.9], "group": "ridges", "material": "tendon_fiber"})
+        # 3px V形尖头 (两翼宽 3.0: x in [-1.5, 1.5])
+        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.5, 4.2, -3.0], "to": [-0.4, 4.70, -2.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.4, 4.2, -3.0], "to": [ 1.5, 4.70, -2.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.4, 4.2, -2.3], "to": [ 0.4, 4.72, -1.8], "group": "ridges", "material": "tendon_fiber"})
 
         # 2. 南向 (z 正向 -> 朝 -Z 孔心)
         cubes.append({"name": f"{pfx}ridge_s_outer", "from": [-0.7, 5.2,  3.8], "to": [0.7, 5.68,  4.8], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_s_inner", "from": [-0.5, 4.2,  3.0], "to": [0.5, 4.68,  3.8], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.0, 4.2,  2.4], "to": [-0.3, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.3, 4.2,  2.4], "to": [ 1.0, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.35, 4.2,  1.9], "to": [0.35, 4.72,  2.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.5, 4.2,  2.3], "to": [-0.4, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.4, 4.2,  2.3], "to": [ 1.5, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.4, 4.2,  1.8], "to": [ 0.4, 4.72,  2.3], "group": "ridges", "material": "tendon_fiber"})
 
         # 3. 西向 (x 负向 -> 朝 +X 孔心)
         cubes.append({"name": f"{pfx}ridge_w_outer", "from": [-4.8, 5.2, -0.7], "to": [-3.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_w_inner", "from": [-3.8, 4.2, -0.5], "to": [-3.0, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-3.0, 4.2, -1.0], "to": [-2.4, 4.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-3.0, 4.2,  0.3], "to": [-2.4, 4.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-2.4, 4.2, -0.35], "to": [-1.9, 4.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-3.0, 4.2, -1.5], "to": [-2.3, 4.70, -0.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-3.0, 4.2,  0.4], "to": [-2.3, 4.70,  1.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-2.3, 4.2, -0.4], "to": [-1.8, 4.72, 0.4], "group": "ridges", "material": "tendon_fiber"})
 
         # 4. 东向 (x 正向 -> 朝 -X 孔心)
         cubes.append({"name": f"{pfx}ridge_e_outer", "from": [ 3.8, 5.2, -0.7], "to": [ 4.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_e_inner", "from": [ 3.0, 4.2, -0.5], "to": [ 3.8, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 2.4, 4.2, -1.0], "to": [ 3.0, 4.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 2.4, 4.2,  0.3], "to": [ 3.0, 4.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 1.9, 4.2, -0.35], "to": [ 2.4, 4.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 2.3, 4.2, -1.5], "to": [ 3.0, 4.70, -0.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 2.3, 4.2,  0.4], "to": [ 3.0, 4.70,  1.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 1.8, 4.2, -0.4], "to": [ 2.3, 4.72, 0.4], "group": "ridges", "material": "tendon_fiber"})
 
-        # 5. NW 斜向 (朝 SE 孔心)
+        # 5. NW 斜向 (朝 SE 孔心，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_nw_outer", "from": [-4.5, 5.2, -4.5], "to": [-3.7, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_nw_inner", "from": [-3.7, 4.2, -3.7], "to": [-2.8, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-2.8, 4.2, -2.8], "to": [-2.0, 4.72, -2.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-2.8, 4.25, -2.8], "to": [-1.6, 4.75, -1.6], "group": "ridges", "material": "tendon_fiber"})
 
-        # 6. NE 斜向 (朝 SW 孔心)
+        # 6. NE 斜向 (朝 SW 孔心，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_ne_outer", "from": [ 3.7, 5.2, -4.5], "to": [ 4.5, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_ne_inner", "from": [ 2.8, 4.2, -3.7], "to": [ 3.7, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 2.0, 4.2, -2.8], "to": [ 2.8, 4.72, -2.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 1.6, 4.25, -2.8], "to": [ 2.8, 4.75, -1.6], "group": "ridges", "material": "tendon_fiber"})
 
-        # 7. SW 斜向 (朝 NE 孔心)
+        # 7. SW 斜向 (朝 NE 孔心，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_sw_outer", "from": [-4.5, 5.2,  3.7], "to": [-3.7, 5.68,  4.5], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_sw_inner", "from": [-3.7, 4.2,  2.8], "to": [-2.8, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-2.8, 4.2,  2.0], "to": [-2.0, 4.72,  2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-2.8, 4.25,  1.6], "to": [-1.6, 4.75,  2.8], "group": "ridges", "material": "tendon_fiber"})
 
-        # 8. SE 斜向 (朝 NW 孔心)
+        # 8. SE 斜向 (朝 NW 孔心，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_se_outer", "from": [ 3.7, 5.2,  3.7], "to": [ 4.5, 5.68,  4.5], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_se_inner", "from": [ 2.8, 4.2,  2.8], "to": [ 3.7, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 2.0, 4.2,  2.0], "to": [ 2.8, 4.72,  2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 1.6, 4.25,  1.6], "to": [ 2.8, 4.75,  2.8], "group": "ridges", "material": "tendon_fiber"})
 
     else:
         # ═══════════════════════════════════════════════════════════════
-        # port_out: 尖头指向碗沿 (离心发散流向，靠碗沿端为锋利 V 尖)
+        # port_out: 尖头指向碗沿 (离心发散流向，靠碗沿端为 3px 粗大 V 尖)
         # ═══════════════════════════════════════════════════════════════
 
         # 1. 北向 (朝 -Z 碗沿)
-        # 台阶1内段基部 (y 4.2..4.68, z: -3.8..-3.0) 宽 1.0
         cubes.append({"name": f"{pfx}ridge_n_inner", "from": [-0.5, 4.2, -3.8], "to": [0.5, 4.68, -3.0], "group": "ridges", "material": "tendon_fiber"})
-        # 台阶2中段 (y 5.2..5.68, z: -4.4..-3.8) 宽 1.4
         cubes.append({"name": f"{pfx}ridge_n_outer", "from": [-0.7, 5.2, -4.4], "to": [0.7, 5.68, -3.8], "group": "ridges", "material": "tendon_fiber"})
-        # 2px V形尖头 (指向碗沿 -Z，尖端在 z=-5.1，两翼在 z=-4.8..-4.4 宽 2.0)
-        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.0, 5.22, -4.8], "to": [-0.3, 5.70, -4.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.3, 5.22, -4.8], "to": [ 1.0, 5.70, -4.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.35, 5.24, -5.1], "to": [0.35, 5.72, -4.7], "group": "ridges", "material": "tendon_fiber"})
+        # 3px V形尖头 (两翼宽 3.0: x in [-1.5, 1.5])
+        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.5, 5.22, -4.8], "to": [-0.4, 5.70, -4.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.4, 5.22, -4.8], "to": [ 1.5, 5.70, -4.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.4, 5.24, -5.2], "to": [ 0.4, 5.72, -4.7], "group": "ridges", "material": "tendon_fiber"})
 
         # 2. 南向 (朝 +Z 碗沿)
         cubes.append({"name": f"{pfx}ridge_s_inner", "from": [-0.5, 4.2,  3.0], "to": [0.5, 4.68,  3.8], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_s_outer", "from": [-0.7, 5.2,  3.8], "to": [0.7, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.0, 5.22,  4.4], "to": [-0.3, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.3, 5.22,  4.4], "to": [ 1.0, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.35, 5.24,  4.7], "to": [0.35, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.5, 5.22,  4.3], "to": [-0.4, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.4, 5.22,  4.3], "to": [ 1.5, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.4, 5.24,  4.7], "to": [ 0.4, 5.72,  5.2], "group": "ridges", "material": "tendon_fiber"})
 
         # 3. 西向 (朝 -X 碗沿)
         cubes.append({"name": f"{pfx}ridge_w_inner", "from": [-3.8, 4.2, -0.5], "to": [-3.0, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_w_outer", "from": [-4.4, 5.2, -0.7], "to": [-3.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-4.8, 5.22, -1.0], "to": [-4.4, 5.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-4.8, 5.22,  0.3], "to": [-4.4, 5.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-5.1, 5.24, -0.35], "to": [-4.7, 5.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-4.8, 5.22, -1.5], "to": [-4.3, 5.70, -0.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-4.8, 5.22,  0.4], "to": [-4.3, 5.70,  1.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-5.2, 5.24, -0.4], "to": [-4.7, 5.72,  0.4], "group": "ridges", "material": "tendon_fiber"})
 
         # 4. 东向 (朝 +X 碗沿)
         cubes.append({"name": f"{pfx}ridge_e_inner", "from": [ 3.0, 4.2, -0.5], "to": [ 3.8, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_e_outer", "from": [ 3.8, 5.2, -0.7], "to": [ 4.4, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 4.4, 5.22, -1.0], "to": [ 4.8, 5.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 4.4, 5.22,  0.3], "to": [ 4.8, 5.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 4.7, 5.24, -0.35], "to": [ 5.1, 5.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 4.3, 5.22, -1.5], "to": [ 4.8, 5.70, -0.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 4.3, 5.22,  0.4], "to": [ 4.8, 5.70,  1.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 4.7, 5.24, -0.4], "to": [ 5.2, 5.72,  0.4], "group": "ridges", "material": "tendon_fiber"})
 
-        # 5. NW 斜向 (朝 NW 碗沿外射)
+        # 5. NW 斜向 (朝 NW 碗沿外射，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_nw_inner", "from": [-3.7, 4.2, -3.7], "to": [-2.8, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_nw_outer", "from": [-4.4, 5.2, -4.4], "to": [-3.7, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-5.1, 5.23, -5.1], "to": [-4.3, 5.72, -4.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-5.2, 5.23, -5.2], "to": [-4.1, 5.72, -4.1], "group": "ridges", "material": "tendon_fiber"})
 
-        # 6. NE 斜向 (朝 NE 碗沿外射)
+        # 6. NE 斜向 (朝 NE 碗沿外射，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_ne_inner", "from": [ 2.8, 4.2, -3.7], "to": [ 3.7, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_ne_outer", "from": [ 3.7, 5.2, -4.4], "to": [ 4.4, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 4.3, 5.23, -5.1], "to": [ 5.1, 5.72, -4.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 4.1, 5.23, -5.2], "to": [ 5.2, 5.72, -4.1], "group": "ridges", "material": "tendon_fiber"})
 
-        # 7. SW 斜向 (朝 SW 碗沿外射)
+        # 7. SW 斜向 (朝 SW 碗沿外射，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_sw_inner", "from": [-3.7, 4.2,  2.8], "to": [-2.8, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_sw_outer", "from": [-4.4, 5.2,  3.7], "to": [-3.7, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-5.1, 5.23,  4.3], "to": [-4.3, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-5.2, 5.23,  4.1], "to": [-4.1, 5.72,  5.2], "group": "ridges", "material": "tendon_fiber"})
 
-        # 8. SE 斜向 (朝 SE 碗沿外射)
+        # 8. SE 斜向 (朝 SE 碗沿外射，展宽至 3.0)
         cubes.append({"name": f"{pfx}ridge_se_inner", "from": [ 2.8, 4.2,  2.8], "to": [ 3.7, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
         cubes.append({"name": f"{pfx}ridge_se_outer", "from": [ 3.7, 5.2,  3.7], "to": [ 4.4, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
-        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 4.3, 5.23,  4.3], "to": [ 5.1, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 4.1, 5.23,  4.1], "to": [ 5.2, 5.72,  5.2], "group": "ridges", "material": "tendon_fiber"})
 
     return cubes
-
 
 def all_cubes(is_in_port: bool = True) -> List[dict]:
     """汇总指定变体所有部件的立方体。"""

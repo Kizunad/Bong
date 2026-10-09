@@ -262,18 +262,16 @@ def part_05_inlet_and_outlet(variant: str = "empty") -> List[dict]:
     # 右内衬
     cubes.append({"name": f"{pfx}inlet_lining_r",   "from": [ 3.92, 2.08, -8.0], "to": [ 4.0, 7.92, -5.08], "group": "inlet_outlet", "material": "flesh_lit"})
 
-    # ── 2. 顶面中心 b01 同款小骨环出口 (#d8ccb0 bone_main) ──
-    # 顶部中心抬高骨座 (y: 12.5..14.0，连接筋囊顶与骨环)
-    cubes.append({"name": f"{pfx}outlet_base_riser", "from": [-1.8, 12.5, -1.8], "to": [1.8, 14.0, 1.8], "group": "inlet_outlet", "material": "bone_main"})
-
-    # 小骨环出口 4 段 (y in [14.0, 14.5]，外 3x3: x/z in [-1.5, 1.5], 内孔 1x1: x/z in [-0.5, 0.5])
-    cubes.append({"name": f"{pfx}outlet_ring_n", "from": [-1.5, 14.0, -1.5], "to": [ 1.5, 14.5, -0.5], "group": "inlet_outlet", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}outlet_ring_s", "from": [-1.5, 14.0,  0.5], "to": [ 1.5, 14.5,  1.5], "group": "inlet_outlet", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}outlet_ring_w", "from": [-1.5, 14.0, -0.5], "to": [-0.5, 14.5,  0.5], "group": "inlet_outlet", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}outlet_ring_e", "from": [ 0.5, 14.0, -0.5], "to": [ 1.5, 14.5,  0.5], "group": "inlet_outlet", "material": "bone_main"})
-
-    # 内孔深孔底 (#5a1a1a flesh_dark，y in [13.8, 14.05])
-    cubes.append({"name": f"{pfx}outlet_dark_hole", "from": [-0.5, 13.8, -0.5], "to": [0.5, 14.05, 0.5], "group": "inlet_outlet", "material": "flesh_dark"})
+    # ── 2. 顶面中心肉质颈管 (#8a2a2a flesh_main，对齐参考图与 b04 规范) ──
+    # 颈管下段 (y: 12.0..14.5，截面 4x4: x in [-2, 2], z in [-2, 2])
+    cubes.append({"name": f"{pfx}top_neck_lower", "from": [-2.0, 12.0, -2.0], "to": [2.0, 14.5, 2.0], "group": "inlet_outlet", "material": "flesh_main"})
+    # 颈管上段空心中空管头 (y: 14.5..16.0，截面 4x4 微向 +Z 偏转: x in [-2, 2], z in [-1.6, 2.4]，内孔 x in [-1, 1], z in [-0.6, 1.4])
+    cubes.append({"name": f"{pfx}top_neck_wall_s", "from": [-2.0, 14.5,  1.4], "to": [ 2.0, 16.0,  2.4], "group": "inlet_outlet", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}top_neck_wall_n", "from": [-2.0, 14.5, -1.6], "to": [ 2.0, 16.0, -0.6], "group": "inlet_outlet", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}top_neck_wall_w", "from": [-2.0, 14.5, -0.6], "to": [-1.0, 16.0,  1.4], "group": "inlet_outlet", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}top_neck_wall_e", "from": [ 1.0, 14.5, -0.6], "to": [ 2.0, 16.0,  1.4], "group": "inlet_outlet", "material": "flesh_main"})
+    # 顶端中空孔底板 (#5a1a1a flesh_dark，深陷 1.5px: y in [14.45, 14.55])
+    cubes.append({"name": f"{pfx}top_neck_hole_bot", "from": [-1.0, 14.45, -0.6], "to": [1.0, 14.55, 1.4], "group": "inlet_outlet", "material": "flesh_dark"})
 
     return cubes
 

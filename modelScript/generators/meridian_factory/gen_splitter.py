@@ -156,11 +156,13 @@ def part_02_conveyors_out_and_rails() -> List[dict]:
     # 4. 南骨轨 (截面 2x2，底在 y=4、顶在 y=6: x in [3.0, 6.0], z in [4.0, 6.0])
     cubes.append({"name": "out_r_rail_s", "from": [3.0, 4.0,  4.0], "to": [6.0, 6.0,  6.0], "group": "conveyors_out", "material": "bone_main"})
 
-    # ═══════════ 连通拐角骨轨 (西北角与东北角) ═══════════
-    # 西北转角骨轨: 连接入口西立柱 (z=-6) 与左出北立柱 (x=-6)，截面 2x2，底在 y=4、顶在 y=6
-    cubes.append({"name": "corner_rail_nw", "from": [-6.0, 4.0, -6.0], "to": [-4.0, 6.0, -4.0], "group": "conveyors_out", "material": "bone_main"})
-    # 东北转角骨轨: 连接入口东立柱 (z=-6) 与右出北立柱 (x=6)，截面 2x2，底在 y=4、顶在 y=6
-    cubes.append({"name": "corner_rail_ne", "from": [ 4.0, 4.0, -6.0], "to": [ 6.0, 6.0, -4.0], "group": "conveyors_out", "material": "bone_main"})
+    # ═══════════ 连通转角 2x2 骨立柱 (西北角与东北角) ═══════════
+    # 西北转角 2x2 立柱: 连接入口西立柱与左出北立柱，截面 2x2，底在 y=4、顶高 y=8
+    cubes.append({"name": "corner_post_nw", "from": [-6.0, 4.0, -6.0], "to": [-4.0, 8.0, -4.0], "group": "conveyors_out", "material": "bone_main"})
+    cubes.append({"name": "corner_post_nw_stripe", "from": [-5.5, 5.5, -6.05], "to": [-4.5, 6.5, -3.95], "group": "conveyors_out", "material": "bone_dark"})
+    # 东北转角 2x2 立柱: 连接入口东立柱与右出北立柱，截面 2x2，底在 y=4、顶高 y=8
+    cubes.append({"name": "corner_post_ne", "from": [ 4.0, 4.0, -6.0], "to": [ 6.0, 8.0, -4.0], "group": "conveyors_out", "material": "bone_main"})
+    cubes.append({"name": "corner_post_ne_stripe", "from": [ 4.5, 5.5, -6.05], "to": [ 5.5, 6.5, -3.95], "group": "conveyors_out", "material": "bone_dark"})
 
     return cubes
 

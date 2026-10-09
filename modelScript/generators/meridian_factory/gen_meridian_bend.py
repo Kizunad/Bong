@@ -176,21 +176,25 @@ def part_03_interface_stubs() -> List[dict]:
 def part_04_rotary_arc_tube() -> List[dict]:
     """用 4 段直管旋转 22.5° 拼合出半径 8px 的四分之一圆弧：
     段 1: 11.25°, 段 2: 33.75°, 段 3: 56.25°, 段 4: 78.75°。
-    相邻两段在转角处重叠约 1px，严丝合缝不留缝。
+    相邻两段在转角处深度咬合，外弧侧壁两端延展 0.4px，彻底填平外弧转折交角处的锯齿缝隙。
     暖粉管壁 #d9a08c，上下各留 1px #e8bca8 亮边。
     """
     cubes = []
     angles = [11.25, 33.75, 56.25, 78.75]
     z_ranges = [(-8.6, -5.7), (-10.0, -6.0), (-10.0, -6.0), (-10.3, -7.4)]
+    # 外弧侧壁专属 z 范围：两端微延展消除外弧转折交角锯齿缝
+    z_ranges_out = [(-8.9, -5.4), (-10.3, -5.7), (-10.3, -5.7), (-10.6, -7.1)]
 
     for i, (ang, (z0, z1)) in enumerate(zip(angles, z_ranges)):
         rot = [0, ang, 0]
         pfx = f"seg_{i+1}"
+        z0_out, z1_out = z_ranges_out[i]
+
         # 1. 底部 1px 亮边 (y: 2.0..2.8)
         cubes.append({
             "name": f"tube_{pfx}_bot_rim",
-            "from": [-4.0, 2.0, z0],
-            "to":   [4.0, 2.8, z1],
+            "from": [-4.0, 2.0, z0_out],
+            "to":   [4.0, 2.8, z1_out],
             "origin": BEND_ORIGIN,
             "rotation": rot,
             "group": "meridian_tube",
@@ -199,8 +203,8 @@ def part_04_rotary_arc_tube() -> List[dict]:
         # 2. 顶部 1px 亮边 (y: 7.2..8.0)
         cubes.append({
             "name": f"tube_{pfx}_top_rim",
-            "from": [-4.0, 7.2, z0],
-            "to":   [4.0, 8.0, z1],
+            "from": [-4.0, 7.2, z0_out],
+            "to":   [4.0, 8.0, z1_out],
             "origin": BEND_ORIGIN,
             "rotation": rot,
             "group": "meridian_tube",
@@ -209,8 +213,8 @@ def part_04_rotary_arc_tube() -> List[dict]:
         # 3. 外弧侧壁 (x: -4.0..-3.2, y: 2.8..7.2, 暖粉色 #d9a08c)
         cubes.append({
             "name": f"tube_{pfx}_wall_out",
-            "from": [-4.0, 2.8, z0],
-            "to":   [-3.2, 7.2, z1],
+            "from": [-4.0, 2.8, z0_out],
+            "to":   [-3.2, 7.2, z1_out],
             "origin": BEND_ORIGIN,
             "rotation": rot,
             "group": "meridian_tube",
