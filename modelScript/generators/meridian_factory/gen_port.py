@@ -6,22 +6,14 @@
 - .task-meridian-models.md
 - model-review/meridian_factory.md
 - 参考图：model-review/img/meridian_factory/refs/b03_port.png (左入口 port_in、右出口 port_out)
-
-规范落实：
-1. 半高块尺寸契约：
-   - 方块空间为 16×8×16：x in [-8.0, 8.0], y in [0.0, 8.0], z in [-8.0, 8.0]；
-   - 整体高度严格不超过 8.0px (半高块)。
-2. 中间圆形肉质插座与内孔：
-   - 外径约 10px (x/z in [-5.0, 5.0])，材质为血肉主色 #8a2a2a (flesh_main)；
-   - 内孔直径约 6px (x/z in [-3.0, 3.0])，孔径完全对齐 8×6 统一截面的经脉管腔；
-   - 孔内采用深色暗血肉 #5a1a1a (flesh_dark)，深陷通底形成贯通接插井。
-3. 外面一圈骨环领：
-   - 环绕在插座外周，外径约 14px (x/z in [-7.0, 7.0])，宽正好 2.0px；
-   - 材质采用骨色 #d8ccb0 (bone_main)，带有骨暗面 #b8a888 角爪。
-4. 两个变体的 8 条放射状肉脊 (#b05050 flesh_lit)：
-   - port_in (入口插座)：肉脊做成指向孔心的楔形 (外端宽 1.4px，内端收细尖锐至 0.5px，呈向心汇聚流向)；
-   - port_out (出口插座)：肉脊做成指向外侧的楔形 (内端宽 1.4px，外端收细尖锐至 0.5px，呈离心发散喷涌流向)。
-5. 门禁验证：_assert_no_coplanar_faces 0 共面冲突，--self-test 缺陷拦截自测全绿。
+- 调度审 b03 第 1 次（2026-10-09 08:5x）要求：
+  - 肉体：#8a2a2a，x/z 1–15、y 0–6，四个竖角各切掉 2×2（做出圆角感），侧面加 #5a1a1a 竖向暗纹 2~3 条。
+  - 碗形凹口（顶面向下 3 级台阶）：y 6 处开 10×10 口，y 5 处 8×8，y 4 处 6×6，最底 6×6 孔用 #5a1a1a；台阶面用 #b05050。
+  - 肉脊：碗壁上 8 条 1px 宽 #c07868 浮起 0.5px 的线，四个正方向 + 四个斜方向。
+    * port_in：每条线外宽内窄，靠孔一端加一个 2px 的 V 形尖头指向孔心；
+    * port_out：尖头朝外、指向碗沿。
+  - 骨环领：碗口一圈 #d8ccb0 宽 2px、高 2px（y 6–8），四条边中点各一根立柱 2×3×2（做到 y 8 为止），柱面 #b8a888 暗纹。
+  - render.png（俯视 + 3/4 + 侧视）和 check.png（必须含 3/4 视角对标）。
 """
 
 from __future__ import annotations
@@ -44,20 +36,23 @@ MODEL_DIR = REPO / "modelScript" / "models" / "meridian_factory"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/port")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b03_port.png")
 
+# 色表修订对齐
 PALETTE = {
-    "flesh_dark":  (90, 26, 26, 255),    # #5a1a1a 暗血肉 (底座衬底 / 孔底深井)
-    "flesh_main":  (138, 42, 42, 255),   # #8a2a2a 血肉 (圆形肉质插座主体)
-    "bone_main":   (216, 204, 176, 255), # #d8ccb0 骨 (外圈 2px 骨环领)
-    "bone_dark":   (184, 168, 136, 255), # #b8a888 骨暗面 / 角锁
-    "flesh_lit":   (176, 80, 80, 255),   # #b05050 亮肉粉 (8 条放射状肉脊)
+    "flesh_dark":     (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔底深井 / 侧面暗纹)
+    "flesh_main":     (138, 42, 42, 255),   # #8a2a2a 血肉 (肉体主体)
+    "flesh_lit":      (176, 80, 80, 255),   # #b05050 亮肉红 (碗形台阶面)
+    "bone_main":      (216, 204, 176, 255), # #d8ccb0 骨 (骨环领 / 立柱主身)
+    "bone_dark":      (184, 168, 136, 255), # #b8a888 骨暗面 (立柱柱面暗纹)
+    "tendon_fiber":   (192, 120, 104, 255), # #c07868 筋丝 (8 条放射状肉脊)
 }
 
 MAT_UV = {
-    "flesh_dark":  [0, 0, 16, 16],
-    "flesh_main":  [16, 0, 32, 16],
-    "bone_main":   [32, 0, 48, 16],
-    "bone_dark":   [48, 0, 64, 16],
-    "flesh_lit":   [0, 16, 16, 32],
+    "flesh_dark":     [0, 0, 16, 16],
+    "flesh_main":     [16, 0, 32, 16],
+    "flesh_lit":      [32, 0, 48, 16],
+    "bone_main":      [48, 0, 64, 16],
+    "bone_dark":      [0, 16, 16, 32],
+    "tendon_fiber":   [16, 16, 32, 32],
 }
 
 RES = 64
@@ -67,101 +62,238 @@ RES = 64
 # 各部件几何定义 (part_* 拆分)
 # =============================================================================
 
-def part_01_base_pad(is_in_port: bool = True) -> List[dict]:
-    """底座血肉衬垫 (#5a1a1a flesh_dark)：贴地 y: 0.0..1.0，外 14x14，内空 6x6。"""
-    cubes = []
-    pfx = "in_" if is_in_port else "out_"
-
-    cubes.append({"name": f"{pfx}base_n", "from": [-7.0, 0.0, -7.0], "to": [ 7.0, 1.0, -3.0], "group": "base", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}base_s", "from": [-7.0, 0.0,  3.0], "to": [ 7.0, 1.0,  7.0], "group": "base", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}base_w", "from": [-7.0, 0.0, -3.0], "to": [-3.0, 1.0,  3.0], "group": "base", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}base_e", "from": [ 3.0, 0.0, -3.0], "to": [ 7.0, 1.0,  3.0], "group": "base", "material": "flesh_dark"})
-
-    # 中央深井底面 (y: 0.0..0.1, 深邃暗血肉)
-    cubes.append({"name": f"{pfx}port_dark_well", "from": [-3.0, 0.0, -3.0], "to": [3.0, 0.1, 3.0], "group": "flesh_socket", "material": "flesh_dark"})
-    return cubes
-
-
-def part_02_bone_collar(is_in_port: bool = True) -> List[dict]:
-    """外面一圈骨环领：宽 2px (#d8ccb0 bone_main)，外径 14px，内径 10px，y: 1.0..3.8。"""
-    cubes = []
-    pfx = "in_" if is_in_port else "out_"
-
-    cubes.append({"name": f"{pfx}bone_n", "from": [-7.0, 1.0, -7.0], "to": [ 7.0, 3.8, -5.0], "group": "bone_collar", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}bone_s", "from": [-7.0, 1.0,  5.0], "to": [ 7.0, 3.8,  7.0], "group": "bone_collar", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}bone_w", "from": [-7.0, 1.0, -5.0], "to": [-5.0, 3.8,  5.0], "group": "bone_collar", "material": "bone_main"})
-    cubes.append({"name": f"{pfx}bone_e", "from": [ 5.0, 1.0, -5.0], "to": [ 7.0, 3.8,  5.0], "group": "bone_collar", "material": "bone_main"})
-    return cubes
-
-
-def part_03_flesh_socket(is_in_port: bool = True) -> List[dict]:
-    """圆形肉质插座主体 (#8a2a2a flesh_main)：外径约 10px (x/z in [-5.0, 5.0])，内孔约 6px (x/z in [-3.0, 3.0])。
-    高度 y: 1.0..7.2。
+def part_01_flesh_body(is_in_port: bool = True) -> List[dict]:
+    """肉体主体：#8a2a2a，x/z 1–15 ([-7, 7])，y 0–4 为底层开 6×6 孔；
+    四个竖角各切掉 2×2 (呈八边形倒角)；
+    侧面加 #5a1a1a 竖向暗纹 2~3 条。
     """
     cubes = []
     pfx = "in_" if is_in_port else "out_"
 
-    cubes.append({"name": f"{pfx}socket_n", "from": [-5.0, 1.0, -5.0], "to": [ 5.0, 7.2, -3.0], "group": "flesh_socket", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}socket_s", "from": [-5.0, 1.0,  3.0], "to": [ 5.0, 7.2,  5.0], "group": "flesh_socket", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}socket_w", "from": [-5.0, 1.0, -3.0], "to": [-3.0, 7.2,  3.0], "group": "flesh_socket", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}socket_e", "from": [ 3.0, 1.0, -3.0], "to": [ 5.0, 7.2,  3.0], "group": "flesh_socket", "material": "flesh_main"})
+    # y in [0.0, 4.0]：底层开 6x6 孔 (x in [-3, 3], z in [-3, 3])
+    # 北侧
+    cubes.append({"name": f"{pfx}body_base_n", "from": [-3.0, 0.0, -7.0], "to": [ 3.0, 4.0, -3.0], "group": "flesh_body", "material": "flesh_main"})
+    # 南侧
+    cubes.append({"name": f"{pfx}body_base_s", "from": [-3.0, 0.0,  3.0], "to": [ 3.0, 4.0,  7.0], "group": "flesh_body", "material": "flesh_main"})
+    # 西侧中部
+    cubes.append({"name": f"{pfx}body_base_w_mid", "from": [-5.0, 0.0, -7.0], "to": [-3.0, 4.0,  7.0], "group": "flesh_body", "material": "flesh_main"})
+    # 东侧中部
+    cubes.append({"name": f"{pfx}body_base_e_mid", "from": [ 3.0, 0.0, -7.0], "to": [ 5.0, 4.0,  7.0], "group": "flesh_body", "material": "flesh_main"})
+    # 西翼耳部 (切角后切掉 [-7, -5]x[-7, -5] 与 [-7, -5]x[5, 7])
+    cubes.append({"name": f"{pfx}body_base_w_wing", "from": [-7.0, 0.0, -5.0], "to": [-5.0, 4.0,  5.0], "group": "flesh_body", "material": "flesh_main"})
+    # 东翼耳部
+    cubes.append({"name": f"{pfx}body_base_e_wing", "from": [ 5.0, 0.0, -5.0], "to": [ 7.0, 4.0,  5.0], "group": "flesh_body", "material": "flesh_main"})
+
+    # 最底 6×6 孔底面 (#5a1a1a flesh_dark，深邃孔底)
+    cubes.append({"name": f"{pfx}dark_well_bottom", "from": [-3.0, 0.0, -3.0], "to": [3.0, 0.15, 3.0], "group": "flesh_body", "material": "flesh_dark"})
+
+    # 侧面加 #5a1a1a 竖向暗纹 2 条 (四个主要平直立面，厚度 0.05px)
+    # 北面 (z = -7.0)
+    cubes.append({"name": f"{pfx}stripe_n1", "from": [-3.5, 0.5, -7.05], "to": [-2.5, 4.2, -7.0], "group": "flesh_body", "material": "flesh_dark"})
+    cubes.append({"name": f"{pfx}stripe_n2", "from": [ 1.5, 0.5, -7.05], "to": [ 2.5, 4.2, -7.0], "group": "flesh_body", "material": "flesh_dark"})
+    # 南面 (z = 7.0)
+    cubes.append({"name": f"{pfx}stripe_s1", "from": [-3.5, 0.5,  7.0], "to": [-2.5, 4.2,  7.05], "group": "flesh_body", "material": "flesh_dark"})
+    cubes.append({"name": f"{pfx}stripe_s2", "from": [ 1.5, 0.5,  7.0], "to": [ 2.5, 4.2,  7.05], "group": "flesh_body", "material": "flesh_dark"})
+    # 西面 (x = -7.0)
+    cubes.append({"name": f"{pfx}stripe_w1", "from": [-7.05, 0.5, -3.5], "to": [-7.0, 4.2, -2.5], "group": "flesh_body", "material": "flesh_dark"})
+    cubes.append({"name": f"{pfx}stripe_w2", "from": [-7.05, 0.5,  1.5], "to": [-7.0, 4.2,  2.5], "group": "flesh_body", "material": "flesh_dark"})
+    # 东面 (x = 7.0)
+    cubes.append({"name": f"{pfx}stripe_e1", "from": [ 7.0, 0.5, -3.5], "to": [ 7.05, 4.2, -2.5], "group": "flesh_body", "material": "flesh_dark"})
+    cubes.append({"name": f"{pfx}stripe_e2", "from": [ 7.0, 0.5,  1.5], "to": [ 7.05, 4.2,  2.5], "group": "flesh_body", "material": "flesh_dark"})
+
+    return cubes
+
+
+def part_02_bowl_steps(is_in_port: bool = True) -> List[dict]:
+    """碗形凹口（顶面向下 3 级台阶）：
+    - y 4 处开 6×6 口，暴露 8×8 到 6×6 的 1px 宽台阶面 (#b05050)；
+    - y 5 处开 8×8 口，暴露 10×10 到 8×8 的 1px 宽台阶面 (#b05050)；
+    - y 6 处开 10×10 口；
+    - 肉体外侧随层包裹向上延伸。
+    """
+    cubes = []
+    pfx = "in_" if is_in_port else "out_"
+
+    # ── 第 1 级台阶面 (y 4 处：外 8×8，内 6×6，材质 #b05050 flesh_lit，高 y: 4.0..4.18) ──
+    cubes.append({"name": f"{pfx}step1_n", "from": [-4.0, 4.0, -4.0], "to": [ 4.0, 4.18, -3.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step1_s", "from": [-4.0, 4.0,  3.0], "to": [ 4.0, 4.18,  4.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step1_w", "from": [-4.0, 4.0, -3.0], "to": [-3.0, 4.18,  3.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step1_e", "from": [ 3.0, 4.0, -3.0], "to": [ 4.0, 4.18,  3.0], "group": "bowl_steps", "material": "flesh_lit"})
+
+    # y in [4.0, 5.0] 的外侧肉体 (开 8×8 口)
+    cubes.append({"name": f"{pfx}body_mid_n",     "from": [-4.0, 4.0, -7.0], "to": [ 4.0, 5.0, -4.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_mid_s",     "from": [-4.0, 4.0,  4.0], "to": [ 4.0, 5.0,  7.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_mid_w_mid", "from": [-5.0, 4.0, -7.0], "to": [-4.0, 5.0,  7.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_mid_e_mid", "from": [ 4.0, 4.0, -7.0], "to": [ 5.0, 5.0,  7.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_mid_w_wing","from": [-7.0, 4.0, -5.0], "to": [-5.0, 5.0,  5.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_mid_e_wing","from": [ 5.0, 4.0, -5.0], "to": [ 7.0, 5.0,  5.0], "group": "bowl_steps", "material": "flesh_main"})
+
+    # ── 第 2 级台阶面 (y 5 处：外 10×10，内 8×8，材质 #b05050 flesh_lit，高 y: 5.0..5.18) ──
+    cubes.append({"name": f"{pfx}step2_n", "from": [-5.0, 5.0, -5.0], "to": [ 5.0, 5.18, -4.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step2_s", "from": [-5.0, 5.0,  4.0], "to": [ 5.0, 5.18,  5.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step2_w", "from": [-5.0, 5.0, -4.0], "to": [-4.0, 5.18,  4.0], "group": "bowl_steps", "material": "flesh_lit"})
+    cubes.append({"name": f"{pfx}step2_e", "from": [ 4.0, 5.0, -4.0], "to": [ 5.0, 5.18,  4.0], "group": "bowl_steps", "material": "flesh_lit"})
+
+    # y in [5.0, 6.0] 的外侧肉体 (开 10×10 口)
+    cubes.append({"name": f"{pfx}body_top_n",      "from": [-5.0, 5.0, -7.0], "to": [ 5.0, 6.0, -5.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_top_s",      "from": [-5.0, 5.0,  5.0], "to": [ 5.0, 6.0,  7.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_top_w_wing", "from": [-7.0, 5.0, -5.0], "to": [-5.0, 6.0,  5.0], "group": "bowl_steps", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}body_top_e_wing", "from": [ 5.0, 5.0, -5.0], "to": [ 7.0, 6.0,  5.0], "group": "bowl_steps", "material": "flesh_main"})
+
+    return cubes
+
+
+def part_03_bone_collar(is_in_port: bool = True) -> List[dict]:
+    """骨环领 + 4 根立柱：
+    - 骨环领：碗口一圈 #d8ccb0 宽 2px、高 2px（y 6–8，即 x/z in [-7, 7] 外包，内孔 10×10）；
+    - 四条边中点各一根立柱 2×3×2 (截面 2×2，高 3：y 5.0..8.0)，柱面加 #b8a888 暗纹。
+    """
+    cubes = []
+    pfx = "in_" if is_in_port else "out_"
+
+    # 骨环领四段直梁 (y in [6.0, 7.85]，高 1.85px，宽 2.0px)
+    cubes.append({"name": f"{pfx}bone_collar_n", "from": [-5.0, 6.0, -7.0], "to": [ 5.0, 7.85, -5.0], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}bone_collar_s", "from": [-5.0, 6.0,  5.0], "to": [ 5.0, 7.85,  7.0], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}bone_collar_w", "from": [-7.0, 6.0, -5.0], "to": [-5.0, 7.85,  5.0], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}bone_collar_e", "from": [ 5.0, 6.0, -5.0], "to": [ 7.0, 7.85,  5.0], "group": "bone_collar", "material": "bone_main"})
+
+    # 四边中点的 4 根立柱 (截面 2x2，高 3.1px: y 4.9..8.0，顶高微凸出骨环领 0.15px，底微下探 0.1px 锁入肉体)
+    # 北立柱 (z = -7.1..-5.1)
+    cubes.append({"name": f"{pfx}pillar_n", "from": [-1.0, 4.9, -7.1], "to": [1.0, 8.0, -5.1], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}pillar_n_stripe", "from": [-0.6, 5.1, -7.15], "to": [0.6, 7.85, -7.1], "group": "bone_collar", "material": "bone_dark"})
+    # 南立柱 (z = 5.1..7.1)
+    cubes.append({"name": f"{pfx}pillar_s", "from": [-1.0, 4.9,  5.1], "to": [1.0, 8.0,  7.1], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}pillar_s_stripe", "from": [-0.6, 5.1,  7.1], "to": [0.6, 7.85,  7.15], "group": "bone_collar", "material": "bone_dark"})
+    # 西立柱 (x = -7.1..-5.1)
+    cubes.append({"name": f"{pfx}pillar_w", "from": [-7.1, 4.9, -1.0], "to": [-5.1, 8.0, 1.0], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}pillar_w_stripe", "from": [-7.15, 5.1, -0.6], "to": [-7.1, 7.85, 0.6], "group": "bone_collar", "material": "bone_dark"})
+    # 东立柱 (x = 5.1..7.1)
+    cubes.append({"name": f"{pfx}pillar_e", "from": [ 5.1, 4.9, -1.0], "to": [ 7.1, 8.0, 1.0], "group": "bone_collar", "material": "bone_main"})
+    cubes.append({"name": f"{pfx}pillar_e_stripe", "from": [ 7.1, 5.1, -0.6], "to": [ 7.15, 7.85, 0.6], "group": "bone_collar", "material": "bone_dark"})
+
     return cubes
 
 
 def part_04_radial_ridges(is_in_port: bool = True) -> List[dict]:
-    """插座表面 8 条放射状肉脊 (#b05050 flesh_lit，浮起 y: 7.22..7.85)：
-    port_in:  肉脊做成指向孔心的楔形 (外宽 1.4px，向孔心收尖至 0.5px，呈向心汇聚流向)；
-    port_out: 肉脊做成指向外侧的楔形 (内端宽 1.4px，向外圈收尖至 0.5px，呈离心发散流向)。
+    """碗壁上 8 条 1px 宽 #c07868 浮起 0.5px 的线：
+    四个正方向 + 四个斜方向。
+    - port_in：每条线外宽内窄，靠孔一端加一个 2px 的 V 形尖头指向孔心；
+    - port_out：尖头朝外、指向碗沿。
     """
     cubes = []
     pfx = "in_" if is_in_port else "out_"
 
     if is_in_port:
-        # ── port_in: 指向孔心 (外宽内窄) ──
-        # 正北
-        cubes.append({"name": f"{pfx}ridge_n_out", "from": [-0.7, 7.22, -4.95], "to": [0.7, 7.80, -3.95], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_n_in",  "from": [-0.25, 7.22, -3.95], "to": [0.25, 7.85, -3.05], "group": "ridges", "material": "flesh_lit"})
-        # 正南
-        cubes.append({"name": f"{pfx}ridge_s_out", "from": [-0.7, 7.22,  3.95], "to": [0.7, 7.80,  4.95], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_s_in",  "from": [-0.25, 7.22,  3.05], "to": [0.25, 7.85,  3.95], "group": "ridges", "material": "flesh_lit"})
-        # 正西
-        cubes.append({"name": f"{pfx}ridge_w_out", "from": [-4.95, 7.22, -0.7], "to": [-3.95, 7.80, 0.7], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_w_in",  "from": [-3.95, 7.22, -0.25], "to": [-3.05, 7.85, 0.25], "group": "ridges", "material": "flesh_lit"})
-        # 正东
-        cubes.append({"name": f"{pfx}ridge_e_out", "from": [ 3.95, 7.22, -0.7], "to": [ 4.95, 7.80, 0.7], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_e_in",  "from": [ 3.05, 7.22, -0.25], "to": [ 3.95, 7.85, 0.25], "group": "ridges", "material": "flesh_lit"})
-        # 四斜角 (NW, NE, SW, SE: 外侧基部宽，内侧尖端细)
-        cubes.append({"name": f"{pfx}ridge_nw_base", "from": [-4.6, 7.22, -4.6], "to": [-3.9, 7.75, -3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_nw_tip",  "from": [-3.9, 7.22, -3.9], "to": [-3.1, 7.85, -3.1], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_ne_base", "from": [ 3.9, 7.22, -4.6], "to": [ 4.6, 7.75, -3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_ne_tip",  "from": [ 3.1, 7.22, -3.9], "to": [ 3.9, 7.85, -3.1], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_sw_base", "from": [-4.6, 7.22,  3.9], "to": [-3.9, 7.75,  4.6], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_sw_tip",  "from": [-3.9, 7.22,  3.1], "to": [-3.1, 7.85,  3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_se_base", "from": [ 3.9, 7.22,  3.9], "to": [ 4.6, 7.75,  4.6], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_se_tip",  "from": [ 3.1, 7.22,  3.1], "to": [ 3.9, 7.85,  3.9], "group": "ridges", "material": "flesh_lit"})
+        # ═══════════════════════════════════════════════════════════════
+        # port_in: 尖头指向孔心 (向心流向，靠孔心端为锋利 V 尖)
+        # ═══════════════════════════════════════════════════════════════
+
+        # 1. 北向 (z 负向 -> 朝 +Z 孔心)
+        # 台阶2外段 (y 5.2..5.68, z: -4.8..-3.8) 宽 1.4
+        cubes.append({"name": f"{pfx}ridge_n_outer", "from": [-0.7, 5.2, -4.8], "to": [0.7, 5.68, -3.8], "group": "ridges", "material": "tendon_fiber"})
+        # 台阶1内段 (y 4.2..4.68, z: -3.8..-3.0) 宽 1.0
+        cubes.append({"name": f"{pfx}ridge_n_inner", "from": [-0.5, 4.2, -3.8], "to": [0.5, 4.68, -3.0], "group": "ridges", "material": "tendon_fiber"})
+        # 2px V形尖头 (指向孔心 +Z，尖端在 z=-2.1，两翼宽 2.0 在 z=-2.9)
+        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.0, 4.2, -3.0], "to": [-0.3, 4.70, -2.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.3, 4.2, -3.0], "to": [ 1.0, 4.70, -2.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.35, 4.2, -2.4], "to": [0.35, 4.72, -1.9], "group": "ridges", "material": "tendon_fiber"})
+
+        # 2. 南向 (z 正向 -> 朝 -Z 孔心)
+        cubes.append({"name": f"{pfx}ridge_s_outer", "from": [-0.7, 5.2,  3.8], "to": [0.7, 5.68,  4.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_inner", "from": [-0.5, 4.2,  3.0], "to": [0.5, 4.68,  3.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.0, 4.2,  2.4], "to": [-0.3, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.3, 4.2,  2.4], "to": [ 1.0, 4.70,  3.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.35, 4.2,  1.9], "to": [0.35, 4.72,  2.4], "group": "ridges", "material": "tendon_fiber"})
+
+        # 3. 西向 (x 负向 -> 朝 +X 孔心)
+        cubes.append({"name": f"{pfx}ridge_w_outer", "from": [-4.8, 5.2, -0.7], "to": [-3.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_inner", "from": [-3.8, 4.2, -0.5], "to": [-3.0, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-3.0, 4.2, -1.0], "to": [-2.4, 4.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-3.0, 4.2,  0.3], "to": [-2.4, 4.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-2.4, 4.2, -0.35], "to": [-1.9, 4.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+
+        # 4. 东向 (x 正向 -> 朝 -X 孔心)
+        cubes.append({"name": f"{pfx}ridge_e_outer", "from": [ 3.8, 5.2, -0.7], "to": [ 4.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_inner", "from": [ 3.0, 4.2, -0.5], "to": [ 3.8, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 2.4, 4.2, -1.0], "to": [ 3.0, 4.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 2.4, 4.2,  0.3], "to": [ 3.0, 4.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 1.9, 4.2, -0.35], "to": [ 2.4, 4.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+
+        # 5. NW 斜向 (朝 SE 孔心)
+        cubes.append({"name": f"{pfx}ridge_nw_outer", "from": [-4.5, 5.2, -4.5], "to": [-3.7, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_inner", "from": [-3.7, 4.2, -3.7], "to": [-2.8, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-2.8, 4.2, -2.8], "to": [-2.0, 4.72, -2.0], "group": "ridges", "material": "tendon_fiber"})
+
+        # 6. NE 斜向 (朝 SW 孔心)
+        cubes.append({"name": f"{pfx}ridge_ne_outer", "from": [ 3.7, 5.2, -4.5], "to": [ 4.5, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_inner", "from": [ 2.8, 4.2, -3.7], "to": [ 3.7, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 2.0, 4.2, -2.8], "to": [ 2.8, 4.72, -2.0], "group": "ridges", "material": "tendon_fiber"})
+
+        # 7. SW 斜向 (朝 NE 孔心)
+        cubes.append({"name": f"{pfx}ridge_sw_outer", "from": [-4.5, 5.2,  3.7], "to": [-3.7, 5.68,  4.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_inner", "from": [-3.7, 4.2,  2.8], "to": [-2.8, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-2.8, 4.2,  2.0], "to": [-2.0, 4.72,  2.8], "group": "ridges", "material": "tendon_fiber"})
+
+        # 8. SE 斜向 (朝 NW 孔心)
+        cubes.append({"name": f"{pfx}ridge_se_outer", "from": [ 3.7, 5.2,  3.7], "to": [ 4.5, 5.68,  4.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_inner", "from": [ 2.8, 4.2,  2.8], "to": [ 3.7, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 2.0, 4.2,  2.0], "to": [ 2.8, 4.72,  2.8], "group": "ridges", "material": "tendon_fiber"})
+
     else:
-        # ── port_out: 指向外侧 (内宽外窄) ──
-        # 正北
-        cubes.append({"name": f"{pfx}ridge_n_in",  "from": [-0.7, 7.22, -3.95], "to": [0.7, 7.80, -3.05], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_n_out", "from": [-0.25, 7.22, -4.95], "to": [0.25, 7.85, -3.95], "group": "ridges", "material": "flesh_lit"})
-        # 正南
-        cubes.append({"name": f"{pfx}ridge_s_in",  "from": [-0.7, 7.22,  3.05], "to": [0.7, 7.80,  3.95], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_s_out", "from": [-0.25, 7.22,  3.95], "to": [0.25, 7.85,  4.95], "group": "ridges", "material": "flesh_lit"})
-        # 正西
-        cubes.append({"name": f"{pfx}ridge_w_in",  "from": [-3.95, 7.22, -0.7], "to": [-3.05, 7.80, 0.7], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_w_out", "from": [-4.95, 7.22, -0.25], "to": [-3.95, 7.85, 0.25], "group": "ridges", "material": "flesh_lit"})
-        # 正东
-        cubes.append({"name": f"{pfx}ridge_e_in",  "from": [ 3.05, 7.22, -0.7], "to": [ 3.95, 7.80, 0.7], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_e_out", "from": [ 3.95, 7.22, -0.25], "to": [ 4.95, 7.85, 0.25], "group": "ridges", "material": "flesh_lit"})
-        # 四斜角 (NW, NE, SW, SE: 内侧基部宽，外侧尖端细)
-        cubes.append({"name": f"{pfx}ridge_nw_base", "from": [-3.9, 7.22, -3.9], "to": [-3.1, 7.75, -3.1], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_nw_tip",  "from": [-4.6, 7.22, -4.6], "to": [-3.9, 7.85, -3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_ne_base", "from": [ 3.1, 7.22, -3.9], "to": [ 3.9, 7.75, -3.1], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_ne_tip",  "from": [ 3.9, 7.22, -4.6], "to": [ 4.6, 7.85, -3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_sw_base", "from": [-3.9, 7.22,  3.1], "to": [-3.1, 7.75,  3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_sw_tip",  "from": [-4.6, 7.22,  3.9], "to": [-3.9, 7.85,  4.6], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_se_base", "from": [ 3.1, 7.22,  3.1], "to": [ 3.9, 7.75,  3.9], "group": "ridges", "material": "flesh_lit"})
-        cubes.append({"name": f"{pfx}ridge_se_tip",  "from": [ 3.9, 7.22,  3.9], "to": [ 4.6, 7.85,  4.6], "group": "ridges", "material": "flesh_lit"})
+        # ═══════════════════════════════════════════════════════════════
+        # port_out: 尖头指向碗沿 (离心发散流向，靠碗沿端为锋利 V 尖)
+        # ═══════════════════════════════════════════════════════════════
+
+        # 1. 北向 (朝 -Z 碗沿)
+        # 台阶1内段基部 (y 4.2..4.68, z: -3.8..-3.0) 宽 1.0
+        cubes.append({"name": f"{pfx}ridge_n_inner", "from": [-0.5, 4.2, -3.8], "to": [0.5, 4.68, -3.0], "group": "ridges", "material": "tendon_fiber"})
+        # 台阶2中段 (y 5.2..5.68, z: -4.4..-3.8) 宽 1.4
+        cubes.append({"name": f"{pfx}ridge_n_outer", "from": [-0.7, 5.2, -4.4], "to": [0.7, 5.68, -3.8], "group": "ridges", "material": "tendon_fiber"})
+        # 2px V形尖头 (指向碗沿 -Z，尖端在 z=-5.1，两翼在 z=-4.8..-4.4 宽 2.0)
+        cubes.append({"name": f"{pfx}ridge_n_v_left",  "from": [-1.0, 5.22, -4.8], "to": [-0.3, 5.70, -4.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_right", "from": [ 0.3, 5.22, -4.8], "to": [ 1.0, 5.70, -4.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_n_v_tip",   "from": [-0.35, 5.24, -5.1], "to": [0.35, 5.72, -4.7], "group": "ridges", "material": "tendon_fiber"})
+
+        # 2. 南向 (朝 +Z 碗沿)
+        cubes.append({"name": f"{pfx}ridge_s_inner", "from": [-0.5, 4.2,  3.0], "to": [0.5, 4.68,  3.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_outer", "from": [-0.7, 5.2,  3.8], "to": [0.7, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_left",  "from": [-1.0, 5.22,  4.4], "to": [-0.3, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_right", "from": [ 0.3, 5.22,  4.4], "to": [ 1.0, 5.70,  4.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_s_v_tip",   "from": [-0.35, 5.24,  4.7], "to": [0.35, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
+
+        # 3. 西向 (朝 -X 碗沿)
+        cubes.append({"name": f"{pfx}ridge_w_inner", "from": [-3.8, 4.2, -0.5], "to": [-3.0, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_outer", "from": [-4.4, 5.2, -0.7], "to": [-3.8, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_top", "from": [-4.8, 5.22, -1.0], "to": [-4.4, 5.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_bot", "from": [-4.8, 5.22,  0.3], "to": [-4.4, 5.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_w_v_tip", "from": [-5.1, 5.24, -0.35], "to": [-4.7, 5.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+
+        # 4. 东向 (朝 +X 碗沿)
+        cubes.append({"name": f"{pfx}ridge_e_inner", "from": [ 3.0, 4.2, -0.5], "to": [ 3.8, 4.68, 0.5], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_outer", "from": [ 3.8, 5.2, -0.7], "to": [ 4.4, 5.68, 0.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_top", "from": [ 4.4, 5.22, -1.0], "to": [ 4.8, 5.70, -0.3], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_bot", "from": [ 4.4, 5.22,  0.3], "to": [ 4.8, 5.70,  1.0], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_e_v_tip", "from": [ 4.7, 5.24, -0.35], "to": [ 5.1, 5.72, 0.35], "group": "ridges", "material": "tendon_fiber"})
+
+        # 5. NW 斜向 (朝 NW 碗沿外射)
+        cubes.append({"name": f"{pfx}ridge_nw_inner", "from": [-3.7, 4.2, -3.7], "to": [-2.8, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_outer", "from": [-4.4, 5.2, -4.4], "to": [-3.7, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_nw_v_tip", "from": [-5.1, 5.23, -5.1], "to": [-4.3, 5.72, -4.3], "group": "ridges", "material": "tendon_fiber"})
+
+        # 6. NE 斜向 (朝 NE 碗沿外射)
+        cubes.append({"name": f"{pfx}ridge_ne_inner", "from": [ 2.8, 4.2, -3.7], "to": [ 3.7, 4.68, -2.8], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_outer", "from": [ 3.7, 5.2, -4.4], "to": [ 4.4, 5.68, -3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_ne_v_tip", "from": [ 4.3, 5.23, -5.1], "to": [ 5.1, 5.72, -4.3], "group": "ridges", "material": "tendon_fiber"})
+
+        # 7. SW 斜向 (朝 SW 碗沿外射)
+        cubes.append({"name": f"{pfx}ridge_sw_inner", "from": [-3.7, 4.2,  2.8], "to": [-2.8, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_outer", "from": [-4.4, 5.2,  3.7], "to": [-3.7, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_sw_v_tip", "from": [-5.1, 5.23,  4.3], "to": [-4.3, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
+
+        # 8. SE 斜向 (朝 SE 碗沿外射)
+        cubes.append({"name": f"{pfx}ridge_se_inner", "from": [ 2.8, 4.2,  2.8], "to": [ 3.7, 4.68,  3.7], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_outer", "from": [ 3.7, 5.2,  3.7], "to": [ 4.4, 5.68,  4.4], "group": "ridges", "material": "tendon_fiber"})
+        cubes.append({"name": f"{pfx}ridge_se_v_tip", "from": [ 4.3, 5.23,  4.3], "to": [ 5.1, 5.72,  5.1], "group": "ridges", "material": "tendon_fiber"})
 
     return cubes
 
@@ -169,9 +301,9 @@ def part_04_radial_ridges(is_in_port: bool = True) -> List[dict]:
 def all_cubes(is_in_port: bool = True) -> List[dict]:
     """汇总指定变体所有部件的立方体。"""
     return (
-        part_01_base_pad(is_in_port)
-        + part_02_bone_collar(is_in_port)
-        + part_03_flesh_socket(is_in_port)
+        part_01_flesh_body(is_in_port)
+        + part_02_bowl_steps(is_in_port)
+        + part_03_bone_collar(is_in_port)
         + part_04_radial_ridges(is_in_port)
     )
 
@@ -237,7 +369,7 @@ def build_texture(res: int = RES) -> Image.Image:
         tile = np.zeros((h, w, 4), dtype=np.uint8)
         tile[:, :] = base_color
 
-        if "flesh" in mat_name:
+        if "flesh" in mat_name or "tendon" in mat_name:
             noise = rng.randint(-12, 12, size=(h, w))
             for c in range(3):
                 tile[:, :, c] = np.clip(tile[:, :, c].astype(int) + noise, 0, 255)
@@ -324,71 +456,89 @@ def generate_bbmodel(is_in_port: bool, out_path: Path) -> Path:
 # =============================================================================
 
 def render_views(p_in_path: Path, p_out_path: Path):
-    """输出四视角拼图 render.png 与左右并排对照卡 check.png 到 model-review。"""
+    """输出包含（俯视 + 3/4 + 侧视）的综合拼图 render.png 与左右并排对照卡 check.png 到 model-review。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)
 
-    # 1. 渲染各变体视角
-    # port_in 顶视 (俯瞰肉脊指向孔心) 与 3/4 视
+    # 1. 渲染各变体视角：俯视 (TOP)、3/4 视角 (Isometric)、侧视 (SIDE)
+    # port_in 视角
     im_in_top, _ = render(p_in_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
     im_in_iso, _ = render(p_in_path, yaw=-35.0, pitch=30.0, size=500, bg=bg_color)
+    im_in_side, _ = render(p_in_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
 
-    # port_out 顶视 (俯瞰肉脊指向外侧) 与 3/4 视
+    # port_out 视角
     im_out_top, _ = render(p_out_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
     im_out_iso, _ = render(p_out_path, yaw=-35.0, pitch=30.0, size=500, bg=bg_color)
+    im_out_side, _ = render(p_out_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
 
-    # 2. 拼装 render.png (2x2 网格：展示两个变体的顶视与 3/4 视对比)
-    canvas_w = 1040
-    canvas_h = 1040
+    # 2. 拼装 render.png (2 行 3 列：左中右分别为 俯视 TOP、3/4 等轴、侧视 SIDE；上行为 port_in，下行为 port_out)
+    cell_w, cell_h = 500, 500
+    canvas_w = cell_w * 3 + 40
+    canvas_h = cell_h * 2 + 40
     canvas = Image.new("RGB", (canvas_w, canvas_h), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("PORT_IN (TOP: Ridges Point IN)", im_in_top, 20, 20),
-        ("PORT_OUT (TOP: Ridges Point OUT)", im_out_top, 540, 20),
-        ("PORT_IN (3/4 Isometric)", im_in_iso, 20, 540),
-        ("PORT_OUT (3/4 Isometric)", im_out_iso, 540, 540),
+        # 行 1: port_in
+        ("PORT_IN · TOP (V-Arrow Points IN)", im_in_top, 10, 10),
+        ("PORT_IN · 3/4 Isometric (Bowl & Pillars)", im_in_iso, cell_w + 20, 10),
+        ("PORT_IN · SIDE (Half-Block & Pillars)", im_in_side, cell_w * 2 + 30, 10),
+        # 行 2: port_out
+        ("PORT_OUT · TOP (V-Arrow Points OUT)", im_out_top, 10, cell_h + 20),
+        ("PORT_OUT · 3/4 Isometric (Bowl & Pillars)", im_out_iso, cell_w + 20, cell_h + 20),
+        ("PORT_OUT · SIDE (Half-Block & Pillars)", im_out_side, cell_w * 2 + 30, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 280, py + 26], fill=(24, 25, 28))
-        draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
+        draw.rectangle([px, py, px + 360, py + 26], fill=(24, 25, 28))
+        draw.text((px + 8, py + 6), title, fill=(235, 235, 235))
 
     render_path = REVIEW_DIR / "render.png"
     canvas.save(render_path)
-    print(f"✓ render.png 已输出: {render_path}")
+    print(f"✓ render.png (俯视 + 3/4 + 侧视 2x3 拼版) 已输出: {render_path}")
 
-    # 3. 拼装 check.png (左参考图与右渲染并排)
+    # 3. 拼装 check.png (左参考图，右渲染包含 3/4 视与俯视对标)
     if REF_IMAGE.exists():
         ref_im = Image.open(REF_IMAGE).convert("RGB")
-        target_h = 600
+        target_h = 550
         ref_w = int(ref_im.width * target_h / ref_im.height)
         ref_scaled = ref_im.resize((ref_w, target_h), Image.Resampling.LANCZOS)
 
-        in_scale_w = int(im_in_top.width * target_h / im_in_top.height)
-        out_scale_w = int(im_out_top.width * target_h / im_out_top.height)
-        in_scaled = im_in_top.resize((in_scale_w, target_h), Image.Resampling.LANCZOS)
-        out_scaled = im_out_top.resize((out_scale_w, target_h), Image.Resampling.LANCZOS)
+        # 右侧放 4 张对比：port_in 3/4、port_out 3/4、port_in 俯视、port_out 俯视
+        thumb_w = int(target_h * 0.55)
+        thumb_h = int(target_h * 0.46)
 
-        right_w = in_scale_w + out_scale_w + 16
-        total_w = ref_w + right_w + 32
-        check_cv = Image.new("RGB", (total_w, target_h + 40), (28, 29, 33))
+        c_in_iso = im_in_iso.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        c_out_iso = im_out_iso.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        c_in_top = im_in_top.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        c_out_top = im_out_top.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+
+        right_w = thumb_w * 2 + 20
+        total_w = ref_w + right_w + 36
+        check_cv = Image.new("RGB", (total_w, target_h + 46), (28, 29, 33))
         c_draw = ImageDraw.Draw(check_cv)
 
-        check_cv.paste(ref_scaled, (12, 30))
-        c_draw.text((16, 8), "REFERENCE (b03_port.png: Left In, Right Out)", fill=(210, 200, 180))
+        # 贴左参考图
+        check_cv.paste(ref_scaled, (12, 34))
+        c_draw.text((16, 10), "REFERENCE (b03_port.png: Left In, Right Out)", fill=(210, 200, 180))
 
+        # 贴右渲染图 (上行两张 3/4 视，下行两张 TOP 俯视)
         rx = ref_w + 24
-        check_cv.paste(in_scaled, (rx, 30))
-        check_cv.paste(out_scaled, (rx + in_scale_w + 8, 30))
-        c_draw.text((rx + 4, 8), "NOW RENDER (LEFT: port_in, RIGHT: port_out)", fill=(180, 220, 210))
+        # 上行 3/4
+        check_cv.paste(c_in_iso, (rx, 34))
+        check_cv.paste(c_out_iso, (rx + thumb_w + 10, 34))
+        # 下行 TOP
+        check_cv.paste(c_in_top, (rx, 34 + thumb_h + 10))
+        check_cv.paste(c_out_top, (rx + thumb_w + 10, 34 + thumb_h + 10))
+
+        c_draw.text((rx + 4, 10), "NOW RENDER (Top: 3/4 Views, Bottom: TOP Views | Left: port_in, Right: port_out)", fill=(180, 220, 210))
 
         check_path = REVIEW_DIR / "check.png"
         check_cv.save(check_path)
-        print(f"✓ check.png 并排对照图已输出: {check_path}")
+        print(f"✓ check.png 并排对照图 (含 3/4 视角对标) 已输出: {check_path}")
 
 
 def self_test():
@@ -402,8 +552,8 @@ def self_test():
 
         defect_cubes = list(cubes) + [{
             "name": "inject_coplanar_fail",
-            "from": [-7.0, 0.0, -7.0],
-            "to":   [ 7.0, 1.0, -3.0],
+            "from": [-3.0, 0.0, -7.0],
+            "to":   [ 3.0, 4.0, -3.0],
             "material": "flesh_main",
         }]
         caught = False
