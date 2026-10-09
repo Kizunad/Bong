@@ -7,5 +7,5 @@ shell = [242, 240, 234]
 core = [216, 212, 200]
 
 [features]
-qi_core = { elements = ["core"], must_show_in = ["TOP"], min_px = 60 }
+qi_core = { elements = ["patch_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 60 }
 crystal_shell = { elements = ["shell_"], must_show_in = ["FRONT", "3/4", "TOP"], min_px = 200 }

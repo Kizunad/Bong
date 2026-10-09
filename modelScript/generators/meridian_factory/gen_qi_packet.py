@@ -6,15 +6,17 @@
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-结构与规范落实：
-1. 尺寸：一个 4×4×4 px 的小方块，外包严格为 4×4×4 px (x in [-2, 2], y in [0, 4], z in [-2, 2])，
-   原点位于底面中心 (0.0, 0.0, 0.0)。
-2. 四条竖直棱角各切 0.5px，形成八角棱柱微晶体，杜绝直角呆板感。
-3. 具有明显的「内发光」晶核感：
-   - 内芯 2×2×2 px (x in [-1, 1], y in [1, 3], z in [-1, 1])，使用深一档颜色；
-   - 顶面设有灵气晶体视窗，深邃直视 2×2 内发光晶核；
-   - 外层 4×4×4 px，使用浅色微透玉质/灵晶质感包裹。
-4. 6 个变体（只换外层/内芯颜色）：
+调度审第 1 次更正说明落实：
+1. 实心 4×4×4 方块，不开口：
+   - 基础外包严格为 4×4×4 px (x in [-2, 2], y in [0, 4], z in [-2, 2])，
+     原点位于底面中心 (0.0, 0.0, 0.0)；
+   - 内部完全实心，绝非开口空心杯。
+2. 四条竖棱各切 0.5px 的八棱柱特征完整保留：
+   - 四个竖直边缘削去 0.5×0.5px，形成精致八角截面微晶体。
+3. 六面中央 2×2 面心色方片（营造强烈内发光感）：
+   - 在立方体的全部 6 个外表面（上、下、前、后、左、右）中央，各贴一块 2×2 的内芯色方片（浮出 0.05px）；
+   - 外层使用浅色，面心方片使用深一档颜色，产生深邃的光核向外漫射的真实内发光晶块质感。
+4. 6 个变体（外层浅色 / 面心深色）：
    - qi_packet_neutral: #f2f0ea / #d8d4c8 (中性真元)
    - qi_packet_metal:   #c8ccd0 / #9aa0a8 (金真元)
    - qi_packet_wood:    #5aa060 / #3a7a40 (木真元)
@@ -44,36 +46,36 @@ REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/im
 REVIEW_DIR_ALIAS = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/p01_qi_packet")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/p01_qi_packets.png")
 
-# 6 个变体的外层浅色与内芯深色配置 (RGBA)
+# 6 个变体的外层浅色与面心深色配置 (RGBA)
 VARIANTS = {
     "neutral": {
         "title": "Neutral (中性)",
-        "shell": (242, 240, 234, 220), # #f2f0ea
+        "shell": (242, 240, 234, 255), # #f2f0ea
         "core":  (216, 212, 200, 255), # #d8d4c8
     },
     "metal": {
         "title": "Metal (金)",
-        "shell": (200, 204, 208, 220), # #c8ccd0
+        "shell": (200, 204, 208, 255), # #c8ccd0
         "core":  (154, 160, 168, 255), # #9aa0a8
     },
     "wood": {
         "title": "Wood (木)",
-        "shell": (90,  160, 96,  220), # #5aa060
+        "shell": (90,  160, 96,  255), # #5aa060
         "core":  (58,  122, 64,  255), # #3a7a40
     },
     "water": {
         "title": "Water (水)",
-        "shell": (74,  120, 192, 220), # #4a78c0
+        "shell": (74,  120, 192, 255), # #4a78c0
         "core":  (42,  80,  144, 255), # #2a5090
     },
     "fire": {
         "title": "Fire (火)",
-        "shell": (200, 74,  58,  220), # #c84a3a
+        "shell": (200, 74,  58,  255), # #c84a3a
         "core":  (144, 42,  32,  255), # #902a20
     },
     "earth": {
         "title": "Earth (土)",
-        "shell": (176, 138, 64,  220), # #b08a40
+        "shell": (176, 138, 64,  255), # #b08a40
         "core":  (128, 96,  32,  255), # #806020
     },
 }
@@ -90,59 +92,50 @@ RES = 64
 # 各部件几何定义 (part_* 拆分)
 # =============================================================================
 
-def part_01_core() -> List[dict]:
-    """1. 内芯 (2×2×2 px, x: -1..1, y: 1..3, z: -1..1)。
+def part_01_solid_shell() -> List[dict]:
+    """1. 实心 4×4×4 八棱柱主体（四条竖棱各切 0.5px，材质 shell）。
 
-    使用深一档颜色，营造灵气凝结的内发光晶核。
-    """
-    return [{
-        "name": "core",
-        "from": [-1.0, 1.0, -1.0],
-        "to":   [ 1.0, 3.0,  1.0],
-        "group": "qi_core",
-        "material": "core",
-    }]
-
-
-def part_02_shell() -> List[dict]:
-    """2. 外层 (4×4×4 px, 四条竖棱各切 0.5px)。
-
-    包裹住 2×2×2 内芯，外廓在主轴方向达到 4×4×4，四角削去 0.5×0.5px 形成八棱柱微晶体。
-    顶面留出灵气视窗直视 2×2 内芯晶核顶面。
-    全部 13 个方块与内芯紧密吻合，0 容积重叠，0 同向共面冲突。
+    完全实心，不开口。由中央 3×3 柱体与四侧凸块严密契合构成。
     """
     cubes = []
-    # ── 底板 (y: 0..1, 平稳承托) ──
-    cubes.append({"name": "shell_bottom", "from": [-1.5, 0.0, -1.5], "to": [1.5, 1.0, 1.5], "group": "crystal_shell", "material": "shell"})
+    # 中央核心主体 (截面 3x3, 高 4, x in [-1.5, 1.5], z in [-1.5, 1.5], y in [0, 4])
+    cubes.append({"name": "shell_main_core", "from": [-1.5, 0.0, -1.5], "to": [1.5, 4.0, 1.5], "group": "crystal_shell", "material": "shell"})
 
-    # ── 顶层四边外框 (y: 3..4, 中间露出 core 的顶面) ──
-    cubes.append({"name": "shell_top_n", "from": [-1.5, 3.0, -1.5], "to": [ 1.5, 4.0, -1.0], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_top_s", "from": [-1.5, 3.0,  1.0], "to": [ 1.5, 4.0,  1.5], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_top_w", "from": [-1.5, 3.0, -1.0], "to": [-1.0, 4.0,  1.0], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_top_e", "from": [ 1.0, 3.0, -1.0], "to": [ 1.5, 4.0,  1.0], "group": "crystal_shell", "material": "shell"})
-
-    # ── 中层围绕内芯四壁 (y: 1..3) ──
-    cubes.append({"name": "shell_mid_n",  "from": [-1.5, 1.0, -1.5], "to": [ 1.5, 3.0, -1.0], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_mid_s",  "from": [-1.5, 1.0,  1.0], "to": [ 1.5, 3.0,  1.5], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_mid_w",  "from": [-1.5, 1.0, -1.0], "to": [-1.0, 3.0,  1.0], "group": "crystal_shell", "material": "shell"})
-    cubes.append({"name": "shell_mid_e",  "from": [ 1.0, 1.0, -1.0], "to": [ 1.5, 3.0,  1.0], "group": "crystal_shell", "material": "shell"})
-
-    # ── 外层四面凸面 (使外廓达到 4x4x4, 但四角切去 0.5px) ──
-    # 南侧 (+Z): x in [-1.5, 1.5], z in [1.5, 2.0], y in [0.0, 4.0]
+    # 四面凸出 (长 3, 宽 0.5, 高 4, 使主轴外廓达到 4x4x4，四角削去 0.5x0.5px)
     cubes.append({"name": "shell_lobe_s", "from": [-1.5, 0.0,  1.5], "to": [1.5, 4.0,  2.0], "group": "crystal_shell", "material": "shell"})
-    # 北侧 (-Z): x in [-1.5, 1.5], z in [-2.0, -1.5], y in [0.0, 4.0]
     cubes.append({"name": "shell_lobe_n", "from": [-1.5, 0.0, -2.0], "to": [1.5, 4.0, -1.5], "group": "crystal_shell", "material": "shell"})
-    # 西侧 (-X): x in [-2.0, -1.5], z in [-1.5, 1.5], y in [0.0, 4.0]
     cubes.append({"name": "shell_lobe_w", "from": [-2.0, 0.0, -1.5], "to": [-1.5, 4.0, 1.5], "group": "crystal_shell", "material": "shell"})
-    # 东侧 (+X): x in [1.5, 2.0], z in [-1.5, 1.5], y in [0.0, 4.0]
     cubes.append({"name": "shell_lobe_e", "from": [ 1.5, 0.0, -1.5], "to": [ 2.0, 4.0, 1.5], "group": "crystal_shell", "material": "shell"})
+
+    return cubes
+
+
+def part_02_face_patches() -> List[dict]:
+    """2. 六面中央 2×2 面心色方片（浮出 0.05px，材质 core）。
+
+    在六个表面中央各贴一块 2×2 px 的深一档内芯色方片，浮出 0.05px，
+    呈现强烈内发光与精细微浮雕质感。
+    """
+    cubes = []
+    # 顶面 (+Y 面心)
+    cubes.append({"name": "patch_top",    "from": [-1.0, 4.0, -1.0], "to": [1.0, 4.05, 1.0], "group": "qi_core", "material": "core"})
+    # 底面 (-Y 面心)
+    cubes.append({"name": "patch_bottom", "from": [-1.0, -0.05, -1.0], "to": [1.0, 0.0, 1.0], "group": "qi_core", "material": "core"})
+    # 前面 (+Z 面心)
+    cubes.append({"name": "patch_front",  "from": [-1.0, 1.0, 2.0], "to": [1.0, 3.0, 2.05], "group": "qi_core", "material": "core"})
+    # 后面 (-Z 面心)
+    cubes.append({"name": "patch_back",   "from": [-1.0, 1.0, -2.05], "to": [1.0, 3.0, -2.0], "group": "qi_core", "material": "core"})
+    # 左面 (-X 面心)
+    cubes.append({"name": "patch_left",   "from": [-2.05, 1.0, -1.0], "to": [-2.0, 3.0, 1.0], "group": "qi_core", "material": "core"})
+    # 右面 (+X 面心)
+    cubes.append({"name": "patch_right",  "from": [2.0, 1.0, -1.0], "to": [2.05, 3.0, 1.0], "group": "qi_core", "material": "core"})
 
     return cubes
 
 
 def all_cubes() -> List[dict]:
     """汇总真元载荷包全部立方体。"""
-    return part_01_core() + part_02_shell()
+    return part_01_solid_shell() + part_02_face_patches()
 
 
 # =============================================================================
@@ -209,7 +202,6 @@ def build_texture(variant_key: str, res: int = RES) -> Image.Image:
             r = int(np.clip(shell_c[0] + noise, 0, 255))
             g = int(np.clip(shell_c[1] + noise, 0, 255))
             b = int(np.clip(shell_c[2] + noise, 0, 255))
-            # 晶体微粒与光晕
             if (x + y * 2) % 7 in (0, 1):
                 r = int(np.clip(r + 6, 0, 255))
                 g = int(np.clip(g + 6, 0, 255))
@@ -223,7 +215,6 @@ def build_texture(variant_key: str, res: int = RES) -> Image.Image:
             r = int(np.clip(core_c[0] + noise, 0, 255))
             g = int(np.clip(core_c[1] + noise, 0, 255))
             b = int(np.clip(core_c[2] + noise, 0, 255))
-            # 核心光流微脉
             if (x * 3 + y * 5) % 11 in (0, 1):
                 r = int(np.clip(r + 10, 0, 255))
                 g = int(np.clip(g + 10, 0, 255))
@@ -382,7 +373,7 @@ def render_views(model_paths: Dict[str, Path]):
     draw = ImageDraw.Draw(canvas)
 
     # 标题栏
-    draw.text((margin_x, 12), "p01 qi_packet 6 Variants (4x4x4 px, Core 2x2x2 px, Beveled Vertices): Top=3/4 View, Bottom=Top View", fill=(230, 230, 230))
+    draw.text((margin_x, 12), "p01 qi_packet 6 Variants (Solid 4x4x4 px, 2x2 Core Patch on 6 Faces, Beveled Vertices)", fill=(230, 230, 230))
 
     for idx, k in enumerate(variant_order):
         v_title = VARIANTS[k]["title"]
@@ -398,7 +389,7 @@ def render_views(model_paths: Dict[str, Path]):
         # 贴俯视
         canvas.paste(rendered_top[k], (px, py_top))
         draw.rectangle([px, py_top, px + col_w, py_top + 24], fill=(24, 25, 28))
-        draw.text((px + 8, py_top + 5), f"{v_title} TOP (Octagon)", fill=(180, 200, 220))
+        draw.text((px + 8, py_top + 5), f"{v_title} TOP", fill=(180, 200, 220))
 
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
         r_path = target_dir / "render.png"
@@ -449,9 +440,9 @@ def self_test():
     # 注入测试缺陷
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [-1.0, 1.0, -1.0],
-        "to":   [ 1.0, 3.0,  1.0],  # 与 core 完全重叠
-        "material": "core",
+        "from": [-1.5, 0.0, -1.5],
+        "to":   [ 1.5, 4.0,  1.5],  # 与 shell_main_core 完全重叠
+        "material": "shell",
     }]
     caught = False
     try:
