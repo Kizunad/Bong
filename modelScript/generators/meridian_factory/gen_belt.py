@@ -6,23 +6,28 @@
 - /home/serverkizuna/Code/Bong/.agent-worktrees/.task-meridian-models.md
 - /home/serverkizuna/Code/Bong/.agent-worktrees/model-review/meridian_factory.md
 
-结构与规范落实：
-1. 尺寸：每件严格落在一格 16×16×16 内 (x in [-8, 8], z in [-8, 8], y in [0, 16]，坡道顶端到 y=22)，
-   中心对齐方块网格，原点位于底面中心 (0.0, 0.0, 0.0)。
-2. 带面：
-   - 宽 8px (居中 x in [-4, 4])，带面顶高 y = 4.0；
-   - 红肌纤维带面，沿运动方向每 2px 一条横肋，由 #8a2a2a (flesh_main) 与 #5a1a1a (flesh_dark) 交替；
-   - 带面下方到 y=0 是筋质底座 #d9a08c (tendon_tube)，侧面带 2 条 #c07868 (tendon_fiber) 斜筋丝。
-3. 骨轨与立柱：
-   - 带面两侧各一条 #d8ccb0 (bone_main) 骨轨，宽 2px (x in [-6, -4] 与 [4, 6])，顶高 y = 6.0；
-   - 骨轨外侧到方块边严格留空 2px (8.0 - 6.0 = 2.0px)；
-   - 每隔 8px 一根 2×2 骨立柱，顶高 y = 8.0 (比骨轨高出 2px)，柱面饰有 #b8a888 (bone_dark) 暗纹。
-4. 4 件独立模型：
-   - belt_straight: 沿 z 轴直通 (-8..8)；
-   - belt_corner: -Z 进 +X 出，带面与内外骨轨沿 R=8 的四分之一圆弧，用 4 段直管旋转 22.5° 紧密拼合；
-   - belt_slope_up: 沿 z 爬升一格，带面从 y=4 升到 y=20 的斜面采用 8 级 2px 台阶，骨轨与立柱跟着顺升；
-   - belt_slope_down: slope_up 绕 Y 轴旋转 180° 单独出文件，从 -Z 端 y=20 平滑降至 +Z 端 y=4。
-5. 门禁要求：通过 _assert_no_coplanar_faces 严格自检（0 共面冲突），带 --self-test 差分缺陷拦截验证。
+调度审第 1 次严格修改落实：
+1. 骨轨：
+   - 截面正好 2 宽 × 2 高，放在带面两侧；
+   - 底在 y = 4.0、顶在 y = 6.0 (只比带面高 2px)；
+   - 骨轨外侧到方块边严格留空 2px (x in [-6, -4] 与 [4, 6]，外部 [-8, -6] 与 [6, 8] 为空)。
+2. 立柱：
+   - 截面正好 2×2，底在 y = 4.0、顶在 y = 8.0 (高 4px)；
+   - 每 8px 一根，直段每侧两根：z = -6..-4 与 z = 2..4 (对应 0-16 空间 z=2-4, 10-12)；
+   - 柱面饰有 #b8a888 暗纹。
+3. 带面与底座：
+   - 带面：宽 8px (居中 x in [-4, 4])，顶在 y = 4.0；
+   - 带面下方 y in [0.0, 4.0] 为筋质底座 #d9a08c，侧面可完全露出，带 2 条 #c07868 斜筋丝。
+4. slope_up / slope_down：
+   - 坡面采用 8 级台阶，每级 z 前进 2px、y 升 2px (从 y=4 升至 y=20)；
+   - 骨轨跟着坡面逐级抬高 (截面 2x2，底在 y_top，顶在 y_top+2)；
+   - 立柱只在坡底 (z in [-8, -6], y: 4..8) 和坡顶 (z in [6, 8], y: 20..24) 各一对；
+   - 拍照取景从「低端在前、看得见带面」的角度拍摄。
+5. corner：
+   - 内外两条骨轨沿四分之一圆弧，内角为圆心 (8.0, -8.0)，内轨半径 4 (R in [2, 4])、外轨半径 12 (R in [12, 14])；
+   - 骨轨截面 2x2，底在 y=4、顶在 y=6；
+   - 立柱只在两端各一对 (底在 y=4, 顶在 y=8)。
+6. 门禁要求：通过 _assert_no_coplanar_faces 严格自检（0 共面冲突），带 --self-test 差分缺陷拦截验证。
 """
 
 from __future__ import annotations
@@ -84,35 +89,42 @@ def build_straight_cubes() -> List[dict]:
         mat = "flesh_main" if i % 2 == 0 else "flesh_dark"
         cubes.append({"name": f"rib_{i}", "from": [-4.0, 3.8, z0], "to": [4.0, 4.0, z1], "group": "belt_surface", "material": mat})
 
-    # ── 4 根骨立柱 (2x2, 全高 y: 0..8, 在 z: [-5..-3] 与 [3..5]) ──
-    cubes.append({"name": "post_l1", "from": [-6.0, 0.0, -5.0], "to": [-4.0, 8.0, -3.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_l2", "from": [-6.0, 0.0,  3.0], "to": [-4.0, 8.0,  5.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_r1", "from": [ 4.0, 0.0, -5.0], "to": [ 6.0, 8.0, -3.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_r2", "from": [ 4.0, 0.0,  3.0], "to": [ 6.0, 8.0,  5.0], "group": "bone_posts", "material": "bone_main"})
+    # ── 骨轨 (截面 2x2, 底在 y=4, 顶在 y=6: x in [-6, -4] 与 [4, 6], 避开立柱分段) ──
+    rail_z = [(-8.0, -6.0), (-4.0, 2.0), (4.0, 8.0)]
+    for i, (z0, z1) in enumerate(rail_z):
+        cubes.append({"name": f"rail_l_{i}", "from": [-6.0, 4.0, z0], "to": [-4.0, 6.0, z1], "group": "bone_rails", "material": "bone_main"})
+        cubes.append({"name": f"rail_r_{i}", "from": [ 4.0, 4.0, z0], "to": [ 6.0, 6.0, z1], "group": "bone_rails", "material": "bone_main"})
+
+    # ── 4 根立柱 (2x2, 底在 y=4, 顶在 y=8, 在 z: [-6..-4] 与 [2..4]) ──
+    cubes.append({"name": "post_l1", "from": [-6.0, 4.0, -6.0], "to": [-4.0, 8.0, -4.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_l2", "from": [-6.0, 4.0,  2.0], "to": [-4.0, 8.0,  4.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_r1", "from": [ 4.0, 4.0, -6.0], "to": [ 6.0, 8.0, -4.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_r2", "from": [ 4.0, 4.0,  2.0], "to": [ 6.0, 8.0,  4.0], "group": "bone_posts", "material": "bone_main"})
 
     # 立柱柱面暗纹环扣 (#b8a888)
-    cubes.append({"name": "post_l1_band", "from": [-6.05, 6.0, -5.05], "to": [-3.95, 6.8, -2.95], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_l2_band", "from": [-6.05, 6.0,  2.95], "to": [-3.95, 6.8,  5.05], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_r1_band", "from": [ 3.95, 6.0, -5.05], "to": [ 6.05, 6.8, -2.95], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_r2_band", "from": [ 3.95, 6.0,  2.95], "to": [ 6.05, 6.8,  5.05], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_l1_band", "from": [-6.05, 6.8, -6.05], "to": [-3.95, 7.6, -3.95], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_l2_band", "from": [-6.05, 6.8,  1.95], "to": [-3.95, 7.6,  4.05], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_r1_band", "from": [ 3.95, 6.8, -6.05], "to": [ 6.05, 7.6, -3.95], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_r2_band", "from": [ 3.95, 6.8,  1.95], "to": [ 6.05, 7.6,  4.05], "group": "bone_posts", "material": "bone_dark"})
 
-    # ── 骨轨 (宽 2: x in [-6, -4] 与 [4, 6], 顶高 y=6.0, 避开立柱分段咬合) ──
-    rail_z = [(-8.0, -5.0), (-3.0, 3.0), (5.0, 8.0)]
-    for i, (z0, z1) in enumerate(rail_z):
-        cubes.append({"name": f"rail_l_{i}", "from": [-6.0, 0.0, z0], "to": [-4.0, 6.0, z1], "group": "bone_rails", "material": "bone_main"})
-        cubes.append({"name": f"rail_r_{i}", "from": [ 4.0, 0.0, z0], "to": [ 6.0, 6.0, z1], "group": "bone_rails", "material": "bone_main"})
-
-    # ── 侧面斜筋丝 ──
-    cubes.append({"name": "fiber_l1", "from": [-6.08, 1.5, -2.5], "to": [-5.95, 4.2, -0.5], "group": "tendon_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_l2", "from": [-6.08, 1.5,  0.5], "to": [-5.95, 4.2,  2.5], "group": "tendon_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_r1", "from": [ 5.95, 1.5, -2.5], "to": [ 6.08, 4.2, -0.5], "group": "tendon_fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fiber_r2", "from": [ 5.95, 1.5,  0.5], "to": [ 6.08, 4.2,  2.5], "group": "tendon_fibers", "material": "tendon_fiber"})
+    # ── 底座侧面斜筋丝 (y: 1.0..3.0, 贴在底座侧面 x=-4.05 与 4.05) ──
+    cubes.append({"name": "fiber_l1", "from": [-4.1, 1.0, -6.0], "to": [-4.0, 2.8, -2.0], "group": "tendon_fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_l2", "from": [-4.1, 1.0,  2.0], "to": [-4.0, 2.8,  6.0], "group": "tendon_fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_r1", "from": [ 4.0, 1.0, -6.0], "to": [ 4.1, 2.8, -2.0], "group": "tendon_fibers", "material": "tendon_fiber"})
+    cubes.append({"name": "fiber_r2", "from": [ 4.0, 1.0,  2.0], "to": [ 4.1, 2.8,  6.0], "group": "tendon_fibers", "material": "tendon_fiber"})
 
     return cubes
 
 
 def build_corner_cubes() -> List[dict]:
-    """2. belt_corner (弯传送带，-Z 进 +X 出，4 段旋转 22.5° 拼四分之一圆弧)。"""
+    """2. belt_corner (弯传送带，-Z 进 +X 出，4 段旋转 22.5° 拼四分之一圆弧)。
+
+    内角圆心在 (8.0, -8.0)：
+    - 带面内缘半径 4，外缘半径 12 (中心半径 R=8, 宽度 8px)；
+    - 内骨轨半径 R in [2, 4]，宽 2px，底在 y=4、顶在 y=6；
+    - 外骨轨半径 R in [12, 14]，宽 2px，底在 y=4、顶在 y=6；
+    - 立柱只在两端各一对 (底在 y=4, 顶在 y=8)。
+    """
     cubes = []
     bend_origin = [8.0, 0.0, -8.0]
     angles = [11.25, 33.75, 56.25, 78.75]
@@ -131,7 +143,7 @@ def build_corner_cubes() -> List[dict]:
             "group": "base",
             "material": "tendon_tube",
         })
-        # 2 条红肌横肋 (交替 #8a2a2a / #5a1a1a)
+        # 2 条红肌横肋 (y: 3.8..4.0)
         z_mid = (z0 + z1) / 2.0
         cubes.append({
             "name": f"rib_{pfx}_1",
@@ -151,20 +163,20 @@ def build_corner_cubes() -> List[dict]:
             "group": "belt_surface",
             "material": "flesh_dark" if i % 2 == 0 else "flesh_main",
         })
-        # 外骨轨 (宽 2, y: 0..6)
+        # 外骨轨 (宽 2, 底在 y=4, 顶在 y=6: y in [4.0, 6.0])
         cubes.append({
             "name": f"rail_out_{pfx}",
-            "from": [-6.0, 0.0, z0],
+            "from": [-6.0, 4.0, z0],
             "to":   [-4.0, 6.0, z1],
             "origin": bend_origin,
             "rotation": rot,
             "group": "bone_rails",
             "material": "bone_main",
         })
-        # 内骨轨 (宽 2, y: 0..6)
+        # 内骨轨 (宽 2, 底在 y=4, 顶在 y=6: y in [4.0, 6.0])
         cubes.append({
             "name": f"rail_in_{pfx}",
-            "from": [4.0, 0.0, z0],
+            "from": [4.0, 4.0, z0],
             "to":   [6.0, 6.0, z1],
             "origin": bend_origin,
             "rotation": rot,
@@ -172,17 +184,17 @@ def build_corner_cubes() -> List[dict]:
             "material": "bone_main",
         })
 
-    # 输入端立柱 (-Z 侧: z in [-8, -6], x in [-6, -4] 与 [4, 6])
-    cubes.append({"name": "post_in_l", "from": [-6.0, 0.0, -8.0], "to": [-4.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_in_r", "from": [ 4.0, 0.0, -8.0], "to": [ 6.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_in_l_band", "from": [-6.05, 6.0, -8.05], "to": [-3.95, 6.8, -5.95], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_in_r_band", "from": [ 3.95, 6.0, -8.05], "to": [ 6.05, 6.8, -5.95], "group": "bone_posts", "material": "bone_dark"})
+    # 输入端立柱 (-Z 侧，z: [-8.0, -6.0]，底在 y=4, 顶在 y=8)
+    cubes.append({"name": "post_in_l", "from": [-6.0, 4.0, -8.0], "to": [-4.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_in_r", "from": [ 4.0, 4.0, -8.0], "to": [ 6.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_in_l_band", "from": [-6.05, 6.8, -8.05], "to": [-3.95, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_in_r_band", "from": [ 3.95, 6.8, -8.05], "to": [ 6.05, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
 
-    # 输出端立柱 (+X 侧: x in [6, 8], 避让输入端立柱角点)
-    cubes.append({"name": "post_out_l", "from": [6.0, 0.0, -5.8], "to": [8.0, 8.0, -3.8], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_out_r", "from": [6.0, 0.0,  4.0], "to": [8.0, 8.0,  6.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_out_l_band", "from": [5.95, 6.0, -5.85], "to": [8.05, 6.8, -3.75], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_out_r_band", "from": [5.95, 6.0,  3.95], "to": [8.05, 6.8,  6.05], "group": "bone_posts", "material": "bone_dark"})
+    # 输出端立柱 (+X 侧，x: [6.0, 8.0]，底在 y=4, 顶在 y=8)
+    cubes.append({"name": "post_out_l", "from": [6.0, 4.0, -5.8], "to": [8.0, 8.0, -3.8], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_out_r", "from": [6.0, 4.0,  4.0], "to": [8.0, 8.0,  6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_out_l_band", "from": [5.95, 6.8, -5.85], "to": [8.05, 7.6, -3.75], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_out_r_band", "from": [5.95, 6.8,  3.95], "to": [8.05, 7.6,  6.05], "group": "bone_posts", "material": "bone_dark"})
 
     return cubes
 
@@ -197,27 +209,27 @@ def build_slope_up_cubes() -> List[dict]:
         y_top = 4.0 + i * 2.0
         # 筋质底座
         cubes.append({"name": f"base_{i}", "from": [-4.0, 0.0, z0], "to": [4.0, y_top - 0.2, z1], "group": "base", "material": "tendon_tube"})
-        # 红肌横肋
+        # 红肌横肋 (每级一条)
         mat = "flesh_main" if i % 2 == 0 else "flesh_dark"
         cubes.append({"name": f"rib_{i}", "from": [-4.0, y_top - 0.2, z0], "to": [4.0, y_top, z1], "group": "belt_surface", "material": mat})
 
-        # 骨轨 (随带面升高，顶高 y_top + 2.0，避开两组立柱位)
-        if i not in (1, 5):
-            cubes.append({"name": f"rail_l_{i}", "from": [-6.0, 0.0, z0], "to": [-4.0, y_top + 2.0, z1], "group": "bone_rails", "material": "bone_main"})
-            cubes.append({"name": f"rail_r_{i}", "from": [ 4.0, 0.0, z0], "to": [ 6.0, y_top + 2.0, z1], "group": "bone_rails", "material": "bone_main"})
+        # 骨轨 (随带面升高，截面 2x2，底在 y_top，顶在 y_top+2.0)
+        # 坡底(i=0)和坡顶(i=7)由立柱直接承担
+        if 1 <= i <= 6:
+            cubes.append({"name": f"rail_l_{i}", "from": [-6.0, y_top, z0], "to": [-4.0, y_top + 2.0, z1], "group": "bone_rails", "material": "bone_main"})
+            cubes.append({"name": f"rail_r_{i}", "from": [ 4.0, y_top, z0], "to": [ 6.0, y_top + 2.0, z1], "group": "bone_rails", "material": "bone_main"})
 
-    # 两组立柱 (跟随斜坡高度拔高至比骨轨高出 2px)
-    # 组 1: z in [-6, -4], y_top=6, 骨轨高 8, 立柱顶高 10
-    cubes.append({"name": "post_l1", "from": [-6.0, 0.0, -6.0], "to": [-4.0, 10.0, -4.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_r1", "from": [ 4.0, 0.0, -6.0], "to": [ 6.0, 10.0, -4.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_l1_band", "from": [-6.05, 8.0, -6.05], "to": [-3.95, 8.8, -3.95], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_r1_band", "from": [ 3.95, 8.0, -6.05], "to": [ 6.05, 8.8, -3.95], "group": "bone_posts", "material": "bone_dark"})
+    # 坡底一对立柱 (i=0, z: [-8, -6], 底在 y=4, 顶在 y=8)
+    cubes.append({"name": "post_l_bot", "from": [-6.0, 4.0, -8.0], "to": [-4.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_r_bot", "from": [ 4.0, 4.0, -8.0], "to": [ 6.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_l_bot_band", "from": [-6.05, 6.8, -8.05], "to": [-3.95, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_r_bot_band", "from": [ 3.95, 6.8, -8.05], "to": [ 6.05, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
 
-    # 组 2: z in [2, 4], y_top=14, 骨轨高 16, 立柱顶高 18
-    cubes.append({"name": "post_l2", "from": [-6.0, 0.0,  2.0], "to": [-4.0, 18.0,  4.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_r2", "from": [ 4.0, 0.0,  2.0], "to": [ 6.0, 18.0,  4.0], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_l2_band", "from": [-6.05, 16.0,  1.95], "to": [-3.95, 16.8,  4.05], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_r2_band", "from": [ 3.95, 16.0,  1.95], "to": [ 6.05, 16.8,  4.05], "group": "bone_posts", "material": "bone_dark"})
+    # 坡顶一对立柱 (i=7, z: [6, 8], 底在 y=20, 顶在 y=24)
+    cubes.append({"name": "post_l_top", "from": [-6.0, 20.0, 6.0], "to": [-4.0, 24.0, 8.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_r_top", "from": [ 4.0, 20.0, 6.0], "to": [ 6.0, 24.0, 8.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_l_top_band", "from": [-6.05, 22.8, 5.95], "to": [-3.95, 23.6, 8.05], "group": "bone_posts", "material": "bone_dark"})
+    cubes.append({"name": "post_r_top_band", "from": [ 3.95, 22.8, 5.95], "to": [ 6.05, 23.6, 8.05], "group": "bone_posts", "material": "bone_dark"})
 
     return cubes
 
@@ -228,7 +240,6 @@ def build_slope_down_cubes(up_cubes: List[dict]) -> List[dict]:
     for c in up_cubes:
         f = c["from"]
         t = c["to"]
-        # 绕 Y 轴旋转 180°：new_x = -x, new_z = -z
         new_from = [-t[0], f[1], -t[2]]
         new_to   = [-f[0], t[1], -f[2]]
         down_cubes.append({
@@ -308,7 +319,6 @@ def build_texture(res: int = RES) -> Image.Image:
                 b = int(np.clip(base_c[2] + noise, 0, 255))
 
                 if mat_name == "flesh_main":
-                    # 红肌微横纹
                     if y % 3 in (0, 1):
                         r = int(np.clip(r + 8, 0, 255))
                         g = int(np.clip(g + 4, 0, 255))
@@ -446,7 +456,12 @@ def generate_all_bbmodels() -> Dict[str, Path]:
 # =============================================================================
 
 def render_views(model_paths: Dict[str, Path]):
-    """输出 4 件传送带并排 3/4 视与俯视图 render.png 与左右并排对照卡 check.png。"""
+    """输出 4 件传送带并排 3/4 视与俯视图 render.png 与左右并排对照卡 check.png。
+
+    坡道严格从「低端在前、看得见带面」的角度拍：
+    - belt_slope_up (低端在 -Z，高端在 +Z): 从 yaw=145, pitch=28 拍摄，低端在前、8 级带面台阶清晰可见；
+    - belt_slope_down (低端在 +Z，高端在 -Z): 从 yaw=-35, pitch=28 拍摄，低端在前、8 级带面台阶清晰可见。
+    """
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -457,8 +472,16 @@ def render_views(model_paths: Dict[str, Path]):
     titles = {
         "belt_straight":   "Straight (直带)",
         "belt_corner":     "Corner (-Z to +X 弯带)",
-        "belt_slope_up":   "Slope Up (上坡 y:4->20)",
-        "belt_slope_down": "Slope Down (下坡 y:20->4)",
+        "belt_slope_up":   "Slope Up (低端在前 y:4->20)",
+        "belt_slope_down": "Slope Down (低端在前 y:20->4)",
+    }
+
+    # 各构件的最佳 3/4 视角（坡道确保低端在前，看得见带面）
+    iso_angles = {
+        "belt_straight":   (-35.0, 25.0),
+        "belt_corner":     (-35.0, 25.0),
+        "belt_slope_up":   (145.0, 28.0), # 低端(-Z)在前，清晰看到 8 级爬升带面
+        "belt_slope_down": (-35.0, 28.0), # 低端(+Z)在前，清晰看到 8 级下降带面
     }
 
     rendered_iso = {}
@@ -466,7 +489,8 @@ def render_views(model_paths: Dict[str, Path]):
 
     for k in items_order:
         bb_p = model_paths[k]
-        im_i, _ = render(bb_p, yaw=-35.0, pitch=25.0, size=400, bg=bg_color)
+        y_ang, p_ang = iso_angles[k]
+        im_i, _ = render(bb_p, yaw=y_ang, pitch=p_ang, size=400, bg=bg_color)
         im_t, _ = render(bb_p, yaw=0.0, pitch=89.9, size=400, bg=bg_color)
         rendered_iso[k] = im_i
         rendered_top[k] = im_t
@@ -484,7 +508,7 @@ def render_views(model_paths: Dict[str, Path]):
     canvas = Image.new("RGB", (total_w, total_h), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
-    draw.text((margin_x, 12), "b07 belt 4 Models (Top Row: 3/4 View, Bottom Row: Top View): Straight, Corner, Slope Up, Slope Down", fill=(230, 230, 230))
+    draw.text((margin_x, 12), "b07 belt 4 Models (Top Row: 3/4 View with Visible Belt & Steps, Bottom Row: Top View)", fill=(230, 230, 230))
 
     for idx, k in enumerate(items_order):
         px = margin_x + idx * (col_w + pad)
@@ -528,7 +552,7 @@ def render_views(model_paths: Dict[str, Path]):
         c_draw.text((16, 6), "REFERENCE (b07_belt.png: Left Straight & Slope / Right Corner & Overview)", fill=(210, 200, 180))
 
         check_cv.paste(right_cv, (ref_w + 20, 28))
-        c_draw.text((ref_w + 20, 6), "NOW RENDER (4 Belt Models Parallel: Straight, Corner, Slope Up, Slope Down)", fill=(180, 220, 210))
+        c_draw.text((ref_w + 20, 6), "NOW RENDER (4 Belt Models with Low-End-Front View & 2x2 Rails)", fill=(180, 220, 210))
 
         for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
             c_path = target_dir / "check.png"
@@ -547,6 +571,9 @@ def self_test():
 
     cubes_d = build_slope_down_cubes(cubes_u)
     _assert_no_coplanar_faces(cubes_d)
+
+    cubes_c = build_corner_cubes()
+    _assert_no_coplanar_faces(cubes_c)
     print("  [OK] 正常立方体集无共面冲突")
 
     # 注入测试缺陷 (在 straight 模型中注入重叠方块)
