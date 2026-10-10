@@ -32,30 +32,21 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 MODEL_DIR = REPO / "modelScript" / "models" / "meridian_factory"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/port")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b03_port.png")
 
-# 色表修订对齐
-PALETTE = {
-    "flesh_dark":     (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔底深井 / 侧面暗纹)
-    "flesh_main":     (138, 42, 42, 255),   # #8a2a2a 血肉 (肉体主体)
-    "flesh_lit":      (176, 80, 80, 255),   # #b05050 亮肉红 (碗形台阶面)
-    "bone_main":      (216, 204, 176, 255), # #d8ccb0 骨 (骨环领 / 立柱主身)
-    "bone_dark":      (184, 168, 136, 255), # #b8a888 骨暗面 (立柱柱面暗纹)
-    "tendon_fiber":   (192, 120, 104, 255), # #c07868 筋丝 (8 条放射状肉脊)
-}
-
-MAT_UV = {
-    "flesh_dark":     [0, 0, 16, 16],
-    "flesh_main":     [16, 0, 32, 16],
-    "flesh_lit":      [32, 0, 48, 16],
-    "bone_main":      [48, 0, 64, 16],
-    "bone_dark":      [0, 16, 16, 32],
-    "tendon_fiber":   [16, 16, 32, 32],
-}
-
-RES = 64
+from modelScript.generators.meridian_factory.common_parts import (
+    PALETTE,
+    MAT_UV,
+    RES,
+    _assert_no_coplanar_faces,
+    build_texture,
+    bone_post,
+)
 
 
 # =============================================================================

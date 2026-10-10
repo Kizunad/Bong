@@ -45,31 +45,23 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 MODEL_DIR = REPO / "modelScript" / "models" / "meridian_factory"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/belt")
 REVIEW_DIR_ALIAS = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/b07_belt")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b07_belt.png")
 
-# 调色板 (严格对齐 meridian_factory.md 色值表)
-PALETTE = {
-    "flesh_main":    (138, 42, 42, 255),   # #8a2a2a 红肌横肋主色
-    "flesh_dark":    (90, 26, 26, 255),    # #5a1a1a 肋间暗部与交替深色肋
-    "tendon_tube":   (217, 160, 140, 255), # #d9a08c 筋质底座
-    "tendon_fiber":  (192, 120, 104, 255), # #c07868 侧面斜筋丝
-    "bone_main":     (216, 204, 176, 255), # #d8ccb0 骨轨与立柱
-    "bone_dark":     (184, 168, 136, 255), # #b8a888 骨立柱暗纹
-}
-
-MAT_UV = {
-    "flesh_main":   [0,  0,  16, 16],
-    "flesh_dark":   [16, 0,  32, 16],
-    "tendon_tube":  [32, 0,  48, 16],
-    "tendon_fiber": [48, 0,  64, 16],
-    "bone_main":    [0,  16, 16, 32],
-    "bone_dark":    [16, 16, 32, 32],
-}
-
-RES = 64
+from modelScript.generators.meridian_factory.common_parts import (
+    PALETTE,
+    MAT_UV,
+    RES,
+    _assert_no_coplanar_faces,
+    build_texture,
+    bone_rail,
+    bone_post,
+)
 
 
 # =============================================================================
