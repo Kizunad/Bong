@@ -3373,3 +3373,235 @@ fn unmapped_held_weapon_falls_back_to_wound_kind_animation() {
         "表外手持物回落伤口分支"
     );
 }
+
+// ── emit_beast_melee_animation_triggers（生物动画接线第二阶段任务 1）────────────
+
+fn spawn_beast(app: &mut App, pos: [f64; 3], kind: FaunaVisualKind) -> valence::prelude::Entity {
+    app.world_mut()
+        .spawn((Position::new(pos), EntityId::default(), kind))
+        .id()
+}
+
+fn beast_melee_attack_intent(
+    attacker: valence::prelude::Entity,
+    source: AttackSource,
+) -> AttackIntent {
+    AttackIntent {
+        attacker,
+        target: Some(attacker),
+        issued_at_tick: 1,
+        reach: AttackReach::new(1.0, 0.0),
+        qi_invest: 0.0,
+        wound_kind: WoundKind::Blunt,
+        source,
+        debug_command: None,
+    }
+}
+
+fn entity_anim_from(request: &VfxEventRequest) -> (i32, String, u16) {
+    match &request.payload {
+        VfxEventPayloadV1::PlayEntityAnim {
+            entity_id,
+            anim,
+            duration_ticks,
+        } => (*entity_id, anim.clone(), *duration_ticks),
+        other => panic!("expected PlayEntityAnim, got {other:?}"),
+    }
+}
+
+fn setup_beast_melee_app() -> App {
+    let mut app = App::new();
+    app.add_event::<AttackIntent>();
+    app.add_event::<VfxEventRequest>();
+    app.add_systems(Update, emit_beast_melee_animation_triggers);
+    app
+}
+
+#[test]
+fn beast_melee_attack_issued_emits_entity_anim_for_mapped_species() {
+    // 出手就播，不等命中判定结果——挥空也该有挥击动作（见生产函数 doc 注释的语义改动）。
+    let mut app = setup_beast_melee_app();
+    let attacker = spawn_beast(&mut app, [1.0, 64.0, 1.0], FaunaVisualKind::GreenSpider);
+    let expected_id = app.world().get::<EntityId>(attacker).unwrap().get();
+
+    app.world_mut()
+        .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
+    app.update();
+
+    let emitted = drain_vfx(&mut app);
+    assert_eq!(emitted.len(), 1, "应恰好 emit 一条 PlayEntityAnim");
+    assert_eq!(
+        entity_anim_from(&emitted[0]),
+        (
+            expected_id,
+            "animation.bong.green_spider.attack".to_string(),
+            9
+        )
+    );
+}
+
+#[test]
+fn beast_melee_attack_with_non_melee_source_does_not_emit() {
+    // 技能类 source（如 BurstMeridian）走各自专属 AV trigger，不该被本表重复收口——
+    // 锁住 `event.source != AttackSource::Melee` 这道过滤器。
+    let mut app = setup_beast_melee_app();
+    let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], FaunaVisualKind::GreenSpider);
+
+    app.world_mut().send_event(beast_melee_attack_intent(
+        attacker,
+        AttackSource::BurstMeridian,
+    ));
+    app.update();
+
+    assert!(drain_vfx(&mut app).is_empty());
+}
+
+#[test]
+fn beast_melee_attack_for_species_with_dedicated_av_trigger_does_not_emit() {
+    // DainuLion/FuyuVulture/Horse/DevourRat/HybridBeast/Heiwushi 各自已有专属 AV
+    // trigger（skills::animate / rat_av_trigger / heiwushi_av_trigger / 子 Profile
+    // 渲染管线），本表故意不收录，否则会与它们自己的动画互相打断。
+    for kind in [
+        FaunaVisualKind::DainuLion,
+        FaunaVisualKind::FuyuVulture,
+        FaunaVisualKind::Horse,
+        FaunaVisualKind::DevourRat,
+        FaunaVisualKind::HybridBeast,
+        FaunaVisualKind::Heiwushi,
+    ] {
+        let mut app = setup_beast_melee_app();
+        let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
+
+        app.world_mut()
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
+        app.update();
+
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "{kind:?} 已有专属 AV trigger，本表不应重复 emit"
+        );
+    }
+}
+
+#[test]
+fn beast_melee_attack_for_species_with_looping_attack_clip_does_not_emit() {
+    // JungleScorpion/LivingPillar/PoisonDragon/BoneDragon 的 attack 段在动画文件里是
+    // loop:true——当一次性攻击动作播会播完不停、卡在循环里，暂不收录进表（需要先补一段
+    // one-shot 版本，不在本次接线范围）。
+    for kind in [
+        FaunaVisualKind::JungleScorpion,
+        FaunaVisualKind::LivingPillar,
+        FaunaVisualKind::PoisonDragon,
+        FaunaVisualKind::BoneDragon,
+    ] {
+        let mut app = setup_beast_melee_app();
+        let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
+
+        app.world_mut()
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
+        app.update();
+
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "{kind:?} 的 attack 段是循环动画，本表不应收录"
+        );
+    }
+}
+
+#[test]
+fn player_attacker_without_fauna_visual_kind_does_not_emit() {
+    // 玩家 AttackSource::Melee 也会走到同一条 AttackIntent，但玩家没有
+    // FaunaVisualKind 组件——查询天然不命中，不会误把玩家攻击当成野兽攻击。
+    let mut app = setup_beast_melee_app();
+    let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+    app.world_mut()
+        .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
+    app.update();
+
+    assert!(drain_vfx(&mut app).is_empty());
+}
+
+/// 表里每一条 (anim, duration_ticks) 都必须对得上真实动画文件：anim 全名对应的 clip
+/// 确实存在、`animation_length` × 20 向上取整等于硬编码的 duration_ticks、且非循环
+/// （循环段不能当一次性攻击动作播，否则播完不会自动停）。防止手改表值拍脑袋或动画
+/// 文件后续调时长后表值悄悄漂移。
+#[test]
+fn beast_melee_anim_duration_matches_animation_file() {
+    let all_kinds = [
+        FaunaVisualKind::DainuLion,
+        FaunaVisualKind::FuyuVulture,
+        FaunaVisualKind::Horse,
+        FaunaVisualKind::DevourRat,
+        FaunaVisualKind::AshSpider,
+        FaunaVisualKind::GreenSpider,
+        FaunaVisualKind::JungleScorpion,
+        FaunaVisualKind::CockadeSnake,
+        FaunaVisualKind::BlueSpider,
+        FaunaVisualKind::IceScorpion,
+        FaunaVisualKind::MandrakeSnake,
+        FaunaVisualKind::HybridBeast,
+        FaunaVisualKind::VoidDistorted,
+        FaunaVisualKind::DarkTiger,
+        FaunaVisualKind::LivingPillar,
+        FaunaVisualKind::PoisonDragon,
+        FaunaVisualKind::BoneDragon,
+        FaunaVisualKind::Heiwushi,
+        FaunaVisualKind::Daoxiang,
+        FaunaVisualKind::Zhinian,
+        FaunaVisualKind::TsySentinel,
+        FaunaVisualKind::Fuya,
+        FaunaVisualKind::SkullFiend,
+    ];
+
+    let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../client/src/main/resources/assets/bong/animations");
+
+    let mut checked = 0;
+    for kind in all_kinds {
+        let Some((anim_full_name, duration_ticks)) = beast_melee_anim_for(kind) else {
+            continue;
+        };
+        checked += 1;
+
+        // anim_full_name = "animation.bong.<file>.<clip>"；文件名是去掉首尾两段的中间部分。
+        let segments: Vec<&str> = anim_full_name.split('.').collect();
+        assert_eq!(
+            segments.first().copied(),
+            Some("animation"),
+            "{kind:?} 的动画全名应以 animation. 开头，实际 {anim_full_name}"
+        );
+        let file_stem = segments[2..segments.len() - 1].join(".");
+        let path = resources.join(format!("{file_stem}.animation.json"));
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{kind:?} 读取 {path:?} 失败：{error}"));
+        let root: serde_json::Value =
+            serde_json::from_str(&content).expect("动画文件应为合法 JSON");
+        let clip = root
+            .get("animations")
+            .and_then(|animations| animations.get(anim_full_name))
+            .unwrap_or_else(|| panic!("{kind:?} 的 {anim_full_name} 在 {path:?} 里找不到"));
+
+        let is_loop = clip.get("loop").and_then(|v| v.as_bool()).unwrap_or(false);
+        assert!(
+            !is_loop,
+            "{kind:?} 的 {anim_full_name} 是循环动画，不能当一次性攻击动作播"
+        );
+
+        let animation_length = clip
+            .get("animation_length")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0);
+        let expected_ticks = (animation_length * 20.0).ceil().max(1.0) as u16;
+        assert_eq!(
+            duration_ticks, expected_ticks,
+            "{kind:?} 的 {anim_full_name} 硬编码 duration_ticks={duration_ticks}，\
+             但 animation_length={animation_length}s 换算应为 {expected_ticks} ticks"
+        );
+    }
+
+    assert_eq!(
+        checked, 13,
+        "本轮收录的攻击动画映射条目数变化了，更新本测试的期望值（同时检查是否漏测新物种）"
+    );
+}

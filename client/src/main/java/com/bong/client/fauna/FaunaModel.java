@@ -39,10 +39,22 @@ public final class FaunaModel extends GeoModel<FaunaEntity> {
 
     @Override
     public Identifier getTextureResource(FaunaEntity entity) {
-        if (!entity.playback().profile().path().equals(entity.visualKind().path())) {
+        if (!usesBaseAssets(entity.playback(), entity.visualKind())) {
             return new Identifier("bong", "textures/entity/fauna/" + entity.playback().profile().path() + PNG_SUFFIX);
         }
         return selectTexture(entity.visualKind(), entity.getId());
+    }
+
+    /**
+     * 当前 playback 是否仍在该形态的默认 Profile（未切到 hybrid_beast core/shard、
+     * fuyu_vulture flight 等子形态）。
+     *
+     * <p>必须对照 {@link FaunaVisualKind#assetPath()}（默认资源三件套路径），不能对照
+     * {@link FaunaVisualKind#path()}（entity 注册 id）——v2 迁移后两者永久不同，用 path
+     * 判断会让 DAOXIANG/DEVOUR_RAT 的贴图特判（道伥伪装、噬元鼠吸元档位）永远走不到。
+     */
+    static boolean usesBaseAssets(FaunaPlayback playback, FaunaVisualKind kind) {
+        return playback.profile().path().equals(kind.assetPath());
     }
 
     @Override

@@ -8,6 +8,7 @@ use valence::prelude::{
 
 use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, Realm};
 use crate::cultivation::life_record::LifeRecord;
+use crate::fauna::components::BeastKind;
 use crate::npc::brain::{
     ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction, MeleeAttackAction,
     MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
@@ -17,8 +18,10 @@ use crate::npc::movement::{MovementCapabilities, MovementController, MovementCoo
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{
-    DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype,
+    spawn_beast_npc_of_kind_at, DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker,
+    NpcMeleeArchetype,
 };
+use crate::npc::territory::Territory;
 use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
@@ -56,6 +59,11 @@ pub enum ScenarioType {
     Duel,
     /// Stationary non-retaliating NPC for deterministic protocol Bot combat evidence.
     PassiveTarget,
+    /// 生物动画接线第二阶段任务 1 —— 贴身生成一只带真实 `FaunaVisualKind`（GreenSpider）的
+    /// 妖兽，走生产 `beast_npc_thinker()` 近战，供 Bot 场景观察
+    /// `vfx_event{type:play_entity_anim}`（`/npc_scenario fight` 等生成的是无 `FaunaVisualKind`
+    /// 的 zombie 假靴测试体，走不到 `emit_beast_melee_animation_triggers` 的表）。
+    BeastMelee,
     /// Despawn all scenario NPCs.
     Clear,
 }
@@ -70,6 +78,7 @@ impl ScenarioType {
             "swarm" => Some(Self::Swarm),
             "duel" => Some(Self::Duel),
             "passive_target" => Some(Self::PassiveTarget),
+            "beast_melee" => Some(Self::BeastMelee),
             "clear" => Some(Self::Clear),
             _ => None,
         }
@@ -177,6 +186,25 @@ fn process_pending_scenarios(
 
     if matches!(scenario, ScenarioType::Clear) {
         tracing::info!("[bong][npc] cleared all scenario NPCs");
+        return;
+    }
+
+    if matches!(scenario, ScenarioType::BeastMelee) {
+        // 贴身生成（而非 scenario_offset 的环形散开）：bot 场景要立刻进入近战而不是先追一段。
+        let spawn_pos = player_pos + DVec3::new(1.0, 0.0, 0.0);
+        let max_age = NpcArchetype::Beast.default_max_age_ticks();
+        let entity = spawn_beast_npc_of_kind_at(
+            &mut commands,
+            layer,
+            DEFAULT_SPAWN_ZONE_NAME,
+            spawn_pos,
+            Territory::new(spawn_pos, 8.0),
+            // 30% 寿命：成年、远离 AgeingScorer(>=0.8) 的退场阈值。
+            max_age * 0.3,
+            BeastKind::GreenSpider,
+        );
+        commands.entity(entity).insert(ScenarioNpc);
+        tracing::info!("[bong][npc] spawned beast_melee scenario NPC (GreenSpider) near player");
         return;
     }
 
@@ -298,8 +326,10 @@ fn build_thinker(scenario: &ScenarioType) -> ThinkerBuilder {
             .when(PlayerProximityScorer, FleeAction)
             .when(ChaseTargetScorer, ChaseAction),
 
-        ScenarioType::Clear | ScenarioType::PassiveTarget => {
-            // Clear is handled before we get here, but provide a default.
+        ScenarioType::Clear | ScenarioType::PassiveTarget | ScenarioType::BeastMelee => {
+            // Clear 和 BeastMelee 都在到达这里之前就 return 了（各自走早退分支 /
+            // spawn_beast_npc_of_kind_at 自带 beast_npc_thinker()）；PassiveTarget 同样不
+            // 会调用本函数。三者共用同一个占位默认值。
             Thinker::build()
                 .picker(FirstToScore { threshold: 0.8 })
                 .when(PlayerProximityScorer, FleeAction)
@@ -905,5 +935,63 @@ mod tests {
             NpcMeleeArchetype::Sword,
             NpcMeleeArchetype::Sword.profile(),
         )));
+    }
+
+    // ─── BeastMelee（生物动画接线第二阶段任务 1 的 bot 场景依赖）──────────────
+
+    #[test]
+    fn beast_melee_parser_is_pinned() {
+        assert!(matches!(
+            ScenarioType::from_str("beast_melee"),
+            Some(ScenarioType::BeastMelee)
+        ));
+        assert!(ScenarioType::from_str("beast-melee").is_none());
+    }
+
+    #[test]
+    fn beast_melee_spawns_real_fauna_visual_kind_near_player() {
+        use crate::fauna::visual::FaunaVisualKind;
+        use crate::npc::spawn::NpcMeleeProfile;
+
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let player_pos = DVec3::new(8.0, 66.0, 8.0);
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::BeastMelee, player_pos)),
+        });
+        app.add_systems(Update, process_pending_scenarios);
+
+        app.update();
+
+        let entries = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<
+                (&FaunaVisualKind, &NpcMeleeProfile, &Position),
+                With<ScenarioNpc>,
+            >();
+            query
+                .iter(world)
+                .map(|(kind, profile, pos)| (*kind, *profile, pos.get()))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            entries.len(),
+            1,
+            "beast_melee 场景应恰好生成一只带 FaunaVisualKind 的妖兽"
+        );
+        let (kind, _profile, pos) = entries[0];
+        assert_eq!(
+            kind,
+            FaunaVisualKind::GreenSpider,
+            "beast_melee 场景应生成 GreenSpider——/npc_scenario fight 等走 zombie 假靴，\
+             没有 FaunaVisualKind，走不到 emit_beast_melee_animation_triggers 的表"
+        );
+        assert!(
+            pos.distance(player_pos) <= 2.0,
+            "应贴身生成以便 bot 立刻进入近战，实际距玩家 {} 格",
+            pos.distance(player_pos)
+        );
     }
 }
