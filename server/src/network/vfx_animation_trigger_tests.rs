@@ -3382,23 +3382,19 @@ fn spawn_beast(app: &mut App, pos: [f64; 3], kind: FaunaVisualKind) -> valence::
         .id()
 }
 
-fn beast_melee_hit_event(attacker: valence::prelude::Entity, damage: f32) -> CombatEvent {
-    CombatEvent {
+fn beast_melee_attack_intent(
+    attacker: valence::prelude::Entity,
+    source: AttackSource,
+) -> AttackIntent {
+    AttackIntent {
         attacker,
-        target: attacker,
-        resolved_at_tick: 1,
-        body_part: BodyPart::Chest,
+        target: Some(attacker),
+        issued_at_tick: 1,
+        reach: AttackReach::new(1.0, 0.0),
+        qi_invest: 0.0,
         wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: false,
-        physical_damage: damage,
-        damage: 0.0,
-        contam_delta: 0.0,
-        description: "beast melee hit".to_string(),
-        defense_kind: None,
-        defense_effectiveness: None,
-        defense_contam_reduced: None,
-        defense_wound_severity: None,
+        source,
+        debug_command: None,
     }
 }
 
@@ -3415,20 +3411,21 @@ fn entity_anim_from(request: &VfxEventRequest) -> (i32, String, u16) {
 
 fn setup_beast_melee_app() -> App {
     let mut app = App::new();
-    app.add_event::<CombatEvent>();
+    app.add_event::<AttackIntent>();
     app.add_event::<VfxEventRequest>();
     app.add_systems(Update, emit_beast_melee_animation_triggers);
     app
 }
 
 #[test]
-fn beast_melee_hit_emits_entity_anim_for_mapped_species() {
+fn beast_melee_attack_issued_emits_entity_anim_for_mapped_species() {
+    // 出手就播，不等命中判定结果——挥空也该有挥击动作（见生产函数 doc 注释的语义改动）。
     let mut app = setup_beast_melee_app();
     let attacker = spawn_beast(&mut app, [1.0, 64.0, 1.0], FaunaVisualKind::GreenSpider);
     let expected_id = app.world().get::<EntityId>(attacker).unwrap().get();
 
     app.world_mut()
-        .send_event(beast_melee_hit_event(attacker, 1.0));
+        .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
     app.update();
 
     let emitted = drain_vfx(&mut app);
@@ -3444,21 +3441,23 @@ fn beast_melee_hit_emits_entity_anim_for_mapped_species() {
 }
 
 #[test]
-fn beast_melee_hit_with_zero_damage_does_not_emit() {
-    // 完全格挡/招架（真伤+气伤都是 0）不算"命中"，不该播出手动画——与
-    // `emit_hit_recoil_animation_triggers` 对目标侧的同一过滤口径保持一致。
+fn beast_melee_attack_with_non_melee_source_does_not_emit() {
+    // 技能类 source（如 BurstMeridian）走各自专属 AV trigger，不该被本表重复收口——
+    // 锁住 `event.source != AttackSource::Melee` 这道过滤器。
     let mut app = setup_beast_melee_app();
     let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], FaunaVisualKind::GreenSpider);
 
-    app.world_mut()
-        .send_event(beast_melee_hit_event(attacker, 0.0));
+    app.world_mut().send_event(beast_melee_attack_intent(
+        attacker,
+        AttackSource::BurstMeridian,
+    ));
     app.update();
 
     assert!(drain_vfx(&mut app).is_empty());
 }
 
 #[test]
-fn beast_melee_hit_for_species_with_dedicated_av_trigger_does_not_emit() {
+fn beast_melee_attack_for_species_with_dedicated_av_trigger_does_not_emit() {
     // DainuLion/FuyuVulture/Horse/DevourRat/HybridBeast/Heiwushi 各自已有专属 AV
     // trigger（skills::animate / rat_av_trigger / heiwushi_av_trigger / 子 Profile
     // 渲染管线），本表故意不收录，否则会与它们自己的动画互相打断。
@@ -3474,7 +3473,7 @@ fn beast_melee_hit_for_species_with_dedicated_av_trigger_does_not_emit() {
         let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
 
         app.world_mut()
-            .send_event(beast_melee_hit_event(attacker, 1.0));
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
         app.update();
 
         assert!(
@@ -3485,7 +3484,7 @@ fn beast_melee_hit_for_species_with_dedicated_av_trigger_does_not_emit() {
 }
 
 #[test]
-fn beast_melee_hit_for_species_with_looping_attack_clip_does_not_emit() {
+fn beast_melee_attack_for_species_with_looping_attack_clip_does_not_emit() {
     // JungleScorpion/LivingPillar/PoisonDragon/BoneDragon 的 attack 段在动画文件里是
     // loop:true——当一次性攻击动作播会播完不停、卡在循环里，暂不收录进表（需要先补一段
     // one-shot 版本，不在本次接线范围）。
@@ -3499,7 +3498,7 @@ fn beast_melee_hit_for_species_with_looping_attack_clip_does_not_emit() {
         let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
 
         app.world_mut()
-            .send_event(beast_melee_hit_event(attacker, 1.0));
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
         app.update();
 
         assert!(
@@ -3511,13 +3510,13 @@ fn beast_melee_hit_for_species_with_looping_attack_clip_does_not_emit() {
 
 #[test]
 fn player_attacker_without_fauna_visual_kind_does_not_emit() {
-    // 玩家 AttackSource::Melee 也会走到同一条 CombatEvent，但玩家没有
+    // 玩家 AttackSource::Melee 也会走到同一条 AttackIntent，但玩家没有
     // FaunaVisualKind 组件——查询天然不命中，不会误把玩家攻击当成野兽攻击。
     let mut app = setup_beast_melee_app();
     let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
 
     app.world_mut()
-        .send_event(beast_melee_hit_event(attacker, 1.0));
+        .send_event(beast_melee_attack_intent(attacker, AttackSource::Melee));
     app.update();
 
     assert!(drain_vfx(&mut app).is_empty());

@@ -522,7 +522,7 @@ pub fn emit_hit_recoil_animation_triggers(
     }
 }
 
-/// 妖兽近战命中 → 攻击者 GeckoLib 攻击动画表驱动映射（第二阶段任务 1）。
+/// 妖兽近战出手 → 攻击者 GeckoLib 攻击动画表驱动映射（第二阶段任务 1）。
 ///
 /// `FaunaVisualKind` → (GeckoLib 动画全名, 占用 tick)。只收录**动画文件里真有** attack
 /// （或该物种已有的近战段，如灰烬蛛 `bite`）的物种；没有对应段的物种返回 `None`，不 emit——
@@ -575,18 +575,23 @@ fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
     }
 }
 
-/// Resolved beast melee hit -> attacker GeckoLib attack animation.
+/// Beast melee attack issuance -> attacker GeckoLib attack animation.
 ///
-/// 读与 [`emit_hit_recoil_animation_triggers`] 相同的 `CombatEvent`（已结算、真伤 > 0 才算
-/// "命中"），但目标换成攻击者；玩家攻击者没有 `FaunaVisualKind` 组件，查询天然不命中、
-/// 直接跳过——两套系统各管一侧，互不冲突。
+/// 读 `AttackIntent`（出手时就发，不等 [`resolve_attack_intents`](crate::combat::resolve::resolve_attack_intents)
+/// 判出命中结果）——挥空也该有挥击动作，这比原来挂在已结算 `CombatEvent`（真伤 > 0 才算
+/// "命中"）上更符合语义：观战玩家应该看到对面"出手了"，不是只有被打中才看到动画。
+/// 只认 `AttackSource::Melee`（`HuntAction` / `MeleeAttackAction` 两条生产路径发的都是
+/// 这个 source，见 `npc::territory::hunt_action_system` / `npc::brain::actions_combat::
+/// melee_attack_action_system`），技能类 source 走各自专属 AV trigger，不与本表重叠。
+/// 玩家攻击者没有 `FaunaVisualKind` 组件，查询天然不命中、直接跳过；两套系统各管一侧，
+/// 互不冲突。
 pub fn emit_beast_melee_animation_triggers(
-    mut events: EventReader<CombatEvent>,
+    mut events: EventReader<AttackIntent>,
     attackers: Query<(&Position, &EntityId, &FaunaVisualKind)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in events.read() {
-        if event.damage + event.physical_damage <= 0.0 {
+        if event.source != AttackSource::Melee {
             continue;
         }
         let Ok((position, entity_id, visual_kind)) = attackers.get(event.attacker) else {
