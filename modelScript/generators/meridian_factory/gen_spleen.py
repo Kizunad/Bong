@@ -2,42 +2,44 @@
 """经脉工厂内景器官生成器 —— o07: spleen (脾，土)
 
 依据：
-- model-review/meridian_factory.md「统一约定」、配色表、「第 2 批」o07 行
+- model-review/meridian_factory.md「统一约定」、配色表、「第 2 批」o07 行、「o07 spleen 调度审第 1 次」
 - 爆炸图 exploded/x07_spleen.png，单件图 refs/o07_spleen.png
-- 接口件：底部 8×6 输出口用 common_parts.outlet_8x6；bbmodel 落盘与审阅图走 organ_common.py。
+- 接口件：两根血管的管口都用 common_parts.bone_ring_port 收口；bbmodel 落盘与审阅图走 organ_common.py。
+  common_parts.flesh_collar 是给 8×6 截面做的，套不上 3×3 的血管，肉箍在这里单做（5×5，各管两个）。
 
-外包 2 × 2 × 2（32×32×32 px），原点在底面中心，正面朝 +Z，输出口开在底面（-Y）。
-单个弯豆形侧躺：凹口朝 -X（左），上下两个叶尖向左探出，右侧是一条大弧。
+单位换算：调度卡里的「格」按 2px 算，x 原点在 32px 外框的左缘，所以卡里「x=8」就是本模型的 x=0（外框中心），
+「x=10」是 +4px。外框 32×32×32，原点在底面中心，正面朝 +Z。
 
-逐行宽度表：15 行 × 2px = 30px 高（y 2..32，输出口套管在 y 0..2），
-沿 X 按全局 2px 网格切段（行首尾不足 2px 的截短）：
+豆身：长轴竖直，14 层 × 2px = 28px 高（y 2..30）。每层横截面是椭圆，宽 14px（半轴 7）、厚 12px（半轴 6），
+沿 X 切成 14 条 1px 宽的柱，柱的半深 = 6 × sqrt(1 - (u/7)²)，u 为柱中心到本层中心的距离，取到 0.5px。
+中心 x 随高度走弧线 cx = 4 × sin(π × (k+0.5) / 14)，取整，两端 ≈0、中段 y 14..18 到 +4，
+所以中段向 +X 鼓、凹面朝 -X：
 
-   行   y        左缘 x   右缘 x   行宽   半深
-    0   2..4      -6        8       14     8
-    1   4..6     -10       11       21    10
-    2   6..8     -12       13       25    11.5
-    3   8..10    -14       14       28    12.5
-    4   10..12   -14       15       29    13      ← 下叶
-    5   12..14   -12       16       28    13
-    6   14..16    -6       16       22    13      ← 凹口（脾门）5 行 x = -6，比叶尖浅 8px
-    7   16..18    -6       16       22    13
-    8   18..20    -6       16       22    13
-    9   20..22    -6       16       22    13
-   10   22..24    -6       16       22    13
-   11   24..26   -11       16       27    13      ← 上叶
-   12   26..28   -13       15       28    12.5
-   13   28..30   -13       13       26    11
-   14   30..32    -9       10       19     8.5
+   层 k   y        中心 cx
+    0     2..4        0
+    1     4..6        1
+    2     6..8        2
+    3     8..10       3
+    4     10..12      3
+    5     12..14      4      ← 脾门凹口：y 12..20 共 4 层，每层把左侧 4px 切掉（凹 2 格），
+    6     14..16      4         凹口面在 x = cx - 3 = 1
+    7     16..18      4
+    8     18..20      4
+    9     20..22      3
+   10     22..24      3
+   11     24..26      2
+   12     26..28      1
+   13     28..30      0
 
-每段半深 = 行半深 × (0.45 + 0.55 × sin(π·u))，u 为该段中心在本行内的相对位置（0 左缘 → 1 右缘），
-所以俯视和侧视都是圆弧。主色 #6a2a3a，#8a2a2a 成片的斑（2×2 格一组）。
+主色 #6a2a3a，#8a2a2a 成片的斑。
 
-叶脉 #b08a40：1×1px 格的路径，前面（+Z）薄薄凸出 0.5px，贴在所在本体格的表面上。
-每条分支都是 4 连通，细支 1px 宽，脾门处主干 2px 宽。从脾门出发一根主干，
-在脾门右侧分成上下两支，再各自分出向右、向叶尖的小支，照 o01 支气管那样逐格连续。
+血管（3×3 筋管，各 3 段：水平段 + 拐角块 + 竖直段，竖直段中点和水平段中点各一个 5×5 肉箍，管口骨环）：
+- 入口（上）：水平段 y 16.5..19.5 从凹口面向 -X 伸到 x=-7，拐角后向上，管口朝上，环在 y=29.5；
+- 出口（下）：水平段 y 12.5..15.5（让开层边界 y=12 / 20），拐角后向下，管口朝下，环在 y=0（底面）。
+两根管竖直段的 x 都在 -10..-7，让开豆身的左缘（最靠左的 x=-7）。
 
-入口管：凹口面中段 y 18..22 一根 4×4 筋管向 -X 伸出，管口一圈骨环（6×6 外廓、4×4 内孔），
-凹口面上有一圈 #5a1a1a 脾门环（外 8×8，凸出 0.5）。
+脉络 #c07868：1×1px 格，贴在 +Z 面凸 0.5px。主干从脾门（凹口面）沿凹面向上、向下两路延伸，
+每路各分 2 级：一级支从主干向右斜出，二级细枝再从一级支分出。其余地方不铺。
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-from common_parts import _assert_no_coplanar_faces, outlet_8x6
+from common_parts import _assert_no_coplanar_faces, bone_ring_port
 from organ_common import bounds, extend_materials, render_review, write_bbmodel
 
 REPO = Path(__file__).resolve().parents[3]
@@ -57,109 +59,80 @@ EXPLODED_REF = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/
 TMP_DIR = Path("/tmp/claude-1000/-home-serverkizuna-Code-Bong--agent-worktrees-model-b/e8024e15-89b9-4c94-bc09-9db5a4565345/scratchpad/spleen_parts")
 VISIBLE_BOX = [2, 2, 2]
 
-# 配色表「脾」主色 #6a2a3a；「土」细脉 #b08a40
-PALETTE, MAT_UV = extend_materials({
-    "spleen_main": ((106, 42, 58, 255), [16, 32, 32, 48]),
-    "earth_vein": ((176, 138, 64, 255), [32, 32, 48, 48]),
-})
+# 配色表「脾」主色 #6a2a3a；脉络用 common_parts 里已有的 tendon_fiber #c07868
+PALETTE, MAT_UV = extend_materials({"spleen_main": ((106, 42, 58, 255), [16, 32, 32, 48])})
 
 ROW_H = 2.0
 BEAN_Y0 = 2.0
-CELL_W = 2.0
-# (左缘 x, 右缘 x, 半深)，自下而上 15 行
-SPLEEN_ROWS: List[Tuple[float, float, float]] = [
-    (-6.0, 8.0, 8.0),
-    (-10.0, 11.0, 10.0),
-    (-12.0, 13.0, 11.5),
-    (-14.0, 14.0, 12.5),
-    (-14.0, 15.0, 13.0),
-    (-12.0, 16.0, 13.0),
-    (-6.0, 16.0, 13.0),
-    (-6.0, 16.0, 13.0),
-    (-6.0, 16.0, 13.0),
-    (-6.0, 16.0, 13.0),
-    (-6.0, 16.0, 13.0),
-    (-11.0, 16.0, 13.0),
-    (-13.0, 15.0, 12.5),
-    (-13.0, 13.0, 11.0),
-    (-9.0, 10.0, 8.5),
-]
-HILUM_ROWS = (6, 10)  # 凹口所在行（含）
-HILUM_FACE_X = -6.0
-EDGE_THICKNESS = 0.45  # 行宽两端半深占中央的比例
+LAYERS = 14
+HALF_W = 7  # 横截面半宽（x），14 条 1px 柱
+HALF_D = 6.0  # 横截面半厚（z）
+CX_AMPLITUDE = 4.0  # 中段相对两端向 +X 偏移
+HILUM_LAYERS = (5, 8)  # 脾门凹口所在层（含），y 12..20
+HILUM_DEPTH = 4  # 凹口深度 px（2 格）
 
-VEIN_PROUD = 0.5  # 叶脉薄片凸出本体表面
-VEIN_Y0 = BEAN_Y0
+VEIN_PROUD = 0.5
 
-# 叶脉折线路点（px 坐标 (x, y)，一格 = 1×1px，格以左下角计）。
-# 每对相邻路点之间补成 4 连通的阶梯，细线 1px 宽，只有主干 2px。
+# 血管：3×3 截面，水平段从凹口面向 -X，竖直段在 x -10..-7
+TUBE_SIZE = 3.0
+TUBE_HALF = TUBE_SIZE / 2
+RUN_X = (-10.0, -7.0)  # 拐角块 / 竖直段的 x 范围
+FACE_X = 1.0  # 凹口面 x（= cx - 3）
+TUBE_INTO_BODY = 0.5  # 水平段插进豆身的深度
+INLET_Y = (16.5, 19.5)
+OUTLET_Y = (12.5, 15.5)
+INLET_TOP_Y = 29.5  # 入口竖直段顶端（环在这里）
+OUTLET_BOTTOM_Y = 0.5  # 出口竖直段底端（环在 0..0.5）
+COLLAR_HALF = 2.5
+COLLAR_LEN = 1.5
+
+# 脉络折线路点（px 坐标 (x, y)，格以左下角计），相邻路点之间补成 4 连通阶梯。
+# 主干两路（上 / 下）→ 一级支 → 二级细枝。
 VEIN_POLYLINES: List[List[Tuple[int, int]]] = [
-    [(-6, 19), (2, 19)],  # 脾门主干（入口管对着 y 18..22），2px 宽
-    [(-6, 20), (2, 20)],
-    [(2, 19), (2, 23), (4, 27), (4, 30)],  # 上支
-    [(2, 23), (-6, 29)],  # 上支 → 上叶左尖
-    [(4, 27), (12, 29)],  # 上支 → 右上
-    [(2, 21), (10, 22), (14, 24)],  # 上支 → 右
-    [(10, 22), (12, 26)],
-    [(2, 19), (8, 16), (14, 13)],  # 主干继续向右
-    [(2, 19), (2, 15), (0, 11), (0, 7), (0, 4)],  # 下支
-    [(2, 15), (8, 13), (14, 10)],  # 下支 → 右下
-    [(0, 11), (-8, 8), (-12, 8)],  # 下支 → 下叶左尖
-    [(0, 7), (6, 4)],  # 下支 → 底部右
+    [(1, 16), (1, 19), (0, 22), (-1, 26), (-3, 29)],  # 上主干，贴凹面
+    [(1, 19), (7, 21), (8, 24)],  # 上 一级支
+    [(7, 21), (9, 20)],  # 上 二级
+    [(0, 22), (5, 27), (6, 29)],  # 上 一级支
+    [(5, 27), (7, 27)],  # 上 二级
+    [(1, 16), (1, 12), (0, 10), (-1, 6), (-2, 4)],  # 下主干，贴凹面
+    [(1, 12), (7, 11), (9, 8)],  # 下 一级支
+    [(7, 11), (10, 12)],  # 下 二级
+    [(0, 10), (5, 6), (6, 4)],  # 下 一级支
+    [(5, 6), (8, 7)],  # 下 二级
 ]
-
-# 入口管（4×4，凹口面中段）与脾门环
-TUBE_Y = (18.0, 22.0)
-TUBE_HALF_Z = 2.0
-RING_Y = (16.0, 24.0)
-RING_HALF_Z = 4.0
-RING_PROUD = 0.5
-TUBE_END_X = -13.5
-PORT_OUTER_X = -15.0  # 管口骨环最外面
-PORT_Y = (17.0, 23.0)  # 骨环外廓 6×6
-PORT_HALF_Z = 3.0
 
 
 def _cube(name: str, lo, hi, group: str, material: str) -> dict:
     return {"name": name, "from": [float(v) for v in lo], "to": [float(v) for v in hi], "group": group, "material": material}
 
 
-def _row_cells(r: int) -> List[Tuple[int, float, float, float]]:
-    """第 r 行的所有格子：[(列 c, x0, x1, 半深)]，按全局 2px 网格切段，行首尾截短。"""
-    left, right, half_d = SPLEEN_ROWS[r]
-    cells = []
-    c = math.floor(left / CELL_W)
-    while c * CELL_W < right:
-        x0, x1 = max(left, c * CELL_W), min(right, (c + 1) * CELL_W)
-        u = ((x0 + x1) / 2 - left) / (right - left)
-        hd = half_d * (EDGE_THICKNESS + (1 - EDGE_THICKNESS) * math.sin(math.pi * u))
-        cells.append((c, x0, x1, round(hd * 2) / 2))  # 半深取到 0.5px，避免出现碎小数
-        c += 1
-    return cells
+def _layer_cx(k: int) -> int:
+    """第 k 层的中心 x（取整）。"""
+    return round(CX_AMPLITUDE * math.sin(math.pi * (k + 0.5) / LAYERS))
+
+
+def _layer_columns(k: int) -> List[Tuple[int, float]]:
+    """第 k 层的 1px 柱：[(柱左缘 x, 半深)]；脾门层把左侧 HILUM_DEPTH 条柱切掉。"""
+    cx = _layer_cx(k)
+    first = cx - HALF_W + (HILUM_DEPTH if HILUM_LAYERS[0] <= k <= HILUM_LAYERS[1] else 0)
+    cols = []
+    for x in range(first, cx + HALF_W):
+        u = x + 0.5 - cx
+        hd = HALF_D * math.sqrt(1 - (u / HALF_W) ** 2)
+        cols.append((x, round(hd * 2) / 2))
+    return cols
 
 
 def _body_half_depth(x: int, y: int) -> float:
-    """1×1px 格 (x, y) 所在本体格的半深；格在豆形外返回 0。"""
-    r = int((y - BEAN_Y0) // ROW_H)
-    if not 0 <= r < len(SPLEEN_ROWS):
+    """1×1px 格 (x, y) 所在柱的半深；格在豆身外返回 0。"""
+    k = int((y - BEAN_Y0) // ROW_H)
+    if not 0 <= k < LAYERS:
         return 0.0
-    for c, x0, x1, hd in _row_cells(r):
-        if x0 <= x and x + 1 <= x1:
-            return hd
-    return 0.0
-
-
-def _vein_cells() -> Set[Tuple[int, int]]:
-    """所有叶脉 1px 格 (x, y)：折线补成 4 连通阶梯后取并集，再只留在豆形本体内的。"""
-    cells: Set[Tuple[int, int]] = set()
-    for line in VEIN_POLYLINES:
-        for (c0, r0), (c1, r1) in zip(line, line[1:]):
-            cells |= _stair(c0, r0, c1, r1)
-    return {(x, y) for x, y in cells if _body_half_depth(x, y) > 0}
+    return dict(_layer_columns(k)).get(x, 0.0)
 
 
 def _stair(c0: int, r0: int, c1: int, r1: int) -> Set[Tuple[int, int]]:
-    """两点之间的 4 连通阶梯：沿大方向每步走一格，小方向按斜率进位，进位时先走水平再走竖直。"""
+    """两点之间的 4 连通阶梯：沿大方向每步走一格，小方向按斜率进位，斜走的那一步补一个肘格。"""
     dc, dr = c1 - c0, r1 - r0
     steps = max(abs(dc), abs(dr))
     out = {(c0, r0)}
@@ -167,75 +140,95 @@ def _stair(c0: int, r0: int, c1: int, r1: int) -> Set[Tuple[int, int]]:
     for i in range(1, steps + 1):
         cur = (c0 + round(dc * i / steps), r0 + round(dr * i / steps))
         if cur[0] != prev[0] and cur[1] != prev[1]:
-            out.add((cur[0], prev[1]))  # 斜着走的那一步补一个肘格
+            out.add((cur[0], prev[1]))
         out.add(cur)
         prev = cur
     return out
 
 
-def _is_patch(c: int, r: int) -> bool:
-    """#8a2a2a 斑：按 2×2 格一组取哈希，约 2/7 的组是斑。"""
-    gc, gr = c // 2, r // 2
-    return (gc * 37 + gr * 91 + gc * gr * 11) % 7 < 2
+def _vein_cells() -> Set[Tuple[int, int]]:
+    """所有脉络 1px 格 (x, y)：折线补成 4 连通阶梯后取并集，再只留在豆身内的。"""
+    cells: Set[Tuple[int, int]] = set()
+    for line in VEIN_POLYLINES:
+        for (x0, y0), (x1, y1) in zip(line, line[1:]):
+            cells |= _stair(x0, y0, x1, y1)
+    return {(x, y) for x, y in cells if _body_half_depth(x, y) > 0}
+
+
+def _is_patch(x: int, k: int) -> bool:
+    """#8a2a2a 斑：按 3×2 柱组取哈希，约 2/7 的组是斑。"""
+    gx, gk = x // 3, k // 2
+    return (gx * 37 + gk * 91 + gx * gk * 11) % 7 < 2
 
 
 def part_01_body() -> List[dict]:
     cubes = []
-    for r in range(len(SPLEEN_ROWS)):
-        y0 = BEAN_Y0 + r * ROW_H
-        for c, x0, x1, hd in _row_cells(r):
-            material = "flesh_main" if _is_patch(c, r) else "spleen_main"
-            cubes.append(_cube(f"spleen_r{r}_c{c}", (x0, y0, -hd), (x1, y0 + ROW_H, hd), "spleen", material))
+    for k in range(LAYERS):
+        y0 = BEAN_Y0 + k * ROW_H
+        for x, hd in _layer_columns(k):
+            material = "flesh_main" if _is_patch(x, k) else "spleen_main"
+            cubes.append(_cube(f"spleen_k{k}_x{x}", (x, y0, -hd), (x + 1, y0 + ROW_H, hd), "spleen", material))
     return cubes
 
 
 def part_02_veins() -> List[dict]:
-    """叶脉：1px 格薄片，贴在所在本体格的前面（+Z）上，凸出 0.5px。"""
+    """脉络：1px 格薄片，贴在所在柱的前面（+Z）上，凸出 0.5px。"""
     cubes = []
     for x, y in sorted(_vein_cells(), key=lambda p: (p[1], p[0])):
         hd = _body_half_depth(x, y)
-        cubes.append(_cube(f"vein_x{x}_y{y}", (x, y, hd), (x + 1, y + 1, hd + VEIN_PROUD), "veins", "earth_vein"))
+        cubes.append(_cube(f"vein_x{x}_y{y}", (x, y, hd), (x + 1, y + 1, hd + VEIN_PROUD), "veins", "tendon_fiber"))
     return cubes
+
+
+def _collar(name: str, centre: Tuple[float, float, float], axis: str, group: str) -> dict:
+    """5×5 肉箍，沿 axis（"x" 或 "y"）长 COLLAR_LEN，套在 3×3 管上。"""
+    cx, cy, cz = centre
+    hx, hy = (COLLAR_LEN / 2, COLLAR_HALF) if axis == "x" else (COLLAR_HALF, COLLAR_LEN / 2)
+    return _cube(name, (cx - hx, cy - hy, cz - COLLAR_HALF), (cx + hx, cy + hy, cz + COLLAR_HALF), group, "flesh_main")
+
+
+def _vessel(tag: str, y_range: Tuple[float, float], end_y: float, up: bool) -> List[dict]:
+    """一根短弯管：水平段 → 拐角块 → 竖直段（3 段），两个肉箍，管口骨环。
+
+    up=True 向上、管口朝上，竖直段顶端在 end_y；up=False 向下、管口朝下，竖直段底端在 end_y。
+    """
+    g = f"vessel_{tag}"
+    y0, y1 = y_range
+    run_x0, run_x1 = RUN_X
+    z0, z1 = -TUBE_HALF, TUBE_HALF
+    horizontal = _cube(f"{tag}_seg1", (run_x1, y0, z0), (FACE_X + TUBE_INTO_BODY, y1, z1), g, "tendon_tube")
+    corner = _cube(f"{tag}_seg2", (run_x0, y0, z0), (run_x1, y1, z1), g, "tendon_tube")
+    if up:
+        vertical = _cube(f"{tag}_seg3", (run_x0, y1, z0), (run_x1, end_y, z1), g, "tendon_tube")
+        collar_y = (y1 + end_y) / 2
+        port_face = "up"
+    else:
+        vertical = _cube(f"{tag}_seg3", (run_x0, end_y, z0), (run_x1, y0, z1), g, "tendon_tube")
+        collar_y = (y0 + end_y) / 2
+        port_face = "down"
+    mid_y = (y0 + y1) / 2
+    collars = [
+        # 两根管的水平肉箍错开 2px，免得两个 5×5 箍在 y≈16 处叠在一起
+        _collar(f"{tag}_collar_h", ((run_x1 + FACE_X) / 2 + (-1.0 if up else 1.0), mid_y, 0.0), "x", g),
+        _collar(f"{tag}_collar_v", ((run_x0 + run_x1) / 2, collar_y, 0.0), "y", g),
+    ]
+    port = bone_ring_port(center_x=(run_x0 + run_x1) / 2, center_y=end_y, center_z=0.0, face=port_face, group=g, pfx=f"{tag}_port")
+    return [horizontal, corner, vertical] + collars + port
 
 
 def part_03_inlet() -> List[dict]:
-    """脾门环 + 入口筋管 + 管口骨环。"""
-    g = "inlet"
-    ring_x0, ring_x1 = HILUM_FACE_X - RING_PROUD, HILUM_FACE_X
-    (ry0, ry1), rz = RING_Y, RING_HALF_Z
-    ty0, ty1 = TUBE_Y
-    tz = TUBE_HALF_Z
-    cubes = [
-        _cube("hilum_ring_top", (ring_x0, ty1, -rz), (ring_x1, ry1, rz), g, "flesh_dark"),
-        _cube("hilum_ring_bot", (ring_x0, ry0, -rz), (ring_x1, ty0, rz), g, "flesh_dark"),
-        _cube("hilum_ring_f", (ring_x0, ty0, tz), (ring_x1, ty1, rz), g, "flesh_dark"),
-        _cube("hilum_ring_b", (ring_x0, ty0, -rz), (ring_x1, ty1, -tz), g, "flesh_dark"),
-        _cube("tube_main", (TUBE_END_X, ty0, -tz), (ring_x0, ty1, tz), g, "tendon_tube"),
-        _cube("tube_hl_top", (TUBE_END_X + 0.1, ty1 - 0.4, tz - 0.1), (ring_x0 - 0.1, ty1 - 0.1, tz + 0.1), g, "tendon_highlight"),
-    ]
-    py0, py1 = PORT_Y
-    pz = PORT_HALF_Z
-    px0, px1 = PORT_OUTER_X, TUBE_END_X
-    cubes += [
-        _cube("port_top", (px0, ty1, -pz), (px1, py1, pz), g, "bone_main"),
-        _cube("port_bot", (px0, py0, -pz), (px1, ty0, pz), g, "bone_main"),
-        _cube("port_f", (px0, ty0, tz), (px1, ty1, pz), g, "bone_main"),
-        _cube("port_b", (px0, ty0, -pz), (px1, ty1, -tz), g, "bone_main"),
-        _cube("port_hole", (px0 + 0.05, ty0, -tz), (px0 + 0.4, ty1, tz), g, "flesh_dark"),
-    ]
-    return cubes
+    return _vessel("inlet", INLET_Y, INLET_TOP_Y, up=True)
 
 
 def part_04_outlet() -> List[dict]:
-    """底部 8×6 统一截面输出口（common_parts.outlet_8x6，朝下，管套高 2px，底边贴地）。"""
-    return outlet_8x6(center_x=0.0, center_y=2.0, center_z=0.0, facing="-y", length=2.0, group="outlet", pfx="outlet")
+    return _vessel("outlet", OUTLET_Y, OUTLET_BOTTOM_Y, up=False)
 
 
 PARTS = [
     ("spleen_body", part_01_body),
     ("veins", part_02_veins),
-    ("inlet", part_03_inlet),
-    ("outlet", part_04_outlet),
+    ("inlet_vessel", part_03_inlet),
+    ("outlet_vessel", part_04_outlet),
 ]
 
 
@@ -263,7 +256,7 @@ def _components(cells: Set[Tuple[int, int]]) -> int:
 
 
 def self_test() -> None:
-    """共面 / 外包 / 叶脉连续三道门禁，各自先注入缺陷确认拦得住；再核对豆形凹口。"""
+    """共面 / 外包 / 脉络连续三道门禁，各自先注入缺陷确认拦得住；再核对豆身尺寸与凹口。"""
     cubes = all_cubes()
     _assert_no_coplanar_faces(cubes)
     print(f"  [OK] {len(cubes)} 个立方体 0 项共面冲突")
@@ -283,16 +276,20 @@ def self_test() -> None:
     print("  [OK] 外包门禁能识别超高缺陷")
 
     veins = _vein_cells()
-    assert _components(veins) == 1, f"叶脉应连成一整棵树，实际 {_components(veins)} 块"
-    # 注入缺陷：拿掉任何一个单点瓶颈格，连通门禁必须报出断开
+    assert _components(veins) == 1, f"脉络应连成一整棵树，实际 {_components(veins)} 块"
     breaks = [cell for cell in veins if _components(veins - {cell}) > 1]
-    assert breaks, "叶脉连续门禁失效：整棵树里找不到任何一个拿掉就断开的格子"
-    print(f"  [OK] 叶脉 {len(veins)} 格连成 1 棵树；注入缺口（如拿掉 {breaks[0]}）后能识别为断开")
+    assert breaks, "脉络连续门禁失效：整棵树里找不到任何一个拿掉就断开的格子"
+    print(f"  [OK] 脉络 {len(veins)} 格连成 1 棵树；注入缺口（如拿掉 {breaks[0]}）后能识别为断开")
 
-    hilum = range(HILUM_ROWS[0], HILUM_ROWS[1] + 1)
-    assert all(SPLEEN_ROWS[i][0] == HILUM_FACE_X for i in hilum), "凹口 5 行左缘应都在 x = -6"
-    assert SPLEEN_ROWS[4][0] - HILUM_FACE_X <= -8 and SPLEEN_ROWS[12][0] - HILUM_FACE_X <= -7, "上下叶应比凹口面向左多出 ≥ 7px"
-    print("  [OK] 弯豆形：凹口 5 行，上下叶向左探出")
+    body = part_01_body()
+    ys = [c["from"][1] for c in body]
+    assert min(ys) == BEAN_Y0 and max(c["to"][1] for c in body) == BEAN_Y0 + LAYERS * ROW_H, "豆身应是 y 2..30 共 14 层"
+    assert max(c["to"][2] for c in body) == HALF_D, "豆身最厚处半厚应为 6（厚 12）"
+    full_layers = [k for k in range(LAYERS) if not HILUM_LAYERS[0] <= k <= HILUM_LAYERS[1]]
+    assert all(len(_layer_columns(k)) == 2 * HALF_W for k in full_layers), "非凹口层的宽度应都是 14"
+    assert [_layer_cx(k) for k in (0, 13)] == [0, 0] and max(_layer_cx(k) for k in range(LAYERS)) == 4, "中心线两端 x=0、中段 +4"
+    assert all(len(_layer_columns(k)) == 2 * HALF_W - HILUM_DEPTH for k in range(HILUM_LAYERS[0], HILUM_LAYERS[1] + 1)), "凹口层应各比整层少 4px"
+    print("  [OK] 豆身：14 层、宽 14、厚 12，中心线弧形（两端 0、中段 +4），凹口 4 层 × 4px")
 
 
 def main() -> None:
