@@ -223,59 +223,59 @@ def part_02_bone_clamp() -> List[dict]:
 def part_03_flaring_bell() -> List[dict]:
     """喇叭口用 3 节空心壳（壁厚 2，#8a2a2a，内壁面 #b05050）：
     - 喇叭底（z=5 / z_model: -3.0 处，壳内）：一块 #f6dcc4 4×4 当内光，中心对着经脉；
-    - 第 1 节：z 5–9 (z_model: -3..1) 外 x 2–14 (x: -6..6)、y 1–11，四个竖角切除 1.5x1.5px；
-    - 第 2 节：z 9–13 (z_model: 1..5) 外 x 1–15 (x: -7..7)、y 0–13，四个竖角切除 2.0x2.0px；
-    - 第 3 节：z 13–16 (z_model: 5..8) 外 x 0–16 (x: -8..8)、y 0–15，最外节四个竖角切除 2.5x2.5px，呈极具活体圆润感的八边形圆口喇叭！
+    - 第 1 节：z 5–9 (z_model: -3..1) 外 x 2–14 (x: -6..6)、y 1–11，四个竖角切除 3.0x3.0px；
+    - 第 2 节：z 9–13 (z_model: 1..5) 外 x 1–15 (x: -7..7)、y 0–13，四个竖角切除 3.5x3.5px；
+    - 第 3 节：z 13–16 (z_model: 5..8) 外 x 0–16 (x: -8..8)、y 0–15，最外节四个竖角各多切 1.5px (切角达 4.0x4.0px)，开口圆润八边形！
     """
     cubes = []
 
     # ═══════════ 喇叭底内光 (#f6dcc4 qi_glow，4x4 居中对齐经脉中心 y=5) ═══════════
     cubes.append({'name': 'bell_core_qi', 'from': [-2.0, 3.0, -3.0], 'to': [2.0, 7.0, -2.6], 'group': 'flaring_bell', 'material': 'qi_glow'})
 
-    # ═══════════ 第 1 节空心壳 (z in [-3.0, 1.0]，四竖角各切 1.5x1.5) ═══════════
-    cubes.append({'name': 'shell1_bot_out', 'from': [-4.5, 1.0, -3.0], 'to': [4.5, 2.8, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_bot_in',  'from': [-4.5, 2.8, -3.0], 'to': [4.5, 3.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell1_top_in',  'from': [-4.5, 9.0, -3.0], 'to': [4.5, 9.2, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell1_top_out', 'from': [-4.5, 9.2, -3.0], 'to': [4.5, 11.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_l_out',   'from': [-6.0, 3.0, -3.0], 'to': [-4.2, 9.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_l_in',    'from': [-4.2, 3.0, -3.0], 'to': [-4.0, 9.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell1_r_in',    'from': [4.0, 3.0, -3.0], 'to': [4.2, 9.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell1_r_out',   'from': [4.2, 3.0, -3.0], 'to': [6.0, 9.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    # ═══════════ 第 1 节空心壳 (z in [-3.0, 1.0]，四竖角多切 1.5px: 切角 3.0x3.0) ═══════════
+    cubes.append({'name': 'shell1_bot_out', 'from': [-3.5, 1.0, -3.0], 'to': [3.5, 2.8, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_bot_in',  'from': [-3.5, 2.8, -3.0], 'to': [3.5, 3.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell1_top_in',  'from': [-3.5, 9.0, -3.0], 'to': [3.5, 9.2, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell1_top_out', 'from': [-3.5, 9.2, -3.0], 'to': [3.5, 11.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_l_out',   'from': [-6.0, 4.0, -3.0], 'to': [-4.2, 8.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_l_in',    'from': [-4.2, 4.0, -3.0], 'to': [-4.0, 8.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell1_r_in',    'from': [4.0, 4.0, -3.0], 'to': [4.2, 8.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell1_r_out',   'from': [4.2, 4.0, -3.0], 'to': [6.0, 8.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
     # 4个圆钝切角填角
-    cubes.append({'name': 'shell1_bl_ch', 'from': [-5.5, 1.5, -3.0], 'to': [-4.5, 3.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_br_ch', 'from': [ 4.5, 1.5, -3.0], 'to': [ 5.5, 3.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_tl_ch', 'from': [-5.5, 9.0, -3.0], 'to': [-4.5, 10.5, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell1_tr_ch', 'from': [ 4.5, 9.0, -3.0], 'to': [ 5.5, 10.5, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_bl_ch', 'from': [-5.5, 1.5, -3.0], 'to': [-3.5, 4.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_br_ch', 'from': [ 3.5, 1.5, -3.0], 'to': [ 5.5, 4.0, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_tl_ch', 'from': [-5.5, 8.0, -3.0], 'to': [-3.5, 10.5, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell1_tr_ch', 'from': [ 3.5, 8.0, -3.0], 'to': [ 5.5, 10.5, 1.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
 
-    # ═══════════ 第 2 节空心壳 (z in [1.0, 5.0]，四竖角各切 2.0x2.0) ═══════════
-    cubes.append({'name': 'shell2_bot_out', 'from': [-5.0, 0.0, 1.0], 'to': [5.0, 1.8, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_bot_in',  'from': [-5.0, 1.8, 1.0], 'to': [5.0, 2.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell2_top_in',  'from': [-5.0, 11.0, 1.0], 'to': [5.0, 11.2, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell2_top_out', 'from': [-5.0, 11.2, 1.0], 'to': [5.0, 13.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_l_out',   'from': [-7.0, 2.0, 1.0], 'to': [-5.2, 11.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_l_in',    'from': [-5.2, 2.0, 1.0], 'to': [-5.0, 11.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell2_r_in',    'from': [5.0, 2.0, 1.0], 'to': [5.2, 11.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell2_r_out',   'from': [5.2, 2.0, 1.0], 'to': [7.0, 11.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    # ═══════════ 第 2 节空心壳 (z in [1.0, 5.0]，四竖角多切 1.5px: 切角 3.5x3.5) ═══════════
+    cubes.append({'name': 'shell2_bot_out', 'from': [-4.0, 0.0, 1.0], 'to': [4.0, 1.8, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_bot_in',  'from': [-4.0, 1.8, 1.0], 'to': [4.0, 2.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell2_top_in',  'from': [-4.0, 11.0, 1.0], 'to': [4.0, 11.2, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell2_top_out', 'from': [-4.0, 11.2, 1.0], 'to': [4.0, 13.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_l_out',   'from': [-7.0, 3.0, 1.0], 'to': [-5.2, 10.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_l_in',    'from': [-5.2, 3.0, 1.0], 'to': [-5.0, 10.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell2_r_in',    'from': [5.0, 3.0, 1.0], 'to': [5.2, 10.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell2_r_out',   'from': [5.2, 3.0, 1.0], 'to': [7.0, 10.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
     # 4个圆钝切角填角
-    cubes.append({'name': 'shell2_bl_ch', 'from': [-6.5, 0.5, 1.0], 'to': [-5.0, 2.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_br_ch', 'from': [ 5.0, 0.5, 1.0], 'to': [ 6.5, 2.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_tl_ch', 'from': [-6.5, 11.0, 1.0], 'to': [-5.0, 12.5, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell2_tr_ch', 'from': [ 5.0, 11.0, 1.0], 'to': [ 6.5, 12.5, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_bl_ch', 'from': [-6.5, 0.8, 1.0], 'to': [-4.0, 3.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_br_ch', 'from': [ 4.0, 0.8, 1.0], 'to': [ 6.5, 3.0, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_tl_ch', 'from': [-6.5, 10.0, 1.0], 'to': [-4.0, 12.2, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell2_tr_ch', 'from': [ 4.0, 10.0, 1.0], 'to': [ 6.5, 12.2, 5.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
 
-    # ═══════════ 第 3 节空心壳 (z in [5.0, 8.0]，四竖角各切 2.5x2.5，呈圆口喇叭) ═══════════
-    cubes.append({'name': 'shell3_bot_out', 'from': [-5.5, 0.0, 5.0], 'to': [5.5, 1.8, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_bot_in',  'from': [-5.5, 1.8, 5.0], 'to': [5.5, 2.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell3_top_in',  'from': [-5.5, 13.0, 5.0], 'to': [5.5, 13.2, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell3_top_out', 'from': [-5.5, 13.2, 5.0], 'to': [5.5, 15.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_l_out',   'from': [-8.0, 2.5, 5.0], 'to': [-6.2, 12.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_l_in',    'from': [-6.2, 2.5, 5.0], 'to': [-6.0, 12.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell3_r_in',    'from': [6.0, 2.5, 5.0], 'to': [6.2, 12.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
-    cubes.append({'name': 'shell3_r_out',   'from': [6.2, 2.5, 5.0], 'to': [8.0, 12.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    # 4个圆钝切角填角 (切角扩大至 2.5x2.5，呈流畅喇叭花八边形)
-    cubes.append({'name': 'shell3_bl_ch', 'from': [-7.2, 0.8, 5.0], 'to': [-5.5, 2.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_br_ch', 'from': [ 5.5, 0.8, 5.0], 'to': [ 7.2, 2.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_tl_ch', 'from': [-7.2, 12.5, 5.0], 'to': [-5.5, 14.2, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
-    cubes.append({'name': 'shell3_tr_ch', 'from': [ 5.5, 12.5, 5.0], 'to': [ 7.2, 14.2, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    # ═══════════ 第 3 节空心壳 (z in [5.0, 8.0]，四竖角多切 1.5px: 切角 4.0x4.0，呈极圆喇叭口) ═══════════
+    cubes.append({'name': 'shell3_bot_out', 'from': [-4.5, 0.0, 5.0], 'to': [4.5, 1.8, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_bot_in',  'from': [-4.5, 1.8, 5.0], 'to': [4.5, 2.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell3_top_in',  'from': [-4.5, 13.0, 5.0], 'to': [4.5, 13.2, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell3_top_out', 'from': [-4.5, 13.2, 5.0], 'to': [4.5, 15.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_l_out',   'from': [-8.0, 3.5, 5.0], 'to': [-6.2, 11.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_l_in',    'from': [-6.2, 3.5, 5.0], 'to': [-6.0, 11.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell3_r_in',    'from': [6.0, 3.5, 5.0], 'to': [6.2, 11.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_lit'})
+    cubes.append({'name': 'shell3_r_out',   'from': [6.2, 3.5, 5.0], 'to': [8.0, 11.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    # 4个大切角填角 (切角扩大至 4.0x4.0，呈圆润八边形大喇叭口)
+    cubes.append({'name': 'shell3_bl_ch', 'from': [-7.4, 1.0, 5.0], 'to': [-4.5, 3.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_br_ch', 'from': [ 4.5, 1.0, 5.0], 'to': [ 7.4, 3.5, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_tl_ch', 'from': [-7.4, 11.5, 5.0], 'to': [-4.5, 14.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
+    cubes.append({'name': 'shell3_tr_ch', 'from': [ 4.5, 11.5, 5.0], 'to': [ 7.4, 14.0, 8.0], 'group': 'flaring_bell', 'material': 'flesh_main'})
 
     return cubes
 
