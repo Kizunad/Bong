@@ -290,6 +290,7 @@ fn dormant_tsy_hostile_snapshot_carries_family_phase_and_aura() {
         phase: ZhinianPhase::Aggressive,
         phase_entered_at_tick: 77,
         combat_memory: Default::default(),
+        last_issued_kind: None,
     };
     let aura = FuyaAura {
         radius_blocks: 12.0,

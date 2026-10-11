@@ -1150,6 +1150,7 @@ fn spawn_from_snapshot(
                 phase: hydrate_zhinian_phase(phase),
                 phase_entered_at_tick,
                 combat_memory: Default::default(),
+                last_issued_kind: None,
             });
         }
         if let Some(aura) = tsy.fuya_aura {

@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use valence::entity::EntityId;
 use valence::prelude::{Entity, EventReader, EventWriter, Local, Position, Query, Res, UniqueId};
 
 use crate::botany::components::HarvestTerminalEvent;
@@ -35,10 +36,12 @@ use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
 use crate::cultivation::technique_scroll::TechniqueLearnedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
+use crate::fauna::visual::FaunaVisualKind;
 use crate::forge::events::TemperingHit;
 use crate::forge::session::{ForgeSessions, ForgeStep};
 use crate::inventory::PlayerInventory;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::tsy_hostile::{ComboKind, ZhinianMind};
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
@@ -517,6 +520,113 @@ pub fn emit_hit_recoil_animation_triggers(
             &players,
             &mut vfx_events,
         );
+    }
+}
+
+/// 妖兽近战出手 → 攻击者 GeckoLib 攻击动画表驱动映射（第二阶段任务 1）。
+///
+/// `FaunaVisualKind` → (GeckoLib 动画全名, 占用 tick)。只收录**动画文件里真有** attack
+/// （或该物种已有的近战段，如灰烬蛛 `bite`）的物种；没有对应段的物种返回 `None`，不 emit——
+/// 宁可缺动画也不能播一个不存在的 clip 名（client `Profile.find` 查不到会静默无动作）。
+///
+/// 以下物种**不**收录，原因各不相同：
+///
+/// 1. 各自已有专属 AV trigger，在此表重复映射会与其自身动画双重触发（fauna Marker
+///    实体动作机只认"最后一次 trigger"，无优先级通道，会互相打断）：
+///    - `DainuLion` / `FuyuVulture` / `Horse` —— `fauna::wildlife::skills::animate`（技能起手播放）
+///    - `DevourRat` —— `network::rat_av_trigger`（peck/claw/pounce 三态）
+///    - `Heiwushi` —— `network::heiwushi_av_trigger`（boss 招式表，含 MeleeSlash → attack）
+///    - `HybridBeast` —— 三头位各自 bite 段走专属渲染/子 Profile 切换管线，不走本表
+/// 2. 动画文件里的 `attack` 段本身是**循环**动画（`loop:true`），不能当一次性攻击动作播
+///    （播完不会自动停，会一直循环卡住）。需要先补一段 one-shot 版本才能收录，不在本次
+///    接线范围——`JungleScorpion` / `LivingPillar` / `PoisonDragon` / `BoneDragon` 四只。
+///
+/// tick 数 = 对应 `client/src/main/resources/assets/bong/animations/*.animation.json` 里
+/// `animation_length`(秒) × 20 向上取整（与 client `FaunaAnimations.read()` 换算规则一致），
+/// 逐条来源核对见本模块 `beast_melee_anim_duration_matches_animation_file` 测试。
+/// `VoidDistorted` / `Daoxiang` / `Zhinian` / `TsySentinel` / `Fuya` / `SkullFiend` 六只已切
+/// v2 资源（`FaunaVisualKind`(client) 构造参数），故动画全名含 `_v2`；v1 文件没有 attack 段。
+fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
+    match kind {
+        FaunaVisualKind::AshSpider => Some(("animation.bong.ash_spider.bite", 11)),
+        FaunaVisualKind::GreenSpider => Some(("animation.bong.green_spider.attack", 9)),
+        FaunaVisualKind::BlueSpider => Some(("animation.bong.blue_spider.attack", 9)),
+        FaunaVisualKind::IceScorpion => Some(("animation.bong.ice_scorpion.attack", 24)),
+        FaunaVisualKind::CockadeSnake => Some(("animation.bong.cockade_snake.attack", 18)),
+        FaunaVisualKind::MandrakeSnake => Some(("animation.bong.mandrake_snake.attack", 18)),
+        FaunaVisualKind::DarkTiger => Some(("animation.bong.dark_tiger.attack", 18)),
+        FaunaVisualKind::VoidDistorted => Some(("animation.bong.void_distorted_v2.attack", 18)),
+        FaunaVisualKind::Daoxiang => Some(("animation.bong.daoxiang_v2.attack", 18)),
+        FaunaVisualKind::Zhinian => Some(("animation.bong.zhinian_v2.attack", 17)),
+        FaunaVisualKind::TsySentinel => Some(("animation.bong.tsy_sentinel_v2.attack", 22)),
+        FaunaVisualKind::Fuya => Some(("animation.bong.fuya_v2.attack", 20)),
+        FaunaVisualKind::SkullFiend => Some(("animation.bong.skull_fiend_v2.attack", 18)),
+        // 已有专属 AV trigger / 共用子 Profile 渲染管线，或 attack 段是循环动画暂不可用
+        // （见上方 doc 注释两条分类）。
+        FaunaVisualKind::DainuLion
+        | FaunaVisualKind::FuyuVulture
+        | FaunaVisualKind::Horse
+        | FaunaVisualKind::DevourRat
+        | FaunaVisualKind::HybridBeast
+        | FaunaVisualKind::Heiwushi
+        | FaunaVisualKind::JungleScorpion
+        | FaunaVisualKind::LivingPillar
+        | FaunaVisualKind::PoisonDragon
+        | FaunaVisualKind::BoneDragon => None,
+    }
+}
+
+/// Beast melee attack issuance -> attacker GeckoLib attack animation.
+///
+/// 读 `AttackIntent`（出手时就发，不等 [`resolve_attack_intents`](crate::combat::resolve::resolve_attack_intents)
+/// 判出命中结果）——挥空也该有挥击动作，这比原来挂在已结算 `CombatEvent`（真伤 > 0 才算
+/// "命中"）上更符合语义：观战玩家应该看到对面"出手了"，不是只有被打中才看到动画。
+/// 只认 `AttackSource::Melee | AttackSource::NpcMelee`（`HuntAction` / `MeleeAttackAction`
+/// 两条生产路径发 `Melee`，见 `npc::territory::hunt_action_system` / `npc::brain::
+/// actions_combat::melee_attack_action_system`；`tsy_hostile.rs` 的道伥本能攻击 /
+/// 执念连招 / 秘境守灵三阶段都发 `NpcMelee`——纯粹为绕开 qi 反作弊门禁，本质仍是近战
+/// 出手，必须一并收口，否则这三只 v2 物种在表里有条目也永远不会触发），技能类 source
+/// 走各自专属 AV trigger，不与本表重叠。玩家攻击者没有 `FaunaVisualKind` 组件，查询
+/// 天然不命中、直接跳过；两套系统各管一侧，互不冲突。
+///
+/// 执念的连招三段（`tsy_hostile::ComboKind`）共用同一个 `AttackSource::NpcMelee`，但
+/// `Dash` / `Projectile` 两段不是近战挥击，不该播 `zhinian_v2.attack`（近战挥击姿势）。
+/// 区分不走新增 `AttackSource` 变体（那会在 `combat::zhenmai_v2`、`combat::knockback`、
+/// `network::combat_bridge` 等一串已有精确匹配上强制加分支，牵连到经脉系统——冻结区）
+/// 也不走 `AttackIntent` 新字段（会牵连所有构造点），而是读执念 NPC 自带的
+/// `ZhinianMind::last_issued_kind`（纯动画侧记账，出手那一刻与事件同步写入，见
+/// `npc::tsy_hostile::zhinian_combo_step_action_system`）：非 `Zhinian` 物种没有这个
+/// 组件，`Option<&ZhinianMind>` 查询自然为 `None`，行为不变。
+pub fn emit_beast_melee_animation_triggers(
+    mut events: EventReader<AttackIntent>,
+    attackers: Query<(&Position, &EntityId, &FaunaVisualKind, Option<&ZhinianMind>)>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in events.read() {
+        if !matches!(event.source, AttackSource::Melee | AttackSource::NpcMelee) {
+            continue;
+        }
+        let Ok((position, entity_id, visual_kind, zhinian_mind)) = attackers.get(event.attacker)
+        else {
+            continue;
+        };
+        if matches!(
+            zhinian_mind.and_then(|mind| mind.last_issued_kind),
+            Some(ComboKind::Dash) | Some(ComboKind::Projectile)
+        ) {
+            continue;
+        }
+        let Some((anim, duration_ticks)) = beast_melee_anim_for(*visual_kind) else {
+            continue;
+        };
+        vfx_events.send(VfxEventRequest::new(
+            position.get(),
+            VfxEventPayloadV1::PlayEntityAnim {
+                entity_id: entity_id.get(),
+                anim: anim.to_string(),
+                duration_ticks,
+            },
+        ));
     }
 }
 

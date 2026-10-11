@@ -144,6 +144,12 @@ pub struct ZhinianMind {
     pub phase: ZhinianPhase,
     pub phase_entered_at_tick: u64,
     pub combat_memory: CombatCombo,
+    /// 最近一次实际发出 `AttackIntent` 时用的连招段——仅供 vfx_animation_trigger 的
+    /// 近战挥击动画判断用：Dash/Projectile 不该播 zhinian_v2.attack（那是近战挥击姿势）。
+    /// 不参与伤害计算，`AttackIntent` 本身不带这个信息（三段连招共用
+    /// `AttackSource::NpcMelee`，纯为绕开 qi 反作弊门禁）。`None` 表示还没发出过任何
+    /// 连招（保守按"可能是近战"处理，不误杀真实近战动画）。
+    pub last_issued_kind: Option<ComboKind>,
 }
 
 impl Default for ZhinianMind {
@@ -152,6 +158,7 @@ impl Default for ZhinianMind {
             phase: ZhinianPhase::Masquerade,
             phase_entered_at_tick: 0,
             combat_memory: CombatCombo::default(),
+            last_issued_kind: None,
         }
     }
 }
@@ -1725,6 +1732,7 @@ fn zhinian_combo_step_action_system(
                 }
                 if let Some(target) = bb.nearest_player {
                     bb.last_melee_tick = tick;
+                    mind.last_issued_kind = Some(step.kind);
                     let qi_invest = match step.kind {
                         ComboKind::Melee => 10.0,
                         ComboKind::Dash => 14.0,

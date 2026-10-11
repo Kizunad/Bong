@@ -87,7 +87,7 @@ BOT_E2E_OPERATOR_TAGS=(
   QiH QiV FpH DhH MPH WbH
   Zlb Zre Alc Bob Ascend HdJue HdKeep HdSkip
   Rein Term NewCh Slice Guard
-  NpcIn NpcCh NpcTr
+  NpcIn NpcCh NpcTr BeastAnim
   FalseSkin InvGroup Quickslot Scrolls SkillCfg
   Zlb Zre Alc Bob CoPl Coffin FoRq
   Big Typ Rng Stl

@@ -60,9 +60,10 @@ public class FaunaRenderBootstrapTest {
 
         Set<String> expected = Set.of(
             "geo/devour_rat.geo.json",
+            // 以下 6 只已切到 v2 几何（见 FaunaVisualKind 构造参数注释）；ash_spider 暂留 v1（fold 缺口）。
             "geo/ash_spider.geo.json",
             "geo/hybrid_beast.geo.json",
-            "geo/void_distorted.geo.json",
+            "geo/void_distorted_v2.geo.json",
             "geo/green_spider.geo.json",
             "geo/jungle_scorpion.geo.json",
             "geo/cockade_snake.geo.json",
@@ -74,11 +75,11 @@ public class FaunaRenderBootstrapTest {
             "geo/poison_dragon.geo.json",
             "geo/bone_dragon.geo.json",
             "geo/heiwushi.geo.json",
-            "geo/daoxiang.geo.json",
-            "geo/zhinian.geo.json",
-            "geo/tsy_sentinel.geo.json",
-            "geo/fuya.geo.json",
-            "geo/skull_fiend.geo.json",
+            "geo/daoxiang_v2.geo.json",
+            "geo/zhinian_v2.geo.json",
+            "geo/tsy_sentinel_v2.geo.json",
+            "geo/fuya_v2.geo.json",
+            "geo/skull_fiend_v2.geo.json",
             "geo/dainu_lion.geo.json",
             "geo/fuyu_vulture.geo.json",
             "geo/kekeda_goose.geo.json",
@@ -102,9 +103,9 @@ public class FaunaRenderBootstrapTest {
                 + texture
         );
         assertEquals(
-            "textures/entity/fauna/fuya.png",
+            "textures/entity/fauna/fuya_v2.png",
             texture.getPath(),
-            "expected FUYA texture path under textures/entity/fauna because renderer lookup uses fauna asset layout, actual: "
+            "expected FUYA texture path under textures/entity/fauna (v2 资源) because renderer lookup uses fauna asset layout, actual: "
                 + texture
         );
     }
@@ -119,9 +120,9 @@ public class FaunaRenderBootstrapTest {
                 + texture
         );
         assertEquals(
-            "textures/entity/fauna/skull_fiend.png",
+            "textures/entity/fauna/skull_fiend_v2.png",
             texture.getPath(),
-            "expected SKULL_FIEND texture path under textures/entity/fauna because renderer lookup uses fauna asset layout, actual: "
+            "expected SKULL_FIEND texture path under textures/entity/fauna (v2 资源) because renderer lookup uses fauna asset layout, actual: "
                 + texture
         );
     }
@@ -156,7 +157,7 @@ public class FaunaRenderBootstrapTest {
     @Test
     void idleAnimationNameDerivesFromAnimPath() {
         assertEquals("animation.bong.ash_spider.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
-            "拟态蜘蛛应使用独立流水线的 idle");
+            "拟态蜘蛛应使用独立流水线的 idle（v2 缺 fold，暂留 v1 资源）");
         // 噬元鼠改走专属模型（devour_rat.geo.json + devour_rat.animation.json，含 idle/walk/run/peck/claw/pounce），
         // idle 应取 animation.bong.devour_rat.idle 而非通用回退。
         assertEquals("animation.bong.devour_rat.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),

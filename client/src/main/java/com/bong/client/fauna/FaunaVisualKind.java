@@ -5,14 +5,19 @@ import net.minecraft.util.Identifier;
 
 public enum FaunaVisualKind {
     DEVOUR_RAT("devour_rat", 126, 0.4f, 0.3f, 0.65f, 0.2f, "devour_rat"),
+    // ASH_SPIDER 暂不切 v2：v2 动画文件缺 "fold"（蜘蛛伪装重新折叠用，FaunaPlayback.spiderDisguise
+    // 依赖它把 block 置回 true），v1 的 "retreat" 已确认死代码（无调用点，不是阻塞项）。
+    // 补上 fold 前切换会让暴起后的蜘蛛永久可见、ambush 隐蔽机制失效，故仍留 v1 资源。
+    // 其余 6 只已切到 v2 资源三件套（geo/texture/animation 同名 "<id>_v2"）；
+    // entity 注册 id（第一个字段）和 expectedRawId 保持不动，跨端协议契约不受影响。
     ASH_SPIDER("ash_spider", 127, 0.9f, 0.45f, 1.0f, 0.4f, "ash_spider"),
     HYBRID_BEAST("hybrid_beast", 128, 1.2f, 1.4f, 1.0f, 0.6f, "hybrid_beast"),
-    VOID_DISTORTED("void_distorted", 129, 1.2f, 1.5f, 1.05f, 0.5f, "void_distorted"),
-    DAOXIANG("daoxiang", 130, 0.65f, 1.9f, 0.95f, 0.38f, "daoxiang"),
-    ZHINIAN("zhinian", 131, 0.65f, 1.9f, 0.95f, 0.38f, "zhinian"),
-    TSY_SENTINEL("tsy_sentinel", 132, 0.85f, 2.1f, 1.05f, 0.45f, "tsy_sentinel"),
-    FUYA("fuya", 133, 0.8f, 2.0f, 1.1f, 0.25f, "fuya"),
-    SKULL_FIEND("skull_fiend", 134, 1.4f, 1.4f, 1.05f, 0.18f, "skull_fiend"),
+    VOID_DISTORTED("void_distorted", 129, 1.2f, 1.5f, 1.05f, 0.5f, "void_distorted_v2"),
+    DAOXIANG("daoxiang", 130, 0.65f, 1.9f, 0.95f, 0.38f, "daoxiang_v2"),
+    ZHINIAN("zhinian", 131, 0.65f, 1.9f, 0.95f, 0.38f, "zhinian_v2"),
+    TSY_SENTINEL("tsy_sentinel", 132, 0.85f, 2.1f, 1.05f, 0.45f, "tsy_sentinel_v2"),
+    FUYA("fuya", 133, 0.8f, 2.0f, 1.1f, 0.25f, "fuya_v2"),
+    SKULL_FIEND("skull_fiend", 134, 1.4f, 1.4f, 1.05f, 0.18f, "skull_fiend_v2"),
     GREEN_SPIDER("green_spider", 135, 0.9f, 0.45f, 0.75f, 0.22f, "green_spider"),
     JUNGLE_SCORPION("jungle_scorpion", 136, 0.8f, 0.5f, 0.7f, 0.25f, "jungle_scorpion"),
     COCKADE_SNAKE("cockade_snake", 137, 0.5f, 0.4f, 0.65f, 0.18f, "cockade_snake"),
@@ -35,7 +40,7 @@ public enum FaunaVisualKind {
     private final EntityDimensions dimensions;
     private final float renderScale;
     private final float shadowRadius;
-    private final String animPath;
+    private final String assetPath;
 
     FaunaVisualKind(
         String path,
@@ -44,37 +49,44 @@ public enum FaunaVisualKind {
         float height,
         float renderScale,
         float shadowRadius,
-        String animPath
+        String assetPath
     ) {
         this.path = path;
         this.expectedRawId = expectedRawId;
         this.dimensions = EntityDimensions.fixed(width, height);
         this.renderScale = renderScale;
         this.shadowRadius = shadowRadius;
-        this.animPath = animPath;
+        this.assetPath = assetPath;
     }
 
     public Identifier entityId() {
         return new Identifier("bong", path);
     }
 
+    /**
+     * geo / texture / animation 三件套共用的资源路径（默认形态，未切换子 Profile 时）。
+     *
+     * <p>与 {@link #path}（entity 注册 id / raw id，跨端协议契约）分离：同一物种升级到
+     * 新版模型（如 v2 重做）时只改这里，entity id 和协议 raw id 不受影响。
+     */
+    public String assetPath() {
+        return assetPath == null ? "fauna" : assetPath;
+    }
+
     public Identifier modelId() {
-        return new Identifier("bong", "geo/" + path + ".geo.json");
+        return new Identifier("bong", "geo/" + assetPath() + ".geo.json");
     }
 
     public Identifier textureId() {
-        return new Identifier("bong", "textures/entity/fauna/" + path + ".png");
+        return new Identifier("bong", "textures/entity/fauna/" + assetPath() + ".png");
     }
 
     public Identifier animationId() {
-        if (animPath != null) {
-            return new Identifier("bong", "animations/" + animPath + ".animation.json");
-        }
-        return new Identifier("bong", "animations/fauna.animation.json");
+        return new Identifier("bong", "animations/" + assetPath() + ".animation.json");
     }
 
     public FaunaAnimations.Profile animations() {
-        return FaunaAnimations.load(animPath == null ? "fauna" : animPath);
+        return FaunaAnimations.load(assetPath());
     }
 
     public String idleAnimationName() {
