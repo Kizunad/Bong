@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
 """经脉工厂内景方块生成器 —— b11: valve (经脉阀门，含 open / half / closed 三变体)
 
-风格：A 有机型 (活体血肉、暖粉半透明筋管、中间括约肌环、顶置小骨轮、旧损暗淡配色)
+风格：A 有机型 (活体血肉、暖粉半透明筋管、正中显眼括约肌环、顶置骨柄与骨轮、旧损暗淡配色)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md (第 2 批表格与规范)
 - 爆炸参考图：model-review/img/meridian_factory/exploded/x11_valve.png
-
-调度要求（整格 16×16×16，长轴沿 z 走向）：
-1. 沿 z 一节 b01 筋管，两端用 common_parts.sinew_tube + flesh_collar，两端骨环端口；
-2. 正中一圈括约肌环（#8a2a2a flesh_main，外 12×10、厚 3px: z in [-1.5, 1.5], x in [-6, 6], y in [0, 10]）：
-   表面 4~6 条 #5a1a1a (flesh_dark) 环向褶纹；
-3. 三变体：
-   - valve_open: 管腔不变（贯通 8×6 暖粉管腔与 2×2 真元光芯）；
-   - valve_half: 环向内收 2px（管腔收窄至 4×2，肌肉向内挤压隆起）；
-   - valve_closed: 收到中心只剩 2×2 的 #5a1a1a 暗色小孔（四周完全闭合封死）；
-4. 环顶用 common_parts.bone_wheel：
-   小骨轮（#d8ccb0，外廓 6×1×6，十字辐条 + 外圆环，带 #b8a888 中心轴柱）；
-5. 输出图：
-   - render.png（三变体 3/4 + 正对管口 2×3 拼版）；
-   - check.png（左爆炸图 x11_valve.png，右渲染对标）。
+- 调度审第 1 次指示：
+  1. 两端肉箍改窄：flesh_collar 宽 2 (z 0–2 对应 [-8, -6]; z 14–16 对应 [6, 8])，筋管 z 2–14 露出来；
+  2. 括约肌环放在 z 6–10，外 12×10 (比肉箍大一圈，3/4 里要比肉箍更显眼)，#8a2a2a，表面 6 条 #b05050 / #5a1a1a 交替的环向褶 (每条 1px 浮起)；
+  3. 开度要在管口方向和侧面都看得出：
+     - 环内孔 open 8×6 (与管腔一样)、half 4×3、closed 2×2，孔内壁 #5a1a1a；
+     - 环在 half / closed 时外径与厚度各再鼓 1px (被挤压鼓起)，侧面能看出明显差别；
+  4. 骨轮放在环顶正中 (common_parts.bone_wheel)，轮下一根 2×2×2 骨柄连到环；
+  5. render 输出：三变体 3/4 视 + 侧视 (看外径鼓起) + 正对管口直视 (看内孔开度)；check.png 爆炸图对标。
 """
 
 from __future__ import annotations
@@ -65,124 +59,164 @@ from modelScript.generators.meridian_factory.common_parts import (
 
 def part_01_pipe_and_collars(variant: str = "open") -> List[dict]:
     """生成前后管段、两端肉箍与贴面骨环端口：
-    - 后管段: z in [-8.0, -1.5] (长 6.5px)
-    - 前管段: z in [1.5, 8.0] (长 6.5px)
-    - 两端肉箍: 后箍 center=-6.0, 前箍 center=6.0 (length=3.0)
-    - 顶面与底面骨环端口: 共 4 处
+    - 两端肉箍改窄：宽 2px (后箍 [-8, -6], 前箍 [6, 8])
+    - 筋管露出来：[-6.0, z_min] 与 [z_max, 6.0] 显眼露出长达 4px 暖粉管壁
+    - 贴面骨环端口：贴在两端肉箍顶底面
     """
     cubes = []
     pfx = f"{variant}_"
 
-    # 1. 前后标准 8x6 暖粉筋管段 (复用 common_parts.sinew_tube)
-    cubes.extend(sinew_tube(-8.0, -1.5, axis="z", with_inner_qi=True, with_highlights=True, pfx=f"{pfx}tube_rear"))
-    cubes.extend(sinew_tube( 1.5,  8.0, axis="z", with_inner_qi=True, with_highlights=True, pfx=f"{pfx}tube_front"))
+    # 变体对应的肌环厚度 Z 范围
+    if variant == "open":
+        z_min, z_max = -2.0, 2.0
+    elif variant == "half":
+        z_min, z_max = -2.5, 2.5
+    else: # closed
+        z_min, z_max = -3.0, 3.0
 
-    # 2. 两端四面包覆肉箍 (复用 common_parts.flesh_collar)
-    cubes.extend(flesh_collar(center_pos=-6.0, length=3.0, axis="z", pfx=f"{pfx}collar_rear"))
-    cubes.extend(flesh_collar(center_pos= 6.0, length=3.0, axis="z", pfx=f"{pfx}collar_front"))
+    # 1. 前后露出筋管段 (复用 common_parts.sinew_tube)
+    cubes.extend(sinew_tube(-6.0, z_min, axis="z", with_inner_qi=True, with_highlights=True, pfx=f"{pfx}tube_rear"))
+    cubes.extend(sinew_tube(z_max,  6.0, axis="z", with_inner_qi=True, with_highlights=True, pfx=f"{pfx}tube_front"))
+
+    # 2. 两端改窄肉箍 (宽 2px: center=-7.0 与 center=7.0, 复用 common_parts.flesh_collar)
+    cubes.extend(flesh_collar(center_pos=-7.0, length=2.0, axis="z", pfx=f"{pfx}collar_rear"))
+    cubes.extend(flesh_collar(center_pos= 7.0, length=2.0, axis="z", pfx=f"{pfx}collar_front"))
 
     # 3. 肉箍顶面与底面骨环端口 (复用 common_parts.bone_ring_port)
-    cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=-6.0, face="up",   pfx=f"{pfx}port_r_t"))
-    cubes.extend(bone_ring_port(center_x=0.0, center_y=1.0, center_z=-6.0, face="down", pfx=f"{pfx}port_r_b"))
-    cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z= 6.0, face="up",   pfx=f"{pfx}port_f_t"))
-    cubes.extend(bone_ring_port(center_x=0.0, center_y=1.0, center_z= 6.0, face="down", pfx=f"{pfx}port_f_b"))
+    cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=-7.0, face="up",   pfx=f"{pfx}port_r_t"))
+    cubes.extend(bone_ring_port(center_x=0.0, center_y=1.0, center_z=-7.0, face="down", pfx=f"{pfx}port_r_b"))
+    cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z= 7.0, face="up",   pfx=f"{pfx}port_f_t"))
+    cubes.extend(bone_ring_port(center_x=0.0, center_y=1.0, center_z= 7.0, face="down", pfx=f"{pfx}port_f_b"))
 
     return cubes
 
 
 def part_02_sphincter_ring(variant: str = "open") -> List[dict]:
-    """生成正中括约肌环 (#8a2a2a，外 12×10、厚 3px: z in [-1.5, 1.5], x in [-6, 6], y in [0, 10])：
-    - 四周圆钝阶梯外轮廓；
-    - 表面 6 条 #5a1a1a 环向褶纹。
-    """
-    cubes = []
-    pfx = f"{variant}_"
-
-    # 1. 环体无交集分区构型 (外框 12x10: X in [-6, 6], Y in [0, 10], Z in [-1.5, 1.5])
-    # 顶壁 (x in [-4, 4], y in [8, 10])
-    cubes.append({"name": f"{pfx}sph_top", "from": [-4.0, 8.0, -1.5], "to": [ 4.0, 10.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    # 底壁 (x in [-4, 4], y in [0, 2])
-    cubes.append({"name": f"{pfx}sph_bot", "from": [-4.0, 0.0, -1.5], "to": [ 4.0,  2.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    # 左壁 (x in [-6, -4], y in [2, 8])
-    cubes.append({"name": f"{pfx}sph_l",   "from": [-6.0, 2.0, -1.5], "to": [-4.0,  8.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    # 右壁 (x in [4, 6], y in [2, 8])
-    cubes.append({"name": f"{pfx}sph_r",   "from": [ 4.0, 2.0, -1.5], "to": [ 6.0,  8.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-
-    # 四角倒角阶梯块 (外切角 1x1，呈圆钝活体环形)
-    cubes.append({"name": f"{pfx}sph_tl", "from": [-5.0, 8.0, -1.5], "to": [-4.0, 9.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}sph_tr", "from": [ 4.0, 8.0, -1.5], "to": [ 5.0, 9.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}sph_bl", "from": [-5.0, 1.0, -1.5], "to": [-4.0, 2.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}sph_br", "from": [ 4.0, 1.0, -1.5], "to": [ 5.0, 2.0, 1.5], "group": "sphincter", "material": "flesh_main"})
-
-    # 2. 表面 6 条 #5a1a1a 环向褶纹 (贴于前后端面，微浮 0.05px)
-    # 前端面褶纹 (z in [-1.55, -1.45])
-    cubes.append({"name": f"{pfx}fold_f_top", "from": [-3.5, 8.4, -1.55], "to": [3.5, 9.2, -1.45], "group": "sphincter", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}fold_f_bot", "from": [-3.5, 0.8, -1.55], "to": [3.5, 1.6, -1.45], "group": "sphincter", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}fold_f_l",   "from": [-5.8, 3.0, -1.55], "to": [-5.0, 7.0, -1.45], "group": "sphincter", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}fold_f_r",   "from": [ 5.0, 3.0, -1.55], "to": [ 5.8, 7.0, -1.45], "group": "sphincter", "material": "flesh_dark"})
-    # 后端面褶纹 (z in [1.45, 1.55])
-    cubes.append({"name": f"{pfx}fold_b_top", "from": [-3.5, 8.4, 1.45], "to": [3.5, 9.2, 1.55], "group": "sphincter", "material": "flesh_dark"})
-    cubes.append({"name": f"{pfx}fold_b_bot", "from": [-3.5, 0.8, 1.45], "to": [3.5, 1.6, 1.55], "group": "sphincter", "material": "flesh_dark"})
-
-    return cubes
-
-
-def part_03_valve_lumen(variant: str = "open") -> List[dict]:
-    """生成三变体内孔开闭形态 (在 z in [-1.5, 1.5] 核心腔)：
-    - open: 管腔不变，贯通 8x6 暖粉管腔与 2x2 真元光芯；
-    - half: 环向内收 2px，管腔收窄至 4x2，四周肌肉向内收缩挤压；
-    - closed: 收到中心只剩 2x2 #5a1a1a 小孔，四周完全紧闭封死。
+    """生成正中显眼括约肌环与表面 6 条环向褶纹：
+    - open: 外 12×10 (X: [-6, 6], Y: [0, 10]), 厚 4px (Z: [-2, 2])
+    - half: 外径与厚度各鼓 1px -> 外 13×11 (X: [-6.5, 6.5], Y: [0, 11]), 厚 5px (Z: [-2.5, 2.5])
+    - closed: 外径与厚度再鼓 1px -> 外 14×12 (X: [-7, 7], Y: [0, 12]), 厚 6px (Z: [-3, 3])
+    - 表面 6 条 #b05050 / #5a1a1a 交替的环向褶 (每条 1px 浮起)
     """
     cubes = []
     pfx = f"{variant}_"
 
     if variant == "open":
-        # 8x6 暖粉管腔贯通 + 2x2 真元光芯
-        cubes.append({"name": f"{pfx}mid_tube", "from": [-4.0, 2.0, -1.5],  "to": [4.0, 8.0, 1.5],  "group": "valve_lumen", "material": "tendon_tube"})
-        cubes.append({"name": f"{pfx}mid_qi",   "from": [-1.0, 4.0, -1.45], "to": [1.0, 6.0, 1.45], "group": "valve_lumen", "material": "qi_glow"})
-
+        z_min, z_max = -2.0, 2.0
+        r_x, r_y = 6.0, 10.0
     elif variant == "half":
-        # 环向内收 2px (孔道从 8x6 收窄至 4x2: x in [-2, 2], y in [4, 6])
-        # 内收肉层 (#8a2a2a)
-        cubes.append({"name": f"{pfx}constrict_top", "from": [-4.0, 6.0, -1.5], "to": [ 4.0, 8.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}constrict_bot", "from": [-4.0, 2.0, -1.5], "to": [ 4.0, 4.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}constrict_l",   "from": [-4.0, 4.0, -1.5], "to": [-2.0, 6.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}constrict_r",   "from": [ 2.0, 4.0, -1.5], "to": [ 4.0, 6.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        # 4x2 收窄管腔与细光芯
-        cubes.append({"name": f"{pfx}constrict_lumen", "from": [-2.0, 4.0, -1.5],  "to": [2.0, 6.0, 1.5],  "group": "valve_lumen", "material": "tendon_tube"})
-        cubes.append({"name": f"{pfx}constrict_qi",    "from": [-0.6, 4.5, -1.45], "to": [0.6, 5.5, 1.45], "group": "valve_lumen", "material": "qi_glow"})
+        z_min, z_max = -2.5, 2.5
+        r_x, r_y = 6.5, 11.0
+    else: # closed
+        z_min, z_max = -3.0, 3.0
+        r_x, r_y = 7.0, 12.0
 
-    elif variant == "closed":
-        # 闭死：收到中心只剩 2x2 #5a1a1a 暗色小孔 (x in [-1, 1], y in [4, 6])
-        cubes.append({"name": f"{pfx}closed_flesh_top", "from": [-4.0, 6.0, -1.5], "to": [ 4.0, 8.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}closed_flesh_bot", "from": [-4.0, 2.0, -1.5], "to": [ 4.0, 4.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}closed_flesh_l",   "from": [-4.0, 4.0, -1.5], "to": [-1.0, 6.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        cubes.append({"name": f"{pfx}closed_flesh_r",   "from": [ 1.0, 4.0, -1.5], "to": [ 4.0, 6.0, 1.5], "group": "valve_lumen", "material": "flesh_main"})
-        # 2x2 闭锁孔暗面
-        cubes.append({"name": f"{pfx}closed_hole_dark", "from": [-1.0, 4.0, -1.5], "to": [ 1.0, 6.0, 1.5], "group": "valve_lumen", "material": "flesh_dark"})
+    # 1. 环体无交集分区外框 (#8a2a2a flesh_main)
+    # 底中: X in [-4, 4], Y in [0, 2]
+    cubes.append({"name": f"{pfx}sph_bot_mid", "from": [-4.0, 0.0, z_min], "to": [ 4.0, 2.0, z_max], "group": "sphincter", "material": "flesh_main"})
+    # 顶中: X in [-4, 4], Y in [8, r_y]
+    cubes.append({"name": f"{pfx}sph_top_mid", "from": [-4.0, 8.0, z_min], "to": [ 4.0, r_y, z_max], "group": "sphincter", "material": "flesh_main"})
+    # 左中: X in [-r_x, -4], Y in [2, 8]
+    cubes.append({"name": f"{pfx}sph_l_mid",   "from": [-r_x, 2.0, z_min], "to": [-4.0, 8.0, z_max], "group": "sphincter", "material": "flesh_main"})
+    # 右中: X in [4, r_x], Y in [2, 8]
+    cubes.append({"name": f"{pfx}sph_r_mid",   "from": [ 4.0, 2.0, z_min], "to": [ r_x, 8.0, z_max], "group": "sphincter", "material": "flesh_main"})
+
+    # 四角倒角块 (外切角 1x1，形成生动饱满的圆形肌环)
+    cubes.append({"name": f"{pfx}sph_c_bl", "from": [-r_x + 1.0, 1.0, z_min], "to": [-4.0, 2.0, z_max], "group": "sphincter", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}sph_c_br", "from": [ 4.0, 1.0, z_min], "to": [ r_x - 1.0, 2.0, z_max], "group": "sphincter", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}sph_c_tl", "from": [-r_x + 1.0, 8.0, z_min], "to": [-4.0, r_y - 1.0, z_max], "group": "sphincter", "material": "flesh_main"})
+    cubes.append({"name": f"{pfx}sph_c_tr", "from": [ 4.0, 8.0, z_min], "to": [ r_x - 1.0, r_y - 1.0, z_max], "group": "sphincter", "material": "flesh_main"})
+
+    # 2. 表面 6 条 #b05050 / #5a1a1a 交替的环向褶 (每条浮起 0.8px ~ 1.0px)
+    # 前端面 (从外到内环绕孔道): 3 条 (上环褶、左环褶、右环褶)
+    # 褶 1: 前顶环褶 (#b05050 flesh_lit)
+    cubes.append({"name": f"{pfx}fold_f1_top", "from": [-r_x + 1.8, r_y - 1.5, z_min - 0.8], "to": [r_x - 1.8, r_y - 0.5, z_min], "group": "sphincter_folds", "material": "flesh_lit"})
+    # 褶 2: 前左立褶 (#5a1a1a flesh_dark)
+    cubes.append({"name": f"{pfx}fold_f2_l",   "from": [-r_x + 0.5, 3.5, z_min - 0.8], "to": [-r_x + 1.5, 7.5, z_min], "group": "sphincter_folds", "material": "flesh_dark"})
+    # 褶 3: 前右立褶 (#b05050 flesh_lit)
+    cubes.append({"name": f"{pfx}fold_f3_r",   "from": [ r_x - 1.5, 3.5, z_min - 0.8], "to": [ r_x - 0.5, 7.5, z_min], "group": "sphincter_folds", "material": "flesh_lit"})
+
+    # 后端面 3 条:
+    # 褶 4: 后顶环褶 (#5a1a1a flesh_dark)
+    cubes.append({"name": f"{pfx}fold_b1_top", "from": [-r_x + 1.8, r_y - 1.5, z_max], "to": [r_x - 1.8, r_y - 0.5, z_max + 0.8], "group": "sphincter_folds", "material": "flesh_dark"})
+    # 褶 5: 后左立褶 (#b05050 flesh_lit)
+    cubes.append({"name": f"{pfx}fold_b2_l",   "from": [-r_x + 0.5, 3.5, z_max], "to": [-r_x + 1.5, 7.5, z_max + 0.8], "group": "sphincter_folds", "material": "flesh_lit"})
+    # 褶 6: 后右立褶 (#5a1a1a flesh_dark)
+    cubes.append({"name": f"{pfx}fold_b3_r",   "from": [ r_x - 1.5, 3.5, z_max], "to": [ r_x - 0.5, 7.5, z_max + 0.8], "group": "sphincter_folds", "material": "flesh_dark"})
 
     return cubes
 
 
-def part_04_top_bone_wheel(variant: str = "open") -> List[dict]:
-    """环顶小骨轮 (复用 common_parts.bone_wheel)：
-    - 安装立轴：#b8a888 bone_dark (y in [9.8, 10.5], 截面 1.2x1.2)；
-    - 骨轮主体：6x1x6 外廓，y=11.0，十字辐条 + 外圆环。
+def part_03_valve_lumen(variant: str = "open") -> List[dict]:
+    """生成三变体内孔开闭形态 (在 z in [z_min, z_max] 核心腔)：
+    - open: 内孔 8×6 (与管腔完全贯通，暖粉管腔 + 2×2 真元光芯)；
+    - half: 内孔 4×3，孔内壁 #5a1a1a，周围深红肌肉层向内收缩挤压隆起；
+    - closed: 内孔 2×2，孔内壁 #5a1a1a，四周完全紧闭阻断。
     """
     cubes = []
     pfx = f"{variant}_"
 
-    # 支撑立轴 (#b8a888 bone_dark)
+    if variant == "open":
+        z_min, z_max = -2.0, 2.0
+        # 8x6 贯通暖粉管腔 + 2x2 真元光芯
+        cubes.append({"name": f"{pfx}lumen_tube", "from": [-4.0, 2.0, z_min],        "to": [4.0, 8.0, z_max],        "group": "valve_lumen", "material": "tendon_tube"})
+        cubes.append({"name": f"{pfx}lumen_qi",   "from": [-1.0, 4.0, z_min + 0.05], "to": [1.0, 6.0, z_max - 0.05], "group": "valve_lumen", "material": "qi_glow"})
+
+    elif variant == "half":
+        z_min, z_max = -2.5, 2.5
+        # 孔 4x3: X in [-2, 2], Y in [3.5, 6.5]
+        hx, hy = 2.0, 1.5
+        cy = 5.0
+        # 四周收缩挤压肌肉层 (#8a2a2a flesh_main)
+        cubes.append({"name": f"{pfx}con_bot", "from": [-4.0, 2.0, z_min], "to": [ 4.0, cy - hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_top", "from": [-4.0, cy + hy, z_min], "to": [ 4.0, 8.0, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_l",   "from": [-4.0, cy - hy, z_min], "to": [-hx, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_r",   "from": [ hx, cy - hy, z_min], "to": [ 4.0, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        # 4x3 孔内壁 (#5a1a1a flesh_dark)
+        cubes.append({"name": f"{pfx}con_hole_lining", "from": [-hx, cy - hy, z_min], "to": [hx, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_dark"})
+
+    elif variant == "closed":
+        z_min, z_max = -3.0, 3.0
+        # 孔 2x2: X in [-1, 1], Y in [4, 6]
+        hx, hy = 1.0, 1.0
+        cy = 5.0
+        # 四周深红肌肉层全面紧缩填充
+        cubes.append({"name": f"{pfx}con_bot", "from": [-4.0, 2.0, z_min], "to": [ 4.0, cy - hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_top", "from": [-4.0, cy + hy, z_min], "to": [ 4.0, 8.0, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_l",   "from": [-4.0, cy - hy, z_min], "to": [-hx, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        cubes.append({"name": f"{pfx}con_r",   "from": [ hx, cy - hy, z_min], "to": [ 4.0, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_main"})
+        # 2x2 闭死微孔内壁 (#5a1a1a flesh_dark)
+        cubes.append({"name": f"{pfx}con_hole_dark", "from": [-hx, cy - hy, z_min], "to": [hx, cy + hy, z_max], "group": "valve_lumen", "material": "flesh_dark"})
+
+    return cubes
+
+
+def part_04_stem_and_wheel(variant: str = "open") -> List[dict]:
+    """骨轮 + 骨柄：
+    - 轮下一根 2×2×2 骨柄连到环 (#d8ccb0 / #b8a888)；
+    - 骨轮放在环顶正中 (复用 common_parts.bone_wheel, 6×1×6, 十字辐条+外圆环)。
+    """
+    cubes = []
+    pfx = f"{variant}_"
+
+    if variant == "open":
+        r_y = 10.0
+    elif variant == "half":
+        r_y = 11.0
+    else: # closed
+        r_y = 12.0
+
+    # 1. 2x2x2 骨柄 (连到环): X in [-1, 1], Z in [-1, 1], Y in [r_y, r_y + 2.0]
     cubes.append({
-        "name": f"{pfx}wheel_shaft",
-        "from": [-0.6, 9.8, -0.6],
-        "to":   [ 0.6, 10.5, 0.6],
+        "name": f"{pfx}bone_stem",
+        "from": [-1.0, r_y, -1.0],
+        "to":   [ 1.0, r_y + 2.0, 1.0],
         "group": "bone_wheel",
         "material": "bone_dark",
     })
 
-    # 6x1x6 骨轮 (复用 common_parts.bone_wheel)
-    cubes.extend(bone_wheel(center_x=0.0, center_y=11.0, center_z=0.0, radius=3.0, thickness=1.0, axis="y", pfx=f"{pfx}wheel"))
+    # 2. 骨轮放在骨柄顶上 (center_y = r_y + 2.5, radius=3.0, thickness=1.0)
+    cubes.extend(bone_wheel(center_x=0.0, center_y=r_y + 2.5, center_z=0.0, radius=3.0, thickness=1.0, axis="y", pfx=f"{pfx}wheel"))
 
     return cubes
 
@@ -193,7 +227,7 @@ def all_cubes(variant: str = "open") -> List[dict]:
         part_01_pipe_and_collars(variant)
         + part_02_sphincter_ring(variant)
         + part_03_valve_lumen(variant)
-        + part_04_top_bone_wheel(variant)
+        + part_04_stem_and_wheel(variant)
     )
 
 
@@ -270,7 +304,7 @@ def generate_bbmodel(variant: str, out_path: Path) -> Path:
 
 
 def render_views(paths: Dict[str, Path]):
-    """输出三变体（3/4 等轴视 + 正对管口直视）的综合拼图 render.png 与爆炸图并排对照卡 check.png。"""
+    """输出三变体（3/4 视 + 侧视 + 正对管口直视）的综合拼图 render.png 与爆炸图并排对照卡 check.png。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -281,26 +315,34 @@ def render_views(paths: Dict[str, Path]):
 
     for v in variants:
         p = paths[v]
-        # 3/4 等轴视 (看整体括约肌环、顶置小骨轮、筋管)
+        # 1. 3/4 等轴视 (看整体大括约肌环、暖粉管露出、顶置骨轮与骨柄)
         im_iso, _ = render(p, yaw=-35.0, pitch=30.0, size=500, bg=bg_color)
-        # 正对管口直视 (yaw=0.0, pitch=0.0，从 -Z 正视管口内孔开闭)
+        # 2. 侧视 (yaw=-90.0, pitch=0.0，侧面清楚对比外径与厚度逐级鼓 1px 的挤压形变)
+        im_side, _ = render(p, yaw=-90.0, pitch=0.0, size=500, bg=bg_color)
+        # 3. 正对管口直视 (yaw=0.0, pitch=0.0，正对 -Z 管口朝 +Z 看进去，直视孔径开度 8x6 / 4x3 / 2x2)
         im_front, _ = render(p, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
-        renders[v] = (im_iso, im_front)
+        renders[v] = (im_iso, im_side, im_front)
 
-    # 1. 拼装 render.png (2 行 3 列：上行三变体 3/4 视，下行三变体正对管口直视)
+    # 1. 拼装 render.png (3 行 3 列：行 1 为 3/4 视，行 2 为侧视看鼓起，行 3 为正对管口看开度)
     cell_w, cell_h = 500, 500
     canvas_w = cell_w * 3 + 40
-    canvas_h = cell_h * 2 + 30
+    canvas_h = cell_h * 3 + 40
     canvas = Image.new("RGB", (canvas_w, canvas_h), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
     titles = [
-        ("valve_open (3/4 Isometric View)", renders["open"][0], 10, 10),
-        ("valve_half (3/4 Isometric View)", renders["half"][0], cell_w + 20, 10),
-        ("valve_closed (3/4 Isometric View)", renders["closed"][0], cell_w * 2 + 30, 10),
-        ("valve_open (FRONT VIEW: Full 8x6 Lumen)", renders["open"][1], 10, cell_h + 20),
-        ("valve_half (FRONT VIEW: Constricted 4x2 Lumen)", renders["half"][1], cell_w + 20, cell_h + 20),
-        ("valve_closed (FRONT VIEW: 2x2 Sealed Hole)", renders["closed"][1], cell_w * 2 + 30, cell_h + 20),
+        # 行 1: 3/4 等轴视
+        ("valve_open (3/4 View: Ring 12x10, Stems & Wheel)", renders["open"][0], 10, 10),
+        ("valve_half (3/4 View: Ring 13x11, Swollen +1px)", renders["half"][0], cell_w + 20, 10),
+        ("valve_closed (3/4 View: Ring 14x12, Swollen +2px)", renders["closed"][0], cell_w * 2 + 30, 10),
+        # 行 2: 侧视 (看挤压鼓起与厚度变化)
+        ("valve_open (SIDE: Height 10, Thick 4px)", renders["open"][1], 10, cell_h + 20),
+        ("valve_half (SIDE: Height 11, Thick 5px, Swollen)", renders["half"][1], cell_w + 20, cell_h + 20),
+        ("valve_closed (SIDE: Height 12, Thick 6px, Max Swell)", renders["closed"][1], cell_w * 2 + 30, cell_h + 20),
+        # 行 3: 正对管口直视 (看孔径开度)
+        ("valve_open (FRONT VIEW: Full 8x6 Open Lumen)", renders["open"][2], 10, cell_h * 2 + 30),
+        ("valve_half (FRONT VIEW: Constricted 4x3 Lumen)", renders["half"][2], cell_w + 20, cell_h * 2 + 30),
+        ("valve_closed (FRONT VIEW: Sealed 2x2 Dark Hole)", renders["closed"][2], cell_w * 2 + 30, cell_h * 2 + 30),
     ]
 
     for title, im_v, px, py in titles:
@@ -310,7 +352,7 @@ def render_views(paths: Dict[str, Path]):
 
     render_path = REVIEW_DIR / "render.png"
     canvas.save(render_path)
-    print(f"✓ render.png (三变体 3/4视 + 正对管口 2x3 拼版) 已输出: {render_path}")
+    print(f"✓ render.png (三变体 3/4视 + 侧视鼓起 + 正对管口开度 3x3 拼版) 已输出: {render_path}")
 
     # 2. 拼装 check.png (左为 x11 爆炸参考图，右为三变体 3/4 视角并排等高对标)
     ref_image_to_use = EXPLODED_REF if EXPLODED_REF.exists() else SINGLE_REF
@@ -359,8 +401,8 @@ def self_test():
 
         defect = list(cubes) + [{
             "name": "inject_coplanar_fail",
-            "from": [-4.0, 2.0, -8.0],
-            "to":   [ 4.0, 8.0, -1.5],
+            "from": [-4.0, 2.0, -6.0],
+            "to":   [ 4.0, 8.0, -2.0],
             "material": "tendon_tube",
         }]
         caught = False
