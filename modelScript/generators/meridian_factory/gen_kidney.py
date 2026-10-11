@@ -2,40 +2,44 @@
 """经脉工厂内景器官生成器 —— o08: kidney (肾，水)
 
 依据：
-- model-review/meridian_factory.md「统一约定」、10-09 修订配色表、「第 2 批」o08 行
+- model-review/meridian_factory.md「统一约定」、10-09 修订配色表、「第 2 批」o08 行、
+  「o08 kidney 调度审第 1 次」的逐行宽度表
 - 爆炸图 exploded/x08_kidney.png，单件图 refs/o08_kidney.png
 - 接口件：底部 8×6 输出口用 common_parts.outlet_8x6。
 - bbmodel 落盘与审阅图走 organ_common.py。
 
 外包 3 宽 × 2 高 × 2 深（48×32×32 px），原点在底面中心，正面朝 +Z，输出口开在底面（-Y）。
 
-逐行宽度表：一对豆形肾，左右镜像、内凹（肾门）相对。下表是左肾，右肾取 x 的镜像。
-每行 2px 高自下而上（y 4..28，共 12 行），肾占 x ∈ [-外缘, -内缘]：
+逐行宽度表：每个肾单独按豆形做，12 行 × 2px = 24px 高（y 4..28，托架在它下面 y 0..6），
+下表是左肾，右肾 x 取镜像。「内侧」指朝另一个肾的那一侧，内侧基线固定在 |x| = 6：
 
-   行   y        外缘 |x|   内缘 |x|   半深
-    0   4..6       19         8          8
-    1   6..8       21         7         10
-    2   8..10      22         6.5       11
-    3   10..12     23         8         12
-    4   12..14     23.5      11         12.5   ← 内缘从这里开始向外退，形成肾门凹口
-    5   14..16     23.5      12         12.5   ← 肾门最深
-    6   16..18     23.5      11         12.5
-    7   18..20     23         8         12
-    8   20..22     22         6.5       11
-    9   22..24     21         7         10
-   10   24..26     19         8          8.5
-   11   26..28     16         9.5        6.5
+   行   y        外侧边界 w   内缘 |x|   行宽    半深
+    0   4..6        7          6         7        8
+    1   6..8       10          6        10       10
+    2   8..10      12          6        12       11.5
+    3   10..12     13          6        13       13
+    4   12..14     14         10        10       14     ← 肾门：内缘向外凹 4px，共 4 行（y 12..20）
+    5   14..16     14         10        10       14
+    6   16..18     14         10        10       14
+    7   18..20     14         10        10       14
+    8   20..22     13          6        13       13
+    9   22..24     12          6        12       11.5
+   10   24..26     10          6        10       10
+   11   26..28      7          6         7        8
 
-每行沿 X 切成若干段（宽约 4.5px），每段前后各自 ±1px 起伏，材质在 #8a2a2a / #b05050 间交替。
+外缘 |x| = 6 + w，所以外侧是一条 7→14→7 的弧、内侧是直线加一个 4px 深的凹口，合起来是豆形。
+每行沿 X 切成约 2px 一段，半深按 sin 曲线向两侧收（中央满、两侧约 60%），俯视也是弧。
+材质 #8a2a2a 主、#b05050 斑；肾门凹口外沿一圈 #5a1a1a。
 
-偏蓝血管 #4a78c0：从两侧肾门（|x|=12, y 13..17）各一条 4×4 阶梯管向中间下方走 3 步（每步 x 内移 3~4、y 下降 2），
-汇进中间一根 4×4 竖管（y 2..13），竖管下接底部 8×6 输出口。
-骨质托架 #d8ccb0：左右各一块底板（y 2..4，x ±[6, 23]，z ±13）+ 前后各一条护唇（y 4..6）+ 两只脚（y 0..2）。
+肾门血管 #4a78c0（3×3）：从凹口里 4 步斜向下走，汇进中间 4×4 主干（y 2..11.5），主干下接 8×6 输出口。
+骨托（#d8ccb0，2px 粗）：每个肾前后各一个 U 形（底条 + 外侧臂 + 内侧臂），
+左右两组之间前后各连一根横骨，U 下面有脚。
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import List, Tuple
 
@@ -54,43 +58,53 @@ PALETTE, MAT_UV = extend_materials({"water": ((74, 120, 192, 255), [16, 32, 32, 
 
 ROW_H = 2.0
 KIDNEY_Y0 = 4.0
-# (外缘 |x|, 内缘 |x|, 半深)，自下而上 12 行；左肾，右肾镜像
-KIDNEY_ROWS: List[Tuple[float, float, float]] = [
-    (19.0, 8.0, 8.0),
-    (21.0, 7.0, 10.0),
-    (22.0, 6.5, 11.0),
-    (23.0, 8.0, 12.0),
-    (23.5, 11.0, 12.5),
-    (23.5, 12.0, 12.5),
-    (23.5, 11.0, 12.5),
-    (23.0, 8.0, 12.0),
-    (22.0, 6.5, 11.0),
-    (21.0, 7.0, 10.0),
-    (19.0, 8.0, 8.5),
-    (16.0, 9.5, 6.5),
+INNER_BASE = 6.0  # 内侧基线 |x|
+HILUM_DEPTH = 4.0  # 肾门凹口深度
+# (外侧边界 w, 是否肾门行, 半深)，自下而上 12 行；左肾，右肾镜像
+KIDNEY_ROWS: List[Tuple[float, bool, float]] = [
+    (7.0, False, 8.0),
+    (10.0, False, 10.0),
+    (12.0, False, 11.5),
+    (13.0, False, 13.0),
+    (14.0, True, 14.0),
+    (14.0, True, 14.0),
+    (14.0, True, 14.0),
+    (14.0, True, 14.0),
+    (13.0, False, 13.0),
+    (12.0, False, 11.5),
+    (10.0, False, 10.0),
+    (7.0, False, 8.0),
 ]
-SEGMENT_TARGET_W = 4.5
-BUMP = [0, 1, 0, -1, 1, 0, -1, 0]  # 每段前 / 后表面的 Z 起伏（px）
+SEGMENT_TARGET_W = 2.0
+EDGE_THICKNESS = 0.6  # 行宽两侧边缘的半深占中央的比例
 
-# 肾门血管：每侧 3 步阶梯，(x 内端, x 外端, y 底)，4×4 截面，左侧坐标；右侧取镜像
+# 肾门周围一圈 #5a1a1a：外 7×7、孔 3×3、厚 2、凸出凹口面 0.5
+HILUM_RING_Y = (12.5, 19.5)
+HILUM_RING_HALF_Z = 3.5
+HILUM_HOLE_Y = (14.5, 17.5)
+HILUM_HOLE_HALF_Z = 1.5
+HILUM_RING_PROUD = 0.5
+
+# 肾门血管：左侧 4 步 3×3 阶梯管，(x 外端, x 内端, y 底)，右侧镜像
 VESSEL_STEPS: List[Tuple[float, float, float]] = [
-    (-12.0, -9.0, 13.0),
-    (-9.0, -6.0, 11.0),
-    (-6.0, -2.0, 9.0),
+    (-10.0, -8.0, 14.5),
+    (-8.0, -6.0, 12.5),
+    (-6.0, -4.0, 10.5),
+    (-4.0, -2.0, 8.5),
 ]
-VESSEL_SIZE = 4.0
+VESSEL_SIZE = 3.0
 TRUNK_HALF = 2.0
-TRUNK_Y = (2.0, 13.0)
+TRUNK_Y = (2.0, 11.5)
 
-# 骨托架（左侧坐标，右侧镜像）
-CRADLE_X = (-23.0, -6.0)
-CRADLE_HALF_Z = 13.0
-CRADLE_Y = (2.0, 4.0)
-LIP_Y = (4.0, 6.0)
-LIP_Z = (11.0, 13.0)
-LIP_X = (-22.0, -7.0)
-FOOT_X = (-23.0, -19.0)
-FOOT_Z = (9.0, 13.0)
+# 骨托（左侧坐标，右侧镜像）：每个肾前后各一个 U（XY 平面，厚 2px）
+U_BAR_X = (-15.0, -4.0)
+U_BAR_Y = (2.0, 4.0)
+U_ARM_Y = (4.0, 6.0)
+U_OUTER_ARM_X = (-15.0, -13.0)
+U_INNER_ARM_X = (-6.0, -4.0)
+U_Z = (6.0, 8.0)  # 前 U 的 z 范围，后 U 取负
+FOOT_Y = (0.0, 2.0)
+CROSS_X = (-4.0, 4.0)  # 左右两组 U 之间的横骨
 
 
 def _cube(name: str, lo, hi, group: str, material: str) -> dict:
@@ -106,35 +120,58 @@ def _mirror_x(cubes: List[dict]) -> List[dict]:
     return out
 
 
+def _row_edges(row: int) -> Tuple[float, float]:
+    """第 row 行的 (内缘 |x|, 外缘 |x|)。"""
+    width, hilum, _ = KIDNEY_ROWS[row]
+    return (INNER_BASE + HILUM_DEPTH if hilum else INNER_BASE), INNER_BASE + width
+
+
 def _bean(side: int) -> List[dict]:
-    """一只肾（side=0 左，1 右），逐行逐段。右肾直接按镜像坐标建，起伏哈希里带 side，左右不完全一样。"""
+    """一只肾（side=0 左，1 右），逐行逐段；右肾按镜像坐标直接建，斑块哈希带 side，左右不完全一样。"""
     cubes: List[dict] = []
-    for r, (outer, inner, half_d) in enumerate(KIDNEY_ROWS):
+    for r, (_, _, half_d) in enumerate(KIDNEY_ROWS):
+        inner, outer = _row_edges(r)
         y0 = KIDNEY_Y0 + r * ROW_H
-        n = max(1, round((outer - inner) / SEGMENT_TARGET_W))
+        n = max(2, round((outer - inner) / SEGMENT_TARGET_W))
         step = (outer - inner) / n
         for k in range(n):
             a, b = inner + step * k, inner + step * (k + 1)
+            u = (k + 0.5) / n  # 0 内缘 → 1 外缘
+            hd = half_d * (EDGE_THICKNESS + (1 - EDGE_THICKNESS) * math.sin(math.pi * u))
             x0, x1 = (-b, -a) if side == 0 else (a, b)
-            zf = half_d + BUMP[(r * 3 + k * 5 + side * 2) % len(BUMP)]
-            zb = half_d + BUMP[(r * 3 + k * 5 + side * 2 + 3) % len(BUMP)]
-            material = "flesh_lit" if (r * 7 + k * 3 + side) % 4 == 0 else "flesh_main"
-            cubes.append(_cube(f"kidney_{'lr'[side]}_r{r}_s{k}", (x0, y0, -zb), (x1, y0 + ROW_H, zf), f"kidney_{'lr'[side]}", material))
+            material = "flesh_lit" if (r * 7 + k * 3 + side * 2) % 5 == 0 else "flesh_main"
+            cubes.append(_cube(f"kidney_{'lr'[side]}_r{r}_s{k}", (x0, y0, -hd), (x1, y0 + ROW_H, hd), f"kidney_{'lr'[side]}", material))
     return cubes
 
 
+def _hilum_ring() -> List[dict]:
+    """左肾肾门凹口面（x = -(INNER_BASE+HILUM_DEPTH)）上凸出的一圈 #5a1a1a，中间 3×3 孔让血管进去。"""
+    face = -(INNER_BASE + HILUM_DEPTH)
+    x0, x1 = face, face + HILUM_RING_PROUD
+    (y0, y3), (y1, y2) = HILUM_RING_Y, HILUM_HOLE_Y
+    hz, hh = HILUM_RING_HALF_Z, HILUM_HOLE_HALF_Z
+    g, m = "kidney_l", "flesh_dark"
+    return [
+        _cube("hilum_ring_top", (x0, y2, -hz), (x1, y3, hz), g, m),
+        _cube("hilum_ring_bot", (x0, y0, -hz), (x1, y1, hz), g, m),
+        _cube("hilum_ring_f", (x0, y1, hh), (x1, y2, hz), g, m),
+        _cube("hilum_ring_b", (x0, y1, -hz), (x1, y2, -hh), g, m),
+    ]
+
+
 def part_01_kidney_left() -> List[dict]:
-    return _bean(0)
+    return _bean(0) + _hilum_ring()
 
 
 def part_02_kidney_right() -> List[dict]:
-    return _bean(1)
+    return _bean(1) + _mirror_x(_hilum_ring())
 
 
 def part_03_vessels() -> List[dict]:
-    """肾门血管：两侧各 3 步 4×4 阶梯管 + 中间一根 4×4 竖管。"""
+    """肾门血管：两侧各 4 步 3×3 阶梯管，从凹口里斜向下汇进中间 4×4 主干。"""
+    h = VESSEL_SIZE / 2
     left = [
-        _cube(f"vessel_step{i}", (xa, yb, -VESSEL_SIZE / 2), (xb, yb + VESSEL_SIZE, VESSEL_SIZE / 2), "vessels", "water")
+        _cube(f"vessel_step{i}", (xa, yb, -h), (xb, yb + VESSEL_SIZE, h), "vessels", "water")
         for i, (xa, xb, yb) in enumerate(VESSEL_STEPS)
     ]
     trunk = _cube("vessel_trunk", (-TRUNK_HALF, TRUNK_Y[0], -TRUNK_HALF), (TRUNK_HALF, TRUNK_Y[1], TRUNK_HALF), "vessels", "water")
@@ -142,16 +179,22 @@ def part_03_vessels() -> List[dict]:
 
 
 def part_04_cradle() -> List[dict]:
-    """骨托架：左右各一块底板 + 前后护唇 + 两只脚。"""
+    """骨托：每个肾前后各一个 U（底条 + 两条短臂 + 脚），左右之间前后各连一根横骨。"""
     g, m = "cradle", "bone_main"
-    left = [
-        _cube("cradle_slab", (CRADLE_X[0], CRADLE_Y[0], -CRADLE_HALF_Z), (CRADLE_X[1], CRADLE_Y[1], CRADLE_HALF_Z), g, m),
-        _cube("cradle_lip_f", (LIP_X[0], LIP_Y[0], LIP_Z[0]), (LIP_X[1], LIP_Y[1], LIP_Z[1]), g, m),
-        _cube("cradle_lip_b", (LIP_X[0], LIP_Y[0], -LIP_Z[1]), (LIP_X[1], LIP_Y[1], -LIP_Z[0]), g, m),
-        _cube("cradle_foot_f", (FOOT_X[0], 0.0, FOOT_Z[0]), (FOOT_X[1], CRADLE_Y[0], FOOT_Z[1]), g, "bone_dark"),
-        _cube("cradle_foot_b", (FOOT_X[0], 0.0, -FOOT_Z[1]), (FOOT_X[1], CRADLE_Y[0], -FOOT_Z[0]), g, "bone_dark"),
+    left: List[dict] = []
+    for tag, (z0, z1) in (("f", U_Z), ("b", (-U_Z[1], -U_Z[0]))):
+        left += [
+            _cube(f"u_{tag}_bar", (U_BAR_X[0], U_BAR_Y[0], z0), (U_BAR_X[1], U_BAR_Y[1], z1), g, m),
+            _cube(f"u_{tag}_arm_out", (U_OUTER_ARM_X[0], U_ARM_Y[0], z0), (U_OUTER_ARM_X[1], U_ARM_Y[1], z1), g, m),
+            _cube(f"u_{tag}_arm_in", (U_INNER_ARM_X[0], U_ARM_Y[0], z0), (U_INNER_ARM_X[1], U_ARM_Y[1], z1), g, m),
+            _cube(f"u_{tag}_foot_out", (U_OUTER_ARM_X[0], FOOT_Y[0], z0), (U_OUTER_ARM_X[1], FOOT_Y[1], z1), g, "bone_dark"),
+            _cube(f"u_{tag}_foot_in", (U_INNER_ARM_X[0], FOOT_Y[0], z0), (U_INNER_ARM_X[1], FOOT_Y[1], z1), g, "bone_dark"),
+        ]
+    cross = [
+        _cube("cross_f", (CROSS_X[0], U_BAR_Y[0], U_Z[0]), (CROSS_X[1], U_BAR_Y[1], U_Z[1]), g, m),
+        _cube("cross_b", (CROSS_X[0], U_BAR_Y[0], -U_Z[1]), (CROSS_X[1], U_BAR_Y[1], -U_Z[0]), g, m),
     ]
-    return left + _mirror_x(left)
+    return left + _mirror_x(left) + cross
 
 
 def part_05_outlet() -> List[dict]:
@@ -176,7 +219,7 @@ def all_cubes() -> List[dict]:
 
 
 def self_test() -> None:
-    """共面门禁 + 外包尺寸门禁，各自先注入缺陷确认拦得住；再核对内凹相对、左右对称。"""
+    """共面门禁 + 外包尺寸门禁，各自先注入缺陷确认拦得住；再核对豆形（外弧 + 4 行 4px 肾门）。"""
     cubes = all_cubes()
     _assert_no_coplanar_faces(cubes)
     print(f"  [OK] {len(cubes)} 个立方体 0 项共面冲突")
@@ -196,10 +239,11 @@ def self_test() -> None:
     assert hi_bad[1] > 32, "外包门禁失效：注入的超高立方体没把包围盒顶出 32"
     print("  [OK] 外包门禁能识别超高缺陷")
 
-    inners = [row[1] for row in KIDNEY_ROWS]
-    deepest = inners.index(max(inners))
-    assert 0 < deepest < len(inners) - 1 and max(inners) > inners[0] + 2, "肾门凹口应当落在中间几行，且明显比两端深"
-    print("  [OK] 肾门凹口在中部、内凹相对")
+    outers = [w for w, _, _ in KIDNEY_ROWS]
+    assert outers == [7, 10, 12, 13, 14, 14, 14, 14, 13, 12, 10, 7], "外侧边界应是 7,10,12,13,14,14,14,14,13,12,10,7"
+    hilum_rows = [i for i, (_, h, _) in enumerate(KIDNEY_ROWS) if h]
+    assert hilum_rows == [4, 5, 6, 7] and all(_row_edges(i)[0] - INNER_BASE == HILUM_DEPTH for i in hilum_rows), "肾门应是中段 4 行、各凹 4px"
+    print("  [OK] 豆形：外侧弧线表 + 中段 4 行凹 4px 的肾门")
 
 
 def main() -> None:
