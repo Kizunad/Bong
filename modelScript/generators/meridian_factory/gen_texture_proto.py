@@ -6,7 +6,7 @@
 中 = 现在的平色版，右 = 贴图版；中、右同一 3/4 取景。
 
 几何只做小改（贴图版）：去掉 32 个斜交筋丝立方体（改画进贴图）；肉箍加 0.8px 鼓边；
-管子两端加暖粉封面薄板；骨环端口加一级台阶倒角。
+管子两端加暖粉管口框（中间 8×6 开口保持）；骨环端口加一级台阶倒角。
 """
 
 from __future__ import annotations
@@ -47,22 +47,31 @@ def collar_bulges() -> list:
         z0, z1 = cz - BULGE_HALF, cz + BULGE_HALF
         for side, (x0, x1) in (("l", (-5.0 - BULGE_OUT, -5.0)), ("r", (5.0, 5.0 + BULGE_OUT))):
             cubes.append(_cube(f"bulge_{tag}_side_{side}", (x0, 2.0, z0), (x1, 8.0, z1), "flesh_main", "flesh_collars"))
-        for side, (x0, x1) in (("l", (-5.0, -2.0)), ("r", (2.0, 5.0))):
+        for side, (x0, x1) in (("l", (-5.0, -2.5)), ("r", (2.5, 5.0))):
             cubes.append(_cube(f"bulge_{tag}_top_{side}", (x0, 9.0, z0), (x1, 9.0 + BULGE_OUT, z1), "flesh_main", "flesh_collars"))
             cubes.append(_cube(f"bulge_{tag}_bot_{side}", (x0, 1.0 - BULGE_OUT, z0), (x1, 1.0, z1), "flesh_main", "flesh_collars"))
     return cubes
 
 
 def end_caps() -> list:
-    """管子两端封面：暖粉薄板，缩进管口 0.1px，8×6 开口位置不变（板在管腔里，管口截面不动）。"""
-    return [
-        _cube("end_cap_rear", (-3.2, 2.8, -7.9), (3.2, 7.2, -7.4), "tendon_tube", "meridian_tube"),
-        _cube("end_cap_front", (-3.2, 2.8, 7.4), (3.2, 7.2, 7.9), "tendon_tube", "meridian_tube"),
-    ]
+    """管口封边：每端一圈 0.5px 的暖粉框（外 9×7、内 8×6），中间 8×6 开口保持，
+    和 common_parts.outlet_8x6 的 8×6 截面对齐，不封死管腔。框紧贴肉箍外端面（z=±7.5）到管口（z=±8）。"""
+    cubes = []
+    for tag, z0, z1 in (("rear", -8.0, -7.5), ("front", 7.5, 8.0)):
+        bars = (
+            ("top", (-4.5, 8.0, z0), (4.5, 8.5, z1)),
+            ("bot", (-4.5, 1.5, z0), (4.5, 2.0, z1)),
+            ("l", (-4.5, 2.0, z0), (-4.0, 8.0, z1)),
+            ("r", (4.0, 2.0, z0), (4.5, 8.0, z1)),
+        )
+        for edge, lo, hi in bars:
+            cubes.append(_cube(f"end_lip_{tag}_{edge}", lo, hi, "tendon_tube", "meridian_tube"))
+    return cubes
 
 
 def port_chamfers() -> list:
-    """骨环端口倒角：环外加一级 5×5 / 内 3×3、厚 0.25px 的台阶底座（顶、底面各一圈）。"""
+    """骨环端口倒角：环外加一级 5×5 / 内 3×3、厚 0.25px 的台阶底座（顶、底面各一圈），
+    材质用 bone_lit（更亮的骨色）做出一圈亮边。"""
     cubes = []
     for cz in COLLAR_CENTERS:
         tag = "rear" if cz < 0 else "front"
@@ -74,7 +83,7 @@ def port_chamfers() -> list:
                 ("e", (1.5, cz - 1.5), (2.5, cz + 1.5)),
             )
             for edge, (xa, za), (xb, zb) in frame:
-                cubes.append(_cube(f"chamfer_{tag}_{face}_{edge}", (xa, y0, za), (xb, y1, zb), "bone_main", "ports"))
+                cubes.append(_cube(f"chamfer_{tag}_{face}_{edge}", (xa, y0, za), (xb, y1, zb), "bone_lit", "ports"))
     return cubes
 
 
