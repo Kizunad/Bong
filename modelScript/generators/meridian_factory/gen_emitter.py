@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """经脉工厂内景方块生成器 —— b13: emitter (经脉发射器 / 喷嘴)
 
-风格：A 有机型 (活体血肉、半高镂空红肉骨架底座、细高三级收窄喷嘴、节间外凸肉褶环、外翻口沿、口中真元光芯、四索对角斜拉筋索)
+风格：A 有机型 (活体血肉、半高镂空红肉骨架底座、细高三级收窄宝塔喷嘴、深色肉褶收拢环、外翻口沿、口中真元光芯、四索 1x1 阶梯斜拉筋络)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md「第 2 批」表格 b13 那行
 - 爆炸参考图：model-review/img/meridian_factory/exploded/x13_emitter.png
-- 调度审第 1 次指示（2026-10-11 15:2x）：
-  1. 底座：b04 那种半高框 (y 0–5)，四面镂空只留红肉棱条和 8 个骨节角 (能透过空框看到里面)，框内底面中心 common_parts.outlet_8x6 朝下当入口；
-  2. 喷嘴 (y 5–16，细高)：截面逐级收窄 8×8 (y 5–9) → 6×6 (y 9–13) → 4×4 (y 13–15)，顶上一圈外翻口沿 6×6 × 1px 高 (y 15–16)，口内 2×2 #f6dcc4 真元内光；
-     每级之间加一圈 1px 外凸的 #5a1a1a 肉褶环；
-  3. 4 条 #c07868 筋丝从口沿斜着垂到底座四角的骨节上 (不是贴在喷嘴面上的竖条)；
-  4. 只改 b13，重出图，写自查，保持 b13-waiting 停下。
+- 调度审第 2 次指标（2026-10-11 16:0x）：
+  1. 底座镂空框保留：b04 那种半高框 (y 0–5)，四面完全镂空，只留红肉棱条和 4 根角骨节柱 (能看到里面)，框内底面中心 common_parts.outlet_8x6 朝下当入口；
+  2. 喷嘴细高重做 (x/z 居中，以 0–16 计)：
+     - 芯柱 4×4 (x 6–10 对应 [-2, 2]) 从 y5 一直到 y14，贯穿全部裙层；
+     - 裙 1：y5–7 为 10×10 (x 3–13 对应 [-5, 5])，y7–8 收到 8×8 (对应 [-4, 4])；
+     - 裙 2：y8–10 为 8×8 (对应 [-4, 4])，y10–11 收到 6×6 (对应 [-3, 3])；
+     - 裙 3：y11–13 为 6×6 (对应 [-3, 3])，y13–14 收到 4×4 (对应 [-2, 2])；
+     - 每层裙之间露出 1 格芯柱，芯柱用 #5a1a1a 做肉褶色；
+     - 顶口 y14–16 是 6×6 外翻环 (中间 4×4 镂空，不要封板)，环口颜色用 #f6dcc4 当亮芯；
+  3. 四根筋络：从顶口下沿四角出发，用 1×1 方块斜着阶梯往下落到底座四个骨角，不要竖直立柱；
+  4. 几何以外不动，输出 render.png 与 check.png。
 """
 
 from __future__ import annotations
@@ -55,7 +60,7 @@ from modelScript.generators.meridian_factory.common_parts import (
 
 def part_01_base_frame() -> List[dict]:
     """底座半高镂空框 (y 0–5)：
-    - 四面完全镂空，能看穿底座内部；
+    - 四面完全镂空，能看穿底座内部空腔；
     - 4 根角骨节柱 (截面 2x2，底在 y=0、顶在 y=5，复用 common_parts.bone_post，中段带 #b8a888 节纹暗面)；
     - 底面 4 条水平红肉棱 (y in [0.0, 1.5]) 与顶面 4 条水平红肉棱 (y in [3.5, 5.0])；
     - 肉棱外表面附微浮 #5a1a1a 暗纹；
@@ -97,50 +102,58 @@ def part_01_base_frame() -> List[dict]:
     return cubes
 
 
-def part_02_nozzle_tiers() -> List[dict]:
-    """细高肉质喷嘴 3 级 (y 5–16，细高挺拔)：
-    - 级 1: 截面 8x8 (x/z in [-4, 4]), y in [5.0, 9.0]；
-    - 级 1-2 肉褶环: 截面 10x10, y in [8.5, 9.5], 外凸 1px #5a1a1a；
-    - 级 2: 截面 6x6 (x/z in [-3, 3]), y in [9.0, 13.0]；
-    - 级 2-3 肉褶环: 截面 8x8, y in [12.5, 13.5], 外凸 1px #5a1a1a；
-    - 级 3: 截面 4x4 (x/z in [-2, 2]), y in [13.0, 15.0]；
-    - 顶上一圈外翻口沿 6x6 x 1px 高 (y in [15.0, 16.0])，中心 2x2 #f6dcc4 真元内光。
+def part_02_slender_nozzle_tiers() -> List[dict]:
+    """细高肉质喷嘴 3 级 (y 5–16，细高宝塔收窄造型)：
+    - 芯柱 4×4 从 y5 到 y14 贯穿全部裙层；
+    - 裙 1：y5–7 为 10×10 (x in [-5, 5])，y7–8 收到 8×8 (x in [-4, 4])；
+    - 裙 2：y8–10 为 8×8 (x in [-4, 4])，y10–11 收到 6×6 (x in [-3, 3])；
+    - 裙 3：y11–13 为 6×6 (x in [-3, 3])，y13–14 收到 4×4 (x in [-2, 2])；
+    - 每层裙之间露出 1 格芯柱，芯柱用 #5a1a1a 做肉褶色；
+    - 顶口 y14–16 是 6×6 外翻环 (中间 4×4 镂空，不要封板)，环口颜色用 #f6dcc4 当亮芯。
     """
     cubes = []
 
-    # 1. 级 1 (截面 8x8, y in [5.0, 9.0])
-    cubes.append({"name": "nozzle_tier1", "from": [-4.0, 5.0, -4.0], "to": [4.0, 9.0, 4.0], "group": "nozzle", "material": "flesh_main"})
+    # 1. 裙 1 主体: y in [5.0, 7.0], 截面 10x10 (x/z in [-5.0, 5.0]), #8a2a2a (flesh_main)
+    cubes.append({"name": "skirt1_main", "from": [-5.0, 5.0, -5.0], "to": [5.0, 7.0, 5.0], "group": "nozzle_skirt1", "material": "flesh_main"})
 
-    # 2. 级 1-2 之间外凸 1px #5a1a1a 肉褶环 (截面 10x10, y in [8.5, 9.5])
-    cubes.append({"name": "fold_ring_1_2", "from": [-5.0, 8.5, -5.0], "to": [5.0, 9.5, 5.0], "group": "nozzle", "material": "flesh_dark"})
+    # 2. 裙 1 收束 / 露出芯柱肉褶: y in [7.0, 8.0], 截面 8x8 (x/z in [-4.0, 4.0]), #5a1a1a (flesh_dark)
+    cubes.append({"name": "skirt1_fold", "from": [-4.0, 7.0, -4.0], "to": [4.0, 8.0, 4.0], "group": "nozzle_skirt1", "material": "flesh_dark"})
 
-    # 3. 级 2 (截面 6x6, y in [9.0, 13.0])
-    cubes.append({"name": "nozzle_tier2", "from": [-3.0, 9.0, -3.0], "to": [3.0, 13.0, 3.0], "group": "nozzle", "material": "flesh_main"})
+    # 3. 裙 2 主体: y in [8.0, 10.0], 截面 8x8 (x/z in [-4.0, 4.0]), #8a2a2a (flesh_main)
+    cubes.append({"name": "skirt2_main", "from": [-4.0, 8.0, -4.0], "to": [4.0, 10.0, 4.0], "group": "nozzle_skirt2", "material": "flesh_main"})
 
-    # 4. 级 2-3 之间外凸 1px #5a1a1a 肉褶环 (截面 8x8, y in [12.5, 13.5])
-    cubes.append({"name": "fold_ring_2_3", "from": [-4.0, 12.5, -4.0], "to": [4.0, 13.5, 4.0], "group": "nozzle", "material": "flesh_dark"})
+    # 4. 裙 2 收束 / 露出芯柱肉褶: y in [10.0, 11.0], 截面 6x6 (x/z in [-3.0, 3.0]), #5a1a1a (flesh_dark)
+    cubes.append({"name": "skirt2_fold", "from": [-3.0, 10.0, -3.0], "to": [3.0, 11.0, 3.0], "group": "nozzle_skirt2", "material": "flesh_dark"})
 
-    # 5. 级 3 (截面 4x4, y in [13.0, 15.0])
-    cubes.append({"name": "nozzle_tier3", "from": [-2.0, 13.0, -2.0], "to": [2.0, 15.0, 2.0], "group": "nozzle", "material": "flesh_main"})
+    # 5. 裙 3 主体: y in [11.0, 13.0], 截面 6x6 (x/z in [-3.0, 3.0]), #8a2a2a (flesh_main)
+    cubes.append({"name": "skirt3_main", "from": [-3.0, 11.0, -3.0], "to": [3.0, 13.0, 3.0], "group": "nozzle_skirt3", "material": "flesh_main"})
 
-    # 6. 顶上一圈外翻口沿 6x6 x 1px 高 (y in [15.0, 16.0])
-    # 四周外翻肉唇 (#b05050 flesh_lit)
-    cubes.append({"name": "lip_n", "from": [-3.0, 15.0, -3.0], "to": [ 3.0, 16.0, -1.0], "group": "nozzle_lip", "material": "flesh_lit"})
-    cubes.append({"name": "lip_s", "from": [-3.0, 15.0,  1.0], "to": [ 3.0, 16.0,  3.0], "group": "nozzle_lip", "material": "flesh_lit"})
-    cubes.append({"name": "lip_w", "from": [-3.0, 15.0, -1.0], "to": [-1.0, 16.0,  1.0], "group": "nozzle_lip", "material": "flesh_lit"})
-    cubes.append({"name": "lip_e", "from": [ 1.0, 15.0, -1.0], "to": [ 3.0, 16.0,  1.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    # 6. 裙 3 收到 4x4 / 露出 1 格 4x4 芯柱: y in [13.0, 14.0], 截面 4x4 (x/z in [-2.0, 2.0]), #5a1a1a (flesh_dark)
+    cubes.append({"name": "core_exposed", "from": [-2.0, 13.0, -2.0], "to": [2.0, 14.0, 2.0], "group": "nozzle_core", "material": "flesh_dark"})
 
-    # 7. 口内 2x2 真元内光 (#f6dcc4 qi_glow, y in [14.0, 15.8])
-    cubes.append({"name": "orifice_qi_core", "from": [-1.0, 14.0, -1.0], "to": [1.0, 15.8, 1.0], "group": "nozzle_lip", "material": "qi_glow"})
+    # 7. 顶口 y14–16 是 6x6 外翻环 (中间 4x4 镂空，不要封板)
+    # 外翻环四边唇壁 (外 6x6: x/z in [-3, 3], 内 4x4 镂空: x/z in [-2, 2], 高 y in [14.0, 16.0])
+    # 北壁唇
+    cubes.append({"name": "lip_n", "from": [-3.0, 14.0, -3.0], "to": [ 3.0, 16.0, -2.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    # 南壁唇
+    cubes.append({"name": "lip_s", "from": [-3.0, 14.0,  2.0], "to": [ 3.0, 16.0,  3.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    # 西壁唇
+    cubes.append({"name": "lip_w", "from": [-3.0, 14.0, -2.0], "to": [-2.0, 16.0,  2.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    # 东壁唇
+    cubes.append({"name": "lip_e", "from": [ 2.0, 14.0, -2.0], "to": [ 3.0, 16.0,  2.0], "group": "nozzle_lip", "material": "flesh_lit"})
+
+    # 8. 环口中心深处 2x2 真元亮芯 (#f6dcc4 qi_glow, y in [13.2, 14.5], x/z in [-1.0, 1.0])
+    cubes.append({"name": "orifice_glow_core", "from": [-1.0, 13.2, -1.0], "to": [1.0, 14.5, 1.0], "group": "nozzle_lip", "material": "qi_glow"})
 
     return cubes
 
 
-def part_03_diagonal_guy_wires() -> List[dict]:
-    """4 条 #c07868 筋丝从口沿斜着垂到底座四角骨节上：
-    - NW, NE, SW, SE 四个对角空间完全悬空的斜拉索；
-    - 从口沿外角 (y=15.5) 阶梯斜拉延伸到底座角骨节 (y=5.0)；
-    - 绝非贴在喷嘴面上的竖条，在 3/4 与侧视呈现强烈的有机斜拉索张力感。
+def part_03_stepped_guy_wires() -> List[dict]:
+    """四根筋络：从顶口下沿四角出发，用 1×1 方块斜着阶梯往下落到底座四个骨角，不要竖直立柱。
+    - 四个角 (NW, NE, SW, SE) 各一条；
+    - 5 级阶梯步进，每步截面 1x1，高 1.8px；
+    - 从顶口下沿四角 (y=14.0, x/z=±3.0) 沿对角线阶梯下落到底座角骨柱 (y=5.0, x/z=±6.6)；
+    - 形成生动强烈的四角阶梯斜拉索，彻底避免竖直立柱感。
     """
     cubes = []
 
@@ -151,26 +164,28 @@ def part_03_diagonal_guy_wires() -> List[dict]:
         ("se",  1.0,  1.0),
     ]
 
+    # 5 级 1x1 阶梯台阶 (y0, y1, 内外径 d0, d1: 每步截面正好 1x1)
+    steps = [
+        (12.2, 14.0, 2.5, 3.5),
+        (10.4, 12.2, 3.4, 4.4),
+        ( 8.6, 10.4, 4.3, 5.3),
+        ( 6.8,  8.6, 5.2, 6.2),
+        ( 5.0,  6.8, 6.1, 7.1),
+    ]
+
     for sname, sx, sz in strands:
-        # 段 1 (近口沿): y in [12.8, 15.2], x/z 偏移 ~2.6
-        x1_0, x1_1 = (min(sx * 2.2, sx * 3.1), max(sx * 2.2, sx * 3.1))
-        z1_0, z1_1 = (min(sz * 2.2, sz * 3.1), max(sz * 2.2, sz * 3.1))
-        cubes.append({"name": f"guy_{sname}_seg1", "from": [x1_0, 12.8, z1_0], "to": [x1_1, 15.2, z1_1], "group": "guy_wires", "material": "tendon_fiber"})
-
-        # 段 2 (中上部): y in [10.2, 12.8], x/z 偏移 ~3.7
-        x2_0, x2_1 = (min(sx * 3.15, sx * 4.2), max(sx * 3.15, sx * 4.2))
-        z2_0, z2_1 = (min(sz * 3.15, sz * 4.2), max(sz * 3.15, sz * 4.2))
-        cubes.append({"name": f"guy_{sname}_seg2", "from": [x2_0, 10.2, z2_0], "to": [x2_1, 12.8, z2_1], "group": "guy_wires", "material": "tendon_fiber"})
-
-        # 段 3 (中下部): y in [7.4, 10.2], x/z 偏移 ~4.8
-        x3_0, x3_1 = (min(sx * 4.25, sx * 5.4), max(sx * 4.25, sx * 5.4))
-        z3_0, z3_1 = (min(sz * 4.25, sz * 5.4), max(sz * 4.25, sz * 5.4))
-        cubes.append({"name": f"guy_{sname}_seg3", "from": [x3_0, 7.4, z3_0], "to": [x3_1, 10.2, z3_1], "group": "guy_wires", "material": "tendon_fiber"})
-
-        # 段 4 (下部锚入底座骨柱): y in [4.8, 7.4], x/z 偏移 ~6.0
-        x4_0, x4_1 = (min(sx * 5.45, sx * 6.6), max(sx * 5.45, sx * 6.6))
-        z4_0, z4_1 = (min(sz * 5.45, sz * 6.6), max(sz * 5.45, sz * 6.6))
-        cubes.append({"name": f"guy_{sname}_seg4", "from": [x4_0, 4.8, z4_0], "to": [x4_1, 7.4, z4_1], "group": "guy_wires", "material": "tendon_fiber"})
+        for idx, (y0, y1, d0, d1) in enumerate(steps, start=1):
+            x_min = min(sx * d0, sx * d1)
+            x_max = max(sx * d0, sx * d1)
+            z_min = min(sz * d0, sz * d1)
+            z_max = max(sz * d0, sz * d1)
+            cubes.append({
+                "name": f"guy_{sname}_step{idx}",
+                "from": [x_min, y0, z_min],
+                "to":   [x_max, y1, z_max],
+                "group": "guy_wires",
+                "material": "tendon_fiber",
+            })
 
     return cubes
 
@@ -179,8 +194,8 @@ def all_cubes() -> List[dict]:
     """汇总所有部件立方体。"""
     return (
         part_01_base_frame()
-        + part_02_nozzle_tiers()
-        + part_03_diagonal_guy_wires()
+        + part_02_slender_nozzle_tiers()
+        + part_03_stepped_guy_wires()
     )
 
 
@@ -277,10 +292,10 @@ def render_views(model_p: Path):
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("3/4 ISOMETRIC (Open Base y:0-5, Slender Nozzle y:5-16, Guys)", im_iso, 10, 10),
-        ("SIDE VIEW (Hollow Open Base Frame & Slender Nozzle Tiers)", im_side, cell_w + 20, 10),
-        ("TOP VIEW (Flaring Lip 6x6, Orifice Qi-Glow 2x2 & 4 Guys)", im_top, 10, cell_h + 20),
-        ("FRONT VIEW (Diagonal Guy-Wires Anchored to Base Corners)", im_front, cell_w + 20, cell_h + 20),
+        ("3/4 ISOMETRIC (Slender Nozzle y:5-16, 1x1 Stepped Guy-Wires)", im_iso, 10, 10),
+        ("SIDE VIEW (Open Base y:0-5, Nozzle Tiers 10->8->6->4->6)", im_side, cell_w + 20, 10),
+        ("TOP VIEW (Flaring Lip 6x6, Hollow 4x4 & Qi-Glow Core)", im_top, 10, cell_h + 20),
+        ("FRONT VIEW (Diagonal 1x1 Stepped Guy-Wires to Base Corners)", im_front, cell_w + 20, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
@@ -318,7 +333,7 @@ def render_views(model_p: Path):
         check_cv.paste(c_iso, (rx, 34 + 10))
         check_cv.paste(c_side, (rx + thumb_size + 8, 34 + 10))
 
-        c_draw.text((rx + 4, 10), "NOW RENDER (LEFT: 3/4 Isometric View, RIGHT: SIDE View | Slender Nozzle y:5-16)", fill=(180, 220, 210))
+        c_draw.text((rx + 4, 10), "NOW RENDER (LEFT: 3/4 Isometric View, RIGHT: SIDE View | Slender Nozzle y:5-16, Stepped Guys)", fill=(180, 220, 210))
 
         check_path = REVIEW_DIR / "check.png"
         check_cv.save(check_path)
@@ -334,8 +349,8 @@ def self_test():
 
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [-4.0, 5.0, -4.0],
-        "to":   [ 4.0, 9.0,  4.0],
+        "from": [-5.0, 5.0, -5.0],
+        "to":   [ 5.0, 7.0,  5.0],
         "material": "flesh_main",
     }]
     caught = False
