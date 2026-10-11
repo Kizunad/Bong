@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""经脉工厂内景方块生成器 —— b10: junction (经脉三通 / 四通) [第 2 批通用接口重构版]
+"""经脉工厂内景方块生成器 —— b10: junction (经脉三通 / 四通) [第 2 批通用接口重构版 - 第 2 次修改]
 
 风格：A 有机型 (活体血肉、暖粉半透明筋管、两端肉箍小骨环、中心肉质枢纽、交叉筋丝)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md
 - 爆炸参考图：model-review/img/meridian_factory/exploded/x10_junction.png
-- 调度审第 1 次指示（2026-10-11 07:5x）：
-  * 枢纽缩到 x/z 5–11 ([-3.0, 3.0])、y 2–8（高 6px，顶面圆角 1px，两条交叉 #c07868 筋丝）；
-  * 每条臂用 common_parts.sinew_tube 从枢纽边伸到方块边（5px 长，暖粉露出来）；
-  * 肉箍只放在方块边那 2px（flesh_collar 宽度参数用 2，在 z in [-7.5, -5.5] 等）；
-  * 骨环端口在肉箍顶面 (face='up')；
-  * T 形只有 -Z、+X、-X 三条臂，+Z 一侧枢纽面是封闭的肉面（加一块 #5a1a1a 4×4 凹 1px 当盲端）；
-  * 十字形有 -Z、+Z、+X、-X 四条臂全通；
-  * render 包含 3/4 视与俯视（T / 十字一眼能分）；
+- 调度审第 2 次修改要求（2026-10-11 11:0x）：
+  * 枢纽：x 6–10、z 6–10、y 1–9（4×4 截面、比管高 1px），#8a2a2a，顶面一个 #c07868 十字；
+  * 每条臂：改用 6×4 细管（x 或 z 居中 5–11、y 3–7），从枢纽边伸到 z=1 (或 x=1 / 15)；
+    臂之间必须留出空隙，俯视能看到四个角是空的；
+  * 方块边 0–2 的 2px：flesh_collar 宽 2，截面放大到 8×6 的统一接口；骨环端口贴在肉箍顶面；
+  * T 形去掉 +Z 臂，枢纽 +Z 面加 #5a1a1a 2×2 盲端凹点；
+  * 十字形四向全通；
+  * render 加俯视（T / 十字一眼能分）；
   * check 左爆炸图右渲染。
 """
 
@@ -47,7 +47,6 @@ from modelScript.generators.meridian_factory.common_parts import (
     RES,
     _assert_no_coplanar_faces,
     build_texture,
-    sinew_tube,
     flesh_collar,
     bone_ring_port,
 )
@@ -59,90 +58,159 @@ from modelScript.generators.meridian_factory.common_parts import (
 
 def part_01_central_hub(is_cross: bool = False) -> List[dict]:
     """中心肉质枢纽：
-    x/z 5–11 (模型坐标 X/Z in [-3.0, 3.0])、y 2–8 (Y in [2.0, 8.0]，高 6px)，材质 #8a2a2a (flesh_main)；
-    四个竖角切 1px 倒角；
-    枢纽顶面 (y=8.0) 设 2 条 #c07868 (tendon_fiber) 交叉筋丝 (浮起 0.5px: y in [8.0, 8.5])，中心交汇 #e8bca8 亮斑；
-    枢纽内部贯穿 #f6dcc4 真元内光核心；
-    若为 junction_t (T形)，南面 (+Z) 为封闭肉质后壁，外侧附 4x4 凹 1px 的 #5a1a1a 盲端腔。
+    x 6–10、z 6–10、y 1–9 (模型坐标 X/Z in [-2.0, 2.0], Y in [1.0, 9.0]，4x4 截面、高 8px)，
+    材质 #8a2a2a (flesh_main)；
+    顶面 (y=9.0) 一个 #c07868 (tendon_fiber) 十字 (浮起 0.4px: Y in [9.0, 9.4])，中心交汇亮结；
+    内部 #f6dcc4 真元内光；
+    T 形在 +Z 面加 #5a1a1a 2x2 盲端凹点。
     """
     cubes = []
     pfx = "x_" if is_cross else "t_"
 
-    # 1. 枢纽顶板与底板 (覆盖中心 X/Z in [-3.0, 3.0])
+    # 1. 枢纽主体 (4x4 截面，高 8px: Y in [1.0, 9.0])
     cubes.append({
-        "name": f"{pfx}hub_top",
-        "from": [-3.0, 7.55, -3.0],
-        "to":   [ 3.0, 8.0,   3.0],
-        "group": "central_hub",
-        "material": "flesh_main",
-    })
-    cubes.append({
-        "name": f"{pfx}hub_bot",
-        "from": [-3.0, 2.0,  -3.0],
-        "to":   [ 3.0, 2.45,  3.0],
+        "name": f"{pfx}hub_core",
+        "from": [-2.0, 1.0, -2.0],
+        "to":   [ 2.0, 9.0,  2.0],
         "group": "central_hub",
         "material": "flesh_main",
     })
 
-    # 2. 四个拐角圆钝立柱 (X/Z in [-3, -2] / [2, 3], y in [2.45, 7.55])
-    cubes.append({"name": f"{pfx}hub_corner_nw", "from": [-3.0, 2.45, -3.0], "to": [-2.0, 7.55, -2.0], "group": "central_hub", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}hub_corner_ne", "from": [ 2.0, 2.45, -3.0], "to": [ 3.0, 7.55, -2.0], "group": "central_hub", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}hub_corner_sw", "from": [-3.0, 2.45,  2.0], "to": [-2.0, 7.55,  3.0], "group": "central_hub", "material": "flesh_main"})
-    cubes.append({"name": f"{pfx}hub_corner_se", "from": [ 2.0, 2.45,  2.0], "to": [ 3.0, 7.55,  3.0], "group": "central_hub", "material": "flesh_main"})
+    # 2. 顶面 #c07868 十字筋丝 (Y in [9.0, 9.4])
+    cubes.append({
+        "name": f"{pfx}hub_cross_x",
+        "from": [-1.8, 9.0, -0.4],
+        "to":   [ 1.8, 9.4,  0.4],
+        "group": "central_hub",
+        "material": "tendon_fiber",
+    })
+    cubes.append({
+        "name": f"{pfx}hub_cross_z_n",
+        "from": [-0.4, 9.0, -1.8],
+        "to":   [ 0.4, 9.4, -0.4],
+        "group": "central_hub",
+        "material": "tendon_fiber",
+    })
+    cubes.append({
+        "name": f"{pfx}hub_cross_z_s",
+        "from": [-0.4, 9.0,  0.4],
+        "to":   [ 0.4, 9.4,  1.8],
+        "group": "central_hub",
+        "material": "tendon_fiber",
+    })
+    # 十字中心亮结 (#e8bca8)
+    cubes.append({
+        "name": f"{pfx}hub_cross_center",
+        "from": [-0.45, 9.38, -0.45],
+        "to":   [ 0.45, 9.48,  0.45],
+        "group": "central_hub",
+        "material": "tendon_highlight",
+    })
 
-    # 3. 枢纽顶面 2 条 #c07868 交叉筋丝 (浮起 0.5px: y in [8.0, 8.5])
-    cubes.append({"name": f"{pfx}hub_fiber_x",      "from": [-2.6, 8.0, -0.5], "to": [2.6, 8.5, 0.5], "group": "central_hub", "material": "tendon_fiber"})
-    cubes.append({"name": f"{pfx}hub_fiber_z_n",    "from": [-0.5, 8.0, -2.6], "to": [0.5, 8.5, -0.5], "group": "central_hub", "material": "tendon_fiber"})
-    cubes.append({"name": f"{pfx}hub_fiber_z_s",    "from": [-0.5, 8.0,  0.5], "to": [0.5, 8.5,  2.6], "group": "central_hub", "material": "tendon_fiber"})
-    cubes.append({"name": f"{pfx}hub_fiber_center", "from": [-0.7, 8.48, -0.7], "to": [0.7, 8.58, 0.7], "group": "central_hub", "material": "tendon_highlight"})
+    # 3. 内部真元内光核心
+    cubes.append({
+        "name": f"{pfx}hub_qi_glow",
+        "from": [-0.8, 4.0, -0.8],
+        "to":   [ 0.8, 6.0,  0.8],
+        "group": "central_hub",
+        "material": "qi_glow",
+    })
 
-    # 4. 枢纽内部真元核心 (#f6dcc4 qi_glow，截面 2x2, Y in [4.0, 6.0])
-    cubes.append({"name": f"{pfx}hub_qi_core", "from": [-1.0, 4.0, -1.0], "to": [1.0, 6.0, 1.0], "group": "central_hub", "material": "qi_glow"})
-
-    # 5. T 形三通专属：南壁 (+Z 面) 封闭墙体与 4x4 凹 1px 盲端腔
+    # 4. T 形南面 (+Z): 枢纽 +Z 面加 #5a1a1a 2×2 盲端凹点 (X in [-1, 1], Y in [4, 6], Z in [1.9, 2.05])
     if not is_cross:
-        cubes.append({"name": "t_hub_south_wall",       "from": [-2.0, 2.45, 2.0], "to": [2.0, 7.55, 3.0], "group": "central_hub", "material": "flesh_main"})
-        cubes.append({"name": "t_hub_south_blind_hole", "from": [-1.95, 3.05, 2.05], "to": [1.95, 6.95, 2.95], "group": "central_hub", "material": "flesh_dark"})
+        cubes.append({
+            "name": "t_hub_blind_dot",
+            "from": [-1.0, 4.0, 1.9],
+            "to":   [ 1.0, 6.0, 2.05],
+            "group": "central_hub",
+            "material": "flesh_dark",
+        })
 
     return cubes
 
 
-def part_02_branches(is_cross: bool = False) -> List[dict]:
-    """生成所有分支管道、肉箍与小骨环端口（全部直接复用 common_parts.py）：
-    - 每条臂长 5px (从枢纽边 3.0 伸到方块边 8.0，露出一截 2.5px 暖粉筋管)；
-    - 肉箍宽 2.0px 位于方块边缘 (center_pos = ±6.5)；
-    - 骨环端口位于肉箍顶面 (face='up')。
+def part_02_arms_and_interfaces(is_cross: bool = False) -> List[dict]:
+    """生成分支细管（6×4 截面从枢纽伸到方块边）、统一接口段（方块边 2px 放大到 8×6）、肉箍与顶面骨环端口：
+    - 细臂截面 6×4 (y 3–7, 居中)，臂间四角留空，俯视四个角完全镂空；
+    - 边缘 0–2 (2px): 放大到 8×6 统一接口 + 2px 肉箍 + 骨环端口贴在肉箍顶面。
     """
     cubes = []
     pfx = "x_" if is_cross else "t_"
+    dirs = ["n", "s", "w", "e"] if is_cross else ["n", "w", "e"]
 
-    # 1. 北向分支 (-Z)
-    cubes.extend(sinew_tube(-8.0, -3.0, axis="z", pfx=f"{pfx}tube_n"))
-    cubes.extend(flesh_collar(center_pos=-6.5, length=2.0, axis="z", pfx=f"{pfx}collar_n"))
-    cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=-6.5, face="up", pfx=f"{pfx}port_n"))
+    for d in dirs:
+        if d == "n":  # -Z 方向 (北)
+            # 8x6 统一接口短管 (Z in [-8, -6])
+            cubes.append({"name": f"{pfx}inlet_n_tube", "from": [-4.0, 2.0, -8.0], "to": [4.0, 8.0, -6.0], "group": "interface", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}inlet_n_hl_bot", "from": [-3.9, 1.95, -7.95], "to": [3.9, 2.7, -6.05], "group": "interface", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}inlet_n_hl_top", "from": [-3.9, 7.3,  -7.95], "to": [3.9, 8.05, -6.05], "group": "interface", "material": "tendon_highlight"})
 
-    # 2. 西向分支 (-X)
-    cubes.extend(sinew_tube(-8.0, -4.0, axis="x", pfx=f"{pfx}tube_w"))
-    cubes.extend(flesh_collar(center_pos=-6.5, length=2.0, axis="x", pfx=f"{pfx}collar_w"))
-    cubes.extend(bone_ring_port(center_x=-6.5, center_y=9.0, center_z=0.0, face="up", pfx=f"{pfx}port_w"))
+            # 6x4 细管主体 (Z in [-6.0, -3.0], X in [-3, 3], Y in [3, 7])
+            cubes.append({"name": f"{pfx}arm_n_6x4", "from": [-3.0, 3.0, -6.0], "to": [3.0, 7.0, -3.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_n_hl_bot", "from": [-2.9, 2.95, -5.95], "to": [2.9, 3.5, -3.05], "group": "arms", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}arm_n_hl_top", "from": [-2.9, 6.5,  -5.95], "to": [2.9, 7.05, -3.05], "group": "arms", "material": "tendon_highlight"})
 
-    # 3. 东向分支 (+X)
-    cubes.extend(sinew_tube(4.0, 8.0, axis="x", pfx=f"{pfx}tube_e"))
-    cubes.extend(flesh_collar(center_pos=6.5, length=2.0, axis="x", pfx=f"{pfx}collar_e"))
-    cubes.extend(bone_ring_port(center_x=6.5, center_y=9.0, center_z=0.0, face="up", pfx=f"{pfx}port_e"))
+            # 颈缩过渡进入 4x4 枢纽 (Z in [-3.0, -2.0], X in [-2, 2], Y in [3, 7])
+            cubes.append({"name": f"{pfx}arm_n_neck", "from": [-2.0, 3.0, -3.0], "to": [2.0, 7.0, -2.0], "group": "arms", "material": "tendon_tube"})
 
-    # 4. 南向分支 (+Z，仅十字四通 junction_x 拥有)
-    if is_cross:
-        cubes.extend(sinew_tube(3.0, 8.0, axis="z", pfx=f"{pfx}tube_s"))
-        cubes.extend(flesh_collar(center_pos=6.5, length=2.0, axis="z", pfx=f"{pfx}collar_s"))
-        cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=6.5, face="up", pfx=f"{pfx}port_s"))
+            # 贯穿真元光芯
+            cubes.append({"name": f"{pfx}arm_n_qi", "from": [-0.8, 4.5, -7.95], "to": [0.8, 5.5, -2.05], "group": "arms", "material": "qi_glow"})
+
+            # 肉箍与骨环端口 (复用 common_parts)
+            cubes.extend(flesh_collar(center_pos=-6.5, length=2.0, axis="z", pfx=f"{pfx}collar_n", group="interface"))
+            cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=-6.5, face="up", pfx=f"{pfx}port_n", group="interface"))
+
+        elif d == "s":  # +Z 方向 (南，仅十字四通拥有)
+            cubes.append({"name": f"{pfx}inlet_s_tube", "from": [-4.0, 2.0,  6.0], "to": [4.0, 8.0,  8.0], "group": "interface", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}inlet_s_hl_bot", "from": [-3.9, 1.95,  6.05], "to": [3.9, 2.7,  7.95], "group": "interface", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}inlet_s_hl_top", "from": [-3.9, 7.3,   6.05], "to": [3.9, 8.05, 7.95], "group": "interface", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_s_6x4", "from": [-3.0, 3.0,  3.0], "to": [3.0, 7.0,  6.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_s_hl_bot", "from": [-2.9, 2.95,  3.05], "to": [2.9, 3.5,  5.95], "group": "arms", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}arm_s_hl_top", "from": [-2.9, 6.5,   3.05], "to": [2.9, 7.05, 5.95], "group": "arms", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_s_neck", "from": [-2.0, 3.0,  2.0], "to": [2.0, 7.0,  3.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_s_qi", "from": [-0.8, 4.5,  2.05], "to": [0.8, 5.5,  7.95], "group": "arms", "material": "qi_glow"})
+
+            cubes.extend(flesh_collar(center_pos=6.5, length=2.0, axis="z", pfx=f"{pfx}collar_s", group="interface"))
+            cubes.extend(bone_ring_port(center_x=0.0, center_y=9.0, center_z=6.5, face="up", pfx=f"{pfx}port_s", group="interface"))
+
+        elif d == "w":  # -X 方向 (西)
+            cubes.append({"name": f"{pfx}inlet_w_tube", "from": [-8.0, 2.0, -4.0], "to": [-6.0, 8.0, 4.0], "group": "interface", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}inlet_w_hl_bot", "from": [-7.95, 1.95, -3.9], "to": [-6.05, 2.7, 3.9], "group": "interface", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}inlet_w_hl_top", "from": [-7.95, 7.3,  -3.9], "to": [-6.05, 8.05, 3.9], "group": "interface", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_w_6x4", "from": [-6.0, 3.0, -3.0], "to": [-3.0, 7.0, 3.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_w_hl_bot", "from": [-5.95, 2.95, -2.9], "to": [-3.05, 3.5, 2.9], "group": "arms", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}arm_w_hl_top", "from": [-5.95, 6.5,  -2.9], "to": [-3.05, 7.05, 2.9], "group": "arms", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_w_neck", "from": [-3.0, 3.0, -2.0], "to": [-2.0, 7.0, 2.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_w_qi", "from": [-7.95, 4.5, -0.8], "to": [-2.05, 5.5, 0.8], "group": "arms", "material": "qi_glow"})
+
+            cubes.extend(flesh_collar(center_pos=-6.5, length=2.0, axis="x", pfx=f"{pfx}collar_w", group="interface"))
+            cubes.extend(bone_ring_port(center_x=-6.5, center_y=9.0, center_z=0.0, face="up", pfx=f"{pfx}port_w", group="interface"))
+
+        elif d == "e":  # +X 方向 (东)
+            cubes.append({"name": f"{pfx}inlet_e_tube", "from": [ 6.0, 2.0, -4.0], "to": [ 8.0, 8.0, 4.0], "group": "interface", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}inlet_e_hl_bot", "from": [ 6.05, 1.95, -3.9], "to": [ 7.95, 2.7, 3.9], "group": "interface", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}inlet_e_hl_top", "from": [ 6.05, 7.3,  -3.9], "to": [ 7.95, 8.05, 3.9], "group": "interface", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_e_6x4", "from": [ 3.0, 3.0, -3.0], "to": [ 6.0, 7.0, 3.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_e_hl_bot", "from": [ 3.05, 2.95, -2.9], "to": [ 5.95, 3.5, 2.9], "group": "arms", "material": "tendon_highlight"})
+            cubes.append({"name": f"{pfx}arm_e_hl_top", "from": [ 3.05, 6.5,  -2.9], "to": [ 5.95, 7.05, 2.9], "group": "arms", "material": "tendon_highlight"})
+
+            cubes.append({"name": f"{pfx}arm_e_neck", "from": [ 2.0, 3.0, -2.0], "to": [ 3.0, 7.0, 2.0], "group": "arms", "material": "tendon_tube"})
+            cubes.append({"name": f"{pfx}arm_e_qi", "from": [ 2.05, 4.5, -0.8], "to": [ 7.95, 5.5, 0.8], "group": "arms", "material": "qi_glow"})
+
+            cubes.extend(flesh_collar(center_pos=6.5, length=2.0, axis="x", pfx=f"{pfx}collar_e", group="interface"))
+            cubes.extend(bone_ring_port(center_x=6.5, center_y=9.0, center_z=0.0, face="up", pfx=f"{pfx}port_e", group="interface"))
 
     return cubes
 
 
 def all_cubes(is_cross: bool = False) -> List[dict]:
     """汇总指定变体的所有立方体。"""
-    return part_01_central_hub(is_cross) + part_02_branches(is_cross)
+    return part_01_central_hub(is_cross) + part_02_arms_and_interfaces(is_cross)
 
 
 # =============================================================================
@@ -242,13 +310,13 @@ def render_views(p_t_path: Path, p_x_path: Path):
     views = [
         ("junction_t (3/4 ISOMETRIC VIEW - 3-way)", im_t_iso, 10, 10),
         ("junction_x (3/4 ISOMETRIC VIEW - 4-way)", im_x_iso, cell_w + 20, 10),
-        ("junction_t (TOP VIEW - T Junction)", im_t_top, 10, cell_h + 20),
-        ("junction_x (TOP VIEW - Cross Junction)", im_x_top, cell_w + 20, cell_h + 20),
+        ("junction_t (TOP VIEW - Hollow Corners & T-shape)", im_t_top, 10, cell_h + 20),
+        ("junction_x (TOP VIEW - Hollow Corners & Cross)", im_x_top, cell_w + 20, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 440, py + 26], fill=(24, 25, 28))
+        draw.rectangle([px, py, px + 470, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(235, 235, 235))
 
     render_path = REVIEW_DIR / "render.png"
@@ -301,7 +369,7 @@ def self_test():
     defect_t = list(cubes_t) + [{
         "name": "inject_coplanar_fail",
         "from": [-4.0, 2.0, -8.0],
-        "to":   [ 4.0, 8.0, -3.0],
+        "to":   [ 4.0, 8.0, -6.0],
         "material": "tendon_tube",
     }]
     caught_t = False
@@ -320,7 +388,7 @@ def self_test():
 
     defect_x = list(cubes_x) + [{
         "name": "inject_coplanar_fail",
-        "from": [-4.0, 2.0, 3.0],
+        "from": [-4.0, 2.0, 6.0],
         "to":   [ 4.0, 8.0, 8.0],
         "material": "tendon_tube",
     }]
