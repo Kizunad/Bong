@@ -218,44 +218,99 @@ class TubeFrame:
     shift: Vec = (0.0, 0.0, 0.0)    # 亮斑中心相对包络中心的偏移
 
 
-TUBE_FRAME_MATERIALS = ("tendon_tube",)
-TUBE_PAINT_MATERIALS = ("tendon_tube", "tendon_highlight", "tendon_fascia", "tendon_trans")
+TUBE_FRAME_MATERIALS = ("tendon_tube", "tube_dark")
+TUBE_PAINT_MATERIALS = ("tendon_tube", "tendon_highlight", "tendon_fascia", "tendon_trans", "tube_dark")
+TUBE_DARK_SHADE = -0.22     # tube_dark（污染段暗一档的管壁）= 筋膜画笔再压暗这么多
+FRAME_TOUCH_TOL = 0.11      # 高光片等贴在管壁表面上的小立方体，离管壁这么近就算同一段管
 
 
 def _cube_key(cube: dict) -> tuple:
     return (cube.get("group", ""), tuple(cube.get("rotation", (0, 0, 0))), tuple(cube.get("origin", (0, 0, 0))))
 
 
-def collect_tube_frames(cubes: List[dict]) -> Dict[tuple, TubeFrame]:
-    """按 (组, 旋转, 旋转原点) 把筋管主体立方体归并成包络，得到每段管的坐标系。"""
-    boxes: Dict[tuple, Tuple[np.ndarray, np.ndarray]] = {}
-    keys_per_group: Dict[str, int] = {}
-    for cube in cubes:
-        if cube.get("material") not in TUBE_FRAME_MATERIALS:
-            continue
-        key = _cube_key(cube)
-        lo, hi = np.array(cube["from"], float), np.array(cube["to"], float)
-        if key in boxes:
-            lo, hi = np.minimum(lo, boxes[key][0]), np.maximum(hi, boxes[key][1])
-        else:
-            keys_per_group[key[0]] = keys_per_group.get(key[0], 0) + 1
-        boxes[key] = (lo, hi)
+def _box(cube: dict) -> Tuple[np.ndarray, np.ndarray]:
+    return np.array(cube["from"], float), np.array(cube["to"], float)
 
-    frames = {}
-    for key, (lo, hi) in boxes.items():
-        size = hi - lo
-        half = np.maximum(size / 2, 1e-6)
-        continuous = keys_per_group[key[0]] > 1
-        # 弧管沿 z 走，外弧侧在局部 -x：亮带往外弧偏半个半宽
-        shift = (-0.5 * half[0], 0.0, 0.0) if continuous else (0.0, 0.0, 0.0)
-        frames[key] = TubeFrame(
-            center=tuple((lo + hi) / 2),
-            half=tuple(half),
-            axis=2 if continuous else int(np.argmax(size)),   # 弧管每段短而宽，包络最长边不是管轴；管轴恒为局部 z
-            continuous=continuous,
-            shift=shift,
-        )
-    return frames
+
+def _share_a_face(a: Tuple[np.ndarray, np.ndarray], b: Tuple[np.ndarray, np.ndarray]) -> bool:
+    """两个立方体面接触（接触面有面积；只碰棱或角不算）。"""
+    overlap = np.minimum(a[1], b[1]) - np.maximum(a[0], b[0])    # 各轴重叠长度，负 = 分离，0 = 刚好相接
+    touching = int(np.sum(np.abs(overlap) < 1e-6))
+    overlapping = int(np.sum(overlap > 1e-6))
+    return touching == 1 and overlapping == 2 or (overlapping == 3)
+
+
+def _make_frame(lo: np.ndarray, hi: np.ndarray, continuous: bool) -> TubeFrame:
+    size = hi - lo
+    half = np.maximum(size / 2, 1e-6)
+    # 弧管沿 z 走，外弧侧在局部 -x：亮带往外弧偏半个半宽
+    shift = (-0.5 * half[0], 0.0, 0.0) if continuous else (0.0, 0.0, 0.0)
+    return TubeFrame(
+        center=tuple((lo + hi) / 2),
+        half=tuple(half),
+        axis=2 if continuous else int(np.argmax(size)),   # 弧管每段短而宽，包络最长边不是管轴；管轴恒为局部 z
+        continuous=continuous,
+        shift=shift,
+    )
+
+
+class TubeFrames:
+    """一个模型里所有筋管 / 筋囊的坐标系。
+
+    - 同组、同旋转的筋管立方体，按「面接触」连成一段管（三通的三条臂各是一段管，不会并成一个大包络）；
+    - 同一组里有多个旋转（弧管由多段旋转直管拼成）时，每个旋转算一段，且标记为连续弧管。
+    """
+
+    def __init__(self, cubes: List[dict]):
+        members = [c for c in cubes if c.get("material") in TUBE_FRAME_MATERIALS]
+        keys_per_group: Dict[str, set] = {}
+        for cube in members:
+            key = _cube_key(cube)
+            keys_per_group.setdefault(key[0], set()).add(key)
+
+        by_key: Dict[tuple, List[dict]] = {}
+        for cube in members:
+            by_key.setdefault(_cube_key(cube), []).append(cube)
+
+        self.segments: List[Tuple[tuple, np.ndarray, np.ndarray, TubeFrame]] = []
+        for key, key_cubes in by_key.items():
+            continuous = len(keys_per_group[key[0]]) > 1
+            groups = [key_cubes] if continuous else _face_clusters(key_cubes)
+            for group in groups:
+                boxes = [_box(c) for c in group]
+                lo, hi = np.min([b[0] for b in boxes], axis=0), np.max([b[1] for b in boxes], axis=0)
+                self.segments.append((key, lo, hi, _make_frame(lo, hi, continuous)))
+
+    def for_cube(self, cube: dict) -> Optional[TubeFrame]:
+        """立方体所属（或紧贴）的那段管的坐标系；找不到返回 None。"""
+        key = _cube_key(cube)
+        lo, hi = _box(cube)
+        for seg_key, seg_lo, seg_hi, frame in self.segments:
+            if seg_key == key and np.all(lo <= seg_hi + FRAME_TOUCH_TOL) and np.all(hi >= seg_lo - FRAME_TOUCH_TOL):
+                return frame
+        return None
+
+
+def _face_clusters(cubes: List[dict]) -> List[List[dict]]:
+    """把立方体按「面接触」分成连通块。"""
+    boxes = [_box(c) for c in cubes]
+    parent = list(range(len(cubes)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(cubes)):
+        for j in range(i + 1, len(cubes)):
+            if _share_a_face(boxes[i], boxes[j]):
+                parent[find(i)] = find(j)
+
+    clusters: Dict[int, List[dict]] = {}
+    for i, cube in enumerate(cubes):
+        clusters.setdefault(find(i), []).append(cube)
+    return list(clusters.values())
 
 
 def _tube_ramp(b: float) -> Color:
@@ -392,7 +447,7 @@ class PainterSet:
     def __init__(self, cubes: List[dict], palette: Optional[Dict[str, Color]] = None,
                  override: Optional[Override] = None):
         self.palette = palette or {}
-        self.frames = collect_tube_frames(cubes)
+        self.frames = TubeFrames(cubes)
         self.override = override
 
     def for_cube(self, cube: dict) -> Painter:
@@ -408,8 +463,11 @@ class PainterSet:
         if material in BONE_SCHEMES:
             return make_bone_painter(cube, *BONE_SCHEMES[material])
         if material in TUBE_PAINT_MATERIALS:
-            frame = self.frames.get(_cube_key(cube))
-            return make_tube_painter(frame) if frame else make_spot_painter(cube)
+            frame = self.frames.for_cube(cube)
+            painter = make_tube_painter(frame) if frame else make_spot_painter(cube)
+            if material == "tube_dark":
+                return lambda p, axis: shade(painter(p, axis), TUBE_DARK_SHADE)
+            return painter
         if material == "qi_glow":
             return make_spot_painter(cube)
         if material == "tendon_fiber":

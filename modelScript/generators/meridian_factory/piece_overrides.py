@@ -16,6 +16,7 @@ import math
 from typing import Optional
 
 from pixel_texture import (
+    FIBER_DARK,
     FIBER_NET,
     FLESH_LIT,
     hex_color,
@@ -25,6 +26,7 @@ from pixel_texture import (
     Painter,
     Vec,
     mix,
+    shade,
     paint_flesh,
     texel_noise,
     value_noise,
@@ -315,4 +317,262 @@ def _liquid_highlight_painter(cube: dict, default: Painter) -> Painter:
 def stomach_override(cube: dict, default: Painter) -> Optional[Painter]:
     if cube.get("material") == "amber_fluid":
         return _liquid_highlight_painter(cube, default)
+    return None
+
+
+# =============================================================================
+# 第 2 批
+# =============================================================================
+
+def _face_radius(cube: dict, p: Vec, axis: int) -> float:
+    """点在所在面上的归一化径向距离：面中心 0，面边缘 1（取两个面内方向里较大的那个）。"""
+    lo, hi = cube["from"], cube["to"]
+    others = [i for i in range(3) if i != axis]
+    return max(abs(p[i] - (lo[i] + hi[i]) / 2) / max((hi[i] - lo[i]) / 2, 1e-6) for i in others)
+
+
+# ---- 血管：o06 肝叶脉 / o07 脾血管 / o08 肾血管 ---------------------------------
+
+def _vein_painter(cube: dict, default: Painter) -> Painter:
+    """血管：#c07868 本色，沿血管走向的中线描一道 #e8bca8 高光。"""
+    lo, hi = cube["from"], cube["to"]
+    size = [hi[i] - lo[i] for i in range(3)]
+    long_axis = size.index(max(size))
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = mix(LINE_COLOR, FIBER_DARK, 0.25 * value_noise(p, 1.4, 131))
+        if axis == long_axis:
+            return color
+        across = 3 - long_axis - axis
+        if abs(p[across] - (lo[across] + hi[across]) / 2) < 0.22:
+            return mix(color, TUBE_HIGHLIGHT, 0.8)
+        return color
+
+    return paint
+
+
+def liver_override(cube: dict, default: Painter) -> Optional[Painter]:
+    if cube.get("group") == "leaf_veins":
+        return _vein_painter(cube, default)
+    return None
+
+
+def spleen_override(cube: dict, default: Painter) -> Optional[Painter]:
+    if cube.get("group") == "veins":
+        return _vein_painter(cube, default)
+    return None
+
+
+# ---- o05 心：余烬斑高对比亮暗渐变 ------------------------------------------------
+
+EMBER_EDGE = hex_color("#3a0e0a")
+EMBER_MID = hex_color("#c84a3a")
+EMBER_CORE = hex_color("#ffd090")
+EMBER_HOT = hex_color("#fff0dc")
+
+
+def _ember_painter(cube: dict) -> Painter:
+    """余烬：外缘近黑的暗红 → #c84a3a → 中心发白的橙黄，亮暗差拉到最大；texel 级闪烁。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        brightness = 1.0 - _face_radius(cube, p, axis) ** 1.3
+        brightness += (texel_noise(p, 141) - 0.5) * 0.12
+        brightness = max(0.0, min(1.0, brightness))
+        if brightness < 0.5:
+            return mix(EMBER_EDGE, EMBER_MID, brightness / 0.5)
+        if brightness < 0.85:
+            return mix(EMBER_MID, EMBER_CORE, (brightness - 0.5) / 0.35)
+        return mix(EMBER_CORE, EMBER_HOT, (brightness - 0.85) / 0.15)
+
+    return paint
+
+
+# 心肌表面的发光血管网：主干从顶部三根大血管下来，分 3 级。只画在朝前（+z）的面上。
+HEART_BASE = hex_color("#7a2424")       # 心肌底色压暗，血管网才亮得出来
+VESSEL_CORE = hex_color("#f6dcc4")
+VESSEL_SIDE = hex_color("#e8bca8")
+VESSEL_SIDE_WIDTH = 0.45                # 线芯两侧高光的宽度
+# 三根主干的起点 (x, y)：对着顶部三根大血管（x = 0、-9、+9）的根部
+HEART_TRUNK_ROOTS = ((0.0, 39.0), (-9.0, 38.0), (9.0, 37.0))
+# 每级：(长度, 线芯半宽, 分叉数, 分叉半角度)
+HEART_BRANCH_LEVELS = (
+    (9.0, 0.55, 2, 26.0),
+    (6.5, 0.42, 3, 22.0),
+    (4.5, 0.32, 0, 0.0),
+)
+# 余烬斑：几何里是 6×6 的 ember_plate，贴图上把光晕画到两倍大
+EMBER_CENTER = (0.0, 19.0)
+EMBER_GLOW_RADIUS = 6.0
+HEART_FRONT_Z = 5.0
+HEART_MUSCLE_GROUPS = ("ventricles", "atria")
+
+
+def _heart_segments() -> list:
+    """主干 + 分叉的线段表：(起点, 终点, 线芯半宽)。方向用「偏离正下方的角度」，分叉左右对称展开，
+    主干朝心尖（余烬斑）略微收拢。"""
+    segments = []
+
+    def grow(x: float, y: float, heading: float, level: int):
+        length, half_width, forks, spread = HEART_BRANCH_LEVELS[level]
+        end = (x + length * math.sin(math.radians(heading)), y - length * math.cos(math.radians(heading)))
+        segments.append(((x, y), end, half_width))
+        if forks == 0:
+            return
+        for k in range(forks):
+            offset = (k - (forks - 1) / 2) * 2 * spread / max(forks - 1, 1)
+            grow(end[0], end[1], heading + offset, level + 1)
+
+    for root_x, root_y in HEART_TRUNK_ROOTS:
+        toward_center = -math.degrees(math.atan2(root_x, 20.0)) * 0.5   # 左边的向右收，右边的向左收
+        grow(root_x, root_y, -toward_center, 0)
+    return segments
+
+
+HEART_SEGMENTS = _heart_segments()
+
+
+def _heart_surface_painter(default: Painter) -> Painter:
+    def paint(p: Vec, axis: int) -> Color:
+        color = mix(default(p, axis), HEART_BASE, 0.7)
+        # 前半个心的所有朝向都画：心肌是逐行堆的台阶，只画朝前的面，网会被台阶的朝上面截断
+        if p[2] < HEART_FRONT_Z:
+            return color
+
+        glow = math.hypot(p[0] - EMBER_CENTER[0], p[1] - EMBER_CENTER[1]) / EMBER_GLOW_RADIUS
+        if glow < 1.0:
+            warmth = (1.0 - glow) ** 1.5
+            color = mix(color, mix(EMBER_MID, EMBER_CORE, warmth), min(1.0, warmth * 1.5))
+
+        for start, end, half_width in HEART_SEGMENTS:
+            distance = _segment_distance(p[0], p[1], start, end)
+            if distance < half_width:
+                return VESSEL_CORE
+            if distance < half_width + VESSEL_SIDE_WIDTH:
+                color = mix(color, VESSEL_SIDE, 0.9)
+        return color
+
+    return paint
+
+
+def heart_override(cube: dict, default: Painter) -> Optional[Painter]:
+    if cube.get("material") == "fire":
+        return _ember_painter(cube)
+    if cube.get("group") in HEART_MUSCLE_GROUPS:
+        return _heart_surface_painter(default)
+    return None
+
+
+# ---- b11 阀门：括约肌环放射褶纹 ---------------------------------------------------
+
+VALVE_AXIS_Y = 5.0          # 管腔中线（y），环绕 z 轴
+VALVE_FOLDS = 18            # 放射褶数
+FLESH_FOLD_LIT = hex_color("#b05050")
+FLESH_FOLD_DARK = hex_color("#4a1414")
+
+
+LENGTHWISE_FOLD_PERIOD = 1.4    # 侧面纵向褶纹的间距（px），褶沿 z（管轴）方向走
+
+
+def _lengthwise_fold(color: Color, p: Vec, axis: int) -> Color:
+    """括约肌环的外侧面（顶 / 底 / 左 / 右）：沿管轴方向的纵向褶纹，比端面的放射褶淡一点。"""
+    across = p[0] if axis == 1 else p[1]        # 顶底面上褶沿 x 排列，左右面上沿 y 排列
+    wave = math.cos(2 * math.pi * across / LENGTHWISE_FOLD_PERIOD)
+    if wave > 0.4:
+        return mix(color, FLESH_FOLD_LIT, 0.35)
+    if wave < -0.4:
+        return mix(color, FLESH_FOLD_DARK, 0.45)
+    return color
+
+
+def _radial_fold_painter(default: Painter) -> Painter:
+    """括约肌环的前后端面：绕管腔一圈放射褶，亮褶 #b05050 与暗沟交替，越靠孔口越暗。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = default(p, axis)
+        if axis != 2:
+            return _lengthwise_fold(color, p, axis)
+        dx, dy = p[0], p[1] - VALVE_AXIS_Y
+        wave = math.cos(VALVE_FOLDS * math.atan2(dy, dx))
+        radius = math.hypot(dx, dy)
+        color = mix(color, FLESH_FOLD_DARK, max(0.0, 0.5 - radius / 20.0))     # 近孔口压暗
+        if wave > 0.35:
+            return mix(color, FLESH_FOLD_LIT, 0.65)
+        if wave < -0.35:
+            return mix(color, FLESH_FOLD_DARK, 0.75)
+        return color
+
+    return paint
+
+
+def valve_override(cube: dict, default: Painter) -> Optional[Painter]:
+    if cube.get("group") in ("sphincter", "sphincter_folds"):
+        return _radial_fold_painter(default)
+    return None
+
+
+# ---- b14 损伤三态：裂纹 / 断口 / 污染血块 -----------------------------------------
+
+CRACK_CORE = hex_color("#120505")
+CRACK_RIM = hex_color("#c07868")
+CRACK_RIM_WIDTH = 0.25
+WOUND_EDGE = hex_color("#6a1a1a")
+WOUND_MID = hex_color("#c84040")
+WOUND_CORE = hex_color("#f0a090")
+CLOT_SHEEN = hex_color("#9a5a90")
+
+
+def _crack_painter(cube: dict) -> Painter:
+    """裂纹：近黑深沟，沟沿一圈 #c07868 的翻开的肉边，沟与周围筋管反差拉满。"""
+    lo, hi = cube["from"], cube["to"]
+
+    def paint(p: Vec, axis: int) -> Color:
+        in_plane = [i for i in range(3) if i != axis]
+        edge = min(min(p[i] - lo[i], hi[i] - p[i]) for i in in_plane)
+        if edge < CRACK_RIM_WIDTH:
+            return mix(CRACK_CORE, CRACK_RIM, 0.85)
+        return mix(CRACK_CORE, FLESH_FOLD_DARK, 0.4 * value_noise(p, 1.2, 151))
+
+    return paint
+
+
+def _wound_painter(cube: dict) -> Painter:
+    """断口：湿红的肉面，中心偏亮，间杂 #e8bca8 的断筋头。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        brightness = 1.0 - _face_radius(cube, p, axis) ** 1.2
+        color = mix(WOUND_EDGE, WOUND_MID, min(1.0, brightness * 1.6))
+        if brightness > 0.5:
+            color = mix(color, WOUND_CORE, (brightness - 0.5) * 1.2)
+        if texel_noise(p, 161) < 0.1:
+            color = mix(color, TUBE_HIGHLIGHT, 0.85)
+        return color
+
+    return paint
+
+
+def _clot_painter(cube: dict, default: Painter) -> Painter:
+    """污染血块：深紫黑底，表面带湿润的亮斑，边缘一圈暗，反差比平色版大得多。"""
+    lo, hi = cube["from"], cube["to"]
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = default(p, axis)
+        in_plane = [i for i in range(3) if i != axis]
+        edge = min(min(p[i] - lo[i], hi[i] - p[i]) for i in in_plane)
+        if edge < 0.25:
+            return shade(color, -0.45)
+        if texel_noise(p, 171) < 0.09:
+            return mix(color, CLOT_SHEEN, 0.8)
+        return shade(color, (value_noise(p, 1.3, 172) - 0.5) * 0.5)
+
+    return paint
+
+
+def damage_override(cube: dict, default: Painter) -> Optional[Painter]:
+    group = cube.get("group")
+    if group == "cracks":
+        return _crack_painter(cube)
+    if group == "sever_ends":
+        return _wound_painter(cube)
+    if group in ("blood_clots", "taint_veins"):
+        return _clot_painter(cube, default)
     return None

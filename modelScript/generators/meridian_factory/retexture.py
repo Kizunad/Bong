@@ -29,11 +29,16 @@ from piece_overrides import (
     arm_override,
     buffer_override,
     coupling_override,
+    damage_override,
     floor_override,
+    heart_override,
+    liver_override,
     lung_override,
     port_override,
+    spleen_override,
     stomach_override,
     tank_override,
+    valve_override,
 )
 from pixel_texture import Override, palette_to_colors, write_textured_bbmodel
 
@@ -55,6 +60,7 @@ class Variant:
     flat_stem: str                          # 现有平色 bbmodel 的文件名（不含扩展名）
     palette: Dict[str, tuple]
     override: Optional[Override] = None     # 个别立方体的专属画笔，见 piece_overrides.py
+    flat_builder: Optional[Callable[[], object]] = None   # 平色 bbmodel 不存在时用它生成（第 2 批）
 
 
 @dataclass
@@ -154,6 +160,68 @@ def build_registry() -> Dict[str, Piece]:
     }
 
 
+
+def build_batch2_registry() -> Dict[str, Piece]:
+    """第 2 批：b10 三通/十字、b11 阀门、b12 合流、b14 损伤三态、o05 心、o06 肝、o07 脾、o08 肾。
+    b13 外放口要重新设计，先跳过。几何来自各自分支上过审的生成器，这里只贴图。"""
+    import common_parts
+    import gen_heart
+    import gen_junction
+    import gen_kidney
+    import gen_liver
+    import gen_merger
+    import gen_meridian_damage
+    import gen_spleen
+    import gen_valve
+
+    common = palette_to_colors(common_parts.PALETTE)
+
+    def organ_flat(module):
+        """器官生成器没有单独的「只出平色模型」函数，这里复用它们 main 里的 write_bbmodel 调用。"""
+        return lambda: module.write_bbmodel(module.BBMODEL_OUT, module.ORGAN_ID, module.all_cubes(),
+                                            module.PALETTE, module.MAT_UV, module.VISIBLE_BOX)
+
+    def organ(module, review_name, ref, override) -> Piece:
+        stem = module.BBMODEL_OUT.stem
+        return Piece(REVIEW_ROOT / review_name, ref,
+                     [Variant(stem, module.all_cubes, stem, _palette(module), override, organ_flat(module))])
+
+    junction = [
+        Variant("junction_t", lambda: gen_junction.all_cubes(False), "junction_t", common, None,
+                lambda: gen_junction.generate_bbmodel(False, MODEL_DIR / "junction_t.bbmodel")),
+        Variant("junction_cross", lambda: gen_junction.all_cubes(True), "junction_cross", common, None,
+                lambda: gen_junction.generate_bbmodel(True, MODEL_DIR / "junction_cross.bbmodel")),
+    ]
+    valve = [
+        Variant(f"valve_{v}", (lambda v=v: gen_valve.all_cubes(v)), f"valve_{v}", common, valve_override,
+                (lambda v=v: gen_valve.generate_bbmodel(gen_valve.all_cubes(v), f"valve_{v}",
+                                                        MODEL_DIR / f"valve_{v}.bbmodel")))
+        for v in gen_valve.VARIANTS
+    ]
+    damage_palette = _palette(gen_meridian_damage)
+    damage = [
+        Variant(f"meridian_{state}", getattr(gen_meridian_damage, f"build_{state}_cubes"),
+                f"meridian_{state}", damage_palette, damage_override, gen_meridian_damage.generate_all_bbmodels)
+        for state in ("cracked", "severed", "contaminated")
+    ]
+    heart_stem = gen_heart.BBMODEL_OUT.stem
+
+    return {
+        "b10": Piece(gen_junction.REVIEW_DIR, "b10_junction.png", junction),
+        "b11": Piece(gen_valve.REVIEW_DIR, "b11_valve.png", valve),
+        "b12": Piece(gen_merger.REVIEW_DIR, "b12_merger.png",
+                     [Variant("merger", gen_merger.all_cubes, "merger", common, None,
+                              lambda: gen_merger.generate_bbmodel(MODEL_DIR / "merger.bbmodel"))]),
+        "b14": Piece(gen_meridian_damage.REVIEW_DIR, "b14_meridian_damage.png", damage),
+        "o05": Piece(gen_heart.REVIEW_DIR, "o05_heart.png",
+                     [Variant(heart_stem, gen_heart.all_cubes, heart_stem, _palette(gen_heart), heart_override,
+                              gen_heart.generate_bbmodel)]),
+        "o06": organ(gen_liver, "liver", "o06_liver.png", liver_override),
+        "o07": organ(gen_spleen, "spleen", "o07_spleen.png", spleen_override),
+        "o08": organ(gen_kidney, "kidney", "o08_kidney.png", None),
+    }
+
+
 # =============================================================================
 # 渲染与出图
 # =============================================================================
@@ -235,6 +303,8 @@ def retexture(piece_id: str, piece: Piece):
         out_dir.mkdir(parents=True, exist_ok=True)
 
     first = piece.variants[0]
+    if first.flat_builder and not (MODEL_DIR / f"{first.flat_stem}.bbmodel").exists():
+        first.flat_builder()
     sheet = render_sheet(tex_paths)
     check = check_sheet(piece, first, tex_paths[first.name])
     sheet.save(piece.review_dir / "render_tex.png")
@@ -247,6 +317,11 @@ def retexture(piece_id: str, piece: Piece):
 
 def main():
     registry = build_registry()
+    try:
+        registry.update(build_batch2_registry())
+    except ImportError as error:
+        # 第 2 批生成器在别的分支上，本分支没有；缺了就只做第 1 批
+        print(f"（跳过第 2 批：{error}）")
     parser = argparse.ArgumentParser(description="经脉工厂统一重贴图（几何不动）")
     parser.add_argument("ids", nargs="*", help="模型编号，如 b01 b02")
     parser.add_argument("--list", action="store_true", help="列出可用编号")
