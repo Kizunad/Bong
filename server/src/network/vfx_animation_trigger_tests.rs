@@ -3487,6 +3487,59 @@ fn beast_melee_attack_with_npc_melee_source_emits_for_tsy_hostile_species() {
 }
 
 #[test]
+fn zhinian_dash_and_projectile_combo_steps_do_not_emit_melee_swing_anim() {
+    // 回归锁：Kody 第 2 轮抓到的真 bug——执念连招三段（ComboKind::Melee/Dash/Projectile）
+    // 共用同一个 AttackSource::NpcMelee，之前的过滤器只看 source，Dash/Projectile 两段
+    // 冲刺/投掷出手时也会被误判成近战挥击，播出不该播的 zhinian_v2.attack。
+    // ZhinianMind::last_issued_kind 记的是"刚刚那次出手用的哪一段"，Dash/Projectile
+    // 必须被挡住，Melee 段仍要正常 emit。
+    for (kind, should_emit) in [
+        (ComboKind::Melee, true),
+        (ComboKind::Dash, false),
+        (ComboKind::Projectile, false),
+    ] {
+        let mut app = setup_beast_melee_app();
+        let attacker = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                EntityId::default(),
+                FaunaVisualKind::Zhinian,
+                ZhinianMind {
+                    last_issued_kind: Some(kind),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::NpcMelee));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            usize::from(should_emit),
+            "ComboKind::{kind:?} 的 emit 结果不对：期望 should_emit={should_emit}"
+        );
+    }
+}
+
+#[test]
+fn zhinian_without_mind_component_falls_back_to_emitting() {
+    // 没挂 ZhinianMind 组件（例如非执念的其它物种，或执念尚未进入战斗记忆初始化路径）
+    // 时，Option<&ZhinianMind> 查询天然为 None，按"可能是近战"保守 emit，不误杀。
+    let mut app = setup_beast_melee_app();
+    let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], FaunaVisualKind::Zhinian);
+
+    app.world_mut()
+        .send_event(beast_melee_attack_intent(attacker, AttackSource::NpcMelee));
+    app.update();
+
+    assert_eq!(drain_vfx(&mut app).len(), 1);
+}
+
+#[test]
 fn beast_melee_attack_for_species_with_dedicated_av_trigger_does_not_emit() {
     // DainuLion/FuyuVulture/Horse/DevourRat/HybridBeast/Heiwushi 各自已有专属 AV
     // trigger（skills::animate / rat_av_trigger / heiwushi_av_trigger / 子 Profile

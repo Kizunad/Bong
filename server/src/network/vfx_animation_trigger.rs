@@ -41,6 +41,7 @@ use crate::forge::events::TemperingHit;
 use crate::forge::session::{ForgeSessions, ForgeStep};
 use crate::inventory::PlayerInventory;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::tsy_hostile::{ComboKind, ZhinianMind};
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
@@ -587,18 +588,34 @@ fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
 /// 出手，必须一并收口，否则这三只 v2 物种在表里有条目也永远不会触发），技能类 source
 /// 走各自专属 AV trigger，不与本表重叠。玩家攻击者没有 `FaunaVisualKind` 组件，查询
 /// 天然不命中、直接跳过；两套系统各管一侧，互不冲突。
+///
+/// 执念的连招三段（`tsy_hostile::ComboKind`）共用同一个 `AttackSource::NpcMelee`，但
+/// `Dash` / `Projectile` 两段不是近战挥击，不该播 `zhinian_v2.attack`（近战挥击姿势）。
+/// 区分不走新增 `AttackSource` 变体（那会在 `combat::zhenmai_v2`、`combat::knockback`、
+/// `network::combat_bridge` 等一串已有精确匹配上强制加分支，牵连到经脉系统——冻结区）
+/// 也不走 `AttackIntent` 新字段（会牵连所有构造点），而是读执念 NPC 自带的
+/// `ZhinianMind::last_issued_kind`（纯动画侧记账，出手那一刻与事件同步写入，见
+/// `npc::tsy_hostile::zhinian_combo_step_action_system`）：非 `Zhinian` 物种没有这个
+/// 组件，`Option<&ZhinianMind>` 查询自然为 `None`，行为不变。
 pub fn emit_beast_melee_animation_triggers(
     mut events: EventReader<AttackIntent>,
-    attackers: Query<(&Position, &EntityId, &FaunaVisualKind)>,
+    attackers: Query<(&Position, &EntityId, &FaunaVisualKind, Option<&ZhinianMind>)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in events.read() {
         if !matches!(event.source, AttackSource::Melee | AttackSource::NpcMelee) {
             continue;
         }
-        let Ok((position, entity_id, visual_kind)) = attackers.get(event.attacker) else {
+        let Ok((position, entity_id, visual_kind, zhinian_mind)) = attackers.get(event.attacker)
+        else {
             continue;
         };
+        if matches!(
+            zhinian_mind.and_then(|mind| mind.last_issued_kind),
+            Some(ComboKind::Dash) | Some(ComboKind::Projectile)
+        ) {
+            continue;
+        }
         let Some((anim, duration_ticks)) = beast_melee_anim_for(*visual_kind) else {
             continue;
         };
