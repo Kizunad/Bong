@@ -30,6 +30,7 @@ from piece_overrides import (
     buffer_override,
     coupling_override,
     damage_override,
+    emitter_override,
     floor_override,
     heart_override,
     liver_override,
@@ -69,6 +70,7 @@ class Piece:
     ref_name: Optional[str]
     variants: List[Variant]
     alias_dir: Optional[Path] = None
+    check_all_variants: bool = False    # check_tex.png 里把每个变体的贴图版并排（没有平色版）
 
 
 def _palette(module) -> Dict[str, tuple]:
@@ -159,6 +161,19 @@ def build_registry() -> Dict[str, Piece]:
         "p01": Piece(gen_qi_packet.REVIEW_DIR, "p01_qi_packets.png", qi_variants, gen_qi_packet.REVIEW_DIR_ALIAS),
     }
 
+
+
+def build_emitter_registry() -> Dict[str, Piece]:
+    """b13 新收缩口（origin/feat/meridian-factory-b13-sphincter 上的 gen_emitter.py），开 / 半 / 闭三态。"""
+    import gen_emitter
+
+    colors = _palette(gen_emitter)
+    variants = [
+        Variant(f"emitter_{v}", (lambda v=v: gen_emitter.all_cubes(v)), f"emitter_{v}", colors, emitter_override,
+                (lambda v=v: gen_emitter.generate_bbmodel(v, MODEL_DIR / f"emitter_{v}.bbmodel")))
+        for v in gen_emitter.VARIANTS
+    ]
+    return {"b13": Piece(gen_emitter.REVIEW_DIR, "../exploded/x13_emitter_v2.png", variants, check_all_variants=True)}
 
 
 def build_batch2_registry() -> Dict[str, Piece]:
@@ -275,17 +290,23 @@ def render_sheet(tex_paths: Dict[str, Path]) -> Image.Image:
     return vstack(rows)
 
 
-def check_sheet(piece: Piece, first: Variant, tex_path: Path) -> Image.Image:
-    """check_tex.png：参考图 | 现有平色版 | 贴图版（后两者同一 3/4 取景）。"""
+def check_sheet(piece: Piece, first: Variant, tex_paths: Dict[str, Path]) -> Image.Image:
+    """check_tex.png：参考图 | 现有平色版 | 贴图版（后两者同一 3/4 取景）；
+    check_all_variants 时改为：参考图 | 各变体的贴图版。"""
     tiles = []
     ref_path = REVIEW_ROOT / "refs" / piece.ref_name if piece.ref_name else None
     if ref_path and ref_path.exists():
         ref = Image.open(ref_path).convert("RGB")
         ref = ref.resize((int(ref.width * TILE / ref.height), TILE), Image.Resampling.LANCZOS)
         tiles.append(labeled(ref, f"REFERENCE ({ref_path.name})"))
+    if piece.check_all_variants:
+        for name, path in tex_paths.items():
+            tiles.append(labeled(shot(path, ISO_YAW, ISO_PITCH), f"TEXTURED {name}"))
+        return hstack(tiles)
     flat_path = MODEL_DIR / f"{first.flat_stem}.bbmodel"
     if flat_path.exists():
         tiles.append(labeled(shot(flat_path, ISO_YAW, ISO_PITCH), f"FLAT (existing {flat_path.name})"))
+    tex_path = tex_paths[first.name]
     tiles.append(labeled(shot(tex_path, ISO_YAW, ISO_PITCH), f"TEXTURED ({tex_path.name})"))
     return hstack(tiles)
 
@@ -306,7 +327,7 @@ def retexture(piece_id: str, piece: Piece):
     if first.flat_builder and not (MODEL_DIR / f"{first.flat_stem}.bbmodel").exists():
         first.flat_builder()
     sheet = render_sheet(tex_paths)
-    check = check_sheet(piece, first, tex_paths[first.name])
+    check = check_sheet(piece, first, tex_paths)
     sheet.save(piece.review_dir / "render_tex.png")
     check.save(piece.review_dir / "check_tex.png")
     if piece.alias_dir:
@@ -317,11 +338,12 @@ def retexture(piece_id: str, piece: Piece):
 
 def main():
     registry = build_registry()
-    try:
-        registry.update(build_batch2_registry())
-    except ImportError as error:
-        # 第 2 批生成器在别的分支上，本分支没有；缺了就只做第 1 批
-        print(f"（跳过第 2 批：{error}）")
+    for build_other_branch_pieces in (build_batch2_registry, build_emitter_registry):
+        try:
+            registry.update(build_other_branch_pieces())
+        except ImportError as error:
+            # 第 2 批和 b13 的生成器在别的分支上，本分支没有；缺了就跳过
+            print(f"（跳过 {build_other_branch_pieces.__name__}：{error}）")
     parser = argparse.ArgumentParser(description="经脉工厂统一重贴图（几何不动）")
     parser.add_argument("ids", nargs="*", help="模型编号，如 b01 b02")
     parser.add_argument("--list", action="store_true", help="列出可用编号")

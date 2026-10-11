@@ -576,3 +576,40 @@ def damage_override(cube: dict, default: Painter) -> Optional[Painter]:
     if group in ("blood_clots", "taint_veins"):
         return _clot_painter(cube, default)
     return None
+
+
+# ---- b13 收缩口：肉褶脊、褶间暗沟、口内亮芯 -------------------------------------------
+
+RIDGE_COLOR = hex_color("#b05050")      # 肉褶脊
+GROOVE_COLOR = hex_color("#5a1a1a")     # 褶间压暗
+APERTURE_EDGE = hex_color("#f6dcc4")    # 口内亮芯：边缘
+APERTURE_CENTER = hex_color("#fff8ec")  # 口内亮芯：正中
+
+
+def _fold_painter(base: Color, seed: int) -> Painter:
+    """褶脊 / 褶间：一个固定底色，只留很轻的明暗起伏，两种底色的反差就是「褶」。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return shade(base, (value_noise(p, 1.6, seed) - 0.5) * 0.18 + (texel_noise(p, seed + 1) - 0.5) * 0.06)
+
+    return paint
+
+
+def _aperture_core_painter(cube: dict) -> Painter:
+    """口内亮芯：边缘 #f6dcc4 渐变到正中 #fff8ec。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(APERTURE_EDGE, APERTURE_CENTER, 1.0 - _face_radius(cube, p, axis))
+
+    return paint
+
+
+def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
+    group, material = cube.get("group"), cube.get("material")
+    if group == "dome" and material == "flesh_lit":
+        return _fold_painter(RIDGE_COLOR, 181)
+    if group == "dome" and material == "flesh_dark":
+        return _fold_painter(GROOVE_COLOR, 183)
+    if group == "aperture" and material == "qi_glow":
+        return _aperture_core_painter(cube)
+    return None

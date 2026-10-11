@@ -203,7 +203,6 @@ FIBER_SLOPE = 0.75
 FIBER_HALF_WIDTH = 0.28     # 约 1 texel 宽
 FIBER_GLOW_WIDTH = 0.5      # 筋丝两侧高光带宽度（约 1 texel）
 FIBER_REF_HALF_H = 3.0      # 斜率标定用的标准半高（标准截面 8×6 的半高）
-END_FACE_BRIGHTNESS = 0.12
 ARC_BAND_HALF_WIDTH = 0.6   # 弧管亮带半宽（占半截面的比例）
 
 
@@ -343,7 +342,10 @@ def make_tube_painter(frame: TubeFrame) -> Painter:
 
     def paint(p: Vec, axis: int) -> Color:
         if axis == long_axis:
-            return _noisy_ramp(p, END_FACE_BRIGHTNESS)
+            # 管口端面：同样中心亮、边缘压暗（按两个截面方向的径向距离）
+            others = [i for i in range(3) if i != long_axis]
+            radius = max(abs(p[i] - frame.center[i]) / frame.half[i] for i in others)
+            return _noisy_ramp(p, 1.0 - (radius / SPOT_EDGE_RADIUS) ** 1.5)
         cross = 3 - long_axis - axis    # 剩下的那根截面轴
         across = abs(p[cross] - frame.center[cross] - shift[cross]) / frame.half[cross]
         along = 0.0 if frame.continuous else abs(p[long_axis] - frame.center[long_axis]) / frame.half[long_axis]
