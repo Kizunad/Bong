@@ -11,9 +11,9 @@
   y  9.5–10  顶面半透膜 ±4
   y 10–10.5  十字亮通道贴片：宽 2，中心 2×2 #fff0dc，往四个方向渐变
   y 10.5–12  骨脊：1 宽，高出膜面 2px；合流器从中心伸向出口 +Z，分流器从入口 -Z 伸到中心再分叉朝两条出臂
-  y  0–11    四根 2×2 骨柱，x/z 在 ±(2..4)（4–6 / 10–12），贴着腔体四角
+  y  0–4     四根 2×2 矮骨脚，x/z 在 ±(2..4)，贴着腔体四角，顶上各一个 1px 小骨节（y4–5）
   y  2–3, 7–8  臂框四条 1×1 肉梁（臂截面 6 宽 × 6 高：z ±3，y 2..8），长度沿臂；四个侧面全空
-  y  3–7     4×4 肌肉卷（z ±2），沿臂长 1px 一道肋，#8a2a2a / #5a1a1a 交替
+  y  3–7     肌肉卷：3×3 暗红卷芯 + 每隔 1px 一道外凸 0.5px 的 4×4 肋环，#8a2a2a / #5a1a1a 交替
   臂沿轴向 4..8，两端各 4 个 1×1 骨节（共 8 个）
   四个外角 |x|>4 且 |z|>4（调度的 x0–4×z0–4 等）整块为空。
 """
@@ -63,7 +63,9 @@ ARM_HALF_B = 3.0
 ROLL_HALF = 2.0
 ROLL_Y = (3.0, 7.0)
 POST_CENTER = 3.025        # 柱 x/z 2.025..4.025，比腔壁多凸 0.025 避开共面
-POST_HEIGHT = 11.0
+POST_HEIGHT = 4.0         # 矮骨脚，顶上再加 1px 小骨节（总高到 y5）
+RIB_PROUD = 0.5
+RIB_THICK = 0.5
 
 
 def _box(name, lo, hi, group, material) -> dict:
@@ -121,13 +123,14 @@ def arm_module(direction: str, pfx: str) -> List[dict]:
         local.append(_box(f"{pfx}_beam_{tag}", (ARM_A0 + 1.0, y0, b0), (ARM_A1 - 1.0, y0 + 1.0, b0 + 1.0), g, "flesh_main"))
         local.append(_box(f"{pfx}_knot_in_{tag}", (ARM_A0, y0, b0), (ARM_A0 + 1.0, y0 + 1.0, b0 + 1.0), g, "bone_main"))
         local.append(_box(f"{pfx}_knot_out_{tag}", (ARM_A1 - 1.0, y0, b0), (ARM_A1, y0 + 1.0, b0 + 1.0), g, "bone_main"))
-    # 4×4 肌肉卷：红肋为 4×4，暗红肋收进 0.5，露出肋间沟
+    # 肌肉卷：3×3 暗红卷芯贯穿全臂，外面每隔 1px 一道外凸 0.5px 的肋环（共 4×4），红/暗红交替
+    core = ROLL_HALF - RIB_PROUD
+    local.append(_box(f"{pfx}_core", (ARM_A0, ROLL_Y[0] + RIB_PROUD, -core), (ARM_A1, ROLL_Y[1] - RIB_PROUD, core), g, "flesh_dark"))
     for i in range(4):
-        a0 = ARM_A0 + i
-        if i % 2 == 0:
-            local.append(_box(f"{pfx}_rib_{i}", (a0, ROLL_Y[0], -ROLL_HALF), (a0 + 1.0, ROLL_Y[1], ROLL_HALF), g, "flesh_main"))
-        else:
-            local.append(_box(f"{pfx}_rib_{i}", (a0, ROLL_Y[0] + 0.5, -ROLL_HALF + 0.5), (a0 + 1.0, ROLL_Y[1] - 0.5, ROLL_HALF - 0.5), g, "flesh_dark"))
+        # 肋环错开 0.25，避免端面和卷芯端面共面
+        a0 = ARM_A0 + 0.25 + i
+        mat = "flesh_main" if i % 2 == 0 else "flesh_dark"
+        local.append(_box(f"{pfx}_rib_{i}", (a0, ROLL_Y[0], -ROLL_HALF), (a0 + RIB_THICK, ROLL_Y[1], ROLL_HALF), g, mat))
     return _orient(local, direction)
 
 
@@ -202,6 +205,9 @@ def corner_posts() -> List[dict]:
                 bone_post(sx * POST_CENTER, sz * POST_CENTER, y_bot=0.0, height=POST_HEIGHT,
                           group="bone_posts", pfx=f"post_{sx:+d}{sz:+d}")
             )
+            cx, cz = sx * POST_CENTER, sz * POST_CENTER
+            cubes.append(_box(f"post_{sx:+d}{sz:+d}_cap", (cx - 0.5, POST_HEIGHT, cz - 0.5), (cx + 0.5, POST_HEIGHT + 1.0, cz + 0.5),
+                              "bone_posts", "bone_main"))
     return cubes
 
 
@@ -265,13 +271,21 @@ def check_structure(cubes: List[dict], single_z: int) -> None:
     for b in beams:
         dims = sorted(b["to"][i] - b["from"][i] for i in range(3))
         assert dims[0] == 1.0 and dims[1] == 1.0, f"{b['name']} 不是 1×1 截面: {dims}"
+    cores = {c["name"].rsplit("_core", 1)[0]: c for c in cubes if c["name"].endswith("_core")}
+    assert len(cores) == 3, f"应有 3 根卷芯，实际 {len(cores)}"
+    for r in ribs:
+        core = cores[r["name"].rsplit("_rib_", 1)[0]]
+        proud = core["from"][1] - r["from"][1]   # 竖直方向肋环比卷芯多出的高度
+        assert abs(proud - RIB_PROUD) < 1e-6, f"{r['name']} 肋环没比卷芯外凸 {RIB_PROUD}: {proud}"
+    caps = [c for c in cubes if c["name"].endswith("_cap") and c["name"].startswith("post_")]
+    assert len(caps) == 4, f"每根骨脚顶上应有 1 个小骨节，实际 {len(caps)}"
     knots = [c for c in cubes if "_knot_" in c["name"]]
     assert len(knots) == 24, f"小骨节应为 3 臂 × 8，实际 {len(knots)}"
 
     posts = [c for c in cubes if c["name"].endswith("_body") and c["name"].startswith("post_")]
     assert len(posts) == 4, f"骨柱应为 4 根，实际 {len(posts)}"
     for p in posts:
-        assert p["to"][1] <= 11.0 + 1e-6, f"骨柱 {p['name']} 高过 11: {p['to'][1]}"
+        assert p["to"][1] <= POST_HEIGHT + 1e-6, f"骨柱 {p['name']} 高过 {POST_HEIGHT}: {p['to'][1]}"
         cx = (p["from"][0] + p["to"][0]) / 2
         cz = (p["from"][2] + p["to"][2]) / 2
         assert abs(abs(cx) - POST_CENTER) < 1e-6 and abs(abs(cz) - POST_CENTER) < 1e-6, f"骨柱 {p['name']} 不在腔体四角: ({cx},{cz})"
@@ -310,6 +324,9 @@ def self_test(single_z: int, label: str) -> None:
     tall = [dict(c, to=[c["to"][0], 12.0, c["to"][2]]) if c["name"] == "post_+1+1_body" else c for c in cubes]
     must_fail("骨柱过高", tall, lambda cs: check_structure(cs, single_z))
 
+    flat = [dict(c, **{"from": [c["from"][0], 3.5, c["from"][2]], "to": [c["to"][0], 6.5, c["to"][2]]}) if "_rib_" in c["name"] else c for c in cubes]
+    must_fail("肋环不外凸", flat, lambda cs: check_structure(cs, single_z))
+
     no_arm = [c for c in cubes if not c["name"].startswith("arm_w")]
     must_fail("少一条臂", no_arm, lambda cs: check_structure(cs, single_z))
 
@@ -322,7 +339,7 @@ def _assert_open_sides(cubes: List[dict]) -> None:
     for c in cubes:
         if not c["name"].startswith("arm_"):
             continue
-        if any(k in c["name"] for k in ("_beam_", "_knot_", "_rib_")):
+        if any(k in c["name"] for k in ("_beam_", "_knot_", "_rib_", "_core")):
             continue
         raise AssertionError(f"臂框侧面不许有封板: {c['name']}")
 
