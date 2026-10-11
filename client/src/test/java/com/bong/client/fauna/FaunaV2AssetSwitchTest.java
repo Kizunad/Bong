@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -19,12 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       {@link FaunaModel#usesBaseAssets}的 javadoc）。
  * </ul>
  *
- * <p>ASH_SPIDER 暂留 v1（v2 动画缺 "fold"，蜘蛛伪装重新折叠会卡在 ambush_burst 之后永久可见），
- * 本测试同时锁住这条"暂不切换"的决定，防止后续误以为漏做而随手改掉。
+ * <p>ASH_SPIDER 补齐 fold / retreat 后同样切到 v2，见 {@link #SWITCHED_TO_V2}。
  */
 class FaunaV2AssetSwitchTest {
 
     private static final FaunaVisualKind[] SWITCHED_TO_V2 = {
+        FaunaVisualKind.ASH_SPIDER,
         FaunaVisualKind.VOID_DISTORTED,
         FaunaVisualKind.DAOXIANG,
         FaunaVisualKind.ZHINIAN,
@@ -62,10 +63,10 @@ class FaunaV2AssetSwitchTest {
     }
 
     @Test
-    void ashSpiderStaysOnV1BecauseV2AnimationMissesFold() {
-        assertEquals("geo/ash_spider.geo.json", FaunaVisualKind.ASH_SPIDER.modelId().getPath());
-        assertEquals("textures/entity/fauna/ash_spider.png", FaunaVisualKind.ASH_SPIDER.textureId().getPath());
-        assertEquals("animations/ash_spider.animation.json", FaunaVisualKind.ASH_SPIDER.animationId().getPath());
+    void ashSpiderV2AnimationHasFoldAndAmbushBurstForDisguiseCycle() {
+        var profile = FaunaAnimations.load(FaunaVisualKind.ASH_SPIDER.assetPath());
+        assertNotNull(profile.find("fold"), "伪装重新折叠依赖 fold，缺了蜘蛛暴起后会永久可见");
+        assertNotNull(profile.find("ambush_burst"));
     }
 
     @Test
