@@ -3443,7 +3443,7 @@ fn beast_melee_attack_issued_emits_entity_anim_for_mapped_species() {
 #[test]
 fn beast_melee_attack_with_non_melee_source_does_not_emit() {
     // 技能类 source（如 BurstMeridian）走各自专属 AV trigger，不该被本表重复收口——
-    // 锁住 `event.source != AttackSource::Melee` 这道过滤器。
+    // 锁住过滤器仍会挡掉真正的技能 source。
     let mut app = setup_beast_melee_app();
     let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], FaunaVisualKind::GreenSpider);
 
@@ -3454,6 +3454,36 @@ fn beast_melee_attack_with_non_melee_source_does_not_emit() {
     app.update();
 
     assert!(drain_vfx(&mut app).is_empty());
+}
+
+#[test]
+fn beast_melee_attack_with_npc_melee_source_emits_for_tsy_hostile_species() {
+    // 回归锁：Kody 在 PR #2410 HEAD 4dbb3fba 上抓到的真 bug——tsy_hostile.rs 里道伥本能
+    // 攻击 / 执念连招 / 秘境守灵三阶段都发 AttackSource::NpcMelee（纯为绕开 qi 反作弊
+    // 门禁，本质仍是近战出手，见 events.rs 对该 variant 的文档），之前过滤器只认
+    // `Melee`，这三只 v2 物种在表里有条目却永远不会触发攻击动画。
+    for kind in [
+        FaunaVisualKind::Daoxiang,
+        FaunaVisualKind::Zhinian,
+        FaunaVisualKind::TsySentinel,
+    ] {
+        let mut app = setup_beast_melee_app();
+        let attacker = spawn_beast(&mut app, [0.0, 64.0, 0.0], kind);
+        let expected_id = app.world().get::<EntityId>(attacker).unwrap().get();
+
+        app.world_mut()
+            .send_event(beast_melee_attack_intent(attacker, AttackSource::NpcMelee));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "{kind:?} 走 NpcMelee 出手也该 emit 一条 PlayEntityAnim"
+        );
+        let (entity_id, _, _) = entity_anim_from(&emitted[0]);
+        assert_eq!(entity_id, expected_id);
+    }
 }
 
 #[test]

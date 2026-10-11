@@ -580,18 +580,20 @@ fn beast_melee_anim_for(kind: FaunaVisualKind) -> Option<(&'static str, u16)> {
 /// 读 `AttackIntent`（出手时就发，不等 [`resolve_attack_intents`](crate::combat::resolve::resolve_attack_intents)
 /// 判出命中结果）——挥空也该有挥击动作，这比原来挂在已结算 `CombatEvent`（真伤 > 0 才算
 /// "命中"）上更符合语义：观战玩家应该看到对面"出手了"，不是只有被打中才看到动画。
-/// 只认 `AttackSource::Melee`（`HuntAction` / `MeleeAttackAction` 两条生产路径发的都是
-/// 这个 source，见 `npc::territory::hunt_action_system` / `npc::brain::actions_combat::
-/// melee_attack_action_system`），技能类 source 走各自专属 AV trigger，不与本表重叠。
-/// 玩家攻击者没有 `FaunaVisualKind` 组件，查询天然不命中、直接跳过；两套系统各管一侧，
-/// 互不冲突。
+/// 只认 `AttackSource::Melee | AttackSource::NpcMelee`（`HuntAction` / `MeleeAttackAction`
+/// 两条生产路径发 `Melee`，见 `npc::territory::hunt_action_system` / `npc::brain::
+/// actions_combat::melee_attack_action_system`；`tsy_hostile.rs` 的道伥本能攻击 /
+/// 执念连招 / 秘境守灵三阶段都发 `NpcMelee`——纯粹为绕开 qi 反作弊门禁，本质仍是近战
+/// 出手，必须一并收口，否则这三只 v2 物种在表里有条目也永远不会触发），技能类 source
+/// 走各自专属 AV trigger，不与本表重叠。玩家攻击者没有 `FaunaVisualKind` 组件，查询
+/// 天然不命中、直接跳过；两套系统各管一侧，互不冲突。
 pub fn emit_beast_melee_animation_triggers(
     mut events: EventReader<AttackIntent>,
     attackers: Query<(&Position, &EntityId, &FaunaVisualKind)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in events.read() {
-        if event.source != AttackSource::Melee {
+        if !matches!(event.source, AttackSource::Melee | AttackSource::NpcMelee) {
             continue;
         }
         let Ok((position, entity_id, visual_kind)) = attackers.get(event.attacker) else {
