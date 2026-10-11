@@ -93,6 +93,8 @@ SPIDER_GROUP_A = ("leg_l_0", "leg_r_1", "leg_l_2", "leg_r_3")
 # 由 check_ground() 的最低点报告反推，改动作幅度后要重新核一遍。
 SPIDER_DEATH_DROP = -2.4
 SPIDER_LEGS = tuple(f"leg_{side}_{i}" for side in "lr" for i in range(4))
+# ambush_burst 的末帧姿态（t=1）。fold 以它为起点，两段共用这一份数，改一处另一处自动跟上。
+BURST_END = {"rise": 1.2, "spread": 14.0, "pitch": -10.0, "lunge": 1.0, "chelicerae": -20.0, "sweep": 6.0}
 
 
 def spider_leg(poser: Poser, pose: Pose, leg: str, sweep: float, lift: float, fold: float = 0.0) -> None:
@@ -165,14 +167,59 @@ def ash_spider_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
 
     def ambush_burst(t: float) -> Pose:
         pose = Pose()
-        crouch = keys(t, [(0, 0), (0.25, -1.6), (0.55, 2.4), (0.8, 1.6), (1, 1.2)])
-        spread = keys(t, [(0, 0), (0.25, -10), (0.55, 30), (0.8, 18), (1, 14)])
-        poser.turn(pose, "body", rot=(keys(t, [(0, 0), (0.25, 4), (0.55, -18), (1, -10)]), 0, 0),
-                   pos=(0, crouch, keys(t, [(0, 0), (0.55, 1.5), (1, 1.0)])))
-        poser.turn(pose, "chelicerae", rot=(keys(t, [(0, 0), (0.55, -30), (1, -20)]), 0, 0))
+        crouch = keys(t, [(0, 0), (0.25, -1.6), (0.55, 2.4), (0.8, 1.6), (1, BURST_END["rise"])])
+        spread = keys(t, [(0, 0), (0.25, -10), (0.55, 30), (0.8, 18), (1, BURST_END["spread"])])
+        poser.turn(pose, "body", rot=(keys(t, [(0, 0), (0.25, 4), (0.55, -18), (1, BURST_END["pitch"])]), 0, 0),
+                   pos=(0, crouch, keys(t, [(0, 0), (0.55, 1.5), (1, BURST_END["lunge"])])))
+        poser.turn(pose, "chelicerae", rot=(keys(t, [(0, 0), (0.55, -30), (1, BURST_END["chelicerae"])]), 0, 0))
         for leg in SPIDER_LEGS:
             front = leg.endswith(("_0", "_1"))
-            spider_leg(poser, pose, leg, 6 if front else -6, spread if front else spread * 0.4)
+            spider_leg(poser, pose, leg, BURST_END["sweep"] if front else -BURST_END["sweep"],
+                       spread if front else spread * 0.4)
+        return pose
+
+    def fold(t: float) -> Pose:
+        # 暴起之后收拢回伪装姿态。起点 = ambush_burst 末帧（BURST_END 残留），终点 = 静止姿
+        # （idle 的起始帧），所以「暴起 → 收拢 → 伪装 idle」首尾都接得上。
+        # 节奏：腿从后往前依次内收（后腿先收，前腿最后落位），身子先猛地下沉压低，再松回静止高度；
+        # 螯肢先合拢、触肢内扣。收拢峰值之后各量必须在 t=1 回到 0，不能残留。
+        pose = Pose()
+        body_settle = keys(t, [(0, 1), (0.55, 0)])  # 暴起残留量的衰减
+        sink = keys(t, [(0, 0), (0.4, 1), (1, 0)])  # 整体下沉 / 收拢峰值
+        poser.turn(pose, "body",
+                   rot=(BURST_END["pitch"] * body_settle + 5 * sink, 0, 0),
+                   pos=(0, BURST_END["rise"] * body_settle - 1.1 * sink, BURST_END["lunge"] * body_settle))
+        poser.turn(pose, "chelicerae", rot=(BURST_END["chelicerae"] * keys(t, [(0, 1), (0.35, 0)]) + 8 * sink, 0, 0))
+        for palp in ("palp_l", "palp_r"):
+            poser.turn(pose, palp, rot=(-14 * sink, 0, 0))
+        for leg in SPIDER_LEGS:
+            row = int(leg[-1])  # 0 前 … 3 后
+            delay = 0.06 * (3 - row)
+            front = row <= 1
+            residual = keys(t, [(0, 1), (delay + 0.45, 0)])
+            tuck = keys(t, [(delay, 0), (delay + 0.3, 1), (1, 0)])
+            spread = BURST_END["spread"] * (1.0 if front else 0.4) * residual
+            sweep = (BURST_END["sweep"] if front else -BURST_END["sweep"]) * residual
+            spider_leg(poser, pose, leg, sweep, spread, 26 * tuck)
+        # 末段混入 idle 的起始帧：idle 在 t=0 时有几条腿正处在「挪脚」中途，不是纯静止姿，
+        # 收拢要落在那一帧上才能无缝接 idle。
+        settle = keys(t, [(0.6, 0), (1, 1)])
+        for bone, home in idle(0.0).items():
+            channel = pose[bone]
+            channel.rot = [a + settle * b for a, b in zip(channel.rot, home.rot)]
+            channel.pos = [a + settle * b for a, b in zip(channel.pos, home.pos)]
+            channel.scale = [1 + (settle * (b - 1)) for b in home.scale]
+        return pose
+
+    def retreat(t: float) -> Pose:
+        # 面朝敌人倒退：步态把扫腿方向取反（支撑相腿尖由后往前划，身体往后走），
+        # 头部微抬、螯肢半张、触肢外撑做威吓，躯干随步频左右小摆。
+        pose = Pose()
+        spider_gait(poser, pose, t, sweep=-18, lift=18)
+        poser.turn(pose, "body", rot=(-5, 4 * wave(t, 1), 2 * wave(t, 2)), pos=(0, -0.4 + 0.4 * abs(wave(t, 2)), 0))
+        poser.turn(pose, "chelicerae", rot=(-12 + 3 * wave(t, 2), 0, 0))
+        poser.turn(pose, "palp_l", rot=(-22 + 6 * wave(t, 2), 0, 0))
+        poser.turn(pose, "palp_r", rot=(-22 - 6 * wave(t, 2), 0, 0))
         return pose
 
     def hurt(t: float) -> Pose:
@@ -200,6 +247,7 @@ def ash_spider_clips(poser: Poser) -> dict[str, tuple[float, bool, Sampler]]:
     return {
         "idle": (4.0, True, idle), "walk": (1.0, True, walk), "run": (0.5, True, run),
         "bite": (0.6, False, bite), "ambush_burst": (0.3, False, ambush_burst),
+        "fold": (0.55, False, fold), "retreat": (0.5, True, retreat),
         "hurt": (0.4, False, hurt), "death": (1.8, False, death),
     }
 
@@ -879,12 +927,40 @@ def check_ground(name: str, clip: str, rig: PoseRig, sampler: Sampler) -> float:
     return lowest
 
 
+def seam_gap(a: Pose, b: Pose) -> tuple[float, float]:
+    """两个姿态的最大差：（旋转度数, 位移像素）。连播衔接用它量。"""
+
+    rot = pos = 0.0
+    for bone in set(a) | set(b):
+        rot = max(rot, max(abs(x - y) for x, y in zip(a[bone].rot, b[bone].rot)))
+        pos = max(pos, max(abs(x - y) for x, y in zip(a[bone].pos, b[bone].pos)))
+    return rot, pos
+
+
+# 灰烬蛛的连播衔接：暴起 → 收拢 → 伪装 idle。前后两段交界姿态差超过容差就是接不上。
+SEAM_ROT_TOLERANCE = 1.0
+SEAM_POS_TOLERANCE = 0.2
+
+
+def check_ash_spider_seams(clips: dict[str, tuple[float, bool, Sampler]]) -> None:
+    for label, end, start in (("ambush_burst→fold", clips["ambush_burst"][2](1.0), clips["fold"][2](0.0)),
+                              ("fold→idle", clips["fold"][2](1.0), clips["idle"][2](0.0))):
+        rot, pos = seam_gap(end, start)
+        print(f"  衔接 {label}: 旋转差 {rot:.2f}° 位移差 {pos:.2f}px")
+        if rot > SEAM_ROT_TOLERANCE or pos > SEAM_POS_TOLERANCE:
+            raise ValueError(f"{label} 接不上：旋转差 {rot:.2f}° / 位移差 {pos:.2f}px 超出容差")
+
+
 def export(name: str) -> None:
     rig = PoseRig(gen_rig.write_rig(name))
     poser = Poser(rig)
 
+    author_clips = CLIPS[name](poser)
+    if name == "ash_spider_v2":
+        check_ash_spider_seams(author_clips)
+
     animations = []
-    for clip, (length, loop, raw_sampler) in CLIPS[name](poser).items():
+    for clip, (length, loop, raw_sampler) in author_clips.items():
         sampler = grounded(rig, poser, raw_sampler)
         lowest = check_ground(name, clip, rig, sampler)
         print(f"  {clip}: 最低点 {lowest:+.2f}px")
