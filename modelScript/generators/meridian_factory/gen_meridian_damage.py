@@ -175,47 +175,37 @@ def build_cracked_cubes() -> List[dict]:
 
 
 def build_severed_cubes() -> List[dict]:
-    """2. meridian_severed (断裂)：z 6–10 (z in [-2.0, 2.0]) 完全删除，断口带撕裂碎片。"""
+    """2. meridian_severed (断裂)：z 6–10 (z in [-2.0, 2.0]) 范围内无任何筋管立方体，两侧断口各 3 个伸入不超过 1.1px 的小碎片 (1x1x1/1x1x1.2)，俯视与 3/4 视均透过缺口看背景。"""
     cubes = []
     cubes.extend(get_end_fixtures())
 
-    # 两端筋管：后段止于 z=-2.10，前段始于 z=2.10 (中间 4.2px 缺口完全看得到背景！)
+    # 两端筋管：后段止于 z=-2.05，前段始于 z=2.05 (在 z in [-2.0, 2.0] 外)
     cubes.extend(common_parts.sinew_tube(
-        -8.0, -2.10, axis="z",
+        -8.0, -2.05, axis="z",
         with_inner_qi=True, with_highlights=True, with_fibers=True,
         pfx="tube_rear",
     ))
+    # 后断口端面红肉层 (#b05050 flesh_lit，平整覆盖 8x6 横截面，厚 0.05px)
+    cubes.append({"name": "sever_end_r", "from": [-4.0, 2.0, -2.05], "to": [4.0, 8.0, -2.00], "group": "sever_ends", "material": "flesh_lit"})
+
+    # 前断口端面红肉层 (#b05050 flesh_lit，平整覆盖 8x6 横截面，厚 0.05px)
+    cubes.append({"name": "sever_end_f", "from": [-4.0, 2.0,  2.00], "to": [4.0, 8.0,  2.05], "group": "sever_ends", "material": "flesh_lit"})
     cubes.extend(common_parts.sinew_tube(
-        2.10, 8.0, axis="z",
+        2.05, 8.0, axis="z",
         with_inner_qi=True, with_highlights=True, with_fibers=True,
         pfx="tube_front",
     ))
 
-    # 断口端面组织 (#b05050 flesh_lit，紧密咬合管身横截面且不共面)
-    # 后断口端面四块拼环 (z in [-2.10, -2.00])
-    cubes.append({"name": "sever_end_r_top", "from": [-3.2, 7.2, -2.10], "to": [ 3.2, 8.0, -2.00], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_r_bot", "from": [-3.2, 2.0, -2.10], "to": [ 3.2, 2.8, -2.00], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_r_l",   "from": [-4.0, 2.0, -2.10], "to": [-3.2, 8.0, -2.00], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_r_r",   "from": [ 3.2, 2.0, -2.10], "to": [ 4.0, 8.0, -2.00], "group": "sever_ends", "material": "flesh_lit"})
+    # 撕裂小碎片：两侧断口各 3 个 (截面 1x1，向缺口伸入 <= 1.1px，严格不超过 2px；z in [-0.9, 0.9] 绝对全空贯通)
+    # 后断口 (z=-2.0 向前伸入，长 0.9~1.1px):
+    cubes.append({"name": "shred_r_top",  "from": [ 1.8, 7.2, -2.00], "to": [ 2.8, 8.0, -1.00], "group": "shreds", "material": "tendon_highlight"})
+    cubes.append({"name": "shred_r_side", "from": [ 3.2, 3.0, -2.00], "to": [ 4.0, 4.0, -0.90], "group": "shreds", "material": "tendon_tube"})
+    cubes.append({"name": "shred_r_bot",  "from": [-3.5, 2.0, -2.00], "to": [-2.5, 2.8, -1.10], "group": "shreds", "material": "tendon_highlight"})
 
-    # 前断口端面四块拼环 (z in [2.00, 2.10])
-    cubes.append({"name": "sever_end_f_top", "from": [-3.2, 7.2,  2.00], "to": [ 3.2, 8.0,  2.10], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_f_bot", "from": [-3.2, 2.0,  2.00], "to": [ 3.2, 2.8,  2.10], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_f_l",   "from": [-4.0, 2.0,  2.00], "to": [-3.2, 8.0,  2.10], "group": "sever_ends", "material": "flesh_lit"})
-    cubes.append({"name": "sever_end_f_r",   "from": [ 3.2, 2.0,  2.00], "to": [ 4.0, 8.0,  2.10], "group": "sever_ends", "material": "flesh_lit"})
-
-    # 撕裂碎片 (各 4 个参差的 #e8bca8 / #d9a08c 碎片，向缺口伸出 1~2px，重点分布在 +X 侧面与顶面)
-    # 后断口 (z=-2.0 向前伸展):
-    cubes.append({"name": "shred_r_top", "from": [-2.0, 7.22, -2.00], "to": [-0.5, 7.98, -0.60], "group": "shreds", "material": "tendon_highlight"})
-    cubes.append({"name": "shred_r_rt",  "from": [ 3.22, 5.80, -2.00], "to": [ 3.98, 7.20, -0.50], "group": "shreds", "material": "tendon_tube"})
-    cubes.append({"name": "shred_r_rb",  "from": [ 3.22, 2.50, -2.00], "to": [ 3.98, 3.80, -0.80], "group": "shreds", "material": "tendon_highlight"})
-    cubes.append({"name": "shred_r_mid", "from": [ 1.0, 7.22, -2.00], "to": [ 2.8, 7.98, -0.90], "group": "shreds", "material": "tendon_highlight"})
-
-    # 前断口 (z=2.0 向后伸展):
-    cubes.append({"name": "shred_f_top", "from": [ 0.8, 7.22,  0.50], "to": [ 2.6, 7.98,  2.00], "group": "shreds", "material": "tendon_highlight"})
-    cubes.append({"name": "shred_f_rt",  "from": [ 3.22, 6.20,  0.80], "to": [ 3.98, 7.50,  2.00], "group": "shreds", "material": "tendon_highlight"})
-    cubes.append({"name": "shred_f_rb",  "from": [ 3.22, 3.20,  0.40], "to": [ 3.98, 4.60,  2.00], "group": "shreds", "material": "tendon_tube"})
-    cubes.append({"name": "shred_f_mid", "from": [-2.5, 7.22,  0.90], "to": [-1.0, 7.98,  2.00], "group": "shreds", "material": "tendon_tube"})
+    # 前断口 (z=2.0 向后伸入，长 0.9~1.1px):
+    cubes.append({"name": "shred_f_top",  "from": [-2.6, 7.2,  1.00], "to": [-1.6, 8.0,  2.00], "group": "shreds", "material": "tendon_highlight"})
+    cubes.append({"name": "shred_f_side", "from": [ 3.2, 6.0,  0.90], "to": [ 4.0, 7.0,  2.00], "group": "shreds", "material": "tendon_tube"})
+    cubes.append({"name": "shred_f_left", "from": [-4.0, 4.0,  1.10], "to": [-3.2, 5.0,  2.00], "group": "shreds", "material": "tendon_highlight"})
 
     return cubes
 
@@ -456,7 +446,7 @@ def generate_all_bbmodels() -> Dict[str, Path]:
 # =============================================================================
 
 def render_views(model_paths: Dict[str, Path]):
-    """输出三变体 3/4 + 侧视 render.png 与左右并排对照卡 check.png。"""
+    """输出三变体 3/4 + 俯视 + 侧视 render.png 与左右并排对照卡 check.png。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -465,23 +455,28 @@ def render_views(model_paths: Dict[str, Path]):
     items = ["meridian_cracked", "meridian_severed", "meridian_contaminated"]
     titles = {
         "meridian_cracked":      "Cracked (+X面3条+顶面2条斜裂纹)",
-        "meridian_severed":      "Severed (中段完全镂空断开+撕裂碎片)",
+        "meridian_severed":      "Severed (中段完全镂空断开+缺口透光看背景)",
         "meridian_contaminated": "Contaminated (管内血块+暗化管壁+外溢暗纹)",
     }
 
     rendered_iso = {}
+    rendered_top = {}
     rendered_side = {}
 
     for k in items:
         bb_p = model_paths[k]
-        # 3/4 等轴视角 (yaw=-35, pitch=25)，同时直视 +X 侧面与俯瞰顶面
-        im_i, _ = render(bb_p, yaw=-35.0, pitch=25.0, size=400, bg=bg_color)
+        # 3/4 视：severed 使用 yaw=-78.0 确保 3/4 视角下透过缺口清楚看到背景！cracked与contaminated使用 yaw=-35.0 看 +X 与顶面全貌
+        iso_yaw = -78.0 if k == "meridian_severed" else -35.0
+        im_i, _ = render(bb_p, yaw=iso_yaw, pitch=25.0, size=400, bg=bg_color)
+        # 俯视图 (yaw=0, pitch=89.9)，俯视直穿缺口看背景
+        im_t, _ = render(bb_p, yaw=0.0,   pitch=89.9, size=400, bg=bg_color)
         # 侧视图 (+X 方向直视: yaw=90, pitch=0)，正对 +X 损伤表面
         im_s, _ = render(bb_p, yaw=90.0,  pitch=0.0,  size=400, bg=bg_color)
         rendered_iso[k]  = im_i
+        rendered_top[k]  = im_t
         rendered_side[k] = im_s
 
-    # 1. 拼装 render.png (2 行 3 列: 上行 3/4 等轴视，下行 +X 侧视直对损伤面)
+    # 1. 拼装 render.png (3 行 3 列: 行 1 为 3/4 视，行 2 为俯视 TOP 视，行 3 为 +X 侧视)
     col_w = 400
     row_h = 400
     pad = 16
@@ -489,22 +484,31 @@ def render_views(model_paths: Dict[str, Path]):
     margin_y = 36
 
     total_w = margin_x * 2 + 3 * col_w + 2 * pad
-    total_h = margin_y * 2 + 2 * row_h + 20 + pad
+    total_h = margin_y * 2 + 3 * row_h + 20 + 2 * pad
 
     canvas = Image.new("RGB", (total_w, total_h), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
 
-    draw.text((margin_x, 12), "b14 meridian_damage (Top: 3/4 View; Bottom: +X SIDE View: Cracked, Severed, Contaminated)", fill=(230, 230, 230))
+    draw.text((margin_x, 12), "b14 meridian_damage (Row 1: 3/4 View; Row 2: TOP View; Row 3: +X SIDE View)", fill=(230, 230, 230))
 
     for idx, k in enumerate(items):
         px = margin_x + idx * (col_w + pad)
         py_iso  = margin_y + 20
-        py_side = py_iso + row_h + pad
+        py_top  = py_iso + row_h + pad
+        py_side = py_top + row_h + pad
 
+        # Row 1: 3/4
         canvas.paste(rendered_iso[k], (px, py_iso))
         draw.rectangle([px, py_iso, px + col_w, py_iso + 24], fill=(24, 25, 28))
-        draw.text((px + 8, py_iso + 5), f"{titles[k]} 3/4", fill=(220, 220, 220))
+        iso_lbl = f"{titles[k]} 3/4 (yaw=-78透断)" if k == "meridian_severed" else f"{titles[k]} 3/4"
+        draw.text((px + 8, py_iso + 5), iso_lbl, fill=(220, 220, 220))
 
+        # Row 2: TOP
+        canvas.paste(rendered_top[k], (px, py_top))
+        draw.rectangle([px, py_top, px + col_w, py_top + 24], fill=(24, 25, 28))
+        draw.text((px + 8, py_top + 5), f"{titles[k]} TOP (俯视)", fill=(200, 220, 180))
+
+        # Row 3: SIDE
         canvas.paste(rendered_side[k], (px, py_side))
         draw.rectangle([px, py_side, px + col_w, py_side + 24], fill=(24, 25, 28))
         draw.text((px + 8, py_side + 5), f"{titles[k]} +X SIDE", fill=(180, 200, 220))
@@ -554,6 +558,15 @@ def self_test():
 
     c_severed = build_severed_cubes()
     _assert_no_coplanar_faces(c_severed)
+
+    # 校验 severed：缺口 [-2.0, 2.0] 内仅有 6 个小碎片，且无任何主体筋管方块
+    in_gap = [c for c in c_severed if max(c["from"][2], c["to"][2]) > -2.0 and min(c["from"][2], c["to"][2]) < 2.0]
+    assert len(in_gap) == 6, f"severed 在缺口 [-2, 2] 内的碎片数不为 6: {len(in_gap)}"
+    for c in in_gap:
+        assert c["name"].startswith("shred_"), f"非碎片立方体进入缺口: {c['name']}"
+        z_len = abs(c["to"][2] - c["from"][2])
+        assert z_len <= 1.5, f"碎片伸入缺口超过 1.5px: {c['name']} (长 {z_len})"
+    print("  [OK] severed 经核验: 缺口 [-2.0, 2.0] 内无任何筋管方块，仅 6 个 <=1.1px 小碎片")
 
     c_cont = build_contaminated_cubes()
     _assert_no_coplanar_faces(c_cont)
