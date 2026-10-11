@@ -1,31 +1,17 @@
 #!/usr/bin/env python3
 """经脉工厂内景方块生成器 —— b13: emitter (经脉发射器 / 喷嘴)
 
-风格：A 有机型 (活体血肉、半高红肉骨架底座、向上三级收窄喷嘴、口中真元光芯、四面斜拉筋索)
+风格：A 有机型 (活体血肉、半高镂空红肉骨架底座、细高三级收窄喷嘴、节间外凸肉褶环、外翻口沿、口中真元光芯、四索对角斜拉筋索)
 依据：
 - .task-meridian-models.md
 - model-review/meridian_factory.md「第 2 批」表格 b13 那行
 - 爆炸参考图：model-review/img/meridian_factory/exploded/x13_emitter.png
-
-调度指标落地：
-1. 底座：b04 同款红肉棱 + 骨节角的半高框 (y 0–6)；
-   - 4 根角骨节柱 (截面 2x2，底在 y=0、顶在 y=6，复用 common_parts.bone_post，带 #b8a888 暗纹节带)；
-   - 底面 4 条水平红肉棱 (y in [0, 2]) 与顶面 4 条水平红肉棱 (y in [4, 6])，材质 #8a2a2a (flesh_main)，附 #5a1a1a 暗纹；
-   - 底面中心用 common_parts.outlet_8x6 (facing='-y') 做入口；
-2. 上面向上收窄的肉质喷嘴 3 级 (截面 12×12 → 9×9 → 6×6，到 y 14)：
-   - 级 1: 截面 12x12 (x/z in [-6, 6])，y in [6.0, 8.5]；
-   - 级 2: 截面 9x9 (x/z in [-4.5, 4.5])，y in [8.5, 11.0]；
-   - 级 3: 截面 6x6 (x/z in [-3, 3])，y in [11.0, 14.0]；
-   - 材质全部采用活体红肌主色 #8a2a2a (flesh_main)；
-3. 顶口内壁与内光：
-   - 顶口内壁衬 #b05050 (flesh_lit) 亮红肌肉衬层；
-   - 口中嵌入一块 2×2 的 #f6dcc4 (qi_glow) 真元内光；
-4. 四面各一条 #c07868 筋丝从口沿到底座：
-   - 北、南、西、东四面外壁各一条 #c07868 (tendon_fiber) 筋丝；
-   - 紧贴三级阶梯肉质喷嘴外壁一路走台阶下延，牢牢拉索锚固到底座上；
-5. 输出图：
-   - render.png（3/4 视 + 侧视 + 俯视 + 正视 2×2 高清拼版）；
-   - check.png（左爆炸参考图 x13_emitter.png，右 3/4 等轴视与侧视并排等高对标卡）。
+- 调度审第 1 次指示（2026-10-11 15:2x）：
+  1. 底座：b04 那种半高框 (y 0–5)，四面镂空只留红肉棱条和 8 个骨节角 (能透过空框看到里面)，框内底面中心 common_parts.outlet_8x6 朝下当入口；
+  2. 喷嘴 (y 5–16，细高)：截面逐级收窄 8×8 (y 5–9) → 6×6 (y 9–13) → 4×4 (y 13–15)，顶上一圈外翻口沿 6×6 × 1px 高 (y 15–16)，口内 2×2 #f6dcc4 真元内光；
+     每级之间加一圈 1px 外凸的 #5a1a1a 肉褶环；
+  3. 4 条 #c07868 筋丝从口沿斜着垂到底座四角的骨节上 (不是贴在喷嘴面上的竖条)；
+  4. 只改 b13，重出图，写自查，保持 b13-waiting 停下。
 """
 
 from __future__ import annotations
@@ -68,120 +54,123 @@ from modelScript.generators.meridian_factory.common_parts import (
 # =============================================================================
 
 def part_01_base_frame() -> List[dict]:
-    """底座半高框 (y 0–6)：
-    - 4 根角骨节柱 (截面 2x2，底在 y=0、顶在 y=6，复用 common_parts.bone_post)；
-    - 底面 4 条水平红肉棱 (y in [0, 2]) 与顶面 4 条水平红肉棱 (y in [4, 6])；
+    """底座半高镂空框 (y 0–5)：
+    - 四面完全镂空，能看穿底座内部；
+    - 4 根角骨节柱 (截面 2x2，底在 y=0、顶在 y=5，复用 common_parts.bone_post，中段带 #b8a888 节纹暗面)；
+    - 底面 4 条水平红肉棱 (y in [0.0, 1.5]) 与顶面 4 条水平红肉棱 (y in [3.5, 5.0])；
     - 肉棱外表面附微浮 #5a1a1a 暗纹；
-    - 底面中心用 common_parts.outlet_8x6 (facing='-y') 做入口。
+    - 框内底面中心用 common_parts.outlet_8x6 (facing='-y') 朝下当入口。
     """
     cubes = []
 
-    # 1. 四根角骨节柱 (截面 2x2, y in [0.0, 6.0]，位于四外角)
+    # 1. 四根角骨节柱 (截面 2x2, y in [0.0, 5.0]，位于四外角，中段附暗面节带)
     corners = [
-        ("nw", -7.0, -7.0),
-        ("ne",  7.0, -7.0),
-        ("sw", -7.0,  7.0),
-        ("se",  7.0,  7.0),
+        ("nw", -6.5, -6.5),
+        ("ne",  6.5, -6.5),
+        ("sw", -6.5,  6.5),
+        ("se",  6.5,  6.5),
     ]
     for cname, cx, cz in corners:
-        cubes.extend(bone_post(center_x=cx, center_z=cz, y_bot=0.0, height=6.0, group="base_frame", pfx=f"post_{cname}"))
+        cubes.extend(bone_post(center_x=cx, center_z=cz, y_bot=0.0, height=5.0, group="base_frame", pfx=f"post_{cname}"))
 
-    # 2. 底面 4 条水平红肉棱 (截面 2x2, y in [0.0, 2.0], 长 12px: x/z in [-6.0, 6.0])
-    cubes.append({"name": "base_bot_rib_n", "from": [-6.0, 0.0, -8.0], "to": [ 6.0, 2.0, -6.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_bot_rib_s", "from": [-6.0, 0.0,  6.0], "to": [ 6.0, 2.0,  8.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_bot_rib_w", "from": [-8.0, 0.0, -6.0], "to": [-6.0, 2.0,  6.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_bot_rib_e", "from": [ 6.0, 0.0, -6.0], "to": [ 8.0, 2.0,  6.0], "group": "base_frame", "material": "flesh_main"})
+    # 2. 底面 4 条水平红肉棱 (截面 1.5x1.5, y in [0.0, 1.5], 连接四角骨柱)
+    cubes.append({"name": "base_bot_rib_n", "from": [-5.5, 0.0, -7.5], "to": [ 5.5, 1.5, -6.0], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_bot_rib_s", "from": [-5.5, 0.0,  6.0], "to": [ 5.5, 1.5,  7.5], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_bot_rib_w", "from": [-7.5, 0.0, -5.5], "to": [-6.0, 1.5,  5.5], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_bot_rib_e", "from": [ 6.0, 0.0, -5.5], "to": [ 7.5, 1.5,  5.5], "group": "base_frame", "material": "flesh_main"})
 
-    # 3. 顶面 4 条水平红肉棱 (截面 2x2, y in [4.0, 6.0], 长 12px: x/z in [-6.0, 6.0])
-    cubes.append({"name": "base_top_rib_n", "from": [-6.0, 4.0, -8.0], "to": [ 6.0, 6.0, -6.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_top_rib_s", "from": [-6.0, 4.0,  6.0], "to": [ 6.0, 6.0,  8.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_top_rib_w", "from": [-8.0, 4.0, -6.0], "to": [-6.0, 6.0,  6.0], "group": "base_frame", "material": "flesh_main"})
-    cubes.append({"name": "base_top_rib_e", "from": [ 6.0, 4.0, -6.0], "to": [ 8.0, 6.0,  6.0], "group": "base_frame", "material": "flesh_main"})
+    # 3. 顶面 4 条水平红肉棱 (截面 1.5x1.5, y in [3.5, 5.0], 连接四角骨柱)
+    cubes.append({"name": "base_top_rib_n", "from": [-5.5, 3.5, -7.5], "to": [ 5.5, 5.0, -6.0], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_top_rib_s", "from": [-5.5, 3.5,  6.0], "to": [ 5.5, 5.0,  7.5], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_top_rib_w", "from": [-7.5, 3.5, -5.5], "to": [-6.0, 5.0,  5.5], "group": "base_frame", "material": "flesh_main"})
+    cubes.append({"name": "base_top_rib_e", "from": [ 6.0, 3.5, -5.5], "to": [ 7.5, 5.0,  5.5], "group": "base_frame", "material": "flesh_main"})
 
-    # 4. 肉棱暗纹条 (#5a1a1a flesh_dark，贴于顶棱外侧微浮 0.05px)
-    cubes.append({"name": "base_stripe_n", "from": [-3.0, 4.5, -8.05], "to": [3.0, 5.5, -7.95], "group": "base_frame", "material": "flesh_dark"})
-    cubes.append({"name": "base_stripe_s", "from": [-3.0, 4.5,  7.95], "to": [3.0, 5.5,  8.05], "group": "base_frame", "material": "flesh_dark"})
-    cubes.append({"name": "base_stripe_w", "from": [-8.05, 4.5, -3.0], "to": [-7.95, 5.5, 3.0], "group": "base_frame", "material": "flesh_dark"})
-    cubes.append({"name": "base_stripe_e", "from": [ 7.95, 4.5, -3.0], "to": [ 8.05, 5.5, 3.0], "group": "base_frame", "material": "flesh_dark"})
+    # 4. 肉棱外侧暗纹条 (#5a1a1a flesh_dark，微浮 0.05px)
+    cubes.append({"name": "base_stripe_n", "from": [-2.5, 3.8, -7.55], "to": [2.5, 4.7, -7.45], "group": "base_frame", "material": "flesh_dark"})
+    cubes.append({"name": "base_stripe_s", "from": [-2.5, 3.8,  7.45], "to": [2.5, 4.7,  7.55], "group": "base_frame", "material": "flesh_dark"})
+    cubes.append({"name": "base_stripe_w", "from": [-7.55, 3.8, -2.5], "to": [-7.45, 4.7, 2.5], "group": "base_frame", "material": "flesh_dark"})
+    cubes.append({"name": "base_stripe_e", "from": [ 7.45, 3.8, -2.5], "to": [ 7.55, 4.7, 2.5], "group": "base_frame", "material": "flesh_dark"})
 
-    # 5. 底面中心入口 (common_parts.outlet_8x6，facing='-y')
+    # 5. 框内底面中心入口 (common_parts.outlet_8x6，facing='-y' 朝下)
     cubes.extend(outlet_8x6(center_x=0.0, center_y=1.0, center_z=0.0, facing="-y", length=2.0, pfx="base_inlet"))
 
     return cubes
 
 
 def part_02_nozzle_tiers() -> List[dict]:
-    """肉质喷嘴 3 级 (截面 12×12 → 9×9 → 6×6，到 y 14)：
-    - 级 1: 截面 12x12 (x/z in [-6, 6]), y in [6.0, 8.5]；
-    - 级 2: 截面 9x9 (x/z in [-4.5, 4.5]), y in [8.5, 11.0]；
-    - 级 3: 截面 6x6 (x/z in [-3, 3]), y in [11.0, 14.0]；
-    - 顶口内壁衬 #b05050，口中 #f6dcc4 2x2 真元光芯。
+    """细高肉质喷嘴 3 级 (y 5–16，细高挺拔)：
+    - 级 1: 截面 8x8 (x/z in [-4, 4]), y in [5.0, 9.0]；
+    - 级 1-2 肉褶环: 截面 10x10, y in [8.5, 9.5], 外凸 1px #5a1a1a；
+    - 级 2: 截面 6x6 (x/z in [-3, 3]), y in [9.0, 13.0]；
+    - 级 2-3 肉褶环: 截面 8x8, y in [12.5, 13.5], 外凸 1px #5a1a1a；
+    - 级 3: 截面 4x4 (x/z in [-2, 2]), y in [13.0, 15.0]；
+    - 顶上一圈外翻口沿 6x6 x 1px 高 (y in [15.0, 16.0])，中心 2x2 #f6dcc4 真元内光。
     """
     cubes = []
 
-    # 1. 级 1 (截面 12x12, y in [6.0, 8.5])
-    cubes.append({"name": "nozzle_t1", "from": [-6.0, 6.0, -6.0], "to": [6.0, 8.5, 6.0], "group": "nozzle", "material": "flesh_main"})
+    # 1. 级 1 (截面 8x8, y in [5.0, 9.0])
+    cubes.append({"name": "nozzle_tier1", "from": [-4.0, 5.0, -4.0], "to": [4.0, 9.0, 4.0], "group": "nozzle", "material": "flesh_main"})
 
-    # 2. 级 2 (截面 9x9, y in [8.5, 11.0])
-    cubes.append({"name": "nozzle_t2", "from": [-4.5, 8.5, -4.5], "to": [4.5, 11.0, 4.5], "group": "nozzle", "material": "flesh_main"})
+    # 2. 级 1-2 之间外凸 1px #5a1a1a 肉褶环 (截面 10x10, y in [8.5, 9.5])
+    cubes.append({"name": "fold_ring_1_2", "from": [-5.0, 8.5, -5.0], "to": [5.0, 9.5, 5.0], "group": "nozzle", "material": "flesh_dark"})
 
-    # 3. 级 3 外壁四边围绕中心 4x4 顶口 (截面 6x6, y in [11.0, 14.0])
-    # 北壁
-    cubes.append({"name": "nozzle_t3_n", "from": [-3.0, 11.0, -3.0], "to": [ 3.0, 14.0, -2.0], "group": "nozzle", "material": "flesh_main"})
-    # 南壁
-    cubes.append({"name": "nozzle_t3_s", "from": [-3.0, 11.0,  2.0], "to": [ 3.0, 14.0,  3.0], "group": "nozzle", "material": "flesh_main"})
-    # 西壁
-    cubes.append({"name": "nozzle_t3_w", "from": [-3.0, 11.0, -2.0], "to": [-2.0, 14.0,  2.0], "group": "nozzle", "material": "flesh_main"})
-    # 东壁
-    cubes.append({"name": "nozzle_t3_e", "from": [ 2.0, 11.0, -2.0], "to": [ 3.0, 14.0,  2.0], "group": "nozzle", "material": "flesh_main"})
+    # 3. 级 2 (截面 6x6, y in [9.0, 13.0])
+    cubes.append({"name": "nozzle_tier2", "from": [-3.0, 9.0, -3.0], "to": [3.0, 13.0, 3.0], "group": "nozzle", "material": "flesh_main"})
 
-    # 4. 顶口内壁亮红衬层 (#b05050 flesh_lit)
-    cubes.append({"name": "orifice_lining_n", "from": [-2.0, 12.0, -2.0], "to": [ 2.0, 14.0, -1.8], "group": "nozzle", "material": "flesh_lit"})
-    cubes.append({"name": "orifice_lining_s", "from": [-2.0, 12.0,  1.8], "to": [ 2.0, 14.0,  2.0], "group": "nozzle", "material": "flesh_lit"})
-    cubes.append({"name": "orifice_lining_w", "from": [-2.0, 12.0, -1.8], "to": [-1.8, 14.0,  1.8], "group": "nozzle", "material": "flesh_lit"})
-    cubes.append({"name": "orifice_lining_e", "from": [ 1.8, 12.0, -1.8], "to": [ 2.0, 14.0,  1.8], "group": "nozzle", "material": "flesh_lit"})
-    cubes.append({"name": "orifice_bottom",   "from": [-2.0, 11.8, -2.0], "to": [ 2.0, 12.0,  2.0], "group": "nozzle", "material": "flesh_lit"})
+    # 4. 级 2-3 之间外凸 1px #5a1a1a 肉褶环 (截面 8x8, y in [12.5, 13.5])
+    cubes.append({"name": "fold_ring_2_3", "from": [-4.0, 12.5, -4.0], "to": [4.0, 13.5, 4.0], "group": "nozzle", "material": "flesh_dark"})
 
-    # 5. 口中真元内光 (#f6dcc4 qi_glow, 2x2, x/z in [-1.0, 1.0], y in [12.5, 14.0])
-    cubes.append({"name": "orifice_qi_glow", "from": [-1.0, 12.5, -1.0], "to": [1.0, 14.0, 1.0], "group": "nozzle", "material": "qi_glow"})
+    # 5. 级 3 (截面 4x4, y in [13.0, 15.0])
+    cubes.append({"name": "nozzle_tier3", "from": [-2.0, 13.0, -2.0], "to": [2.0, 15.0, 2.0], "group": "nozzle", "material": "flesh_main"})
+
+    # 6. 顶上一圈外翻口沿 6x6 x 1px 高 (y in [15.0, 16.0])
+    # 四周外翻肉唇 (#b05050 flesh_lit)
+    cubes.append({"name": "lip_n", "from": [-3.0, 15.0, -3.0], "to": [ 3.0, 16.0, -1.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    cubes.append({"name": "lip_s", "from": [-3.0, 15.0,  1.0], "to": [ 3.0, 16.0,  3.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    cubes.append({"name": "lip_w", "from": [-3.0, 15.0, -1.0], "to": [-1.0, 16.0,  1.0], "group": "nozzle_lip", "material": "flesh_lit"})
+    cubes.append({"name": "lip_e", "from": [ 1.0, 15.0, -1.0], "to": [ 3.0, 16.0,  1.0], "group": "nozzle_lip", "material": "flesh_lit"})
+
+    # 7. 口内 2x2 真元内光 (#f6dcc4 qi_glow, y in [14.0, 15.8])
+    cubes.append({"name": "orifice_qi_core", "from": [-1.0, 14.0, -1.0], "to": [1.0, 15.8, 1.0], "group": "nozzle_lip", "material": "qi_glow"})
 
     return cubes
 
 
-def part_03_nozzle_fibers() -> List[dict]:
-    """四面各一条 #c07868 筋丝从口沿到底座：
-    - 北、南、西、东四面外壁各一条；
-    - 紧贴 3 级收窄阶梯台阶肉壁走台阶，从口沿 (y=14) 牢牢拉索锚固到底座 (y=6)。
+def part_03_diagonal_guy_wires() -> List[dict]:
+    """4 条 #c07868 筋丝从口沿斜着垂到底座四角骨节上：
+    - NW, NE, SW, SE 四个对角空间完全悬空的斜拉索；
+    - 从口沿外角 (y=15.5) 阶梯斜拉延伸到底座角骨节 (y=5.0)；
+    - 绝非贴在喷嘴面上的竖条，在 3/4 与侧视呈现强烈的有机斜拉索张力感。
     """
     cubes = []
 
-    # 1. 北面筋丝 (沿北壁阶梯向下)
-    cubes.append({"name": "fib_n_v3", "from": [-0.5, 11.06, -3.06], "to": [0.5, 14.0, -3.0], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_n_h2", "from": [-0.5, 11.0, -4.56], "to": [0.5, 11.06, -3.0], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_n_v2", "from": [-0.5, 8.56, -4.56], "to": [0.5, 11.0, -4.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_n_h1", "from": [-0.5, 8.5, -6.06], "to": [0.5, 8.56, -4.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_n_v1", "from": [-0.5, 6.0, -6.06], "to": [0.5, 8.5, -6.0], "group": "fibers", "material": "tendon_fiber"})
+    strands = [
+        ("nw", -1.0, -1.0),
+        ("ne",  1.0, -1.0),
+        ("sw", -1.0,  1.0),
+        ("se",  1.0,  1.0),
+    ]
 
-    # 2. 南面筋丝 (沿南壁阶梯向下)
-    cubes.append({"name": "fib_s_v3", "from": [-0.5, 11.06, 3.0], "to": [0.5, 14.0, 3.06], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_s_h2", "from": [-0.5, 11.0, 3.0], "to": [0.5, 11.06, 4.56], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_s_v2", "from": [-0.5, 8.56, 4.5], "to": [0.5, 11.0, 4.56], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_s_h1", "from": [-0.5, 8.5, 4.5], "to": [0.5, 8.56, 6.06], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_s_v1", "from": [-0.5, 6.0, 6.0], "to": [0.5, 8.5, 6.06], "group": "fibers", "material": "tendon_fiber"})
+    for sname, sx, sz in strands:
+        # 段 1 (近口沿): y in [12.8, 15.2], x/z 偏移 ~2.6
+        x1_0, x1_1 = (min(sx * 2.2, sx * 3.1), max(sx * 2.2, sx * 3.1))
+        z1_0, z1_1 = (min(sz * 2.2, sz * 3.1), max(sz * 2.2, sz * 3.1))
+        cubes.append({"name": f"guy_{sname}_seg1", "from": [x1_0, 12.8, z1_0], "to": [x1_1, 15.2, z1_1], "group": "guy_wires", "material": "tendon_fiber"})
 
-    # 3. 西面筋丝 (沿西壁阶梯向下)
-    cubes.append({"name": "fib_w_v3", "from": [-3.06, 11.06, -0.5], "to": [-3.0, 14.0, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_w_h2", "from": [-4.56, 11.0, -0.5], "to": [-3.0, 11.06, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_w_v2", "from": [-4.56, 8.56, -0.5], "to": [-4.5, 11.0, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_w_h1", "from": [-6.06, 8.5, -0.5], "to": [-4.5, 8.56, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_w_v1", "from": [-6.06, 6.0, -0.5], "to": [-6.0, 8.5, 0.5], "group": "fibers", "material": "tendon_fiber"})
+        # 段 2 (中上部): y in [10.2, 12.8], x/z 偏移 ~3.7
+        x2_0, x2_1 = (min(sx * 3.15, sx * 4.2), max(sx * 3.15, sx * 4.2))
+        z2_0, z2_1 = (min(sz * 3.15, sz * 4.2), max(sz * 3.15, sz * 4.2))
+        cubes.append({"name": f"guy_{sname}_seg2", "from": [x2_0, 10.2, z2_0], "to": [x2_1, 12.8, z2_1], "group": "guy_wires", "material": "tendon_fiber"})
 
-    # 4. 东面筋丝 (沿东壁阶梯向下)
-    cubes.append({"name": "fib_e_v3", "from": [ 3.0, 11.06, -0.5], "to": [ 3.06, 14.0, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_e_h2", "from": [ 3.0, 11.0, -0.5], "to": [ 4.56, 11.06, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_e_v2", "from": [ 4.5, 8.56, -0.5], "to": [ 4.56, 11.0, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_e_h1", "from": [ 4.5, 8.5, -0.5], "to": [ 6.06, 8.56, 0.5], "group": "fibers", "material": "tendon_fiber"})
-    cubes.append({"name": "fib_e_v1", "from": [ 6.0, 6.0, -0.5], "to": [ 6.06, 8.5, 0.5], "group": "fibers", "material": "tendon_fiber"})
+        # 段 3 (中下部): y in [7.4, 10.2], x/z 偏移 ~4.8
+        x3_0, x3_1 = (min(sx * 4.25, sx * 5.4), max(sx * 4.25, sx * 5.4))
+        z3_0, z3_1 = (min(sz * 4.25, sz * 5.4), max(sz * 4.25, sz * 5.4))
+        cubes.append({"name": f"guy_{sname}_seg3", "from": [x3_0, 7.4, z3_0], "to": [x3_1, 10.2, z3_1], "group": "guy_wires", "material": "tendon_fiber"})
+
+        # 段 4 (下部锚入底座骨柱): y in [4.8, 7.4], x/z 偏移 ~6.0
+        x4_0, x4_1 = (min(sx * 5.45, sx * 6.6), max(sx * 5.45, sx * 6.6))
+        z4_0, z4_1 = (min(sz * 5.45, sz * 6.6), max(sz * 5.45, sz * 6.6))
+        cubes.append({"name": f"guy_{sname}_seg4", "from": [x4_0, 4.8, z4_0], "to": [x4_1, 7.4, z4_1], "group": "guy_wires", "material": "tendon_fiber"})
 
     return cubes
 
@@ -191,7 +180,7 @@ def all_cubes() -> List[dict]:
     return (
         part_01_base_frame()
         + part_02_nozzle_tiers()
-        + part_03_nozzle_fibers()
+        + part_03_diagonal_guy_wires()
     )
 
 
@@ -288,10 +277,10 @@ def render_views(model_p: Path):
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("3/4 ISOMETRIC (Half-Height Base & 3-Tier Nozzle)", im_iso, 10, 10),
-        ("SIDE VIEW (Nozzle y:6-14, Base y:0-6 & Fibers)", im_side, cell_w + 20, 10),
-        ("TOP VIEW (Qi-Glow Core 2x2 & Orifice Lining)", im_top, 10, cell_h + 20),
-        ("FRONT VIEW (Base Posts, Ribs & Symmetrical Fibers)", im_front, cell_w + 20, cell_h + 20),
+        ("3/4 ISOMETRIC (Open Base y:0-5, Slender Nozzle y:5-16, Guys)", im_iso, 10, 10),
+        ("SIDE VIEW (Hollow Open Base Frame & Slender Nozzle Tiers)", im_side, cell_w + 20, 10),
+        ("TOP VIEW (Flaring Lip 6x6, Orifice Qi-Glow 2x2 & 4 Guys)", im_top, 10, cell_h + 20),
+        ("FRONT VIEW (Diagonal Guy-Wires Anchored to Base Corners)", im_front, cell_w + 20, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
@@ -329,7 +318,7 @@ def render_views(model_p: Path):
         check_cv.paste(c_iso, (rx, 34 + 10))
         check_cv.paste(c_side, (rx + thumb_size + 8, 34 + 10))
 
-        c_draw.text((rx + 4, 10), "NOW RENDER (LEFT: 3/4 Isometric View, RIGHT: SIDE View | Base y:0-6, Nozzle y:6-14)", fill=(180, 220, 210))
+        c_draw.text((rx + 4, 10), "NOW RENDER (LEFT: 3/4 Isometric View, RIGHT: SIDE View | Slender Nozzle y:5-16)", fill=(180, 220, 210))
 
         check_path = REVIEW_DIR / "check.png"
         check_cv.save(check_path)
@@ -345,8 +334,8 @@ def self_test():
 
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [-6.0, 6.0, -6.0],
-        "to":   [ 6.0, 8.5,  6.0],
+        "from": [-4.0, 5.0, -4.0],
+        "to":   [ 4.0, 9.0,  4.0],
         "material": "flesh_main",
     }]
     caught = False
