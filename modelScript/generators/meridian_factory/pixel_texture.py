@@ -6,13 +6,13 @@
 读不出血管、斑驳、透光渐变；参考图（refs/b01_meridian_straight.png）的观感全在贴图里。
 
 怎么做：
-- 每个面按 1 模型 px = 1 贴图 texel（即 16px/格）分配图集里的一块矩形；
+- 每个面按 1 模型 px = 2 贴图 texel（即 32px/格）分配图集里的一块矩形；
 - 每个 texel 取其**在模型空间里的 3D 位置**交给材质画笔上色。因为画笔只看 3D 位置，
   所以同一材质被切成很多小立方体时，纹理依然连续（血管不会在切缝处断开）；
 - 材质画笔各一套：血肉 / 暗血肉 / 骨 / 筋管。
 
 发光效果的做法（用户 10-11 要求）：**不做发光层 / 自发光**，也不依赖半透明。
-筋管靠贴图自身的亮暗对比表现「透光」：中心近 #f6dcc4，边缘压到 #a86858，筋丝用更深的线拉开反差。
+筋管靠贴图自身的亮暗对比表现「透光」：中心近 #f6dcc4，边缘压到 #a86858，筋丝用更深的细线（#a86858 。
 贴图 alpha 一律不透明；将来要加半透明是在不改贴图的前提下另加材质层。
 """
 
@@ -31,6 +31,9 @@ from PIL import Image
 
 from bbmodel_maker.render.render_bbmodel import FACES
 
+# 贴图密度：每 1 模型 px 取 2 texel（32px/格），细筋丝和细血管才画得出来
+TEXELS_PER_PX = 2
+
 Color = Tuple[int, int, int]
 Vec = Tuple[float, float, float]
 
@@ -45,7 +48,7 @@ def mix(a: Color, b: Color, t: float) -> Color:
     return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 
-# 配色表颜色 + 样板新增的两档（用户 10-11 指定的边缘暗色 #a86858；筋丝深线 #7a4036）
+# 配色表颜色 + 样板新增的两档（用户 10-11 指定的边缘暗色 #a86858）
 FLESH = hex_color("#8a2a2a")
 FLESH_DARK = hex_color("#5a1a1a")
 FLESH_LIT = hex_color("#b05050")
@@ -55,7 +58,6 @@ BONE_PORE = hex_color("#6a5a48")
 TUBE_EDGE = hex_color("#a86858")
 TUBE_MID = hex_color("#d9a08c")
 TUBE_CENTER = hex_color("#f6dcc4")
-TUBE_FIBER_DEEP = hex_color("#7a4036")
 
 
 # =============================================================================
@@ -86,7 +88,8 @@ def value_noise(p: Vec, scale: float, seed: int) -> float:
 
 def texel_noise(p: Vec, seed: int) -> float:
     """每个 texel 一个独立随机数（用位置取整，所以同一 texel 恒定）。"""
-    return _hash3(math.floor(p[0] * 2), math.floor(p[1] * 2), math.floor(p[2] * 2), seed)
+    return _hash3(math.floor(p[0] * TEXELS_PER_PX), math.floor(p[1] * TEXELS_PER_PX),
+                  math.floor(p[2] * TEXELS_PER_PX), seed)
 
 
 # =============================================================================
@@ -94,21 +97,22 @@ def texel_noise(p: Vec, seed: int) -> float:
 # =============================================================================
 
 def paint_flesh(p: Vec, axis: int) -> Color:
-    """血肉：暗红底 + 不规则深浅斑 + 细血管线。"""
-    blotch = value_noise(p, 1.6, 11) * 0.55 + value_noise(p, 0.8, 12) * 0.45
+    """血肉：暗红底 + 不规则深浅斑 + texel 级深浅格 + 1 texel 宽的细血管线。"""
+    blotch = value_noise(p, 1.4, 11) * 0.5 + value_noise(p, 0.6, 12) * 0.5
     color = FLESH
-    if blotch > 0.58:
-        color = mix(FLESH, FLESH_LIT, (blotch - 0.58) * 5.0)
-    elif blotch < 0.42:
-        color = mix(FLESH, FLESH_DARK, (0.42 - blotch) * 5.0)
-    # 细血管：噪声的等值线附近 1 texel 宽
-    ridge = abs(value_noise(p, 2.4, 21) - 0.5)
-    if ridge < 0.035:
-        color = mix(color, FLESH_DARK, 0.75)
-    elif ridge < 0.06:
-        color = mix(color, FLESH_LIT, 0.3)
+    if blotch > 0.56:
+        color = mix(FLESH, FLESH_LIT, (blotch - 0.56) * 5.0)
+    elif blotch < 0.44:
+        color = mix(FLESH, FLESH_DARK, (0.44 - blotch) * 5.0)
+    # 细血管：两层噪声等值线，1 texel 宽的深线 + 旁边一圈亮边
+    for scale, seed in ((2.0, 21), (3.1, 22)):
+        ridge = abs(value_noise(p, scale, seed) - 0.5)
+        if ridge < 0.022:
+            color = mix(color, FLESH_DARK, 0.85)
+        elif ridge < 0.04:
+            color = mix(color, FLESH_LIT, 0.35)
     grain = texel_noise(p, 31)
-    return mix(color, FLESH_DARK if grain < 0.5 else FLESH_LIT, 0.08 + 0.08 * abs(grain - 0.5))
+    return mix(color, FLESH_DARK if grain < 0.5 else FLESH_LIT, 0.10 + 0.18 * abs(grain - 0.5))
 
 
 def paint_flesh_dark(p: Vec, axis: int) -> Color:
@@ -122,9 +126,9 @@ def paint_bone(p: Vec, axis: int) -> Color:
     n = value_noise(p, 2.5, 51)
     color = mix(BONE_SHADE, BONE, 0.55 + 0.6 * n)
     pore = texel_noise(p, 52)
-    if pore < 0.14:
-        color = mix(color, BONE_PORE, 0.85)
-    elif pore < 0.22:
+    if pore < 0.06:
+        color = mix(color, BONE_PORE, 0.7)
+    elif pore < 0.16:
         color = mix(color, BONE_SHADE, 0.6)
     return color
 
@@ -136,7 +140,7 @@ TUBE_HALF_H = 3.0
 TUBE_HALF_L = 8.0
 FIBER_PERIOD = 8.0
 FIBER_SLOPE = 0.75
-FIBER_HALF_WIDTH = 0.45
+FIBER_HALF_WIDTH = 0.28    # 约 1 texel 宽
 
 
 def _tube_ramp(b: float) -> Color:
@@ -146,10 +150,23 @@ def _tube_ramp(b: float) -> Color:
     return mix(TUBE_MID, TUBE_CENTER, (b - 0.5) / 0.5)
 
 
+SPOT_ALONG_RADIUS = 0.8     # 亮斑沿管长的半径（占半长的比例）
+NET_PERIOD = 4.0            # 细筋网的周期（px），粗筋丝周期 FIBER_PERIOD 的一半
+FIBER_NET = hex_color("#c07868")
+FIBER_STRONG = hex_color("#a86858")
+
+
+def _fiber_line(v: float, z: float, period: float, half_width: float) -> bool:
+    """两条交叉斜线（X 形），每 period px 重复一次。"""
+    pz = ((z + period / 2) % period) - period / 2
+    slope = FIBER_SLOPE * (FIBER_PERIOD / period)
+    return abs(v - slope * pz) < half_width or abs(v + slope * pz) < half_width
+
+
 def paint_tube(p: Vec, axis: int) -> Color:
-    """筋管：靠亮暗对比表现透光。
-    - 中心亮（≈#f6dcc4）、边缘压暗到 #a86858；管长方向中点最亮；
-    - 侧面画两条交叉对角筋丝，用 #7a4036 深线拉开反差。
+    """筋管：只靠亮暗对比表现透光（不做发光层 / 自发光）。
+    - 管身中点有一团亮斑，接近 #f6dcc4，向四周宽幅过渡，边缘明显压暗到 #a86858；
+    - 侧面画细密的筋丝网：每 8px 一组较深的 X（#a86858）+ 每 4px 一组较浅的 X（#c07868）。
     """
     x, y, z = p
     if axis == 0:
@@ -158,20 +175,21 @@ def paint_tube(p: Vec, axis: int) -> Color:
         across = abs(x) / TUBE_HALF_W
     else:
         across = max(abs(x) / TUBE_HALF_W, abs(y - TUBE_CENTER_Y) / TUBE_HALF_H)
-    along = abs(z) / TUBE_HALF_L if axis != 2 else 1.0
-    brightness = 1.0 - min(1.0, 0.55 * across ** 1.2 + 0.45 * along ** 1.6)
-    brightness += (value_noise(p, 2.0, 61) - 0.5) * 0.10 + (texel_noise(p, 62) - 0.5) * 0.05
+    if axis == 2:
+        brightness = 0.12
+    else:
+        along = abs(z) / TUBE_HALF_L
+        radius = math.hypot(along / SPOT_ALONG_RADIUS, across)
+        brightness = 1.0 - radius ** 1.25
+    brightness += (value_noise(p, 1.5, 61) - 0.5) * 0.12 + (texel_noise(p, 62) - 0.5) * 0.06
     color = _tube_ramp(max(0.0, min(1.0, brightness)))
 
     if axis == 0:
-        # 对角筋丝只画在侧面（参考图顶面只有渐变）：沿管长每 8px 一个 X 形
         v = y - TUBE_CENTER_Y
-        pz = ((z + FIBER_PERIOD / 2) % FIBER_PERIOD) - FIBER_PERIOD / 2
-        on_line = (
-            abs(v - FIBER_SLOPE * pz) < FIBER_HALF_WIDTH or abs(v + FIBER_SLOPE * pz) < FIBER_HALF_WIDTH
-        )
-        if on_line:
-            color = mix(color, TUBE_FIBER_DEEP, 0.7)
+        if _fiber_line(v, z, FIBER_PERIOD, FIBER_HALF_WIDTH):
+            color = mix(color, FIBER_STRONG, 0.9)
+        elif _fiber_line(v, z, NET_PERIOD, FIBER_HALF_WIDTH):
+            color = mix(color, FIBER_NET, 0.7)
     return color
 
 
@@ -200,13 +218,13 @@ def _face_geometry(cube: dict, face: str):
     f = np.array(cube["from"], float)
     t = np.array(cube["to"], float)
     tl, tr, br, bl = [np.array(c, float) for c in corner_fn(f, t)]
-    w = max(1, int(round(np.linalg.norm(tr - tl))))
-    h = max(1, int(round(np.linalg.norm(bl - tl))))
+    w = max(1, int(round(np.linalg.norm(tr - tl) * TEXELS_PER_PX)))
+    h = max(1, int(round(np.linalg.norm(bl - tl) * TEXELS_PER_PX)))
     axis = int(np.argmax(np.abs(normal)))
     return tl, tr, bl, w, h, axis
 
 
-def build_atlas(cubes: List[dict], width: int = 256) -> Tuple[Image.Image, List[Dict[str, List[float]]]]:
+def build_atlas(cubes: List[dict], width: int = 512) -> Tuple[Image.Image, List[Dict[str, List[float]]]]:
     """返回 (图集图片, 与 cubes 等长的 [面名 → uv] 列表)。货架式排布，高度按需。"""
     jobs = []
     for ci, cube in enumerate(cubes):
