@@ -120,8 +120,8 @@ def part_01_base_frame() -> List[dict]:
     cubes.append({"name": "base_stripe_w", "from": [-7.55, 3.8, -2.5], "to": [-7.45, 4.7, 2.5], "group": "base_frame", "material": "flesh_dark"})
     cubes.append({"name": "base_stripe_e", "from": [ 7.45, 3.8, -2.5], "to": [ 7.55, 4.7, 2.5], "group": "base_frame", "material": "flesh_dark"})
 
-    # 5. 框内底面中心入口 (common_parts.outlet_8x6，facing='-y' 朝下)
-    cubes.extend(outlet_8x6(center_x=0.0, center_y=1.0, center_z=0.0, facing="-y", length=2.0, pfx="base_inlet"))
+    # 5. 框内底面中心入口 (common_parts.outlet_8x6，facing='-y' 朝下，肉套 y 0..2，底面贴地)
+    cubes.extend(outlet_8x6(center_x=0.0, center_y=2.0, center_z=0.0, facing="-y", length=2.0, pfx="base_inlet"))
 
     return cubes
 
@@ -391,10 +391,9 @@ def self_test():
         else:
             raise RuntimeError(f"门禁失效: emitter_{v} 注入共面冲突未被拦截!")
 
-        # y 下限 -1：pi-a 底座框内入口 outlet_8x6 (center_y=1, length=2) 的肉套往下探出地面 1px，底座原样保留
         lo = [min(c["from"][i] for c in cubes) for i in range(3)]
         hi = [max(c["to"][i] for c in cubes) for i in range(3)]
-        assert lo[0] >= -8 and hi[0] <= 8 and lo[2] >= -8 and hi[2] <= 8 and lo[1] >= -1 and hi[1] <= 16, f"{v} 外包超出 16×16×16: lo={lo} hi={hi}"
+        assert lo[0] >= -8 and hi[0] <= 8 and lo[2] >= -8 and hi[2] <= 8 and lo[1] >= 0 and hi[1] <= 16, f"{v} 外包超出 16×16×16: lo={lo} hi={hi}"
         print(f"  [OK] emitter_{v} 外包 x[{lo[0]},{hi[0]}] y[{lo[1]},{hi[1]}] z[{lo[2]},{hi[2]}] ⊂ 16³")
 
     for v in VARIANTS:
