@@ -46,37 +46,37 @@ REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/im
 REVIEW_DIR_ALIAS = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/p01_qi_packet")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/p01_qi_packets.png")
 
-# 6 个变体的外层浅色与面心深色配置 (RGBA)
+# 6 个变体的外层基色与面心亮一档发光色配置 (RGBA)
 VARIANTS = {
     "neutral": {
         "title": "Neutral (中性)",
-        "shell": (216, 212, 200, 255), # #d8d4c8
-        "core":  (250, 248, 242, 255), # #faf8f2 面心亮白发光
+        "shell": (230, 226, 218, 255), # #e6e2da 柔和浅象牙外壳
+        "core":  (255, 255, 252, 255), # #fffff0 纯白晶核亮一档发光
     },
     "metal": {
         "title": "Metal (金)",
-        "shell": (160, 166, 174, 255), # #a0a6ae
-        "core":  (224, 230, 236, 255), # #e0e6ec 面心银白发光
+        "shell": (196, 200, 206, 255), # #c4c8ce 银灰金性外壳
+        "core":  (245, 248, 252, 255), # #f5f8fc 亮银白晶核亮一档发光
     },
     "wood": {
         "title": "Wood (木)",
-        "shell": (58,  122, 64,  255), # #3a7a40
-        "core":  (120, 200, 128, 255), # #78c880 面心翠绿发光
+        "shell": (85,  155, 90,  255), # #559b5a 翠绿木性外壳
+        "core":  (150, 230, 160, 255), # #96e6a0 鲜亮翠绿晶核亮一档发光
     },
     "water": {
         "title": "Water (水)",
-        "shell": (42,  80,  144, 255), # #2a5090
-        "core":  (106, 152, 224, 255), # #6a98e0 面心冰蓝发光
+        "shell": (68,  115, 185, 255), # #4473b9 湛蓝水性外壳
+        "core":  (135, 185, 255, 255), # #87b9ff 冰蓝亮晶核亮一档发光
     },
     "fire": {
         "title": "Fire (火)",
-        "shell": (144, 42,  32,  255), # #902a20
-        "core":  (232, 106, 90,  255), # #e86a5a 面心炽火发光
+        "shell": (195, 70,  55,  255), # #c34637 炽红火性外壳
+        "core":  (255, 145, 120, 255), # #ff9178 亮焰红晶核亮一档发光
     },
     "earth": {
         "title": "Earth (土)",
-        "shell": (128, 96,  32,  255), # #806020
-        "core":  (208, 168, 80,  255), # #d0a850 面心真金发光
+        "shell": (170, 132, 60,  255), # #aa843c 褐黄土性外壳
+        "core":  (240, 205, 110, 255), # #f0cd6e 金黄亮晶核亮一档发光
     },
 }
 

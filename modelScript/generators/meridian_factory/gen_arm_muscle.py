@@ -254,21 +254,21 @@ def part_03_muscle_bundles() -> List[dict]:
                 "material": "flesh_lit",
             })
 
-        # 延伸段 (z 44 那头长度错开 0-4px，两级阶梯切角做饱满圆钝的半球肌腹)
+        # 延伸段 (z 44 那头长度错开 0-4px，大幅阶梯收缩做饱满圆钝肌腹，彻底消除平切感)
         ext_len = ext if ext > 0.05 else 1.2
         x0, x1, y0, y1 = secs[3]
         z_end_s1 = zs[4]
         dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
 
         if b_name != "b0":
-            x0_c1 = x0 + 1.2 if dx_sign < 0 else x0 + 0.3
-            x1_c1 = x1 - 0.3 if dx_sign < 0 else x1 - 1.2
-            y0_c1, y1_c1 = y0 + 0.6, y1 - 0.6
+            x0_c1 = x0 + 1.8 if dx_sign < 0 else x0 + 0.6
+            x1_c1 = x1 - 0.6 if dx_sign < 0 else x1 - 1.8
+            y0_c1, y1_c1 = y0 + 0.9, y1 - 0.9
         else:
-            x0_c1, x1_c1 = x0 + 0.6, x1 - 0.6
-            y0_c1, y1_c1 = y0 + 0.6, y1 - 0.6
+            x0_c1, x1_c1 = x0 + 0.9, x1 - 0.9
+            y0_c1, y1_c1 = y0 + 0.9, y1 - 0.9
 
-        z_m1 = z_end_s1 + ext_len * 0.6
+        z_m1 = z_end_s1 + ext_len * 0.55
         cubes.append({
             "name": f"{b_name}_ext1",
             "from": [round(x0_c1, 2), round(y0_c1, 2), round(z_end_s1, 2)],
@@ -285,14 +285,26 @@ def part_03_muscle_bundles() -> List[dict]:
             "material": "flesh_lit",
         })
 
-        # 级 2 进一步收缩圆钝顶帽
-        x0_c2, x1_c2 = x0_c1 + 0.8, x1_c1 - 0.8
-        y0_c2, y1_c2 = y0_c1 + 0.5, y1_c1 - 0.5
-        z_m2 = z_end_s1 + ext_len
+        # 级 2 进一步大幅收缩圆钝顶帽 (向中心圆拱)
+        x0_c2, x1_c2 = x0_c1 + 1.2, x1_c1 - 1.2
+        y0_c2, y1_c2 = y0_c1 + 0.8, y1_c1 - 0.8
+        z_m2 = z_end_s1 + ext_len * 0.9
         cubes.append({
             "name": f"{b_name}_ext2_dome",
             "from": [round(x0_c2, 2), round(y0_c2, 2), round(z_m1, 2)],
             "to":   [round(x1_c2, 2), round(y1_c2, 2), round(z_m2, 2)],
+            "group": "muscle_bundles",
+            "material": "flesh_main",
+        })
+
+        # 级 3 极小圆拱尖帽 (长 0.4px，彻底圆润闭合)
+        x0_c3, x1_c3 = x0_c2 + 0.6, x1_c2 - 0.6
+        y0_c3, y1_c3 = y0_c2 + 0.5, y1_c2 - 0.5
+        z_m3 = z_end_s1 + ext_len
+        cubes.append({
+            "name": f"{b_name}_ext3_apex",
+            "from": [round(x0_c3, 2), round(y0_c3, 2), round(z_m2, 2)],
+            "to":   [round(x1_c3, 2), round(y1_c3, 2), round(z_m3, 2)],
             "group": "muscle_bundles",
             "material": "flesh_main",
         })
