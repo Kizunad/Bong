@@ -2,6 +2,7 @@
 """经脉工厂共享接口件重构前后几何一致性严格比对测试"""
 
 import json
+import sys
 from pathlib import Path
 
 MODEL_DIR = Path("modelScript/models/meridian_factory")
