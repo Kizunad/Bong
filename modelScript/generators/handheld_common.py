@@ -46,6 +46,13 @@ PALETTE: Dict[str, Tuple[int, int, int]] = {
     "cinnabar_dark": (92, 22, 20),
     "ash": (74, 72, 70),
     "void": (24, 20, 28),
+    "rope": (122, 80, 52),
+    "paper_ochre": (176, 150, 100),
+    "ink_ochre": (168, 116, 28),
+    "paper_frost": (128, 142, 152),
+    "ink_blue": (50, 84, 112),
+    "paper_scorch": (58, 50, 48),
+    "ink_cinnabar": (176, 42, 32),
 }
 
 
