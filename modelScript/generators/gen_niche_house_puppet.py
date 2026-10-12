@@ -25,7 +25,8 @@ CAGE_X = (-2.0, 2.0)        # 胸口笼格开口：宽 4px
 CAGE_Y = (7.0, 11.0)        # 高 4px
 CAGE_BARS = 5               # 竖条数，间距 1px
 CAGE_Z = (2.4, 3.0)         # 栅条前后厚度
-FINGER_LENGTH = 3.0         # 三指爪：每指 1×1×3（z 向前）
+CLAW_BASE = 2.0             # 三指爪：每指根节长（z 向前）
+CLAW_TIP = 1.8              # 爪尖长
 
 
 def part_base() -> List[Cube]:
@@ -104,9 +105,12 @@ def part_arms() -> List[Cube]:
         cubes.append(cube(f"arm_fore_{tag}", (x0 + 0.3, 1.8, -1.3), (x1 - 0.3, 6.8, 1.5), "wood", "arms"))
         cubes.extend(_guard_plates(tag, sx, x0 + 0.3 if sx < 0 else x1 - 0.3))
         center = (x0 + x1) / 2
-        for k, offset in enumerate((-0.95, 0.0, 0.95)):
-            cubes.append(cube(f"claw_{tag}_{k}", (center + offset - 0.45, 1.8, 1.5),
-                              (center + offset + 0.45, 2.8, 1.5 + FINGER_LENGTH), "stone", "arms"))
+        for k, offset in enumerate((-1.45, 0.0, 1.45)):
+            # 爪加大：每指根节 1.2×1.3×2，前面再接一节收细的爪尖 0.6×1×1.8，总长约 3.8
+            cubes.append(cube(f"claw_{tag}_{k}", (center + offset - 0.6, 1.8, 1.5),
+                              (center + offset + 0.6, 3.1, 1.5 + CLAW_BASE), "stone", "arms"))
+            cubes.append(cube(f"claw_{tag}_{k}_tip", (center + offset - 0.3, 1.8, 1.5 + CLAW_BASE),
+                              (center + offset + 0.3, 2.8, 1.5 + CLAW_BASE + CLAW_TIP), "bone_lit", "arms"))
     return cubes
 
 

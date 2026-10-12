@@ -37,10 +37,12 @@ def part_rings() -> List[Cube]:
 def part_eye() -> List[Cube]:
     """眼：三层叠成的杏仁形 + 抬高一层的瞳点。"""
     return [
-        tp.bar("eye_mid", -1.6, 1.6, -0.4, 0.4, INK),
-        tp.bar("eye_upper", -1.0, 1.0, 0.4, 1.0, INK),
-        tp.bar("eye_lower", -1.0, 1.0, -1.0, -0.4, INK),
-        hc.cube("eye_pupil", (-0.4, tp.GLYPH_TOP, -0.4), (0.4, tp.GLYPH_TOP + 0.3, 0.4), "stone_dark", "glyph"),
+        tp.bar("eye_mid", -2.0, 2.0, -0.4, 0.4, INK),
+        tp.bar("eye_upper", -1.5, 1.5, 0.4, 1.0, INK),
+        tp.bar("eye_upper_tip", -0.8, 0.8, 1.0, 1.5, INK),
+        tp.bar("eye_lower", -1.5, 1.5, -1.0, -0.4, INK),
+        tp.bar("eye_lower_tip", -0.8, 0.8, -1.5, -1.0, INK),
+        hc.cube("eye_pupil", (-0.5, tp.GLYPH_TOP, -0.5), (0.5, tp.GLYPH_TOP + 0.3, 0.5), "stone_dark", "glyph"),
     ]
 
 

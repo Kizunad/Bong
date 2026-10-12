@@ -23,7 +23,7 @@ CORE_TOP = 2.0              # 中心块比别的纹路再凸起一点
 # 轴向尖刺：由内向外三节，逐节变窄 (x 起, x 止, 半宽)
 AXIS_SPIKE = ((1.0, 2.6, 0.6), (2.6, 4.0, 0.4), (4.0, 5.0, 0.2))
 # 斜向尖刺：沿对角线的三个方块 (中心偏移, 边长)
-DIAGONAL_SPIKE = ((1.9, 1.0), (2.9, 1.0), (3.9, 0.8))
+DIAGONAL_SPIKE = ((1.9, 1.3), (2.7, 1.2), (3.5, 1.0))
 
 
 def part_burst() -> List[Cube]:
@@ -38,8 +38,9 @@ def part_burst() -> List[Cube]:
             for i, (center, size) in enumerate(DIAGONAL_SPIKE):
                 h = size / 2
                 cx, cz = sx * center, sz * center
-                cubes.append(tp.bar(f"spike_{tag_z}{tag_x}_{i}", cx - h, cx + h, cz - h, cz + h, INK,
-                                    y1=tp.GLYPH_TOP - 0.1 * i))
+                # 相邻方块互相叠 0.3~0.4px，连成一条斜刺；底面各抬 0.03 错开，避免共面
+                cubes.append(hc.cube(f"spike_{tag_z}{tag_x}_{i}", (cx - h, tp.PAPER_TOP + 0.03 * i, cz - h),
+                                     (cx + h, tp.GLYPH_TOP - 0.1 * i, cz + h), INK, "glyph"))
     return cubes
 
 

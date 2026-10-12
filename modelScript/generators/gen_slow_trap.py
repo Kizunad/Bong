@@ -27,7 +27,7 @@ SPIRAL: Tuple[Tuple[float, float], ...] = (
     (2.4, -2.4), (2.4, 2.4), (-2.4, 2.4), (-2.4, -1.2),
     (1.2, -1.2), (1.2, 1.2),
 )
-HOLLOW_DOT = 0.5            # 中心空心点的半边长
+HOLLOW_DOT = 0.7            # 中心空心点的半边长
 
 
 def part_spiral() -> List[Cube]:

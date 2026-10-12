@@ -43,7 +43,7 @@ FRAME_TOP = 4.0             # 内框高 2（从 2 到 4）
 FRAME2_HALF = 3.0           # 第二层框 6×6
 FRAME2_W = 0.6
 FRAME2_TOP = 6.0
-HORN_STEP = 0.7             # 骨角每升 2px，沿 x、z 各向外偏的量
+HORN_STEP = 1.0             # 骨角每升 2px，沿 x、z 各向外偏的量（对角线上约 1.4px）
 RED_BAND_Y = ((4.5, 5.0), (6.0, 6.5))   # 骨柱上两道红箍
 
 
@@ -160,7 +160,7 @@ def part_center(tier: str) -> List[Cube]:
 def part_horns() -> List[Cube]:
     """高档：内框四角各伸出一根向外弯、高 6 的骨角，每升 2px 沿 x、z 各向外偏一格（共三节）。"""
     cubes = []
-    base_center = FRAME_HALF - FRAME_W / 2 + 0.6        # 骨角根部落在内框角上，略靠外
+    base_center = FRAME2_HALF + 0.4                  # 骨角根部紧贴第二层框外侧，往外弯 3 节
     for sx, tag_x in ((-1, "w"), (1, "e")):
         for sz, tag_z in ((-1, "n"), (1, "s")):
             for i in range(3):
