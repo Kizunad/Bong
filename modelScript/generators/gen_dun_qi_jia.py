@@ -14,7 +14,7 @@
     part_hinge    铰块 + 轴销        y 0 ~ 0.06，两片夹子在底下合成一个整体
     part_plates   两片厚铁夹，三段，往上由内收渐张     y 0.06 ~ 0.40
     part_wrap     麻绳缠三道         y 0.155 ~ 0.24，手握处，同时把两片夹子勒在一起
-    part_pads     夹口皮垫 ×2        y 0.31 ~ 0.38，贴在两片夹子的内侧面
+    part_pads     夹口皮垫 ×2 + 缝线   y 0.31 ~ 0.38，贴在两片夹子的内侧面，每块三道缝线
     part_tips     磨平的钝头 ×2      y 0.40 ~ 0.445，用亮铁（磨出来的）
 
 ## 方向约定
@@ -67,13 +67,17 @@ def _left_plate() -> list[Box]:
     """-X 一片厚铁夹：三段，越往上离中线越远（V 形张开）；段间 x 位置和 z 半宽都错开，侧面不共面。"""
     return [
         Box("plate_low_l", "clamp_iron", (-0.0300, 0.1300, 0.0), (0.0190, 0.0700, 0.0340)),
-        Box("plate_mid_l", "clamp_iron", (-0.0340, 0.2500, 0.0), (0.0190, 0.0500, 0.0335)),
-        Box("plate_jaw_l", "clamp_iron", (-0.0400, 0.3500, 0.0), (0.0190, 0.0500, 0.0330)),
+        Box("plate_mid_l", "clamp_iron", (-0.0360, 0.2500, 0.0), (0.0190, 0.0500, 0.0335)),
+        Box("plate_jaw_l", "clamp_iron", (-0.0460, 0.3500, 0.0), (0.0190, 0.0500, 0.0330)),
         # 夹口皮垫：贴在夹口段内侧面（x = -0.021）上，朝中线鼓出 0.0125
-        Box("pad_l", "clamp_pad", (-0.0148, 0.3450, 0.0), (0.0063, 0.0350, 0.0260)),
+        Box("pad_l", "clamp_pad", (-0.0207, 0.3450, 0.0), (0.0063, 0.0350, 0.0260)),
+        # 皮垫缝线：三道细麻线横过垫面，露在垫的内侧面外 0.003
+        Box("stitch_a_l", "clamp_cord", (-0.0135, 0.3250, 0.0), (0.0030, 0.0035, 0.0200)),
+        Box("stitch_b_l", "clamp_cord", (-0.0132, 0.3450, 0.0), (0.0030, 0.0030, 0.0205)),
+        Box("stitch_c_l", "clamp_cord", (-0.0138, 0.3650, 0.0), (0.0030, 0.0032, 0.0198)),
         # 钝头：夹口磨平的那一截，亮铁；顶上再压一小级，读成倒了角的钝面
-        Box("tip_l", "clamp_edge", (-0.0400, 0.4150, 0.0), (0.0200, 0.0150, 0.0310)),
-        Box("tip_top_l", "clamp_edge", (-0.0420, 0.4375, 0.0), (0.0170, 0.0075, 0.0280)),
+        Box("tip_l", "clamp_edge", (-0.0460, 0.4150, 0.0), (0.0200, 0.0150, 0.0310)),
+        Box("tip_top_l", "clamp_edge", (-0.0480, 0.4375, 0.0), (0.0170, 0.0075, 0.0280)),
     ]
 
 
@@ -101,7 +105,7 @@ def part_wrap() -> list[Box]:
 
 def part_pads() -> list[Box]:
     plates = _left_plate()
-    return [box for box in plates + _mirror(plates) if box.name.startswith("pad")]
+    return [box for box in plates + _mirror(plates) if box.name.startswith(("pad", "stitch"))]
 
 
 def part_tips() -> list[Box]:

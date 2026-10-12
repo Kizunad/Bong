@@ -55,7 +55,7 @@ REPO = Path(__file__).resolve().parents[2]
 BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 
 ITEM_ID = "bao_chu"
-LENGTH = 0.8025         # 全长（授权系，方块）：握把末端 y=0 到锄板上沿
+LENGTH = 0.8338         # 全长（授权系，方块）：握把末端 y=0 到翻边上沿
 GRIP = 0.14             # 拳心对准缠手麻绳的中段
 SCALE = 0.85            # 显示缩放 → 手里约 0.66 方块
 
@@ -65,6 +65,8 @@ SOCKET_TOP = 0.74       # 方銎顶（y）
 PLATE_WIDTH_PX = 6.0    # 锄板宽（z）
 PLATE_REACH_PX = 5.0    # 锄板伸出方銎之外的长度（-X）
 PLATE_THICK_PX = 1.0    # 锄板厚（y）
+LIP_PX = 1.5            # 锄板两侧翻边高度
+LIP_THICK = 0.0150      # 翻边厚（z）
 
 
 # ── 贴图 ──────────────────────────────────────────────────────────────────
@@ -209,6 +211,12 @@ def part_head() -> list[Box]:
     for index, (z0, z1) in enumerate(spans):
         boxes.append(Box(f"plate_edge_{index}", "hoe_edge", (main_x1 - edge / 2.0, mid_y, (z0 + z1) / 2.0),
                          (edge / 2.0, half_t, (z1 - z0) / 2.0)))
+    # 主板两侧各立一道 1.5px 高的翻边：整块板读成浅浅的一块「畚」（参考图里内凹的锄板），
+    # 不再是一块平放的铁片。翻边只在主板范围内，不盖前缘的缺口。
+    lip_h = LIP_PX * PX
+    for name, side in (("plate_lip_front", -1.0), ("plate_lip_back", 1.0)):
+        boxes.append(Box(name, "hoe_iron", ((mid_x0 + main_x1) / 2.0, top_y + lip_h / 2.0, side * (half_w - LIP_THICK / 2.0)),
+                         ((mid_x0 - main_x1) / 2.0 - 0.004, lip_h / 2.0, LIP_THICK / 2.0)))
     return boxes
 
 

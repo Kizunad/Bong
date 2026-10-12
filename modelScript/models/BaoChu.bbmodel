@@ -1509,6 +1509,172 @@
      "texture": 0
     }
    }
+  },
+  {
+   "name": "plate_lip_front",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "ee4ab4f0-0cda-58f0-b8ef-cdb96073e410",
+   "from": [
+    3.064,
+    18.6,
+    5.0
+   ],
+   "to": [
+    4.936,
+    20.1,
+    5.24
+   ],
+   "autouv": 0,
+   "color": 1,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    }
+   }
+  },
+  {
+   "name": "plate_lip_back",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "4c81c24e-2182-5486-9545-5bd8908fe4f3",
+   "from": [
+    3.064,
+    18.6,
+    10.76
+   ],
+   "to": [
+    4.936,
+    20.1,
+    11.0
+   ],
+   "autouv": 0,
+   "color": 1,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      16,
+      0,
+      32,
+      16
+     ],
+     "texture": 0
+    }
+   }
   }
  ],
  "outliner": [
@@ -1578,7 +1744,9 @@
     "338a91e7-2c25-5b79-88b7-9a35b66b4aeb",
     "829f1cad-ddb7-5ab9-9c44-89f78872c924",
     "c9317e43-f128-578b-b671-7da4cbd2d961",
-    "7433e852-280d-59d2-8a75-e6f0364ea473"
+    "7433e852-280d-59d2-8a75-e6f0364ea473",
+    "ee4ab4f0-0cda-58f0-b8ef-cdb96073e410",
+    "4c81c24e-2182-5486-9545-5bd8908fe4f3"
    ]
   },
   {

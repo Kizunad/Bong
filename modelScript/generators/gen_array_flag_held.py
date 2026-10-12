@@ -18,8 +18,8 @@
     part_collar   骨环              y 0.27 ~ 0.31，握柄与旗杆之间的一圈
     part_pole     旗杆 两段          y 0.31 ~ 0.76，往上略收
     part_banner   旗幡 + 两道皮绑带   y 0.43 ~ 0.72，从杆头附近往 -X 伸出，边缘参差
-    part_rune     阵纹 一竖两横       穿过旗幡、两面都鼓出一点，贴图是青白弱光
-    part_finial   杆头骨饰           y 0.76 ~ 0.87，骨节 + 一枚向上的短骨刺
+    part_rune     阵纹 一竖两横 + 方环   穿过旗幡、两面都鼓出一点，贴图是青白弱光
+    part_finial   杆头骨饰           y 0.76 ~ 0.918，骨节 + 三节往 +X 勾回的骨刺
 
 ## 方向约定
 
@@ -59,7 +59,7 @@ REPO = Path(__file__).resolve().parents[2]
 BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 
 ITEM_ID = "array_flag"
-LENGTH = 0.87           # 全长（授权系，方块）：柄尾到骨刺尖
+LENGTH = 0.918          # 全长（授权系，方块）：柄尾到骨刺钩尖
 GRIP = 0.15             # 拳心对准缠革握柄的中段
 SCALE = 0.90            # 显示缩放 → 手里约 0.78 方块
 
@@ -189,20 +189,34 @@ def part_banner() -> list[Box]:
 
 
 def part_rune() -> list[Box]:
-    """阵纹：一竖两横，穿透旗幡、两面各鼓出 0.003，所以两面都看得见。"""
+    """阵纹：一竖两横 + 套在十字心上的一圈方环，穿透旗幡、两面各鼓出 0.003，所以两面都看得见。
+
+    方环是参考图里那圈圆环的体素化（四条细边围成方框）；各条的 z 半宽互不相同
+    （0.0191~0.0199），相邻条的侧面不共面。
+    """
+    ring_x, ring_y, ring_half = -0.1450, 0.5850, 0.0300
     return [
         Box("rune_stem", "flag_rune", (-0.1450, 0.5900, 0.0), (0.0070, 0.0900, 0.0195)),
         Box("rune_arm_high", "flag_rune", (-0.1450, 0.6450, 0.0), (0.0650, 0.0070, 0.0192)),
         Box("rune_arm_low", "flag_rune", (-0.1450, 0.5500, 0.0), (0.0400, 0.0070, 0.0198)),
+        Box("rune_ring_top", "flag_rune", (ring_x, ring_y + ring_half, 0.0), (ring_half, 0.0055, 0.0191)),
+        Box("rune_ring_bottom", "flag_rune", (ring_x, ring_y - ring_half, 0.0), (ring_half, 0.0055, 0.0193)),
+        Box("rune_ring_left", "flag_rune", (ring_x - ring_half, ring_y, 0.0), (0.0055, ring_half, 0.0197)),
+        Box("rune_ring_right", "flag_rune", (ring_x + ring_half, ring_y, 0.0), (0.0055, ring_half, 0.0199)),
     ]
 
 
 def part_finial() -> list[Box]:
-    """杆头骨饰：一节骨 + 一枚向上的短骨刺（参考图里那枚弯骨刺的方块化）。"""
+    """杆头骨饰：一节骨 + 一枚向上、尖端向 +X 勾回的骨刺（参考图里那枚弯骨刺的方块化）。
+
+    刺分三节，每节往 +X 偏一点、越往上越细，顶上再多一小块往 +X 探出——侧着看是个弯钩。
+    """
     return [
         Box("finial_knob", "flag_bone", (0.0, 0.7850, 0.0), (0.0460, 0.0250, 0.0440)),
         Box("finial_spike_low", "flag_bone", (0.0, 0.8350, 0.0), (0.0240, 0.0250, 0.0230)),
-        Box("finial_spike_tip", "flag_bone", (0.0030, 0.8570, 0.0), (0.0140, 0.0130, 0.0130)),
+        Box("finial_spike_mid", "flag_bone", (0.0060, 0.8750, 0.0), (0.0180, 0.0150, 0.0170)),
+        Box("finial_spike_tip", "flag_bone", (0.0140, 0.9000, 0.0), (0.0110, 0.0100, 0.0120)),
+        Box("finial_spike_hook", "flag_bone", (0.0230, 0.9120, 0.0), (0.0090, 0.0060, 0.0100)),
     ]
 
 
