@@ -190,19 +190,27 @@ def _box(name: str, material: str, y0: float, y1: float, x: float, z: float, hx:
     return Box(name, material, (round(x, 5), round((y0 + y1) / 2.0, 5), round(z, 5)),
                (round(hx, 5), round((y1 - y0) / 2.0, 5), round(hz, 5)))
 
+def _chamfered(name: str, material: str, y0: float, y1: float, x: float, z: float,
+               hx: float, hz: float, cut: float) -> list[Box]:
+    """削掉四角的矩形截面（每角削 `cut`）：「宽 2hx × 厚 2(hz-cut)」+「宽 2(hx-cut) × 厚 2hz」两块十字相叠，
+    高度错开 0.0033，免得两块的上下面共面。矛杆、尾帽、握把缠绳、缠扎收口圈**全部走这一个函数**，削角做法一致。"""
+    return [
+        _box(f"{name}_a", material, y0, y1, x, z, hx, hz - cut),
+        _box(f"{name}_b", material, y0 + 0.0033, y1 - 0.0033, x, z, hx - cut, hz),
+    ]
+
+
 
 def part_butt(material: str = "wood") -> list[Box]:
-    """矛尾帽：比矛杆略粗的一截钝头，也是握把的尾端止滑。石 / 骨矛是木帽，铁矛是铁帽。"""
-    return [_box("butt", material, 0.0, 0.030, 0.0, 0.0, 1.15 * PX, 1.15 * PX)]
+    """矛尾帽：比矛杆略粗的一截钝头，也是握把的尾端止滑。石 / 骨矛是木帽，铁矛是铁帽。
+    和矛杆同样**削四角**（每角削 0.55px），整件杆形一致。"""
+    return _chamfered("butt", material, 0.0, 0.030, 0.0, 0.0, 1.15 * PX, 1.15 * PX, 0.55 * PX)
 
 
 def _octagon(name: str, material: str, y0: float, y1: float, x: float, z: float, k: float = 1.0) -> list[Box]:
     """2×2 削掉四角（每角 0.5px）的近圆截面：「宽 2 × 厚 1」+「宽 1 × 厚 2」两块十字相叠，高度错开一点点，
     免得两块的上下面共面。`k` 是整体粗细系数。"""
-    return [
-        _box(f"{name}_a", material, y0, y1, x, z, 1.0 * PX * k, 0.5 * PX * k),
-        _box(f"{name}_b", material, y0 + 0.0033, y1 - 0.0033, x, z, 0.5 * PX * k, 1.0 * PX * k),
-    ]
+    return _chamfered(name, material, y0, y1, x, z, 1.0 * PX * k, 1.0 * PX * k, 0.5 * PX * k)
 
 
 def part_shaft() -> list[Box]:
@@ -232,8 +240,10 @@ def part_grip(cord: str) -> list[Box]:
         (0.302, 0.348, 1.30, -0.003, +0.003),
         (0.354, 0.398, 1.18, +0.003, -0.002),
     )
-    return [_box(f"grip_{i}", cord, y0, y1, x, z, hw * PX, hw * PX)
-            for i, (y0, y1, hw, x, z) in enumerate(coils)]
+    boxes: list[Box] = []
+    for i, (y0, y1, hw, x, z) in enumerate(coils):
+        boxes += _chamfered(f"grip_{i}", cord, y0, y1, x, z, hw * PX, hw * PX, hw * 0.5 * PX)
+    return boxes
 
 
 def part_socket(material: str = "wood") -> list[Box]:
@@ -263,7 +273,7 @@ def part_lashing(cord: str) -> list[Box]:
     # 上下收口圈：整圈裹住两瓣 + 矛头，只比杆头外沿凸一点
     for name, (y0, y1) in (("lash_ring_lo", (SOCKET_Y[0] - 0.003, SOCKET_Y[0] + 0.009)),
                            ("lash_ring_hi", (SOCKET_Y[1] - 0.009, SOCKET_Y[1] + 0.003))):
-        boxes.append(_box(name, cord, y0, y1, 0.0, 0.0, 1.22 * PX, 1.66 * PX))
+        boxes += _chamfered(name, cord, y0, y1, 0.0, 0.0, 1.22 * PX, 1.66 * PX, 0.5 * PX)
     return boxes
 
 
@@ -404,6 +414,64 @@ def items() -> tuple[HeldItem, ...]:
     )
 
 
+# ── 门禁：三件共用部件必须一致（先注入缺陷再信它） ─────────────────────────────
+
+_SHARED_PREFIXES = ("shaft_", "knot_", "grip_", "socket_", "lash_", "butt")
+_CHAMFERED_PREFIXES = ("shaft_", "grip_", "butt", "lash_ring")
+
+
+def _geometry(boxes) -> dict:
+    return {b.name: (b.center, b.half) for b in boxes if b.name.startswith(_SHARED_PREFIXES)}
+
+
+def check_family(spears: tuple[HeldItem, ...]) -> None:
+    """三件共用的杆 / 握把缠绳 / 杆头夹持 / 缠扎 / 尾帽：几何逐盒一致；杆形、握把缠绳、收口圈、尾帽全部是削角（_a/_b 成对）；
+    缠扎是十字交叉（前后两面各有「左下→右上」「右下→左上」两道斜带，每道 4 级）。"""
+    base = _geometry(spears[0].boxes)
+    for sp in spears[1:]:
+        other = _geometry(sp.boxes)
+        assert other.keys() == base.keys(), f"{sp.key} 的共用部件盒数不同: {sorted(set(other) ^ set(base))[:4]}"
+        for name, geo in base.items():
+            assert other[name] == geo, f"{sp.key}/{name} 与 {spears[0].key} 的共用部件几何不一致"
+    for sp in spears:
+        names = {b.name for b in sp.boxes}
+        for name in names:
+            if name.startswith(_CHAMFERED_PREFIXES):
+                stem = name.rsplit("_", 1)[0] if name.endswith(("_a", "_b")) else None
+                assert stem is not None and f"{stem}_a" in names and f"{stem}_b" in names, f"{sp.key}/{name} 不是削角（_a/_b 成对）"
+        for face in ("f", "b"):
+            for band in (0, 1):
+                steps = [n for n in names if n.startswith(f"lash_{face}{band}_")]
+                assert len(steps) == 4, f"{sp.key} 缠扎 {face}{band} 不是 4 级斜带: {len(steps)}"
+        xs = {band: [b.center[0] for b in sp.boxes if b.name.startswith(f"lash_f{band}_")] for band in (0, 1)}
+        assert xs[0] == sorted(xs[0]) and xs[1] == sorted(xs[1], reverse=True), f"{sp.key} 两道斜带方向没有交叉"
+
+
+def check_family_self_test(spears: tuple[HeldItem, ...]) -> None:
+    check_family(spears)
+    print(f"  [OK] 三件共用部件一致、杆形 / 握把 / 收口圈 / 尾帽全削角、缠扎十字交叉（{len(spears)} 件）")
+
+    def must_fail(name: str, bad: tuple[HeldItem, ...]) -> None:
+        try:
+            check_family(bad)
+        except AssertionError as e:
+            print(f"  [OK] 注入「{name}」被拦截: {str(e)[:60]}")
+            return
+        raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+    def replace(sp: HeldItem, boxes) -> HeldItem:
+        return HeldItem(sp.key, sp.display_name, sp.host_item, tuple(boxes), sp.materials, sp.display, sp.grip)
+
+    def everywhere(edit) -> tuple[HeldItem, ...]:
+        """同一处缺陷打在三件上：这样「三件互相一致」那条拦不住它，只有下面各自的规则才能拦住。"""
+        return tuple(replace(sp, edit(sp.boxes)) for sp in spears)
+
+    must_fail("只改一件的杆身", (spears[0], replace(spears[1], [Box(b.name, b.material, (b.center[0] + 0.01, b.center[1], b.center[2]), b.half) if b.name == "shaft_1_a" else b for b in spears[1].boxes]), spears[2]))
+    must_fail("握把缠绳不削角（三件都是）", everywhere(lambda boxes: [b for b in boxes if b.name != "grip_0_b"]))
+    must_fail("缠扎缺一道斜带（三件都是）", everywhere(lambda boxes: [b for b in boxes if not b.name.startswith("lash_f1_")]))
+    must_fail("两道斜带不交叉（三件都是）", everywhere(lambda boxes: [Box(b.name, b.material, (-b.center[0], b.center[1], b.center[2]), b.half) if b.name.startswith("lash_f1_") else b for b in boxes]))
+
+
 # ── 审阅图 ───────────────────────────────────────────────────────────────
 
 
@@ -452,6 +520,8 @@ def main() -> None:
             print(build_mtl(item))
         return
 
+    print("gen_spear_family 自检…")
+    check_family_self_test(items())
     outputs = write_assets(items(), bbmodel_dir=BBMODEL_DIR, client_resources=None,
                            preview_dir=PREVIEW_DIR, render_previews=not args.no_preview)
     for key, path in outputs.items():
