@@ -265,7 +265,7 @@ def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
 # ---- b09 地砖：血管线 ---------------------------------------------------------
 
 FLOOR_VESSEL_CORE = hex_color("#8a2a2a")
-FLOOR_VESSEL_LIGHT = hex_color("#e8bca8")   # 血管一侧 1px 高光
+FLOOR_VESSEL_LIGHT = hex_color("#c07868")   # 血管一侧 1px 高光
 FLOOR_VESSEL_SHADE = hex_color("#5a1a1a")   # 另一侧 1px 暗边
 FLOOR_VESSEL_CORE_HALF = 0.5                # 芯 1px；加两侧各 1px，总宽 3px
 FLOOR_VESSEL_RIM = 1.0
@@ -311,6 +311,8 @@ def _sample_fork() -> list:
     return points
 
 
+FLOOR_FORK_START = (_vessel_x(FLOOR_VESSELS[FLOOR_FORK_FROM_VESSEL], FLOOR_FORK_Z), FLOOR_FORK_Z)
+FLOOR_FORK_GAP_RADIUS = 2.5     # 分叉点周围这个半径内，主血管的高光断开
 FLOOR_CURVES = [_sample_vessel(v) for v in FLOOR_VESSELS] + [_sample_fork()]
 
 
@@ -350,10 +352,14 @@ def _floor_painter(default: Painter) -> Painter:
         if axis == 1:
             if p[1] < FLOOR_TOP_Y - 1e-6:
                 return color
-            for curve in FLOOR_CURVES:
+            for index, curve in enumerate(FLOOR_CURVES):
                 offset = _curve_offset(curve, p[0], p[2])
-                if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
-                    return _vessel_color(color, offset)
+                if abs(offset) >= FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+                    continue
+                near_fork = math.hypot(p[0] - FLOOR_FORK_START[0], p[2] - FLOOR_FORK_START[1]) < FLOOR_FORK_GAP_RADIUS
+                if index == FLOOR_FORK_FROM_VESSEL and offset > 0 and near_fork:
+                    continue    # 分叉处主血管的高光让位，不和分支的高光并在一起
+                return _vessel_color(color, offset)
             return color
         if p[1] > FLOOR_TOP_Y - FLOOR_EDGE_DARK_DEPTH:
             return mix(color, FLOOR_VESSEL_SHADE, FLOOR_EDGE_DARK)
