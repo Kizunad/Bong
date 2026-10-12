@@ -387,24 +387,29 @@ def floor_override(cube: dict, default: Painter) -> Optional[Painter]:
 # ---- o02 胃：胃液高光 ---------------------------------------------------------
 
 LIQUID_HIGHLIGHT = hex_color("#f6dcc4")
-HIGHLIGHT_POSITION = 0.3    # 高光线在胃液面短边方向上的位置（占比）
-HIGHLIGHT_WIDTH = 0.5
+LIQUID_RING = hex_color("#e8bca8")
+LIQUID_RING_WIDTH = 0.5
+# 泡沫光斑：胃液面上 7 个大小不一的圆斑，(x, y, 半径 px)，按液面正面（法线 z）的绝对坐标
+FOAM_SPOTS = (
+    (1.0, 28.5, 1.0), (-6.0, 25.5, 1.8), (6.0, 24.5, 1.1), (-2.0, 22.0, 2.3),
+    (8.0, 20.5, 1.4), (-7.0, 19.0, 1.1), (2.0, 17.5, 1.7),
+)
 
 
-def _liquid_highlight_painter(cube: dict, default: Painter) -> Painter:
+def _liquid_foam_painter(cube: dict, default: Painter) -> Painter:
     lo, hi = cube["from"], cube["to"]
-    size = [hi[i] - lo[i] for i in range(3)]
-    thin_axis = size.index(min(size))
-    plane = [i for i in range(3) if i != thin_axis]
-    short_axis = plane[0] if size[plane[0]] < size[plane[1]] else plane[1]
+    thin_axis = [hi[i] - lo[i] for i in range(3)].index(min(hi[i] - lo[i] for i in range(3)))
 
     def paint(p: Vec, axis: int) -> Color:
         color = default(p, axis)
         if axis != thin_axis:
             return color
-        position = (p[short_axis] - lo[short_axis]) / max(size[short_axis], 1e-6)
-        if abs(position - HIGHLIGHT_POSITION) * size[short_axis] < HIGHLIGHT_WIDTH / 2:
-            return mix(color, LIQUID_HIGHLIGHT, 0.9)
+        for x, y, radius in FOAM_SPOTS:
+            distance = math.hypot(p[0] - x, p[1] - y)
+            if distance < radius:
+                return mix(color, LIQUID_HIGHLIGHT, 0.95)
+            if distance < radius + LIQUID_RING_WIDTH:
+                return mix(color, LIQUID_RING, 0.85)
         return color
 
     return paint
@@ -412,7 +417,7 @@ def _liquid_highlight_painter(cube: dict, default: Painter) -> Painter:
 
 def stomach_override(cube: dict, default: Painter) -> Optional[Painter]:
     if cube.get("material") == "amber_fluid":
-        return _liquid_highlight_painter(cube, default)
+        return _liquid_foam_painter(cube, default)
     return None
 
 
