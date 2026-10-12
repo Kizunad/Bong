@@ -613,3 +613,122 @@ def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
     if group == "aperture" and material == "qi_glow":
         return _aperture_core_painter(cube)
     return None
+
+
+# ---- b05 分流器 / b12 合流器：中心腔十字亮通道 + 肌肉卷肋环 ----------------------------
+
+CROSS_CENTER = hex_color("#fff0dc")
+CROSS_BASE = hex_color("#a86858")       # 通道往臂端渐变到的底色，也是顶膜底色
+CROSS_REACH = 4.0                       # 十字从中心到腔壁的距离（px）
+MEMBRANE_KEEP = 0.2                     # 顶膜保留多少默认膜面的起伏，其余用底色压平
+
+RIB_LIT_COLOR = hex_color("#8a2a2a")    # 偶数肋
+RIB_DARK_COLOR = hex_color("#5a1a1a")   # 奇数肋
+RIB_HIGHLIGHT = hex_color("#c86a5a")
+RIB_RIM_WIDTH = 0.5                     # 端面外圈高光的宽度（px，= 1 texel）
+
+
+def _cross_gradient_painter(default: Painter) -> Painter:
+    """十字通道：以腔体中心为原点，沿臂方向（x 或 z 取大者）从 #fff0dc 渐变到 #a86858。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        reach = max(abs(p[0]), abs(p[2]))
+        t = min(1.0, max(0.0, (reach - 1.0) / (CROSS_REACH - 1.0)))   # 中心 2×2 保持最亮
+        color = mix(CROSS_CENTER, CROSS_BASE, t ** 0.8)
+        color = mix(color, default(p, axis), 0.1)
+        return color if axis == 1 else shade(color, -0.1)      # 十字的侧面略压暗，顶面保持原亮度
+
+    return paint
+
+
+def _membrane_base_painter(default: Painter) -> Painter:
+    """中心腔顶膜：压成 #a86858 底色，只留一点默认起伏，十字通道贴在它上面才亮得出来。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(CROSS_BASE, default(p, axis), MEMBRANE_KEEP)
+
+    return paint
+
+
+def _roll_rib_painter(cube: dict, default: Painter) -> Painter:
+    """肌肉卷肋环：#8a2a2a / #5a1a1a 交替；沿臂方向的端面外圈描 1 texel 高光，侧面整条略提亮。"""
+    lo, hi = cube["from"], cube["to"]
+    size = [hi[i] - lo[i] for i in range(3)]
+    arm_axis = size.index(min(size))
+    base = RIB_LIT_COLOR if cube["name"].endswith(("_0", "_2")) else RIB_DARK_COLOR
+    plane = [i for i in range(3) if i != arm_axis]
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = mix(default(p, axis), base, 0.85)
+        if axis != arm_axis:
+            return mix(color, RIB_HIGHLIGHT, 0.35)
+        edge = min(min(p[i] - lo[i], hi[i] - p[i]) for i in plane)
+        if edge < RIB_RIM_WIDTH:
+            return mix(color, RIB_HIGHLIGHT, 0.7)
+        return color
+
+    return paint
+
+
+def flow_block_override(cube: dict, default: Painter) -> Optional[Painter]:
+    group, name = cube.get("group"), cube["name"]
+    if group == "glow_cross":
+        return _cross_gradient_painter(default)
+    if name == "chamber_membrane":
+        return _membrane_base_painter(default)
+    if group and group.startswith("arm_") and "_rib_" in name:
+        return _roll_rib_painter(cube, default)
+    return None
+
+
+# ---- o04 腿肌：两条 Y 形肌腱带亮芯 + 肌束沿长轴（竖直）的纤维线 --------------------------------
+
+TENDON_BODY = hex_color("#e8bca8")
+TENDON_CORE = hex_color("#fff0dc")
+TENDON_CORE_EDGE = hex_color("#f6dcc4")
+TENDON_EDGE_SHADE = -0.12               # 腱带两侧略压暗，亮芯更突出
+LEG_FIBER_SPACING = 1.0                 # 肌束纤维线的间距（px），沿 y 方向竖直走
+
+
+def _tendon_body_painter(default: Painter) -> Painter:
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(TENDON_BODY, default(p, axis), 0.15)
+
+    return paint
+
+
+def _tendon_core_painter(cube: dict) -> Painter:
+    """腱带正面那条亮芯：中线 #fff0dc，往两侧收到 #f6dcc4。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(TENDON_CORE, TENDON_CORE_EDGE, _face_radius(cube, p, axis))
+
+    return paint
+
+
+def _vertical_fiber_painter(default: Painter) -> Painter:
+    """肌束在这个模型里自下而上排成阶梯，长轴是 y：侧面画竖线，顶 / 底面不画。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = default(p, axis)
+        if axis == 1:
+            return color
+        across = p[0] if axis == 2 else p[2]
+        slot = math.floor(across / LEG_FIBER_SPACING)
+        if texel_noise((slot, axis, round(p[1] / 4)), 131) > FIBER_SKIP_CHANCE:
+            if (across - slot * LEG_FIBER_SPACING) < FIBER_LINE_WIDTH:
+                return mix(color, LINE_COLOR, 0.8)
+        return color
+
+    return paint
+
+
+def leg_override(cube: dict, default: Painter) -> Optional[Painter]:
+    group, material = cube.get("group"), cube.get("material")
+    if group == "tendons" and material == "tendon_trans":
+        return _tendon_body_painter(default)
+    if group == "tendons" and material == "qi_glow":
+        return _tendon_core_painter(cube)
+    if group == "muscle_bundles" and material in ("flesh_main", "flesh_lit"):
+        return _vertical_fiber_painter(default)
+    return None

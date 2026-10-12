@@ -32,8 +32,10 @@ from piece_overrides import (
     damage_override,
     emitter_override,
     floor_override,
+    flow_block_override,
     heart_override,
     liver_override,
+    leg_override,
     lung_override,
     port_override,
     spleen_override,
@@ -90,7 +92,6 @@ def build_registry() -> Dict[str, Piece]:
     import gen_port
     import gen_prep_buffer
     import gen_qi_packet
-    import gen_splitter
     import gen_stomach
     import gen_texture_proto
 
@@ -138,8 +139,6 @@ def build_registry() -> Dict[str, Piece]:
                     f"outer_wall_tank_{v}", _palette(gen_outer_wall_tank), tank_override)
             for v in ("empty", "half", "full")
         ]),
-        "b05": Piece(gen_splitter.REVIEW_DIR, "b05_splitter.png",
-                     single(gen_splitter, gen_splitter.all_cubes, "splitter")),
         "b06": Piece(gen_prep_buffer.REVIEW_DIR, "b06_prep_buffer.png", [
             Variant(f"prep_buffer_{v}", (lambda v=v: gen_prep_buffer.all_cubes(v)),
                     f"prep_buffer_{v}", _palette(gen_prep_buffer), buffer_override)
@@ -157,10 +156,28 @@ def build_registry() -> Dict[str, Piece]:
         "o03": Piece(gen_arm_muscle.REVIEW_DIR, "o03_arm_muscle.png",
                      single(gen_arm_muscle, gen_arm_muscle.all_cubes, "arm_muscle", arm_override), gen_arm_muscle.REVIEW_DIR_ALIAS),
         "o04": Piece(gen_leg_muscle.REVIEW_DIR, "o04_leg_muscle.png",
-                     single(gen_leg_muscle, gen_leg_muscle.all_cubes, "leg_muscle"), gen_leg_muscle.REVIEW_DIR_ALIAS),
+                     single(gen_leg_muscle, gen_leg_muscle.all_cubes, "leg_muscle", leg_override), gen_leg_muscle.REVIEW_DIR_ALIAS),
         "p01": Piece(gen_qi_packet.REVIEW_DIR, "p01_qi_packets.png", qi_variants, gen_qi_packet.REVIEW_DIR_ALIAS),
     }
 
+
+
+def build_flow_registry() -> Dict[str, Piece]:
+    """b05 分流器 / b12 合流器（origin/feat/meridian-factory-splitter-merger-v2 上重做的版本），
+    两件共用 flow_block_parts.py 的部件，参考图是爆炸图。"""
+    import flow_block_parts as fb
+    import gen_merger
+    import gen_splitter
+
+    colors = _palette(fb)
+    return {
+        "b05": Piece(REVIEW_ROOT / "splitter", "../exploded/x05_splitter.png",
+                     [Variant("splitter", gen_splitter.all_cubes, "splitter", colors, flow_block_override,
+                              lambda: gen_splitter.generate_bbmodel(MODEL_DIR / "splitter.bbmodel"))]),
+        "b12": Piece(REVIEW_ROOT / "merger", "../exploded/x12_merger.png",
+                     [Variant("merger", gen_merger.all_cubes, "merger", colors, flow_block_override,
+                              lambda: gen_merger.generate_bbmodel(MODEL_DIR / "merger.bbmodel"))]),
+    }
 
 
 def build_emitter_registry() -> Dict[str, Piece]:
@@ -184,7 +201,6 @@ def build_batch2_registry() -> Dict[str, Piece]:
     import gen_junction
     import gen_kidney
     import gen_liver
-    import gen_merger
     import gen_meridian_damage
     import gen_spleen
     import gen_valve
@@ -224,9 +240,6 @@ def build_batch2_registry() -> Dict[str, Piece]:
     return {
         "b10": Piece(gen_junction.REVIEW_DIR, "b10_junction.png", junction),
         "b11": Piece(gen_valve.REVIEW_DIR, "b11_valve.png", valve),
-        "b12": Piece(gen_merger.REVIEW_DIR, "b12_merger.png",
-                     [Variant("merger", gen_merger.all_cubes, "merger", common, None,
-                              lambda: gen_merger.generate_bbmodel(MODEL_DIR / "merger.bbmodel"))]),
         "b14": Piece(gen_meridian_damage.REVIEW_DIR, "b14_meridian_damage.png", damage),
         "o05": Piece(gen_heart.REVIEW_DIR, "o05_heart.png",
                      [Variant(heart_stem, gen_heart.all_cubes, heart_stem, _palette(gen_heart), heart_override,
@@ -338,7 +351,7 @@ def retexture(piece_id: str, piece: Piece):
 
 def main():
     registry = build_registry()
-    for build_other_branch_pieces in (build_batch2_registry, build_emitter_registry):
+    for build_other_branch_pieces in (build_batch2_registry, build_flow_registry, build_emitter_registry):
         try:
             registry.update(build_other_branch_pieces())
         except ImportError as error:
