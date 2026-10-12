@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""灵锋剑 ling_feng_sword：碎铁锻成的稀有单手剑，窄长的蓝色灵锋剑身，剑格是异兽骨月牙。bbmodel + SML OBJ 双出。
+"""灵锋剑 ling_feng_sword：碎铁锻成的稀有单手剑，窄长的银白灵锋剑身（刃线带青光），剑格是异兽骨月牙。bbmodel + SML OBJ 双出。
 
 依据（server/assets/items/forge.toml、server/assets/forge/blueprints/ling_feng_v0.json）：
 - 描述「灵锋入骨，真元过刃时可听见细碎风声」→ 剑格用**异兽骨**（blueprint 的可选载体之一 `yi_shou_gu`，「入骨」），
-  剑身通体偏青蓝、刃口两线灵光（真元过刃）；
+  剑身银白底（参考图）、刃口两线青光（真元过刃，发光只靠贴图对比度）；
 - blueprint 铭文步 `slots: 2` → 剑身两面各嵌**两格铭文槽**（发青白光的小方块）；
 - 稀有、tier 2、base_attack 21。
 
@@ -21,7 +21,7 @@
 
     总长 1.76（青锋 1.68 的 105%），第三人称缩放 0.8 → 手里长 1.41
     剑身 1.29，占全长 73%（≥ 2/3）
-    剑身宽 2.58px = 0.161，**宽:长 = 1:8**；厚 0.7px
+    剑身宽 2.1px，和青锋剑肉眼可见的剑身同宽，宽:长 ≈ 1:9.8；厚 0.7px
 
 `held_item_common.assert_conventions` 把全长限制在 0.3~1.2（那是单手小件的区间），1.76 的长剑会被它拦下；
 所以这里**不走 `write_assets`**，改成逐项调用它的其余门禁（共面 + 连通）再自己写 bbmodel，
@@ -85,39 +85,39 @@ GUARD_Y = (0.425, 0.475)
 BLADE_Y0 = 0.475
 BLADE_Y1 = 1.760        # 剑尖
 GRIP = 0.250            # 拳心对准的高度：木柄中段
-BLADE_HALF_WIDTH_PX = 1.29           # 宽 2.58px = 0.161，约 1 : 8
+BLADE_HALF_WIDTH_PX = 1.05          # 宽 2.1px：和青锋剑肉眼可见的剑身同宽（钢芯 1.84 + 两线亮边）
 BLADE_HALF_THICK_PX = 0.35
 
 # 参照量（main 上的 OBJ 实测，见模块 docstring）
 QING_LENGTH = 1.680
 MIN_BLADE_SHARE = 2.0 / 3.0
-BLADE_WIDTH_TO_LENGTH = (1 / 9.0, 1 / 7.0)      # 允许区间，目标约 1:8
+BLADE_WIDTH_TO_LENGTH = (1 / 11.0, 1 / 8.0)      # 允许区间（青锋剑含斜面共 2.7px 宽 / 18px 长，肉眼可见部分 ≈2.2px）
 
 
 # ── 贴图（16²，通用材质样本；OBJ 链每个面整张铺满） ───────────────────────────
 
 
 def tex_steel() -> Image.Image:
-    """蓝色灵钢：冷青蓝，细密纵向打磨纹，亮暗两档斑。"""
+    """银白灵钢：银白底（参考图），细密纵向打磨纹，亮暗两档斑；青光只靠刃线贴图的高对比度，不加发光层。"""
     rng = random.Random(0x6F01)
-    img = Image.new("RGBA", (16, 16), (128, 168, 206, 255))
-    noise_fill(img, rng, (128, 168, 206), 7, warm=0)
-    blotch(img, rng, 4, (162, 200, 232), (1.6, 3.4))
-    blotch(img, rng, 3, (98, 134, 176), (1.4, 2.8))
+    img = Image.new("RGBA", (16, 16), (200, 208, 218, 255))
+    noise_fill(img, rng, (200, 208, 218), 6, warm=0)
+    blotch(img, rng, 4, (226, 232, 240), (1.6, 3.4))
+    blotch(img, rng, 3, (164, 174, 190), (1.4, 2.8))
     pixels = img.load()
     for x in (3, 8, 12):
         for y in range(16):
             if (x + y * 3) % 5:
-                pixels[x, y] = (112, 150, 190, 255)
+                pixels[x, y] = (182, 192, 205, 255)
     return img
 
 
 def tex_steel_hi() -> Image.Image:
-    """剑脊：比剑身更亮的淡青白。"""
+    """剑脊：近白的亮银。"""
     rng = random.Random(0x6F06)
-    img = Image.new("RGBA", (16, 16), (190, 222, 244, 255))
-    noise_fill(img, rng, (190, 222, 244), 6, warm=0)
-    blotch(img, rng, 3, (222, 242, 252), (1.4, 2.8))
+    img = Image.new("RGBA", (16, 16), (238, 243, 248, 255))
+    noise_fill(img, rng, (238, 243, 248), 4, warm=0)
+    blotch(img, rng, 3, (252, 253, 255), (1.4, 2.8))
     return img
 
 
@@ -282,8 +282,8 @@ def item() -> HeldItem:
         host_item="iron_sword",     # 现在借铁剑 OBJ 的宿主；专属宿主接线时再定（要查 vanillaModelPaths 防撞）
         boxes=all_boxes(),
         materials=(
-            Material("steel", (0.50, 0.66, 0.81), tex_steel()),
-            Material("steel_hi", (0.75, 0.87, 0.96), tex_steel_hi()),
+            Material("steel", (0.78, 0.82, 0.86), tex_steel()),
+            Material("steel_hi", (0.93, 0.95, 0.97), tex_steel_hi()),
             Material("glow", (0.60, 0.91, 0.93), tex_glow()),
             Material("bone", (0.89, 0.84, 0.74), tex_bone()),
             Material("grip", (0.33, 0.23, 0.16), tex_grip_wood()),
@@ -306,7 +306,7 @@ def check_dimensions(boxes: tuple[Box, ...]) -> dict:
     assert y_max >= QING_LENGTH, f"总长 {y_max:.3f} 短于青锋剑 {QING_LENGTH}"
     assert blade_len / y_max >= MIN_BLADE_SHARE, f"剑身只占全长 {blade_len / y_max:.0%}，要 ≥ 2/3"
     ratio = blade_width / blade_len
-    assert BLADE_WIDTH_TO_LENGTH[0] <= ratio <= BLADE_WIDTH_TO_LENGTH[1], f"剑身宽:长 = 1:{1 / ratio:.1f}，要在 1:7 ~ 1:9"
+    assert BLADE_WIDTH_TO_LENGTH[0] <= ratio <= BLADE_WIDTH_TO_LENGTH[1], f"剑身宽:长 = 1:{1 / ratio:.1f}，要在 1:8 ~ 1:11"
     return {"length": y_max, "blade_len": blade_len, "blade_share": blade_len / y_max, "width": blade_width, "ratio": 1 / ratio}
 
 
