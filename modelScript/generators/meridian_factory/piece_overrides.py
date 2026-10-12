@@ -264,16 +264,74 @@ def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
 
 # ---- b09 地砖：血管线 ---------------------------------------------------------
 
-VESSEL_SCALES = ((5.0, 121), (8.0, 122))   # (噪声格大小 px, 种子)：两层等值线叠出分叉的血管
-VESSEL_HALF_WIDTH = 0.012
+FLOOR_VESSEL_CORE = hex_color("#8a2a2a")
+FLOOR_VESSEL_EDGE = hex_color("#c07868")
+FLOOR_VESSEL_CORE_HALF = 0.5          # 血管总宽 2px：芯 1px + 两侧各 0.5px 的边
+FLOOR_VESSEL_HALF = 1.0
+FLOOR_TOP_Y = 16.0              # 地砖肉块顶面高度
+FLOOR_HALF = 8.0                # 地砖半边长
+FLOOR_VESSEL_STUB_DEPTH = 2.5         # 血管在前后侧面露出的短截深度（px）
+
+# 4 条沿 z 贯穿整块的粗血管：x(z) = 起点 + 振幅 * sin(2π z / 波长 + 相位)，平滑弯曲
+FLOOR_VESSELS = (
+    # (x 中线, 振幅, 波长, 相位)
+    (-5.4, 1.3, 19.0, 0.4),
+    (-1.9, 1.6, 15.0, 2.3),
+    (1.8, 1.4, 17.0, 4.1),
+    (5.3, 1.2, 21.0, 1.2),
+)
+
+
+def _vessel_x(vessel: tuple, z: float) -> float:
+    center, amplitude, wavelength, phase = vessel
+    return center + amplitude * math.sin(2 * math.pi * z / wavelength + phase)
+
+
+def _vessel_distance(vessel: tuple, x: float, z: float) -> float:
+    """点到血管中线的垂直距离（用斜率修正横向偏差）。"""
+    center, amplitude, wavelength, phase = vessel
+    slope = amplitude * 2 * math.pi / wavelength * math.cos(2 * math.pi * z / wavelength + phase)
+    return abs(x - _vessel_x(vessel, z)) / math.sqrt(1 + slope * slope)
+
+
+def _vessel_color(color: Color, distance: float) -> Color:
+    if distance < FLOOR_VESSEL_CORE_HALF:
+        return mix(color, FLOOR_VESSEL_CORE, 0.95)
+    if distance < FLOOR_VESSEL_HALF:
+        return mix(color, FLOOR_VESSEL_EDGE, 0.95)
+    return color
 
 
 def _vessel_painter(default: Painter) -> Painter:
+    """顶面画 4 条整条的粗血管；血管走到前后侧面（法线 z）时在边缘露出一小截。"""
+
     def paint(p: Vec, axis: int) -> Color:
         color = default(p, axis)
-        for scale, seed in VESSEL_SCALES:
-            if abs(value_noise(p, scale, seed) - 0.5) < VESSEL_HALF_WIDTH:
-                return mix(color, LINE_COLOR, LINE_MIX)
+        if axis == 1 and p[1] > FLOOR_TOP_Y - 1e-6:
+            for vessel in FLOOR_VESSELS:
+                distance = _vessel_distance(vessel, p[0], p[2])
+                if distance < FLOOR_VESSEL_HALF:
+                    return _vessel_color(color, distance)
+        elif axis == 2 and p[1] > FLOOR_TOP_Y - FLOOR_VESSEL_STUB_DEPTH:
+            end_z = FLOOR_HALF if p[2] > 0 else -FLOOR_HALF
+            for vessel in FLOOR_VESSELS:
+                if abs(p[0] - _vessel_x(vessel, end_z)) < FLOOR_VESSEL_HALF:
+                    return _vessel_color(color, abs(p[0] - _vessel_x(vessel, end_z)))
+        return color
+
+    return paint
+
+
+def _vein_cell_painter(default: Painter) -> Painter:
+    """顶面凸起的小肉块：血管从上面照样画过去（按绝对坐标），不被肉块截断；其余面保持原来的淡线色。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = mix(default(p, axis), LINE_COLOR, 0.6)
+        if axis == 1:
+            for vessel in FLOOR_VESSELS:
+                distance = _vessel_distance(vessel, p[0], p[2])
+                if distance < FLOOR_VESSEL_HALF:
+                    return _vessel_color(color, distance)
         return color
 
     return paint
@@ -284,7 +342,7 @@ def floor_override(cube: dict, default: Painter) -> Optional[Painter]:
     if group == "base_block":
         return _vessel_painter(default)
     if group == "veins":
-        return lambda p, axis: mix(default(p, axis), LINE_COLOR, 0.6)
+        return _vein_cell_painter(default)
     return None
 
 
