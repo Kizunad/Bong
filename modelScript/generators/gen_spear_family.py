@@ -162,6 +162,27 @@ def tex_spear_bone_dark() -> Image.Image:
     return img
 
 
+def tex_spear_rust() -> Image.Image:
+    """锈铁矛头：红褐锈壳 + 橙色锈斑 + 暗色蚀坑 + 几处露出的灰蓝金属。"""
+    rng = random.Random(0x5E07)
+    img = Image.new("RGBA", (16, 16), (146, 76, 50, 255))
+    noise_fill(img, rng, (146, 76, 50), 12, warm=3)
+    blotch(img, rng, 6, (182, 98, 56), (1.6, 3.4))         # 橙色浮锈
+    blotch(img, rng, 4, (96, 54, 40), (1.2, 2.6))          # 蚀坑
+    blotch(img, rng, 3, (118, 116, 114), (1.0, 2.0))       # 剥落处露出的铁
+    return img
+
+
+def tex_spear_rust_dark() -> Image.Image:
+    """锈铁暗面：矛头中脊 / 铁套 / 铁帽，更深的黑褐锈，夹灰铁。"""
+    rng = random.Random(0x5E08)
+    img = Image.new("RGBA", (16, 16), (104, 62, 46, 255))
+    noise_fill(img, rng, (104, 62, 46), 9, warm=2)
+    blotch(img, rng, 4, (78, 46, 36), (1.4, 2.8))
+    blotch(img, rng, 3, (112, 108, 104), (0.9, 1.8))
+    return img
+
+
 # ── 共用部件 ─────────────────────────────────────────────────────────────
 
 
@@ -170,9 +191,9 @@ def _box(name: str, material: str, y0: float, y1: float, x: float, z: float, hx:
                (round(hx, 5), round((y1 - y0) / 2.0, 5), round(hz, 5)))
 
 
-def part_butt() -> list[Box]:
-    """矛尾木帽：比矛杆略粗的一截钝木，也是握把的尾端止滑。"""
-    return [_box("butt", "wood", 0.0, 0.030, 0.0, 0.0, 1.15 * PX, 1.15 * PX)]
+def part_butt(material: str = "wood") -> list[Box]:
+    """矛尾帽：比矛杆略粗的一截钝头，也是握把的尾端止滑。石 / 骨矛是木帽，铁矛是铁帽。"""
+    return [_box("butt", material, 0.0, 0.030, 0.0, 0.0, 1.15 * PX, 1.15 * PX)]
 
 
 def _octagon(name: str, material: str, y0: float, y1: float, x: float, z: float, k: float = 1.0) -> list[Box]:
@@ -215,12 +236,12 @@ def part_grip(cord: str) -> list[Box]:
             for i, (y0, y1, hw, x, z) in enumerate(coils)]
 
 
-def part_socket() -> list[Box]:
+def part_socket(material: str = "wood") -> list[Box]:
     """杆头劈开的两瓣：各 1px 厚（z 向）、2px 宽，夹住中间 1px 厚的矛头。
 
     两瓣的外侧面是 z = ±1.5px，矛头占 z ±0.5px，两瓣内侧面正好贴在矛头两面上。
     """
-    return [_box(f"socket_{side}", "wood", SOCKET_Y[0], SOCKET_Y[1], 0.0, sz * 1.0 * PX, 1.05 * PX, 0.5 * PX)
+    return [_box(f"socket_{side}", material, SOCKET_Y[0], SOCKET_Y[1], 0.0, sz * 1.0 * PX, 1.05 * PX, 0.5 * PX)
             for side, sz in (("f", +1.0), ("b", -1.0))]
 
 
@@ -307,16 +328,52 @@ def part_head_bone() -> list[Box]:
     return boxes
 
 
+# 锈铁矛头：**宽刃**——最宽 4px（石头 3px、骨尖 2.2px），中脊凸起，边缘几处锈蚀缺口。
+# 14 行 × 0.5px = 7px 长；前 4 行（插进杆头的舌 + 刃根）厚 1px，和另两件一样能被同一副两瓣杆头夹住。
+_IRON_WIDTH_PX = (1.2, 2.0, 3.0, 3.6, 4.0, 4.0, 3.8, 3.5, 3.1, 2.6, 2.1, 1.5, 0.9, 0.4)
+_IRON_HALF_THICK_PX = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.45, 0.4, 0.35, 0.3)
+_IRON_RIDGE_ROWS = range(4, 13)         # 中脊所在行（跳过插进杆头的前 4 行）
+_IRON_RIDGE_HALF_PX = 0.4               # 中脊半宽
+_IRON_RIDGE_PROUD_PX = 0.2              # 中脊凸出刃面
+_IRON_PITS_LEFT = (7,)                  # 左缘锈蚀缺口所在行（向内 0.3px）
+_IRON_PITS_RIGHT = (5, 9)
+
+
+def part_head_rust() -> list[Box]:
+    """锈铁矛头：**宽刃**、中脊凸起、边缘锈蚀缺口——比石 / 骨矛头宽一圈（最宽 4px），一眼是铁刃。
+
+    刃身逐行叠；中脊是刃面中线上一条更厚的带（暗锈色），每行略缩 0.002 高度，免得与刃行的上下面共面。
+    """
+    boxes: list[Box] = []
+    for i, (w, ht) in enumerate(zip(_IRON_WIDTH_PX, _IRON_HALF_THICK_PX)):
+        half, centre = w / 2.0, 0.0
+        if i in _IRON_PITS_LEFT:
+            half -= 0.15
+            centre += 0.15
+        if i in _IRON_PITS_RIGHT:
+            half -= 0.15
+            centre -= 0.15
+        y0 = HEAD_Y0 + i * ROW
+        boxes.append(_box(f"rust_row_{i:02d}", "rust", y0, y0 + ROW, centre * PX, 0.0, half * PX, ht * PX))
+    for i in _IRON_RIDGE_ROWS:
+        y0 = HEAD_Y0 + i * ROW
+        ht = _IRON_HALF_THICK_PX[i] + _IRON_RIDGE_PROUD_PX
+        boxes.append(_box(f"rust_ridge_{i:02d}", "rust_dark", y0 + 0.002, y0 + ROW - 0.002, 0.0, 0.0,
+                          _IRON_RIDGE_HALF_PX * PX, ht * PX))
+    return boxes
+
+
 # ── 整件 ─────────────────────────────────────────────────────────────────
 
 
 def all_boxes_for(key: str) -> tuple[Box, ...]:
-    """每件：(绑缚材质, 矛头部件)。石矛是麻绳，骨矛 / 铁矛是暗色蛛丝绳。"""
-    cord, head = {
-        "crude_stone_spear": ("hemp", part_head_stone),
-        "bone_tip_spear": ("silk", part_head_bone),
+    """每件：(绑缚材质, 矛头部件, 杆头两瓣材质, 矛尾帽材质)。石矛是麻绳，骨矛 / 铁矛是暗色蛛丝绳；铁矛的杆头两瓣和尾帽是铁。"""
+    cord, head, socket, butt = {
+        "crude_stone_spear": ("hemp", part_head_stone, "wood", "wood"),
+        "bone_tip_spear": ("silk", part_head_bone, "wood", "wood"),
+        "rusted_iron_spear": ("silk", part_head_rust, "rust_dark", "rust_dark"),
     }[key]
-    return tuple(part_butt() + part_shaft() + part_grip(cord) + part_socket() + part_lashing(cord) + head())
+    return tuple(part_butt(butt) + part_shaft() + part_grip(cord) + part_socket(socket) + part_lashing(cord) + head())
 
 
 def _item(key: str, name: str, materials: tuple[Material, ...]) -> HeldItem:
@@ -338,9 +395,12 @@ def items() -> tuple[HeldItem, ...]:
     stone = Material("stone", (0.59, 0.58, 0.56), tex_spear_stone())
     bone = Material("bone", (0.87, 0.83, 0.72), tex_spear_bone())
     bone_dark = Material("bone_dark", (0.49, 0.42, 0.33), tex_spear_bone_dark())
+    rust = Material("rust", (0.57, 0.30, 0.20), tex_spear_rust())
+    rust_dark = Material("rust_dark", (0.41, 0.24, 0.18), tex_spear_rust_dark())
     return (
         _item("crude_stone_spear", "粗石矛", (wood, hemp, stone)),
         _item("bone_tip_spear", "骨尖矛", (wood, silk, bone, bone_dark)),
+        _item("rusted_iron_spear", "锈铁矛", (wood, silk, rust, rust_dark)),
     )
 
 
