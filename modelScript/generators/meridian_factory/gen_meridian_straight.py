@@ -42,32 +42,23 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 BBMODEL_OUT = REPO / "modelScript" / "models" / "meridian_factory" / "meridian_straight.bbmodel"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/meridian_straight")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/meridian_factory/refs/b01_meridian_straight.png")
 
-# 调色板 (严格对齐 2026-10-09 05:3x 调度审修订值)
-PALETTE = {
-    "flesh_dark":       (90, 26, 26, 255),    # #5a1a1a 暗血肉 (孔内深色底)
-    "flesh_main":       (138, 42, 42, 255),   # #8a2a2a 血肉 (两端肉箍主色)
-    "bone_main":        (216, 204, 176, 255), # #d8ccb0 骨 (贴面小骨环)
-    "tendon_tube":      (217, 160, 140, 150), # #d9a08c 暖粉半透明筋管壁 (alpha 约 60%)
-    "tendon_highlight": (232, 188, 168, 255), # #e8bca8 筋管上下 1px 亮边
-    "qi_glow":          (246, 220, 196, 255), # #f6dcc4 内光芯 / 6x2 淡光斑
-    "tendon_fiber":     (192, 120, 104, 255), # #c07868 斜交对角线筋丝 (浮起 0.5px)
-}
-
-MAT_UV = {
-    "flesh_dark":       [0, 0, 16, 16],
-    "flesh_main":       [16, 0, 32, 16],
-    "bone_main":        [32, 0, 48, 16],
-    "tendon_tube":      [48, 0, 64, 16],
-    "qi_glow":          [0, 16, 16, 32],
-    "tendon_fiber":     [16, 16, 32, 32],
-    "tendon_highlight": [32, 16, 48, 32],
-}
-
-RES = 64
+from modelScript.generators.meridian_factory.common_parts import (
+    PALETTE,
+    MAT_UV,
+    RES,
+    _assert_no_coplanar_faces,
+    build_texture,
+    sinew_tube,
+    flesh_collar,
+    bone_ring_port,
+)
 
 
 # =============================================================================
