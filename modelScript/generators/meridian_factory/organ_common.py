@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Sequence, Tuple
@@ -160,3 +161,90 @@ def render_review(
     _label(check, "ASSEMBLED", (ax, 10), 160)
     check.save(out_dir / "check.png")
     return out_dir
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 贴表面的分叉血管树（肝 / 脾共用）：1px 格 + 过台阶补半格
+# ─────────────────────────────────────────────────────────────────────────────
+
+Cell = Tuple[int, int]
+
+
+def stair_cells(c0: int, r0: int, c1: int, r1: int) -> set:
+    """两格之间的 4 连通阶梯：沿大方向每步走一格，小方向按斜率进位，斜走那步补一个肘格。"""
+    dc, dr = c1 - c0, r1 - r0
+    steps = max(abs(dc), abs(dr))
+    out = {(c0, r0)}
+    prev = (c0, r0)
+    for i in range(1, steps + 1):
+        cur = (c0 + round(dc * i / steps), r0 + round(dr * i / steps))
+        if cur[0] != prev[0] and cur[1] != prev[1]:
+            out.add((cur[0], prev[1]))
+        out.add(cur)
+        prev = cur
+    return out
+
+
+def path_cells(waypoints: Sequence[Cell]) -> set:
+    """路点折线 → 4 连通阶梯格集合。"""
+    cells: set = set()
+    for (c0, r0), (c1, r1) in zip(waypoints, waypoints[1:]):
+        cells |= stair_cells(c0, r0, c1, r1)
+    return cells
+
+
+def thicken(cells: set) -> set:
+    """每格扩成 2×2（向右、向上各多一格），用来画 2×2 截面的主干。"""
+    return {(ix + dx, iy + dy) for ix, iy in cells for dx in (0, 1) for dy in (0, 1)}
+
+
+def relax_heights(tops: Dict[Cell, float], steps=((1, 0), (-1, 0), (0, 1), (0, -1))) -> Dict[Cell, float]:
+    """让相邻格前表面高差不超过 0.5px：较低的格往上垫半格（0.5 的整数倍），迭代到稳定。"""
+    final = dict(tops)
+    changed = True
+    while changed:
+        changed = False
+        for (ix, iy), h in list(final.items()):
+            for dx, dy in steps:
+                nb = (ix + dx, iy + dy)
+                if nb in final and final[nb] - h > 0.5 + 1e-9:
+                    base = tops[(ix, iy)]
+                    final[(ix, iy)] = max(h, base + 0.5 * math.ceil((final[nb] - 0.5 - base) / 0.5 - 1e-9))
+                    changed = True
+    return final
+
+
+def surface_vein_cubes(
+    levels: Sequence[Tuple[str, set, float, str, float]],
+    front_z: Callable[[float, float, float, float], float],
+    x_off: float,
+    y_off: float,
+    group: str,
+) -> Cubes:
+    """把若干组 1×1 格画成贴表面的血管块。levels = [(名字, 格集合, 埋深, 材质, 凸出 px)]；所有组一起算过台阶补半格。
+
+    每格 x∈[ix+x_off, ix+x_off+1]、y∈[iy+y_off, iy+y_off+1]，前表面取 front_z(x0,x1,y0,y1) + proud；
+    落在体外的格（front_z 抛 ValueError）不画。相邻格高差大于 0.5 的，在较低那格上垫半格（名字加 _half）。
+    """
+    boxes, tops, owner = {}, {}, {}
+    for name, cells, sink, material, proud in levels:
+        for ix, iy in sorted(cells):
+            x0, y0 = ix + x_off, iy + y_off
+            try:
+                tops[(ix, iy)] = front_z(x0, x0 + 1.0, y0, y0 + 1.0) + proud
+            except ValueError:
+                continue
+            boxes[(ix, iy)] = (x0, y0, x0 + 1.0, y0 + 1.0)
+            owner[(ix, iy)] = (name, sink, material)
+    cubes: Cubes = []
+    for cell, top in tops.items():
+        x0, y0, x1, y1 = boxes[cell]
+        name, sink, material = owner[cell]
+        cubes.append({"name": f"{name}_{cell[0]}_{cell[1]}", "from": [x0, y0, top - sink], "to": [x1, y1, top], "group": group, "material": material})
+    final = relax_heights(tops)
+    for cell, top in tops.items():
+        if final[cell] - top > 1e-6:
+            x0, y0, x1, y1 = boxes[cell]
+            name, _, material = owner[cell]
+            cubes.append({"name": f"{name}_{cell[0]}_{cell[1]}_half", "from": [x0, y0, top], "to": [x1, y1, final[cell]], "group": group, "material": material})
+    return cubes

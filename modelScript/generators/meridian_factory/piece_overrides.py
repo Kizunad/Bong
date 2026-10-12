@@ -352,10 +352,26 @@ def _vein_painter(cube: dict, default: Painter) -> Painter:
     return paint
 
 
+def _branch_tree_painter(cube: dict) -> Painter:
+    """分叉血管树的块：#c07868 本色，朝上的面和朝左（-X）的面、以及正面最左 1px 描 #e8bca8 高光。
+    主干（2 宽）正面左半 1px 是高光；1×1 的支脉 / 末梢，正面靠左的一半 texel 列是高光。"""
+    lo, hi = cube["from"], cube["to"]
+    highlight_width = 1.0 if hi[0] - lo[0] > 1.5 else 0.5
+
+    def paint(p: Vec, axis: int) -> Color:
+        color = mix(LINE_COLOR, FIBER_DARK, 0.25 * value_noise(p, 1.4, 131))
+        lit = (axis == 1 and abs(p[1] - hi[1]) < 1e-6) or (axis == 0 and abs(p[0] - lo[0]) < 1e-6)
+        if axis == 2 and p[0] - lo[0] < highlight_width:
+            lit = True
+        return mix(color, TUBE_HIGHLIGHT, 0.85) if lit else color
+
+    return paint
+
+
 def liver_override(cube: dict, default: Painter) -> Optional[Painter]:
-    if cube.get("group") == "leaf_veins":
-        return _vein_painter(cube, default)
-    return None
+    if cube.get("group") == "duct_tree":
+        return _branch_tree_painter(cube)
+    return None    # 叶脉树（leaf_tree）保持绿色，走默认的木色画笔
 
 
 def spleen_override(cube: dict, default: Painter) -> Optional[Painter]:
