@@ -632,6 +632,7 @@ def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
 CROSS_CENTER = hex_color("#fff0dc")
 CROSS_BASE = hex_color("#a86858")       # 通道往臂端渐变到的底色，也是顶膜底色
 CROSS_REACH = 4.0                       # 十字从中心到腔壁的距离（px）
+CROSS_BRIGHT = 3.0                      # 离中心（x/z 取大者）不超过这个距离的通道面保持 #fff0dc：宽 4 的十字里约占腔顶 1/2
 MEMBRANE_KEEP = 0.2                     # 顶膜保留多少默认膜面的起伏，其余用底色压平
 
 RIB_LIT_COLOR = hex_color("#8a2a2a")    # 偶数肋
@@ -641,11 +642,11 @@ RIB_RIM_WIDTH = 0.5                     # 端面外圈高光的宽度（px，= 1
 
 
 def _cross_gradient_painter(default: Painter) -> Painter:
-    """十字通道：以腔体中心为原点，沿臂方向（x 或 z 取大者）从 #fff0dc 渐变到 #a86858。"""
+    """十字通道：以腔体中心为原点，沿臂方向（x 或 z 取大者）：CROSS_BRIGHT 内整块 #fff0dc，往腔壁渐变到 #a86858。"""
 
     def paint(p: Vec, axis: int) -> Color:
         reach = max(abs(p[0]), abs(p[2]))
-        t = min(1.0, max(0.0, (reach - 1.0) / (CROSS_REACH - 1.0)))   # 中心 2×2 保持最亮
+        t = min(1.0, max(0.0, (reach - CROSS_BRIGHT) / (CROSS_REACH - CROSS_BRIGHT)))   # 中心一片整块最亮，只有臂的最外 1px 往底色渐变
         color = mix(CROSS_CENTER, CROSS_BASE, t ** 0.8)
         color = mix(color, default(p, axis), 0.1)
         return color if axis == 1 else shade(color, -0.1)      # 十字的侧面略压暗，顶面保持原亮度
