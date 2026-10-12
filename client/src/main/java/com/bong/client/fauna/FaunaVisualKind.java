@@ -5,12 +5,9 @@ import net.minecraft.util.Identifier;
 
 public enum FaunaVisualKind {
     DEVOUR_RAT("devour_rat", 126, 0.4f, 0.3f, 0.65f, 0.2f, "devour_rat"),
-    // ASH_SPIDER 暂不切 v2：v2 动画文件缺 "fold"（蜘蛛伪装重新折叠用，FaunaPlayback.spiderDisguise
-    // 依赖它把 block 置回 true），v1 的 "retreat" 已确认死代码（无调用点，不是阻塞项）。
-    // 补上 fold 前切换会让暴起后的蜘蛛永久可见、ambush 隐蔽机制失效，故仍留 v1 资源。
-    // 其余 6 只已切到 v2 资源三件套（geo/texture/animation 同名 "<id>_v2"）；
+    // 带 "_v2" 的几只已切到 v2 资源三件套（geo/texture/animation 同名 "<id>_v2"）；
     // entity 注册 id（第一个字段）和 expectedRawId 保持不动，跨端协议契约不受影响。
-    ASH_SPIDER("ash_spider", 127, 0.9f, 0.45f, 1.0f, 0.4f, "ash_spider"),
+    ASH_SPIDER("ash_spider", 127, 0.9f, 0.45f, 1.0f, 0.4f, "ash_spider_v2"),
     HYBRID_BEAST("hybrid_beast", 128, 1.2f, 1.4f, 1.0f, 0.6f, "hybrid_beast"),
     VOID_DISTORTED("void_distorted", 129, 1.2f, 1.5f, 1.05f, 0.5f, "void_distorted_v2"),
     DAOXIANG("daoxiang", 130, 0.65f, 1.9f, 0.95f, 0.38f, "daoxiang_v2"),

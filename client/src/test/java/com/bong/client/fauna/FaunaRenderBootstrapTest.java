@@ -60,8 +60,8 @@ public class FaunaRenderBootstrapTest {
 
         Set<String> expected = Set.of(
             "geo/devour_rat.geo.json",
-            // 以下 6 只已切到 v2 几何（见 FaunaVisualKind 构造参数注释）；ash_spider 暂留 v1（fold 缺口）。
-            "geo/ash_spider.geo.json",
+            // 带 _v2 的几只已切到 v2 几何（见 FaunaVisualKind 构造参数注释）。
+            "geo/ash_spider_v2.geo.json",
             "geo/hybrid_beast.geo.json",
             "geo/void_distorted_v2.geo.json",
             "geo/green_spider.geo.json",
@@ -156,8 +156,8 @@ public class FaunaRenderBootstrapTest {
 
     @Test
     void idleAnimationNameDerivesFromAnimPath() {
-        assertEquals("animation.bong.ash_spider.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
-            "拟态蜘蛛应使用独立流水线的 idle（v2 缺 fold，暂留 v1 资源）");
+        assertEquals("animation.bong.ash_spider_v2.idle", FaunaVisualKind.ASH_SPIDER.idleAnimationName(),
+            "拟态蜘蛛应使用 v2 独立流水线的 idle");
         // 噬元鼠改走专属模型（devour_rat.geo.json + devour_rat.animation.json，含 idle/walk/run/peck/claw/pounce），
         // idle 应取 animation.bong.devour_rat.idle 而非通用回退。
         assertEquals("animation.bong.devour_rat.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
