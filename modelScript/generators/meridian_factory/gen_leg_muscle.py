@@ -74,337 +74,180 @@ RES = 64
 
 
 # =============================================================================
-# 各部件几何定义 (part_* 拆分)
+# 各部件几何定义 (part_* 拆分) —— 第 3 轮：整件改成竖立姿态
 # =============================================================================
+#
+# 逐行宽度表（x 为左右宽度；y 自下而上；原点在底面中心，正面 +Z）
+#   y 29–32  顶骨环口：外 7×7、内孔 5×5、高 3，中心 x0，z 贴在肌腹前上方
+#   y 22–29  肌腱主干：宽 6 × 厚 3，两条并在一起，贴着肌腹前面
+#   y  2–22  肌腱张开成 Y：每条宽 3 × 厚 3，每降 1px 向外偏 ~0.79px，末端中心落在 x ±16
+#   y  0–3   底部两个骨环口：外 7×7、内孔 5×5，中心 x ±17，两口内缘相距 28px
+#   y  2–30  肌腹 9 束纵向肌束（3 列 × 3 排，列中心 x -9/0/9，排中心 z -9/0/9，束宽 8、缝 1）：
+#            两端各 2 级倒角（半宽 4.0 → 3.0 → 2.0），两端高度逐束错开，不平切
+#
+# 肌腱贴在前排肌束外面：每一节的后表面取该高度前排肌束的外表面再缩 0.5px，所以从正面看得清。
 
-def part_01_coupling_sockets() -> List[dict]:
-    """1. 双骨环 + 两个耦合插口 (z: 0..2)。
+BELLY_ROW_Z = [-9.0, 0.0, 9.0]
+BELLY_COL_X = [-9.0, 0.0, 9.0]
+BELLY_HALF = 4.0
 
-    插口开口在 z=0 端面，接在 Y 形肌腱末端 (落在 x 2–4 与 x 12–14)：
-    - 左孔中心在 x = -5.0 (x in [-7.0, -3.0], y in [2.0, 6.0])，底边离地 2px；
-    - 右孔中心在 x =  5.0 (x in [ 3.0,  7.0], y in [2.0, 6.0])，底边离地 2px；
-    - 各外包骨环 #d8ccb0，方孔内壁贴 #b05050 衬层，中心真元内光 #f6dcc4。
-    """
-    cubes = []
+# 每束 (底部多缩短 db，顶部多缩短 dt)，使 9 束的两端高度错开
+BELLY_STAGGER = [
+    (0.0, 1.0), (1.0, 0.0), (0.5, 1.5),
+    (1.5, 0.5), (0.0, 0.0), (1.0, 1.0),
+    (0.5, 0.5), (1.5, 1.5), (0.0, 1.5),
+]
 
-    # ── 左插口 (中心在 x = -5.0) ──
-    # 四面骨环外框
-    cubes.append({"name": "socket_ring_l_out", "from": [-8.0, 1.0, 0.0], "to": [-7.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_in",  "from": [-3.0, 1.0, 0.0], "to": [-2.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_top", "from": [-7.0, 6.0, 0.0], "to": [-3.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_l_bot", "from": [-7.0, 1.0, 0.0], "to": [-3.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
+BELLY_BASE_Y = 2.5       # 肌腹最低处
+BELLY_TOP_Y = 29.0       # 肌腹最高处
+CAP_STEP = 2.0           # 每级倒角的高度
+CAP_HALVES = [2.0, 3.0]  # 端部两级倒角的半宽，之后是 4.0
 
-    # 内壁衬层 (#b05050) 与中心真元内光
-    cubes.append({"name": "socket_lining_l_l", "from": [-7.0, 2.0, 0.0], "to": [-6.4, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_r", "from": [-3.6, 2.0, 0.0], "to": [-3.0, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_t", "from": [-6.4, 5.4, 0.0], "to": [-3.6, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_l_b", "from": [-6.4, 2.0, 0.0], "to": [-3.6, 2.6, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lumen_l",    "from": [-6.4, 2.6, 1.0], "to": [-3.6, 5.4, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
+TENDON_TOP_Y = 29.0
+TENDON_SPLIT_Y = 22.0
+LEG_END_Y = 3.0
+LEG_END_X = 17.0
+TRUNK_W = 6.2
+LEG_W = 3.0
+TENDON_T = 3.0           # 肌腱厚度（z 方向）
+Y_OFFSET = 0.25          # 肌腱节界相对整数高度错开 0.25，避开肌束倒角面的共面
+RING_OUTER = 7.0
+RING_HOLE = 5.0
+RING_H = 3.0
 
-    # ── 右插口 (中心在 x = 5.0) ──
-    # 四面骨环外框
-    cubes.append({"name": "socket_ring_r_in",  "from": [ 2.0, 1.0, 0.0], "to": [ 3.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_out", "from": [ 7.0, 1.0, 0.0], "to": [ 8.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_top", "from": [ 3.0, 6.0, 0.0], "to": [ 7.0, 7.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
-    cubes.append({"name": "socket_ring_r_bot", "from": [ 3.0, 1.0, 0.0], "to": [ 7.0, 2.0, 2.0], "group": "coupling_sockets", "material": "bone_main"})
 
-    # 内壁衬层 (#b05050) 与中心真元内光
-    cubes.append({"name": "socket_lining_r_l", "from": [ 3.0, 2.0, 0.0], "to": [ 3.6, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_r", "from": [ 6.4, 2.0, 0.0], "to": [ 7.0, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_t", "from": [ 3.6, 5.4, 0.0], "to": [ 6.4, 6.0, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lining_r_b", "from": [ 3.6, 2.0, 0.0], "to": [ 6.4, 2.6, 1.2], "group": "coupling_sockets", "material": "flesh_lit"})
-    cubes.append({"name": "socket_lumen_r",    "from": [ 3.6, 2.6, 1.0], "to": [ 6.4, 5.4, 2.0], "group": "coupling_sockets", "material": "qi_glow"})
+def _bundle_half(y: float, db: float, dt: float) -> float:
+    """束在高度 y 处的半宽：两端各两级倒角，错开 db / dt。"""
+    y0 = BELLY_BASE_Y + db
+    y1 = BELLY_TOP_Y - dt
+    if y < y0 or y > y1:
+        return 0.0
+    if y < y0 + CAP_STEP:
+        return CAP_HALVES[0]
+    if y < y0 + 2 * CAP_STEP:
+        return CAP_HALVES[1]
+    if y > y1 - CAP_STEP:
+        return CAP_HALVES[0]
+    if y > y1 - 2 * CAP_STEP:
+        return CAP_HALVES[1]
+    return BELLY_HALF
 
+
+def _front_z(y: float) -> float:
+    """前排正中肌束在高度 y 处的前表面 z（肌腱贴在它外面）；超出肌腹则取排中心。"""
+    half = _bundle_half(y, 0.0, 0.0)
+    return BELLY_ROW_Z[2] + half
+
+
+def _box(name, lo, hi, group, material) -> dict:
+    return {"name": name, "from": list(lo), "to": list(hi), "group": group, "material": material}
+
+
+def _ring(prefix: str, cx: float, cz: float, y_base: float, face: str) -> List[dict]:
+    """竖向骨环口：外 6×6、内孔 4×4、高 2；face='up' 口朝上，'down' 口朝下。"""
+    g = "bone_rings"
+    o, h = RING_OUTER / 2.0, RING_HOLE / 2.0
+    y0, y1 = y_base, y_base + RING_H
+    cubes = [
+        _box(f"{prefix}_w", (cx - o, y0, cz - o), (cx - h, y1, cz + o), g, "bone_main"),
+        _box(f"{prefix}_e", (cx + h, y0, cz - o), (cx + o, y1, cz + o), g, "bone_main"),
+        _box(f"{prefix}_n", (cx - h, y0, cz - o), (cx + h, y1, cz - h), g, "bone_main"),
+        _box(f"{prefix}_s", (cx - h, y0, cz + h), (cx + h, y1, cz + o), g, "bone_main"),
+    ]
+    # 孔底衬层 #b05050 + 中心真元内光：口朝上时在底部，口朝下时在顶部
+    if face == "up":
+        floor = (y0, y0 + 0.5)
+        core = (y0 + 0.5, y0 + 1.0)
+    else:
+        floor = (y1 - 0.5, y1)
+        core = (y1 - 1.0, y1 - 0.5)
+    cubes.append(_box(f"{prefix}_floor", (cx - h, floor[0], cz - h), (cx + h, floor[1], cz + h), g, "flesh_lit"))
+    cubes.append(_box(f"{prefix}_core", (cx - 1.0, core[0], cz - 1.0), (cx + 1.0, core[1], cz + 1.0), g, "qi_glow"))
     return cubes
 
 
-def part_02_bifurcated_tendons() -> List[dict]:
-    """2. 左右两条肌腱 (z: 2..12, 调度指定阶梯斜展 V / Y 形分叉)。
+def part_01_bone_rings() -> List[dict]:
+    """顶 1 个、底 2 个骨环口。顶口在肌腱主干上端；底口落在两条肌腱末端，左右各贴近边缘。"""
+    cubes = _ring("ring_top", 0.0, _tendon_z_mid(TENDON_TOP_Y - 0.5), TENDON_TOP_Y, "up")
+    bz = _tendon_z_mid(LEG_END_Y + 0.5)
+    cubes += _ring("ring_bl", -LEG_END_X, bz, 0.0, "down")
+    cubes += _ring("ring_br", LEG_END_X, bz, 0.0, "down")
+    return cubes
 
-    严格按调度公式：
-    - 在肌腹根部 (z=12) 两条肌腱并在中线一起 (x in [-2.0, 2.0], 对应 0..16 网格的 x7–9)；
-    - 沿肌肉长度方向逐段往外斜：每段截面 2x2 (y in [2.5, 4.5])，每走 2px (dz=2) 向外偏 1px (dx=±1)；
-    - 走 5 步到另一端 (z=2) 分别落在 x in [-6.0, -4.0] (对应 x2–4) 与 x in [4.0, 6.0] (对应 x12–14)；
-    - 整体在俯视与 3/4 视角下呈清晰大角度 V / Y 形分叉！
+
+def _tendon_z_mid(y: float) -> float:
+    z0 = _front_z(y) - 0.5
+    return z0 + TENDON_T / 2.0
+
+
+def part_02_tendons() -> List[dict]:
+    """肌腱：顶口 → 主干（两条并在一起）→ y22 起张开成 Y → 各落到底部骨环口。
+
+    每 1px 高度一节，z 跟着前排肌束外表面走；每条肌腱表面一条 #f6dcc4 亮线。
     """
+    g = "tendons"
     cubes = []
 
-    # 5 步阶梯台阶 (z: 12 -> 2)
-    for step in range(5):
-        z_start = 12.0 - step * 2.0
-        z_end   = z_start - 2.0
+    # 主干：y 22..30，宽 4 × 厚 3
+    ys = TENDON_SPLIT_Y + Y_OFFSET
+    i = 0
+    while ys < TENDON_TOP_Y - 1e-6:
+        y_hi = min(ys + 1.0, TENDON_TOP_Y)
+        z0 = _front_z(ys + 0.5) - 0.5
+        cubes.append(_box(f"trunk_{i}", (-TRUNK_W / 2, ys, z0), (TRUNK_W / 2, y_hi, z0 + TENDON_T), g, "tendon_trans"))
+        cubes.append(_box(f"trunk_{i}_hl", (-0.3, ys, z0 + TENDON_T), (0.3, y_hi, z0 + TENDON_T + 0.3), g, "qi_glow"))
+        ys += 1.0
+        i += 1
 
-        lx0 = -2.0 - step * 1.0
-        lx1 =  0.0 - step * 1.0
-        rx0 =  0.0 + step * 1.0
-        rx1 =  2.0 + step * 1.0
-
-        # 左肌腱段 (截面 2x2: y in [2.5, 4.5])
-        cubes.append({
-            "name": f"tendon_l_step_{step}",
-            "from": [lx0, 2.5, z_end],
-            "to":   [lx1, 4.5, z_start],
-            "group": "bifurcated_tendons",
-            "material": "tendon_trans",
-        })
-        # 左肌腱顶面亮线
-        cubes.append({
-            "name": f"tendon_l_hl_{step}",
-            "from": [lx0 + 0.6, 4.55, z_end],
-            "to":   [lx1 - 0.6, 4.85, z_start],
-            "group": "bifurcated_tendons",
-            "material": "qi_glow",
-        })
-
-        # 右肌腱段 (截面 2x2: y in [2.5, 4.5])
-        cubes.append({
-            "name": f"tendon_r_step_{step}",
-            "from": [rx0, 2.5, z_end],
-            "to":   [rx1, 4.5, z_start],
-            "group": "bifurcated_tendons",
-            "material": "tendon_trans",
-        })
-        # 右肌腱顶面亮线
-        cubes.append({
-            "name": f"tendon_r_hl_{step}",
-            "from": [rx0 + 0.6, 4.55, z_end],
-            "to":   [rx1 - 0.6, 4.85, z_start],
-            "group": "bifurcated_tendons",
-            "material": "qi_glow",
-        })
-
+    # Y 形两腿：y 22 → 2，共 20 节，中心 x 从 ±1 走到 ±16
+    n = int(TENDON_SPLIT_Y - LEG_END_Y)
+    dx = (LEG_END_X - LEG_W / 2.0) / (n - 1)
+    for k in range(n):
+        y1 = TENDON_SPLIT_Y + Y_OFFSET - k
+        y0 = LEG_END_Y if k == n - 1 else y1 - 1.0
+        cx = LEG_W / 2.0 + dx * k
+        z0 = _front_z(y0 + 0.5) - 0.5
+        for side, sx in (("l", -1.0), ("r", 1.0)):
+            c = sx * cx
+            cubes.append(_box(f"leg_{side}_{k}", (c - LEG_W / 2, y0, z0), (c + LEG_W / 2, y1, z0 + TENDON_T), g, "tendon_trans"))
+            cubes.append(_box(f"leg_{side}_{k}_hl", (c - 0.3, y0, z0 + TENDON_T), (c + 0.3, y1, z0 + TENDON_T + 0.3), g, "qi_glow"))
     return cubes
 
 
 def part_03_muscle_bundles() -> List[dict]:
-    """3. 9 束肌纤维更粗更短（按 3-3-3 排列，整束长 32px：z 12..44）。
-
-    每束 3 节：
-    - 节 1 (z 30–44): 截面 10×10
-    - 节 2 (z 20–30): 截面 8×8
-    - 节 3 (z 12–20): 截面 5×5
-    各束末端（z 44 那头）长度错开 0–4px，外圈束外角切角做圆钝，不要平切。
-    每束顶面沿长轴一条 1px 宽 #b05050 高光条，束与束之间露出 #5a1a1a 细缝。
-    各束节间 Z 切面微幅错开，彻底避免同向同坐标共面。
-    """
+    """肌腹 9 束纵向肌束，两端倒角圆钝、高度错开；束缝露出暗血肉芯。"""
+    g = "muscle_bundles"
     cubes = []
-
-    bundle_configs = [
-        # ── 上层 3 束 ──
-        # 束 0: 上中 (Top-Center)
-        {
-            "name": "b0",
-            "z": [12.0, 20.0, 30.0, 44.0],
-            "ext": 3.0,
-            "outer": False,
-            "secs": [
-                (-2.5,  2.5, 10.5, 15.5),  # sec 3: 5x5
-                (-4.0,  4.0, 13.5, 21.5),  # sec 2: 8x8
-                (-5.0,  5.0, 16.0, 26.0),  # sec 1: 10x10
+    idx = 0
+    for r, zc in enumerate(BELLY_ROW_Z):
+        for c, xc in enumerate(BELLY_COL_X):
+            db, dt = BELLY_STAGGER[idx]
+            y0 = BELLY_BASE_Y + db
+            y1 = BELLY_TOP_Y - dt
+            levels = [
+                (y0, y0 + CAP_STEP, CAP_HALVES[0]),
+                (y0 + CAP_STEP, y0 + 2 * CAP_STEP, CAP_HALVES[1]),
+                (y0 + 2 * CAP_STEP, y1 - 2 * CAP_STEP, BELLY_HALF),
+                (y1 - 2 * CAP_STEP, y1 - CAP_STEP, CAP_HALVES[1]),
+                (y1 - CAP_STEP, y1, CAP_HALVES[0]),
             ]
-        },
-        # 束 1: 上左 (Top-Left)
-        {
-            "name": "b1",
-            "z": [12.2, 20.3, 30.3, 44.2],
-            "ext": 1.7,
-            "outer": True,
-            "secs": [
-                (-9.5, -4.5, 9.5, 14.5),   # sec 3
-                (-14.5, -6.5, 12.0, 20.0), # sec 2
-                (-17.8, -7.8, 14.2, 24.2), # sec 1
-            ]
-        },
-        # 束 2: 上右 (Top-Right)
-        {
-            "name": "b2",
-            "z": [11.8, 19.7, 29.7, 43.8],
-            "ext": 2.2,
-            "outer": True,
-            "secs": [
-                ( 4.5,  9.5, 9.5, 14.5),
-                ( 6.5, 14.5, 12.0, 20.0),
-                ( 7.8, 17.8, 14.2, 24.2),
-            ]
-        },
-
-        # ── 中层 3 束 ──
-        # 束 3: 中中 (Mid-Center)
-        {
-            "name": "b3",
-            "z": [12.1, 20.1, 30.1, 44.1],
-            "ext": 0.6,
-            "outer": False,
-            "secs": [
-                (-2.4,  2.4, 5.5, 10.5),
-                (-3.9,  3.9, 6.0, 14.0),
-                (-4.9,  4.9, 6.5, 16.5),
-            ]
-        },
-        # 束 4: 中左 (Mid-Left)
-        {
-            "name": "b4",
-            "z": [12.4, 20.4, 30.4, 43.9],
-            "ext": 1.1,
-            "outer": True,
-            "secs": [
-                (-9.7, -4.7, 4.8,  9.8),
-                (-15.0, -7.0, 5.0, 13.0),
-                (-18.0, -8.0, 5.5, 15.5),
-            ]
-        },
-        # 束 5: 中右 (Mid-Right)
-        {
-            "name": "b5",
-            "z": [11.7, 19.6, 29.6, 44.35],
-            "ext": 1.35,
-            "outer": True,
-            "secs": [
-                ( 4.7,  9.7, 4.8,  9.8),
-                ( 7.0, 15.0, 5.0, 13.0),
-                ( 8.0, 18.0, 5.5, 15.5),
-            ]
-        },
-
-        # ── 下层 3 束 ──
-        # 束 6: 下中 (Bottom-Center)
-        {
-            "name": "b6",
-            "z": [12.3, 20.2, 30.2, 43.95],
-            "ext": 2.5,
-            "outer": False,
-            "secs": [
-                (-2.3,  2.3, 1.2, 6.2),
-                (-3.8,  3.8, 1.0, 9.0),
-                (-4.8,  4.8, 1.0, 11.0),
-            ]
-        },
-        # 束 7: 下左 (Bottom-Left)
-        {
-            "name": "b7",
-            "z": [12.5, 20.5, 30.5, 44.4],
-            "ext": 3.5,
-            "outer": True,
-            "secs": [
-                (-9.4, -4.4, 1.5, 6.5),
-                (-14.3, -6.3, 1.2, 9.2),
-                (-17.5, -7.5, 1.0, 11.0),
-            ]
-        },
-        # 束 8: 下右 (Bottom-Right)
-        {
-            "name": "b8",
-            "z": [11.9, 19.8, 29.8, 43.7],
-            "ext": 1.9,
-            "outer": True,
-            "secs": [
-                ( 4.4,  9.4, 1.5, 6.5),
-                ( 6.3, 14.3, 1.2, 9.2),
-                ( 7.5, 17.5, 1.0, 11.0),
-            ]
-        },
-    ]
-
-    for b in bundle_configs:
-        b_name = b["name"]
-        zs = b["z"]
-        secs = b["secs"]
-        ext = b["ext"]
-        is_outer = b["outer"]
-
-        # 3 节长方块 (节 3, 节 2, 节 1)
-        for s_idx in range(3):
-            x0, x1, y0, y1 = secs[s_idx]
-            z0 = zs[s_idx]
-            z1 = zs[s_idx + 1]
-            cubes.append({
-                "name": f"{b_name}_s{3-s_idx}",
-                "from": [x0, y0, z0],
-                "to":   [x1, y1, z1],
-                "group": "muscle_bundles",
-                "material": "flesh_main",
-            })
-            # 顶面沿长轴 1px 宽 #b05050 高光条 (浮起 0.25px)
-            x_mid = (x0 + x1) / 2.0
-            cubes.append({
-                "name": f"{b_name}_s{3-s_idx}_hl",
-                "from": [x_mid - 0.45, y1 + 0.05, z0],
-                "to":   [x_mid + 0.45, y1 + 0.35, z1],
-                "group": "muscle_bundles",
-                "material": "flesh_lit",
-            })
-
-        # 延伸段 (z 44 那头长度错开 0-4px，末端 4 条棱削掉 1px 倒角，最外层再缩 1px，彻底圆钝化绝无平切)
-        ext_len = ext if ext > 0.05 else 1.2
-        x0, x1, y0, y1 = secs[2]
-        z_end_s1 = zs[3]
-        dx_sign = -1.0 if (x0 + x1) < 0 else 1.0
-
-        # 级 1 倒角层：4 条棱各削掉 1px (截面四周各缩进 1.0px)
-        x0_c1 = x0 + (1.5 if dx_sign < 0 else 1.0)
-        x1_c1 = x1 - (1.0 if dx_sign < 0 else 1.5)
-        y0_c1 = y0 + 1.0
-        y1_c1 = y1 - 1.0
-
-        z_m1 = z_end_s1 + ext_len * 0.5
-        cubes.append({
-            "name": f"{b_name}_ext1_chamfer",
-            "from": [round(x0_c1, 2), round(y0_c1, 2), round(z_end_s1, 2)],
-            "to":   [round(x1_c1, 2), round(y1_c1, 2), round(z_m1, 2)],
-            "group": "muscle_bundles",
-            "material": "flesh_main",
-        })
-        x_mid_c1 = (x0_c1 + x1_c1) / 2.0
-        cubes.append({
-            "name": f"{b_name}_ext1_hl",
-            "from": [x_mid_c1 - 0.45, y1_c1 + 0.05, round(z_end_s1, 2)],
-            "to":   [x_mid_c1 + 0.45, y1_c1 + 0.35, round(z_m1, 2)],
-            "group": "muscle_bundles",
-            "material": "flesh_lit",
-        })
-
-        # 级 2 最外层：最外层再缩 1px (四边在倒角层基础上再缩 1.0px，外圈束外侧额外收拢)
-        x0_c2 = x0_c1 + (1.5 if dx_sign < 0 else 1.0)
-        x1_c2 = x1_c1 - (1.0 if dx_sign < 0 else 1.5)
-        y0_c2 = y0_c1 + 1.0
-        y1_c2 = y1_c1 - 1.0
-        z_m2 = z_end_s1 + ext_len * 0.85
-        cubes.append({
-            "name": f"{b_name}_ext2_inner",
-            "from": [round(x0_c2, 2), round(y0_c2, 2), round(z_m1, 2)],
-            "to":   [round(x1_c2, 2), round(y1_c2, 2), round(z_m2, 2)],
-            "group": "muscle_bundles",
-            "material": "flesh_main",
-        })
-
-        # 级 3 极小圆拱顶尖 (四边再缩 0.8px，多面圆钝平滑封闭)
-        x0_c3 = x0_c2 + 0.8
-        x1_c3 = x1_c2 - 0.8
-        y0_c3 = y0_c2 + 0.8
-        y1_c3 = y1_c2 - 0.8
-        z_m3 = z_end_s1 + ext_len
-        cubes.append({
-            "name": f"{b_name}_ext3_apex",
-            "from": [round(x0_c3, 2), round(y0_c3, 2), round(z_m2, 2)],
-            "to":   [round(x1_c3, 2), round(y1_c3, 2), round(z_m3, 2)],
-            "group": "muscle_bundles",
-            "material": "flesh_main",
-        })
-
-    # 束缝底衬暗色芯 (#5a1a1a)
-    cubes.append({"name": "fissure_core_mid", "from": [-3.0, 6.6, 13.0], "to": [3.0, 13.4, 29.0], "group": "muscle_bundles", "material": "flesh_dark"})
-    cubes.append({"name": "fissure_core_fat", "from": [-4.0, 7.2, 31.0], "to": [4.0, 15.6, 42.0], "group": "muscle_bundles", "material": "flesh_dark"})
-
+            for k, (ya, yb, half) in enumerate(levels):
+                cubes.append(_box(f"b{r}{c}_{k}", (xc - half, ya, zc - half), (xc + half, yb, zc + half), g, "flesh_main"))
+            # 最外两列外侧面各一条竖向亮肉条
+            if c != 1:
+                sx = 1.0 if c == 2 else -1.0
+                edge = xc + sx * BELLY_HALF
+                lo, hi = sorted((edge, edge + sx * 0.25))
+                cubes.append(_box(f"b{r}{c}_hl", (lo, y0 + 4.0, zc - 0.5), (hi, y1 - 4.0, zc + 0.5), g, "flesh_lit"))
+            idx += 1
+    # 束缝暗芯（面坐标都避开束面）
+    cubes.append(_box("fissure_core", (-11.6, 4.8, -11.6), (11.6, 27.2, 11.6), g, "flesh_dark"))
     return cubes
 
 
 def all_cubes() -> List[dict]:
-    """汇总下肢肌肉组全部 3 大部件立方体。"""
-    return (
-        part_01_coupling_sockets()
-        + part_02_bifurcated_tendons()
-        + part_03_muscle_bundles()
-    )
+    """汇总下肢肌肉组：骨环口 + 肌腱 + 肌腹。"""
+    return part_01_bone_rings() + part_02_tendons() + part_03_muscle_bundles()
 
 
 # =============================================================================
@@ -545,7 +388,7 @@ def build_bbmodel_doc(cubes: List[dict], tex: Image.Image) -> dict:
         elements.append(element)
 
     outliner = []
-    for g_name in ["coupling_sockets", "bifurcated_tendons", "muscle_bundles"]:
+    for g_name in ["bone_rings", "tendons", "muscle_bundles"]:
         if g_name in groups_map:
             outliner.append({
                 "name": g_name,
@@ -589,115 +432,145 @@ def generate_bbmodel(out_path: Path = BBMODEL_OUT) -> Path:
 # =============================================================================
 
 def render_views(bbmodel_path: Path = BBMODEL_OUT):
-    """输出四视角拼图 render.png 与左右并排对照卡 check.png 到 model-review。"""
+    """输出 render.png（四视图）、parts.png（分部件）、check.png（左参考 / 右 正视 + 3/4）。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     REVIEW_DIR_ALIAS.mkdir(parents=True, exist_ok=True)
-    bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
+    bg_color = (119, 119, 119)  # 对齐参考图中性灰
 
-    # 1. 渲染四视角 (插口直视、长轴侧视、3/4 等轴、俯视)
-    # yaw=180: 从 -Z 看向 +Z，直视 z=0 处的双 8x6 骨环耦合插口与 6px 空隙
-    im_socket, _ = render(bbmodel_path, yaw=180.0, pitch=0.0, size=500, bg=bg_color)
-    # yaw=90: 从 +X 看向 -X，左侧为粗短肌腹、右侧为肌腱插口，与参考图左视严格对标
+    # 整件竖立，正面 +Z；yaw=180 渲的是 +Z 面（与参考图左图同向），yaw=145 是从前上方的 3/4
+    im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
+    im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
-    # yaw=145, pitch=25: 从 (+X, +Y, -Z) 俯瞰，左前方清晰展示双肌腱插口与 Y 形分叉，右后方展示 9 束 3-3-3 肌腹
-    im_iso, _ = render(bbmodel_path, yaw=145.0, pitch=25.0, size=500, bg=bg_color)
-    # yaw=90, pitch=89.9: 俯视长轴
-    im_top, _ = render(bbmodel_path, yaw=90.0, pitch=89.9, size=500, bg=bg_color)
+    im_back, _ = render(bbmodel_path, yaw=145.0, pitch=25.0, size=500, bg=bg_color)
 
-    # 2. 拼装 render.png (2x2 网格)
     canvas = Image.new("RGB", (1040, 1040), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
-
-    views = [
-        ("SOCKET (Dual 8x6 Ports & 6px Gap at z=0)", im_socket, 20, 20),
-        ("SIDE (Profile: Left Belly, Right Tendons)", im_side, 540, 20),
-        ("3/4 ISOMETRIC (3-3-3 Bundles & Y-Bifurcation)", im_iso, 20, 540),
-        ("TOP (Y-Bifurcated Tendons & Divergence)",    im_top, 540, 540),
-    ]
-
-    for title, im_v, px, py in views:
+    for title, im_v, px, py in [
+        ("FRONT (+Z)", im_front, 20, 20),
+        ("SIDE", im_side, 540, 20),
+        ("3/4 FRONT", im_iso, 20, 540),
+        ("3/4 BACK", im_back, 540, 540),
+    ]:
         canvas.paste(im_v, (px, py))
-        draw.rectangle([px, py, px + 380, py + 26], fill=(24, 25, 28))
         draw.text((px + 8, py + 6), title, fill=(230, 230, 230))
-
     for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
-        r_path = target_dir / "render.png"
-        canvas.save(r_path)
-        print(f"✓ render.png 已输出: {r_path}")
+        canvas.save(target_dir / "render.png")
 
-    # 3. 拼装 check.png (左参考图右渲染正面与 3/4 视并排)
+    # 分部件
+    tmp = Path("/tmp/meridian_factory_leg_parts")
+    tmp.mkdir(parents=True, exist_ok=True)
+    thumbs = []
+    for pname, fn in (("bone_rings", part_01_bone_rings), ("tendons", part_02_tendons), ("muscle_bundles", part_03_muscle_bundles)):
+        p = tmp / f"{pname}.bbmodel"
+        p.write_text(json.dumps(build_bbmodel_doc(fn(), build_texture()), ensure_ascii=False), encoding="utf-8")
+        im_p, _ = render(p, yaw=-35.0, pitch=25.0, size=400, bg=bg_color)
+        thumbs.append((pname, im_p))
+    sheet = Image.new("RGB", (3 * 410 + 10, 420), (35, 36, 40))
+    sd = ImageDraw.Draw(sheet)
+    for i, (pname, im_p) in enumerate(thumbs):
+        sheet.paste(im_p, (10 + i * 410, 10))
+        sd.text((18 + i * 410, 16), pname, fill=(230, 230, 230))
+    for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
+        sheet.save(target_dir / "parts.png")
+
     if REF_IMAGE.exists():
         ref_im = Image.open(REF_IMAGE).convert("RGB")
         target_h = 600
         ref_w = int(ref_im.width * target_h / ref_im.height)
         ref_scaled = ref_im.resize((ref_w, target_h), Image.Resampling.LANCZOS)
-
-        side_scale_w = int(im_side.width * target_h / im_side.height)
-        iso_scale_w = int(im_iso.width * target_h / im_iso.height)
-        side_scaled = im_side.resize((side_scale_w, target_h), Image.Resampling.LANCZOS)
-        iso_scaled = im_iso.resize((iso_scale_w, target_h), Image.Resampling.LANCZOS)
-
-        right_w = side_scale_w + iso_scale_w + 16
-        total_w = ref_w + right_w + 32
-        check_cv = Image.new("RGB", (total_w, target_h + 40), (28, 29, 33))
+        front_s = im_front.resize((target_h, target_h), Image.Resampling.LANCZOS)
+        iso_s = im_iso.resize((target_h, target_h), Image.Resampling.LANCZOS)
+        check_cv = Image.new("RGB", (ref_w + 2 * target_h + 36, target_h + 40), (28, 29, 33))
         c_draw = ImageDraw.Draw(check_cv)
-
-        # 贴左参考
         check_cv.paste(ref_scaled, (12, 30))
-        c_draw.text((16, 8), "REFERENCE (o04_leg_muscle.png: Left SIDE / Right 3/4)", fill=(210, 200, 180))
-
-        # 贴右渲染 (SIDE VIEW + 3/4 ISOMETRIC VIEW 与参考图严格左右对应)
-        rx = ref_w + 24
-        check_cv.paste(side_scaled, (rx, 30))
-        check_cv.paste(iso_scaled, (rx + side_scale_w + 8, 30))
-        c_draw.text((rx + 4, 8), "NOW RENDER (SIDE VIEW + 3/4 ISOMETRIC VIEW)", fill=(180, 220, 210))
-
+        check_cv.paste(front_s, (ref_w + 24, 30))
+        check_cv.paste(iso_s, (ref_w + target_h + 36, 30))
+        c_draw.text((16, 8), "REFERENCE o04_leg_muscle.png", fill=(210, 200, 180))
+        c_draw.text((ref_w + 28, 8), "FRONT", fill=(180, 220, 210))
+        c_draw.text((ref_w + target_h + 40, 8), "3/4 FRONT", fill=(180, 220, 210))
         for target_dir in [REVIEW_DIR, REVIEW_DIR_ALIAS]:
-            c_path = target_dir / "check.png"
-            check_cv.save(c_path)
-            print(f"✓ check.png 并排对照图已输出: {c_path}")
+            check_cv.save(target_dir / "check.png")
+    print(f"✓ leg_muscle: render / parts / check -> {REVIEW_DIR}")
+
+
+def check_structure(cubes: List[dict]) -> None:
+    """结构门禁：外包、9 束、3 个骨环口、肌腱 Y 形张开且落在边缘、束端圆钝。"""
+    lo = [min(c["from"][i] for c in cubes) for i in range(3)]
+    hi = [max(c["to"][i] for c in cubes) for i in range(3)]
+    assert lo[0] >= -24 and hi[0] <= 24 and lo[2] >= -24 and hi[2] <= 24, f"x/z 越出 3×3 方块: {lo} {hi}"
+    assert lo[1] >= 0 and hi[1] <= 32, f"y 越出 0..32: {lo[1]} {hi[1]}"
+
+    bundles = {c["name"].split("_")[0] for c in cubes if c["name"].startswith("b") and "_" in c["name"] and c["name"][1:3].isdigit()}
+    assert len(bundles) == 9, f"肌束应为 9 束，实际 {len(bundles)}"
+    for b in bundles:
+        levels = [c for c in cubes if c["name"].startswith(f"{b}_") and not c["name"].endswith("_hl")]
+        assert len(levels) == 5, f"{b} 应为 5 级(两端各 2 级倒角)，实际 {len(levels)}"
+
+    rings = {c["name"].rsplit("_", 1)[0] for c in cubes if c["name"].startswith("ring_") and c["name"].endswith(("_w", "_e", "_n", "_s"))}
+    assert rings == {"ring_top", "ring_bl", "ring_br"}, f"骨环口应为 顶1 + 底2: {rings}"
+
+    legs = {s: sorted((c for c in cubes if c["name"].startswith(f"leg_{s}_") and not c["name"].endswith("_hl")),
+                      key=lambda c: -c["from"][1]) for s in ("l", "r")}
+    for s, seq in legs.items():
+        xs = [abs((c["from"][0] + c["to"][0]) / 2) for c in seq]
+        assert all(b >= a - 1e-6 for a, b in zip(xs, xs[1:])), f"{s} 腿没有单调向外张开: {xs}"
+        assert xs[-1] >= 15.0, f"{s} 腿末端没贴近边缘(|x|={xs[-1]})"
+        assert xs[0] <= 1.5, f"{s} 腿起点没并在中线(|x|={xs[0]})"
+    trunk = [c for c in cubes if c["name"].startswith("trunk_") and not c["name"].endswith("_hl")]
+    assert trunk and all(abs(c["from"][0] + c["to"][0]) < 1e-6 for c in trunk), "主干必须在中线"
+    gap = min(c["from"][0] for c in legs["r"]) if False else None
+    del gap
+    # 底部两口分得很开
+    inner = min(c["from"][0] for c in cubes if c["name"] == "ring_br_w") - max(c["to"][0] for c in cubes if c["name"] == "ring_bl_e")
+    assert inner >= 20.0, f"底部两口内缘距太近: {inner}"
+    # 束端不平切：最高一级的半宽必须小于主体
+    tops = [c for c in cubes if c["name"].startswith("b") and c["name"].endswith("_4")]
+    assert all((c["to"][0] - c["from"][0]) < 2 * BELLY_HALF for c in tops), "束顶端必须倒角收细"
 
 
 def self_test():
-    """运行门禁差分自证：正常立方体无共面冲突，故意注入共面冲突能准确拦截。"""
+    """门禁差分自证：每道门先注入缺陷确认报得出来。"""
     print("运行 gen_leg_muscle.py 差分自证...")
     cubes = all_cubes()
     _assert_no_coplanar_faces(cubes)
-    print("  [OK] 正常立方体集无共面冲突")
+    check_structure(cubes)
+    print(f"  [OK] {len(cubes)} 个立方体，共面/外包/9束/骨环口/Y形/倒角全部通过")
 
-    # 注入测试缺陷
-    defect_cubes = list(cubes) + [{
-        "name": "inject_coplanar_fail",
-        "from": [-8.0, 1.0, 0.0],
-        "to":   [-7.0, 7.0, 2.0],  # 与 socket_ring_l_out 完全重叠
-        "material": "bone_main",
-    }]
-    caught = False
-    try:
-        _assert_no_coplanar_faces(defect_cubes)
-    except AssertionError as e:
-        caught = True
-        print(f"  [OK] 成功捕获注入共面缺陷: {e.args[0].splitlines()[0]}")
+    def must_fail(name, bad, gate):
+        try:
+            gate(bad)
+        except AssertionError as e:
+            print(f"  [OK] 注入「{name}」被拦截: {str(e).splitlines()[0][:60]}")
+            return
+        raise RuntimeError(f"门禁失效: 注入「{name}」没被拦截")
 
-    if not caught:
-        raise RuntimeError("门禁失效: 注入共面冲突未被拦截!")
+    must_fail("共面", cubes + [dict(cubes[0], name="dup")], _assert_no_coplanar_faces)
+    must_fail("少一束", [c for c in cubes if not c["name"].startswith("b00_")], check_structure)
+    parallel = [dict(c, **{"from": [(-1.0 if c["name"].startswith("leg_l_") else 1.0) * 5.0 - 1.0 if c["name"].startswith("leg_l_") else 4.0, c["from"][1], c["from"][2]],
+                           "to": [(-1.0 if c["name"].startswith("leg_l_") else 1.0) * 5.0 + 1.0 if c["name"].startswith("leg_l_") else 6.0, c["to"][1], c["to"][2]]})
+                if c["name"].startswith("leg_") and not c["name"].endswith("_hl") else c for c in cubes]
+    must_fail("两腿平行不张开", parallel, check_structure)
+    must_fail("少一个底口", [c for c in cubes if not c["name"].startswith("ring_br_")], check_structure)
+    def flatten(c):
+        # 把最高一级撑回满宽，等于束端被平切
+        cx, cz = (c["from"][0] + c["to"][0]) / 2, (c["from"][2] + c["to"][2]) / 2
+        return dict(c, **{"from": [cx - BELLY_HALF, c["from"][1], cz - BELLY_HALF], "to": [cx + BELLY_HALF, c["to"][1], cz + BELLY_HALF]})
+
+    flat_top = [flatten(c) if c["name"].startswith("b") and c["name"].endswith("_4") else c for c in cubes]
+    must_fail("束端平切", flat_top, check_structure)
     print("✓ gen_leg_muscle.py 差分自证全绿")
 
 
 def main():
     parser = argparse.ArgumentParser(description="经脉工厂内景器官 o04 leg_muscle 生成器")
-    parser.add_argument("--self-test", action="store_true", help="运行门禁差分自证")
-    parser.add_argument("--render", action="store_true", help="渲染并输出 render.png 与 check.png")
+    parser.add_argument("--self-test", action="store_true", help="只跑门禁差分自证")
     args = parser.parse_args()
 
-    if args.self_test:
-        self_test()
-        return
-
-    # 默认流程：自测 -> 导出 bbmodel -> 渲染图片
     self_test()
+    if args.self_test:
+        return
     bb_path = generate_bbmodel()
     render_views(bb_path)
 
