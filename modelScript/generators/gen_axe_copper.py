@@ -143,20 +143,31 @@ def part_axe_head() -> List[dict]:
         {"name": "eye_socket_mid", "group": "axe_head", "material": "copper_weathered", "from": [6.8, 21.0, 6.6], "to": [9.2, 25.5, 9.4]},
         # 斧背平敲锤颈 (+X 侧，露出铜色 #b87333)
         {"name": "poll_neck", "group": "axe_head", "material": "copper_edge", "from": [9.2, 21.8, 7.0], "to": [10.0, 24.8, 9.0]},
-        # 斧背 2×2 锤背凸起 (截面 2×2: Y in [22.3, 24.3], Z in [7.0, 9.0], 向 +X 突出至 11.5，露出铜色 #b87333)
-        {"name": "poll_hammer_2x2", "group": "axe_head", "material": "copper_edge", "from": [10.0, 22.3, 7.0], "to": [11.5, 24.3, 9.0]},
+        # 锤颈过渡凸缘 (增强铸造粗粝感)
+        {"name": "poll_rim",  "group": "axe_head", "material": "copper_edge", "from": [9.7, 22.0, 6.8], "to": [10.3, 24.6, 9.2]},
+        # 斧背 2×2 锤背凸起 (截面 2×2: Y in [22.3, 24.3], Z in [7.0, 9.0], 向 +X 突出至 11.8，露出铜色 #b87333)
+        {"name": "poll_hammer_2x2", "group": "axe_head", "material": "copper_edge", "from": [10.3, 22.3, 7.0], "to": [11.8, 24.3, 9.0]},
+
         # 斧身主体 (厚度严格为 2px: Z in [7.0, 9.0]，斧面主色铜绿 #4f7a6a / #5e8c78)
         {"name": "blade_throat", "group": "axe_head", "material": "copper_weathered", "from": [5.5, 21.0, 7.0], "to": [6.8, 25.8, 9.0]},
         {"name": "blade_fan_1",  "group": "axe_head", "material": "copper_weathered", "from": [4.0, 19.8, 7.0], "to": [5.5, 26.8, 9.0]},
         {"name": "blade_fan_2",  "group": "axe_head", "material": "copper_weathered", "from": [2.5, 18.5, 7.0], "to": [4.0, 27.8, 9.0]},
         {"name": "blade_fan_3",  "group": "axe_head", "material": "copper_weathered", "from": [1.2, 17.2, 7.0], "to": [2.5, 28.6, 9.0]},
-        # 刃口过渡斜面 (Z in [7.2, 8.8], 厚度 1.6px，铜绿渐变)
-        {"name": "blade_bevel",  "group": "axe_head", "material": "copper_weathered", "from": [0.5, 16.2, 7.2], "to": [1.2, 29.1, 8.8]},
+
+        # 刃口开刃斜面细化过渡 (厚度 1.6px 与 1.3px 梯级削薄，铜绿渐变)
+        {"name": "blade_bevel_mid", "group": "axe_head", "material": "copper_weathered", "from": [0.4, 16.5, 7.2], "to": [1.2, 29.0, 8.8]},
+        {"name": "blade_bevel_sub", "group": "axe_head", "material": "copper_weathered", "from": [-0.2, 16.0, 7.35], "to": [0.4, 29.4, 8.65]},
+
         # 刃口一圈 1px (Z in [7.5, 8.5], 厚度严格收到 1px，露出铜色 #b87333)
-        {"name": "blade_edge_1px_main", "group": "axe_head", "material": "copper_edge", "from": [-0.5, 15.5, 7.5], "to": [0.5, 29.5, 8.5]},
-        # 月牙上下锋利微卷刃尖 (厚度 1px，露出铜色 #b87333)
-        {"name": "blade_edge_tip_top",  "group": "axe_head", "material": "copper_edge", "from": [0.5, 29.2, 7.5], "to": [1.8, 30.0, 8.5]},
-        {"name": "blade_edge_tip_bot",  "group": "axe_head", "material": "copper_edge", "from": [0.5, 14.8, 7.5], "to": [1.8, 15.6, 8.5]},
+        {"name": "blade_edge_1px_main", "group": "axe_head", "material": "copper_edge", "from": [-0.8, 15.6, 7.5], "to": [-0.2, 29.8, 8.5]},
+
+        # 月牙上端微卷月牙角 (两级微卷倒勾，露出铜色 #b87333)
+        {"name": "blade_edge_tip_top1", "group": "axe_head", "material": "copper_edge", "from": [-0.5, 29.8, 7.5], "to": [0.8, 30.5, 8.5]},
+        {"name": "blade_edge_tip_top2", "group": "axe_head", "material": "copper_edge", "from": [0.8, 29.6, 7.5], "to": [1.8, 30.2, 8.5]},
+
+        # 月牙下端微卷月牙角 (两级微卷内钩，露出铜色 #b87333)
+        {"name": "blade_edge_tip_bot1", "group": "axe_head", "material": "copper_edge", "from": [-0.5, 14.8, 7.5], "to": [0.8, 15.6, 8.5]},
+        {"name": "blade_edge_tip_bot2", "group": "axe_head", "material": "copper_edge", "from": [0.8, 15.2, 7.5], "to": [1.8, 15.8, 8.5]},
     ]
 
 

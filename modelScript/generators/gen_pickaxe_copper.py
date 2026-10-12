@@ -138,7 +138,9 @@ def part_pick_head() -> List[dict]:
     """旧铜双尖镐头（镐身厚度 2px 铜绿 #4f7a6a / #5e8c78，左右双向微弧下弯镐臂，两端尖喙收至 1px 露出铜色 #b87333）。"""
     return [
         # 镐眼中部套筒 (包裹榫头，材质铜绿)
-        {"name": "eye_socket_mid", "group": "pick_head", "material": "copper_weathered", "from": [6.8, 18.5, 6.6], "to": [9.2, 21.8, 9.4]},
+        {"name": "eye_socket_mid",   "group": "pick_head", "material": "copper_weathered", "from": [6.8, 18.5, 6.6], "to": [9.2, 21.8, 9.4]},
+        # 套筒顶端加固冠环 (外凸增强套箍受力结构)
+        {"name": "eye_socket_crown", "group": "pick_head", "material": "copper_weathered", "from": [6.6, 21.5, 6.4], "to": [9.4, 22.1, 9.6]},
 
         # ── 左臂 (-X 侧镐喙，微弧向下收细) ──
         {"name": "arm_l_1",     "group": "pick_head", "material": "copper_weathered", "from": [5.4, 18.4, 7.0], "to": [6.8, 21.2, 9.0]},
@@ -147,7 +149,9 @@ def part_pick_head() -> List[dict]:
         {"name": "arm_l_4",     "group": "pick_head", "material": "copper_weathered", "from": [0.8, 16.8, 7.3], "to": [2.2, 18.8, 8.7]},
         {"name": "arm_l_bevel", "group": "pick_head", "material": "copper_weathered", "from": [-0.2, 15.8, 7.4], "to": [0.8, 17.6, 8.6]},
         # 左端磨尖铜喙 (厚度收至 1px，露出铜色 #b87333)
-        {"name": "arm_l_tip",   "group": "pick_head", "material": "copper_edge", "from": [-1.0, 14.8, 7.5], "to": [-0.2, 16.4, 8.5]},
+        {"name": "arm_l_tip",   "group": "pick_head", "material": "copper_edge", "from": [-1.0, 15.0, 7.5], "to": [-0.2, 16.4, 8.5]},
+        # 左端极细鹤嘴端点 (两级收尖: 尖端延伸至 -1.6, 截面 0.6x0.9x0.7)
+        {"name": "arm_l_beak",  "group": "pick_head", "material": "copper_edge", "from": [-1.6, 14.5, 7.65], "to": [-1.0, 15.4, 8.35]},
 
         # ── 右臂 (+X 侧镐喙，微弧向下收细) ──
         {"name": "arm_r_1",     "group": "pick_head", "material": "copper_weathered", "from": [9.2, 18.4, 7.0], "to": [10.6, 21.2, 9.0]},
@@ -156,7 +160,9 @@ def part_pick_head() -> List[dict]:
         {"name": "arm_r_4",     "group": "pick_head", "material": "copper_weathered", "from": [13.8, 16.8, 7.3], "to": [15.2, 18.8, 8.7]},
         {"name": "arm_r_bevel", "group": "pick_head", "material": "copper_weathered", "from": [15.2, 15.8, 7.4], "to": [16.2, 17.6, 8.6]},
         # 右端磨尖铜喙 (厚度收至 1px，露出铜色 #b87333)
-        {"name": "arm_r_tip",   "group": "pick_head", "material": "copper_edge", "from": [16.2, 14.8, 7.5], "to": [17.0, 16.4, 8.5]},
+        {"name": "arm_r_tip",   "group": "pick_head", "material": "copper_edge", "from": [16.2, 15.0, 7.5], "to": [17.0, 16.4, 8.5]},
+        # 右端极细鹤嘴端点 (两级收尖: 尖端延伸至 17.6, 截面 0.6x0.9x0.7)
+        {"name": "arm_r_beak",  "group": "pick_head", "material": "copper_edge", "from": [17.0, 14.5, 7.65], "to": [17.6, 15.4, 8.35]},
     ]
 
 
