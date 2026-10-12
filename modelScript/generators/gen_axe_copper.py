@@ -5,23 +5,24 @@
 - worldview & server/assets/items/tools.toml:
   id = "axe_copper", name = "铜斧"
   description = "旧铜矿回炉的轻斧，挥得快，刃口也更容易卷。"
-- 末法残土废土修仙背景：由残破旧铜回炉重铸的伐木与防身短斧。
-  红铜主体夹杂杂铜氧化斑与星星点点的铜绿（锈斑），刃口略薄微卷，
-  经反复捶打呈月牙微弧。
-- 老木短斧柄（风干硬木），柄身由粗麻绳交叉紧扎加固，
-  斧眼贯穿处由铜环套与顶端铜楔牢牢卡紧。
+- 末法残土废土修仙背景：由残破旧铜回炉重铸的伐木与防身轻斧。
+  依据调度审第 1 次指示修改：
+  1. 斧面主色改为铜绿 #4f7a6a / #5e8c78 斑驳氧化铜，刃口 1px 一圈与斧背锤头露出原生铜色 #b87333；
+  2. 斧身厚度 2px，刃口一侧收至 1px，斧背设 2×2 锤背凸起；
+  3. 斧头与柄之间设铜环套（柄外包 1px 方环）与紧固铜楔；
+  4. 老木柄中段带 2 处 1px 节疤凸起，底端设略粗的柄尾圆端。
 
 结构组成（4 大 Bone Group）：
-    1. haft          - 质朴老木斧柄（柄尾圆端、握持段、主柄身、穿眼榫头）
-    2. cord_wrap     - 粗麻绳防滑与加固缠绑（握把缠圈、斧颈对角绑扎）
-    3. wedge_collar  - 铜环套与顶端紧固铜楔（防脱落结构五金）
-    4. axe_head      - 旧铜斧头（后部平锤、斧眼中段、喉部、月牙开刃身、微卷刃口）
+    1. haft          - 质朴老木斧柄（加粗柄尾圆端、握持段、带节疤主柄身、穿眼榫头）
+    2. cord_wrap     - 粗麻绳防滑与加固缠绑（握把防滑缠圈、斧颈加固环缠）
+    3. wedge_collar  - 外包 1px 方形铜环套与顶端紧固铜楔（防脱五金）
+    4. axe_head      - 旧铜斧头（2px 铜绿斧身、2×2 铜色斧背平锤、1px 铜色月牙刃口）
 
 手持物约定：
     - 握柄轴线置于方块中心 (X=8.0, Z=8.0)
-    - 斧刃朝向 -X 侧（严格遵循 test_axe_edge_direction.py 契约）
+    - 斧刃严格朝向 -X 侧（严格遵循两把 v2 斧与 test_axe_edge_direction.py 契约）
     - 斧背平锤朝向 +X 侧
-    - 全长约 28.6px，符合轻型单手工具比例
+    - 支持 --dump-obj 输出 SML 标准 OBJ
 
 用法：
     python3 modelScript/generators/gen_axe_copper.py
@@ -60,14 +61,14 @@ BONE_ORDER = ["haft", "cord_wrap", "wedge_collar", "axe_head"]
 BONE_PIVOTS = {
     "haft": [8.0, 9.5, 8.0],
     "cord_wrap": [8.0, 10.0, 8.0],
-    "wedge_collar": [8.0, 23.0, 8.0],
+    "wedge_collar": [8.0, 20.5, 8.0],
     "axe_head": [8.0, 23.5, 8.0],
 }
 
 # 纹理贴图 4 象限定义 (64x64)
-# Q1 (0..32, 0..32): copper_weathered (旧铜主材)
+# Q1 (0..32, 0..32): copper_weathered (铜绿氧化铜主材 #4f7a6a / #5e8c78)
 # Q2 (32..64, 0..32): aged_wood (老木斧柄)
-# Q3 (0..32, 32..64): copper_edge (开刃刃口)
+# Q3 (0..32, 32..64): copper_edge (开刃刃口与斧背裸铜色 #b87333)
 # Q4 (32..64, 32..64): hemp_binding (粗麻绳缠绑)
 MAT_REGIONS = {
     "copper_weathered": (0.0, 0.0, 32.0, 32.0),
@@ -82,66 +83,80 @@ MAT_REGIONS = {
 # =============================================================================
 
 def part_haft() -> List[dict]:
-    """老木斧柄（质朴硬木，纵向贯穿 Y 轴，斧刃位于 -X 侧）。"""
+    """老木斧柄（不规则老木：中段带 2 处 1px 节疤凸起，底端设略粗的柄尾圆端）。"""
     return [
-        {"name": "haft_butt", "group": "haft", "material": "aged_wood", "from": [7.3, 1.2, 7.3], "to": [8.7, 2.4, 8.7]},
-        {"name": "haft_lower", "group": "haft", "material": "aged_wood", "from": [7.4, 2.4, 7.4], "to": [8.6, 7.0, 8.6]},
-        {"name": "haft_grip", "group": "haft", "material": "aged_wood", "from": [7.45, 7.0, 7.45], "to": [8.55, 12.0, 8.55]},
-        {"name": "haft_mid", "group": "haft", "material": "aged_wood", "from": [7.4, 12.0, 7.4], "to": [8.6, 18.5, 8.6]},
-        {"name": "haft_neck", "group": "haft", "material": "aged_wood", "from": [7.45, 18.5, 7.45], "to": [8.55, 21.0, 8.55]},
-        {"name": "haft_tenon", "group": "haft", "material": "aged_wood", "from": [7.5, 21.0, 7.5], "to": [8.5, 25.3, 8.5]},
+        # 柄尾略粗圆端 (Butt knob: 宽 2.0px, 带有层级防滑圆头)
+        {"name": "haft_butt_knob_base", "group": "haft", "material": "aged_wood", "from": [7.0, 0.8, 7.0], "to": [9.0, 1.8, 9.0]},
+        {"name": "haft_butt_knob_step", "group": "haft", "material": "aged_wood", "from": [7.2, 1.8, 7.2], "to": [8.8, 2.6, 8.8]},
+        # 下柄身
+        {"name": "haft_lower_shaft", "group": "haft", "material": "aged_wood", "from": [7.4, 2.6, 7.4], "to": [8.6, 7.0, 8.6]},
+        # 握把段 (配合防滑缠圈)
+        {"name": "haft_grip_shaft", "group": "haft", "material": "aged_wood", "from": [7.45, 7.0, 7.45], "to": [8.55, 12.0, 8.55]},
+        # 中段柄身 1 与 节疤 1 (+X 侧外凸 0.8px)
+        {"name": "haft_mid_shaft_1", "group": "haft", "material": "aged_wood", "from": [7.4, 12.0, 7.35], "to": [8.6, 14.5, 8.65]},
+        {"name": "haft_knot_1", "group": "haft", "material": "aged_wood", "from": [8.6, 13.2, 7.6], "to": [9.4, 14.2, 8.4]},
+        # 中段柄身 2 与 节疤 2 (-X 侧外凸 0.88px)
+        {"name": "haft_mid_shaft_2", "group": "haft", "material": "aged_wood", "from": [7.38, 14.5, 7.4], "to": [8.58, 17.0, 8.6]},
+        {"name": "haft_knot_2", "group": "haft", "material": "aged_wood", "from": [6.5, 15.6, 7.5], "to": [7.38, 16.6, 8.4]},
+        # 中段柄身 3 与 颈部
+        {"name": "haft_mid_shaft_3", "group": "haft", "material": "aged_wood", "from": [7.42, 17.0, 7.42], "to": [8.58, 19.5, 8.58]},
+        {"name": "haft_neck_shaft", "group": "haft", "material": "aged_wood", "from": [7.45, 19.5, 7.45], "to": [8.55, 20.8, 8.55]},
+        # 穿眼榫头 (穿过铜斧眼)
+        {"name": "haft_tenon", "group": "haft", "material": "aged_wood", "from": [7.5, 20.8, 7.5], "to": [8.5, 25.3, 8.5]},
+        # 顶端露出榫头
         {"name": "haft_crown", "group": "haft", "material": "aged_wood", "from": [7.55, 25.7, 7.55], "to": [8.45, 26.6, 8.45]},
     ]
 
 
 def part_cord_wrap() -> List[dict]:
-    """粗麻绳/皮绳缠绑（握把防滑与斧颈加固对角绑扎）。"""
+    """粗麻绳缠绑（握把防滑缠圈与颈部加固扎绳）。"""
     return [
-        # 握持段间距微绕
+        # 握持段间距缠圈
         {"name": "wrap_g1", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 7.2, 7.32], "to": [8.68, 8.0, 8.68]},
         {"name": "wrap_g2", "group": "cord_wrap", "material": "hemp_binding", "from": [7.34, 8.2, 7.34], "to": [8.66, 9.0, 8.66]},
         {"name": "wrap_g3", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 9.2, 7.32], "to": [8.68, 10.0, 8.68]},
         {"name": "wrap_g4", "group": "cord_wrap", "material": "hemp_binding", "from": [7.34, 10.2, 7.34], "to": [8.66, 11.0, 8.66]},
         {"name": "wrap_g5", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 11.2, 7.32], "to": [8.68, 11.8, 8.68]},
-        # 斧颈加固环缠
-        {"name": "wrap_n1", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 18.8, 7.32], "to": [8.68, 19.5, 8.68]},
-        {"name": "wrap_n2", "group": "cord_wrap", "material": "hemp_binding", "from": [7.30, 19.6, 7.30], "to": [8.70, 20.3, 8.70]},
-        {"name": "wrap_n3", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 20.4, 7.32], "to": [8.68, 20.9, 8.68]},
-        # 交叉斜扎索（浮起 0.1px 增强立体感）
-        {"name": "wrap_n_diag_f", "group": "cord_wrap", "material": "hemp_binding", "from": [7.28, 19.1, 7.24], "to": [8.72, 20.6, 7.42]},
-        {"name": "wrap_n_diag_b", "group": "cord_wrap", "material": "hemp_binding", "from": [7.28, 19.1, 8.58], "to": [8.72, 20.6, 8.76]},
+        # 斧颈紧固扎绳 (位于铜环套下方)
+        {"name": "wrap_n1", "group": "cord_wrap", "material": "hemp_binding", "from": [7.32, 18.2, 7.32], "to": [8.68, 18.9, 8.68]},
+        {"name": "wrap_n2", "group": "cord_wrap", "material": "hemp_binding", "from": [7.30, 19.0, 7.30], "to": [8.70, 19.7, 8.70]},
     ]
 
 
 def part_wedge_collar() -> List[dict]:
-    """固定铜环套与顶端紧固铜楔（防脱五金）。"""
+    """斧头和柄之间的铜环套（柄外包 1px 的方环，#b87333）和一个楔子。"""
     return [
-        {"name": "collar_sleeve", "group": "wedge_collar", "material": "copper_weathered", "from": [7.1, 20.9, 7.1], "to": [8.9, 21.75, 8.9]},
-        {"name": "wedge_top", "group": "wedge_collar", "material": "copper_weathered", "from": [7.7, 26.2, 7.3], "to": [8.3, 27.2, 8.7]},
-        {"name": "collar_pin", "group": "wedge_collar", "material": "copper_weathered", "from": [7.25, 21.2, 7.85], "to": [8.75, 21.5, 8.15]},
+        # 方形铜环套：紧套在斧柄外四周外凸 1px (X/Z in [6.4, 9.6], Y in [19.8, 20.95])
+        {"name": "collar_ring_n", "group": "wedge_collar", "material": "copper_edge", "from": [6.4, 19.8, 6.4], "to": [9.6, 20.95, 7.45]},
+        {"name": "collar_ring_s", "group": "wedge_collar", "material": "copper_edge", "from": [6.4, 19.8, 8.55], "to": [9.6, 20.95, 9.6]},
+        {"name": "collar_ring_w", "group": "wedge_collar", "material": "copper_edge", "from": [6.4, 19.8, 7.45], "to": [7.45, 20.95, 8.55]},
+        {"name": "collar_ring_e", "group": "wedge_collar", "material": "copper_edge", "from": [8.55, 19.8, 7.45], "to": [9.6, 20.95, 8.55]},
+        # 顶端固定铜楔 (Wedge driven into top of tenon: Y in [26.0, 27.2])
+        {"name": "wedge_pin", "group": "wedge_collar", "material": "copper_edge", "from": [7.7, 26.0, 7.2], "to": [8.3, 27.2, 8.8]},
     ]
 
 
 def part_axe_head() -> List[dict]:
-    """旧铜斧头主体与月牙斧刃（斧刃严格朝向 -X 侧，斧背平锤朝向 +X 侧）。"""
+    """旧铜斧头（斧身厚度 2px 铜绿 #4f7a6a / #5e8c78，刃口一侧收到 1px 露出铜色 #b87333，斧背设 2×2 锤背凸起）。"""
     return [
-        # 斧眼中部套筒
-        {"name": "eye_collar_mid", "group": "axe_head", "material": "copper_weathered", "from": [6.9, 21.8, 6.7], "to": [9.1, 25.5, 9.3]},
-        # 斧背平敲锤 (+X 侧)
-        {"name": "poll_neck", "group": "axe_head", "material": "copper_weathered", "from": [9.1, 22.2, 7.0], "to": [9.8, 25.1, 9.0]},
-        {"name": "poll_hammer", "group": "axe_head", "material": "copper_weathered", "from": [9.8, 22.0, 6.8], "to": [10.8, 25.3, 9.2]},
-        # 斧刃喉部与梯级扩展扇面 (-X 侧)
-        {"name": "blade_throat", "group": "axe_head", "material": "copper_weathered", "from": [5.5, 21.2, 7.0], "to": [6.9, 25.7, 9.0]},
-        {"name": "blade_fan1", "group": "axe_head", "material": "copper_weathered", "from": [4.2, 20.0, 7.2], "to": [5.5, 26.6, 8.8]},
-        {"name": "blade_fan2", "group": "axe_head", "material": "copper_weathered", "from": [2.8, 18.6, 7.4], "to": [4.2, 27.5, 8.6]},
-        {"name": "blade_fan3", "group": "axe_head", "material": "copper_weathered", "from": [1.5, 17.2, 7.6], "to": [2.8, 28.3, 8.4]},
-        # 渐薄开刃斜面
-        {"name": "blade_bevel", "group": "axe_head", "material": "copper_weathered", "from": [0.6, 16.2, 7.7], "to": [1.5, 28.9, 8.3]},
-        # 月牙形锋利刃口 (最外沿 -X 侧)
-        {"name": "blade_edge", "group": "axe_head", "material": "copper_edge", "from": [-0.4, 15.5, 7.82], "to": [0.6, 29.2, 8.18]},
-        # 斧刃上下尖角微弯挂钩 (上扬角与下收角)
-        {"name": "edge_tip_top", "group": "axe_head", "material": "copper_edge", "from": [0.5, 29.2, 7.85], "to": [1.8, 29.8, 8.15]},
-        {"name": "edge_tip_bot", "group": "axe_head", "material": "copper_edge", "from": [0.5, 14.8, 7.85], "to": [1.8, 15.5, 8.15]},
+        # 斧眼中部套筒 (包裹榫头，材质铜绿)
+        {"name": "eye_socket_mid", "group": "axe_head", "material": "copper_weathered", "from": [6.8, 21.0, 6.6], "to": [9.2, 25.5, 9.4]},
+        # 斧背平敲锤颈 (+X 侧，露出铜色 #b87333)
+        {"name": "poll_neck", "group": "axe_head", "material": "copper_edge", "from": [9.2, 21.8, 7.0], "to": [10.0, 24.8, 9.0]},
+        # 斧背 2×2 锤背凸起 (截面 2×2: Y in [22.3, 24.3], Z in [7.0, 9.0], 向 +X 突出至 11.5，露出铜色 #b87333)
+        {"name": "poll_hammer_2x2", "group": "axe_head", "material": "copper_edge", "from": [10.0, 22.3, 7.0], "to": [11.5, 24.3, 9.0]},
+        # 斧身主体 (厚度严格为 2px: Z in [7.0, 9.0]，斧面主色铜绿 #4f7a6a / #5e8c78)
+        {"name": "blade_throat", "group": "axe_head", "material": "copper_weathered", "from": [5.5, 21.0, 7.0], "to": [6.8, 25.8, 9.0]},
+        {"name": "blade_fan_1",  "group": "axe_head", "material": "copper_weathered", "from": [4.0, 19.8, 7.0], "to": [5.5, 26.8, 9.0]},
+        {"name": "blade_fan_2",  "group": "axe_head", "material": "copper_weathered", "from": [2.5, 18.5, 7.0], "to": [4.0, 27.8, 9.0]},
+        {"name": "blade_fan_3",  "group": "axe_head", "material": "copper_weathered", "from": [1.2, 17.2, 7.0], "to": [2.5, 28.6, 9.0]},
+        # 刃口过渡斜面 (Z in [7.2, 8.8], 厚度 1.6px，铜绿渐变)
+        {"name": "blade_bevel",  "group": "axe_head", "material": "copper_weathered", "from": [0.5, 16.2, 7.2], "to": [1.2, 29.1, 8.8]},
+        # 刃口一圈 1px (Z in [7.5, 8.5], 厚度严格收到 1px，露出铜色 #b87333)
+        {"name": "blade_edge_1px_main", "group": "axe_head", "material": "copper_edge", "from": [-0.5, 15.5, 7.5], "to": [0.5, 29.5, 8.5]},
+        # 月牙上下锋利微卷刃尖 (厚度 1px，露出铜色 #b87333)
+        {"name": "blade_edge_tip_top",  "group": "axe_head", "material": "copper_edge", "from": [0.5, 29.2, 7.5], "to": [1.8, 30.0, 8.5]},
+        {"name": "blade_edge_tip_bot",  "group": "axe_head", "material": "copper_edge", "from": [0.5, 14.8, 7.5], "to": [1.8, 15.6, 8.5]},
     ]
 
 
@@ -161,43 +176,43 @@ def all_cubes() -> List[dict]:
 
 def generate_texture() -> Image.Image:
     """生成 64x64 四象限纹理贴图：
-    Q1 (0..32, 0..32): copper_weathered - 回炉旧铜、斑驳暗铜、铜绿微斑
-    Q2 (32..64, 0..32): aged_wood - 深褐老木、天然纵向木纹、手握暗斑
-    Q3 (0..32, 32..64): copper_edge - 亮铜开刃线、微卷微糙磨痕
-    Q4 (32..64, 32..64): hemp_binding - 粗麻编织纤维纹、暗影转折
+    Q1 (0..32, 0..32): copper_weathered - 铜绿 #4f7a6a / #5e8c78 斑驳氧化铜
+    Q2 (32..64, 0..32): aged_wood - 深褐老木、天然纵向木纹、树节暗斑
+    Q3 (0..32, 32..64): copper_edge - 刃口 1px 与斧背锤头露出原生铜色 #b87333
+    Q4 (32..64, 32..64): hemp_binding - 粗麻编织纤维纹、阴影转折
     """
     img = Image.new("RGBA", (RES, RES), (0, 0, 0, 255))
     rng = np.random.default_rng(20261012)
 
-    # ── Q1: 旧铜主材 (copper_weathered: 0..32, 0..32) ──
+    # ── Q1: 铜绿氧化铜斧面 (copper_weathered: #4f7a6a / #5e8c78) ──
     cop_arr = np.zeros((32, 32, 4), dtype=np.uint8)
-    base_cop = np.array([170, 96, 56], dtype=np.float32)
-    noise_cop = rng.normal(0, 9, (32, 32, 1))
-    cop_rgb = np.clip(base_cop + noise_cop, 100, 220).astype(np.uint8)
-    cop_arr[:, :, :3] = cop_rgb
+    base_patina = np.array([86, 131, 113], dtype=np.float32)
+    noise_patina = rng.normal(0, 10, (32, 32, 1))
+    patina_rgb = np.clip(base_patina + noise_patina, 60, 160).astype(np.uint8)
+    cop_arr[:, :, :3] = patina_rgb
     cop_arr[:, :, 3] = 255
     q1 = Image.fromarray(cop_arr, "RGBA")
     q1_draw = ImageDraw.Draw(q1)
 
-    # 铸造暗斑与氧化深痕
-    for _ in range(16):
-        rx, ry = rng.integers(2, 30, 2)
+    # 铜绿深浅斑块 (#4f7a6a / #5e8c78 错落分布)
+    for _ in range(20):
+        rx, ry = rng.integers(1, 30, 2)
         rw, rh = rng.integers(2, 6, 2)
-        dark_col = (int(rng.integers(90, 120)), int(rng.integers(48, 65)), int(rng.integers(25, 38)), 255)
-        q1_draw.ellipse([rx, ry, rx + rw, ry + rh], fill=dark_col)
+        dark_g = (int(rng.integers(55, 78)), int(rng.integers(88, 120)), int(rng.integers(72, 100)), 255)
+        q1_draw.ellipse([rx, ry, rx + rw, ry + rh], fill=dark_g)
 
-    # 铜绿氧化斑 (斑驳古绿)
-    for _ in range(7):
-        gx, gy = rng.integers(3, 29, 2)
-        gw, gh = rng.integers(2, 4, 2)
-        green_col = (int(rng.integers(60, 85)), int(rng.integers(115, 145)), int(rng.integers(90, 115)), 255)
-        q1_draw.ellipse([gx, gy, gx + gw, gy + gh], fill=green_col)
+    # 底层偶尔若隐若现露出的暗铜微粒
+    for _ in range(6):
+        rx, ry = rng.integers(2, 30, 2)
+        rw, rh = rng.integers(1, 3, 2)
+        under_cop = (int(rng.integers(135, 165)), int(rng.integers(80, 105)), int(rng.integers(50, 70)), 255)
+        q1_draw.ellipse([rx, ry, rx + rw, ry + rh], fill=under_cop)
 
     img.paste(q1, (0, 0))
 
     # ── Q2: 深褐老木斧柄 (aged_wood: 32..64, 0..32) ──
     wood_arr = np.zeros((32, 32, 4), dtype=np.uint8)
-    base_wood = np.array([96, 68, 46], dtype=np.float32)
+    base_wood = np.array([92, 64, 44], dtype=np.float32)
     noise_wood = rng.normal(0, 6, (32, 32, 1))
     wood_rgb = np.clip(base_wood + noise_wood, 55, 130).astype(np.uint8)
     wood_arr[:, :, :3] = wood_rgb
@@ -205,40 +220,35 @@ def generate_texture() -> Image.Image:
     q2 = Image.fromarray(wood_arr, "RGBA")
     q2_draw = ImageDraw.Draw(q2)
 
-    # 纵向木纹纹理
+    # 纵向老木纤维纹理
     for x in range(0, 32, 3):
-        col_w = int(75 + rng.integers(0, 30))
-        q2_draw.line([(x, 0), (x, 31)], fill=(col_w + 18, col_w, col_w - 20, 255))
-        if rng.random() > 0.65:
+        col_w = int(72 + rng.integers(0, 28))
+        q2_draw.line([(x, 0), (x, 31)], fill=(col_w + 16, col_w, col_w - 20, 255))
+        if rng.random() > 0.6:
             kn_y = rng.integers(4, 28)
-            q2_draw.ellipse([x - 1, kn_y - 2, x + 2, kn_y + 2], fill=(50, 34, 22, 255))
+            q2_draw.ellipse([x - 1, kn_y - 2, x + 2, kn_y + 2], fill=(46, 30, 20, 255))
 
     img.paste(q2, (32, 0))
 
-    # ── Q3: 铜斧刃口 (copper_edge: 0..32, 32..64) ──
+    # ── Q3: 露出原生铜色 (copper_edge: #b87333 / 184, 115, 51) ──
     edge_arr = np.zeros((32, 32, 4), dtype=np.uint8)
-    base_edge = np.array([210, 138, 86], dtype=np.float32)
+    base_edge = np.array([184, 115, 51], dtype=np.float32)
     noise_edge = rng.normal(0, 8, (32, 32, 1))
-    edge_rgb = np.clip(base_edge + noise_edge, 140, 250).astype(np.uint8)
+    edge_rgb = np.clip(base_edge + noise_edge, 130, 240).astype(np.uint8)
     edge_arr[:, :, :3] = edge_rgb
     edge_arr[:, :, 3] = 255
     q3 = Image.fromarray(edge_arr, "RGBA")
     q3_draw = ImageDraw.Draw(q3)
 
-    # 研磨亮线与卷刃微痕
+    # 锤打研磨亮铜光条
     for y in range(0, 32):
-        bright = int(220 + rng.integers(0, 35))
-        q3_draw.line([(0, y), (6, y)], fill=(bright, bright - 40, bright - 70, 255))
-        q3_draw.line([(7, y), (12, y)], fill=(bright - 35, bright - 70, bright - 90, 255))
-
-    # 细微崩口暗点
-    for _ in range(6):
-        nx, ny = rng.integers(0, 6), rng.integers(2, 30)
-        q3_draw.point((nx, ny), fill=(110, 60, 35, 255))
+        bright = int(210 + rng.integers(0, 35))
+        q3_draw.line([(0, y), (6, y)], fill=(bright, int(bright * 0.66), int(bright * 0.32), 255))
+        q3_draw.line([(7, y), (14, y)], fill=(bright - 35, int((bright - 35) * 0.62), int((bright - 35) * 0.30), 255))
 
     img.paste(q3, (0, 32))
 
-    # ── Q4: 麻绳缠绑 (hemp_binding: 32..64, 32..64) ──
+    # ── Q4: 粗麻绑扎 (hemp_binding: 32..64, 32..64) ──
     cord_arr = np.zeros((32, 32, 4), dtype=np.uint8)
     base_cord = np.array([142, 122, 88], dtype=np.float32)
     noise_cord = rng.normal(0, 6, (32, 32, 1))
@@ -440,7 +450,6 @@ def build_obj(cubes: List[dict] | None = None) -> str:
         u0_norm, u1_norm = u0 / RES, u1 / RES
         v0_norm, v1_norm = 1.0 - (v1 / RES), 1.0 - (v0 / RES)
 
-        # 8 个顶点 (除以 16 转为 MC 单位)
         verts = [
             (x0/16, y0/16, z0/16), (x1/16, y0/16, z0/16),
             (x1/16, y1/16, z0/16), (x0/16, y1/16, z0/16),
@@ -450,16 +459,13 @@ def build_obj(cubes: List[dict] | None = None) -> str:
         for vx, vy, vz in verts:
             lines.append(f"v {vx:.6f} {vy:.6f} {vz:.6f}")
 
-        # 贴图坐标
         lines.append(f"vt {u0_norm:.4f} {v0_norm:.4f}")
         lines.append(f"vt {u1_norm:.4f} {v0_norm:.4f}")
         lines.append(f"vt {u1_norm:.4f} {v1_norm:.4f}")
         lines.append(f"vt {u0_norm:.4f} {v1_norm:.4f}")
 
-        # 材质
         lines.append(f"usemtl {mat}")
 
-        # 6 个面 (CCW)
         faces = [
             (4, 3, 2, 1), # North (-Z)
             (5, 6, 7, 8), # South (+Z)
@@ -503,13 +509,9 @@ def render_views(bbmodel_path: Path):
     bg_color = (119, 119, 119)
 
     # 1. 渲染关键视角
-    # 3/4 等轴透视 (立体感、厚度与刀头结合)
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=30.0, size=500, bg=bg_color)
-    # 正侧面观察 (面对 XY 平面，清晰展现 -X 月牙刃口弧线、柄部轮廓与 +X 斧背)
     im_broad, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
-    # 刀刃正对侧视 (自 -X 刃面直视，核查刃线居中与厚度)
     im_edge, _ = render(bbmodel_path, yaw=-90.0, pitch=0.0, size=500, bg=bg_color)
-    # 俯视 (核查斧眼包裹度与前后配重)
     im_top, _ = render(bbmodel_path, yaw=0.0, pitch=89.9, size=500, bg=bg_color)
 
     # 2. 输出综合 render.png (2x2 拼版)
@@ -518,10 +520,10 @@ def render_views(bbmodel_path: Path):
     draw = ImageDraw.Draw(canvas)
 
     views = [
-        ("axe_copper (3/4 ISOMETRIC VIEW)", im_iso, 10, 10),
-        ("axe_copper (BROADSIDE PROFILE - Crescent Blade -X)", im_broad, cell_w + 20, 10),
-        ("axe_copper (CUTTING EDGE PROFILE - Blade Line)", im_edge, 10, cell_h + 20),
-        ("axe_copper (TOP VIEW - Eye Socket & Balance)", im_top, cell_w + 20, cell_h + 20),
+        ("axe_copper (3/4 ISOMETRIC VIEW - Round 2)", im_iso, 10, 10),
+        ("axe_copper (BROADSIDE PROFILE - 2px Body & 1px Edge)", im_broad, cell_w + 20, 10),
+        ("axe_copper (CUTTING EDGE PROFILE - 2x2 Hammer Poll)", im_edge, 10, cell_h + 20),
+        ("axe_copper (TOP VIEW - Square Collar & Knot)", im_top, cell_w + 20, cell_h + 20),
     ]
 
     for title, im_v, px, py in views:
@@ -573,8 +575,8 @@ def self_test():
     print(f"  [OK] axe_copper ({len(cubes)} 个立方体) 正常立方体集无共面冲突")
 
     # 刃口方向断言 (-X 侧必须为斧刃)
-    blade_cube = next(c for c in cubes if c["name"] == "blade_edge")
-    haft_cube = next(c for c in cubes if c["name"] == "haft_mid")
+    blade_cube = next(c for c in cubes if c["name"] == "blade_edge_1px_main")
+    haft_cube = next(c for c in cubes if c["name"] == "haft_mid_shaft_1")
     blade_mid_x = (blade_cube["from"][0] + blade_cube["to"][0]) / 2.0
     haft_mid_x = (haft_cube["from"][0] + haft_cube["to"][0]) / 2.0
     assert blade_mid_x < haft_mid_x, f"契约破坏: 斧刃 X={blade_mid_x:.2f} 必须在握柄 X={haft_mid_x:.2f} 的 -X 侧!"
@@ -583,7 +585,7 @@ def self_test():
     # 注入缺陷拦截测试
     defect_cubes = list(cubes) + [{
         "name": "inject_coplanar_fail",
-        "from": [7.4, 2.4, 7.4],
+        "from": [7.4, 2.6, 7.4],
         "to":   [8.6, 7.0, 8.6],
         "material": "aged_wood",
     }]
