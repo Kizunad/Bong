@@ -199,15 +199,25 @@ def _segment_distance(px: float, py: float, a: tuple, b: tuple) -> float:
 
 # ---- o01 肺：肺叶正面的支气管树 ------------------------------------------------
 
-# 右肺（x<0）的树枝，左肺取镜像。每段 (起点, 终点)，坐标为 (x, y)。
-# 骨质主支（几何）在 y 18..31，这里补它们往肺叶深处延伸的细枝。
+# 右肺（x<0）的树枝，左肺取镜像。每段 (起点, 终点, 线宽 px)，坐标为 (x, y)。
+# 骨质主支（几何）在 y 18..31：下支末端在 (-13.5, 18)，上支末端在 (-9.5, 30.5)。
+# 画的枝从这两个末端长出来：1 级 2px 主枝，2、3 级 1px 细枝。
+LUNG_DOWN_END = (-13.5, 18.0)
+LUNG_UP_END = (-9.5, 30.5)
 LUNG_BRANCHES = (
-    ((-4, 24), (-9, 19)), ((-9, 19), (-13, 14)), ((-9, 19), (-8, 12)),
-    ((-6, 26), (-12, 28)), ((-12, 28), (-15, 31)), ((-12, 28), (-14, 24)),
-    ((-4, 24), (-5, 15)), ((-5, 15), (-3, 11)), ((-5, 15), (-8, 13)),
-    ((-13, 14), (-15, 11)), ((-13, 14), (-16, 15)),
+    # 下支末端 → 向下分叉
+    (LUNG_DOWN_END, (-14.5, 15.0), 2.0), (LUNG_DOWN_END, (-11.5, 15.0), 2.0),
+    ((-14.5, 15.0), (-15.5, 12.5), 1.0), ((-14.5, 15.0), (-13.5, 12.0), 1.0),
+    ((-11.5, 15.0), (-12.0, 12.5), 1.0), ((-11.5, 15.0), (-9.5, 12.5), 1.0),
+    ((-15.5, 12.5), (-16.0, 10.6), 1.0), ((-13.5, 12.0), (-14.0, 10.6), 1.0),
+    ((-12.0, 12.5), (-11.5, 10.6), 1.0), ((-9.5, 12.5), (-8.0, 10.6), 1.0),
+    # 上支末端 → 向外、向上分叉
+    (LUNG_UP_END, (-12.5, 28.5), 2.0), (LUNG_UP_END, (-9.5, 33.0), 2.0),
+    ((-12.5, 28.5), (-15.0, 28.0), 1.0), ((-12.5, 28.5), (-14.0, 25.0), 1.0),
+    ((-9.5, 33.0), (-6.5, 35.0), 1.0), ((-9.5, 33.0), (-6.0, 31.5), 1.0),
+    ((-15.0, 28.0), (-15.5, 25.5), 1.0), ((-14.0, 25.0), (-16.0, 23.5), 1.0),
+    ((-6.5, 35.0), (-4.5, 35.5), 1.0), ((-6.0, 31.5), (-4.0, 33.0), 1.0),
 )
-LUNG_LINE_HALF_WIDTH = 0.35
 LUNG_FRONT_Z = 10.0     # 只画在肺叶前后面（法线沿 z）上，z 绝对值大于这个值的面
 
 
@@ -217,8 +227,8 @@ def _lung_branch_painter(default: Painter) -> Painter:
         if axis != 2 or abs(p[2]) < LUNG_FRONT_Z:
             return color
         x = -abs(p[0])      # 左右肺镜像：折到右肺
-        for a, b in LUNG_BRANCHES:
-            if _segment_distance(x, p[1], a, b) < LUNG_LINE_HALF_WIDTH:
+        for a, b, width in LUNG_BRANCHES:
+            if _segment_distance(x, p[1], a, b) < width / 2:
                 return mix(color, LINE_COLOR, LINE_MIX)
         return color
 
@@ -231,85 +241,183 @@ def lung_override(cube: dict, default: Painter) -> Optional[Painter]:
     return None
 
 
-# ---- o03 臂肌：肌纤维沿肌束长轴走 ------------------------------------------------
+# ---- o03 臂肌：每个肌束 3~4 条贯穿全长的平行弧线 ---------------------------------------
 
-FIBER_SPACING = 1.25        # 相邻纤维线的间距（px）
 FIBER_LINE_WIDTH = 0.3
-FIBER_SKIP_CHANCE = 0.3     # 有的纤维线断掉，免得像条码
+FIBER_SKIP_CHANCE = 0.3     # o04 腿肌的纤维线会随机断开几条
+ARM_ARC_OFFSETS = (-0.62, -0.22, 0.22, 0.62)    # 弧线在肌束截面里的相对位置（-1..1，占半宽的比例）
+ARM_ARC_BULGE = 0.15                            # 弧线随肌腹隆起外扩的幅度
+ARM_Z_START, ARM_Z_END = 8.0, 47.0              # 肌束沿 z 的全长，弧线的隆起相位按它算，各段首尾相接
 
 
 def _muscle_fiber_painter(cube: dict, default: Painter) -> Painter:
+    """肌束沿 z 走：顶 / 底面上的弧线沿 x 排布，左 / 右侧面上沿 y 排布。
+    线位置按「截面半宽的比例」给定，所以肌束各段变粗变细时线跟着走，整条不断；比例里再叠一个沿全长的
+    正弦隆起，让平行线呈弧形外鼓。"""
     lo, hi = cube["from"], cube["to"]
-    size = [hi[i] - lo[i] for i in range(3)]
-    long_axis = size.index(max(size))
 
     def paint(p: Vec, axis: int) -> Color:
         color = default(p, axis)
-        if axis == long_axis:
+        if axis == 2:
             return color
-        across_axis = 3 - long_axis - axis
-        slot = math.floor((p[across_axis] - lo[across_axis]) / FIBER_SPACING)
-        offset = (p[across_axis] - lo[across_axis]) - slot * FIBER_SPACING
-        if offset < FIBER_LINE_WIDTH and texel_noise((slot, axis, round(lo[long_axis])), 111) > FIBER_SKIP_CHANCE:
-            return mix(color, LINE_COLOR, 0.85)
+        across = 0 if axis == 1 else 1          # 顶底面看 x，侧面看 y
+        center = (lo[across] + hi[across]) / 2
+        half = (hi[across] - lo[across]) / 2
+        phase = math.pi * min(1.0, max(0.0, (p[2] - ARM_Z_START) / (ARM_Z_END - ARM_Z_START)))
+        for offset in ARM_ARC_OFFSETS:
+            line = center + offset * (1 + ARM_ARC_BULGE * math.sin(phase)) * half
+            if abs(p[across] - line) < FIBER_LINE_WIDTH:
+                return mix(color, LINE_COLOR, 0.85)
         return color
 
     return paint
 
 
 def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
-    if cube.get("group") == "muscle_bundles" and cube.get("material") in ("flesh_main", "flesh_lit"):
+    if cube.get("group") == "muscle_bundles" and cube.get("material") in ("flesh_main", "flesh_lit") \
+            and not cube["name"].endswith("_hl"):
         return _muscle_fiber_painter(cube, default)
     return None
 
 
 # ---- b09 地砖：血管线 ---------------------------------------------------------
 
-VESSEL_SCALES = ((5.0, 121), (8.0, 122))   # (噪声格大小 px, 种子)：两层等值线叠出分叉的血管
-VESSEL_HALF_WIDTH = 0.012
+FLOOR_VESSEL_CORE = hex_color("#8a2a2a")
+FLOOR_VESSEL_LIGHT = hex_color("#c07868")   # 血管一侧 1px 高光
+FLOOR_VESSEL_SHADE = hex_color("#5a1a1a")   # 另一侧 1px 暗边
+FLOOR_VESSEL_CORE_HALF = 0.5                # 芯 1px；加两侧各 1px，总宽 3px
+FLOOR_VESSEL_RIM = 1.0
+FLOOR_NOISE_KEEP = 0.5                      # 底色噪点幅度压到原来的一半，血管才跳得出来
+FLOOR_BASE = hex_color("#8a2a2a")           # 压噪点时向它收拢
+FLOOR_TOP_Y = 16.0              # 地砖肉块顶面高度
+FLOOR_EDGE_DARK_DEPTH = 1.0     # 侧面顶沿压暗的宽度（px）
+FLOOR_EDGE_DARK = 0.85          # 顶沿压暗时混入 #5a1a1a 的比例
+FLOOR_CURVE_STEPS = 96          # 把平滑曲线采样成折线，每个 texel 取到折线的最近点
+
+# 3 条沿 z 贯穿整面的主血管：x(z) = 中线 + 振幅 * sin(2π z / 波长 + 相位)；之间的间距 ≥ 4px
+FLOOR_VESSELS = (
+    # (x 中线, 振幅, 波长, 相位)
+    (-5.0, 1.3, 20.0, 0.4),
+    (0.0, 1.5, 16.0, 2.3),
+    (5.0, 1.3, 22.0, 4.1),
+)
+# 一处分叉：从第 1 条血管上的分叉点出发，二次贝塞尔曲线弯向 -x 侧的边缘
+FLOOR_FORK_FROM_VESSEL = 0
+FLOOR_FORK_Z = -1.5
+FLOOR_FORK_BULGE = (-5.2, 4.0)    # 控制点 (x, z)
+FLOOR_FORK_END = (-8.0, 6.5)      # 终点 (x, z)，落在 -x 边缘
 
 
-def _vessel_painter(default: Painter) -> Painter:
+def _vessel_x(vessel: tuple, z: float) -> float:
+    center, amplitude, wavelength, phase = vessel
+    return center + amplitude * math.sin(2 * math.pi * z / wavelength + phase)
+
+
+def _sample_vessel(vessel: tuple) -> list:
+    half = 8.0
+    return [(_vessel_x(vessel, z), z) for z in
+            (-half + 2 * half * i / FLOOR_CURVE_STEPS for i in range(FLOOR_CURVE_STEPS + 1))]
+
+
+def _sample_fork() -> list:
+    start = (_vessel_x(FLOOR_VESSELS[FLOOR_FORK_FROM_VESSEL], FLOOR_FORK_Z), FLOOR_FORK_Z)
+    points = []
+    for i in range(FLOOR_CURVE_STEPS // 2 + 1):
+        t = i / (FLOOR_CURVE_STEPS // 2)
+        points.append(tuple((1 - t) ** 2 * start[k] + 2 * (1 - t) * t * FLOOR_FORK_BULGE[k] + t * t * FLOOR_FORK_END[k]
+                            for k in range(2)))
+    return points
+
+
+FLOOR_FORK_START = (_vessel_x(FLOOR_VESSELS[FLOOR_FORK_FROM_VESSEL], FLOOR_FORK_Z), FLOOR_FORK_Z)
+FLOOR_FORK_GAP_RADIUS = 2.5     # 分叉点周围这个半径内，主血管的高光断开
+FLOOR_CURVES = [_sample_vessel(v) for v in FLOOR_VESSELS] + [_sample_fork()]
+
+
+def _curve_offset(curve: list, x: float, z: float) -> float:
+    """点到折线的有符号距离：取最近线段，符号看点落在行进方向（沿 z 增大）的哪一侧，+x 侧为正。"""
+    best, best_offset = 1e9, 0.0
+    for (ax, az), (bx, bz) in zip(curve, curve[1:]):
+        dx, dz = bx - ax, bz - az
+        length_sq = dx * dx + dz * dz
+        t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq))
+        qx, qz = ax + t * dx, az + t * dz
+        distance = math.hypot(x - qx, z - qz)
+        if distance < best:
+            length = math.sqrt(length_sq)
+            normal = (dz / length, -dx / length)
+            best = distance
+            best_offset = (x - qx) * normal[0] + (z - qz) * normal[1]
+    return best_offset
+
+
+def _vessel_color(color: Color, offset: float) -> Color:
+    """芯 #8a2a2a（1px）+ 正侧 1px #e8bca8 高光 + 负侧 1px #5a1a1a 暗边。"""
+    if abs(offset) < FLOOR_VESSEL_CORE_HALF:
+        return mix(color, FLOOR_VESSEL_CORE, 0.95)
+    if 0 < offset < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+        return mix(color, FLOOR_VESSEL_LIGHT, 0.95)
+    if -(FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM) < offset < 0:
+        return mix(color, FLOOR_VESSEL_SHADE, 0.95)
+    return color
+
+
+def _floor_painter(default: Painter) -> Painter:
+    """平整肉块：底色噪点压半；顶面画 3 条贯穿的平滑血管 + 一处分叉；侧面纯底色，只在顶沿压暗 1px。"""
+
     def paint(p: Vec, axis: int) -> Color:
-        color = default(p, axis)
-        for scale, seed in VESSEL_SCALES:
-            if abs(value_noise(p, scale, seed) - 0.5) < VESSEL_HALF_WIDTH:
-                return mix(color, LINE_COLOR, LINE_MIX)
+        color = mix(default(p, axis), FLOOR_BASE, 1 - FLOOR_NOISE_KEEP)
+        if axis == 1:
+            if p[1] < FLOOR_TOP_Y - 1e-6:
+                return color
+            for index, curve in enumerate(FLOOR_CURVES):
+                offset = _curve_offset(curve, p[0], p[2])
+                if abs(offset) >= FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+                    continue
+                near_fork = math.hypot(p[0] - FLOOR_FORK_START[0], p[2] - FLOOR_FORK_START[1]) < FLOOR_FORK_GAP_RADIUS
+                if index == FLOOR_FORK_FROM_VESSEL and offset > 0 and near_fork:
+                    continue    # 分叉处主血管的高光让位，不和分支的高光并在一起
+                return _vessel_color(color, offset)
+            return color
+        if p[1] > FLOOR_TOP_Y - FLOOR_EDGE_DARK_DEPTH:
+            return mix(color, FLOOR_VESSEL_SHADE, FLOOR_EDGE_DARK)
         return color
 
     return paint
 
 
 def floor_override(cube: dict, default: Painter) -> Optional[Painter]:
-    group = cube.get("group")
-    if group == "base_block":
-        return _vessel_painter(default)
-    if group == "veins":
-        return lambda p, axis: mix(default(p, axis), LINE_COLOR, 0.6)
+    if cube.get("group") == "base_block":
+        return _floor_painter(default)
     return None
 
 
 # ---- o02 胃：胃液高光 ---------------------------------------------------------
 
 LIQUID_HIGHLIGHT = hex_color("#f6dcc4")
-HIGHLIGHT_POSITION = 0.3    # 高光线在胃液面短边方向上的位置（占比）
-HIGHLIGHT_WIDTH = 0.5
+LIQUID_RING = hex_color("#e8bca8")
+LIQUID_RING_WIDTH = 0.5
+# 泡沫光斑：胃液面上 7 个大小不一的圆斑，(x, y, 半径 px)，按液面正面（法线 z）的绝对坐标
+FOAM_SPOTS = (
+    (1.0, 28.5, 1.0), (-6.0, 25.5, 1.8), (6.0, 24.5, 1.1), (-2.0, 22.0, 2.3),
+    (8.0, 20.5, 1.4), (-7.0, 19.0, 1.1), (2.0, 17.5, 1.7),
+)
 
 
-def _liquid_highlight_painter(cube: dict, default: Painter) -> Painter:
+def _liquid_foam_painter(cube: dict, default: Painter) -> Painter:
     lo, hi = cube["from"], cube["to"]
-    size = [hi[i] - lo[i] for i in range(3)]
-    thin_axis = size.index(min(size))
-    plane = [i for i in range(3) if i != thin_axis]
-    short_axis = plane[0] if size[plane[0]] < size[plane[1]] else plane[1]
+    thin_axis = [hi[i] - lo[i] for i in range(3)].index(min(hi[i] - lo[i] for i in range(3)))
 
     def paint(p: Vec, axis: int) -> Color:
         color = default(p, axis)
         if axis != thin_axis:
             return color
-        position = (p[short_axis] - lo[short_axis]) / max(size[short_axis], 1e-6)
-        if abs(position - HIGHLIGHT_POSITION) * size[short_axis] < HIGHLIGHT_WIDTH / 2:
-            return mix(color, LIQUID_HIGHLIGHT, 0.9)
+        for x, y, radius in FOAM_SPOTS:
+            distance = math.hypot(p[0] - x, p[1] - y)
+            if distance < radius:
+                return mix(color, LIQUID_HIGHLIGHT, 0.95)
+            if distance < radius + LIQUID_RING_WIDTH:
+                return mix(color, LIQUID_RING, 0.85)
         return color
 
     return paint
@@ -317,7 +425,7 @@ def _liquid_highlight_painter(cube: dict, default: Painter) -> Painter:
 
 def stomach_override(cube: dict, default: Painter) -> Optional[Painter]:
     if cube.get("material") == "amber_fluid":
-        return _liquid_highlight_painter(cube, default)
+        return _liquid_foam_painter(cube, default)
     return None
 
 
@@ -462,17 +570,26 @@ FLESH_FOLD_LIT = hex_color("#b05050")
 FLESH_FOLD_DARK = hex_color("#4a1414")
 
 
-LENGTHWISE_FOLD_PERIOD = 1.4    # 侧面纵向褶纹的间距（px），褶沿 z（管轴）方向走
+LENGTHWISE_FOLD_PERIOD = 3.2    # 侧面纵向褶纹一个粗细循环的间距（px），褶沿 z（管轴）方向走
+FOLD_WAVE_AMPLITUDE = 0.4       # 褶纹沿 z 的横向摆幅（px），让褶略带弯曲
+FOLD_WAVE_LENGTH = 6.0          # 摆动的波长（px）
+# 一个循环内的分段（起点占比, 终点占比, 颜色, 混入比例）：粗亮褶 / 暗沟 / 细亮褶 / 暗沟
+LENGTHWISE_FOLD_PATTERN = (
+    (0.00, 0.34, FLESH_FOLD_LIT, 0.60),     # 粗褶，约 1.1px
+    (0.34, 0.47, FLESH_FOLD_DARK, 0.70),    # 暗沟
+    (0.47, 0.66, FLESH_FOLD_LIT, 0.45),     # 细褶，约 0.6px
+    (0.66, 0.78, FLESH_FOLD_DARK, 0.70),    # 暗沟
+)
 
 
 def _lengthwise_fold(color: Color, p: Vec, axis: int) -> Color:
-    """括约肌环的外侧面（顶 / 底 / 左 / 右）：沿管轴方向的纵向褶纹，比端面的放射褶淡一点。"""
+    """括约肌环的外侧面（顶 / 底 / 左 / 右）：沿管轴方向的纵向褶纹，粗细交替，随 z 略带弯曲。"""
     across = p[0] if axis == 1 else p[1]        # 顶底面上褶沿 x 排列，左右面上沿 y 排列
-    wave = math.cos(2 * math.pi * across / LENGTHWISE_FOLD_PERIOD)
-    if wave > 0.4:
-        return mix(color, FLESH_FOLD_LIT, 0.35)
-    if wave < -0.4:
-        return mix(color, FLESH_FOLD_DARK, 0.45)
+    across += FOLD_WAVE_AMPLITUDE * math.sin(2 * math.pi * p[2] / FOLD_WAVE_LENGTH)
+    fraction = (across / LENGTHWISE_FOLD_PERIOD) % 1.0
+    for start, end, target, amount in LENGTHWISE_FOLD_PATTERN:
+        if start <= fraction < end:
+            return mix(color, target, amount)
     return color
 
 
