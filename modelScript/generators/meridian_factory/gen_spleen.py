@@ -49,7 +49,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-from common_parts import _assert_no_coplanar_faces, bone_ring_port
+from common_parts import _assert_no_coplanar_faces, bone_ring_port, outlet_8x6
 from organ_common import bounds, extend_materials, render_review, write_bbmodel
 
 REPO = Path(__file__).resolve().parents[3]
@@ -73,17 +73,16 @@ HILUM_DEPTH = 4  # 凹口深度 px（2 格）
 
 VEIN_PROUD = 0.5
 
-# 血管：3×3 截面，水平段从凹口面向 -X，竖直段在 x -10..-7
-TUBE_SIZE = 3.0
+# 入口血管：4×4 截面，水平段从凹口面向 -X，竖直段在 x -11..-7
+# 输出口：底面中心标准 outlet_8x6（朝下），不再有出口血管
+TUBE_SIZE = 4.0
 TUBE_HALF = TUBE_SIZE / 2
-RUN_X = (-10.0, -7.0)  # 拐角块 / 竖直段的 x 范围
+RUN_X = (-11.0, -7.0)  # 拐角块 / 竖直段的 x 范围
 FACE_X = 1.0  # 凹口面 x（= cx - 3）
 TUBE_INTO_BODY = 0.5  # 水平段插进豆身的深度
-INLET_Y = (16.5, 19.5)
-OUTLET_Y = (12.5, 15.5)
+INLET_Y = (15.75, 19.75)  # 4 高，整根落在脾门凹口层 y 12..20 内，且避开层界 y=16 / 20
 INLET_TOP_Y = 29.5  # 入口竖直段顶端（环在这里）
-OUTLET_BOTTOM_Y = 0.5  # 出口竖直段底端（环在 0..0.5）
-COLLAR_HALF = 2.5
+COLLAR_HALF = 3.0  # 6×6 肉箍套 4×4 管
 COLLAR_LEN = 1.5
 
 # 脉络折线路点（px 坐标 (x, y)，格以左下角计），相邻路点之间补成 4 连通阶梯。
@@ -180,55 +179,89 @@ def part_02_veins() -> List[dict]:
     return cubes
 
 
+def part_05_step_fill() -> List[dict]:
+    """豆身侧面台阶补平：相邻两层边缘错开 1px（x 向）或 0.5~1px（z 向）的地方，
+    在凸出较少的那一层靠台阶的半层高处补一块 0.5px 的半格，把一级台阶拆成两级半格，沿豆身绕一圈。
+    脉络格上不补（脉络贴在柱前面，补块会和它共面）。
+    """
+    cubes: List[dict] = []
+    veins = _vein_cells()
+    cols = [dict(_layer_columns(k)) for k in range(LAYERS)]
+    ext = []
+    for k in range(LAYERS):
+        xs = sorted(cols[k])
+        ext.append((xs[0], xs[-1] + 1))
+
+    def add(name, lo, hi):
+        cubes.append(_cube(name, lo, hi, "spleen_fill", "spleen_main"))
+
+    for k in range(LAYERS - 1):
+        top = BEAN_Y0 + (k + 1) * ROW_H
+        (l0, r0), (l1, r1) = ext[k], ext[k + 1]
+        # 右缘（+X）：下层 k 与上层 k+1 的右缘差 1px
+        if r1 - r0 == 1:
+            hd = cols[k][r0 - 1]
+            add(f"fill_r_k{k}", (r0, top - 1, -hd), (r0 + 0.5, top, hd))
+        elif r1 - r0 == -1:
+            hd = cols[k + 1][r1 - 1]
+            add(f"fill_r_k{k}", (r1, top, -hd), (r1 + 0.5, top + 1, hd))
+        # 左缘（-X）：脾门层的左缘整段切进去 4px，那里是凹口，不补
+        if l1 - l0 == -1:
+            hd = cols[k][l0]
+            add(f"fill_l_k{k}", (l0 - 0.5, top - 1, -hd), (l0, top, hd))
+        elif l1 - l0 == 1:
+            hd = cols[k + 1][l1]
+            add(f"fill_l_k{k}", (l1 - 0.5, top, -hd), (l1, top + 1, hd))
+        # 前后表面（±Z）：同一列在相邻两层半深不同
+        for x in sorted(set(cols[k]) & set(cols[k + 1])):
+            hd_a, hd_b = cols[k][x], cols[k + 1][x]
+            if hd_a == hd_b:
+                continue
+            if hd_a < hd_b:
+                y0, hd = top - 1, hd_a
+            else:
+                y0, hd = top, hd_b
+            if (x, int(y0)) not in veins:
+                add(f"fill_f_k{k}_x{x}", (x, y0, hd), (x + 1, y0 + 1, hd + 0.5))
+            add(f"fill_b_k{k}_x{x}", (x, y0, -hd - 0.5), (x + 1, y0 + 1, -hd))
+    return cubes
+
+
 def _collar(name: str, centre: Tuple[float, float, float], axis: str, group: str) -> dict:
-    """5×5 肉箍，沿 axis（"x" 或 "y"）长 COLLAR_LEN，套在 3×3 管上。"""
+    """6×6 肉箍，沿 axis（"x" 或 "y"）长 COLLAR_LEN，套在 4×4 管上。"""
     cx, cy, cz = centre
     hx, hy = (COLLAR_LEN / 2, COLLAR_HALF) if axis == "x" else (COLLAR_HALF, COLLAR_LEN / 2)
     return _cube(name, (cx - hx, cy - hy, cz - COLLAR_HALF), (cx + hx, cy + hy, cz + COLLAR_HALF), group, "flesh_main")
 
 
-def _vessel(tag: str, y_range: Tuple[float, float], end_y: float, up: bool) -> List[dict]:
-    """一根短弯管：水平段 → 拐角块 → 竖直段（3 段），两个肉箍，管口骨环。
-
-    up=True 向上、管口朝上，竖直段顶端在 end_y；up=False 向下、管口朝下，竖直段底端在 end_y。
-    """
-    g = f"vessel_{tag}"
-    y0, y1 = y_range
+def part_03_inlet() -> List[dict]:
+    """入口血管（凹面那根）：4×4 短弯管，水平段 → 拐角块 → 竖直段，两个 6×6 肉箍，管口朝上骨环。"""
+    g = "vessel_inlet"
+    y0, y1 = INLET_Y
     run_x0, run_x1 = RUN_X
     z0, z1 = -TUBE_HALF, TUBE_HALF
-    horizontal = _cube(f"{tag}_seg1", (run_x1, y0, z0), (FACE_X + TUBE_INTO_BODY, y1, z1), g, "tendon_tube")
-    corner = _cube(f"{tag}_seg2", (run_x0, y0, z0), (run_x1, y1, z1), g, "tendon_tube")
-    if up:
-        vertical = _cube(f"{tag}_seg3", (run_x0, y1, z0), (run_x1, end_y, z1), g, "tendon_tube")
-        collar_y = (y1 + end_y) / 2
-        port_face = "up"
-    else:
-        vertical = _cube(f"{tag}_seg3", (run_x0, end_y, z0), (run_x1, y0, z1), g, "tendon_tube")
-        collar_y = (y0 + end_y) / 2
-        port_face = "down"
-    mid_y = (y0 + y1) / 2
+    horizontal = _cube("inlet_seg1", (run_x1, y0, z0), (FACE_X + TUBE_INTO_BODY, y1, z1), g, "tendon_tube")
+    corner = _cube("inlet_seg2", (run_x0, y0, z0), (run_x1, y1, z1), g, "tendon_tube")
+    vertical = _cube("inlet_seg3", (run_x0, y1, z0), (run_x1, INLET_TOP_Y, z1), g, "tendon_tube")
     collars = [
-        # 两根管的水平肉箍错开 2px，免得两个 5×5 箍在 y≈16 处叠在一起
-        _collar(f"{tag}_collar_h", ((run_x1 + FACE_X) / 2 + (-1.0 if up else 1.0), mid_y, 0.0), "x", g),
-        _collar(f"{tag}_collar_v", ((run_x0 + run_x1) / 2, collar_y, 0.0), "y", g),
+        _collar("inlet_collar_h", ((run_x1 + FACE_X) / 2 - 1.0, (y0 + y1) / 2, 0.0), "x", g),
+        _collar("inlet_collar_v", ((run_x0 + run_x1) / 2, (y1 + INLET_TOP_Y) / 2, 0.0), "y", g),
     ]
-    port = bone_ring_port(center_x=(run_x0 + run_x1) / 2, center_y=end_y, center_z=0.0, face=port_face, group=g, pfx=f"{tag}_port")
+    port = bone_ring_port(center_x=(run_x0 + run_x1) / 2, center_y=INLET_TOP_Y, center_z=0.0, face="up", group=g, pfx="inlet_port")
     return [horizontal, corner, vertical] + collars + port
 
 
-def part_03_inlet() -> List[dict]:
-    return _vessel("inlet", INLET_Y, INLET_TOP_Y, up=True)
-
-
 def part_04_outlet() -> List[dict]:
-    return _vessel("outlet", OUTLET_Y, OUTLET_BOTTOM_Y, up=False)
+    """底面中心的标准 8×6 输出口（common_parts.outlet_8x6，朝下，套管 y 0..2）。"""
+    return outlet_8x6(center_x=0.0, center_y=2.0, center_z=0.0, facing="-y", length=2.0, group="outlet", pfx="outlet")
 
 
 PARTS = [
     ("spleen_body", part_01_body),
+    ("step_fill", part_05_step_fill),
     ("veins", part_02_veins),
     ("inlet_vessel", part_03_inlet),
-    ("outlet_vessel", part_04_outlet),
+    ("outlet", part_04_outlet),
 ]
 
 
@@ -290,6 +323,51 @@ def self_test() -> None:
     assert [_layer_cx(k) for k in (0, 13)] == [0, 0] and max(_layer_cx(k) for k in range(LAYERS)) == 4, "中心线两端 x=0、中段 +4"
     assert all(len(_layer_columns(k)) == 2 * HALF_W - HILUM_DEPTH for k in range(HILUM_LAYERS[0], HILUM_LAYERS[1] + 1)), "凹口层应各比整层少 4px"
     print("  [OK] 豆身：14 层、宽 14、厚 12，中心线弧形（两端 0、中段 +4），凹口 4 层 × 4px")
+
+    check_round3(cubes)
+    print("  [OK] 侧面台阶 ≤0.5px；入口管 4×4；输出口在底面中心、8×6 标准")
+
+    def must_fail(name: str, bad: List[dict]) -> None:
+        try:
+            check_round3(bad)
+        except AssertionError as e:
+            print(f"  [OK] 注入「{name}」被拦截: {str(e)[:50]}")
+            return
+        raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+    must_fail("去掉台阶补平", [c for c in cubes if c["group"] != "spleen_fill"])
+    must_fail("入口管改回 3×3", [dict(c, **{"from": [c["from"][0], c["from"][1], -1.5], "to": [c["to"][0], c["to"][1], 1.5]}) if c["name"] == "inlet_seg1" else c for c in cubes])
+    must_fail("输出口移走", [dict(c, **{"from": [c["from"][0] + 6, c["from"][1], c["from"][2]], "to": [c["to"][0] + 6, c["to"][1], c["to"][2]]}) if c["name"].startswith("outlet_") else c for c in cubes])
+
+
+def _profile(cubes: List[dict], side: str) -> Dict[int, float]:
+    """豆身（含补平块）每 1px 行的最右 / 最左 x。"""
+    prof: Dict[int, float] = {}
+    for c in cubes:
+        if c["group"] not in ("spleen", "spleen_fill"):
+            continue
+        for row in range(int(c["from"][1]), int(c["to"][1] + 0.999)):
+            x = c["to"][0] if side == "right" else c["from"][0]
+            if row not in prof or (x > prof[row] if side == "right" else x < prof[row]):
+                prof[row] = x
+    return prof
+
+
+def check_round3(cubes: List[dict]) -> None:
+    """第 3 轮门禁：侧面台阶补成 0.5px；入口管 4×4；输出口在底面中心、内衬 8×6。"""
+    right = _profile(cubes, "right")
+    rows = sorted(right)
+    assert max(abs(right[b] - right[a]) for a, b in zip(rows, rows[1:])) <= 0.5 + 1e-6, "右缘台阶超过 0.5px"
+    left = _profile(cubes, "left")
+    y_base, row_h = int(BEAN_Y0), int(ROW_H)
+    hilum_rows = range(y_base + HILUM_LAYERS[0] * row_h - 1, y_base + (HILUM_LAYERS[1] + 1) * row_h + 1)
+    steps = [abs(left[b] - left[a]) for a, b in zip(rows, rows[1:]) if a not in hilum_rows and b not in hilum_rows]
+    assert max(steps) <= 0.5 + 1e-6, "左缘台阶超过 0.5px"
+    seg = next(c for c in cubes if c["name"] == "inlet_seg1")
+    assert abs(seg["to"][2] - seg["from"][2] - 4.0) < 1e-6 and abs(seg["to"][1] - seg["from"][1] - 4.0) < 1e-6, "入口管应为 4×4"
+    lining = next(c for c in cubes if c["name"] == "outlet_lining")
+    assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][2] - lining["from"][2] - 6.0) < 1e-6, "输出口内衬应为 8 × 6"
+    assert abs((lining["from"][0] + lining["to"][0]) / 2) < 1e-6 and lining["from"][1] < 0.5, "输出口应在底面中心"
 
 
 def main() -> None:

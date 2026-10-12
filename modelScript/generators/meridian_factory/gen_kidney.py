@@ -32,8 +32,8 @@
 材质 #8a2a2a 主、#b05050 斑；肾门凹口外沿一圈 #5a1a1a。
 
 肾门血管 #4a78c0（3×3）：从凹口里 4 步斜向下走，汇进中间 4×4 主干（y 2..11.5），主干下接 8×6 输出口。
-骨托（#d8ccb0，2px 粗）：每个肾前后各一个 U 形（底条 + 外侧臂 + 内侧臂），
-左右两组之间前后各连一根横骨，U 下面有脚。
+骨托（#d8ccb0）：每个肾下面一整片实心弧形骨板（阶梯弧，沿 z 通长 16px），左右各一片；
+输出口是标准 8×6 套管，朝 +Z 从主干前面伸出。
 """
 
 from __future__ import annotations
@@ -96,15 +96,20 @@ VESSEL_SIZE = 3.0
 TRUNK_HALF = 2.0
 TRUNK_Y = (2.0, 11.5)
 
-# 骨托（左侧坐标，右侧镜像）：每个肾前后各一个 U（XY 平面，厚 2px）
-U_BAR_X = (-15.0, -4.0)
-U_BAR_Y = (2.0, 4.0)
-U_ARM_Y = (4.0, 6.0)
-U_OUTER_ARM_X = (-15.0, -13.0)
-U_INNER_ARM_X = (-6.0, -4.0)
-U_Z = (6.0, 8.0)  # 前 U 的 z 范围，后 U 取负
-FOOT_Y = (0.0, 2.0)
-CROSS_X = (-4.0, 4.0)  # 左右两组 U 之间的横骨
+# 骨托：每个肾下面一整片实心弧形骨板（左侧坐标，右侧镜像），沿 z 通长，不再是前后两条 U 形栅栏。
+# 侧视（XY）轮廓是一道阶梯弧：两端高、中间低，托住肾底；(x0, x1, y0, y1)，y 0 贴地。
+CRADLE_PROFILE: List[Tuple[float, float, float, float]] = [
+    (-17.0, -16.0, 0.0, 6.0),
+    (-16.0, -14.0, 0.0, 5.0),
+    (-14.0, -6.0, 0.0, 4.0),
+    (-6.0, -5.0, 0.0, 6.0),
+]
+CRADLE_Z = (-8.0, 8.0)
+
+# 输出口：标准 outlet_8x6 朝 +Z，开口底边离地 2，从中间主干前面伸出；y 取 5.05 避开行格线
+OUTLET_CENTER_Y = 5.05
+OUTLET_Z0 = 2.0
+OUTLET_LEN = 8.0
 
 
 def _cube(name: str, lo, hi, group: str, material: str) -> dict:
@@ -179,27 +184,17 @@ def part_03_vessels() -> List[dict]:
 
 
 def part_04_cradle() -> List[dict]:
-    """骨托：每个肾前后各一个 U（底条 + 两条短臂 + 脚），左右之间前后各连一根横骨。"""
-    g, m = "cradle", "bone_main"
-    left: List[dict] = []
-    for tag, (z0, z1) in (("f", U_Z), ("b", (-U_Z[1], -U_Z[0]))):
-        left += [
-            _cube(f"u_{tag}_bar", (U_BAR_X[0], U_BAR_Y[0], z0), (U_BAR_X[1], U_BAR_Y[1], z1), g, m),
-            _cube(f"u_{tag}_arm_out", (U_OUTER_ARM_X[0], U_ARM_Y[0], z0), (U_OUTER_ARM_X[1], U_ARM_Y[1], z1), g, m),
-            _cube(f"u_{tag}_arm_in", (U_INNER_ARM_X[0], U_ARM_Y[0], z0), (U_INNER_ARM_X[1], U_ARM_Y[1], z1), g, m),
-            _cube(f"u_{tag}_foot_out", (U_OUTER_ARM_X[0], FOOT_Y[0], z0), (U_OUTER_ARM_X[1], FOOT_Y[1], z1), g, "bone_dark"),
-            _cube(f"u_{tag}_foot_in", (U_INNER_ARM_X[0], FOOT_Y[0], z0), (U_INNER_ARM_X[1], FOOT_Y[1], z1), g, "bone_dark"),
-        ]
-    cross = [
-        _cube("cross_f", (CROSS_X[0], U_BAR_Y[0], U_Z[0]), (CROSS_X[1], U_BAR_Y[1], U_Z[1]), g, m),
-        _cube("cross_b", (CROSS_X[0], U_BAR_Y[0], -U_Z[1]), (CROSS_X[1], U_BAR_Y[1], -U_Z[0]), g, m),
+    """骨托：每个肾下面一整片实心弧形骨板（阶梯弧轮廓，沿 z 通长），左右各一片。"""
+    left = [
+        _cube(f"cradle_col{i}", (x0, y0, CRADLE_Z[0]), (x1, y1, CRADLE_Z[1]), "cradle", "bone_main")
+        for i, (x0, x1, y0, y1) in enumerate(CRADLE_PROFILE)
     ]
-    return left + _mirror_x(left) + cross
+    return left + _mirror_x(left)
 
 
 def part_05_outlet() -> List[dict]:
-    """底部 8×6 统一截面输出口（common_parts.outlet_8x6，朝下，管套高 2px，底边贴地）。"""
-    return outlet_8x6(center_x=0.0, center_y=2.0, center_z=0.0, facing="-y", length=2.0, group="outlet", pfx="outlet")
+    """正面下方 8×6 统一截面输出口：标准 outlet_8x6 朝 +Z，开口 y 2..8，从中间主干前面伸出（原来朝下只有 2px 高，太扁）。"""
+    return outlet_8x6(center_x=0.0, center_y=OUTLET_CENTER_Y, center_z=OUTLET_Z0, facing="+z", length=OUTLET_LEN, group="outlet", pfx="outlet")
 
 
 PARTS = [
@@ -244,6 +239,28 @@ def self_test() -> None:
     hilum_rows = [i for i, (_, h, _) in enumerate(KIDNEY_ROWS) if h]
     assert hilum_rows == [4, 5, 6, 7] and all(_row_edges(i)[0] - INNER_BASE == HILUM_DEPTH for i in hilum_rows), "肾门应是中段 4 行、各凹 4px"
     print("  [OK] 豆形：外侧弧线表 + 中段 4 行凹 4px 的肾门")
+
+    check_round3(cubes)
+    print("  [OK] 骨托是两片通长实心弧板；输出口是 +Z 向 8×6 标准套管")
+    fence = cubes + [_cube("cradle_fence_f", (-15, 2, 6), (-4, 4, 8), "cradle", "bone_main")]
+    squashed = [dict(c, **{"to": [c["to"][0], c["from"][1] + 1.0, c["to"][2]]}) if c["name"] == "outlet_lining" else c for c in cubes]
+    for name, bad in (("骨托栅栏条", fence), ("输出口被压扁", squashed)):
+        try:
+            check_round3(bad)
+        except AssertionError:
+            print(f"  [OK] 注入「{name}」被拦截")
+        else:
+            raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+
+def check_round3(cubes: List[dict]) -> None:
+    """第 3 轮门禁：骨托只能是左右各一片通长（z 向 ≥12）的实心板，不许有前后分开的细条；输出口内衬 8 宽 × 6 高、底边离地 2。"""
+    cradle = [c for c in cubes if c["group"] == "cradle"]
+    assert cradle and all(c["to"][2] - c["from"][2] >= 12.0 for c in cradle), "骨托应是通长实心板，不许有前后分开的细条"
+    assert all(c["from"][0] < 0 for c in cradle if c["name"].endswith(tuple("01234"))) and any(c["name"].endswith("_r") for c in cradle), "左右各一片"
+    lining = next(c for c in cubes if c["name"] == "outlet_lining")
+    assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][1] - lining["from"][1] - 6.0) < 1e-6, "输出口内衬应为 8 宽 × 6 高"
+    assert abs(lining["from"][1] - 2.0) < 0.2, f"输出口底边应离地 2: {lining['from'][1]}"
 
 
 def main() -> None:
