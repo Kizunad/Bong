@@ -578,17 +578,26 @@ FLESH_FOLD_LIT = hex_color("#b05050")
 FLESH_FOLD_DARK = hex_color("#4a1414")
 
 
-LENGTHWISE_FOLD_PERIOD = 1.4    # 侧面纵向褶纹的间距（px），褶沿 z（管轴）方向走
+LENGTHWISE_FOLD_PERIOD = 3.2    # 侧面纵向褶纹一个粗细循环的间距（px），褶沿 z（管轴）方向走
+FOLD_WAVE_AMPLITUDE = 0.4       # 褶纹沿 z 的横向摆幅（px），让褶略带弯曲
+FOLD_WAVE_LENGTH = 6.0          # 摆动的波长（px）
+# 一个循环内的分段（起点占比, 终点占比, 颜色, 混入比例）：粗亮褶 / 暗沟 / 细亮褶 / 暗沟
+LENGTHWISE_FOLD_PATTERN = (
+    (0.00, 0.34, FLESH_FOLD_LIT, 0.60),     # 粗褶，约 1.1px
+    (0.34, 0.47, FLESH_FOLD_DARK, 0.70),    # 暗沟
+    (0.47, 0.66, FLESH_FOLD_LIT, 0.45),     # 细褶，约 0.6px
+    (0.66, 0.78, FLESH_FOLD_DARK, 0.70),    # 暗沟
+)
 
 
 def _lengthwise_fold(color: Color, p: Vec, axis: int) -> Color:
-    """括约肌环的外侧面（顶 / 底 / 左 / 右）：沿管轴方向的纵向褶纹，比端面的放射褶淡一点。"""
+    """括约肌环的外侧面（顶 / 底 / 左 / 右）：沿管轴方向的纵向褶纹，粗细交替，随 z 略带弯曲。"""
     across = p[0] if axis == 1 else p[1]        # 顶底面上褶沿 x 排列，左右面上沿 y 排列
-    wave = math.cos(2 * math.pi * across / LENGTHWISE_FOLD_PERIOD)
-    if wave > 0.4:
-        return mix(color, FLESH_FOLD_LIT, 0.35)
-    if wave < -0.4:
-        return mix(color, FLESH_FOLD_DARK, 0.45)
+    across += FOLD_WAVE_AMPLITUDE * math.sin(2 * math.pi * p[2] / FOLD_WAVE_LENGTH)
+    fraction = (across / LENGTHWISE_FOLD_PERIOD) % 1.0
+    for start, end, target, amount in LENGTHWISE_FOLD_PATTERN:
+        if start <= fraction < end:
+            return mix(color, target, amount)
     return color
 
 
