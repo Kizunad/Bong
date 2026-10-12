@@ -265,25 +265,29 @@ def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
 # ---- b09 地砖：血管线 ---------------------------------------------------------
 
 FLOOR_VESSEL_CORE = hex_color("#8a2a2a")
-FLOOR_VESSEL_LIGHT = hex_color("#e8bca8")   # 血管一侧（+x）1px 高光
-FLOOR_VESSEL_SHADE = hex_color("#5a1a1a")   # 另一侧（-x）1px 暗边
-FLOOR_VESSEL_CORE_HALF = 1.0                # 芯 2px 宽
-FLOOR_VESSEL_RIM = 1.0                      # 高光 / 暗边各 1px
+FLOOR_VESSEL_LIGHT = hex_color("#e8bca8")   # 血管一侧 1px 高光
+FLOOR_VESSEL_SHADE = hex_color("#5a1a1a")   # 另一侧 1px 暗边
+FLOOR_VESSEL_CORE_HALF = 0.5                # 芯 1px；加两侧各 1px，总宽 3px
+FLOOR_VESSEL_RIM = 1.0
 FLOOR_NOISE_KEEP = 0.5                      # 底色噪点幅度压到原来的一半，血管才跳得出来
 FLOOR_BASE = hex_color("#8a2a2a")           # 压噪点时向它收拢
-FLOOR_SIDE_SHADE = -0.18                    # 侧面压暗
 FLOOR_TOP_Y = 16.0              # 地砖肉块顶面高度
-FLOOR_HALF = 8.0                # 地砖半边长
-FLOOR_SIDE_DEPTH = 6.0          # 血管从顶面沿前后侧面往下延伸的深度（px）
-FLOOR_SIDE_VESSELS = (0, 2)     # 只让这两条延伸到侧面
+FLOOR_EDGE_DARK_DEPTH = 1.0     # 侧面顶沿压暗的宽度（px）
+FLOOR_EDGE_DARK = 0.85          # 顶沿压暗时混入 #5a1a1a 的比例
+FLOOR_CURVE_STEPS = 96          # 把平滑曲线采样成折线，每个 texel 取到折线的最近点
 
-# 3 条沿 z 贯穿整面的血管：x(z) = 中线 + 振幅 * sin(2π z / 波长 + 相位)，平滑弯曲
+# 3 条沿 z 贯穿整面的主血管：x(z) = 中线 + 振幅 * sin(2π z / 波长 + 相位)；之间的间距 ≥ 4px
 FLOOR_VESSELS = (
     # (x 中线, 振幅, 波长, 相位)
-    (-4.8, 1.5, 20.0, 0.4),
-    (0.2, 1.8, 16.0, 2.3),
-    (4.9, 1.5, 22.0, 4.1),
+    (-5.0, 1.3, 20.0, 0.4),
+    (0.0, 1.5, 16.0, 2.3),
+    (5.0, 1.3, 22.0, 4.1),
 )
+# 一处分叉：从第 1 条血管上的分叉点出发，二次贝塞尔曲线弯向 -x 侧的边缘
+FLOOR_FORK_FROM_VESSEL = 0
+FLOOR_FORK_Z = -1.5
+FLOOR_FORK_BULGE = (-5.2, 4.0)    # 控制点 (x, z)
+FLOOR_FORK_END = (-8.0, 6.5)      # 终点 (x, z)，落在 -x 边缘
 
 
 def _vessel_x(vessel: tuple, z: float) -> float:
@@ -291,15 +295,44 @@ def _vessel_x(vessel: tuple, z: float) -> float:
     return center + amplitude * math.sin(2 * math.pi * z / wavelength + phase)
 
 
-def _vessel_offset(vessel: tuple, x: float, z: float) -> float:
-    """点到血管中线的垂直有符号距离（+x 侧为正），用斜率修正横向偏差。"""
-    center, amplitude, wavelength, phase = vessel
-    slope = amplitude * 2 * math.pi / wavelength * math.cos(2 * math.pi * z / wavelength + phase)
-    return (x - _vessel_x(vessel, z)) / math.sqrt(1 + slope * slope)
+def _sample_vessel(vessel: tuple) -> list:
+    half = 8.0
+    return [(_vessel_x(vessel, z), z) for z in
+            (-half + 2 * half * i / FLOOR_CURVE_STEPS for i in range(FLOOR_CURVE_STEPS + 1))]
+
+
+def _sample_fork() -> list:
+    start = (_vessel_x(FLOOR_VESSELS[FLOOR_FORK_FROM_VESSEL], FLOOR_FORK_Z), FLOOR_FORK_Z)
+    points = []
+    for i in range(FLOOR_CURVE_STEPS // 2 + 1):
+        t = i / (FLOOR_CURVE_STEPS // 2)
+        points.append(tuple((1 - t) ** 2 * start[k] + 2 * (1 - t) * t * FLOOR_FORK_BULGE[k] + t * t * FLOOR_FORK_END[k]
+                            for k in range(2)))
+    return points
+
+
+FLOOR_CURVES = [_sample_vessel(v) for v in FLOOR_VESSELS] + [_sample_fork()]
+
+
+def _curve_offset(curve: list, x: float, z: float) -> float:
+    """点到折线的有符号距离：取最近线段，符号看点落在行进方向（沿 z 增大）的哪一侧，+x 侧为正。"""
+    best, best_offset = 1e9, 0.0
+    for (ax, az), (bx, bz) in zip(curve, curve[1:]):
+        dx, dz = bx - ax, bz - az
+        length_sq = dx * dx + dz * dz
+        t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq))
+        qx, qz = ax + t * dx, az + t * dz
+        distance = math.hypot(x - qx, z - qz)
+        if distance < best:
+            length = math.sqrt(length_sq)
+            normal = (dz / length, -dx / length)
+            best = distance
+            best_offset = (x - qx) * normal[0] + (z - qz) * normal[1]
+    return best_offset
 
 
 def _vessel_color(color: Color, offset: float) -> Color:
-    """芯 #8a2a2a（2px）+ +x 侧 1px #e8bca8 高光 + -x 侧 1px #5a1a1a 暗边。"""
+    """芯 #8a2a2a（1px）+ 正侧 1px #e8bca8 高光 + 负侧 1px #5a1a1a 暗边。"""
     if abs(offset) < FLOOR_VESSEL_CORE_HALF:
         return mix(color, FLOOR_VESSEL_CORE, 0.95)
     if 0 < offset < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
@@ -309,57 +342,29 @@ def _vessel_color(color: Color, offset: float) -> Color:
     return color
 
 
-def _paint_top_vessels(color: Color, p: Vec) -> Color:
-    for vessel in FLOOR_VESSELS:
-        offset = _vessel_offset(vessel, p[0], p[2])
-        if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
-            return _vessel_color(color, offset)
-    return color
-
-
-def _vessel_painter(default: Painter) -> Painter:
-    """地砖肉块：底色噪点压半；顶面画 3 条整条的血管；前后侧面只留压暗的底色，
-    加 1~2 条从顶面延伸下来的血管；左右侧面只有压暗的底色。"""
+def _floor_painter(default: Painter) -> Painter:
+    """平整肉块：底色噪点压半；顶面画 3 条贯穿的平滑血管 + 一处分叉；侧面纯底色，只在顶沿压暗 1px。"""
 
     def paint(p: Vec, axis: int) -> Color:
         color = mix(default(p, axis), FLOOR_BASE, 1 - FLOOR_NOISE_KEEP)
         if axis == 1:
-            return _paint_top_vessels(color, p) if p[1] > FLOOR_TOP_Y - 1e-6 else color
-        color = shade(color, FLOOR_SIDE_SHADE)
-        if axis == 2 and p[1] > FLOOR_TOP_Y - FLOOR_SIDE_DEPTH:
-            end_z = FLOOR_HALF if p[2] > 0 else -FLOOR_HALF
-            for index in FLOOR_SIDE_VESSELS:
-                offset = p[0] - _vessel_x(FLOOR_VESSELS[index], end_z)
+            if p[1] < FLOOR_TOP_Y - 1e-6:
+                return color
+            for curve in FLOOR_CURVES:
+                offset = _curve_offset(curve, p[0], p[2])
                 if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
                     return _vessel_color(color, offset)
-        return color
-
-    return paint
-
-
-def _vein_cell_painter(default: Painter) -> Painter:
-    """顶面那组 X 形几何血管块：套同一配色（顶面芯 + 高光 / 暗边，侧面压暗的芯色），
-    顶面上画出的血管照样画过它们，和块接成一体。"""
-
-    def paint(p: Vec, axis: int) -> Color:
-        if axis != 1:
-            return shade(mix(default(p, axis), FLOOR_VESSEL_CORE, 0.8), FLOOR_SIDE_SHADE)
-        color = mix(default(p, axis), FLOOR_VESSEL_CORE, 0.85)
-        for vessel in FLOOR_VESSELS:
-            offset = _vessel_offset(vessel, p[0], p[2])
-            if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
-                return _vessel_color(color, offset)
+            return color
+        if p[1] > FLOOR_TOP_Y - FLOOR_EDGE_DARK_DEPTH:
+            return mix(color, FLOOR_VESSEL_SHADE, FLOOR_EDGE_DARK)
         return color
 
     return paint
 
 
 def floor_override(cube: dict, default: Painter) -> Optional[Painter]:
-    group = cube.get("group")
-    if group == "base_block":
-        return _vessel_painter(default)
-    if group == "veins":
-        return _vein_cell_painter(default)
+    if cube.get("group") == "base_block":
+        return _floor_painter(default)
     return None
 
 
