@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "meridian_factory"))
 from pixel_texture import Color, Painter, Vec, hex_color, mix, shade, texel_noise, value_noise  # noqa: E402
 
 RENDER_COMPENSATION = -0.08     # 渲染器的 mc 光照会把贴图提亮一档，整体先压暗一点，实际看到的接近指定色
+ROPE_PERIOD = 1.5               # 绳股一个明暗周期的长度（px）
 
 
 def _long_axis(cube: dict) -> int:
@@ -70,10 +71,18 @@ def _grain_coords(cube: dict, p: Vec, axis: int) -> Tuple[float, float]:
     return p[long_axis], p[across_axis]
 
 
+MIN_EDGE_SPAN = 1.4             # 面在某个方向上不到这么宽，就不在这个方向上算「边缘」（细条 / 薄片整面都贴边，会被边缘效果吃满）
+
+
 def _edge_distance(cube: dict, p: Vec, axis: int) -> float:
-    """点在所在面上，到该面最近的一条边的距离（px）。"""
-    others = [i for i in range(3) if i != axis]
-    return min(min(p[i] - cube["from"][i], cube["to"][i] - p[i]) for i in others)
+    """点在所在面上，到该面最近的一条边的距离（px）。只算宽度 ≥ MIN_EDGE_SPAN 的方向，窄方向忽略；都太窄返回很大的数。"""
+    best = 1e9
+    for i in range(3):
+        if i == axis:
+            continue
+        if cube["to"][i] - cube["from"][i] >= MIN_EDGE_SPAN:
+            best = min(best, p[i] - cube["from"][i], cube["to"][i] - p[i])
+    return best
 
 
 def _grain_noise(cube: dict, p: Vec, axis: int, across_scale: float, along_scale: float, seed: int) -> float:
@@ -126,20 +135,24 @@ def _stone(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
 
 
 def _stone_chipped(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
-    """粗打石（矛头、石刃用）：没有砖缝，只有崩口的片状亮暗面、细小凹坑和零星褐渍。"""
+    """粗打石（矛头、石刃用）：没有砖缝，崩口的片状亮暗面、棱线、碎屑小亮点、凹坑，贴近边缘处崩出一粒粒暗点。"""
     a, b = hex_color(base_a), hex_color(base_b)
-    pit, stain = shade(a, -0.4), hex_color("#8a6a48")
+    pit, stain, chip = shade(a, -0.5), hex_color("#8a6a48"), shade(a, -0.62)
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
             flake = value_noise(p, 1.3, seed)
-            color = mix(a, b, flake * 1.4 - 0.2)
-            if abs(value_noise(p, 1.9, seed + 1) - 0.5) < 0.05:
-                color = shade(color, -0.22)             # 崩口的棱线
-            if texel_noise(p, seed + 2) > 0.93:
-                color = mix(color, pit, 0.7)             # 凹坑
-            if value_noise(p, 3.2, seed + 3) > 0.82:
+            color = mix(a, b, flake * 1.5 - 0.25)
+            if abs(value_noise(p, 1.9, seed + 1) - 0.5) < 0.06:
+                color = shade(color, -0.25)                  # 崩口的棱线
+            if texel_noise(p, seed + 2) > 0.9:
+                color = mix(color, pit, 0.75)                # 凹坑
+            elif texel_noise(p, seed + 4) > 0.94:
+                color = shade(color, 0.3)                    # 碎屑反光的小亮点
+            if value_noise(p, 3.2, seed + 3) > 0.8:
                 color = mix(color, stain, 0.3)
+            if _edge_distance(cube, p, axis) < 0.5 and texel_noise(p, seed + 5) > 0.45:
+                color = mix(color, chip, 0.7)                # 崩口暗点
             return color
 
         return paint
@@ -148,7 +161,9 @@ def _stone_chipped(base_a: str, base_b: str, seed: int) -> Callable[[dict], Pain
 
 
 def _wood(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """木：顺长轴的木纹——一条条深色纹线（疏密不匀）夹在浅色底上；端面是年轮；木节是深色核加一圈浅边。"""
     a, b = hex_color(base_a), hex_color(base_b)
+    line_dark, knot_core, knot_ring = shade(a, -0.35), shade(a, -0.55), shade(b, 0.12)
 
     def factory(cube: dict) -> Painter:
         long_axis = _long_axis(cube)
@@ -159,12 +174,16 @@ def _wood(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
                 ring = 0.5 + 0.5 * math.sin(across * 3.2 + 2.0 * value_noise(p, 1.5, seed))
                 color = shade(mix(a, b, ring), -0.12)
             else:                       # 侧面：顺长轴的木纹
-                grain = value_noise((across * 3.2, along * 0.28, 0.0), 1.0, seed)
-                color = mix(a, b, (0.65 * grain + 0.35 * texel_noise(p, seed + 1)) * 1.5 - 0.25)
-                if (across * 1.1 + 2.0 * value_noise(p, 2.0, seed + 5)) % 1.0 < 0.2:
-                    color = shade(color, -0.2)      # 木纹深线
-            if value_noise(p, 2.2, seed + 2) > 0.87:
-                color = shade(color, -0.28)         # 木节
+                base = value_noise((across * 2.2, along * 0.2, 0.0), 1.0, seed)
+                color = mix(a, b, (0.7 * base + 0.3 * texel_noise(p, seed + 1)) * 1.4 - 0.2)
+                wobble = 1.6 * value_noise((across * 0.8, along * 0.18, 0.0), 1.0, seed + 5)
+                if (across * 1.05 + wobble) % 1.0 < 0.26:     # 深色木纹线
+                    color = mix(color, line_dark, 0.65)
+            knot = value_noise(p, 1.9, seed + 2)
+            if knot > 0.86:
+                color = knot_core                              # 木节核
+            elif knot > 0.8:
+                color = mix(color, knot_ring, 0.55)            # 木节边
             return color
 
         return paint
@@ -191,15 +210,22 @@ def _bone(base: str, seed: int) -> Callable[[dict], Painter]:
 
 
 def _rope(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """绳：斜向拧股，一个周期 1.5px 分「暗缝 / 中 / 亮脊」三档，明暗交替读得出股线；股脊上点一点高光。"""
     dark, light = hex_color(base_a), hex_color(base_b)
+    mid = mix(dark, light, 0.5)
+    crest = shade(light, 0.18)
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
             along, across = _grain_coords(cube, p, axis)
-            twist = (along * 1.1 + across * 1.1) % 1.0
-            band = abs(twist - 0.5) * 2
-            color = mix(dark, light, band)
-            return shade(color, (texel_noise(p, seed) - 0.5) * 0.16)
+            phase = ((along + across) / ROPE_PERIOD) % 1.0
+            if phase < 0.3:
+                color = dark                                  # 股与股之间的暗缝
+            elif phase < 0.65:
+                color = mid
+            else:
+                color = crest if texel_noise(p, seed + 1) > 0.7 else light
+            return shade(color, (texel_noise(p, seed) - 0.5) * 0.12)
 
         return paint
 
@@ -239,20 +265,40 @@ def _ink(base: str, seed: int) -> Callable[[dict], Painter]:
     return factory
 
 
+RUST_DEEP, RUST_MID, RUST_LIT = hex_color("#5a2818"), hex_color("#9a4e26"), hex_color("#c8803a")
+PIT_DARK = hex_color("#241410")
+HONED = hex_color("#c4c8cc")            # 刃口磨亮的一线
+EDGE_HONE_WIDTH = 0.5                   # 1 texel
+
+
 def _iron(base: str, rust_amount: float, seed: int) -> Callable[[dict], Painter]:
+    """铁 / 锈铁：拉丝底色 + 零星亮划痕；锈分三层——大片锈斑（深 / 中 / 亮三档橙褐）、小锈点、点蚀坑
+    （深色小坑带一圈亮边）；贴近边缘的一个 texel 磨亮成一线刃口。rust_amount = 锈斑占面积的比例。"""
     color_base = hex_color(base)
-    rust_dark, rust_lit = hex_color("#8a4a2a"), hex_color("#b0623a")
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
             brush = _grain_noise(cube, p, axis, 5.0, 0.2, seed)
             color = shade(color_base, (brush - 0.5) * 0.3)
             if texel_noise(p, seed + 1) > 0.95:
-                color = shade(color, 0.25)          # 亮划痕
+                color = shade(color, 0.25)                  # 亮划痕
             if rust_amount > 0:
-                patch = value_noise(p, 2.2, seed + 2)
+                patch = value_noise(p, 2.4, seed + 2)
+                fine = value_noise(p, 0.9, seed + 4)
                 if patch > 1.0 - rust_amount:
-                    color = mix(color, mix(rust_dark, rust_lit, texel_noise(p, seed + 3)), 0.8)
+                    depth = value_noise(p, 1.3, seed + 6)   # 锈斑里深浅不一
+                    tone = RUST_DEEP if depth < 0.35 else (RUST_MID if depth < 0.7 else RUST_LIT)
+                    color = mix(color, mix(tone, shade(tone, 0.1), texel_noise(p, seed + 3)), 0.9)
+                elif fine > 0.78 and texel_noise(p, seed + 5) > 0.3:
+                    color = mix(color, RUST_MID, 0.7)       # 小锈点
+                # 点蚀坑：深色小坑，坑边一圈略亮
+                pit = value_noise(p, 0.75, seed + 7)
+                if pit > 0.8 and texel_noise(p, seed + 8) > 0.45:
+                    color = mix(color, PIT_DARK, 0.85)
+                elif pit > 0.72:
+                    color = shade(color, 0.12)
+            if _edge_distance(cube, p, axis) < EDGE_HONE_WIDTH:
+                color = mix(color, HONED, 0.75 if rust_amount < 0.6 else 0.55)    # 刃口磨亮一线
             return color
 
         return paint
