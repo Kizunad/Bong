@@ -236,7 +236,10 @@ BAO_CHU = HeldItem(
         Material("hoe_cord", (0.57, 0.50, 0.37), tex_hoe_cord()),
     ),
     grip=GRIP,
-    display=hand_display(SCALE, GRIP, LENGTH),
+    # 旋转取 (-80, -90, 0)，不是 hand_display 默认的 (-80, 90, 0)：锄板建在 -X 侧，默认握法下
+    # 柄朝前时 -X 朝上（板冲天），绕柄轴转半圈（ry 90 → -90）后板才朝下，和握锄的方向一致。
+    # 玩家使用动画 bao_chu_use 就是按这个握法做的；接线时 model JSON 的 display 要用同一个值。
+    display=hand_display(SCALE, GRIP, LENGTH, rotation=(-80, -90, 0)),
 )
 
 
