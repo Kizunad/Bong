@@ -635,63 +635,123 @@ register(ToolAnim(
 
 
 # ── 阵旗 array_flag ───────────────────────────────────────────────────────
-# 挥旗：举旗过头 → 向身体左侧一挥 → 再向右侧一挥 → 收回。
-# 旗杆是物品的柄方向（旗幡在 -X 侧、杆头骨饰在尖端），所以 φ≈90 就是旗杆竖直。
-# 这件**不做插地**：这版旗杆的尖端是骨饰、握把末端才是柄尾，插地要「柄尾朝下」，而这个握法里
-# 手臂放下来时旗杆是朝前下、骨饰端朝地——是倒着插。用手臂 yaw 左右扫出旗杆的弧、躯干与头跟着转，
-# 旗幡随杆左右甩，是「指挥阵眼气机」的挥旗，不是插旗。
+# 挥旗：旗杆举到肩上方、离开头部 → 向身体左侧大幅一挥 → 向右侧大幅一挥 → 收回。
+# 旗杆是物品的柄方向（旗幡在 -X 侧、杆头骨饰在尖端）。这件**不做插地**：这版旗杆的尖端是骨饰、
+# 握把末端才是柄尾，插地要「柄尾朝下」，而这个握法里手臂放下来时旗杆朝前下、骨饰端朝地——是倒着插。
+#
+# 【几何约束，逐条用 `preview_player_anim.hand_transform` 量过，不是目测】
+# 把旗杆（握点往上 14.7px）采样成 24 个点，和头部的轴对齐盒（x ±4、y 24~32、z ±4）求最近距离：
+#   - guard：手在肩上方（y≥25），旗杆竖直（倾角 < 8°），杆离头部 ≥ 5.9px（约 0.75 个头宽）；
+#   - 左挥峰值：杆向身体左侧倾 ≥ 57°，杆在脸的**前方**掠过（z -5 ~ -12），不穿头；
+#   - 右挥峰值：杆向身体右侧倾 ≥ 61°，杆离头 ≥ 7.8px。
+# 左右各挥 60° 上下，一个来回杆总共扫过 ~120°。
+#
+# 【旗面滞后】旗幡是模型的一部分、不能单独摆动，滞后做在**杆的倾角**上：手（pitch / yaw）先到位，
+# 杆的倾角（arm.roll——上臂前平时，roll 让竖着的前臂向两侧摆）晚 1 tick 才到峰值，
+# 手一减速杆还在往外甩，视觉上就是旗杆被手「带着甩」出去，旗面跟着晚一拍。
 
 register(ToolAnim(
     item_id="array_flag",
-    description="阵旗挥旗：举旗过头 → 向左一挥 → 向右一挥 → 收回",
-    end_tick=22,
+    description="阵旗挥旗：举旗到肩上方 → 向左大幅一挥 → 向右大幅一挥 → 收回，旗杆倾角晚手一拍",
+    end_tick=24,
     keys=[
+        # guard：手在肩上方，旗杆竖直立在右肩外侧
         Key(0, {
-            "torso": {"pitch": 2, "yaw": 4},
+            "torso": {"pitch": 0, "yaw": 6},
             "head": {"pitch": -2},
-            "rightArm": haft_arm(92, 82, OFFSET_KIT_HOLD),
+            "rightArm": arm(pitch=-125, bend=60, yaw=75, roll=-22),
             "leftArm": arm(pitch=-12, roll=-10, bend=14),
             "rightLeg": {"pitch": 4},
             "leftLeg": {"pitch": -6},
         }),
-        # 举旗：手高举，旗杆竖直，身体略后仰拔高
+        # 举起：身体微后仰、手再抬一点，旗杆立得更直
         Key(4, {
             "torso": {"pitch": -6, "yaw": 10},
-            "head": {"pitch": -8},
+            "head": {"pitch": -6},
             "body": {"pitch": -2},
-            "rightArm": haft_arm(95, 55, OFFSET_KIT_HOLD),
+            "rightArm": arm(pitch=-130, bend=58, yaw=75, roll=-16),
             "leftArm": arm(pitch=-26, roll=-20, bend=20),
             "rightLeg": {"pitch": 6},
             "leftLeg": {"pitch": -8},
         }),
-        # 向左一挥：手臂 yaw 把旗杆扫向身体左侧，躯干与头跟着转
-        Key(8, {
-            "torso": {"pitch": -2, "yaw": -30},
-            "head": {"pitch": -6, "yaw": -10},
+        # 向左挥（手先动，杆还没倾）
+        Key(6, {
+            "torso": {"pitch": -3, "yaw": -8},
+            "head": {"pitch": -4, "yaw": -6},
             "body": {"pitch": -1},
-            "rightArm": haft_arm(88, 55, OFFSET_KIT_HOLD, yaw=-44, roll=26),
-            "leftArm": arm(pitch=-34, roll=-26, bend=24),
-            "rightLeg": {"pitch": 8, "bend": 6},
+            "rightArm": arm(pitch=-105, bend=55, yaw=40, roll=18),
+            "leftArm": arm(pitch=-30, roll=-22, bend=22),
+            "rightLeg": {"pitch": 8, "bend": 4},
+            "leftLeg": {"pitch": -9, "bend": 3},
+        }),
+        # 手到左侧位置，杆已倾到一半（还在追）
+        Key(8, {
+            "torso": {"pitch": -2, "yaw": -26},
+            "head": {"pitch": -4, "yaw": -14},
+            "body": {"pitch": -1},
+            "rightArm": arm(pitch=-85, bend=50, yaw=20, roll=52),
+            "leftArm": arm(pitch=-36, roll=-26, bend=26),
+            "rightLeg": {"pitch": 9, "bend": 6},
             "leftLeg": {"pitch": -10, "bend": 4},
         }),
-        # 向右一挥：反向扫到右侧，幅度略小，旗幡随杆甩回
-        Key(13, {
-            "torso": {"pitch": -2, "yaw": 22},
-            "head": {"pitch": -6, "yaw": 8},
+        # 左挥峰值：手停住，杆晚一拍到 ~60°（滞后）
+        Key(9, {
+            "torso": {"pitch": -2, "yaw": -28},
+            "head": {"pitch": -4, "yaw": -15},
             "body": {"pitch": -1},
-            "rightArm": haft_arm(92, 55, OFFSET_KIT_HOLD, yaw=36, roll=-22),
-            "leftArm": arm(pitch=-20, roll=-14, bend=18),
-            "rightLeg": {"pitch": 6, "bend": 6},
-            "leftLeg": {"pitch": -8, "bend": 4},
+            "rightArm": arm(pitch=-85, bend=50, yaw=20, roll=80),
+            "leftArm": arm(pitch=-38, roll=-28, bend=26),
+            "rightLeg": {"pitch": 9, "bend": 6},
+            "leftLeg": {"pitch": -10, "bend": 4},
         }),
-        # 拉回中线：旗杆竖直立在身前一格
-        Key(17, {
-            "torso": {"pitch": 0, "yaw": 6},
-            "head": {"pitch": -3},
-            "rightArm": haft_arm(94, 70, OFFSET_KIT_HOLD, yaw=4),
+        # 反向：手先往右带，杆还停在左边——这一段旗杆要从脸的**前方**掠过（z -4 ~ -14），
+        # 不能直接从左边拉回右边，否则杆身会穿过头（试过，tick 11~12 杆有 5 个采样点在头盒里）
+        Key(11, {
+            "torso": {"pitch": -3, "yaw": -4},
+            "head": {"pitch": -4, "yaw": -4},
+            "body": {"pitch": -1},
+            "rightArm": arm(pitch=-70, bend=50, yaw=40, roll=50),
+            "leftArm": arm(pitch=-28, roll=-22, bend=22),
+            "rightLeg": {"pitch": 8, "bend": 5},
+            "leftLeg": {"pitch": -9, "bend": 3},
+        }),
+        Key(13, {
+            "torso": {"pitch": -3, "yaw": 12},
+            "head": {"pitch": -4, "yaw": 6},
+            "body": {"pitch": -1},
+            "rightArm": arm(pitch=-120, bend=40, yaw=56, roll=0),
+            "leftArm": arm(pitch=-20, roll=-14, bend=18),
+            "rightLeg": {"pitch": 7, "bend": 5},
+            "leftLeg": {"pitch": -8, "bend": 3},
+        }),
+        # 手到右侧位置，杆倾到一半（在追）
+        Key(14, {
+            "torso": {"pitch": -2, "yaw": 26},
+            "head": {"pitch": -4, "yaw": 13},
+            "body": {"pitch": -1},
+            "rightArm": arm(pitch=-145, bend=30, yaw=60, roll=-36),
+            "leftArm": arm(pitch=-16, roll=-12, bend=16),
+            "rightLeg": {"pitch": 6, "bend": 5},
+            "leftLeg": {"pitch": -8, "bend": 3},
+        }),
+        # 右挥峰值：杆晚一拍到 ~-66°
+        Key(15, {
+            "torso": {"pitch": -2, "yaw": 28},
+            "head": {"pitch": -4, "yaw": 14},
+            "body": {"pitch": -1},
+            "rightArm": arm(pitch=-145, bend=30, yaw=60, roll=-70),
             "leftArm": arm(pitch=-14, roll=-10, bend=16),
-            "rightLeg": {"pitch": 5},
-            "leftLeg": {"pitch": -7},
+            "rightLeg": {"pitch": 6, "bend": 5},
+            "leftLeg": {"pitch": -8, "bend": 3},
+        }),
+        # 拉回：手先回，杆倾角随后收到竖直
+        Key(19, {
+            "torso": {"pitch": 0, "yaw": 8},
+            "head": {"pitch": -3},
+            "rightArm": arm(pitch=-125, bend=60, yaw=75, roll=-26),
+            "leftArm": arm(pitch=-12, roll=-10, bend=14),
+            "rightLeg": {"pitch": 4},
+            "leftLeg": {"pitch": -6},
         }),
     ],
 ))
