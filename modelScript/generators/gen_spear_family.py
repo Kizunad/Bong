@@ -117,6 +117,51 @@ def tex_spear_stone() -> Image.Image:
     return img
 
 
+def tex_spear_silk() -> Image.Image:
+    """蛛丝绳：暗褐灰、紧拧的细绳，斜纹比麻绳更密更细，整体压暗（骨矛 / 铁矛的绑缚色）。"""
+    rng = random.Random(0x5E04)
+    img = Image.new("RGBA", (16, 16), (74, 58, 50, 255))
+    noise_fill(img, rng, (74, 58, 50), 6, warm=2)
+    pixels = img.load()
+    for start in range(-8, 16, 2):
+        for step in range(16):
+            x, y = start + step, 15 - step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (54, 41, 36, 255)
+    for start in range(-5, 16, 5):
+        for step in range(16):
+            x, y = start + step, 15 - step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (101, 82, 70, 255)
+    return img
+
+
+def tex_spear_bone() -> Image.Image:
+    """骨尖：象牙白微黄，纵向骨纤维，少量暗孔（骨髓腔的小凹）。"""
+    rng = random.Random(0x5E05)
+    img = Image.new("RGBA", (16, 16), (222, 211, 184, 255))
+    noise_fill(img, rng, (222, 211, 184), 7, warm=2)
+    blotch(img, rng, 4, (240, 232, 208), (1.6, 3.2))
+    blotch(img, rng, 3, (196, 182, 152), (1.4, 2.8))
+    pixels = img.load()
+    for x in (5, 10):                                      # 纵向纤维
+        for y in range(16):
+            if (x * 3 + y * 5) % 3:
+                pixels[x, y] = (206, 193, 164, 255)
+    for _ in range(3):                                     # 暗孔
+        pixels[rng.randint(1, 14), rng.randint(1, 14)] = (150, 135, 108, 255)
+    return img
+
+
+def tex_spear_bone_dark() -> Image.Image:
+    """骨尖上的血槽 / 缺口暗面：烟熏过的深褐骨。"""
+    rng = random.Random(0x5E06)
+    img = Image.new("RGBA", (16, 16), (126, 108, 84, 255))
+    noise_fill(img, rng, (126, 108, 84), 8, warm=2)
+    blotch(img, rng, 3, (98, 82, 62), (1.2, 2.4))
+    return img
+
+
 # ── 共用部件 ─────────────────────────────────────────────────────────────
 
 
@@ -233,12 +278,44 @@ def part_head_stone() -> list[Box]:
     return boxes
 
 
+# 骨尖：比石头细、**向一侧微弯**、右侧边缘有锯齿状的骨刺。同样 14 行 × 0.5px = 7px 长、厚 1px（z ±0.5px），
+# 才能插进同一副两瓣杆头。最宽 2.2px 在下 1/3，往尖端收；弯：行中心按 (i/13)^1.6 向 -x 偏，到尖端偏 1.1px。
+_BONE_WIDTH_PX = (1.2, 1.7, 2.0, 2.2, 2.2, 2.1, 2.0, 1.8, 1.6, 1.4, 1.2, 0.9, 0.6, 0.3)
+_BONE_CURVE_PX = 1.1
+_BONE_TEETH = (3, 5, 7, 9)          # 右缘锯齿所在行：向外多凸 0.3px
+
+
+def part_head_bone() -> list[Box]:
+    """骨尖矛头：**微弯的骨尖**——比石矛头窄（最宽 2.2px）、向 -x 微弯 1.1px，右缘四个锯齿状骨刺，
+    中线一道暗色血槽。厚度仍是 1px，插进同一副两瓣杆头；弯度让它和直刃的石 / 铁矛头远观可辨。
+    """
+    boxes: list[Box] = []
+    for i, w in enumerate(_BONE_WIDTH_PX):
+        half = w / 2.0
+        centre = -_BONE_CURVE_PX * (i / 13.0) ** 1.6
+        if i in _BONE_TEETH:
+            half += 0.15
+            centre += 0.15
+        y0 = HEAD_Y0 + i * ROW
+        boxes.append(_box(f"bone_row_{i:02d}", "bone", y0, y0 + ROW, centre * PX, 0.0, half * PX, 0.5 * PX))
+    # 血槽：中线一条暗色细带，正反两面各一，只画中段（行 2~11），微凸 0.1px（半埋进矛头 0.02px 以保持连通）
+    for i in range(2, 12):
+        centre = -_BONE_CURVE_PX * (i / 13.0) ** 1.6
+        y0 = HEAD_Y0 + i * ROW
+        for face, sz in (("f", +1.0), ("b", -1.0)):
+            boxes.append(_box(f"bone_groove_{face}{i:02d}", "bone_dark", y0, y0 + ROW, centre * PX, sz * 0.54 * PX, 0.2 * PX, 0.06 * PX))
+    return boxes
+
+
 # ── 整件 ─────────────────────────────────────────────────────────────────
 
 
 def all_boxes_for(key: str) -> tuple[Box, ...]:
-    cord = "hemp"
-    head = {"crude_stone_spear": part_head_stone}[key]
+    """每件：(绑缚材质, 矛头部件)。石矛是麻绳，骨矛 / 铁矛是暗色蛛丝绳。"""
+    cord, head = {
+        "crude_stone_spear": ("hemp", part_head_stone),
+        "bone_tip_spear": ("silk", part_head_bone),
+    }[key]
     return tuple(part_butt() + part_shaft() + part_grip(cord) + part_socket() + part_lashing(cord) + head())
 
 
@@ -257,8 +334,14 @@ def _item(key: str, name: str, materials: tuple[Material, ...]) -> HeldItem:
 def items() -> tuple[HeldItem, ...]:
     wood = Material("wood", (0.50, 0.36, 0.23), tex_spear_wood())
     hemp = Material("hemp", (0.69, 0.57, 0.37), tex_spear_hemp())
+    silk = Material("silk", (0.29, 0.23, 0.20), tex_spear_silk())
     stone = Material("stone", (0.59, 0.58, 0.56), tex_spear_stone())
-    return (_item("crude_stone_spear", "粗石矛", (wood, hemp, stone)),)
+    bone = Material("bone", (0.87, 0.83, 0.72), tex_spear_bone())
+    bone_dark = Material("bone_dark", (0.49, 0.42, 0.33), tex_spear_bone_dark())
+    return (
+        _item("crude_stone_spear", "粗石矛", (wood, hemp, stone)),
+        _item("bone_tip_spear", "骨尖矛", (wood, silk, bone, bone_dark)),
+    )
 
 
 # ── 审阅图 ───────────────────────────────────────────────────────────────
