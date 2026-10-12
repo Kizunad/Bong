@@ -576,13 +576,14 @@ RIDGE_COLOR = hex_color("#b05050")      # 肉褶脊
 GROOVE_COLOR = hex_color("#5a1a1a")     # 褶间压暗
 APERTURE_EDGE = hex_color("#f6dcc4")    # 口内亮芯：边缘
 APERTURE_CENTER = hex_color("#fff8ec")  # 口内亮芯：正中
+APERTURE_PAD_REACH = 2.0                # 口底亮芯垫的半径（px），与 gen_emitter.GLOW_PAD_RADIUS 一致
 
 
 def _fold_painter(base: Color, seed: int) -> Painter:
     """褶脊 / 褶间：一个固定底色，只留很轻的明暗起伏，两种底色的反差就是「褶」。"""
 
     def paint(p: Vec, axis: int) -> Color:
-        return shade(base, (value_noise(p, 1.6, seed) - 0.5) * 0.18 + (texel_noise(p, seed + 1) - 0.5) * 0.06)
+        return shade(base, (value_noise(p, 1.6, seed) - 0.5) * 0.08 + (texel_noise(p, seed + 1) - 0.5) * 0.03)
 
     return paint
 
@@ -596,8 +597,19 @@ def _aperture_core_painter(cube: dict) -> Painter:
     return paint
 
 
+def _glow_pad_painter(reach: float) -> Painter:
+    """口底亮芯垫：按离口中心的水平距离，中心 #fff8ec 往外渐变到 #f6dcc4（跨柱连续，不按单个柱子取半径）。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(APERTURE_CENTER, APERTURE_EDGE, min(1.0, math.hypot(p[0], p[2]) / reach))
+
+    return paint
+
+
 def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
     group, material = cube.get("group"), cube.get("material")
+    if group == "dome" and material == "qi_glow":
+        return _glow_pad_painter(APERTURE_PAD_REACH)
     if group == "dome" and material == "flesh_lit":
         return _fold_painter(RIDGE_COLOR, 181)
     if group == "dome" and material == "flesh_dark":
@@ -612,6 +624,7 @@ def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
 CROSS_CENTER = hex_color("#fff0dc")
 CROSS_BASE = hex_color("#a86858")       # 通道往臂端渐变到的底色，也是顶膜底色
 CROSS_REACH = 4.0                       # 十字从中心到腔壁的距离（px）
+CROSS_BRIGHT = 3.0                      # 离中心（x/z 取大者）不超过这个距离的通道面保持 #fff0dc：宽 4 的十字里约占腔顶 1/2
 MEMBRANE_KEEP = 0.2                     # 顶膜保留多少默认膜面的起伏，其余用底色压平
 
 RIB_LIT_COLOR = hex_color("#8a2a2a")    # 偶数肋
@@ -621,11 +634,11 @@ RIB_RIM_WIDTH = 0.5                     # 端面外圈高光的宽度（px，= 1
 
 
 def _cross_gradient_painter(default: Painter) -> Painter:
-    """十字通道：以腔体中心为原点，沿臂方向（x 或 z 取大者）从 #fff0dc 渐变到 #a86858。"""
+    """十字通道：以腔体中心为原点，沿臂方向（x 或 z 取大者）：CROSS_BRIGHT 内整块 #fff0dc，往腔壁渐变到 #a86858。"""
 
     def paint(p: Vec, axis: int) -> Color:
         reach = max(abs(p[0]), abs(p[2]))
-        t = min(1.0, max(0.0, (reach - 1.0) / (CROSS_REACH - 1.0)))   # 中心 2×2 保持最亮
+        t = min(1.0, max(0.0, (reach - CROSS_BRIGHT) / (CROSS_REACH - CROSS_BRIGHT)))   # 中心一片整块最亮，只有臂的最外 1px 往底色渐变
         color = mix(CROSS_CENTER, CROSS_BASE, t ** 0.8)
         color = mix(color, default(p, axis), 0.1)
         return color if axis == 1 else shade(color, -0.1)      # 十字的侧面略压暗，顶面保持原亮度

@@ -69,12 +69,18 @@ DOME_HALF = 6  # 柱网范围 ±6
 STEP = 0.5  # 柱网步长：0.5px 一根，10 道放射褶靠它才分得开（试过 1px 柱网，褶被压成方块）
 RIM_REACH = 6.5  # 外缘半格的柱心半径上限（主体柱心半径 ≤ DOME_RADIUS，再往外补一圈到这里）
 RIM_TOP = DOME_Y0 + 0.5  # 外缘半格只有 0.5px 高，给穹顶底脚收一圈细边
-# (柱心半径上限, 穹顶顶面高度)，自内向外：每级台阶高 1px、宽约 1px（斜坡约 45°），不再有 0.5px 一级的碎台阶
-DOME_PROFILE: List[Tuple[float, float]] = [(2.0, 11.0), (3.0, 10.0), (4.0, 9.0), (5.0, 8.0), (5.6, 7.0), (6.0, 6.0)]
+# (柱心半径上限, 穹顶顶面高度)，自内向外：每级台阶高 1px、宽约 1px，没有 0.5px 一级的碎台阶。
+# 脊在 r≈3.4（高 10），往口里逐格降 1px 到口底（8，半径 2 内是平的亮芯底），口底比脊低 2px 成漏斗，斜 45° 能看到口底；
+# 往外照旧 1px 一级降到底脚。
+DOME_PROFILE: List[Tuple[float, float]] = [(2.0, 8.0), (3.0, 9.0), (3.8, 10.0), (4.4, 9.0), (5.0, 8.0), (5.6, 7.0), (6.0, 6.0)]
+GLOW_PAD_RADIUS = 2.0  # 口底亮芯垫的半径：半径内非脊的柱子（含 closed 的缝心）顶面贴亮芯材质，亮面比口本身大
+FUNNEL_SINK = 2.0  # 漏斗：中心（口）比脊顶至少低这么多
+RIDGE_TAPER_FROM, RIDGE_TAPER_TO = 1.5, 4.5  # 褶脊鼓起量在这段柱心半径内由 0 渐增到满幅
 FOLD_AMPLITUDE = {"open": 0.5, "half": 1.0, "closed": 1.5}
 APERTURE_HALF = {"open": 2, "half": 1, "closed": 0}  # 收缩口半宽 a（口宽 2a）
-SEAM_DROP = 1.5  # closed 态中央 2×2 压低量
-APERTURE_FLOOR_Y = 7.0  # 孔底（亮芯顶面在 y=7.5）
+SEAM_DROP = 1.0  # closed 态中央 2×2 压低量（缝心亮芯顶面与它齐平）
+SEAM_SLIT = 0.5  # closed 态缝正中露亮的 1×1（半宽）；顶面与周围压低的缝齐平，斜看也露得出来
+APERTURE_FLOOR_Y = 7.5  # 孔底（亮芯顶面在 y=8.0，与口沿中心那一级齐平，斜看不被口沿压住）
 LINER_THICK = 0.5
 COLLAR_OUTER = {"open": 7.1, "half": 7.6, "closed": 8.1}  # 最远角半径上限，实际外缘取到 0.5px 网格：7.0 / 7.5 / 8.0
 COLLAR_HEIGHT = {"open": 1.5, "half": 2.0, "closed": 2.5}
@@ -177,6 +183,12 @@ def _fold_kind(theta: float, folds: int) -> str:
     return "body"
 
 
+def _ridge_taper(r: float) -> float:
+    """褶脊鼓起的比例：r ≤ RIDGE_TAPER_FROM 完全不鼓（贴着口），到 RIDGE_TAPER_TO 才鼓满。
+    脊越靠近口越矮，褶内侧自脊顶一路降到口沿，斜着看视线才不会被脊挡死。"""
+    return min(1.0, max(0.0, (r - RIDGE_TAPER_FROM) / (RIDGE_TAPER_TO - RIDGE_TAPER_FROM)))
+
+
 def part_02_dome(variant: str = "open", folds: int = FOLDS) -> List[dict]:
     """肉质穹顶 (y 5–约 12)：1×1 柱网 + 放射肉褶。收缩口范围内的柱子不建（part_03 负责孔内）。"""
     amp = FOLD_AMPLITUDE[variant]
@@ -190,11 +202,15 @@ def part_02_dome(variant: str = "open", folds: int = FOLDS) -> List[dict]:
         top = _dome_base_height(r)
         material = "flesh_main"
         if kind == "ridge":
-            top, material = top + amp, "flesh_lit"
+            top, material = top + amp * _ridge_taper(r), "flesh_lit"
         elif kind == "groove":
             top, material = top - amp, "flesh_dark"
         if not a and abs(cx) < 1 and abs(cz) < 1:
-            top, material = _dome_base_height(r) - SEAM_DROP, "flesh_dark"  # closed 态中央星形接缝
+            if abs(cx) < SEAM_SLIT and abs(cz) < SEAM_SLIT:
+                continue  # 缝正中留给 part_03 的亮芯
+            top, material = _dome_base_height(r) - SEAM_DROP, "qi_glow"  # closed 态中央星形接缝，缝里亮
+        elif r <= GLOW_PAD_RADIUS and kind != "ridge":
+            material = "qi_glow"  # 口底亮芯垫：褶沟 / 肉体的柱子顶面发亮，只有褶脊保持肉色，亮面成放射星形
         cubes.append({
             "name": f"dome_x{round(x / STEP)}_z{round(z / STEP)}",
             "from": [x, DOME_Y0, z],
@@ -217,8 +233,11 @@ def part_03_aperture(variant: str = "open") -> List[dict]:
     """收缩口内部：孔底填块 + 0.5px #5a1a1a 内衬 + 孔底亮芯。closed 无孔，返回空。"""
     a = float(APERTURE_HALF[variant])
     if not a:
-        return []
-    liner_top = _dome_base_height(0.0) - FOLD_AMPLITUDE[variant]  # 比孔沿最低的褶间沟还低一点，不顶出孔沿
+        seam_top = _dome_base_height(0.0) - SEAM_DROP  # 与周围压低的缝齐平
+        return [{"name": "aperture_seam_glow", "from": [-SEAM_SLIT, DOME_Y0, -SEAM_SLIT], "to": [SEAM_SLIT, seam_top, SEAM_SLIT],
+                 "group": "aperture", "material": "qi_glow"}]
+    # 比孔沿最低的褶间沟还低一点，不顶出孔沿；至少比孔底高 LINER_THICK，免得内衬被压成 0 厚
+    liner_top = max(_dome_base_height(0.0) - FOLD_AMPLITUDE[variant], APERTURE_FLOOR_Y + LINER_THICK)
     inner = a - LINER_THICK
     g = "aperture"
     return [
@@ -407,8 +426,15 @@ def _hole_area(variant: str) -> float:
 
 
 def _stair_steps_ok(levels: List[float]) -> bool:
-    """自上而下的阶梯高度，相邻两级是否恰好差 1px（门禁判据，self_test 里注入 0.5px 阶梯验证它）。"""
-    return all(a - b == 1.0 for a, b in zip(levels, levels[1:]))
+    """相邻两级顶面是否恰好差 1px（升降都算；门禁判据，self_test 里注入 0.5px 阶梯验证它）。"""
+    return all(abs(a - b) == 1.0 for a, b in zip(levels, levels[1:]))
+
+
+def _funnel_ok(levels: List[float]) -> bool:
+    """中心（第一级）是否比脊顶低至少 FUNNEL_SINK，且从中心到脊逐级升高（门禁判据，self_test 里注入平顶验证它）。"""
+    crest = levels.index(max(levels))
+    rising = all(a < b for a, b in zip(levels[:crest], levels[1: crest + 1]))
+    return rising and max(levels) - levels[0] >= FUNNEL_SINK
 
 
 def _collar_gap_ok(gap: float) -> bool:
@@ -443,16 +469,18 @@ def self_test():
     print(f"  [OK] 三态各 {FOLDS} 道放射褶脊；注入 8 道褶能识别为不符")
 
     areas = [_hole_area(v) for v in VARIANTS]
-    assert areas == [16.0, 4.0, 0.0], f"三态开口面积应为 4×4=16 / 2×2=4 / 0，实际 {areas}"
+    assert areas == [16.0, 4.0, 1.0], f"三态开口面积应为 4×4=16 / 2×2=4 / 缝心 1×1=1，实际 {areas}"
     extents = [max(c["to"][0] for c in part_04_collar(v)) for v in VARIANTS]
     heights = [max(c["to"][1] for c in part_04_collar(v)) for v in VARIANTS]
     assert extents == sorted(set(extents)), f"肉箍外缘应随 open→half→closed 严格加大，实际 {extents}"
     assert heights == sorted(set(heights)), f"肉箍高度应随 open→half→closed 严格加大，实际 {heights}"
     assert all(e <= COLLAR_OUTER[v] for e, v in zip(extents, VARIANTS)), "肉箍不应超出各态外缘上限"
-    print(f"  [OK] 开口面积 {areas}（4×4 / 2×2 / 闭合），肉箍外缘 {extents}、高 {heights} 严格递增")
+    print(f"  [OK] 开口面积 {areas}（4×4 / 2×2 / 缝心 1×1），肉箍外缘 {extents}、高 {heights} 严格递增")
 
     levels = [height for _, height in DOME_PROFILE]
     assert _stair_steps_ok(levels), f"穹顶顶面阶梯应每级恰好 1px，实际 {levels}"
+    assert _funnel_ok(levels), f"口应是漏斗：中心比脊低 ≥{FUNNEL_SINK}px 且逐级升到脊，实际 {levels}"
+    assert _funnel_ok([10.0, 10.0, 10.0, 9.0]) is False, "漏斗门禁失效: 注入平顶没被识别出来"
     assert _stair_steps_ok([4.0, 3.5, 3.0]) is False, "阶梯门禁失效: 注入 0.5px 一级的阶梯没被识别出来"
     rim = _rim_cells()
     body = {(x, z) for x, z, _, _ in _dome_columns()}
