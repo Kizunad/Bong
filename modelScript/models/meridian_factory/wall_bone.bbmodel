@@ -95,7 +95,7 @@
         }
       },
       "type": "cube",
-      "uuid": "654f82c1-6711-4307-9877-567adeea3039"
+      "uuid": "4c35179a-d908-4ec0-b98b-ab54ba866ce1"
     },
     {
       "name": "pillar_nw",
@@ -176,7 +176,7 @@
         }
       },
       "type": "cube",
-      "uuid": "9a67a2b5-bb75-4d7a-a38f-3285fd8d2feb"
+      "uuid": "8a6506c6-4ede-4754-aaab-3e1277732987"
     },
     {
       "name": "pillar_ne",
@@ -257,7 +257,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6a39f440-f0fa-477c-bad7-25cd65189633"
+      "uuid": "fc6d4377-8ddd-4c47-bf90-88ae3393ab1d"
     },
     {
       "name": "pillar_sw",
@@ -338,7 +338,7 @@
         }
       },
       "type": "cube",
-      "uuid": "33d20da2-ca96-4340-a31d-7bdaed3a8188"
+      "uuid": "43e2c7ae-891f-4529-9cfc-b37f08065e0b"
     },
     {
       "name": "pillar_se",
@@ -419,7 +419,7 @@
         }
       },
       "type": "cube",
-      "uuid": "65092f3d-8221-4174-9e0a-f53a780dab45"
+      "uuid": "145618c6-3851-4654-a1ea-1c0d5c02b182"
     },
     {
       "name": "top_bone_plate",
@@ -500,7 +500,7 @@
         }
       },
       "type": "cube",
-      "uuid": "950601c1-a6f4-4a73-b27d-f43c323836f4"
+      "uuid": "53b22c14-ead4-4b30-b938-7c1ffb186f2b"
     },
     {
       "name": "top_spot_1",
@@ -581,7 +581,7 @@
         }
       },
       "type": "cube",
-      "uuid": "fb35ee02-17fd-4569-9479-9c7fb25340b3"
+      "uuid": "364320f0-6491-4842-adb0-e896e962779d"
     },
     {
       "name": "top_spot_2",
@@ -662,7 +662,7 @@
         }
       },
       "type": "cube",
-      "uuid": "13b0b971-8967-4686-adf7-53bcab04a6ef"
+      "uuid": "bc4bd078-90b7-4733-a0a8-67532a9c22e9"
     },
     {
       "name": "wall_n_beam_bot",
@@ -743,7 +743,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f7bae74b-bddd-49df-83f0-267a5fe85c5c"
+      "uuid": "89d80a58-3869-4b38-b47e-33e81920437b"
     },
     {
       "name": "wall_n_beam_top",
@@ -824,7 +824,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c62cf3c6-8b64-41ec-b989-32f3ec34e15d"
+      "uuid": "e22a774f-83bc-4154-923f-7f8f48ee9898"
     },
     {
       "name": "wall_n_beam_mid_l",
@@ -905,7 +905,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cb344406-98a8-43a5-a947-6b9ba64617b6"
+      "uuid": "63d7996c-8586-48ad-8ae5-c75d63a83695"
     },
     {
       "name": "wall_n_beam_mid_r",
@@ -986,7 +986,7 @@
         }
       },
       "type": "cube",
-      "uuid": "12da4985-4245-4ac5-a5ab-73aa47a6f955"
+      "uuid": "bd7310a2-20d0-4a29-8edd-2c2b311134f4"
     },
     {
       "name": "wall_n_beam_knot",
@@ -1067,7 +1067,7 @@
         }
       },
       "type": "cube",
-      "uuid": "e2f15308-66c8-469a-8b50-f5f084d9deff"
+      "uuid": "dbc8e9e3-b4ad-4518-a425-4982cb53ed03"
     },
     {
       "name": "wall_n_beam_v_up",
@@ -1148,7 +1148,7 @@
         }
       },
       "type": "cube",
-      "uuid": "f594df4d-6a6c-453e-a3fe-aa4fb1de482a"
+      "uuid": "693fb64b-ce97-4626-b6ce-7adde6266e23"
     },
     {
       "name": "wall_n_beam_v_dn",
@@ -1229,7 +1229,7 @@
         }
       },
       "type": "cube",
-      "uuid": "15a02b7a-cdc4-4d05-b472-40efa30cf08d"
+      "uuid": "5ec6ef2d-7baf-48f1-825f-db5ca962186c"
     },
     {
       "name": "wall_n_cor_lu_1",
@@ -1310,7 +1310,7 @@
         }
       },
       "type": "cube",
-      "uuid": "e3519122-1686-4a92-aefc-b239e0e69956"
+      "uuid": "e738d25c-66cf-4053-b75e-a57b3e1df2cc"
     },
     {
       "name": "wall_n_cor_lu_2",
@@ -1391,7 +1391,7 @@
         }
       },
       "type": "cube",
-      "uuid": "4b54833a-993d-40dc-abb6-3e781ea0a31a"
+      "uuid": "8731fdaa-0b43-48f9-8fc1-ab38a394ccbb"
     },
     {
       "name": "wall_n_cor_ru_1",
@@ -1472,7 +1472,7 @@
         }
       },
       "type": "cube",
-      "uuid": "ac9750b9-4ca6-434c-89e1-571887776976"
+      "uuid": "cb288119-1922-4b5a-af43-9b674d88503a"
     },
     {
       "name": "wall_n_cor_ru_2",
@@ -1553,7 +1553,7 @@
         }
       },
       "type": "cube",
-      "uuid": "12dc9cfa-048a-4df0-872b-74fb50b140cf"
+      "uuid": "0adaef1b-12d3-491a-9299-3550014a46e3"
     },
     {
       "name": "wall_n_cor_ld_1",
@@ -1634,7 +1634,7 @@
         }
       },
       "type": "cube",
-      "uuid": "db4fed26-9f31-4bde-b30b-a642ef7a702f"
+      "uuid": "8c2c2614-11d9-428e-935b-eab01da1f8ac"
     },
     {
       "name": "wall_n_cor_ld_2",
@@ -1715,7 +1715,7 @@
         }
       },
       "type": "cube",
-      "uuid": "1fd85fce-8738-4ae6-96c4-6cc22d70e29f"
+      "uuid": "4639ffa4-5b31-45db-a35e-c78d7b3aa7ad"
     },
     {
       "name": "wall_n_cor_rd_1",
@@ -1796,7 +1796,7 @@
         }
       },
       "type": "cube",
-      "uuid": "4731480e-a633-4126-8bac-4ba5843cb8d2"
+      "uuid": "8bc3b6e0-d760-481b-8a6e-211ad08cb425"
     },
     {
       "name": "wall_n_cor_rd_2",
@@ -1877,7 +1877,7 @@
         }
       },
       "type": "cube",
-      "uuid": "00f2ed8d-a7ac-45c4-94d2-3ec17a0c290e"
+      "uuid": "372f816c-7bb0-4333-b8bc-edf6617188f2"
     },
     {
       "name": "recess_vein_wall_n_0",
@@ -1958,7 +1958,7 @@
         }
       },
       "type": "cube",
-      "uuid": "0fcb1f5c-87a6-4b16-a2b9-af6ac2bb7e6d"
+      "uuid": "58baf618-511d-49db-acdf-e020047054ae"
     },
     {
       "name": "recess_vein_wall_n_1",
@@ -2039,7 +2039,7 @@
         }
       },
       "type": "cube",
-      "uuid": "489c5a22-099b-42f5-a972-c5597c220fa7"
+      "uuid": "7ba2497d-116f-4031-a60d-04139508e6cd"
     },
     {
       "name": "recess_vein_wall_n_2",
@@ -2120,7 +2120,7 @@
         }
       },
       "type": "cube",
-      "uuid": "1a1904a3-5709-4cc3-a420-9fcb2c47f376"
+      "uuid": "b9beb77c-42d3-400e-9e29-bde63b53b144"
     },
     {
       "name": "recess_vein_wall_n_3",
@@ -2201,7 +2201,7 @@
         }
       },
       "type": "cube",
-      "uuid": "e48f5b1d-a724-45ce-b1ee-57ed1f0d5b39"
+      "uuid": "606681ad-2747-4bb5-bd8d-380a9b903975"
     },
     {
       "name": "wall_s_beam_bot",
@@ -2282,7 +2282,7 @@
         }
       },
       "type": "cube",
-      "uuid": "bb7019a9-ced7-42b6-9bbd-1b47c772d40b"
+      "uuid": "ae0bfae0-3d88-4eda-8639-5837e8f8eb0a"
     },
     {
       "name": "wall_s_beam_top",
@@ -2363,7 +2363,7 @@
         }
       },
       "type": "cube",
-      "uuid": "00bc5065-e4ae-4a99-8570-93b54e26786c"
+      "uuid": "161be740-475d-44b7-bed8-64dea73cd582"
     },
     {
       "name": "wall_s_beam_mid_l",
@@ -2444,7 +2444,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3eac1d3d-c669-4184-bfe9-75cf5b4cae2c"
+      "uuid": "22acc660-8338-4cba-9d1d-e8408ffa75fc"
     },
     {
       "name": "wall_s_beam_mid_r",
@@ -2525,7 +2525,7 @@
         }
       },
       "type": "cube",
-      "uuid": "aa8a2e46-57be-4487-b563-de48761f151f"
+      "uuid": "18d51c94-8cb1-49f2-889f-336111ce3f2a"
     },
     {
       "name": "wall_s_beam_knot",
@@ -2606,7 +2606,7 @@
         }
       },
       "type": "cube",
-      "uuid": "0466be97-f0fb-45bf-a77b-12c0e74c2d19"
+      "uuid": "7d0d2243-1d5f-40f9-9d18-7b2e8b8e4a6a"
     },
     {
       "name": "wall_s_beam_v_up",
@@ -2687,7 +2687,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cd1775fd-75d6-4423-a647-1ad48ba33a69"
+      "uuid": "e73865a1-5d1f-4e9c-9bdb-8c398a07b7b8"
     },
     {
       "name": "wall_s_beam_v_dn",
@@ -2768,7 +2768,7 @@
         }
       },
       "type": "cube",
-      "uuid": "2c22cb69-9c1b-4283-a456-2de9a418e10b"
+      "uuid": "84409aca-1623-484d-a895-056b8ba6fb79"
     },
     {
       "name": "wall_s_cor_lu_1",
@@ -2849,7 +2849,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3312cd2f-6961-4805-ba16-81e4f0d5296a"
+      "uuid": "c08e2fa7-ec03-4949-b3c7-07025047fdd2"
     },
     {
       "name": "wall_s_cor_lu_2",
@@ -2930,7 +2930,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3e01dcbb-9832-4d11-8285-8f0267e92c60"
+      "uuid": "bc796fb1-6217-4ea5-91dc-ec5e0bf74146"
     },
     {
       "name": "wall_s_cor_ru_1",
@@ -3011,7 +3011,7 @@
         }
       },
       "type": "cube",
-      "uuid": "694d4f9a-e90b-4f24-aa94-c299b07e0bae"
+      "uuid": "189030c9-10e1-4446-ac78-d688025b395b"
     },
     {
       "name": "wall_s_cor_ru_2",
@@ -3092,7 +3092,7 @@
         }
       },
       "type": "cube",
-      "uuid": "dc4eda2a-3299-40c2-ac8c-64f7b2800a93"
+      "uuid": "c7552bc8-a305-4d86-94c1-34912e8d4640"
     },
     {
       "name": "wall_s_cor_ld_1",
@@ -3173,7 +3173,7 @@
         }
       },
       "type": "cube",
-      "uuid": "0b1d7275-b7a6-49bd-a772-be9a51e30edd"
+      "uuid": "85865846-6614-4845-84af-e3487eca1863"
     },
     {
       "name": "wall_s_cor_ld_2",
@@ -3254,7 +3254,7 @@
         }
       },
       "type": "cube",
-      "uuid": "9f851ce3-fb6d-4f61-a250-bf42204f8f13"
+      "uuid": "bc19a278-d115-4493-b340-54616200feb1"
     },
     {
       "name": "wall_s_cor_rd_1",
@@ -3335,7 +3335,7 @@
         }
       },
       "type": "cube",
-      "uuid": "032049a2-b42d-4c06-bb67-f088e715f49c"
+      "uuid": "211c6bfb-308d-4dae-9255-a9e9c90bd576"
     },
     {
       "name": "wall_s_cor_rd_2",
@@ -3416,7 +3416,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cc375147-2c46-4828-bb74-12a404b5cf97"
+      "uuid": "8c0b4458-8309-4fbd-8d61-0c807f6a71e9"
     },
     {
       "name": "recess_vein_wall_s_0",
@@ -3497,7 +3497,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c297be4f-9ad5-491a-9f67-fb2b8adb0ca2"
+      "uuid": "a2904d98-af22-4ceb-afa2-1043a6abaaa2"
     },
     {
       "name": "recess_vein_wall_s_1",
@@ -3578,7 +3578,7 @@
         }
       },
       "type": "cube",
-      "uuid": "54d50662-d2bf-4f57-9a0d-6420414ec79e"
+      "uuid": "2e0cdac9-de13-4700-96b8-6f6e503f950a"
     },
     {
       "name": "recess_vein_wall_s_2",
@@ -3659,7 +3659,7 @@
         }
       },
       "type": "cube",
-      "uuid": "fc1f897b-9add-4513-98d6-16612cc04fe0"
+      "uuid": "e2d0196e-b8b6-4d33-a4c0-896723115605"
     },
     {
       "name": "recess_vein_wall_s_3",
@@ -3740,7 +3740,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6405fa32-a97f-49a3-bafc-19d5a1e15ac6"
+      "uuid": "ff0f624f-0ee9-4cb9-8f38-d3bd28f36506"
     },
     {
       "name": "wall_w_beam_bot",
@@ -3821,7 +3821,7 @@
         }
       },
       "type": "cube",
-      "uuid": "345f9ce2-c86b-4382-93a7-22e061766c4d"
+      "uuid": "5b3f147f-db75-4c3b-b3ec-79350c8b610a"
     },
     {
       "name": "wall_w_beam_top",
@@ -3902,7 +3902,7 @@
         }
       },
       "type": "cube",
-      "uuid": "cee25c81-f22b-4173-bee2-c5bb725b3fa1"
+      "uuid": "cf54f6d1-6f83-4336-8be7-c5a0d78f1add"
     },
     {
       "name": "wall_w_beam_mid_l",
@@ -3983,7 +3983,7 @@
         }
       },
       "type": "cube",
-      "uuid": "b8947221-e0a0-4da6-aa7b-26942680b9fb"
+      "uuid": "eac03d7b-203b-4f9a-ac3b-cd1df5b63eef"
     },
     {
       "name": "wall_w_beam_mid_r",
@@ -4064,7 +4064,7 @@
         }
       },
       "type": "cube",
-      "uuid": "66f53e42-9012-43e1-a4f9-15fed85bb152"
+      "uuid": "331c4c34-d3b6-42d9-b526-905b233e0189"
     },
     {
       "name": "wall_w_beam_knot",
@@ -4145,7 +4145,7 @@
         }
       },
       "type": "cube",
-      "uuid": "edc71bd0-bc58-40c3-816d-417dddeecb7e"
+      "uuid": "120ffe0a-b07a-4a45-a33c-b77918644145"
     },
     {
       "name": "wall_w_beam_v_up",
@@ -4226,7 +4226,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c73b7725-1877-4cb8-abd4-a9024ef8531e"
+      "uuid": "44f9ac9a-7747-42cb-b8f5-5c329de7882b"
     },
     {
       "name": "wall_w_beam_v_dn",
@@ -4307,7 +4307,7 @@
         }
       },
       "type": "cube",
-      "uuid": "41933000-a8d4-46e5-bf32-65a1644f43eb"
+      "uuid": "ce9b08ae-7761-4bf1-9a19-55cf23b16c32"
     },
     {
       "name": "wall_w_cor_lu_1",
@@ -4388,7 +4388,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a5f0afc2-ad58-43f8-9e75-d790dd5d6b2b"
+      "uuid": "55961f4b-78a6-41c0-865f-ef828c7fb828"
     },
     {
       "name": "wall_w_cor_lu_2",
@@ -4469,7 +4469,7 @@
         }
       },
       "type": "cube",
-      "uuid": "06a30363-c53b-470f-9df7-c5e880d45d0a"
+      "uuid": "6818a752-5beb-4791-b294-7e5406c11747"
     },
     {
       "name": "wall_w_cor_ru_1",
@@ -4550,7 +4550,7 @@
         }
       },
       "type": "cube",
-      "uuid": "2466fe88-1e01-4818-b512-4203ec19b08a"
+      "uuid": "2d8ec9c7-350c-4832-b36c-7e7130de3a6d"
     },
     {
       "name": "wall_w_cor_ru_2",
@@ -4631,7 +4631,7 @@
         }
       },
       "type": "cube",
-      "uuid": "15591522-7770-40d2-95c5-53c23f6db411"
+      "uuid": "555782ae-041d-49ed-bfae-f4d1ef63204a"
     },
     {
       "name": "wall_w_cor_ld_1",
@@ -4712,7 +4712,7 @@
         }
       },
       "type": "cube",
-      "uuid": "eab88aed-d308-4fa7-96d2-94a254e88f20"
+      "uuid": "17f22b21-a181-4116-bf46-0a3611d1a84b"
     },
     {
       "name": "wall_w_cor_ld_2",
@@ -4793,7 +4793,7 @@
         }
       },
       "type": "cube",
-      "uuid": "8bf88cf8-a6c0-4792-9122-879f47e91456"
+      "uuid": "5026bfab-bba9-4e53-80fc-c4171f315d00"
     },
     {
       "name": "wall_w_cor_rd_1",
@@ -4874,7 +4874,7 @@
         }
       },
       "type": "cube",
-      "uuid": "6cd683e5-54c3-438b-aa50-45727b3fcc36"
+      "uuid": "1f8aa640-e9c5-4504-81d0-53ae7c9592f6"
     },
     {
       "name": "wall_w_cor_rd_2",
@@ -4955,7 +4955,7 @@
         }
       },
       "type": "cube",
-      "uuid": "db05dd5e-99cb-42d3-ae53-ac92e27df32e"
+      "uuid": "d6ff0534-1854-4178-852e-0b9d3f7aa7b1"
     },
     {
       "name": "recess_vein_wall_w_0",
@@ -5036,7 +5036,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a74695dd-2233-4459-aa2c-5790535ad2ba"
+      "uuid": "fdb7144e-1f8d-4ba5-b0ba-f0ba51daa726"
     },
     {
       "name": "recess_vein_wall_w_1",
@@ -5117,7 +5117,7 @@
         }
       },
       "type": "cube",
-      "uuid": "d3dde160-81b8-4214-b73e-9213e5525540"
+      "uuid": "7f58a64a-5b28-4890-9e23-a8ab483f9672"
     },
     {
       "name": "recess_vein_wall_w_2",
@@ -5198,7 +5198,7 @@
         }
       },
       "type": "cube",
-      "uuid": "7da21dd2-47f0-4821-9718-78e4f7f784d6"
+      "uuid": "725bc75a-0e0c-490b-b8f3-429bc5811f3f"
     },
     {
       "name": "recess_vein_wall_w_3",
@@ -5279,7 +5279,7 @@
         }
       },
       "type": "cube",
-      "uuid": "e802f045-3c42-4460-8897-20572cae4190"
+      "uuid": "ba391ff1-3b91-4e6c-9be2-fce2aa7a7bbe"
     },
     {
       "name": "wall_e_beam_bot",
@@ -5360,7 +5360,7 @@
         }
       },
       "type": "cube",
-      "uuid": "92394292-4d4d-4263-a026-ff418d6992fa"
+      "uuid": "d86d5dfc-5418-474d-a4fd-ed212c7bce1c"
     },
     {
       "name": "wall_e_beam_top",
@@ -5441,7 +5441,7 @@
         }
       },
       "type": "cube",
-      "uuid": "8f2328d3-ad52-4e16-b78c-9d170567eb42"
+      "uuid": "7e0fd88b-73d1-4bd4-b941-82c0fb5cf1f5"
     },
     {
       "name": "wall_e_beam_mid_l",
@@ -5522,7 +5522,7 @@
         }
       },
       "type": "cube",
-      "uuid": "5624823d-ecc9-439a-ad5f-44caa199f9c0"
+      "uuid": "277c398b-e67d-40c5-8253-95315f555116"
     },
     {
       "name": "wall_e_beam_mid_r",
@@ -5603,7 +5603,7 @@
         }
       },
       "type": "cube",
-      "uuid": "09e01745-6c25-4527-81ad-0f648b0bc206"
+      "uuid": "ebd2a008-2d62-4513-abf8-7ba705744cec"
     },
     {
       "name": "wall_e_beam_knot",
@@ -5684,7 +5684,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c38ce103-73d0-40d5-8b1d-a9867688a061"
+      "uuid": "e1c1525d-7b15-40fb-9319-6e92af4210a0"
     },
     {
       "name": "wall_e_beam_v_up",
@@ -5765,7 +5765,7 @@
         }
       },
       "type": "cube",
-      "uuid": "2b17f36d-043c-4a32-aeee-e0b0887d90b3"
+      "uuid": "780d80f8-0030-476c-b23a-511f666be429"
     },
     {
       "name": "wall_e_beam_v_dn",
@@ -5846,7 +5846,7 @@
         }
       },
       "type": "cube",
-      "uuid": "a54252bd-03f9-4472-b69a-3d3e1ef9eb9c"
+      "uuid": "2042745d-4608-4e3a-ae32-8266604c0dea"
     },
     {
       "name": "wall_e_cor_lu_1",
@@ -5927,7 +5927,7 @@
         }
       },
       "type": "cube",
-      "uuid": "57d654a8-b4b4-4261-ab85-e2ba716d6241"
+      "uuid": "d8bce68e-6d32-4ac1-98c0-855450c7f0a2"
     },
     {
       "name": "wall_e_cor_lu_2",
@@ -6008,7 +6008,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c1527a84-09d3-490b-b014-d63a3f2aa3e6"
+      "uuid": "088ad265-d642-4049-841d-02d44395cff6"
     },
     {
       "name": "wall_e_cor_ru_1",
@@ -6089,7 +6089,7 @@
         }
       },
       "type": "cube",
-      "uuid": "d14775fe-5122-49cb-b302-deb2fb5c5468"
+      "uuid": "17216ae1-4fc7-45be-a1a5-11c35d6dba22"
     },
     {
       "name": "wall_e_cor_ru_2",
@@ -6170,7 +6170,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3053ebad-9381-4631-8e3b-0aaf102fce9a"
+      "uuid": "0a61b3fb-b7a7-4945-98e9-77742f33700e"
     },
     {
       "name": "wall_e_cor_ld_1",
@@ -6251,7 +6251,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3f07295f-011b-4ce1-9104-4d58e30bbadc"
+      "uuid": "805db74e-f487-490f-9443-4a6e23597f39"
     },
     {
       "name": "wall_e_cor_ld_2",
@@ -6332,7 +6332,7 @@
         }
       },
       "type": "cube",
-      "uuid": "ef9cc247-4bed-4fb3-865c-cc16c6ac19eb"
+      "uuid": "23dd4e50-ee06-4cad-a17e-2256efb70836"
     },
     {
       "name": "wall_e_cor_rd_1",
@@ -6413,7 +6413,7 @@
         }
       },
       "type": "cube",
-      "uuid": "991e11ff-7d07-49e0-afd8-a5ea310cc783"
+      "uuid": "8828cc4a-325b-4c64-ac11-f03469ff67a3"
     },
     {
       "name": "wall_e_cor_rd_2",
@@ -6494,7 +6494,7 @@
         }
       },
       "type": "cube",
-      "uuid": "25558956-bea3-4404-be46-f47f8c70444d"
+      "uuid": "1b2cde04-cf42-45b8-8c55-fd6c9efa9d4e"
     },
     {
       "name": "recess_vein_wall_e_0",
@@ -6575,7 +6575,7 @@
         }
       },
       "type": "cube",
-      "uuid": "3934a62f-7ab4-442e-834f-3265229e8efd"
+      "uuid": "8888d680-d6a8-437d-89a3-62e58334d92c"
     },
     {
       "name": "recess_vein_wall_e_1",
@@ -6656,7 +6656,7 @@
         }
       },
       "type": "cube",
-      "uuid": "c6711c3a-4584-4fa9-b436-3de672547c11"
+      "uuid": "aee7265f-fef5-496b-8dcf-5d5170fed89d"
     },
     {
       "name": "recess_vein_wall_e_2",
@@ -6737,7 +6737,7 @@
         }
       },
       "type": "cube",
-      "uuid": "41474948-3dd5-4239-978a-229f2a27fc04"
+      "uuid": "3481be0f-6dc2-4126-a0ad-f1c3e4aa3578"
     },
     {
       "name": "recess_vein_wall_e_3",
@@ -6818,7 +6818,7 @@
         }
       },
       "type": "cube",
-      "uuid": "740210e1-4021-4d10-ba7e-91180348d392"
+      "uuid": "9d1b0cf7-8e93-4298-84f2-b40f53a57365"
     }
   ],
   "outliner": [
@@ -6830,10 +6830,10 @@
         0.0
       ],
       "color": 0,
-      "uuid": "610a7d00-bb8e-4c4a-a1c7-aae115c5c4c1",
+      "uuid": "cc830268-f7e8-43c4-a8e5-c653281d36ae",
       "isOpen": true,
       "children": [
-        "654f82c1-6711-4307-9877-567adeea3039"
+        "4c35179a-d908-4ec0-b98b-ab54ba866ce1"
       ]
     },
     {
@@ -6844,73 +6844,73 @@
         0.0
       ],
       "color": 0,
-      "uuid": "2b5e7e68-1347-4cf3-ae04-4c7fa25795b3",
+      "uuid": "a9e442e9-5bca-4d63-818d-ca6327ef5d1e",
       "isOpen": true,
       "children": [
-        "9a67a2b5-bb75-4d7a-a38f-3285fd8d2feb",
-        "6a39f440-f0fa-477c-bad7-25cd65189633",
-        "33d20da2-ca96-4340-a31d-7bdaed3a8188",
-        "65092f3d-8221-4174-9e0a-f53a780dab45",
-        "f7bae74b-bddd-49df-83f0-267a5fe85c5c",
-        "c62cf3c6-8b64-41ec-b989-32f3ec34e15d",
-        "cb344406-98a8-43a5-a947-6b9ba64617b6",
-        "12da4985-4245-4ac5-a5ab-73aa47a6f955",
-        "e2f15308-66c8-469a-8b50-f5f084d9deff",
-        "f594df4d-6a6c-453e-a3fe-aa4fb1de482a",
-        "15a02b7a-cdc4-4d05-b472-40efa30cf08d",
-        "e3519122-1686-4a92-aefc-b239e0e69956",
-        "4b54833a-993d-40dc-abb6-3e781ea0a31a",
-        "ac9750b9-4ca6-434c-89e1-571887776976",
-        "12dc9cfa-048a-4df0-872b-74fb50b140cf",
-        "db4fed26-9f31-4bde-b30b-a642ef7a702f",
-        "1fd85fce-8738-4ae6-96c4-6cc22d70e29f",
-        "4731480e-a633-4126-8bac-4ba5843cb8d2",
-        "00f2ed8d-a7ac-45c4-94d2-3ec17a0c290e",
-        "bb7019a9-ced7-42b6-9bbd-1b47c772d40b",
-        "00bc5065-e4ae-4a99-8570-93b54e26786c",
-        "3eac1d3d-c669-4184-bfe9-75cf5b4cae2c",
-        "aa8a2e46-57be-4487-b563-de48761f151f",
-        "0466be97-f0fb-45bf-a77b-12c0e74c2d19",
-        "cd1775fd-75d6-4423-a647-1ad48ba33a69",
-        "2c22cb69-9c1b-4283-a456-2de9a418e10b",
-        "3312cd2f-6961-4805-ba16-81e4f0d5296a",
-        "3e01dcbb-9832-4d11-8285-8f0267e92c60",
-        "694d4f9a-e90b-4f24-aa94-c299b07e0bae",
-        "dc4eda2a-3299-40c2-ac8c-64f7b2800a93",
-        "0b1d7275-b7a6-49bd-a772-be9a51e30edd",
-        "9f851ce3-fb6d-4f61-a250-bf42204f8f13",
-        "032049a2-b42d-4c06-bb67-f088e715f49c",
-        "cc375147-2c46-4828-bb74-12a404b5cf97",
-        "345f9ce2-c86b-4382-93a7-22e061766c4d",
-        "cee25c81-f22b-4173-bee2-c5bb725b3fa1",
-        "b8947221-e0a0-4da6-aa7b-26942680b9fb",
-        "66f53e42-9012-43e1-a4f9-15fed85bb152",
-        "edc71bd0-bc58-40c3-816d-417dddeecb7e",
-        "c73b7725-1877-4cb8-abd4-a9024ef8531e",
-        "41933000-a8d4-46e5-bf32-65a1644f43eb",
-        "a5f0afc2-ad58-43f8-9e75-d790dd5d6b2b",
-        "06a30363-c53b-470f-9df7-c5e880d45d0a",
-        "2466fe88-1e01-4818-b512-4203ec19b08a",
-        "15591522-7770-40d2-95c5-53c23f6db411",
-        "eab88aed-d308-4fa7-96d2-94a254e88f20",
-        "8bf88cf8-a6c0-4792-9122-879f47e91456",
-        "6cd683e5-54c3-438b-aa50-45727b3fcc36",
-        "db05dd5e-99cb-42d3-ae53-ac92e27df32e",
-        "92394292-4d4d-4263-a026-ff418d6992fa",
-        "8f2328d3-ad52-4e16-b78c-9d170567eb42",
-        "5624823d-ecc9-439a-ad5f-44caa199f9c0",
-        "09e01745-6c25-4527-81ad-0f648b0bc206",
-        "c38ce103-73d0-40d5-8b1d-a9867688a061",
-        "2b17f36d-043c-4a32-aeee-e0b0887d90b3",
-        "a54252bd-03f9-4472-b69a-3d3e1ef9eb9c",
-        "57d654a8-b4b4-4261-ab85-e2ba716d6241",
-        "c1527a84-09d3-490b-b014-d63a3f2aa3e6",
-        "d14775fe-5122-49cb-b302-deb2fb5c5468",
-        "3053ebad-9381-4631-8e3b-0aaf102fce9a",
-        "3f07295f-011b-4ce1-9104-4d58e30bbadc",
-        "ef9cc247-4bed-4fb3-865c-cc16c6ac19eb",
-        "991e11ff-7d07-49e0-afd8-a5ea310cc783",
-        "25558956-bea3-4404-be46-f47f8c70444d"
+        "8a6506c6-4ede-4754-aaab-3e1277732987",
+        "fc6d4377-8ddd-4c47-bf90-88ae3393ab1d",
+        "43e2c7ae-891f-4529-9cfc-b37f08065e0b",
+        "145618c6-3851-4654-a1ea-1c0d5c02b182",
+        "89d80a58-3869-4b38-b47e-33e81920437b",
+        "e22a774f-83bc-4154-923f-7f8f48ee9898",
+        "63d7996c-8586-48ad-8ae5-c75d63a83695",
+        "bd7310a2-20d0-4a29-8edd-2c2b311134f4",
+        "dbc8e9e3-b4ad-4518-a425-4982cb53ed03",
+        "693fb64b-ce97-4626-b6ce-7adde6266e23",
+        "5ec6ef2d-7baf-48f1-825f-db5ca962186c",
+        "e738d25c-66cf-4053-b75e-a57b3e1df2cc",
+        "8731fdaa-0b43-48f9-8fc1-ab38a394ccbb",
+        "cb288119-1922-4b5a-af43-9b674d88503a",
+        "0adaef1b-12d3-491a-9299-3550014a46e3",
+        "8c2c2614-11d9-428e-935b-eab01da1f8ac",
+        "4639ffa4-5b31-45db-a35e-c78d7b3aa7ad",
+        "8bc3b6e0-d760-481b-8a6e-211ad08cb425",
+        "372f816c-7bb0-4333-b8bc-edf6617188f2",
+        "ae0bfae0-3d88-4eda-8639-5837e8f8eb0a",
+        "161be740-475d-44b7-bed8-64dea73cd582",
+        "22acc660-8338-4cba-9d1d-e8408ffa75fc",
+        "18d51c94-8cb1-49f2-889f-336111ce3f2a",
+        "7d0d2243-1d5f-40f9-9d18-7b2e8b8e4a6a",
+        "e73865a1-5d1f-4e9c-9bdb-8c398a07b7b8",
+        "84409aca-1623-484d-a895-056b8ba6fb79",
+        "c08e2fa7-ec03-4949-b3c7-07025047fdd2",
+        "bc796fb1-6217-4ea5-91dc-ec5e0bf74146",
+        "189030c9-10e1-4446-ac78-d688025b395b",
+        "c7552bc8-a305-4d86-94c1-34912e8d4640",
+        "85865846-6614-4845-84af-e3487eca1863",
+        "bc19a278-d115-4493-b340-54616200feb1",
+        "211c6bfb-308d-4dae-9255-a9e9c90bd576",
+        "8c0b4458-8309-4fbd-8d61-0c807f6a71e9",
+        "5b3f147f-db75-4c3b-b3ec-79350c8b610a",
+        "cf54f6d1-6f83-4336-8be7-c5a0d78f1add",
+        "eac03d7b-203b-4f9a-ac3b-cd1df5b63eef",
+        "331c4c34-d3b6-42d9-b526-905b233e0189",
+        "120ffe0a-b07a-4a45-a33c-b77918644145",
+        "44f9ac9a-7747-42cb-b8f5-5c329de7882b",
+        "ce9b08ae-7761-4bf1-9a19-55cf23b16c32",
+        "55961f4b-78a6-41c0-865f-ef828c7fb828",
+        "6818a752-5beb-4791-b294-7e5406c11747",
+        "2d8ec9c7-350c-4832-b36c-7e7130de3a6d",
+        "555782ae-041d-49ed-bfae-f4d1ef63204a",
+        "17f22b21-a181-4116-bf46-0a3611d1a84b",
+        "5026bfab-bba9-4e53-80fc-c4171f315d00",
+        "1f8aa640-e9c5-4504-81d0-53ae7c9592f6",
+        "d6ff0534-1854-4178-852e-0b9d3f7aa7b1",
+        "d86d5dfc-5418-474d-a4fd-ed212c7bce1c",
+        "7e0fd88b-73d1-4bd4-b941-82c0fb5cf1f5",
+        "277c398b-e67d-40c5-8253-95315f555116",
+        "ebd2a008-2d62-4513-abf8-7ba705744cec",
+        "e1c1525d-7b15-40fb-9319-6e92af4210a0",
+        "780d80f8-0030-476c-b23a-511f666be429",
+        "2042745d-4608-4e3a-ae32-8266604c0dea",
+        "d8bce68e-6d32-4ac1-98c0-855450c7f0a2",
+        "088ad265-d642-4049-841d-02d44395cff6",
+        "17216ae1-4fc7-45be-a1a5-11c35d6dba22",
+        "0a61b3fb-b7a7-4945-98e9-77742f33700e",
+        "805db74e-f487-490f-9443-4a6e23597f39",
+        "23dd4e50-ee06-4cad-a17e-2256efb70836",
+        "8828cc4a-325b-4c64-ac11-f03469ff67a3",
+        "1b2cde04-cf42-45b8-8c55-fd6c9efa9d4e"
       ]
     },
     {
@@ -6921,12 +6921,12 @@
         0.0
       ],
       "color": 0,
-      "uuid": "7c84ec07-42c7-423c-ab64-b991391dc96c",
+      "uuid": "9b64e26f-5870-4527-a299-6776dad011cf",
       "isOpen": true,
       "children": [
-        "950601c1-a6f4-4a73-b27d-f43c323836f4",
-        "fb35ee02-17fd-4569-9479-9c7fb25340b3",
-        "13b0b971-8967-4686-adf7-53bcab04a6ef"
+        "53b22c14-ead4-4b30-b938-7c1ffb186f2b",
+        "364320f0-6491-4842-adb0-e896e962779d",
+        "bc4bd078-90b7-4733-a0a8-67532a9c22e9"
       ]
     },
     {
@@ -6937,25 +6937,25 @@
         0.0
       ],
       "color": 0,
-      "uuid": "317a4d26-8da8-4ef0-bbde-353942b0eeb0",
+      "uuid": "1665aae4-772c-4eee-8056-59f3a55f15ee",
       "isOpen": true,
       "children": [
-        "0fcb1f5c-87a6-4b16-a2b9-af6ac2bb7e6d",
-        "489c5a22-099b-42f5-a972-c5597c220fa7",
-        "1a1904a3-5709-4cc3-a420-9fcb2c47f376",
-        "e48f5b1d-a724-45ce-b1ee-57ed1f0d5b39",
-        "c297be4f-9ad5-491a-9f67-fb2b8adb0ca2",
-        "54d50662-d2bf-4f57-9a0d-6420414ec79e",
-        "fc1f897b-9add-4513-98d6-16612cc04fe0",
-        "6405fa32-a97f-49a3-bafc-19d5a1e15ac6",
-        "a74695dd-2233-4459-aa2c-5790535ad2ba",
-        "d3dde160-81b8-4214-b73e-9213e5525540",
-        "7da21dd2-47f0-4821-9718-78e4f7f784d6",
-        "e802f045-3c42-4460-8897-20572cae4190",
-        "3934a62f-7ab4-442e-834f-3265229e8efd",
-        "c6711c3a-4584-4fa9-b436-3de672547c11",
-        "41474948-3dd5-4239-978a-229f2a27fc04",
-        "740210e1-4021-4d10-ba7e-91180348d392"
+        "58baf618-511d-49db-acdf-e020047054ae",
+        "7ba2497d-116f-4031-a60d-04139508e6cd",
+        "b9beb77c-42d3-400e-9e29-bde63b53b144",
+        "606681ad-2747-4bb5-bd8d-380a9b903975",
+        "a2904d98-af22-4ceb-afa2-1043a6abaaa2",
+        "2e0cdac9-de13-4700-96b8-6f6e503f950a",
+        "e2d0196e-b8b6-4d33-a4c0-896723115605",
+        "ff0f624f-0ee9-4cb9-8f38-d3bd28f36506",
+        "fdb7144e-1f8d-4ba5-b0ba-f0ba51daa726",
+        "7f58a64a-5b28-4890-9e23-a8ab483f9672",
+        "725bc75a-0e0c-490b-b8f3-429bc5811f3f",
+        "ba391ff1-3b91-4e6c-9be2-fce2aa7a7bbe",
+        "8888d680-d6a8-437d-89a3-62e58334d92c",
+        "aee7265f-fef5-496b-8dcf-5d5170fed89d",
+        "3481be0f-6dc2-4126-a0ad-f1c3e4aa3578",
+        "9d1b0cf7-8e93-4298-84f2-b40f53a57365"
       ]
     }
   ],
@@ -6970,7 +6970,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": true,
-      "uuid": "4506f18c-0639-4215-8ab4-13d111f8da1c",
+      "uuid": "dbc2de48-5f86-444b-a767-0f1370796d3a",
       "source": "data:image/png;base64,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",
       "width": 64,
       "height": 64

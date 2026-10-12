@@ -165,26 +165,26 @@ def build_corner_cubes() -> List[dict]:
             "group": "bone_rails",
             "material": "bone_main",
         })
-        # 内骨轨 (宽 2, 底在 y=4, 顶在 y=6: y in [4.0, 6.0])
+        # 内骨轨 (紧凑弧线，宽 2, 底在 y=4, 顶在 y=6: y in [4.0, 6.0]，避免内角重叠堆积悬空大块)
+        z0_in = max(z0, -7.6)
+        z1_in = min(z1, -6.4)
         cubes.append({
             "name": f"rail_in_{pfx}",
-            "from": [4.0, 4.0, z0],
-            "to":   [6.0, 6.0, z1],
+            "from": [4.0, 4.0, z0_in],
+            "to":   [6.0, 6.0, z1_in],
             "origin": bend_origin,
             "rotation": rot,
             "group": "bone_rails",
             "material": "bone_main",
         })
 
-    # 输入端立柱 (-Z 侧，截面缩小为 1.6x1.5，底在 y=4, 顶在 y=7.5)
-    cubes.append({"name": "post_in_l", "from": [-5.8, 4.0, -8.0], "to": [-4.2, 7.5, -6.5], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_in_r", "from": [ 4.2, 4.0, -8.0], "to": [ 5.8, 7.5, -6.5], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_in_l_band", "from": [-5.85, 6.3, -8.05], "to": [-4.15, 7.1, -6.45], "group": "bone_posts", "material": "bone_dark"})
-    cubes.append({"name": "post_in_r_band", "from": [ 4.15, 6.3, -8.05], "to": [ 5.85, 7.1, -6.45], "group": "bone_posts", "material": "bone_dark"})
+    # 输入端立柱 (-Z 侧外端，严格按约定为 2x2、y 4–8，底在 y=4, 顶在 y=8)
+    cubes.append({"name": "post_in_l", "from": [-6.0, 4.0, -8.0], "to": [-4.0, 8.0, -6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_in_l_band", "from": [-6.05, 6.8, -8.05], "to": [-3.95, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
 
-    # 输出端立柱 (+X 侧，外侧立柱紧扣外轨出口，删除内侧悬空块)
-    cubes.append({"name": "post_out_r", "from": [6.5, 4.0, 4.2], "to": [8.0, 7.5, 5.8], "group": "bone_posts", "material": "bone_main"})
-    cubes.append({"name": "post_out_r_band", "from": [6.45, 6.3, 4.15], "to": [8.05, 7.1, 5.85], "group": "bone_posts", "material": "bone_dark"})
+    # 输出端立柱 (+X 侧外端，严格按约定为 2x2、y 4–8，底在 y=4, 顶在 y=8；内侧不设骨柱，彻底消除内侧悬空骨块)
+    cubes.append({"name": "post_out_r", "from": [6.0, 4.0, 4.0], "to": [8.0, 8.0, 6.0], "group": "bone_posts", "material": "bone_main"})
+    cubes.append({"name": "post_out_r_band", "from": [5.95, 6.8, 3.95], "to": [8.05, 7.6, 6.05], "group": "bone_posts", "material": "bone_dark"})
 
     return cubes
 
@@ -215,7 +215,7 @@ def build_slope_up_cubes() -> List[dict]:
     cubes.append({"name": "post_l_bot_band", "from": [-6.05, 6.8, -8.05], "to": [-3.95, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
     cubes.append({"name": "post_r_bot_band", "from": [ 3.95, 6.8, -8.05], "to": [ 6.05, 7.6, -5.95], "group": "bone_posts", "material": "bone_dark"})
 
-    # 坡顶一对立柱 (i=7, z: [6, 8], 紧紧落于坡顶带面两侧，底在 y=18, 顶在 y=22)
+    # 坡顶一对立柱 (i=7, z: [6, 8], 降到和底端一样高为 4px: 底在 y=18, 顶在 y=22，稳稳落于坡顶带面两侧)
     cubes.append({"name": "post_l_top", "from": [-6.0, 18.0, 6.0], "to": [-4.0, 22.0, 8.0], "group": "bone_posts", "material": "bone_main"})
     cubes.append({"name": "post_r_top", "from": [ 4.0, 18.0, 6.0], "to": [ 6.0, 22.0, 8.0], "group": "bone_posts", "material": "bone_main"})
     cubes.append({"name": "post_l_top_band", "from": [-6.05, 20.8, 5.95], "to": [-3.95, 21.6, 8.05], "group": "bone_posts", "material": "bone_dark"})
