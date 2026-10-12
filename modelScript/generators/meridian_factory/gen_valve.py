@@ -386,7 +386,9 @@ def render_views(paths: Dict[str, Path]):
 
             right_w = thumb_size * 3 + 24
             total_w = ref_w + right_w + 36
-            check_cv = Image.new("RGB", (total_w, target_h + 46), (28, 29, 33))
+            iso_row_h = target_h + 46
+            port_row_h = thumb_size + 34
+            check_cv = Image.new("RGB", (total_w, iso_row_h + port_row_h), (28, 29, 33))
             c_draw = ImageDraw.Draw(check_cv)
 
             check_cv.paste(ref_scaled, (12, 34))
@@ -397,6 +399,15 @@ def render_views(paths: Dict[str, Path]):
             check_cv.paste(c_half, (rx + thumb_size + 8, 34 + 10))
             check_cv.paste(c_closed, (rx + (thumb_size + 8) * 2, 34 + 10))
             c_draw.text((rx + 4, 10), "NOW RENDER, shared scale (LEFT: open, MID: half, RIGHT: closed)", fill=(180, 220, 210))
+
+            # 第二排：正对管口 (括约肌环 + 内孔，筋管/肉箍已去掉)，同一取景，逐级看开度收小
+            port_y = iso_row_h
+            c_draw.text((rx + 4, port_y + 6), "PORT VIEW head-on, shared scale (LEFT: open 8x6, MID: half 4x3, RIGHT: closed)", fill=(180, 220, 210))
+            for index, v in enumerate(VARIANTS):
+                port_thumb = renders_front[v].resize((thumb_size, thumb_size), Image.Resampling.LANCZOS)
+                check_cv.paste(port_thumb, (rx + (thumb_size + 8) * index, port_y + 28))
+                hole_w, hole_h = HOLE_SPEC[v]
+                c_draw.text((rx + (thumb_size + 8) * index + 6, port_y + 32), f"{v}: hole {hole_w:g}x{hole_h:g}", fill=(235, 235, 235))
 
             check_path = REVIEW_DIR / "check.png"
             check_cv.save(check_path)
