@@ -45,12 +45,13 @@
 from __future__ import annotations
 
 import argparse
+import re
 import math
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 from common_parts import _assert_no_coplanar_faces, bone_ring_port, outlet_8x6
-from organ_common import bounds, extend_materials, render_review, write_bbmodel
+from organ_common import bounds, extend_materials, path_cells, render_review, surface_vein_cubes, thicken, write_bbmodel
 
 REPO = Path(__file__).resolve().parents[3]
 ORGAN_ID = "spleen"
@@ -71,7 +72,24 @@ CX_AMPLITUDE = 4.0  # 中段相对两端向 +X 偏移
 HILUM_LAYERS = (5, 8)  # 脾门凹口所在层（含），y 12..20
 HILUM_DEPTH = 4  # 凹口深度 px（2 格）
 
-VEIN_PROUD = 0.5
+# 血管树（几何）：从脾门（凹口面 x≈1、y≈16）出发，主干 2×2，分 2 级、每级一分二，末梢 1×1，贴脾体前表面（+Z）连续走。
+# 格 (ix, iy)：x∈[ix+X_OFF, ix+X_OFF+1]、y∈[iy+Y_OFF, iy+Y_OFF+1]；x 错开 0.4（避开柱界整数和侧面补平块的 0.5 界）、y 错开 0.25，避开豆身层界。
+# 相邻格表面高差超过 0.5px 的地方，在较低那格上垫半格（见 organ_common.surface_vein_cubes）。
+X_OFF = 0.4
+Y_OFF = 0.25
+Y_OFF_TRUNK = Y_OFF           # 主干格和支脉格是互不重叠的两组，用同一个偏移，交接处只是贴边
+TRUNK_PROUD = 1.8             # 主干 2×2 凸出
+BRANCH_PROUD = 1.0            # 支脉 / 末梢 1×1 凸出
+SINK = 3.0                    # 背面埋进豆身的深度，要大于相邻柱前后起伏之差
+SINK_STEP = 0.1
+TREE_TRUNK = [(1, 15), (4, 16)]
+TREE_B1 = {"u": [(4, 16), (6, 21)], "d": [(4, 16), (5, 10)]}
+TREE_B2 = {
+    "u1": [(6, 21), (8, 26)],
+    "u2": [(6, 21), (8, 20)],
+    "d1": [(5, 10), (7, 6)],
+    "d2": [(5, 10), (9, 12)],
+}
 
 # 入口血管：4×4 截面，水平段从凹口面向 -X，竖直段在 x -11..-7
 # 输出口：底面中心标准 outlet_8x6（朝下），不再有出口血管
@@ -85,20 +103,6 @@ INLET_TOP_Y = 29.5  # 入口竖直段顶端（环在这里）
 COLLAR_HALF = 3.0  # 6×6 肉箍套 4×4 管
 COLLAR_LEN = 1.5
 
-# 脉络折线路点（px 坐标 (x, y)，格以左下角计），相邻路点之间补成 4 连通阶梯。
-# 主干两路（上 / 下）→ 一级支 → 二级细枝。
-VEIN_POLYLINES: List[List[Tuple[int, int]]] = [
-    [(1, 16), (1, 19), (0, 22), (-1, 26), (-3, 29)],  # 上主干，贴凹面
-    [(1, 19), (7, 21), (8, 24)],  # 上 一级支
-    [(7, 21), (9, 20)],  # 上 二级
-    [(0, 22), (5, 27), (6, 29)],  # 上 一级支
-    [(5, 27), (7, 27)],  # 上 二级
-    [(1, 16), (1, 12), (0, 10), (-1, 6), (-2, 4)],  # 下主干，贴凹面
-    [(1, 12), (7, 11), (9, 8)],  # 下 一级支
-    [(7, 11), (10, 12)],  # 下 二级
-    [(0, 10), (5, 6), (6, 4)],  # 下 一级支
-    [(5, 6), (8, 7)],  # 下 二级
-]
 
 
 def _cube(name: str, lo, hi, group: str, material: str) -> dict:
@@ -130,28 +134,6 @@ def _body_half_depth(x: int, y: int) -> float:
     return dict(_layer_columns(k)).get(x, 0.0)
 
 
-def _stair(c0: int, r0: int, c1: int, r1: int) -> Set[Tuple[int, int]]:
-    """两点之间的 4 连通阶梯：沿大方向每步走一格，小方向按斜率进位，斜走的那一步补一个肘格。"""
-    dc, dr = c1 - c0, r1 - r0
-    steps = max(abs(dc), abs(dr))
-    out = {(c0, r0)}
-    prev = (c0, r0)
-    for i in range(1, steps + 1):
-        cur = (c0 + round(dc * i / steps), r0 + round(dr * i / steps))
-        if cur[0] != prev[0] and cur[1] != prev[1]:
-            out.add((cur[0], prev[1]))
-        out.add(cur)
-        prev = cur
-    return out
-
-
-def _vein_cells() -> Set[Tuple[int, int]]:
-    """所有脉络 1px 格 (x, y)：折线补成 4 连通阶梯后取并集，再只留在豆身内的。"""
-    cells: Set[Tuple[int, int]] = set()
-    for line in VEIN_POLYLINES:
-        for (x0, y0), (x1, y1) in zip(line, line[1:]):
-            cells |= _stair(x0, y0, x1, y1)
-    return {(x, y) for x, y in cells if _body_half_depth(x, y) > 0}
 
 
 def _is_patch(x: int, k: int) -> bool:
@@ -170,13 +152,34 @@ def part_01_body() -> List[dict]:
     return cubes
 
 
-def part_02_veins() -> List[dict]:
-    """脉络：1px 格薄片，贴在所在柱的前面（+Z）上，凸出 0.5px。"""
-    cubes = []
-    for x, y in sorted(_vein_cells(), key=lambda p: (p[1], p[0])):
-        hd = _body_half_depth(x, y)
-        cubes.append(_cube(f"vein_x{x}_y{y}", (x, y, hd), (x + 1, y + 1, hd + VEIN_PROUD), "veins", "tendon_fiber"))
-    return cubes
+def _front_z(x0: float, x1: float, y0: float, y1: float) -> float:
+    """区域 [x0,x1]×[y0,y1] 内豆身最靠前的 z（逐 1px 柱取半深最大值）；区域不在豆身上则抛 ValueError。"""
+    best = 0.0
+    for x in range(math.floor(x0), math.ceil(x1)):
+        for y in range(math.floor(y0), math.ceil(y1)):
+            best = max(best, _body_half_depth(x, y))
+    if best <= 0:
+        raise ValueError(f"区域 x[{x0},{x1}] y[{y0},{y1}] 不在豆身上")
+    return best
+
+
+def part_02_vessel_tree() -> List[dict]:
+    """血管树 #c07868（贴图加 #e8bca8 高光）：2×2 主干 → 上 / 下两支一级 → 每支再分两个 1×1 末梢。"""
+    g = "vessel_tree"
+    trunk = thicken(path_cells(TREE_TRUNK))
+    b1 = {k: path_cells(wp) for k, wp in TREE_B1.items()}
+    b2 = {k: path_cells(wp) for k, wp in TREE_B2.items()}
+    used = set(trunk)
+    levels = [("vein_trunk", trunk, SINK, "tendon_fiber", TRUNK_PROUD, Y_OFF_TRUNK)]
+    for i, (k, cells) in enumerate(b1.items()):
+        cells = cells - used
+        used |= cells
+        levels.append((f"vein_b1{k}", cells, SINK + SINK_STEP, "tendon_fiber", BRANCH_PROUD, Y_OFF))
+    for k, cells in b2.items():
+        cells = cells - used
+        used |= cells
+        levels.append((f"vein_b2{k}", cells, SINK + 2 * SINK_STEP, "tendon_fiber", BRANCH_PROUD, Y_OFF))
+    return surface_vein_cubes(levels, _front_z, X_OFF, Y_OFF, g)
 
 
 def part_05_step_fill() -> List[dict]:
@@ -185,7 +188,6 @@ def part_05_step_fill() -> List[dict]:
     脉络格上不补（脉络贴在柱前面，补块会和它共面）。
     """
     cubes: List[dict] = []
-    veins = _vein_cells()
     cols = [dict(_layer_columns(k)) for k in range(LAYERS)]
     ext = []
     for k in range(LAYERS):
@@ -221,8 +223,7 @@ def part_05_step_fill() -> List[dict]:
                 y0, hd = top - 1, hd_a
             else:
                 y0, hd = top, hd_b
-            if (x, int(y0)) not in veins:
-                add(f"fill_f_k{k}_x{x}", (x, y0, hd), (x + 1, y0 + 1, hd + 0.5))
+            add(f"fill_f_k{k}_x{x}", (x, y0, hd), (x + 1, y0 + 1, hd + 0.5))
             add(f"fill_b_k{k}_x{x}", (x, y0, -hd - 0.5), (x + 1, y0 + 1, -hd))
     return cubes
 
@@ -259,7 +260,7 @@ def part_04_outlet() -> List[dict]:
 PARTS = [
     ("spleen_body", part_01_body),
     ("step_fill", part_05_step_fill),
-    ("veins", part_02_veins),
+    ("vessel_tree", part_02_vessel_tree),
     ("inlet_vessel", part_03_inlet),
     ("outlet", part_04_outlet),
 ]
@@ -270,22 +271,6 @@ def all_cubes() -> List[dict]:
     for _, build in PARTS:
         cubes += build()
     return cubes
-
-
-def _components(cells: Set[Tuple[int, int]]) -> int:
-    """4 连通分量个数。"""
-    left = set(cells)
-    count = 0
-    while left:
-        count += 1
-        stack = [left.pop()]
-        while stack:
-            c, r = stack.pop()
-            for nb in ((c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)):
-                if nb in left:
-                    left.remove(nb)
-                    stack.append(nb)
-    return count
 
 
 def self_test() -> None:
@@ -308,11 +293,25 @@ def self_test() -> None:
     assert hi_bad[1] > 32, "外包门禁失效：注入的超高立方体没把包围盒顶出 32"
     print("  [OK] 外包门禁能识别超高缺陷")
 
-    veins = _vein_cells()
-    assert _components(veins) == 1, f"脉络应连成一整棵树，实际 {_components(veins)} 块"
-    breaks = [cell for cell in veins if _components(veins - {cell}) > 1]
-    assert breaks, "脉络连续门禁失效：整棵树里找不到任何一个拿掉就断开的格子"
-    print(f"  [OK] 脉络 {len(veins)} 格连成 1 棵树；注入缺口（如拿掉 {breaks[0]}）后能识别为断开")
+    check_vessel_tree(cubes)
+    print("  [OK] 血管树：2×2 主干、上下两支一级、四个 1×1 末梢，整棵连成一块、相邻格台阶 ≤0.5px")
+    tree = [c for c in cubes if c["group"] == "vessel_tree"]
+    rest = [c for c in cubes if c["group"] != "vessel_tree"]
+    mid = [c for c in tree if c["name"].startswith("vein_b1u_") and re.match(r".*_(18|19)(_half)?$", c["name"])]
+    assert mid, "注入用的中段格不存在"
+    for name, bad in (
+        ("拿掉上支中段", rest + [c for c in tree if c not in mid]),
+        ("去掉过台阶半格", rest + [c for c in tree if not c["name"].endswith("_half")]),
+        ("少一个末梢", rest + [c for c in tree if not c["name"].startswith("vein_b2d2_")]),
+        ("血管改回骨色", rest + [dict(c, material="bone_main") for c in tree]),
+        ("末梢变 2 宽", rest + [dict(c, to=[c["to"][0] + 1.0, c["to"][1], c["to"][2]]) if c["name"].startswith("vein_b2u1_") and not c["name"].endswith("_half") else c for c in tree]),
+    ):
+        try:
+            check_vessel_tree(bad)
+        except AssertionError:
+            print(f"  [OK] 注入「{name}」被拦截")
+        else:
+            raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
 
     body = part_01_body()
     ys = [c["from"][1] for c in body]
@@ -368,6 +367,47 @@ def check_round3(cubes: List[dict]) -> None:
     lining = next(c for c in cubes if c["name"] == "outlet_lining")
     assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][2] - lining["from"][2] - 6.0) < 1e-6, "输出口内衬应为 8 × 6"
     assert abs((lining["from"][0] + lining["to"][0]) / 2) < 1e-6 and lining["from"][1] < 0.5, "输出口应在底面中心"
+
+
+_CELL_NAME = re.compile(r"^(?P<prefix>.+)_(?P<ix>-?\d+)_(?P<iy>-?\d+)(?P<half>_half)?$")
+
+
+def _touch(a: dict, b: dict) -> bool:
+    return all(a["from"][i] <= b["to"][i] + 1e-6 and b["from"][i] <= a["to"][i] + 1e-6 for i in range(3))
+
+
+def check_vessel_tree(cubes: List[dict]) -> None:
+    """血管树门禁：#c07868；2×2 主干（有 2×2 的格块）；上 / 下两支一级、四个末梢（u1 u2 d1 d2）都在；
+    支脉 / 末梢格 1×1；整棵连成一块；相邻格（含半格）前表面高差 ≤0.5px。"""
+    tree = [c for c in cubes if c["group"] == "vessel_tree"]
+    assert tree and all(c["material"] == "tendon_fiber" for c in tree), "血管树必须是 #c07868（tendon_fiber）"
+    cells = {}
+    tops: Dict[str, float] = {}
+    for c in tree:
+        m = _CELL_NAME.match(c["name"])
+        key = f"{m['prefix']}_{m['ix']}_{m['iy']}"
+        tops[key] = max(tops.get(key, 0.0), c["to"][2])
+        if not m["half"]:
+            cells[(int(m["ix"]), int(m["iy"]))] = (m["prefix"], key)
+            if m["prefix"] != "vein_trunk":
+                assert abs(c["to"][0] - c["from"][0] - 1.0) < 1e-6 and abs(c["to"][1] - c["from"][1] - 1.0) < 1e-6, f"{c['name']} 应是 1×1"
+    trunk_cells = {k for k, (prefix, _) in cells.items() if prefix == "vein_trunk"}
+    assert any({(x + 1, y), (x, y + 1), (x + 1, y + 1)} <= trunk_cells for x, y in trunk_cells), "主干应是 2×2 截面"
+    for part in ("vein_b1u", "vein_b1d", "vein_b2u1", "vein_b2u2", "vein_b2d1", "vein_b2d2"):
+        assert any(prefix == part for prefix, _ in cells.values()), f"血管树缺 {part}"
+    seen, stack = {0}, [0]
+    while stack:
+        i = stack.pop()
+        for j in range(len(tree)):
+            if j not in seen and _touch(tree[i], tree[j]):
+                seen.add(j)
+                stack.append(j)
+    assert len(seen) == len(tree), f"血管树断成多块: 连通 {len(seen)} / {len(tree)}"
+    for (ix, iy), (_, key) in cells.items():
+        for nb in ((ix + 1, iy), (ix, iy + 1)):
+            if nb in cells:
+                other = cells[nb][1]
+                assert abs(tops[key] - tops[other]) <= 0.5 + 1e-6, f"{key} 与 {other} 前表面高差 {abs(tops[key] - tops[other]):.2f} > 0.5"
 
 
 def main() -> None:

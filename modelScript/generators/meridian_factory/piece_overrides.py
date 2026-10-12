@@ -375,8 +375,8 @@ def liver_override(cube: dict, default: Painter) -> Optional[Painter]:
 
 
 def spleen_override(cube: dict, default: Painter) -> Optional[Painter]:
-    if cube.get("group") == "veins":
-        return _vein_painter(cube, default)
+    if cube.get("group") == "vessel_tree":
+        return _branch_tree_painter(cube)
     return None
 
 

@@ -215,21 +215,22 @@ def relax_heights(tops: Dict[Cell, float], steps=((1, 0), (-1, 0), (0, 1), (0, -
 
 
 def surface_vein_cubes(
-    levels: Sequence[Tuple[str, set, float, str, float]],
+    levels: Sequence[tuple],
     front_z: Callable[[float, float, float, float], float],
     x_off: float,
     y_off: float,
     group: str,
 ) -> Cubes:
-    """把若干组 1×1 格画成贴表面的血管块。levels = [(名字, 格集合, 埋深, 材质, 凸出 px)]；所有组一起算过台阶补半格。
+    """把若干组 1×1 格画成贴表面的血管块。levels = [(名字, 格集合, 埋深, 材质, 凸出 px[, 本组 y 偏移])]；所有组一起算过台阶补半格。
 
     每格 x∈[ix+x_off, ix+x_off+1]、y∈[iy+y_off, iy+y_off+1]，前表面取 front_z(x0,x1,y0,y1) + proud；
     落在体外的格（front_z 抛 ValueError）不画。相邻格高差大于 0.5 的，在较低那格上垫半格（名字加 _half）。
     """
     boxes, tops, owner = {}, {}, {}
-    for name, cells, sink, material, proud in levels:
+    for name, cells, sink, material, proud, *own_y_off in levels:
+        level_y_off = own_y_off[0] if own_y_off else y_off
         for ix, iy in sorted(cells):
-            x0, y0 = ix + x_off, iy + y_off
+            x0, y0 = ix + x_off, iy + level_y_off
             try:
                 tops[(ix, iy)] = front_z(x0, x0 + 1.0, y0, y0 + 1.0) + proud
             except ValueError:
