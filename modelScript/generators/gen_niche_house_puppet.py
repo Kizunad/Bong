@@ -33,10 +33,10 @@ def part_base() -> List[Cube]:
     cubes = [cube("base_plate", (-6.0, 0.0, -4.5), (6.0, 1.5, 4.5), "base_stone", "base")]
     for sx, tag_x in ((-1, "l"), (1, "r")):
         for sz, tag_z in ((-1, "b"), (1, "f")):
-            cx, cz = sx * 5.5, sz * 4.0
+            cx, cz = sx * 4.2, sz * 4.0
             cubes.append(cube(f"base_stud_{tag_z}_{tag_x}", (cx - 0.5, 1.5, cz - 0.5), (cx + 0.5, 2.2, cz + 0.5),
                               "stone", "base"))
-    cubes.append(cube("base_rune_front", (-4.0, 1.5, 3.2), (4.0, 1.65, 3.7), "stone_dark", "base"))
+    cubes.append(cube("base_rune_front", (-3.4, 1.5, 3.2), (3.4, 1.65, 3.7), "stone_dark", "base"))
     cubes.append(cube("base_rune_l", (-5.2, 1.5, -2.5), (-4.7, 1.65, 2.5), "stone_dark", "base"))
     cubes.append(cube("base_rune_r", (4.7, 1.5, -2.5), (5.2, 1.65, 2.5), "stone_dark", "base"))
     return cubes
@@ -85,7 +85,7 @@ def part_core() -> List[Cube]:
 def _guard_plates(tag: str, outward: int, x_edge: float) -> List[Cube]:
     """前臂外侧一排 4 片尖状护板：每片 = 贴臂的宽片 + 向外收窄的尖，越往下越短。"""
     cubes = []
-    for i, (y0, reach) in enumerate(((6.1, 1.4), (5.3, 1.2), (4.5, 1.0), (3.9, 0.8))):
+    for i, (y0, reach) in enumerate(((6.0, 1.4), (4.9, 1.2), (3.8, 1.0), (2.7, 0.8))):
         lo_x, hi_x = (x_edge, x_edge + 0.5) if outward > 0 else (x_edge - 0.5, x_edge)
         cubes.append(cube(f"guard_{tag}_{i}", (lo_x, y0, -1.0), (hi_x, y0 + 0.6, 1.0), "stone", "arms"))
         tip_lo, tip_hi = (hi_x, hi_x + reach) if outward > 0 else (lo_x - reach, lo_x)
@@ -101,12 +101,12 @@ def part_arms() -> List[Cube]:
         cubes.append(cube(f"shoulder_{tag}", (x0, 10.8, -1.6), (x1, 12.6, 1.6), "stone", "arms"))
         cubes.append(cube(f"arm_upper_{tag}", (x0 + 0.3, 7.6, -1.4), (x1 - 0.3, 10.8, 1.4), "wood", "arms"))
         cubes.append(cube(f"arm_elbow_{tag}", (x0 + 0.1, 6.8, -1.6), (x1 - 0.1, 7.6, 1.6), "stone", "arms"))
-        cubes.append(cube(f"arm_fore_{tag}", (x0 + 0.3, 3.8, -1.3), (x1 - 0.3, 6.8, 1.5), "wood", "arms"))
+        cubes.append(cube(f"arm_fore_{tag}", (x0 + 0.3, 1.8, -1.3), (x1 - 0.3, 6.8, 1.5), "wood", "arms"))
         cubes.extend(_guard_plates(tag, sx, x0 + 0.3 if sx < 0 else x1 - 0.3))
         center = (x0 + x1) / 2
         for k, offset in enumerate((-0.95, 0.0, 0.95)):
-            cubes.append(cube(f"claw_{tag}_{k}", (center + offset - 0.45, 2.8, 1.5),
-                              (center + offset + 0.45, 3.8, 1.5 + FINGER_LENGTH), "stone", "arms"))
+            cubes.append(cube(f"claw_{tag}_{k}", (center + offset - 0.45, 1.8, 1.5),
+                              (center + offset + 0.45, 2.8, 1.5 + FINGER_LENGTH), "stone", "arms"))
     return cubes
 
 
