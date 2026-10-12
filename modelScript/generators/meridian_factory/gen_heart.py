@@ -139,7 +139,12 @@ SINK_STEP = 0.1
 
 EMBER_X = (-3.0, 3.0)
 EMBER_Y = (16.0, 22.0)  # 6×6
-EMBER_PROUD = 0.5
+EMBER_PROUD = 1.0  # 余烬块凸出体表 1px（原来 0.5 像一块平板）
+
+# 输出口：+Z 向标准套管，开口底边离地 2
+OUTLET_CENTER_Y = 5.05
+OUTLET_Z0 = 3.0
+OUTLET_LEN = 8.0
 
 
 def _cube(name: str, lo, hi, group: str, material: str) -> dict:
@@ -319,8 +324,12 @@ def part_05_ember() -> List[dict]:
 
 
 def part_06_outlet() -> List[dict]:
-    """底尖 8×6 统一截面输出口（common_parts.outlet_8x6，朝下，管套高 2px，底边贴地）。"""
-    return outlet_8x6(center_x=0.0, center_y=VENTRICLE_Y0, center_z=0.0, facing="-y", length=2.0, group="outlet", pfx="outlet")
+    """正面下方 8×6 统一截面输出口：标准 outlet_8x6 套管朝 +Z，开口 y 2..8（底边离地 2），
+    套管从心尖前壁里伸出，不再是朝下只有 2px 高的扁套。
+
+    center_y 取 5.05 而不是 5.0：套管上下沿 y=8 会和心室行格线（偶数）在 -Y 面共面，错开 0.05。
+    """
+    return outlet_8x6(center_x=0.0, center_y=OUTLET_CENTER_Y, center_z=OUTLET_Z0, facing="+z", length=OUTLET_LEN, group="outlet", pfx="outlet")
 
 
 PARTS = [
@@ -491,6 +500,27 @@ def self_test() -> None:
     _, hi2 = _bounds(tall)
     assert hi2[1] > 48, "外包门禁失效：注入的超高立方体没把包围盒顶出 48"
     print("  [OK] 外包门禁能识别超高缺陷")
+
+    check_round3(cubes)
+    print("  [OK] 余烬块凸出体表 1px；输出口是 +Z 向 8×6 标准套管")
+    flat = [dict(c, to=[c["to"][0], c["to"][1], c["from"][2] + 0.5]) if c["name"] == "ember_plate" else c for c in cubes]
+    squashed = [dict(c, to=[c["to"][0], c["from"][1] + 1.0, c["to"][2]]) if c["name"] == "outlet_lining" else c for c in cubes]
+    for name, bad in (("余烬块回到平板", flat), ("输出口被压扁", squashed)):
+        try:
+            check_round3(bad)
+        except AssertionError:
+            print(f"  [OK] 注入「{name}」被拦截")
+        else:
+            raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+
+def check_round3(cubes: List[dict]) -> None:
+    """第 3 轮门禁：余烬块凸出体表 ≥1px（身体表面处的 z 取自 _front_z）；输出口内衬 8 宽 × 6 高、底边离地 2。"""
+    plate = next(c for c in cubes if c["name"] == "ember_plate")
+    assert plate["to"][2] - plate["from"][2] >= 1.0 - 1e-6, f"余烬块应凸出 1px: {plate['to'][2] - plate['from'][2]}"
+    lining = next(c for c in cubes if c["name"] == "outlet_lining")
+    assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][1] - lining["from"][1] - 6.0) < 1e-6, "输出口内衬应为 8 宽 × 6 高"
+    assert abs(lining["from"][1] - 2.0) < 0.2, f"输出口底边应离地 2: {lining['from'][1]}"
 
 
 def main() -> None:

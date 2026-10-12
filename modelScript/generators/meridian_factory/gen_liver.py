@@ -80,10 +80,21 @@ VEIN_Y_SHIFT = 0.07  # 叶脉整体上抬一点，免得上下沿落在行格线
 SINK = 2.5  # 叶脉背面埋进体内的深度，要大于相邻行 ±1 起伏之差
 SINK_STEP = 0.1  # 每条叶脉再错开一点，免得背面共面
 
-# 胆管：正面底部中间，bone_main
-DUCT_X = (-2.0, 2.0)
-DUCT_Y = (2.5, 14.5)
-DUCT_PROUD = 1.2
+# 胆管：#e8bca8 肉质管，从肝正面中部伸出，主干往上到 y≈17 后分两叉各朝左上 / 右上。
+# 每 1px 高一节，y 整体错开 0.25，避开肝体行格线（偶数）共面。
+DUCT_Y_OFFSET = 0.25
+DUCT_TRUNK_Y = (10.0, 17.0)   # 主干高度范围（加偏移）
+DUCT_TRUNK_W = 4.2            # 主干宽（x）
+DUCT_BRANCH_STEPS = 6         # 两叉各 6 节，y 17 → 23（再高右叉就出了肝体）
+DUCT_BRANCH_W = 2.6
+DUCT_BRANCH_DX = 1.3          # 每上升 1px，叉向外偏的 px
+DUCT_T = 2.5                  # 管厚（z），再厚前凸会超出 32 深的外包
+DUCT_EMBED = 0.8              # 管后表面埋进肝体前表面的深度
+
+OUTLET_CENTER_X = 0.1         # 管套左右沿 x=±4 正好落在肝列界上，整体错开 0.1
+OUTLET_CENTER_Y = 5.05        # 开口 y 2.05..8.05；错开 0.05 避开行格线共面
+OUTLET_Z0 = 8.0
+OUTLET_LEN = 8.0
 
 # 顶部入口管：x 中心，底 y；4×4 截面，顶端 y 到 32
 INLET_X_CENTERS = (-8.0, 0.0)
@@ -161,9 +172,30 @@ def part_02_leaf_veins() -> List[dict]:
 
 
 def part_03_bile_duct() -> List[dict]:
-    """胆管：正面底部中间一根 #d8ccb0 的粗管，沿正面向上伸一截。"""
-    zf = _front_z(DUCT_X[0], DUCT_X[1], DUCT_Y[0], DUCT_Y[1])
-    return [_cube("bile_duct", (DUCT_X[0], DUCT_Y[0], zf - SINK), (DUCT_X[1], DUCT_Y[1], zf + DUCT_PROUD), "bile_duct", "bone_main")]
+    """胆管：#e8bca8 肉质管，从肝中部正面伸出，先一根主干，再分成左右两叉斜着往上。"""
+    g = "bile_duct"
+    cubes: List[dict] = []
+
+    def segment(name: str, cx: float, width: float, y0: float, y1: float) -> None:
+        x0, x1 = cx - width / 2, cx + width / 2
+        zf = _front_z(x0, x1, y0, y1)
+        z0 = zf - DUCT_EMBED
+        cubes.append(_cube(name, (x0, y0, z0), (x1, y1, z0 + DUCT_T), g, "tendon_highlight"))
+        cubes.append(_cube(f"{name}_hl", (cx - 0.3, y0, z0 + DUCT_T), (cx + 0.3, y1, z0 + DUCT_T + 0.3), g, "qi_glow"))
+
+    y = DUCT_TRUNK_Y[0] + DUCT_Y_OFFSET
+    i = 0
+    while y < DUCT_TRUNK_Y[1] + DUCT_Y_OFFSET - 1e-6:
+        segment(f"duct_trunk_{i}", 0.0, DUCT_TRUNK_W, y, y + 1.0)
+        y += 1.0
+        i += 1
+
+    y_fork = DUCT_TRUNK_Y[1] + DUCT_Y_OFFSET
+    for k in range(DUCT_BRANCH_STEPS):
+        cx = DUCT_BRANCH_W / 2 + 0.05 + DUCT_BRANCH_DX * k   # 起点错开 0.05，避开 x=0 的肝列界
+        for side, sx in (("l", -1.0), ("r", 1.0)):
+            segment(f"duct_{side}_{k}", sx * cx, DUCT_BRANCH_W, y_fork + k, y_fork + k + 1.0)
+    return cubes
 
 
 def part_04_inlets() -> List[dict]:
@@ -177,8 +209,9 @@ def part_04_inlets() -> List[dict]:
 
 
 def part_05_outlet() -> List[dict]:
-    """底部 8×6 统一截面输出口（common_parts.outlet_8x6，朝下，管套高 2px，底边贴地）。"""
-    return outlet_8x6(center_x=0.0, center_y=2.0, center_z=0.0, facing="-y", length=2.0, group="outlet", pfx="outlet")
+    """正面下方 8×6 统一截面输出口：标准 outlet_8x6 套管朝 +Z，开口底边离地 2，从肝体前壁里伸出
+    （原来朝下只有 2px 高，太扁）。"""
+    return outlet_8x6(center_x=OUTLET_CENTER_X, center_y=OUTLET_CENTER_Y, center_z=OUTLET_Z0, facing="+z", length=OUTLET_LEN, group="outlet", pfx="outlet")
 
 
 PARTS = [
@@ -223,6 +256,35 @@ def self_test() -> None:
     thick = [c[3] for c in COLUMNS]
     assert thick.index(max(thick)) < len(thick) // 2 and right[3] < left[3], "楔形方向不对：应当左厚右薄"
     print("  [OK] 楔形左厚右薄")
+
+    check_duct_and_outlet(cubes)
+    print("  [OK] 胆管是 #e8bca8 肉管、主干居中后分两叉；输出口是 +Z 向 8×6 标准套管")
+    no_fork = [c for c in cubes if not c["name"].startswith("duct_l_")]
+    for name, bad in (("胆管只剩一叉", no_fork),
+                      ("胆管改回骨色", [dict(c, material="bone_main") if c["name"].startswith("duct_") else c for c in cubes]),
+                      ("输出口被压扁", [dict(c, to=[c["to"][0], c["from"][1] + 1.0, c["to"][2]]) if c["name"] == "outlet_lining" else c for c in cubes])):
+        try:
+            check_duct_and_outlet(bad)
+        except AssertionError:
+            print(f"  [OK] 注入「{name}」被拦截")
+        else:
+            raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+
+def check_duct_and_outlet(cubes: List[dict]) -> None:
+    """胆管：材质 #e8bca8、有主干和左右两叉、两叉向外张开；输出口：内衬 8 宽 × 6 高，底边离地约 2。"""
+    duct = [c for c in cubes if c["name"].startswith("duct_") and not c["name"].endswith("_hl")]
+    assert duct and all(c["material"] == "tendon_highlight" for c in duct), "胆管必须是 #e8bca8 肉质管"
+    trunk = [c for c in duct if c["name"].startswith("duct_trunk_")]
+    left = sorted((c for c in duct if c["name"].startswith("duct_l_")), key=lambda c: c["from"][1])
+    right = sorted((c for c in duct if c["name"].startswith("duct_r_")), key=lambda c: c["from"][1])
+    assert trunk and left and right, "胆管应有主干和左右两叉"
+    assert all(abs(c["from"][0] + c["to"][0]) < 0.2 for c in trunk), "主干应在肝正中"
+    assert (left[-1]["from"][0] + left[-1]["to"][0]) / 2 < -4 < 4 < (right[-1]["from"][0] + right[-1]["to"][0]) / 2, "两叉没有向外张开"
+    lining = next((c for c in cubes if c["name"] == "outlet_lining"), None)
+    assert lining is not None, "缺输出口"
+    assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][1] - lining["from"][1] - 6.0) < 1e-6, "输出口内衬必须是 8 宽 × 6 高"
+    assert abs(lining["from"][1] - 2.0) < 0.2, f"输出口底边应离地 2: {lining['from'][1]}"
 
 
 def main() -> None:
