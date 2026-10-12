@@ -847,6 +847,172 @@
    }
   },
   {
+   "name": "guard_boss_f",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "fdf807a6-0141-5e70-8e6e-4e52444f0f21",
+   "from": [
+    7.712,
+    8.848,
+    7.52
+   ],
+   "to": [
+    8.288,
+    9.168,
+    7.584
+   ],
+   "autouv": 0,
+   "color": 0,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    }
+   }
+  },
+  {
+   "name": "guard_boss_b",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "0ad4bd67-d639-5562-aed6-f8bd5b643fc4",
+   "from": [
+    7.712,
+    8.848,
+    8.416
+   ],
+   "to": [
+    8.288,
+    9.168,
+    8.48
+   ],
+   "autouv": 0,
+   "color": 0,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": 0
+    }
+   }
+  },
+  {
    "name": "blade_base_root",
    "box_uv": false,
    "rescale": false,
@@ -1113,6 +1279,172 @@
     8.096,
     18.16,
     8.112
+   ],
+   "autouv": 0,
+   "color": 2,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    }
+   }
+  },
+  {
+   "name": "spirit_vein_branch_l",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "5cfe072f-6723-507c-8e31-2d42b3e0a53f",
+   "from": [
+    7.76,
+    14.32,
+    7.88
+   ],
+   "to": [
+    7.888,
+    14.96,
+    8.12
+   ],
+   "autouv": 0,
+   "color": 2,
+   "origin": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "faces": {
+    "north": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "south": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "west": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "east": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "up": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    },
+    "down": {
+     "uv": [
+      32,
+      0,
+      48,
+      16
+     ],
+     "texture": 0
+    }
+   }
+  },
+  {
+   "name": "spirit_vein_branch_r",
+   "box_uv": false,
+   "rescale": false,
+   "locked": false,
+   "render_order": "default",
+   "allow_mirror_modeling": true,
+   "type": "cube",
+   "uuid": "f9e2dfcd-a5ec-5b7a-9564-c6bae1586b61",
+   "from": [
+    8.112,
+    13.2,
+    7.88
+   ],
+   "to": [
+    8.24,
+    13.84,
+    8.12
    ],
    "autouv": 0,
    "color": 2,
@@ -2197,6 +2529,8 @@
     "d3e00e58-e01c-5554-a68c-ec2231cbd1fd",
     "11702d38-aefc-5065-b415-e1c2875d22bf",
     "c0b9fe36-1a67-5df7-b3ba-3bdc3788a969",
+    "fdf807a6-0141-5e70-8e6e-4e52444f0f21",
+    "0ad4bd67-d639-5562-aed6-f8bd5b643fc4",
     "a5ead133-d4bb-585b-9a51-255994471092",
     "0ad47636-eb0b-5291-b2d4-6820aeb1a4c3",
     "e86f0fbb-5f64-56c8-b25a-c8054007684c",
@@ -2222,7 +2556,9 @@
     "a5ddaf37-35d5-553b-a085-5b45384b0bbe",
     "bd3f0b39-2c02-5b4f-b6ca-e08f3130a3bf",
     "708fdd4f-c480-5a54-8c4a-d20a55829999",
-    "90ed5b5c-6e91-5a56-b0e7-bbfb79d65eaa"
+    "90ed5b5c-6e91-5a56-b0e7-bbfb79d65eaa",
+    "5cfe072f-6723-507c-8e31-2d42b3e0a53f",
+    "f9e2dfcd-a5ec-5b7a-9564-c6bae1586b61"
    ]
   },
   {

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""石斧（stone_axe / 碎石夹木柄石斧）Blockbench .bbmodel 程序化生成器。
+"""石斧（stone_axe / 碎石夹木柄石斧）Blockbench .bbmodel 程序化生成器。Round 3/3 (PROMISE 担保轮)。
 
 设计理念与世界观：
 - server/assets/items/workbench_materials.toml:
   stone_axe: "碎石夹木柄，伐木入门。"
-- 风格：
+- 风格（Round 3 终轮精修）：
   末法时代早期实用砍伐工具，质朴粗犷、风化残损。
-  天然打制燧石/玄武岩斧头，双面打击剥离崩口，夹在经过简单削整劈开的硬木柄端部，
+  天然打制燧石/玄武岩斧头，双面打击剥离崩口与阶梯贝壳状崩面，夹在经过削整劈开的硬木柄端部（带木夹爪端部收口倒角），
   用浸油生麻绳/皮绳层层十字交叉紧紧捆扎勒紧，柄尾带有天然防脱木节与缠绳。
 - 坐标约定：
   手持物基准系（授权系）：握把末端在 y=0，斧头在 +Y，斧刃朝向 -X 侧（与 axe_bone/axe_iron 一致），
@@ -16,8 +16,8 @@
     1. part_butt         - 柄尾防脱木节与底部收口
     2. part_grip         - 握把段与 4 道生麻绳防滑缠圈
     3. part_haft         - 天然原木主干中段柄身
-    4. part_fork_socket  - 劈开夹持木槽（双木夹爪与基座）
-    5. part_stone_head   - 打制碎石斧头（粗石刃：斧背、斧身、崩口刃缘）
+    4. part_fork_socket  - 劈开夹持木槽（双木夹爪与端部受压削面）
+    5. part_stone_head   - 打制碎石斧头（粗石刃：斧背、石身、扇形崩面凸棱、阶梯剥离崩口锋刃）
     6. part_bindings     - 紧勒木夹与石刃的十字交叉粗麻绳捆扎带
 
 用法：
@@ -147,7 +147,7 @@ def part_haft() -> list[Box]:
 def part_fork_socket() -> list[Box]:
     """4. 劈开夹持木槽 (y: 0.650 -> 0.785)。
 
-    木柄上端劈开形成的夹持叉：底座过渡与前后两片坚韧木夹爪，紧紧夹住碎石斧身。
+    木柄上端劈开形成的夹持叉：底座过渡与前后两片坚韧木夹爪，加设端部收紧削面。
     """
     return [
         # 夹持座底部承托
@@ -156,6 +156,9 @@ def part_fork_socket() -> list[Box]:
         Box("fork_claw_rear", "weathered_wood", (0.0, 0.7285, 0.023), (0.020, 0.0565, 0.007)),
         # 前夹爪 (Z-)
         Box("fork_claw_front", "weathered_wood", (0.0, 0.7285, -0.023), (0.020, 0.0565, 0.007)),
+        # R3 收口加固倒角: 夹爪端部微收紧削面
+        Box("fork_tip_wedge_r", "weathered_wood", (0.0, 0.771, 0.021), (0.016, 0.011, 0.006)),
+        Box("fork_tip_wedge_f", "weathered_wood", (0.0, 0.771, -0.021), (0.016, 0.011, 0.006)),
     ]
 
 
@@ -164,7 +167,7 @@ def part_stone_head() -> list[Box]:
 
     - 刃锋向 -X 侧扇形展开（砍劈方向）；
     - 斧背向 +X 侧微凸，钝厚平衡；
-    - 敲击阶梯崩口，由厚向薄层层收束至锋利冷灰刃线。
+    - R3 细化：增设打击剥落贝壳崩面凹凸与阶梯开刃崩齿。
     """
     return [
         # 斧背尾端 (+X)
@@ -175,12 +178,18 @@ def part_stone_head() -> list[Box]:
         Box("stone_body", "rough_stone", (-0.062, 0.700, 0.0), (0.026, 0.095, 0.013)),
         # 扇形展开石斧大身
         Box("stone_flare", "rough_stone", (-0.110, 0.700, 0.0), (0.022, 0.105, 0.010)),
+        # R3 打制贝壳崩面 (flaking facets)
+        Box("stone_flake_upper", "rough_stone", (-0.088, 0.745, 0.0), (0.016, 0.032, 0.012)),
+        Box("stone_flake_lower", "rough_stone", (-0.088, 0.645, 0.0), (0.016, 0.032, 0.012)),
         # 锋利开刃主中段 (-X 最前端)
         Box("stone_edge_mid", "stone_edge", (-0.142, 0.700, 0.0), (0.010, 0.090, 0.006)),
         # 上刃尖角
         Box("stone_edge_top", "stone_edge", (-0.134, 0.768, 0.0), (0.008, 0.023, 0.005)),
         # 下刃尖角
         Box("stone_edge_bot", "stone_edge", (-0.134, 0.632, 0.0), (0.008, 0.023, 0.005)),
+        # R3 刃缘微挑小崩齿 (阶梯崩口，形成真实打制石器崩缺)
+        Box("stone_edge_notch_upper", "stone_edge", (-0.147, 0.730, 0.0), (0.004, 0.016, 0.004)),
+        Box("stone_edge_notch_lower", "stone_edge", (-0.147, 0.670, 0.0), (0.004, 0.016, 0.004)),
     ]
 
 

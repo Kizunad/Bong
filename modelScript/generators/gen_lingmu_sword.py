@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""灵木剑（lingmu_sword / 灵木削制窄剑）Blockbench .bbmodel 程序化生成器。
+"""灵木剑（lingmu_sword / 灵木削制窄剑）Blockbench .bbmodel 程序化生成器。Round 3/3 (PROMISE 担保轮)。
 
 设计理念与世界观：
 - server/assets/items/weapons.toml:
   lingmu_sword: "灵木削制的窄剑。木纹中隐约可见灵脉走向，是灵器的前身。"
-- 风格（调度审第 2 次公式级严格落实）：
+- 风格（Round 3 终轮精修）：
   按剑身比例基准（设剑身宽为 W = 0.0520）：
     * 护手总宽 = 2.5W (= 0.1300)，高 = 0.5W (= 0.0260)，厚 = W (= 0.0520)，两端上翘 = 0.5W (= 0.0260)；
     * 剑首宽 = 柄宽 + 0.5W (= 0.0360 + 0.0260 = 0.0620)，高 = W (= 0.0520)，正面嵌绿纹 = 0.5W 见方 (= 0.0260×0.0260)；
+  R3 细化：增设护手中心微凸雕花木饰台与剑身青木灵脉中段分枝流络（spirit vein branching nodes）；
   整体比例严格对照参考图左上完整的剑，护手只比剑身稍宽一截，轻盈挺拔、线条洗练。
 - 坐标约定：
   手持物基准系（授权系）：握把末端在 y=0，剑尖在 +Y，剑身沿 Y 轴挺立，
@@ -16,9 +17,9 @@
 结构组成（分部件 part_* 拆解）：
     1. part_pommel       - 方块剑首（宽 柄宽+0.5W, 高 W, 嵌 0.5W 见方绿色灵纹）
     2. part_grip         - 灵木剑柄芯（宽 W_grip）与 4 道细密素麻绳防滑缠圈
-    3. part_guard        - 灵木十字护手（总宽 2.5W, 高 0.5W, 厚 W, 两端上翘 0.5W）
+    3. part_guard        - 灵木十字护手（总宽 2.5W, 高 0.5W, 厚 W, 两端上翘 0.5W，带中心微凸雕花饰）
     4. part_blade_base   - 剑身基段（y: guard_y1 -> 0.320）
-    5. part_blade_narrow - 灵木削制窄长剑身（双刃与贯通青木灵脉中脊脊线）
+    5. part_blade_narrow - 灵木削制窄长剑身（双刃与贯通青木灵脉脊线及分枝脉络）
     6. part_blade_tip    - 剑尖多级挺拔收尖三角刃头
 
 用法：
@@ -210,6 +211,19 @@ def part_guard() -> list[Box]:
             (x_r_center, guard_y1 + GUARD_UPTURN / 2.0, 0.0),
             (wing_tip_w / 2.0, GUARD_UPTURN / 2.0, GUARD_THICK / 2.0 - 0.004),
         ),
+        # R3 护手中心微凸雕花木饰台 (正面与背面)
+        Box(
+            "guard_boss_f",
+            "spirit_wood",
+            (0.0, guard_y_mid, -GUARD_THICK / 2.0 - 0.002),
+            (0.018, 0.010, 0.002),
+        ),
+        Box(
+            "guard_boss_b",
+            "spirit_wood",
+            (0.0, guard_y_mid, GUARD_THICK / 2.0 + 0.002),
+            (0.018, 0.010, 0.002),
+        ),
     ]
 
 
@@ -244,6 +258,10 @@ def part_blade_narrow() -> list[Box]:
         Box("blade_spine_low", "spirit_vein", (0.0, 0.455, 0.0), (0.008, 0.115, 0.009)),
         Box("blade_spine_mid", "spirit_vein", (0.0, 0.655, 0.0), (0.007, 0.085, 0.008)),
         Box("blade_spine_high", "spirit_vein", (0.0, 0.775, 0.0), (0.006, 0.030, 0.007)),
+
+        # R3 青木灵脉中段分枝脉络 (左右各一道斜出微脉，呈现“隐约可见灵脉走向”)
+        Box("spirit_vein_branch_l", "spirit_vein", (-0.011, 0.585, 0.0), (0.004, 0.020, 0.0075)),
+        Box("spirit_vein_branch_r", "spirit_vein", ( 0.011, 0.515, 0.0), (0.004, 0.020, 0.0075)),
 
         # ── 下段剑身 (y: 0.320 -> 0.540, 宽 W) ──
         Box("blade_body_low", "spirit_wood", (0.0, 0.430, 0.0), (W / 2.0 - 0.004, 0.110, 0.008)),
