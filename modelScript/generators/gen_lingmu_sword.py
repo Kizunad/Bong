@@ -4,21 +4,23 @@
 设计理念与世界观：
 - server/assets/items/weapons.toml:
   lingmu_sword: "灵木削制的窄剑。木纹中隐约可见灵脉走向，是灵器的前身。"
-- 风格：
+- 风格（调度审第 1 次落实）：
   线条流畅挺拔的修真早期手工削制窄刃直剑。
   整剑由质地如坚玉的温润灵木雕削而成，中脊与木纹深处隐隐透出一缕青碧色的木灵脉流光；
-  剑格为简朴平展的灵木雕花双翼护手，剑柄缠以防滑细密素麻绳，剑首为削整配重木环。
+  剑身与剑柄交界处加设醒目的十字护手（宽 6px、高 1px、厚 2px，两端各 1px 向上翘起）；
+  柄末配有厚实规整的 2×2×2 方块剑首，正面中心内嵌一块 1×1 鲜明青木灵纹；
+  柄上保留细密素麻绳防滑缠圈。
 - 坐标约定：
   手持物基准系（授权系）：握把末端在 y=0，剑尖在 +Y，剑身沿 Y 轴挺立，
   全长约 0.887 方块，握把中心点 grip=0.170。
 
 结构组成（分部件 part_* 拆解）：
-    1. part_pommel       - 灵木剑首（底凸木节与配重木环）
-    2. part_grip         - 灵木剑柄与 5 道细绳防滑缠圈
-    3. part_guard        - 灵木雕制简朴剑格（中央核与左右平展双翼）
-    4. part_blade_base   - 剑身根部剑镡套与稳固基段
-    5. part_blade_narrow - 灵木削制窄刃长剑身（双刃与青木灵脉中脊线）
-    6. part_blade_tip    - 剑尖多级收尖棱形锋刃
+    1. part_pommel       - 2×2×2 方块剑首（y: 0.0 -> 0.125）与正面 1×1 绿色灵纹符印
+    2. part_grip         - 灵木剑柄芯与 3 道细密麻绳缠圈（y: 0.125 -> 0.250）
+    3. part_guard        - 灵木宽大十字护手（宽 6px、高 1px、厚 2px，两端各 1px 上翘）
+    4. part_blade_base   - 剑身根部剑镡套与基段（y: 0.3125 -> 0.380）
+    5. part_blade_narrow - 灵木削制窄长剑身（双刃与贯通青木灵脉中脊脊线）
+    6. part_blade_tip    - 剑尖多级挺拔收尖三角刃头
 
 用法：
     python3 modelScript/generators/gen_lingmu_sword.py             # 生成模型与审阅图
@@ -109,88 +111,86 @@ def make_cord_tex(rng: random.Random) -> Image.Image:
 # =============================================================================
 
 def part_pommel() -> list[Box]:
-    """1. 灵木剑首 (y: 0.000 -> 0.045)。
+    """1. 2×2×2 方块剑首与正面 1×1 绿色灵纹 (y: 0.000 -> 0.125)。
 
-    包含底凸木节与削整配重木环。
+    柄末配置 2×2×2 px 方块剑首，正面嵌一块 1×1 px 绿色灵纹符印。
     """
     return [
-        # 最低点木节底凸 (y: 0.000 -> 0.012, 严格独占 y_min=0)
-        Box("pommel_finial", "spirit_wood", (0.0, 0.006, 0.0), (0.014, 0.006, 0.011)),
-        # 剑首主配重木环 (y: 0.010 -> 0.045)
-        Box("pommel_ring", "spirit_wood", (0.0, 0.0275, 0.0), (0.022, 0.0175, 0.016)),
+        # 2x2x2 方块剑首 (y: 0.000 -> 0.125, x/z in [-0.0625, 0.0625])
+        Box("pommel_cube", "spirit_wood", (0.0, 0.0625, 0.0), (0.0625, 0.0625, 0.0625)),
+        # 正面 1x1 绿色灵纹 (嵌于正面 -Z 侧: y in [0.03125, 0.09375], x in [-0.03125, 0.03125])
+        Box("pommel_vein_rune", "spirit_vein", (0.0, 0.0625, -0.0645), (0.03125, 0.03125, 0.002)),
     ]
 
 
 def part_grip() -> list[Box]:
-    """2. 灵木剑柄与 5 道细绳防滑缠圈 (y: 0.045 -> 0.220)。
+    """2. 剑柄与细绳缠绕 (y: 0.125 -> 0.250)。
 
-    圆直灵木柄芯，外缠 5 道细密素麻绳。
+    柄身长 2px，外缠 3 道细密素麻绳防滑圈。
     """
     boxes = [
-        Box("grip_core", "spirit_wood", (0.0, 0.1325, 0.0), (0.015, 0.0875, 0.013)),
+        Box("grip_core", "spirit_wood", (0.0, 0.1875, 0.0), (0.024, 0.0625, 0.024)),
     ]
-    for i in range(5):
-        yb = 0.065 + i * 0.030
+    for i in range(3):
+        yb = 0.145 + i * 0.035
         boxes.append(
-            Box(f"grip_wrap_{i}", "fine_cord", (0.0, yb, 0.0), (0.018, 0.010, 0.015))
+            Box(f"grip_wrap_{i}", "fine_cord", (0.0, yb, 0.0), (0.027, 0.010, 0.027))
         )
     return boxes
 
 
 def part_guard() -> list[Box]:
-    """3. 灵木雕制简朴剑格 (y: 0.220 -> 0.255)。
+    """3. 宽大十字护手 (交界处: y in [0.250, 0.3125], 宽 6px、高 1px、厚 2px，两端各 1px 上翘)。
 
-    一体雕削的简朴平展双翼护手。
+    - 主横梁：宽 6px (=0.375)、高 1px (=0.0625)、厚 2px (=0.125)；
+    - 两端各 1px 上翘：在两端最外侧向上抬高 1px，形成经典十字上挑剑格。
     """
     return [
-        # 剑格中央核
-        Box("guard_center", "spirit_wood", (0.0, 0.2375, 0.0), (0.026, 0.0175, 0.020)),
-        # 剑格左翼 (-X)
-        Box("guard_wing_l1", "spirit_wood", (-0.042, 0.235, 0.0), (0.016, 0.013, 0.015)),
-        Box("guard_wing_l2", "spirit_wood", (-0.066, 0.231, 0.0), (0.008, 0.009, 0.011)),
-        # 剑格右翼 (+X)
-        Box("guard_wing_r1", "spirit_wood", (0.042, 0.235, 0.0), (0.016, 0.013, 0.015)),
-        Box("guard_wing_r2", "spirit_wood", (0.066, 0.231, 0.0), (0.008, 0.009, 0.011)),
+        # 主横梁
+        Box("guard_beam", "spirit_wood", (0.0, 0.28125, 0.0), (0.1875, 0.03125, 0.0625)),
+        # 左端 1px 上翘 (-X: x in [-0.1875, -0.125], y in [0.3125, 0.375], 高 1px)
+        Box("guard_wing_l_tip", "spirit_wood", (-0.15625, 0.34375, 0.0), (0.03125, 0.03125, 0.055)),
+        # 右端 1px 上翘 (+X: x in [0.125, 0.1875], y in [0.3125, 0.375], 高 1px)
+        Box("guard_wing_r_tip", "spirit_wood", ( 0.15625, 0.34375, 0.0), (0.03125, 0.03125, 0.055)),
     ]
 
 
 def part_blade_base() -> list[Box]:
-    """4. 剑身根部剑镡套与基段 (y: 0.255 -> 0.325)。
+    """4. 剑身基段 (y: 0.3125 -> 0.380)。
 
-    承接剑格的稳固根段。
+    咬合在十字护手中央的加固剑镡根段。
     """
     return [
-        Box("blade_base_collar", "spirit_wood", (0.0, 0.2725, 0.0), (0.021, 0.0175, 0.014)),
-        Box("blade_base_root", "spirit_wood", (0.0, 0.3075, 0.0), (0.019, 0.0175, 0.012)),
+        Box("blade_base_root", "spirit_wood", (0.0, 0.34625, 0.0), (0.022, 0.03375, 0.015)),
     ]
 
 
 def part_blade_narrow() -> list[Box]:
-    """5. 灵木削制窄刃长剑身 (y: 0.325 -> 0.810)。
+    """5. 灵木削制窄长剑身 (y: 0.380 -> 0.810)。
 
     - 贯穿中脊的青木灵脉脊线 (spirit_vein)；
     - 两侧双刃削薄展宽，逐段向剑尖微收拢。
     """
     return [
-        # ── 青木灵脉中脊贯通线 (spirit_vein，从根部向尖端延伸) ──
-        Box("blade_spine_low", "spirit_vein", (0.0, 0.420, 0.0), (0.009, 0.115, 0.009)),
-        Box("blade_spine_mid", "spirit_vein", (0.0, 0.640, 0.0), (0.008, 0.105, 0.008)),
-        Box("blade_spine_high", "spirit_vein", (0.0, 0.775, 0.0), (0.007, 0.045, 0.007)),
+        # ── 青木灵脉中脊贯通线 (spirit_vein，贯穿剑脊) ──
+        Box("blade_spine_low", "spirit_vein", (0.0, 0.485, 0.0), (0.009, 0.115, 0.010)),
+        Box("blade_spine_mid", "spirit_vein", (0.0, 0.675, 0.0), (0.008, 0.085, 0.009)),
+        Box("blade_spine_high", "spirit_vein", (0.0, 0.785, 0.0), (0.007, 0.030, 0.008)),
 
-        # ── 下段剑身 (y: 0.325 -> 0.525) ──
-        Box("blade_body_low", "spirit_wood", (0.0, 0.425, 0.0), (0.020, 0.100, 0.008)),
-        Box("blade_edge_l_low", "wood_edge", (-0.023, 0.425, 0.0), (0.004, 0.098, 0.005)),
-        Box("blade_edge_r_low", "wood_edge", ( 0.023, 0.425, 0.0), (0.004, 0.098, 0.005)),
+        # ── 下段剑身 (y: 0.380 -> 0.570) ──
+        Box("blade_body_low", "spirit_wood", (0.0, 0.475, 0.0), (0.022, 0.095, 0.009)),
+        Box("blade_edge_l_low", "wood_edge", (-0.025, 0.475, 0.0), (0.003, 0.093, 0.006)),
+        Box("blade_edge_r_low", "wood_edge", ( 0.025, 0.475, 0.0), (0.003, 0.093, 0.006)),
 
-        # ── 中段剑身 (y: 0.525 -> 0.705) - 微收窄 ──
-        Box("blade_body_mid", "spirit_wood", (0.0, 0.615, 0.0), (0.018, 0.090, 0.007)),
-        Box("blade_edge_l_mid", "wood_edge", (-0.0205, 0.615, 0.0), (0.0035, 0.088, 0.0045)),
-        Box("blade_edge_r_mid", "wood_edge", ( 0.0205, 0.615, 0.0), (0.0035, 0.088, 0.0045)),
+        # ── 中段剑身 (y: 0.570 -> 0.740) - 微收窄 ──
+        Box("blade_body_mid", "spirit_wood", (0.0, 0.655, 0.0), (0.019, 0.085, 0.008)),
+        Box("blade_edge_l_mid", "wood_edge", (-0.0215, 0.655, 0.0), (0.0025, 0.083, 0.005)),
+        Box("blade_edge_r_mid", "wood_edge", ( 0.0215, 0.655, 0.0), (0.0025, 0.083, 0.005)),
 
-        # ── 上段剑身 (y: 0.705 -> 0.810) - 再收窄 ──
-        Box("blade_body_high", "spirit_wood", (0.0, 0.7575, 0.0), (0.016, 0.0525, 0.006)),
-        Box("blade_edge_l_high", "wood_edge", (-0.018, 0.7575, 0.0), (0.003, 0.050, 0.004)),
-        Box("blade_edge_r_high", "wood_edge", ( 0.018, 0.7575, 0.0), (0.003, 0.050, 0.004)),
+        # ── 上段剑身 (y: 0.740 -> 0.810) - 再收窄 ──
+        Box("blade_body_high", "spirit_wood", (0.0, 0.775, 0.0), (0.016, 0.035, 0.007)),
+        Box("blade_edge_l_high", "wood_edge", (-0.018, 0.775, 0.0), (0.002, 0.033, 0.004)),
+        Box("blade_edge_r_high", "wood_edge", ( 0.018, 0.775, 0.0), (0.002, 0.033, 0.004)),
     ]
 
 
@@ -249,7 +249,7 @@ def render_views(bbmodel_path: Path):
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
 
-    # 1. 渲染视角 (3/4 视看窄刃立体与灵脉中脊、正视 FRONT 看全剑修长线条、侧视 SIDE 看扁平刃身厚度)
+    # 1. 渲染视角 (3/4 视看十字护手、方块灵纹剑首与灵脉中脊；正视 FRONT 看全剑修长线条；侧视 SIDE 看护手厚度与侧面轮廓)
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
     im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
@@ -261,9 +261,9 @@ def render_views(bbmodel_path: Path):
     r_draw = ImageDraw.Draw(render_cv)
 
     views = [
-        ("FRONT VIEW (Slender Blade & Spirit Vein)", im_front, 24, 40),
+        ("FRONT VIEW (Crossguard, Cube Pommel & Spirit Vein)", im_front, 24, 40),
         ("3/4 ISOMETRIC VIEW (Full Sword Structure)", im_iso, 24 + 516, 40),
-        ("SIDE VIEW (Narrow Edge Profile & Guard)", im_side, 24 + 516 * 2, 40),
+        ("SIDE VIEW (2px Guard Thickness & Edge Profile)", im_side, 24 + 516 * 2, 40),
     ]
     for title, im_v, px, py in views:
         render_cv.paste(im_v, (px, py))
@@ -331,8 +331,8 @@ def self_test():
     defect_box = Box(
         "inject_coplanar_fail",
         "spirit_wood",
-        (0.0, 0.006, 0.0),  # 与 pommel_finial 完全重叠共面
-        (0.014, 0.006, 0.011),
+        (0.0, 0.0625, 0.0),  # 与 pommel_cube 完全重叠共面
+        (0.0625, 0.0625, 0.0625),
     )
     defect_item = HeldItem(
         key="lingmu_sword_defect",
