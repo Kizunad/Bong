@@ -240,34 +240,41 @@ def lung_override(cube: dict, default: Painter) -> Optional[Painter]:
     return None
 
 
-# ---- o03 臂肌：肌纤维沿肌束长轴走 ------------------------------------------------
+# ---- o03 臂肌：每个肌束 3~4 条贯穿全长的平行弧线 ---------------------------------------
 
-FIBER_SPACING = 1.25        # 相邻纤维线的间距（px）
 FIBER_LINE_WIDTH = 0.3
-FIBER_SKIP_CHANCE = 0.3     # 有的纤维线断掉，免得像条码
+FIBER_SKIP_CHANCE = 0.3     # o04 腿肌的纤维线会随机断开几条
+ARM_ARC_OFFSETS = (-0.62, -0.22, 0.22, 0.62)    # 弧线在肌束截面里的相对位置（-1..1，占半宽的比例）
+ARM_ARC_BULGE = 0.15                            # 弧线随肌腹隆起外扩的幅度
+ARM_Z_START, ARM_Z_END = 8.0, 47.0              # 肌束沿 z 的全长，弧线的隆起相位按它算，各段首尾相接
 
 
 def _muscle_fiber_painter(cube: dict, default: Painter) -> Painter:
+    """肌束沿 z 走：顶 / 底面上的弧线沿 x 排布，左 / 右侧面上沿 y 排布。
+    线位置按「截面半宽的比例」给定，所以肌束各段变粗变细时线跟着走，整条不断；比例里再叠一个沿全长的
+    正弦隆起，让平行线呈弧形外鼓。"""
     lo, hi = cube["from"], cube["to"]
-    size = [hi[i] - lo[i] for i in range(3)]
-    long_axis = size.index(max(size))
 
     def paint(p: Vec, axis: int) -> Color:
         color = default(p, axis)
-        if axis == long_axis:
+        if axis == 2:
             return color
-        across_axis = 3 - long_axis - axis
-        slot = math.floor((p[across_axis] - lo[across_axis]) / FIBER_SPACING)
-        offset = (p[across_axis] - lo[across_axis]) - slot * FIBER_SPACING
-        if offset < FIBER_LINE_WIDTH and texel_noise((slot, axis, round(lo[long_axis])), 111) > FIBER_SKIP_CHANCE:
-            return mix(color, LINE_COLOR, 0.85)
+        across = 0 if axis == 1 else 1          # 顶底面看 x，侧面看 y
+        center = (lo[across] + hi[across]) / 2
+        half = (hi[across] - lo[across]) / 2
+        phase = math.pi * min(1.0, max(0.0, (p[2] - ARM_Z_START) / (ARM_Z_END - ARM_Z_START)))
+        for offset in ARM_ARC_OFFSETS:
+            line = center + offset * (1 + ARM_ARC_BULGE * math.sin(phase)) * half
+            if abs(p[across] - line) < FIBER_LINE_WIDTH:
+                return mix(color, LINE_COLOR, 0.85)
         return color
 
     return paint
 
 
 def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
-    if cube.get("group") == "muscle_bundles" and cube.get("material") in ("flesh_main", "flesh_lit"):
+    if cube.get("group") == "muscle_bundles" and cube.get("material") in ("flesh_main", "flesh_lit") \
+            and not cube["name"].endswith("_hl"):
         return _muscle_fiber_painter(cube, default)
     return None
 
