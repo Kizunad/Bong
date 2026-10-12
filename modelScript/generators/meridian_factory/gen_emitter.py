@@ -66,9 +66,11 @@ FOLDS = 10  # 放射肉褶道数（派单要求 8~10）
 FOLD_THRESHOLD = 0.3  # cos(nθ) 超过 ±threshold 才算褶脊 / 褶间沟
 DOME_RADIUS = 6.0  # 柱心半径上限，穹顶底宽 12
 DOME_HALF = 6  # 柱网范围 ±6
-STEP = 0.5  # 柱网步长（0.5px 一根，放射褶才不至于被 1px 网格压成十字）
-# (柱心半径上限, 穹顶顶面高度)，自内向外
-DOME_PROFILE: List[Tuple[float, float]] = [(4.0, 12.0), (4.5, 11.5), (5.0, 10.5), (5.4, 9.5), (5.8, 8.5), (6.0, 7.5)]
+STEP = 0.5  # 柱网步长：0.5px 一根，10 道放射褶靠它才分得开（试过 1px 柱网，褶被压成方块）
+RIM_REACH = 6.5  # 外缘半格的柱心半径上限（主体柱心半径 ≤ DOME_RADIUS，再往外补一圈到这里）
+RIM_TOP = DOME_Y0 + 0.5  # 外缘半格只有 0.5px 高，给穹顶底脚收一圈细边
+# (柱心半径上限, 穹顶顶面高度)，自内向外：每级台阶高 1px、宽约 1px（斜坡约 45°），不再有 0.5px 一级的碎台阶
+DOME_PROFILE: List[Tuple[float, float]] = [(2.0, 11.0), (3.0, 10.0), (4.0, 9.0), (5.0, 8.0), (5.6, 7.0), (6.0, 6.0)]
 FOLD_AMPLITUDE = {"open": 0.5, "half": 1.0, "closed": 1.5}
 APERTURE_HALF = {"open": 2, "half": 1, "closed": 0}  # 收缩口半宽 a（口宽 2a）
 SEAM_DROP = 1.5  # closed 态中央 2×2 压低量
@@ -76,6 +78,9 @@ APERTURE_FLOOR_Y = 7.0  # 孔底（亮芯顶面在 y=7.5）
 LINER_THICK = 0.5
 COLLAR_OUTER = {"open": 7.1, "half": 7.6, "closed": 8.1}  # 最远角半径上限，实际外缘取到 0.5px 网格：7.0 / 7.5 / 8.0
 COLLAR_HEIGHT = {"open": 1.5, "half": 2.0, "closed": 2.5}
+COLLAR_WIDTH = 2.0  # 肉箍径向厚度，内缘 = 外缘 - 厚度
+COLLAR_GAP = 1.0  # 肉箍底面悬在穹顶最高点（含褶脊）上方的距离
+COLLAR_STEP = 0.5  # 肉箍柱网步长，外圈轮廓比主体更细
 
 
 # =============================================================================
@@ -148,6 +153,20 @@ def _dome_columns() -> List[Tuple[float, float, float, float]]:
     return cols
 
 
+def _rim_cells() -> List[Tuple[float, float]]:
+    """外缘半格：主体柱网之外再补一圈 0.5px 高的小格（柱心半径落在 (DOME_RADIUS, RIM_REACH]），
+    返回左缘 (x, z)。穹顶底脚的 1px 台阶外面多出这圈 0.5px 细边，轮廓收得更顺。"""
+    extent = math.ceil(RIM_REACH)
+    n = int(2 * extent / STEP)
+    cells = []
+    for i in range(n):
+        for j in range(n):
+            x, z = -extent + i * STEP, -extent + j * STEP
+            if DOME_RADIUS < math.hypot(x + STEP / 2, z + STEP / 2) <= RIM_REACH:
+                cells.append((x, z))
+    return cells
+
+
 def _fold_kind(theta: float, folds: int) -> str:
     """该角度落在褶脊 / 褶间沟 / 肉体哪一类。"""
     f = math.cos(folds * theta)
@@ -183,6 +202,14 @@ def part_02_dome(variant: str = "open", folds: int = FOLDS) -> List[dict]:
             "group": "dome",
             "material": material,
         })
+    for x, z in _rim_cells():
+        cubes.append({
+            "name": f"dome_rim_x{round(x / STEP)}_z{round(z / STEP)}",
+            "from": [x, DOME_Y0, z],
+            "to": [x + STEP, RIM_TOP, z + STEP],
+            "group": "dome",
+            "material": "flesh_main",
+        })
     return cubes
 
 
@@ -205,23 +232,26 @@ def part_03_aperture(variant: str = "open") -> List[dict]:
 
 
 def part_04_collar(variant: str = "open") -> List[dict]:
-    """外圈肉箍：穹顶底（y 5 起）一圈圆环，和穹顶同一张 STEP 柱网，柱心半径 > DOME_RADIUS 的柱子接在穹顶外面；
-    柱子最远角到中心的距离 ≤ COLLAR_OUTER，所以外缘不会超过该值，外径随开度外鼓。"""
+    """外圈肉箍：悬在收缩口上方的一圈（参考 x13_emitter_v2 里浮在穹顶上的环），和穹顶不相连。
+    环底面 = 该态穹顶最高点（含褶脊）+ COLLAR_GAP；径向厚 COLLAR_WIDTH，外缘取 0.5px 网格、
+    最远角到中心的距离 ≤ COLLAR_OUTER，外径随 open → half → closed 外鼓，高度同步加大。"""
     outer = COLLAR_OUTER[variant]
-    top = DOME_Y0 + COLLAR_HEIGHT[variant]
-    n = int(2 * math.ceil(outer) / STEP)
+    inner = outer - COLLAR_WIDTH
+    bottom = max(c["to"][1] for c in part_02_dome(variant)) + COLLAR_GAP
+    top = bottom + COLLAR_HEIGHT[variant]
+    n = int(2 * math.ceil(outer) / COLLAR_STEP)
     origin = -math.ceil(outer)
     cubes = []
     for i in range(n):
         for j in range(n):
-            x, z = origin + i * STEP, origin + j * STEP
-            cx, cz = x + STEP / 2, z + STEP / 2
-            far = math.hypot(abs(cx) + STEP / 2, abs(cz) + STEP / 2)
-            if math.hypot(cx, cz) > DOME_RADIUS and far <= outer:
+            x, z = origin + i * COLLAR_STEP, origin + j * COLLAR_STEP
+            cx, cz = x + COLLAR_STEP / 2, z + COLLAR_STEP / 2
+            far = math.hypot(abs(cx) + COLLAR_STEP / 2, abs(cz) + COLLAR_STEP / 2)
+            if math.hypot(cx, cz) >= inner and far <= outer:
                 cubes.append({
-                    "name": f"collar_x{round(x / STEP)}_z{round(z / STEP)}",
-                    "from": [x, DOME_Y0, z],
-                    "to": [x + STEP, top, z + STEP],
+                    "name": f"collar_x{round(x / COLLAR_STEP)}_z{round(z / COLLAR_STEP)}",
+                    "from": [x, bottom, z],
+                    "to": [x + COLLAR_STEP, top, z + COLLAR_STEP],
                     "group": "collar",
                     "material": "flesh_main",
                 })
@@ -376,6 +406,16 @@ def _hole_area(variant: str) -> float:
     return missing * STEP * STEP
 
 
+def _stair_steps_ok(levels: List[float]) -> bool:
+    """自上而下的阶梯高度，相邻两级是否恰好差 1px（门禁判据，self_test 里注入 0.5px 阶梯验证它）。"""
+    return all(a - b == 1.0 for a, b in zip(levels, levels[1:]))
+
+
+def _collar_gap_ok(gap: float) -> bool:
+    """肉箍悬空间隙是否够（门禁判据，self_test 里注入 0.4px 间隙验证它）。"""
+    return gap >= COLLAR_GAP
+
+
 def self_test():
     """门禁差分自证：共面 / 外包 / 10 道肉褶 / 三态开度与肉箍单调，各自先注入缺陷确认拦得住。"""
     print("运行 gen_emitter.py 差分自证...")
@@ -410,6 +450,22 @@ def self_test():
     assert heights == sorted(set(heights)), f"肉箍高度应随 open→half→closed 严格加大，实际 {heights}"
     assert all(e <= COLLAR_OUTER[v] for e, v in zip(extents, VARIANTS)), "肉箍不应超出各态外缘上限"
     print(f"  [OK] 开口面积 {areas}（4×4 / 2×2 / 闭合），肉箍外缘 {extents}、高 {heights} 严格递增")
+
+    levels = [height for _, height in DOME_PROFILE]
+    assert _stair_steps_ok(levels), f"穹顶顶面阶梯应每级恰好 1px，实际 {levels}"
+    assert _stair_steps_ok([4.0, 3.5, 3.0]) is False, "阶梯门禁失效: 注入 0.5px 一级的阶梯没被识别出来"
+    rim = _rim_cells()
+    body = {(x, z) for x, z, _, _ in _dome_columns()}
+    overlapping = [(x, z) for x, z in rim if (x, z) in body]
+    assert rim and not overlapping, f"外缘半格不应压在主体柱上: {overlapping[:3]}"
+    print(f"  [OK] 穹顶顶面 {levels} 每级 1px；外缘补了 {len(rim)} 个 0.5px 半格；注入 0.5px 阶梯能识别")
+
+    for v in VARIANTS:
+        dome_top = max(c["to"][1] for c in part_02_dome(v))
+        collar_bottom = min(c["from"][1] for c in part_04_collar(v))
+        assert collar_bottom - dome_top >= COLLAR_GAP, f"emitter_{v} 肉箍应悬在穹顶最高点上方至少 {COLLAR_GAP}px，实际间隙 {collar_bottom - dome_top}"
+    assert _collar_gap_ok(0.4) is False, "悬空门禁失效: 注入 0.4px 间隙没被识别出来"
+    print(f"  [OK] 三态肉箍底面都在穹顶最高点上方 ≥ {COLLAR_GAP}px（悬空）；注入 0.4px 间隙能识别")
 
     print("✓ gen_emitter.py 差分自证全绿")
 
