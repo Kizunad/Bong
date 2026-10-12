@@ -22,6 +22,7 @@ from pixel_texture import (
     hex_color,
     TUBE_CENTER,
     TUBE_HIGHLIGHT,
+    TUBE_MID,
     Color,
     Painter,
     Vec,
@@ -387,19 +388,12 @@ def _ember_painter(cube: dict) -> Painter:
     return paint
 
 
-# 心肌表面的发光血管网：主干从顶部三根大血管下来，分 3 级。只画在朝前（+z）的面上。
-HEART_BASE = hex_color("#7a2424")       # 心肌底色压暗，血管网才亮得出来
-VESSEL_CORE = hex_color("#f6dcc4")
-VESSEL_SIDE = hex_color("#e8bca8")
-VESSEL_SIDE_WIDTH = 0.45                # 线芯两侧高光的宽度
-# 三根主干的起点 (x, y)：对着顶部三根大血管（x = 0、-9、+9）的根部
-HEART_TRUNK_ROOTS = ((0.0, 39.0), (-9.0, 38.0), (9.0, 37.0))
-# 每级：(长度, 线芯半宽, 分叉数, 分叉半角度)
-HEART_BRANCH_LEVELS = (
-    (9.0, 0.55, 2, 26.0),
-    (6.5, 0.42, 3, 22.0),
-    (4.5, 0.32, 0, 0.0),
-)
+# 心肌表面：底色压暗到 #7a2424，血管树（几何块，group vessel_tree）才亮得出来。
+HEART_BASE = hex_color("#7a2424")
+VESSEL_CORE = hex_color("#f6dcc4")      # 线芯
+VESSEL_SIDE = hex_color("#e8bca8")      # 线芯两侧
+MAIN_CORE_HALF = 0.5                    # 主脉（2 宽）线芯半宽 px
+BRANCH_CORE_HALF = 0.25                 # 支脉（1 宽）线芯半宽 px：中间 1 个 texel
 # 余烬斑：几何里是 6×6 的 ember_plate，贴图上把光晕画到两倍大
 EMBER_CENTER = (0.0, 19.0)
 EMBER_GLOW_RADIUS = 6.0
@@ -407,49 +401,29 @@ HEART_FRONT_Z = 5.0
 HEART_MUSCLE_GROUPS = ("ventricles", "atria")
 
 
-def _heart_segments() -> list:
-    """主干 + 分叉的线段表：(起点, 终点, 线芯半宽)。方向用「偏离正下方的角度」，分叉左右对称展开，
-    主干朝心尖（余烬斑）略微收拢。"""
-    segments = []
-
-    def grow(x: float, y: float, heading: float, level: int):
-        length, half_width, forks, spread = HEART_BRANCH_LEVELS[level]
-        end = (x + length * math.sin(math.radians(heading)), y - length * math.cos(math.radians(heading)))
-        segments.append(((x, y), end, half_width))
-        if forks == 0:
-            return
-        for k in range(forks):
-            offset = (k - (forks - 1) / 2) * 2 * spread / max(forks - 1, 1)
-            grow(end[0], end[1], heading + offset, level + 1)
-
-    for root_x, root_y in HEART_TRUNK_ROOTS:
-        toward_center = -math.degrees(math.atan2(root_x, 20.0)) * 0.5   # 左边的向右收，右边的向左收
-        grow(root_x, root_y, -toward_center, 0)
-    return segments
-
-
-HEART_SEGMENTS = _heart_segments()
-
-
 def _heart_surface_painter(default: Painter) -> Painter:
     def paint(p: Vec, axis: int) -> Color:
         color = mix(default(p, axis), HEART_BASE, 0.7)
-        # 前半个心的所有朝向都画：心肌是逐行堆的台阶，只画朝前的面，网会被台阶的朝上面截断
         if p[2] < HEART_FRONT_Z:
             return color
-
         glow = math.hypot(p[0] - EMBER_CENTER[0], p[1] - EMBER_CENTER[1]) / EMBER_GLOW_RADIUS
         if glow < 1.0:
             warmth = (1.0 - glow) ** 1.5
             color = mix(color, mix(EMBER_MID, EMBER_CORE, warmth), min(1.0, warmth * 1.5))
-
-        for start, end, half_width in HEART_SEGMENTS:
-            distance = _segment_distance(p[0], p[1], start, end)
-            if distance < half_width:
-                return VESSEL_CORE
-            if distance < half_width + VESSEL_SIDE_WIDTH:
-                color = mix(color, VESSEL_SIDE, 0.9)
         return color
+
+    return paint
+
+
+def _vessel_tree_painter(cube: dict) -> Painter:
+    """血管树：线芯 #f6dcc4 沿血管中线，两侧 #e8bca8；主脉线芯宽 1px，支脉线芯 1 texel。"""
+    cx = (cube["from"][0] + cube["to"][0]) / 2
+    core_half = MAIN_CORE_HALF if cube["name"].startswith("vein_main") else BRANCH_CORE_HALF
+
+    def paint(p: Vec, axis: int) -> Color:
+        if abs(p[0] - cx) < core_half:
+            return mix(VESSEL_CORE, VESSEL_SIDE, 0.1 * texel_noise(p, 151))
+        return mix(VESSEL_SIDE, TUBE_MID, 0.15 * texel_noise(p, 152))
 
     return paint
 
@@ -457,6 +431,8 @@ def _heart_surface_painter(default: Painter) -> Painter:
 def heart_override(cube: dict, default: Painter) -> Optional[Painter]:
     if cube.get("material") == "fire":
         return _ember_painter(cube)
+    if cube.get("group") == "vessel_tree":
+        return _vessel_tree_painter(cube)
     if cube.get("group") in HEART_MUSCLE_GROUPS:
         return _heart_surface_painter(default)
     return None

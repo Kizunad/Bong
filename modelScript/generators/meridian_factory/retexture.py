@@ -241,11 +241,11 @@ def build_batch2_registry() -> Dict[str, Piece]:
         "b10": Piece(gen_junction.REVIEW_DIR, "b10_junction.png", junction),
         "b11": Piece(gen_valve.REVIEW_DIR, "b11_valve.png", valve),
         "b14": Piece(gen_meridian_damage.REVIEW_DIR, "b14_meridian_damage.png", damage),
-        "o05": Piece(gen_heart.REVIEW_DIR, "o05_heart.png",
+        "o05": Piece(gen_heart.REVIEW_DIR, "../exploded/x05_heart.png",
                      [Variant(heart_stem, gen_heart.all_cubes, heart_stem, _palette(gen_heart), heart_override,
                               gen_heart.generate_bbmodel)]),
-        "o06": organ(gen_liver, "liver", "o06_liver.png", liver_override),
-        "o07": organ(gen_spleen, "spleen", "o07_spleen.png", spleen_override),
+        "o06": organ(gen_liver, "liver", "../exploded/x06_liver.png", liver_override),
+        "o07": organ(gen_spleen, "spleen", "../exploded/x07_spleen.png", spleen_override),
         "o08": organ(gen_kidney, "kidney", "o08_kidney.png", None),
     }
 

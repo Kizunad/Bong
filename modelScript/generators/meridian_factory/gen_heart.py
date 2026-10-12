@@ -44,6 +44,7 @@ import argparse
 import base64
 import io
 import json
+import math
 import uuid
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -118,22 +119,29 @@ VESSEL_HALF = 3.0
 RING_H = 1.5  # 骨环口高
 RING_T = 1.25  # 骨环壁厚
 
-# 冠状血管纹：(x, y) 折线点，y 都在 2px 格线上，自上而下。proud 各不相同，避免交叉处共面。
-# 每条纹：(分块方向, 折线点 (x, y), 浮起 px, 分块范围)。
-# y 向纹按 y 分行，x 向纹（冠状沟，一道拱）按 x 分列。
-# 分块边界一律落在半格上（24.5 / 26.5 …）：体表的段边界都在整数格线上，纹块的侧面如果也落在
-# 格线上就会和体表段的侧面共面。主干在 y=30 的心体顶面处断开 1px（29.5 → 30.5），
-# 正好对应那里从心室体表（Z≈13）台阶式过渡到大血管表面（Z=3）。
-CORONARY = {
-    "trunk_low": ("y", [(0.0, 38.0), (0.0, 24.0)], 0.6, (24.5, 29.5)),
-    "trunk_up": ("y", [(0.0, 38.0), (0.0, 24.0)], 0.6, (30.5, 38.5)),
-    "branch_l": ("y", [(-1.0, 24.0), (-5.0, 22.0), (-8.0, 18.0), (-10.0, 12.0), (-11.0, 8.0)], 0.45, (8.5, 23.5)),
-    "branch_r": ("y", [(1.0, 24.0), (5.0, 22.0), (8.0, 18.0), (10.0, 12.0), (11.0, 8.0)], 0.45, (8.5, 23.5)),
-    "groove": ("x", [(-14.0, 22.0), (-10.0, 26.0), (-5.0, 28.0), (5.0, 28.0), (10.0, 26.0), (14.0, 22.0)], 0.3, (-14.5, 14.5)),
-}
-VEIN_HALF_W = 0.75
-# 纹/余烬光的背面埋进体内的深度：要大于相邻段 ±1 起伏之差，否则低段处会露缝。
-# 每条纹再错开 0.1，免得交叉处背面共面。
+# 血管树（几何）：一条中央主脉 + 左右对称各 2 级支脉。
+# 主脉 2×2：从顶部中间那根大血管的前面（z=3）往下，翻过心体顶面（y=30），再沿心正面中线（|x|≤1）下到余烬斑上方。
+# 支脉 1×1：以 1px 格 (ix, iy) 记，沿心肌表面斜向下逐格走（4 连通阶梯），左侧写出、右侧镜像。
+# 每格贴在所在位置的心肌前表面上，两格表面高度不同（过台阶）时，在较低那格上补一块 0.5px 的半格，
+# 把台阶拆成两级半格，血管不断。
+# 格的 y 整体错开 0.5（心肌行界都在偶数），支脉格的 x 也错开 0.5（避开中央段 |x|=3 等整数界），
+# 免得侧面和心肌段共面。
+MAIN_X = (-1.0, 1.0)
+MAIN_PROUD = 2.0
+MAIN_TOP_Y = 46.0            # 顶端留在大血管骨环口（y 46.5）之下
+MAIN_BRIDGE_Y = (30.0, 32.0)  # 翻过心体顶面的一段
+MAIN_FRONT_Y = (22, 30)       # 沿心正面往下的格（iy 22..29，y 22.5..30.5）
+BRANCH_PROUD = 1.0
+Y_OFFSET = 0.5
+X_OFFSET_BRANCH = 0.5
+BRANCH_Y_OFFSET = 0.25      # 支脉的 y 与主脉（0.5）错开，起点格和主脉相交处才不共面
+# 左侧支脉路点 (ix, iy)：一级支从主脉左缘（余烬斑上方）斜向下，二级支再从一级支分出
+BRANCH_L1 = [(-2, 26), (-6, 23), (-9, 19), (-12, 13)]
+BRANCH_L2 = [
+    [(-6, 23), (-12, 22), (-14, 18)],   # 向外
+    [(-9, 19), (-7, 12), (-5, 8)],      # 向内下
+]
+# 贴身埋进心肌的深度：要大于相邻段 ±1 起伏之差，否则低段处会露缝；各组错开 0.1，免得背面共面。
 SINK = 2.5
 SINK_STEP = 0.1
 
@@ -276,39 +284,115 @@ def part_03_vessels() -> List[dict]:
     return cubes
 
 
-def _interp(points: List[Tuple[float, float]], axis: int, t: float) -> float:
-    """折线在 points[i][axis] = t 处另一个坐标的值（axis 方向须单调）。"""
-    other = 1 - axis
-    pts = sorted(points, key=lambda p: p[axis])
-    if t <= pts[0][axis]:
-        return pts[0][other]
-    for a, b in zip(pts, pts[1:]):
-        if a[axis] <= t <= b[axis]:
-            return a[other] + (b[other] - a[other]) * (t - a[axis]) / (b[axis] - a[axis])
-    return pts[-1][other]
+def _stair(c0: int, r0: int, c1: int, r1: int) -> set:
+    """两格之间的 4 连通阶梯：沿大方向每步走一格，小方向按斜率进位，斜走那步补一个肘格。"""
+    dc, dr = c1 - c0, r1 - r0
+    steps = max(abs(dc), abs(dr))
+    out = {(c0, r0)}
+    prev = (c0, r0)
+    for i in range(1, steps + 1):
+        cur = (c0 + round(dc * i / steps), r0 + round(dr * i / steps))
+        if cur[0] != prev[0] and cur[1] != prev[1]:
+            out.add((cur[0], prev[1]))
+        out.add(cur)
+        prev = cur
+    return out
 
 
-def part_04_coronary() -> List[dict]:
-    """冠状血管纹：沿折线每 2px 一块（竖向纹按 y 分行，冠状沟按 x 分列），宽 1.5px，浮起 proud px。
+def _path_cells(waypoints: List[Tuple[int, int]]) -> set:
+    cells: set = set()
+    for (c0, r0), (c1, r1) in zip(waypoints, waypoints[1:]):
+        cells |= _stair(c0, r0, c1, r1)
+    return cells
 
-    每条纹的 proud 各不相同，交叉处不会出现同面同位的重叠面。
-    """
+
+def _mirror_cells(cells: set) -> set:
+    """左侧格镜像到右侧：格 (ix, iy) 占 x [ix+0.5, ix+1.5]，镜像后占 [-ix-1.5, -ix-0.5]，即格号 -ix-2。"""
+    return {(-ix - 2, iy) for ix, iy in cells}
+
+
+def _relax(tops: dict, steps: tuple) -> dict:
+    """让相邻格前表面高差不超过 0.5px：较低的格往上垫半格（0.5 的整数倍），一直垫到和高处差 ≤0.5。
+    垫高会影响它自己的邻格，所以反复迭代到稳定（等价于沿路径逐级爬坡）。"""
+    final = dict(tops)
+    changed = True
+    while changed:
+        changed = False
+        for (ix, iy), h in list(final.items()):
+            for dx, dy in steps:
+                nb = (ix + dx, iy + dy)
+                if nb in final and final[nb] - h > 0.5 + 1e-9:
+                    # 抬到比邻格低 0.5 以内，取半格整数倍
+                    need = final[nb] - 0.5
+                    final[(ix, iy)] = h = max(h, tops[(ix, iy)] + 0.5 * math.ceil((need - tops[(ix, iy)]) / 0.5 - 1e-9))
+                    changed = True
+    return final
+
+
+def _vein_cells_group(levels: List[Tuple[str, set, float]], proud: float) -> List[dict]:
+    """一侧的全部 1×1 格（一级、二级一起算）：每格贴在所在位置心肌前表面上；
+    表面更高的相邻格之间（不分级），在较低那格上垫半格，高差过大时垫到 ≤0.5。levels = [(名字, 格集合, 埋深)]。"""
+    g = "vessel_tree"
+    boxes = {}
+    tops = {}
+    owner = {}
+    for name, cells, sink in levels:
+        for ix, iy in sorted(cells):
+            x0, x1 = ix + X_OFFSET_BRANCH, ix + X_OFFSET_BRANCH + 1.0
+            y0, y1 = iy + BRANCH_Y_OFFSET, iy + BRANCH_Y_OFFSET + 1.0
+            try:
+                tops[(ix, iy)] = _front_z(x0, x1, y0, y1) + proud
+            except ValueError:
+                continue   # 落在心体外的格不画
+            boxes[(ix, iy)] = (x0, y0, x1, y1)
+            owner[(ix, iy)] = (name, sink)
+    cubes = []
+    for cell, top in tops.items():
+        x0, y0, x1, y1 = boxes[cell]
+        name, sink = owner[cell]
+        cubes.append(_cube(f"vein_{name}_{cell[0]}_{cell[1]}", (x0, y0, top - sink), (x1, y1, top), g, "tendon_highlight"))
+    final = _relax(tops, ((1, 0), (-1, 0), (0, 1), (0, -1)))
+    for cell, top in tops.items():
+        if final[cell] - top > 1e-6:
+            x0, y0, x1, y1 = boxes[cell]
+            cubes.append(_cube(f"vein_{owner[cell][0]}_{cell[0]}_{cell[1]}_half", (x0, y0, top), (x1, y1, final[cell]), g, "tendon_highlight"))
+    return cubes
+
+
+def part_04_vessel_tree() -> List[dict]:
+    """血管树：中央主脉（2×2）+ 左右对称各 2 级支脉（1×1），全部沿心肌表面连续走。"""
+    g = "vessel_tree"
+    x0, x1 = MAIN_X
     cubes: List[dict] = []
-    for index, (name, (mode, points, proud, (start, end))) in enumerate(CORONARY.items()):
-        sink = SINK + index * SINK_STEP
-        t = start
-        while t < end - 1e-6:
-            t1 = min(t + ROW_H, end)
-            if mode == "y":
-                xa, xb = _interp(points, 1, t), _interp(points, 1, t1)
-                box = (min(xa, xb) - VEIN_HALF_W, t, max(xa, xb) + VEIN_HALF_W, t1)
-            else:
-                yc = _interp(points, 0, (t + t1) / 2)
-                box = (t, yc - VEIN_HALF_W, t1, yc + VEIN_HALF_W)
-            x0, y0, x1, y1 = box
-            zf = _front_z(x0, x1, y0, y1)
-            cubes.append(_cube(f"vein_{name}_{t:g}", (x0, y0, zf - sink), (x1, y1, zf + proud), "coronary", "bone_main"))
-            t = t1
+
+    # 主脉 A：顶部中间大血管前面（z 3..5）往下
+    front_a = VESSEL_HALF
+    cubes.append(_cube("vein_main_a", (x0, MAIN_BRIDGE_Y[1], front_a), (x1, MAIN_TOP_Y, front_a + MAIN_PROUD), g, "tendon_highlight"))
+    # 主脉 B：翻过心体顶面（y 30..32），向前一直到心正面
+    front_c = _front_z(x0, x1, 28.0, 30.0)
+    cubes.append(_cube("vein_main_b", (x0 - 0.05, MAIN_BRIDGE_Y[0], front_a), (x1 + 0.05, MAIN_BRIDGE_Y[1], front_c + MAIN_PROUD + 0.5), g, "tendon_highlight"))
+    # 主脉 C：沿心正面中线往下，按格走（2 格宽），表面台阶处补半格
+    main_cells = set()
+    for iy in range(MAIN_FRONT_Y[0], MAIN_FRONT_Y[1]):
+        main_cells |= {(-1, iy), (0, iy)}
+    tops = {}
+    for ix, iy in main_cells:
+        tops[(ix, iy)] = _front_z(ix, ix + 1.0, iy + Y_OFFSET, iy + Y_OFFSET + 1.0) + MAIN_PROUD
+    for (ix, iy), top in tops.items():
+        cubes.append(_cube(f"vein_main_c_{ix}_{iy}", (ix, iy + Y_OFFSET, top - SINK - 0.5), (ix + 1.0, iy + Y_OFFSET + 1.0, top), g, "tendon_highlight"))
+    final = _relax(tops, ((0, 1), (0, -1)))
+    for (ix, iy), top in tops.items():
+        if final[(ix, iy)] - top > 1e-6:
+            cubes.append(_cube(f"vein_main_c_{ix}_{iy}_half", (ix, iy + Y_OFFSET, top), (ix + 1.0, iy + Y_OFFSET + 1.0, final[(ix, iy)]), g, "tendon_highlight"))
+
+    # 支脉：一级 + 二级，左侧写出，右侧镜像
+    level1 = _path_cells(BRANCH_L1)
+    level2 = set()
+    for wp in BRANCH_L2:
+        level2 |= _path_cells(wp)
+    level2 -= level1
+    for tag, flip in (("l", lambda c: c), ("r", _mirror_cells)):
+        cubes += _vein_cells_group([(f"b1{tag}", flip(level1), SINK), (f"b2{tag}", flip(level2), SINK + SINK_STEP)], BRANCH_PROUD)
     return cubes
 
 
@@ -336,7 +420,7 @@ PARTS = [
     ("ventricles", part_01_ventricles),
     ("atria", part_02_atria),
     ("vessels", part_03_vessels),
-    ("coronary", part_04_coronary),
+    ("vessel_tree", part_04_vessel_tree),
     ("ember", part_05_ember),
     ("outlet", part_06_outlet),
 ]
@@ -512,6 +596,75 @@ def self_test() -> None:
             print(f"  [OK] 注入「{name}」被拦截")
         else:
             raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+    check_vessel_tree(cubes)
+    print("  [OK] 血管树：主脉 2 宽、支脉 1×1、左右对称各 2 级、整棵连成一块、相邻格台阶 ≤0.5px")
+    tree = [c for c in cubes if c["group"] == "vessel_tree"]
+    rest = [c for c in cubes if c["group"] != "vessel_tree"]
+    cut = next(c for c in tree if c["name"] == "vein_b1l_-9_19")   # 一级支和两条二级支的分叉点，拿掉就断
+    broken = rest + [c for c in tree if c is not cut and not c["name"].startswith(cut["name"] + "_")]
+    no_fill = rest + [c for c in tree if not c["name"].endswith("_half")]
+    fat = rest + [dict(c, to=[c["to"][0] + 1.0, c["to"][1], c["to"][2]]) if c["name"].startswith("vein_b2l_") and not c["name"].endswith("_half") else c for c in tree]
+    no_l2 = rest + [c for c in tree if not c["name"].startswith("vein_b2r_")]
+    for name, bad in (("拿掉一格支脉", broken), ("去掉过台阶半格", no_fill), ("支脉变 2 宽", fat), ("右侧少二级支", no_l2)):
+        try:
+            check_vessel_tree(bad)
+        except AssertionError:
+            print(f"  [OK] 注入「{name}」被拦截")
+        else:
+            raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
+
+
+def _touch(a: dict, b: dict) -> bool:
+    return all(a["from"][i] <= b["to"][i] + 1e-6 and b["from"][i] <= a["to"][i] + 1e-6 for i in range(3))
+
+
+def check_vessel_tree(cubes: List[dict]) -> None:
+    """血管树门禁：主脉 2 宽、支脉格 1×1；左右两侧各有一级和二级；所有血管块连成一块；
+    同组相邻格（含半格）的前表面高度差 ≤0.5px，也就是过台阶不断。"""
+    tree = [c for c in cubes if c["group"] == "vessel_tree"]
+    assert tree, "没有血管树"
+    for c in tree:
+        if c["name"].startswith("vein_main_c_") and not c["name"].endswith("_half"):
+            assert abs(c["to"][0] - c["from"][0] - 1.0) < 1e-6, f"{c['name']} 主脉格应 1 宽（两格并成 2 宽）"
+    main_c = [c for c in tree if c["name"].startswith("vein_main_c_") and not c["name"].endswith("_half")]
+    assert abs(max(c["to"][0] for c in main_c) - min(c["from"][0] for c in main_c) - 2.0) < 1e-6, "主脉应 2 宽"
+    for c in tree:
+        if c["name"].startswith(("vein_b1", "vein_b2")) and not c["name"].endswith("_half"):
+            assert abs(c["to"][0] - c["from"][0] - 1.0) < 1e-6 and abs(c["to"][1] - c["from"][1] - 1.0) < 1e-6, f"{c['name']} 支脉应是 1×1"
+    for tag in ("b1l", "b1r", "b2l", "b2r"):
+        assert any(c["name"].startswith(f"vein_{tag}_") for c in tree), f"缺 {tag} 支脉"
+    n_l = sum(1 for c in tree if c["name"].startswith(("vein_b1l_", "vein_b2l_")) and not c["name"].endswith("_half"))
+    n_r = sum(1 for c in tree if c["name"].startswith(("vein_b1r_", "vein_b2r_")) and not c["name"].endswith("_half"))
+    assert abs(n_l - n_r) <= 4, f"左右支脉格数差太多: {n_l} vs {n_r}"
+
+    # 连成一块（按包围盒接触）
+    left = list(range(len(tree)))
+    seen = {0}
+    stack = [0]
+    while stack:
+        i = stack.pop()
+        for j in left:
+            if j not in seen and _touch(tree[i], tree[j]):
+                seen.add(j)
+                stack.append(j)
+    assert len(seen) == len(tree), f"血管树断成多块: 连通 {len(seen)} / {len(tree)}"
+
+    # 相邻格前表面高度差 ≤0.5：把半格算进所在格的顶
+    tops = {}
+    for c in tree:
+        if c["name"].startswith(("vein_b1", "vein_b2")):
+            key = c["name"].removesuffix("_half")
+            tops[key] = max(tops.get(key, 0.0), c["to"][2])
+    cells = {}
+    for c in tree:
+        if c["name"].startswith(("vein_b1", "vein_b2")) and not c["name"].endswith("_half"):
+            cells[(round(c["from"][0] * 2), round(c["from"][1] * 4))] = c["name"]
+    for (kx, ky), name in cells.items():
+        for nb in ((kx + 2, ky), (kx, ky + 4)):
+            other = cells.get(nb)
+            if other is not None:
+                assert abs(tops[name] - tops[other]) <= 0.5 + 1e-6, f"{name} 与 {other} 前表面高差 {abs(tops[name] - tops[other])} > 0.5"
 
 
 def check_round3(cubes: List[dict]) -> None:
