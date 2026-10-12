@@ -8,15 +8,21 @@
 **三件共用矛杆 / 绑缚 / 矛尾，只换矛头**（以及绑缚材质：石矛是麻绳，骨矛 / 铁矛是暗色蛛丝绳）：
 
     part_butt()      矛尾木帽
-    part_shaft()     矛杆：三段略有粗细和偏移的木杆 + 几个木疖
+    part_shaft()     矛杆：三段略有粗细和偏移的木杆（2×2 削四角的近圆）+ 几个木疖
     part_grip()      下三分之一的握把缠绳
-    part_socket()    杆头劈开的两瓣木槽（夹住矛头）
-    part_lashing()   木槽外的缠扎绳圈
+    part_socket()    杆头劈开的两瓣（各 1px 厚），夹住中间 1px 厚的矛头
+    part_lashing()   杆头外的十字交叉缠绳（两道斜向绳带交叉）+ 上下各一圈收口
     part_head_*()    矛头（每件各一个）
 
-授权系（见 `held_item_common`）：握把末端在 y=0、尖端朝 +Y，单位 = 方块（1.0 = 16px）。全长 1.19，
-落在手持物合理区间 0.3~1.2 之内；握把中点 y=0.32（缠绳段中点），拳心对准这里。
-双手持长兵，手里显示缩放比单手剑略小一点，免得枪头顶出画面。
+单位：授权系（见 `held_item_common`）——握把末端在 y=0、尖端朝 +Y，单位 = 方块（1.0 = 16px）。下面凡写 `px`
+的尺寸都用 `PX = 1/16` 换算。全长 1.1925（手持物合理区间上限 1.2），握把中点 y=0.32。
+
+## 第 1 次审的修改（2026-10-12）
+
+- 矛头：由胖菱形改成**宽 3px、长 7px、厚 1px 的柳叶形**，最宽处在下 1/3，两侧边缘各打 2~3 个 1px 缺口；
+- 矛头**插进劈开的杆头**：杆头两瓣各 1px 夹住矛头；
+- 绑法：由平行绳圈改成**十字交叉缠绳**（前后两面各两道斜向绳带交叉）；
+- 矛杆截面：2×2 方改成 **2×2 削掉四角的近圆**（每角削 0.5px，用「宽 2 × 厚 1」+「宽 1 × 厚 2」两块十字相叠）。
 
 用法：
     python gen_spear_family.py                 # 出 bbmodel + 单件三视图预览
@@ -52,11 +58,15 @@ BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 PREVIEW_DIR = Path(__file__).resolve().parents[1] / "out"
 REVIEW_ROOT = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/handheld")
 
-LENGTH = 1.19           # 全长（授权系，方块）
+PX = 1.0 / 16.0
+LENGTH = 1.1925         # 全长（授权系，方块）：矛头顶端
 GRIP = 0.32             # 拳心对准的高度：握把缠绳段中点
-SCALE = 0.90            # 手里显示缩放
+SCALE = 0.88            # 手里显示缩放（双手长兵，比单手剑略小）
 
-SHAFT_HALF = 0.034      # 矛杆半宽（≈2px 粗，参考图里杆细、头宽）
+SHAFT_Y = (0.03, 0.74)  # 矛杆段（尾帽之上、杆头劈口之下）
+SOCKET_Y = (0.74, 0.86)  # 杆头劈开的两瓣
+HEAD_Y0 = 0.755         # 矛头最下端（插进杆头 0.105）
+ROW = 0.5 * PX          # 矛头逐行高度（0.5px，共 14 行 = 7px）
 
 
 # ── 贴图（16²，通用材质样本；OBJ 链每个面整张铺满） ───────────────────────────
@@ -97,7 +107,7 @@ def tex_spear_hemp() -> Image.Image:
 
 
 def tex_spear_stone() -> Image.Image:
-    """粗石矛头：灰白燧石，崩口和打片留下的明暗大斑，边缘更暗的崩疤。"""
+    """粗石矛头：灰白燧石，打片留下的明暗大斑，边缘更暗的崩疤。"""
     rng = random.Random(0x5E03)
     img = Image.new("RGBA", (16, 16), (150, 148, 142, 255))
     noise_fill(img, rng, (150, 148, 142), 12, warm=1)
@@ -116,88 +126,110 @@ def _box(name: str, material: str, y0: float, y1: float, x: float, z: float, hx:
 
 
 def part_butt() -> list[Box]:
-    """矛尾木帽：比矛杆略粗的一截钝木，防劈裂也是握把的尾端止滑。"""
-    return [_box("butt", "wood", 0.0, 0.030, 0.0, 0.0, SHAFT_HALF * 1.14, SHAFT_HALF * 1.14)]
+    """矛尾木帽：比矛杆略粗的一截钝木，也是握把的尾端止滑。"""
+    return [_box("butt", "wood", 0.0, 0.030, 0.0, 0.0, 1.15 * PX, 1.15 * PX)]
+
+
+def _octagon(name: str, material: str, y0: float, y1: float, x: float, z: float, k: float = 1.0) -> list[Box]:
+    """2×2 削掉四角（每角 0.5px）的近圆截面：「宽 2 × 厚 1」+「宽 1 × 厚 2」两块十字相叠，高度错开一点点，
+    免得两块的上下面共面。`k` 是整体粗细系数。"""
+    return [
+        _box(f"{name}_a", material, y0, y1, x, z, 1.0 * PX * k, 0.5 * PX * k),
+        _box(f"{name}_b", material, y0 + 0.0033, y1 - 0.0033, x, z, 0.5 * PX * k, 1.0 * PX * k),
+    ]
 
 
 def part_shaft() -> list[Box]:
     """矛杆：三段略有粗细和偏移的木杆（天然木杆不是车出来的直棍），加几个木疖。"""
     segments = (
-        # y0     y1     x 偏     z 偏     半宽系数
+        # y0     y1     x 偏     z 偏     粗细系数
         (0.030, 0.300, +0.002, -0.001, 1.00),
-        (0.300, 0.600, -0.003, +0.002, 0.94),
-        (0.600, 0.860, +0.002, -0.002, 0.88),
+        (0.300, 0.540, -0.003, +0.002, 0.95),
+        (0.540, 0.740, +0.002, -0.002, 0.90),
     )
-    boxes = [_box(f"shaft_{i}", "wood", y0, y1, x, z, SHAFT_HALF * k, SHAFT_HALF * k)
-             for i, (y0, y1, x, z, k) in enumerate(segments)]
+    boxes: list[Box] = []
+    for i, (y0, y1, x, z, k) in enumerate(segments):
+        boxes += _octagon(f"shaft_{i}", "wood", y0, y1, x, z, k)
     # 木疖：杆上鼓出的几小块，错开方向和高度
-    boxes.append(_box("knot_a", "wood", 0.470, 0.505, SHAFT_HALF * 0.94 + 0.006, 0.004, 0.012, 0.016))
-    boxes.append(_box("knot_b", "wood", 0.690, 0.722, -0.002, SHAFT_HALF * 0.88 + 0.006, 0.014, 0.011))
-    boxes.append(_box("knot_c", "wood", 0.120, 0.150, -SHAFT_HALF - 0.005, -0.003, 0.011, 0.014))
+    boxes.append(_box("knot_a", "wood", 0.455, 0.490, 1.0 * PX * 0.95 + 0.006, 0.004, 0.011, 0.016))
+    boxes.append(_box("knot_b", "wood", 0.620, 0.652, -0.002, 1.0 * PX * 0.90 + 0.006, 0.014, 0.011))
+    boxes.append(_box("knot_c", "wood", 0.110, 0.140, -1.0 * PX - 0.005, -0.003, 0.011, 0.014))
     return boxes
 
 
 def part_grip(cord: str) -> list[Box]:
     """握把缠绳：下三分之一四道，厚薄与偏向参差（等厚等宽读成车出来的凹槽）。"""
     coils = (
-        # y0     y1     proud   x 偏    z 偏
-        (0.200, 0.246, 1.30, -0.003, +0.002),
-        (0.252, 0.296, 1.22, +0.004, -0.003),
-        (0.302, 0.348, 1.32, -0.003, +0.003),
-        (0.354, 0.398, 1.20, +0.003, -0.002),
+        # y0     y1     半宽 px  x 偏    z 偏
+        (0.200, 0.246, 1.28, -0.003, +0.002),
+        (0.252, 0.296, 1.20, +0.004, -0.003),
+        (0.302, 0.348, 1.30, -0.003, +0.003),
+        (0.354, 0.398, 1.18, +0.003, -0.002),
     )
-    return [_box(f"grip_{i}", cord, y0, y1, x, z, SHAFT_HALF * k, SHAFT_HALF * k)
-            for i, (y0, y1, k, x, z) in enumerate(coils)]
+    return [_box(f"grip_{i}", cord, y0, y1, x, z, hw * PX, hw * PX)
+            for i, (y0, y1, hw, x, z) in enumerate(coils)]
 
 
 def part_socket() -> list[Box]:
-    """杆头劈开的两瓣木槽：夹住矛头尾部。左右两瓣各一块，中间留缝给矛头舌。"""
-    gap = 0.010
-    half = SHAFT_HALF * 0.86
-    boxes = []
-    for side, sx in (("l", -1.0), ("r", 1.0)):
-        boxes.append(_box(f"socket_{side}", "wood", 0.860, 0.950, sx * (gap + half * 0.5), 0.0, half * 0.5, half))
-    return boxes
+    """杆头劈开的两瓣：各 1px 厚（z 向）、2px 宽，夹住中间 1px 厚的矛头。
+
+    两瓣的外侧面是 z = ±1.5px，矛头占 z ±0.5px，两瓣内侧面正好贴在矛头两面上。
+    """
+    return [_box(f"socket_{side}", "wood", SOCKET_Y[0], SOCKET_Y[1], 0.0, sz * 1.0 * PX, 1.05 * PX, 0.5 * PX)
+            for side, sz in (("f", +1.0), ("b", -1.0))]
 
 
 def part_lashing(cord: str) -> list[Box]:
-    """缠扎绳圈：三道裹在木槽外，压住矛头舌，错开厚薄。"""
-    coils = (
-        (0.866, 0.890, 1.55, +0.002, -0.002),
-        (0.896, 0.920, 1.45, -0.003, +0.003),
-        (0.926, 0.948, 1.55, +0.002, +0.002),
-    )
-    half = SHAFT_HALF * 0.86
-    return [_box(f"lash_{i}", cord, y0, y1, x, z, (0.014 + half) * k, half * k)
-            for i, (y0, y1, k, x, z) in enumerate(coils)]
+    """十字交叉缠绳：前后两面各两道斜向绳带交叉（一道左下→右上，一道右下→左上），
+    上下各一圈收口。两道斜带凸出量不同，交叉处才不共面。
+
+    每道斜带 4 级台阶，每级 `0.667px` 横移、`0.5px` 高：socket 高 0.12≈1.9px，正好走满。
+    """
+    y_lo, y_hi = SOCKET_Y
+    boxes: list[Box] = []
+    step_h = (y_hi - y_lo - 0.016) / 4.0
+    for face, sz in (("f", +1.0), ("b", -1.0)):
+        for band, (direction, proud) in enumerate(((+1.0, 1.62), (-1.0, 1.78))):
+            for i in range(4):
+                y0 = y_lo + 0.008 + i * step_h + band * 0.004   # 两道带错开一点，免得上下面共面
+                x = direction * (-1.0 + i * 0.667) * PX
+                boxes.append(_box(f"lash_{face}{band}_{i}", cord, y0, y0 + step_h, x, sz * proud * PX, 0.55 * PX, 0.18 * PX))
+    # 上下收口圈：整圈裹住两瓣 + 矛头，只比杆头外沿凸一点
+    for name, (y0, y1) in (("lash_ring_lo", (SOCKET_Y[0] - 0.003, SOCKET_Y[0] + 0.009)),
+                           ("lash_ring_hi", (SOCKET_Y[1] - 0.009, SOCKET_Y[1] + 0.003))):
+        boxes.append(_box(name, cord, y0, y1, 0.0, 0.0, 1.22 * PX, 1.66 * PX))
+    return boxes
 
 
 # ── 矛头 ─────────────────────────────────────────────────────────────────
 
 
-def part_head_stone() -> list[Box]:
-    """粗石矛头：长叶形的打制石片——**宽而厚、边缘崩口**，轮廓参差，一眼是石头不是铁。
+# 柳叶形：14 行 × 0.5px = 7px 长，最宽 3px 出现在第 4~5 行（下 1/3），厚 1px（z ±0.5px），尖端逐渐变薄。
+_LEAF_WIDTH_PX = (1.0, 1.6, 2.3, 2.8, 3.0, 3.0, 2.9, 2.7, 2.4, 2.0, 1.6, 1.2, 0.8, 0.4)
+_LEAF_HALF_THICK_PX = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.45, 0.4, 0.35, 0.3)
+# 缺口：每个缺口占 2 行（= 1px 高），向内啃 0.5px；左侧 3 个、右侧 2 个，错开
+_NOTCH_LEFT = ((2, 3), (6, 7), (10, 11))
+_NOTCH_RIGHT = ((4, 5), (8, 9))
 
-    自下而上：舌（插进木槽）→ 肩 → 最宽的叶身（s3）→ 一路收到尖。每段左右中心略错、厚度不同，
-    再加几小片崩出来的碎片贴在边缘，轮廓才碎。
+
+def part_head_stone() -> list[Box]:
+    """粗石矛头：**细长柳叶形的打制石片**——宽 3px、长 7px、厚 1px，最宽处在下 1/3，
+    两侧边缘打出 2~3 个 1px 缺口（左 3 右 2，错开），轮廓参差，一眼是打制石片。
+
+    逐行 0.5px 叠成；缺口那两行，对应一侧边缘向内收 0.5px（行中心偏 0.25px、半宽减 0.25px）。
     """
-    segments = (
-        # 名       y0     y1     x 偏    半宽    半厚
-        ("tang", 0.925, 0.975, 0.000, 0.018, 0.014),
-        ("s1", 0.975, 1.000, -0.002, 0.050, 0.024),
-        ("s2", 1.000, 1.030, +0.002, 0.072, 0.030),
-        ("s3", 1.030, 1.065, -0.003, 0.086, 0.034),
-        ("s4", 1.065, 1.095, +0.003, 0.078, 0.032),
-        ("s5", 1.095, 1.125, -0.002, 0.062, 0.028),
-        ("s6", 1.125, 1.150, +0.002, 0.042, 0.021),
-        ("s7", 1.150, 1.172, 0.000, 0.024, 0.014),
-        ("s8", 1.172, 1.190, 0.000, 0.010, 0.008),
-    )
-    boxes = [_box(f"stone_{name}", "stone", y0, y1, x, 0.0, hw, ht) for name, y0, y1, x, hw, ht in segments]
-    # 崩口 / 碎片：贴在叶身两侧边缘的小块，高度和凸出量各不相同
-    boxes.append(_box("stone_chip_l", "stone", 1.034, 1.056, -0.092, 0.004, 0.014, 0.018))
-    boxes.append(_box("stone_chip_r", "stone", 1.050, 1.078, +0.096, -0.003, 0.014, 0.016))
-    boxes.append(_box("stone_chip_l2", "stone", 1.088, 1.108, -0.074, -0.004, 0.010, 0.014))
+    boxes: list[Box] = []
+    for i, (w, ht) in enumerate(zip(_LEAF_WIDTH_PX, _LEAF_HALF_THICK_PX)):
+        half = w / 2.0
+        centre = 0.0
+        if any(i in pair for pair in _NOTCH_LEFT):
+            half -= 0.25
+            centre += 0.25
+        if any(i in pair for pair in _NOTCH_RIGHT):
+            half -= 0.25
+            centre -= 0.25
+        y0 = HEAD_Y0 + i * ROW
+        boxes.append(_box(f"stone_row_{i:02d}", "stone", y0, y0 + ROW, centre * PX, 0.0, half * PX, ht * PX))
     return boxes
 
 
@@ -233,7 +265,7 @@ def items() -> tuple[HeldItem, ...]:
 
 
 def render_check(item: HeldItem, bbmodel: Path) -> Path:
-    """model-review/img/handheld/<id>/check.png：左爆炸参考图，右渲染 3/4 + 侧视。"""
+    """model-review/img/handheld/<id>/check.png：左爆炸参考图，右渲染 3/4 + 侧视 + 矛头特写。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     out_dir = REVIEW_ROOT / item.key
@@ -241,18 +273,19 @@ def render_check(item: HeldItem, bbmodel: Path) -> Path:
     bg = (119, 119, 119)
     iso, _ = render(bbmodel, yaw=-35.0, pitch=25.0, size=640, bg=bg)
     side, _ = render(bbmodel, yaw=90.0, pitch=0.0, size=640, bg=bg)
+    front, _ = render(bbmodel, yaw=0.0, pitch=0.0, size=640, bg=bg)
 
     ref = Image.open(REVIEW_ROOT / "exploded" / f"{item.key}.png").convert("RGB")
     h = 640
     ref = ref.resize((int(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", (ref.width + 2 * 640 + 48, h + 36), (35, 36, 40))
+    canvas = Image.new("RGB", (ref.width + 3 * 640 + 60, h + 36), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
     canvas.paste(ref, (12, 30))
-    canvas.paste(iso, (ref.width + 24, 30))
-    canvas.paste(side, (ref.width + 640 + 36, 30))
     draw.text((16, 8), f"EXPLODED REFERENCE ({item.key}.png)", fill=(210, 200, 180))
-    draw.text((ref.width + 28, 8), "NOW RENDER (3/4 VIEW)", fill=(180, 220, 210))
-    draw.text((ref.width + 640 + 40, 8), "SIDE VIEW", fill=(180, 220, 210))
+    for i, (title, im) in enumerate((("NOW RENDER (3/4 VIEW)", iso), ("SIDE VIEW", side), ("FRONT VIEW", front))):
+        x = ref.width + 24 + i * 652
+        canvas.paste(im, (x, 30))
+        draw.text((x + 4, 8), title, fill=(180, 220, 210))
     path = out_dir / "check.png"
     canvas.save(path)
     return path
