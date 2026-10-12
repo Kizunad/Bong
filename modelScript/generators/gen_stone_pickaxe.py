@@ -4,21 +4,22 @@
 设计理念与世界观：
 - server/assets/items/workbench_materials.toml:
   stone_pickaxe: "碎石绑木柄，挖矿入门。"
-- 风格：
-  末法时代粗制矿用工具，残损粗粝。
-  双头打制燧石/玄武岩石镐头（一端为宽凿刃，一端为锐尖锥），穿插在略粗原木手柄顶部，
-  用浸油生麻绳/皮绳十字交叉层层绑缚紧固，具有明显的早期石器敲击剥离崩面特征。
+- 风格（调度审第 1 次落实）：
+  两头向下弯曲的弧形打制浅灰双头石镐（一端扁凿刃，一端锐尖锥）：
+  两臂各长 6px，从中心往外每 2px 向下弯 1px；截面从中心 2×2 逐段收束到尖端 1×1；
+  颜色采用浅灰石色（#9a9a94 / #b8b8b0 斑驳燧石）；
+  镐头与木柄交接处配有醒目的十字交叉粗生麻绳捆扎带；保留质朴原木手柄。
 - 坐标约定：
-  手持物基准系（授权系）：握把末端在 y=0，镐头在 +Y，两臂沿 X 轴对称展开并向下微弧弯（与 pickaxe_bone/pickaxe_iron 一致），
-  全长约 0.77 方块，握把中心点 grip=0.18。
+  手持物基准系（授权系）：握把末端在 y=0，镐头在 +Y，两臂沿 X 轴对称展开并向下弧弯（与 pickaxe_bone/pickaxe_iron 一致），
+  全长约 0.805 方块，握把中心点 grip=0.18。
 
 结构组成（分部件 part_* 拆解）：
     1. part_butt         - 柄尾防脱木节与底端收口
     2. part_grip         - 握把段与 4 道生麻绳防滑缠圈
     3. part_haft         - 天然原木主干中段柄身
     4. part_socket       - 木柄顶端套穿与插槽（底承托座与穿出木顶盖）
-    5. part_stone_head   - 双头打制碎石镐头（穿槽石核、-X 侧扁凿臂、+X 侧尖锥臂及冷灰锋缘）
-    6. part_bindings     - 交叉捆扎粗麻绳带（底圈箍、对角交织勒带、顶环结）
+    5. part_stone_head   - 双头弧形打制浅灰碎石镐头（中心石核、-X 侧下弯扁凿臂、+X 侧下弯尖锥臂）
+    6. part_bindings     - 镐头与木柄交接处的十字交叉粗生麻绳捆扎带
 
 用法：
     python3 modelScript/generators/gen_stone_pickaxe.py             # 生成模型与审阅图
@@ -59,7 +60,7 @@ BBMODEL_OUT = MODEL_DIR / "StonePickaxe.bbmodel"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/handheld/stone_pickaxe")
 REF_IMAGE = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/handheld/exploded/stone_pickaxe.png")
 
-LENGTH = 0.770
+LENGTH = 0.805
 GRIP = 0.180
 SCALE = 0.850
 
@@ -78,25 +79,25 @@ def make_wood_tex(rng: random.Random) -> Image.Image:
 
 
 def make_stone_tex(rng: random.Random) -> Image.Image:
-    """粗磨碎石表面：灰黑玄武岩/打制燧石基底，带敲击剥离崩痕与微杂斑。"""
+    """浅灰石色表面：#9a9a94 / #b8b8b0 斑驳浅灰燧石，带有敲击剥离崩痕。"""
     im = Image.new("RGBA", (16, 16))
-    noise_fill(im, rng, (66, 68, 72), 10)
-    blotch(im, rng, 4, (46, 47, 50), (2, 4))
-    blotch(im, rng, 3, (102, 106, 112), (1, 3))
+    noise_fill(im, rng, (154, 154, 148), 10)
+    blotch(im, rng, 4, (184, 184, 176), (2, 4))
+    blotch(im, rng, 3, (122, 122, 114), (1, 3))
     return im
 
 
 def make_edge_tex(rng: random.Random) -> Image.Image:
-    """打制锋刃边缘：较亮冷灰崩口刃线与锥尖高光。"""
+    """浅亮石质锋刃与锥尖：#c8c8c0 / #e0e0d8 坚硬石英/燧石锋面高光。"""
     im = Image.new("RGBA", (16, 16))
-    noise_fill(im, rng, (136, 142, 150), 8)
-    blotch(im, rng, 3, (160, 166, 174), (1, 2))
-    blotch(im, rng, 3, (100, 104, 110), (1, 3))
+    noise_fill(im, rng, (200, 200, 192), 8)
+    blotch(im, rng, 3, (224, 224, 216), (1, 2))
+    blotch(im, rng, 3, (160, 160, 152), (1, 3))
     return im
 
 
 def make_binding_tex(rng: random.Random) -> Image.Image:
-    """粗麻绳/生皮绑带：米褐编织粗纤维，带油脂浸润与风化暗调。"""
+    """粗生麻绳绑带：米褐编织粗纤维，带油脂浸润与风化暗调。"""
     im = Image.new("RGBA", (16, 16))
     noise_fill(im, rng, (166, 140, 104), 10, warm=4)
     blotch(im, rng, 4, (122, 96, 66), (2, 3))
@@ -145,7 +146,7 @@ def part_haft() -> list[Box]:
 
 
 def part_socket() -> list[Box]:
-    """4. 木柄顶端套穿与插槽 (y: 0.670 -> 0.770)。
+    """4. 木柄顶端套穿与插槽 (y: 0.670 -> 0.805)。
 
     包含石镐下托座与穿过石核上方的木顶盖。
     """
@@ -153,51 +154,71 @@ def part_socket() -> list[Box]:
         # 下托座
         Box("haft_socket_base", "weathered_wood", (0.0, 0.685, 0.0), (0.023, 0.015, 0.023)),
         # 穿顶木冠
-        Box("haft_socket_crown", "weathered_wood", (0.0, 0.756, 0.0), (0.019, 0.014, 0.019)),
+        Box("haft_socket_crown", "weathered_wood", (0.0, 0.793, 0.0), (0.019, 0.012, 0.019)),
     ]
 
 
 def part_stone_head() -> list[Box]:
-    """5. 双头打制碎石镐头 (两臂沿 X 轴向两侧展开，微向下弯弧)。
+    """5. 双头打制浅灰弧形碎石镐头（两臂各长 6px，从中心往外每 2px 向下弯 1px；截面从 2×2 逐段收到 1×1）。
 
-    - 穿插石核：位于木槽内；
-    - 左臂 (-X)：扁凿刃（梯级逐段向下微弧弯折，末端打制扁平凿锋）；
-    - 右臂 (+X)：尖锥刃（梯级逐段向下微弧弯折，末端敲击尖锐镐锥）。
+    - 中心石核：截面 2×2（x in [-0.035, 0.035], y in [0.705, 0.785], z in [-0.038, 0.038]）；
+    - 右臂 (+X: 尖锥镐尖，长 6px，每 2px 下弯 1px)：
+      * 段 1 (长 2px: x in [0.035, 0.115], 截面 1.8×1.8)
+      * 段 2 (长 2px: x in [0.115, 0.195], 下弯 1px, 截面 1.4×1.4)
+      * 段 3 (长 2px: x in [0.195, 0.265], 再下弯 1px, 截面 1.0×1.0)
+      * 尖锥 (x in [0.265, 0.294], 锋利尖锐镐锥，浅冷灰高光)
+    - 左臂 (-X: 凿形扁刃，长 6px，每 2px 下弯 1px)：
+      * 段 1 (长 2px: x in [-0.115, -0.035], 截面 1.8×1.8)
+      * 段 2 (长 2px: x in [-0.195, -0.115], 下弯 1px, 截面 1.4×1.4)
+      * 段 3 (长 2px: x in [-0.265, -0.195], 再下弯 1px, 截面 1.0×1.0)
+      * 扁凿刃 (x in [-0.294, -0.265], 石器凿锋，浅冷灰高光)
     """
     return [
-        # 中心石核
-        Box("stone_core", "rough_stone", (0.0, 0.723, 0.0), (0.038, 0.025, 0.028)),
-        # ── 左臂 (-X 侧: 凿形扁刃) ──
-        Box("pick_arm_l_1", "rough_stone", (-0.063, 0.719, 0.0), (0.025, 0.024, 0.022)),
-        Box("pick_arm_l_2", "rough_stone", (-0.113, 0.708, 0.0), (0.025, 0.023, 0.017)),
-        Box("pick_arm_l_3", "rough_stone", (-0.161, 0.692, 0.0), (0.023, 0.022, 0.013)),
-        Box("chisel_edge_tip", "stone_edge", (-0.197, 0.675, 0.0), (0.013, 0.020, 0.010)),
-        Box("chisel_edge_bevel", "stone_edge", (-0.207, 0.672, 0.0), (0.007, 0.015, 0.007)),
-        # ── 右臂 (+X 侧: 尖锥镐尖) ──
-        Box("pick_arm_r_1", "rough_stone", (0.063, 0.719, 0.0), (0.025, 0.024, 0.022)),
-        Box("pick_arm_r_2", "rough_stone", (0.113, 0.708, 0.0), (0.025, 0.023, 0.017)),
-        Box("pick_arm_r_3", "rough_stone", (0.161, 0.692, 0.0), (0.023, 0.022, 0.012)),
-        Box("pick_cone_tip", "stone_edge", (0.196, 0.675, 0.0), (0.012, 0.017, 0.008)),
-        Box("pick_cone_point", "stone_edge", (0.210, 0.672, 0.0), (0.006, 0.012, 0.005)),
+        # 中心石核 (截面 2x2)
+        Box("stone_core", "rough_stone", (0.0, 0.745, 0.0), (0.035, 0.040, 0.038)),
+
+        # ── 右臂 (+X: 尖锥镐尖) ──
+        # 段 1 (长 2px)
+        Box("pick_arm_r_1", "rough_stone", (0.075, 0.736, 0.0), (0.040, 0.036, 0.034)),
+        # 段 2 (长 2px, 下弯 1px)
+        Box("pick_arm_r_2", "rough_stone", (0.155, 0.690, 0.0), (0.040, 0.035, 0.028)),
+        # 段 3 (长 2px, 再下弯 1px)
+        Box("pick_arm_r_3", "rough_stone", (0.230, 0.640, 0.0), (0.035, 0.035, 0.021)),
+        # 尖锥 (末端尖锥镐尖)
+        Box("pick_cone_tip", "stone_edge", (0.2765, 0.595, 0.0), (0.0115, 0.030, 0.014)),
+        Box("pick_cone_point", "stone_edge", (0.291, 0.575, 0.0), (0.003, 0.020, 0.008)),
+
+        # ── 左臂 (-X: 凿形扁刃) ──
+        # 段 1 (长 2px)
+        Box("pick_arm_l_1", "rough_stone", (-0.075, 0.736, 0.0), (0.040, 0.036, 0.034)),
+        # 段 2 (长 2px, 下弯 1px)
+        Box("pick_arm_l_2", "rough_stone", (-0.155, 0.690, 0.0), (0.040, 0.035, 0.028)),
+        # 段 3 (长 2px, 再下弯 1px)
+        Box("pick_arm_l_3", "rough_stone", (-0.230, 0.640, 0.0), (0.035, 0.035, 0.021)),
+        # 扁凿刃 (末端石器凿锋)
+        Box("chisel_edge_tip", "stone_edge", (-0.2765, 0.595, 0.0), (0.0115, 0.030, 0.012)),
+        Box("chisel_edge_blade", "stone_edge", (-0.291, 0.575, 0.0), (0.003, 0.020, 0.006)),
     ]
 
 
 def part_bindings() -> list[Box]:
-    """6. 十字交叉生麻绳捆扎带 (y: 0.690 -> 0.755)。
+    """6. 镐头与木柄交接处的十字交叉粗生麻绳捆扎带。
 
-    将双头石镐与木柄牢牢捆扎在一起，层叠交叉，防止脱落。
+    具有真实十字交叉缠绑与前后打结扣环，紧密固定石镐与木柄。
     """
     return [
-        # 底套圈箍
-        Box("binding_collar", "hemp_binding", (0.0, 0.696, 0.0), (0.027, 0.009, 0.031)),
-        # 前后压带
-        Box("binding_cross_fwd", "hemp_binding", (0.0, 0.724, 0.0), (0.031, 0.019, 0.034)),
-        # 斜向交叉带 1 (内层)
-        Box("binding_cross_diag1", "hemp_binding", (0.008, 0.723, 0.0), (0.025, 0.026, 0.032)),
-        # 斜向交叉带 2 (外层)
-        Box("binding_cross_diag2", "hemp_binding", (-0.008, 0.728, 0.0), (0.026, 0.028, 0.035)),
-        # 顶端固定结
-        Box("binding_top_tie", "hemp_binding", (0.0, 0.753, 0.0), (0.023, 0.005, 0.026)),
+        # 下部紧固底圈 (紧箍木柄与石镐下缘)
+        Box("binding_collar_low", "hemp_binding", (0.0, 0.695, 0.0), (0.027, 0.010, 0.031)),
+        # 横向围束宽带 (中央主绳带)
+        Box("binding_belt_main", "hemp_binding", (0.0, 0.745, 0.0), (0.030, 0.020, 0.042)),
+        # 十字斜交叉带 1 (左上 -> 右下斜向紧勒)
+        Box("binding_diag_1", "hemp_binding", (0.005, 0.743, 0.0), (0.024, 0.037, 0.040)),
+        # 十字斜交叉带 2 (右上 -> 左下斜向紧勒)
+        Box("binding_diag_2", "hemp_binding", (-0.005, 0.747, 0.0), (0.027, 0.039, 0.044)),
+        # 正面绳结凸块
+        Box("binding_knot_front", "hemp_binding", (0.0, 0.745, -0.045), (0.014, 0.014, 0.005)),
+        # 上部收口顶圈 (紧箍木柄顶冠)
+        Box("binding_collar_top", "hemp_binding", (0.0, 0.785, 0.0), (0.023, 0.006, 0.026)),
     ]
 
 
@@ -218,8 +239,8 @@ def stone_pickaxe() -> HeldItem:
     rng = random.Random(20261012)
     mats = (
         Material("weathered_wood", (0.47, 0.35, 0.24), make_wood_tex(rng)),
-        Material("rough_stone", (0.26, 0.27, 0.28), make_stone_tex(rng)),
-        Material("stone_edge", (0.53, 0.56, 0.59), make_edge_tex(rng)),
+        Material("rough_stone", (0.60, 0.60, 0.58), make_stone_tex(rng)),
+        Material("stone_edge", (0.78, 0.78, 0.75), make_edge_tex(rng)),
         Material("hemp_binding", (0.65, 0.55, 0.41), make_binding_tex(rng)),
     )
     return HeldItem(
@@ -244,7 +265,7 @@ def render_views(bbmodel_path: Path):
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)  # 严格对齐参考图中性灰
 
-    # 1. 渲染视角 (3/4 视看双头弧弯与捆扎全貌、正视 FRONT 看两臂横向展宽、侧视 SIDE 看木柄厚度)
+    # 1. 渲染视角 (3/4 视看两臂下弯弧度与十字捆扎、正视 FRONT 看两臂横向展宽与下弯、侧视 SIDE 看木柄厚度)
     im_iso, _ = render(bbmodel_path, yaw=-35.0, pitch=25.0, size=500, bg=bg_color)
     im_front, _ = render(bbmodel_path, yaw=0.0, pitch=0.0, size=500, bg=bg_color)
     im_side, _ = render(bbmodel_path, yaw=90.0, pitch=0.0, size=500, bg=bg_color)
@@ -256,8 +277,8 @@ def render_views(bbmodel_path: Path):
     r_draw = ImageDraw.Draw(render_cv)
 
     views = [
-        ("FRONT VIEW (Double-ended Arms & Bindings)", im_front, 24, 40),
-        ("3/4 ISOMETRIC VIEW (Full Tool Structure)", im_iso, 24 + 516, 40),
+        ("FRONT VIEW (Curved Pick Head & Bindings)", im_front, 24, 40),
+        ("3/4 ISOMETRIC VIEW (Full Curved Structure)", im_iso, 24 + 516, 40),
         ("SIDE VIEW (Haft Profile & Stone Joint)", im_side, 24 + 516 * 2, 40),
     ]
     for title, im_v, px, py in views:
