@@ -1,0 +1,8105 @@
+{
+  "meta": {
+    "format_version": "4.10",
+    "model_format": "free",
+    "box_uv": false
+  },
+  "name": "KuPiLang",
+  "model_identifier": "ku_pi_lang",
+  "visible_box": [
+    -24.0,
+    -16.0,
+    -24.0,
+    24.0,
+    24.0,
+    24.0
+  ],
+  "resolution": {
+    "width": 64,
+    "height": 64
+  },
+  "elements": [
+    {
+      "name": "skull_braincase",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6c57e390-8dab-4f8e-9019-f9e1c4976846",
+      "from": [
+        -2.5,
+        13.2,
+        -11.8
+      ],
+      "to": [
+        2.5,
+        16.5,
+        -8.2
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        14.85,
+        -10.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "skull_brow",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "14763f0e-aa3c-4809-a978-508ba6be14c5",
+      "from": [
+        -2.52,
+        15.2,
+        -12.2
+      ],
+      "to": [
+        2.52,
+        16.2,
+        -10.0
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0.0,
+        15.7,
+        -11.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "skull_bone_patch",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "aa0b6b42-66eb-445e-b147-e99bc6bff59a",
+      "from": [
+        -1.0,
+        16.5,
+        -11.0
+      ],
+      "to": [
+        1.0,
+        16.9,
+        -9.0
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        16.7,
+        -10.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "eye_socket_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "483e39dc-6f3c-47a8-8f41-162357ac7c6a",
+      "from": [
+        -2.56,
+        14.4,
+        -11.2
+      ],
+      "to": [
+        -2.15,
+        15.6,
+        -10.2
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -2.355,
+        15.0,
+        -10.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "eye_amber_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "29b67e32-8705-4eee-bbca-dcc638541631",
+      "from": [
+        -2.6,
+        14.6,
+        -11.0
+      ],
+      "to": [
+        -2.2,
+        15.4,
+        -10.4
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        -2.4,
+        15.0,
+        -10.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "eye_socket_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "83097f08-6e71-4f12-b978-b93755ab891e",
+      "from": [
+        2.15,
+        14.4,
+        -11.2
+      ],
+      "to": [
+        2.56,
+        15.6,
+        -10.2
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        2.355,
+        15.0,
+        -10.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "eye_amber_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1199d4af-5f15-49f3-98b1-82f86216316f",
+      "from": [
+        2.2,
+        14.6,
+        -11.0
+      ],
+      "to": [
+        2.6,
+        15.4,
+        -10.4
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        2.4,
+        15.0,
+        -10.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            17.0,
+            63.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "head"
+    },
+    {
+      "name": "snout_upper",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a035a507-de20-42ce-b3ce-2ef958c3bf7d",
+      "from": [
+        -1.5,
+        13.0,
+        -16.0
+      ],
+      "to": [
+        1.5,
+        15.0,
+        -11.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        14.0,
+        -13.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "snout"
+    },
+    {
+      "name": "snout_nose",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b21517da-e54b-4bbb-948f-ced33c1f184c",
+      "from": [
+        -1.0,
+        14.2,
+        -16.6
+      ],
+      "to": [
+        1.0,
+        15.2,
+        -15.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        0.0,
+        14.7,
+        -16.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            17.0,
+            31.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "snout"
+    },
+    {
+      "name": "fang_upper_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "62c63321-ec60-4428-96bf-5e5616b84e06",
+      "from": [
+        -1.45,
+        12.0,
+        -15.2
+      ],
+      "to": [
+        -1.05,
+        13.0,
+        -14.4
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -1.25,
+        12.5,
+        -14.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "snout"
+    },
+    {
+      "name": "fang_upper_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "66031c27-fec9-4b62-a5f4-d1a0b2d5ce02",
+      "from": [
+        1.05,
+        12.0,
+        -15.2
+      ],
+      "to": [
+        1.45,
+        13.0,
+        -14.4
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        1.25,
+        12.5,
+        -14.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "snout"
+    },
+    {
+      "name": "jaw_lower",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5d3cb304-20a3-48d8-86e9-a9deb753c7f2",
+      "from": [
+        -1.2,
+        11.8,
+        -15.6
+      ],
+      "to": [
+        1.2,
+        12.8,
+        -10.5
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        12.3,
+        -13.05
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "jaw"
+    },
+    {
+      "name": "fang_lower_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "839081ad-9bf2-4788-8349-3996d6c0f1eb",
+      "from": [
+        -1.15,
+        12.8,
+        -14.8
+      ],
+      "to": [
+        -0.85,
+        13.6,
+        -14.0
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -1.0,
+        13.2,
+        -14.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "jaw"
+    },
+    {
+      "name": "fang_lower_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c28ef67f-42cb-46b6-ad90-894fdcd9aaef",
+      "from": [
+        0.85,
+        12.8,
+        -14.8
+      ],
+      "to": [
+        1.15,
+        13.6,
+        -14.0
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        1.0,
+        13.2,
+        -14.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            17.0,
+            47.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "jaw"
+    },
+    {
+      "name": "ear_l_base",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d2557fb6-7bce-482a-9b72-dc6886a1167d",
+      "from": [
+        -2.8,
+        16.5,
+        -9.6
+      ],
+      "to": [
+        -1.4,
+        18.2,
+        -8.6
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.1,
+        17.35,
+        -9.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "ear_l"
+    },
+    {
+      "name": "ear_l_torn",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "114dfe45-31b4-4fa4-b74f-edbbab5adb76",
+      "from": [
+        -2.5,
+        18.2,
+        -9.4
+      ],
+      "to": [
+        -1.6,
+        19.0,
+        -8.7
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        -2.05,
+        18.6,
+        -9.05
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "ear_l"
+    },
+    {
+      "name": "ear_r_base",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c0b47f29-4f75-4fd5-b1cf-62b1d17c82e0",
+      "from": [
+        1.4,
+        16.5,
+        -9.6
+      ],
+      "to": [
+        2.8,
+        18.5,
+        -8.6
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        2.1,
+        17.5,
+        -9.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "ear_r"
+    },
+    {
+      "name": "ear_r_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f6fb0be4-7723-4a2d-a96c-aca8d731d058",
+      "from": [
+        1.6,
+        18.5,
+        -9.5
+      ],
+      "to": [
+        2.6,
+        20.0,
+        -8.7
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        2.1,
+        19.25,
+        -9.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "ear_r"
+    },
+    {
+      "name": "ear_r_notch",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9f50d3c0-2770-4e15-8639-6caa6a4e76fa",
+      "from": [
+        2.3,
+        18.0,
+        -9.4
+      ],
+      "to": [
+        2.85,
+        19.2,
+        -8.65
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        2.575,
+        18.6,
+        -9.025
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "ear_r"
+    },
+    {
+      "name": "neck_core",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "584175e3-a146-4bb8-87d7-fb1b5e8e40d8",
+      "from": [
+        -1.5,
+        12.2,
+        -8.5
+      ],
+      "to": [
+        1.5,
+        15.6,
+        -5.5
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0.0,
+        13.9,
+        -7.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "neck"
+    },
+    {
+      "name": "neck_pelt_mane",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "822fbecf-1db5-4aeb-8542-6f953a2cbe5c",
+      "from": [
+        -2.1,
+        13.5,
+        -7.8
+      ],
+      "to": [
+        2.1,
+        16.5,
+        -5.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        15.0,
+        -6.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "neck"
+    },
+    {
+      "name": "neck_throat",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "54af5a5f-a8a5-4dfb-8037-7e4e86928837",
+      "from": [
+        -1.1,
+        11.2,
+        -8.0
+      ],
+      "to": [
+        1.1,
+        12.6,
+        -5.6
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        0.0,
+        11.9,
+        -6.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "neck"
+    },
+    {
+      "name": "spine_t1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "94ebc7c6-c42a-4817-a87f-ddfca79eb2bc",
+      "from": [
+        -0.5,
+        15.2,
+        -5.0
+      ],
+      "to": [
+        0.5,
+        16.6,
+        -3.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        15.9,
+        -4.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "spine_wither",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "29a8d341-2140-4b1a-8ba3-257596758dae",
+      "from": [
+        -0.6,
+        15.5,
+        -3.8
+      ],
+      "to": [
+        0.6,
+        17.2,
+        -2.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        16.35,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "spine_t2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "918556cc-ab08-4744-8960-7ffeae56614c",
+      "from": [
+        -0.5,
+        15.0,
+        -2.2
+      ],
+      "to": [
+        0.5,
+        16.5,
+        -0.6
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        15.75,
+        -1.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "spine_t3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "adb028c8-a97f-4be5-a623-5e25ddb84bb8",
+      "from": [
+        -0.5,
+        14.6,
+        -0.6
+      ],
+      "to": [
+        0.5,
+        16.0,
+        1.0
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        15.3,
+        0.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "spine_l1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4d6e3d66-cd1c-4cbf-a389-70c6aead1ba2",
+      "from": [
+        -0.5,
+        14.2,
+        1.2
+      ],
+      "to": [
+        0.5,
+        15.5,
+        2.6
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        14.85,
+        1.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "spine_l2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8a96ff05-912b-42dd-83d3-eae82c08cc3d",
+      "from": [
+        -0.5,
+        13.8,
+        2.8
+      ],
+      "to": [
+        0.5,
+        15.0,
+        4.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        14.4,
+        3.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "spine_l3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e674b75d-4dfc-460a-a5eb-8729dbb29f1c",
+      "from": [
+        -0.5,
+        13.6,
+        4.4
+      ],
+      "to": [
+        0.5,
+        14.8,
+        5.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        14.2,
+        5.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "spine_sacrum_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d573f11c-5b06-40e6-9817-05496ac1f99d",
+      "from": [
+        -0.6,
+        13.2,
+        6.2
+      ],
+      "to": [
+        0.6,
+        14.4,
+        7.6
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        13.8,
+        6.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hips"
+    },
+    {
+      "name": "spine_sacrum_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c4090191-8c11-4285-9c9a-fcab85ab418e",
+      "from": [
+        -0.5,
+        12.6,
+        7.8
+      ],
+      "to": [
+        0.5,
+        13.8,
+        9.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        13.2,
+        8.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hips"
+    },
+    {
+      "name": "viscera_core_front",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "67e621e8-fc4c-4fc8-a4d3-4c1296b47e5a",
+      "from": [
+        -2.4,
+        10.05,
+        -4.6
+      ],
+      "to": [
+        2.4,
+        14.35,
+        0.8
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        0.0,
+        12.2,
+        -1.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_l_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "6a948596-20d7-4d93-aea4-43c2dd7c2ea8",
+      "from": [
+        -2.95,
+        10.2,
+        -4.4
+      ],
+      "to": [
+        -2.45,
+        14.8,
+        -4.0
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.7,
+        12.5,
+        -4.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_r_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "249d0276-5a54-4575-b5f3-a6a2462279cf",
+      "from": [
+        2.45,
+        10.2,
+        -4.4
+      ],
+      "to": [
+        2.95,
+        14.8,
+        -4.0
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.7,
+        12.5,
+        -4.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_l_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f2221758-db9d-46ca-830a-d74f144e6a3c",
+      "from": [
+        -3.1,
+        9.8,
+        -3.0
+      ],
+      "to": [
+        -2.6,
+        15.2,
+        -2.6
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.85,
+        12.5,
+        -2.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_r_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "48f3ed4c-67e7-4002-9243-bcd9089a1d27",
+      "from": [
+        2.6,
+        9.8,
+        -3.0
+      ],
+      "to": [
+        3.1,
+        15.2,
+        -2.6
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.85,
+        12.5,
+        -2.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_l_3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9a3854eb-f724-4b00-98bc-4e071fab86f1",
+      "from": [
+        -3.05,
+        9.8,
+        -1.6
+      ],
+      "to": [
+        -2.55,
+        14.8,
+        -1.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.8,
+        12.3,
+        -1.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_r_3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "19143713-66f5-4ba6-9abc-48f171f45a87",
+      "from": [
+        2.55,
+        9.8,
+        -1.6
+      ],
+      "to": [
+        3.05,
+        14.8,
+        -1.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.8,
+        12.3,
+        -1.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_l_4",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "983f52ff-d4ac-40b4-96f1-88d4dbb2bbbf",
+      "from": [
+        -2.85,
+        10.0,
+        -0.2
+      ],
+      "to": [
+        -2.35,
+        14.4,
+        0.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.6,
+        12.2,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_r_4",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d445d27c-906f-4d62-8a54-8fc4761aa2da",
+      "from": [
+        2.35,
+        10.0,
+        -0.2
+      ],
+      "to": [
+        2.85,
+        14.4,
+        0.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.6,
+        12.2,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "rib_l_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "26c961f6-2d31-4cd4-a8a0-c955711a8427",
+      "from": [
+        -2.55,
+        10.4,
+        1.4
+      ],
+      "to": [
+        -2.1,
+        13.8,
+        1.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.325,
+        12.1,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "rib_r_5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9c51e6b4-d5b9-4ab8-82a3-c3048079e7eb",
+      "from": [
+        2.1,
+        10.4,
+        1.4
+      ],
+      "to": [
+        2.55,
+        13.8,
+        1.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.325,
+        12.1,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "rib_l_6",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "bfbab3ff-3507-40bf-99f2-d5725ba787bd",
+      "from": [
+        -2.3,
+        10.8,
+        2.8
+      ],
+      "to": [
+        -1.9,
+        13.4,
+        3.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.1,
+        12.1,
+        3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "rib_r_6",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c45d421e-8f30-4f15-90aa-b2941bc7681b",
+      "from": [
+        1.9,
+        10.8,
+        2.8
+      ],
+      "to": [
+        2.3,
+        13.4,
+        3.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.1,
+        12.1,
+        3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "pelt_shoulder_saddle",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f79daf71-c659-4102-bcca-6bd5ab587a77",
+      "from": [
+        -2.6,
+        14.0,
+        -5.2
+      ],
+      "to": [
+        2.6,
+        15.6,
+        -1.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        14.8,
+        -3.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "pelt_chest_keel",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "840d9220-8a50-4382-8f39-fd01237321e9",
+      "from": [
+        -1.5,
+        9.2,
+        -5.0
+      ],
+      "to": [
+        1.5,
+        10.6,
+        -0.6
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0.0,
+        9.9,
+        -2.8
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thorax"
+    },
+    {
+      "name": "belly_flank_hollow",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3fb24a4d-34fe-4ad0-ac1f-33cdb03aa516",
+      "from": [
+        -1.6,
+        10.8,
+        1.2
+      ],
+      "to": [
+        1.6,
+        13.0,
+        5.6
+      ],
+      "autouv": 0,
+      "color": 2,
+      "origin": [
+        0.0,
+        11.9,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33.0,
+            1.0,
+            47.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "spine_lumbar"
+    },
+    {
+      "name": "pelt_rump",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7b16860c-7ba9-47ac-a226-237cca42623a",
+      "from": [
+        -2.5,
+        11.2,
+        6.05
+      ],
+      "to": [
+        2.5,
+        13.4,
+        9.6
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        12.3,
+        7.825
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hips"
+    },
+    {
+      "name": "bone_ischium_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a957aa68-0ee0-4dd0-a220-946f12730319",
+      "from": [
+        -2.6,
+        12.0,
+        9.2
+      ],
+      "to": [
+        -2.0,
+        13.0,
+        9.9
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.3,
+        12.5,
+        9.55
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hips"
+    },
+    {
+      "name": "bone_ischium_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c6662b8b-abab-4433-a8c8-6e719c31e63f",
+      "from": [
+        2.0,
+        12.0,
+        9.2
+      ],
+      "to": [
+        2.6,
+        13.0,
+        9.9
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.3,
+        12.5,
+        9.55
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hips"
+    },
+    {
+      "name": "scapula_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1423b32c-abe8-4e62-8796-cb1eb3f5e9cd",
+      "from": [
+        -3.5,
+        9.0,
+        -5.8
+      ],
+      "to": [
+        -2.2,
+        13.5,
+        -3.2
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.85,
+        11.25,
+        -4.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shoulder_l"
+    },
+    {
+      "name": "scapula_bone_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7e65d200-84b0-49da-a204-3cd480d3f33b",
+      "from": [
+        -3.6,
+        11.0,
+        -5.2
+      ],
+      "to": [
+        -2.9,
+        12.8,
+        -3.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -3.25,
+        11.9,
+        -4.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shoulder_l"
+    },
+    {
+      "name": "forearm_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f92b257d-9af0-493b-811e-e95e2a70f436",
+      "from": [
+        -3.3,
+        1.5,
+        -4.7
+      ],
+      "to": [
+        -2.3,
+        9.2,
+        -3.5
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        -2.8,
+        5.35,
+        -4.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "arm_l"
+    },
+    {
+      "name": "elbow_bone_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "09bd9496-bec0-4eb0-a156-6bfd82b74ffe",
+      "from": [
+        -3.35,
+        7.8,
+        -3.5
+      ],
+      "to": [
+        -2.45,
+        9.0,
+        -2.7
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.9,
+        8.4,
+        -3.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "arm_l"
+    },
+    {
+      "name": "paw_fl_pad",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e750d97a-48f2-45eb-98bb-de2d9c2dea86",
+      "from": [
+        -3.4,
+        0.0,
+        -5.4
+      ],
+      "to": [
+        -2.2,
+        1.6,
+        -3.2
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.8,
+        0.8,
+        -4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_fl"
+    },
+    {
+      "name": "claw_fl",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "777bcef9-8d3e-4303-831a-fbd0da4a9820",
+      "from": [
+        -3.2,
+        0.0,
+        -6.0
+      ],
+      "to": [
+        -2.4,
+        0.7,
+        -5.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -2.8,
+        0.35,
+        -5.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_fl"
+    },
+    {
+      "name": "scapula_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b794313f-80b4-4d5c-b608-bdcac1cb5dfc",
+      "from": [
+        2.2,
+        9.0,
+        -5.8
+      ],
+      "to": [
+        3.5,
+        13.5,
+        -3.2
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        2.85,
+        11.25,
+        -4.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shoulder_r"
+    },
+    {
+      "name": "scapula_bone_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "594fb372-c0c8-4c39-833d-99066a97d777",
+      "from": [
+        2.9,
+        11.0,
+        -5.2
+      ],
+      "to": [
+        3.6,
+        12.8,
+        -3.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        3.25,
+        11.9,
+        -4.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shoulder_r"
+    },
+    {
+      "name": "forearm_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a30883b3-d873-4195-9092-acce1f352035",
+      "from": [
+        2.3,
+        1.5,
+        -4.7
+      ],
+      "to": [
+        3.3,
+        9.2,
+        -3.5
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        2.8,
+        5.35,
+        -4.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "arm_r"
+    },
+    {
+      "name": "elbow_bone_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8a2b3244-5b6a-41d6-bdbb-94f0a4f9236a",
+      "from": [
+        2.45,
+        7.8,
+        -3.5
+      ],
+      "to": [
+        3.35,
+        9.0,
+        -2.7
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.9,
+        8.4,
+        -3.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "arm_r"
+    },
+    {
+      "name": "paw_fr_pad",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7c52ac0b-3f6e-4397-8bd3-61373b0d5ece",
+      "from": [
+        2.2,
+        0.0,
+        -5.4
+      ],
+      "to": [
+        3.4,
+        1.6,
+        -3.2
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        2.8,
+        0.8,
+        -4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_fr"
+    },
+    {
+      "name": "claw_fr",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "3ab44d42-7745-45b9-ab00-554b72215066",
+      "from": [
+        2.4,
+        0.0,
+        -6.0
+      ],
+      "to": [
+        3.2,
+        0.7,
+        -5.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        2.8,
+        0.35,
+        -5.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_fr"
+    },
+    {
+      "name": "femur_thigh_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5c95d330-dcba-4680-9731-76e4f63c706c",
+      "from": [
+        -3.6,
+        6.8,
+        4.6
+      ],
+      "to": [
+        -1.8,
+        11.8,
+        7.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.7,
+        9.3,
+        6.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_l"
+    },
+    {
+      "name": "femur_trochanter_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f5609415-639b-4e89-be24-2254f72ae78d",
+      "from": [
+        -3.7,
+        9.8,
+        5.4
+      ],
+      "to": [
+        -2.8,
+        11.2,
+        6.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -3.25,
+        10.5,
+        6.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_l"
+    },
+    {
+      "name": "shin_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c1eb1b7c-b883-4724-b194-30200bad7ca5",
+      "from": [
+        -3.3,
+        2.8,
+        6.0
+      ],
+      "to": [
+        -2.2,
+        7.2,
+        8.8
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        -2.75,
+        5.0,
+        7.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shin_l"
+    },
+    {
+      "name": "patella_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "ab19619f-4a12-4f3e-9b17-acbbd375e334",
+      "from": [
+        -3.25,
+        6.2,
+        4.8
+      ],
+      "to": [
+        -2.35,
+        7.4,
+        5.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.8,
+        6.8,
+        5.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shin_l"
+    },
+    {
+      "name": "hock_calcaneus_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "c63dfb59-75fc-4e96-83e0-ef90c9136def",
+      "from": [
+        -3.2,
+        1.2,
+        6.8
+      ],
+      "to": [
+        -2.3,
+        3.2,
+        8.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -2.75,
+        2.2,
+        7.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hock_l"
+    },
+    {
+      "name": "metatarsus_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e8b26f97-7968-4dc2-a3f6-0eb92da1a88c",
+      "from": [
+        -3.15,
+        1.0,
+        5.0
+      ],
+      "to": [
+        -2.35,
+        3.0,
+        6.8
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        -2.75,
+        2.0,
+        5.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hock_l"
+    },
+    {
+      "name": "paw_bl_pad",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "ecb26e06-7650-44e5-9f6b-5a8b600a87c7",
+      "from": [
+        -3.3,
+        0.0,
+        3.4
+      ],
+      "to": [
+        -2.1,
+        1.4,
+        5.4
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.7,
+        0.7,
+        4.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_bl"
+    },
+    {
+      "name": "claw_bl",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cdb19236-8de3-44ee-b0da-df7292741235",
+      "from": [
+        -3.1,
+        0.0,
+        2.7
+      ],
+      "to": [
+        -2.3,
+        0.6,
+        3.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -2.7,
+        0.3,
+        3.05
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_bl"
+    },
+    {
+      "name": "femur_thigh_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0c83bf93-c1d9-4e93-8509-d93ee25e8f49",
+      "from": [
+        1.8,
+        6.8,
+        4.6
+      ],
+      "to": [
+        3.6,
+        11.8,
+        7.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        2.7,
+        9.3,
+        6.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_r"
+    },
+    {
+      "name": "femur_trochanter_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "44bda5c0-b097-4e1d-ae7a-15b2766a9084",
+      "from": [
+        2.8,
+        9.8,
+        5.4
+      ],
+      "to": [
+        3.7,
+        11.2,
+        6.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        3.25,
+        10.5,
+        6.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_r"
+    },
+    {
+      "name": "shin_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "e47c6f3a-c830-416a-a2c1-314b366f1545",
+      "from": [
+        2.2,
+        2.8,
+        6.0
+      ],
+      "to": [
+        3.3,
+        7.2,
+        8.8
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        2.75,
+        5.0,
+        7.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shin_r"
+    },
+    {
+      "name": "patella_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "104bdd35-5d5b-4529-a52c-090613c80023",
+      "from": [
+        2.35,
+        6.2,
+        4.8
+      ],
+      "to": [
+        3.25,
+        7.4,
+        5.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.8,
+        6.8,
+        5.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "shin_r"
+    },
+    {
+      "name": "hock_calcaneus_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "65078ce5-cacf-4400-a2ac-0ce905b34de0",
+      "from": [
+        2.3,
+        1.2,
+        6.8
+      ],
+      "to": [
+        3.2,
+        3.2,
+        8.2
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        2.75,
+        2.2,
+        7.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hock_r"
+    },
+    {
+      "name": "metatarsus_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b9ff3cbb-44dd-49c5-8df7-b73332914f59",
+      "from": [
+        2.35,
+        1.0,
+        5.0
+      ],
+      "to": [
+        3.15,
+        3.0,
+        6.8
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        2.75,
+        2.0,
+        5.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "hock_r"
+    },
+    {
+      "name": "paw_br_pad",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d0121335-2165-4954-baba-a224b591209e",
+      "from": [
+        2.1,
+        0.0,
+        3.4
+      ],
+      "to": [
+        3.3,
+        1.4,
+        5.4
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        2.7,
+        0.7,
+        4.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_br"
+    },
+    {
+      "name": "claw_br",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "25fd97e8-e263-452b-819f-a1516caa3729",
+      "from": [
+        2.3,
+        0.0,
+        2.7
+      ],
+      "to": [
+        3.1,
+        0.6,
+        3.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        2.7,
+        0.3,
+        3.05
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            17.0,
+            15.0,
+            31.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "paw_br"
+    },
+    {
+      "name": "tail_seg_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5575f9af-b79d-4301-9fbe-3daefd28da91",
+      "from": [
+        -0.7,
+        9.8,
+        9.5
+      ],
+      "to": [
+        0.7,
+        11.4,
+        12.5
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        10.6,
+        11.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "tail_base"
+    },
+    {
+      "name": "tail_fur_base",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "a25fc1c0-303e-42a0-aed0-5ff5db759f20",
+      "from": [
+        -0.85,
+        10.2,
+        9.35
+      ],
+      "to": [
+        0.85,
+        11.6,
+        10.8
+      ],
+      "autouv": 0,
+      "color": 1,
+      "origin": [
+        0.0,
+        10.9,
+        10.075
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17.0,
+            1.0,
+            31.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "tail_base"
+    },
+    {
+      "name": "tail_seg_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "b495b738-d0de-470c-857c-dca0aebe8e1e",
+      "from": [
+        -0.5,
+        7.6,
+        12.5
+      ],
+      "to": [
+        0.5,
+        9.8,
+        15.5
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        8.7,
+        14.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "tail_mid"
+    },
+    {
+      "name": "tail_seg_3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "bc095f7e-e6b8-4ea6-8cad-fc7cf0077570",
+      "from": [
+        -0.4,
+        5.4,
+        15.5
+      ],
+      "to": [
+        0.4,
+        7.6,
+        17.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        0.0,
+        6.5,
+        16.65
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "tail_tip"
+    },
+    {
+      "name": "tail_fur_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d0c30068-f591-4a41-a379-a56c4ab70aaf",
+      "from": [
+        -0.65,
+        5.0,
+        17.4
+      ],
+      "to": [
+        0.65,
+        6.8,
+        18.8
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        0.0,
+        5.9,
+        18.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "tail_tip"
+    }
+  ],
+  "outliner": [
+    {
+      "name": "root",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "uuid": "780636f7-57de-4b50-9124-fff3996970b8",
+      "export": true,
+      "mirror_uv": false,
+      "isOpen": false,
+      "locked": false,
+      "visibility": true,
+      "autouv": 0,
+      "children": [
+        {
+          "name": "hips",
+          "origin": [
+            0.0,
+            11.5,
+            6.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "uuid": "425e7625-c9bf-401d-817c-7be6bb4c8c65",
+          "export": true,
+          "mirror_uv": false,
+          "isOpen": false,
+          "locked": false,
+          "visibility": true,
+          "autouv": 0,
+          "children": [
+            "d573f11c-5b06-40e6-9817-05496ac1f99d",
+            "c4090191-8c11-4285-9c9a-fcab85ab418e",
+            "7b16860c-7ba9-47ac-a226-237cca42623a",
+            "a957aa68-0ee0-4dd0-a220-946f12730319",
+            "c6662b8b-abab-4433-a8c8-6e719c31e63f",
+            {
+              "name": "spine_lumbar",
+              "origin": [
+                0.0,
+                12.0,
+                2.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "uuid": "8576609c-cfc5-4906-a5c1-97f1aa0bdcca",
+              "export": true,
+              "mirror_uv": false,
+              "isOpen": false,
+              "locked": false,
+              "visibility": true,
+              "autouv": 0,
+              "children": [
+                "4d6e3d66-cd1c-4cbf-a389-70c6aead1ba2",
+                "8a96ff05-912b-42dd-83d3-eae82c08cc3d",
+                "e674b75d-4dfc-460a-a5eb-8729dbb29f1c",
+                "26c961f6-2d31-4cd4-a8a0-c955711a8427",
+                "9c51e6b4-d5b9-4ab8-82a3-c3048079e7eb",
+                "bfbab3ff-3507-40bf-99f2-d5725ba787bd",
+                "c45d421e-8f30-4f15-90aa-b2941bc7681b",
+                "3fb24a4d-34fe-4ad0-ac1f-33cdb03aa516",
+                {
+                  "name": "thorax",
+                  "origin": [
+                    0.0,
+                    12.5,
+                    -2.0
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "9636672c-880c-4166-8d1b-5096ada7bd1a",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "94ebc7c6-c42a-4817-a87f-ddfca79eb2bc",
+                    "29a8d341-2140-4b1a-8ba3-257596758dae",
+                    "918556cc-ab08-4744-8960-7ffeae56614c",
+                    "adb028c8-a97f-4be5-a623-5e25ddb84bb8",
+                    "67e621e8-fc4c-4fc8-a4d3-4c1296b47e5a",
+                    "6a948596-20d7-4d93-aea4-43c2dd7c2ea8",
+                    "249d0276-5a54-4575-b5f3-a6a2462279cf",
+                    "f2221758-db9d-46ca-830a-d74f144e6a3c",
+                    "48f3ed4c-67e7-4002-9243-bcd9089a1d27",
+                    "9a3854eb-f724-4b00-98bc-4e071fab86f1",
+                    "19143713-66f5-4ba6-9abc-48f171f45a87",
+                    "983f52ff-d4ac-40b4-96f1-88d4dbb2bbbf",
+                    "d445d27c-906f-4d62-8a54-8fc4761aa2da",
+                    "f79daf71-c659-4102-bcca-6bd5ab587a77",
+                    "840d9220-8a50-4382-8f39-fd01237321e9",
+                    {
+                      "name": "neck",
+                      "origin": [
+                        0.0,
+                        13.5,
+                        -6.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "ba3b90d0-2fb0-4d7e-ae26-77d520847fe1",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "584175e3-a146-4bb8-87d7-fb1b5e8e40d8",
+                        "822fbecf-1db5-4aeb-8542-6f953a2cbe5c",
+                        "54af5a5f-a8a5-4dfb-8037-7e4e86928837",
+                        {
+                          "name": "head",
+                          "origin": [
+                            0.0,
+                            14.5,
+                            -10.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "95c6e23b-427a-4a1c-a01f-d858daa951ce",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "6c57e390-8dab-4f8e-9019-f9e1c4976846",
+                            "14763f0e-aa3c-4809-a978-508ba6be14c5",
+                            "aa0b6b42-66eb-445e-b147-e99bc6bff59a",
+                            "483e39dc-6f3c-47a8-8f41-162357ac7c6a",
+                            "29b67e32-8705-4eee-bbca-dcc638541631",
+                            "83097f08-6e71-4f12-b978-b93755ab891e",
+                            "1199d4af-5f15-49f3-98b1-82f86216316f",
+                            {
+                              "name": "snout",
+                              "origin": [
+                                0.0,
+                                13.5,
+                                -11.8
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "a5482c4d-ca1c-4f28-9ca4-40e3233e2edb",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "a035a507-de20-42ce-b3ce-2ef958c3bf7d",
+                                "b21517da-e54b-4bbb-948f-ced33c1f184c",
+                                "62c63321-ec60-4428-96bf-5e5616b84e06",
+                                "66031c27-fec9-4b62-a5f4-d1a0b2d5ce02"
+                              ]
+                            },
+                            {
+                              "name": "jaw",
+                              "origin": [
+                                0.0,
+                                12.8,
+                                -10.5
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "c5c044a7-66ec-48a5-b97f-327c857f9076",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "5d3cb304-20a3-48d8-86e9-a9deb753c7f2",
+                                "839081ad-9bf2-4788-8349-3996d6c0f1eb",
+                                "c28ef67f-42cb-46b6-ad90-894fdcd9aaef"
+                              ]
+                            },
+                            {
+                              "name": "ear_l",
+                              "origin": [
+                                -2.0,
+                                16.5,
+                                -9.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "da87d9ab-3283-4c48-842d-8d40e7188464",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "d2557fb6-7bce-482a-9b72-dc6886a1167d",
+                                "114dfe45-31b4-4fa4-b74f-edbbab5adb76"
+                              ]
+                            },
+                            {
+                              "name": "ear_r",
+                              "origin": [
+                                2.0,
+                                16.5,
+                                -9.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "b13f6ed4-4690-4d51-be5b-24cb72c8d50b",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "c0b47f29-4f75-4fd5-b1cf-62b1d17c82e0",
+                                "f6fb0be4-7723-4a2d-a96c-aca8d731d058",
+                                "9f50d3c0-2770-4e15-8639-6caa6a4e76fa"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "shoulder_l",
+                      "origin": [
+                        -2.8,
+                        11.5,
+                        -4.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "50e3b2ea-4daa-4a1c-a2f0-aa29ffde05cf",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "1423b32c-abe8-4e62-8796-cb1eb3f5e9cd",
+                        "7e65d200-84b0-49da-a204-3cd480d3f33b",
+                        {
+                          "name": "arm_l",
+                          "origin": [
+                            -2.8,
+                            6.5,
+                            -4.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "4a9f4972-2242-4678-b8bf-47043b3d032c",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "f92b257d-9af0-493b-811e-e95e2a70f436",
+                            "09bd9496-bec0-4eb0-a156-6bfd82b74ffe",
+                            {
+                              "name": "paw_fl",
+                              "origin": [
+                                -2.8,
+                                0.0,
+                                -4.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "5ebbe298-5990-48d3-b1b0-e043064a42b2",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "e750d97a-48f2-45eb-98bb-de2d9c2dea86",
+                                "777bcef9-8d3e-4303-831a-fbd0da4a9820"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "shoulder_r",
+                      "origin": [
+                        2.8,
+                        11.5,
+                        -4.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "c6d47d73-7798-4bd4-aa80-b12adb998c48",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "b794313f-80b4-4d5c-b608-bdcac1cb5dfc",
+                        "594fb372-c0c8-4c39-833d-99066a97d777",
+                        {
+                          "name": "arm_r",
+                          "origin": [
+                            2.8,
+                            6.5,
+                            -4.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "4b87132a-5e73-48d4-8139-4f6b8bdbc3f2",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "a30883b3-d873-4195-9092-acce1f352035",
+                            "8a2b3244-5b6a-41d6-bdbb-94f0a4f9236a",
+                            {
+                              "name": "paw_fr",
+                              "origin": [
+                                2.8,
+                                0.0,
+                                -4.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "15989e62-f93d-49f9-8803-cc883bd6a486",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "7c52ac0b-3f6e-4397-8bd3-61373b0d5ece",
+                                "3ab44d42-7745-45b9-ab00-554b72215066"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "tail_base",
+              "origin": [
+                0.0,
+                11.0,
+                9.5
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "uuid": "83bc99cc-e02c-4268-b210-569b1ea9b811",
+              "export": true,
+              "mirror_uv": false,
+              "isOpen": false,
+              "locked": false,
+              "visibility": true,
+              "autouv": 0,
+              "children": [
+                "5575f9af-b79d-4301-9fbe-3daefd28da91",
+                "a25fc1c0-303e-42a0-aed0-5ff5db759f20",
+                {
+                  "name": "tail_mid",
+                  "origin": [
+                    0.0,
+                    9.8,
+                    12.5
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "8ff65af3-b0b2-4edf-9579-286570417bc5",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "b495b738-d0de-470c-857c-dca0aebe8e1e",
+                    {
+                      "name": "tail_tip",
+                      "origin": [
+                        0.0,
+                        7.6,
+                        15.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "4049325c-02f5-4bd4-bf0d-01fb570e9b70",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "bc095f7e-e6b8-4ea6-8cad-fc7cf0077570",
+                        "d0c30068-f591-4a41-a379-a56c4ab70aaf"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "thigh_l",
+              "origin": [
+                -2.6,
+                10.5,
+                6.5
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "uuid": "35545c02-c01f-47ee-b3d9-2e0214c193bf",
+              "export": true,
+              "mirror_uv": false,
+              "isOpen": false,
+              "locked": false,
+              "visibility": true,
+              "autouv": 0,
+              "children": [
+                "5c95d330-dcba-4680-9731-76e4f63c706c",
+                "f5609415-639b-4e89-be24-2254f72ae78d",
+                {
+                  "name": "shin_l",
+                  "origin": [
+                    -2.7,
+                    5.5,
+                    7.5
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "5674ae9c-1b06-4d9a-b9d6-6e5183097bf2",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "c1eb1b7c-b883-4724-b194-30200bad7ca5",
+                    "ab19619f-4a12-4f3e-9b17-acbbd375e334",
+                    {
+                      "name": "hock_l",
+                      "origin": [
+                        -2.7,
+                        2.5,
+                        5.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "9ae75513-ddb6-41ec-b966-2c9236344031",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "c63dfb59-75fc-4e96-83e0-ef90c9136def",
+                        "e8b26f97-7968-4dc2-a3f6-0eb92da1a88c",
+                        {
+                          "name": "paw_bl",
+                          "origin": [
+                            -2.7,
+                            0.0,
+                            4.5
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "10523c58-a15a-408e-875e-6a872d2d4089",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "ecb26e06-7650-44e5-9f6b-5a8b600a87c7",
+                            "cdb19236-8de3-44ee-b0da-df7292741235"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "thigh_r",
+              "origin": [
+                2.6,
+                10.5,
+                6.5
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "uuid": "56f7a6c6-6daf-4490-bff9-a5992b4352c3",
+              "export": true,
+              "mirror_uv": false,
+              "isOpen": false,
+              "locked": false,
+              "visibility": true,
+              "autouv": 0,
+              "children": [
+                "0c83bf93-c1d9-4e93-8509-d93ee25e8f49",
+                "44bda5c0-b097-4e1d-ae7a-15b2766a9084",
+                {
+                  "name": "shin_r",
+                  "origin": [
+                    2.7,
+                    5.5,
+                    7.5
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "7dfb1485-7c45-4d68-b3b7-2846a1ad44bd",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "e47c6f3a-c830-416a-a2c1-314b366f1545",
+                    "104bdd35-5d5b-4529-a52c-090613c80023",
+                    {
+                      "name": "hock_r",
+                      "origin": [
+                        2.7,
+                        2.5,
+                        5.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "345193f7-5bfd-4269-b949-4dcba0bab0fc",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "65078ce5-cacf-4400-a2ac-0ce905b34de0",
+                        "b9ff3cbb-44dd-49c5-8df7-b73332914f59",
+                        {
+                          "name": "paw_br",
+                          "origin": [
+                            2.7,
+                            0.0,
+                            4.5
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "8d104048-b331-4da7-8c04-20aec8084798",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "d0121335-2165-4954-baba-a224b591209e",
+                            "25fd97e8-e263-452b-819f-a1516caa3729"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "path": "",
+      "name": "ku_pi_lang.png",
+      "folder": "fauna",
+      "namespace": "bong",
+      "id": "0",
+      "particle": true,
+      "render_mode": "default",
+      "visible": true,
+      "mode": "bitmap",
+      "saved": true,
+      "uuid": "ad873a31-bfc1-4283-9f74-8e5fa5f0cb38",
+      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAOhklEQVR4nO1Zy44kSVY97mZu/n5FZEZWVlHqaalG3aIXI/VoGrFiyUfwQ/wDH8AWsQSBxAIWoOkRD81o0AhmqruyMiIjwt9P8weLqHuV9QWxIG0TUsrT/dq1e88595jx53/2p6tpmuj7Ho7jYBgGCCEAAF3XIY5jLMuCtm0BAL7vI89zuK4L27bx9vUttNbwfR/LsgAAmqbBq1ev8OOPP0JKCdM0oZTCNE1Y1xW2bWOaJiil8Mu//Xs4jgPbtjEMA5ZlQRiGGMeRn4/jGACgtYZlWZimCZ7noa5r/OVf/xWapoGUkmOzbRtd10FKCSklhBD8PQAwTRNd18G2bZiWZeFhf8C5KHkDFPS6rhjHEcMwQEqJaZrQti1c10XXdZimCcuywLIstG0LwzCwLAuklDifz7i5uYFt2zAMA03T4IeHAzzPQ9/3UEpx0jebDcZxhFIKnuehbVus6wohBIQQyPMc8zxDCIG6rjEMAwBgXVcMw4B1XaGUQtM02Gw2CMMQpmkiTVOEYQgpJeI4Rtu2sCwLhmFgXVfM8wyzKArc726xiSNIKeE4Dm98t9vBsixIKbEsC9I0hZQShmEgSRJIKdG2LX+8KAq0bcvvyPMcVVXBsiwkSYK3r3d8uvM8c8LHcYTrujAMA1JKbDYbBEGAeZ7xUz1ywrXWCIIA78YBfd/zqU7TBCEEDMNAWZbo+x4AMAwDmqYBAGRZhnVdYVkW1nVFFEVwHAfmbre7ZMI0MQwDLMtCWZaoqgp1XWNZFgzDANd1MQwDTNOEEAJ93yPLMpimiXEcEccxoigCAPR9D9u2YVkWouiSWK01pmnC4+MjLMvCOI7o+x6GYSAIAmitYds21nVFWZYYhgFKKfxqGLEsC5dvlmX4gx9gv99DKcUVqLXGPM9wHAdFUXDrUtUqpfhguq7j78jT6YQkSTCOI7quw+l0QhRFnNG6rrlchRBQSqEsS2it4XkefN/HOI748HjE29c77rFpmmBZFgdhmiZ838cwDJimCUEQQCmFx08nZVkWTNOEYRjo+56TaRgGJ1wIwd/0fR8fP37EOI5IkgR938M0Tbiuy61B5e44Dr7/t3/Fu6++xrIs3FqO48Ds+x77/R5lWSJNUziOA8MwkGUZpJTY7XZYlgXLsmBdV1RVxc9EUcQ9//b1Do7jIAgCCCHQNA2apsE0TZimCVpr9H3Pwbdti2ma4LoutNYQQkBrjXEcAQB1XTO4UcKobZqmQV3XAMDJGceRn53nmbFhu91iGAZ8+4vvoJRC13XwPA/DMFwqOgxDCCEQhiHKssQ4jny6Wms8Pj7imOXIyop7LI5juK6LPM9hWRaUUljXFX3fo+97aK2x2WyQpilovf+wx7Is6LoOv/vfH2CaJjzPgxAC8zyjqioGzHVdGWyllPA8D2VZQimFOI4xzzPSNOX/BwDLsrhtp2li1jidThBCoG1bjOOIdV2htYbWGoZhwKyqCpvNhkt+HEcIIWBZFoqigG3biHwPSRigKApEUYSnpydGfa31pZekxA8PByil4Ps+uq5DWZaMIe++fAvHcTDPM3bbGFJKZhICvnVdUdc1wjCEYRjY7h9RliVvQimFw+GAaZqQ5zl2ux33tJQSQRBw/NR6Wmus6wrDMBCGIYIgQFmWWNcV67rCTNOU0XKaJjiOw2VGoGFZ1oWnpxmu6yIIAoRhiK7rsCwLgiDA73/4iJ+8vccwDNBaw3EcSClh2zY8z2MqJJpt2xZhGDI6V1WFLMuw2WwYlP/gX3CCNnGfnRkHmqbB8XhEkiT479/8Go7jQGuNOI7h+z4A4Df/9Z+sT2gP1Oq2bV9inKaJy25ZFvi+fzn1KMLj4yPqrofACtd1sU1i7k86EcuyUNc1vvn6Hc7nS4CmaeK3v/s9bjcRi5hlWXBzc8OoTOIkCALmdQInIQRjwbIsiOMYjuPgwzxjrWt0XQfTNHFzc4NhGPDVH3+DsixhGAamacIwDBe6/OprbpGyLDFNE5IkwTAMGMfxAoJCCOyPJwRBwD1cliWLCt+xcXNzA8dxmIa01hiGgcEEAI7HIyzLguu6GMcRX737CWzbZtBclgXv379HVVXck8/ZIkkSThZtcBgG5msqa6oAz/Pw+PjIJU8xWZaFPM9R1zXSNMXxeOQWk1JyYomFzGma8Ef3r7i/z0WJJEmwLAtOpxMAcHn5vo80TWFZFnOvaZoAgDAMWZ4+bx2SnZQc4nzHcTCOI9I0hWEYyPMcx+ORN0ESOM9zBjTDMPBuHFhX0Gn6vg/Lsvidm80GcRxzJfz7979k6TvPM+Z55qo3lVLIsgy+76OuawSuwxkUQnAy4jhG13X8UhItJGvruuYkFUWBPM95E/TBtm15piAVl2UZB0PtkGUZiyTf93E+nzGOIwzDwP84Lh4eHnh2IOAkdZkkCTMLSfWff/cn/Df6v8PhgLIsLxXgOA66rsN2u4VSCrZts6Doug7zPLPqo3IjcUPgEscx+r7n4WNZFpimySqubVs+KaUUlFLY7/ewbZuVIw1Ntm2zuJmmCXd3dwCAN0UOIQS22y1XBbUKaZh/+sd/4KGKhNXzeeY/fvU95vkC5lEUXRLwfFp7jtY0pZFWp9KkTJ7PZ4RhyELkOcpS39Lp5fkl+K7rGCi32y3rDUq27/sIw5BPdpomFEUBpRTeByHLWgBI0xRBEDD4CSHw7S++g5SSleE8z5BSsir92bc/Z21xPp8hCYiCIGCxQKeSpinGcYRpmmjblicy4lUCFlJjNOicTieuDMMwuG2IAkm4aK3RNA3SNOX2OZ/PfHpaa6RpygIKAB/E8XjkFry7u0PTNByX4zif4RQhPs0KjuPwwGT87JufriSCpJSoqorHya7ruHQdx0Hbtuj7HkEQoP5ER5bl8pRGCC6EYLGRJAnPBzTWEr2laYp/+ee/4yqjsZaQnbCCSp3EUxRFLHe7v/kLLMuCcRy5Qvu+5xM3DIPbmTwGz/MYoyQBlGVZjKiUnb7veQ4oigKmaTLqSymRpimqqmPq01rzhEYARpPfPM+I45iBiaqpaRrW8UEQ4OnpiaUvANi2jc1mAwB4eHhAmqZomgZCCKRpivbThtd15c2laYrz+cxVQPugfY7jiDAMLzRIaEnAluc54wCBopQSSineFCWNmIA2T71HuNK2LW+WaJE4mFrD930opRgf6Jm7V68QxzFTZJZl2G63LLupygjQSNkNw8UrcF0Xp9OJ25sO7rlUPhwOl2GIpivTNNlBcV0XdV1ju90yb5No6bqOhx6ir2VZuALoNwxDzPPMwqYoCm4lCpwmwSzLeAYJ0xRYVw7a8zzGDt/3GaSjzYa1BukHx3FQVRWUUri/v0cQBJimicfpJEn4+69fv74owSAIeESl4YVAo65reJ7H4Pj09IQoivjFQRAwkJHmp7GTWsbzPAYwsqooKMMwUBQF7u7uOAG665jbTdPkoYo0PSnLrqrYNyTW6LoOYRgyUBIb0NTbNA2/q23bCw1KKdkMJaCo6xq2bUMIwVMhmRrEqwREtm2zj0hgSHqBEJ00etu2qKoKSZIgSRKEYch9bX06vePxyJ4kKUjDMFhMKaVYUhMdU1IJRKuqYtVJ7hPRPMngpmlgrp9KjWZrIQRc1/0MhW3b5umQpr0gCNhxIQOFHKV5nhFFEfczJYvaiGYKMiWoavQnJ2i73TKd0S+1gOu6rAGKosA0Tfjyyy/5m3QoZLI+PT1xG5EbRX4HS2GtNZcOca7neazkntvdhOz0QfLWiKrotD583LOBQeVO5di2LY+tZLhS5VGlDMOAqqrYHySanueZRRvR5/v373kGIdojgE6ShHGGXKW6rlHX9cWvJClMJ0/WF9EGqbZ1XVl+bjYb7Pd7pjSiFKoCAHhzf8fzOjk7tm2zpAbAjjEJp+eUHCYJmk8oT21GuDCOI4IgYPX45s0bZFnGrCCEYB/AdV0WSTQJ3t7eMmuZWZax10Z8/9x7b9uWJzHqG2oHwzAY5UlYJEnCfUizA51aURQsUAi4iLJoY/TO9hOSU/Isy0Jye8eUWVXVZ/cBlBTHcWCaJg6HA5c8mbukVmmsLssSkko7DEMcDgfc3t6iaRrOOAEOuTB0cUFoKqXDWY+iiO1pUl/PP0Y9HMcxPnz4gNvbW36WrOx5nvkdzw0SEjPEOs8vUNq25Vm/KAosywLP8xgo6WCIMUiJaq0vswCVS5qmqOsaUkr24ZZl4UsQuhcgK9rzPJxOBZciXaWRM0v+IQ08dDuzrivfM1D/73a7C9BZDlzMmLqOK8bzPK5Qok4aysh/rKoKvu/D8zwWYnEc43w+f6YNqCppVjHJhSFw2G63HCAhedd1aJqGX0BYcTqdPpO1NAwRi2RZxsC23W7x8eMjzwSE0vM8w40iZFmGPM/R5CecHh8BgP3BpmmY10nwEMUSaN7e3jJWkA6Y55mNU6JJ8hC01hfxdz6fQZejy7IgyzIcDgdmBsoy3QEQKJIWJ1p77ibTZEkbV0p9ul1y+B5hXVe+0CyOR7iuy2xBzhLZab7vI8syJEnCyo/u+zzPY1FGCS2KgqmXEt22LeMatbgQAmYURQw2RIlUBXSa6zNZ+vzSYZom7E8Z9xypSHKCoihC0zTQWvNESKVIYy7hwrIsrOfbtkWSJGyt0amTaKMpdZ5nnM9nZif6JXuOpDpVy3a7xTiOHFcQBDC11siyDAD4guO5gUAigswFsrFN07xcj9/fsWwuigIALm5yXfM1OgWilMIXX3yBcRxRliVLXAI54mkpJVNaVVWsQMmnUEphs9lwJVJbkp3+/AqObrioyuM4xn6/ZzwyAFxg8f/pMq8dwLXXSwKuHcC110sCrh3AtddLAq4dwLXXSwKuHcC110sCrh3AtddLAq4dwLXXSwKuHcC110sCrh3AtddLAq4dwLXXSwKuHcC110sCrh3AtddLAq4dwLXXSwKuHcC110sCrh3AtddLAq4dwLXX/wEcjr7nuPkETQAAAABJRU5ErkJggg=="
+    }
+  ]
+}
