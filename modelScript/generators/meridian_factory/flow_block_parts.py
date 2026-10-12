@@ -9,8 +9,8 @@
 逐行宽度表（x 方向宽度；括号里是调度的 0–16 坐标）
   y  0–9.5   中心腔实心肉壳 x/z ±4（4–12）
   y  9.5–10  顶面半透膜 ±4
-  y 10–10.5  十字亮通道贴片：宽 2，中心 2×2 #fff0dc，往四个方向渐变
-  y 10.5–12  骨脊：1 宽，高出膜面 2px；合流器从中心伸向出口 +Z，分流器从入口 -Z 伸到中心再分叉朝两条出臂
+  y 10–10.5  十字亮通道贴片：宽 4（x/z ±2），臂伸到腔壁 ±4；中心 4×4 #fff0dc，往臂端渐变，腔顶约 1/2 是亮的
+  y 10.5–12  骨脊：1 宽，高出膜面 2px，只落在单口那一臂上（z 绝对值 2..4），不压中心：合流器在出口 +Z 臂，分流器在入口 -Z 臂
   y  0–4     四根 2×2 矮骨脚，x/z 在 ±(2..4)，贴着腔体四角，顶上各一个 1px 小骨节（y4–5）
   y  2–3, 7–8  臂框四条 1×1 肉梁（臂截面 6 宽 × 6 高：z ±3，y 2..8），长度沿臂；四个侧面全空
   y  3–7     肌肉卷：3×3 暗红卷芯 + 每隔 1px 一道外凸 0.5px 的 4×4 肋环，#8a2a2a / #5a1a1a 交替
@@ -57,6 +57,8 @@ BODY_TOP = 9.5
 MEMBRANE_TOP = 10.0
 GLOW_TOP = 10.5
 RIDGE_Y = (10.5, 12.0)
+CROSS_HALF_WIDTH = 2.0     # 十字通道半宽（总宽 4），臂一直伸到腔壁 ±4
+RIDGE_Z = (2.0, 4.0)       # 骨脊只落在单口那一臂上（z 的绝对值范围），不压中心 4×4
 ARM_A0, ARM_A1 = 4.0, 8.0
 ARM_Y = (2.0, 8.0)
 ARM_HALF_B = 3.0
@@ -139,7 +141,7 @@ def arm_module(direction: str, pfx: str) -> List[dict]:
 # =============================================================================
 
 def center_chamber(single_z: int) -> List[dict]:
-    """x/z ±4、y0..10 的实心肉壳；顶面半透膜，膜上十字亮通道（宽 2，中心 #fff0dc 往四臂渐变）。"""
+    """x/z ±4、y0..10 的实心肉壳；顶面半透膜，膜上十字亮通道（宽 4，中心 #fff0dc 往四臂渐变）。"""
     g = "chamber"
     h = CHAMBER_HALF
     cubes = [
@@ -152,14 +154,15 @@ def center_chamber(single_z: int) -> List[dict]:
     cubes.append(_box("chamber_back_fiber_b", (0.5, 4.0, min(zf, zf + 0.5)), (1.5, 7.0, max(zf, zf + 0.5)), g, "tendon_fiber"))
 
     y0, y1 = MEMBRANE_TOP, GLOW_TOP
-    cubes.append(_box("glow_center", (-1.0, y0, -1.0), (1.0, y1, 1.0), "glow_cross", "qi_core"))
-    gradient = ["qi_glow", "tendon_highlight", "tendon_fiber"]
+    w = CROSS_HALF_WIDTH
+    cubes.append(_box("glow_center", (-w, y0, -w), (w, y1, w), "glow_cross", "qi_core"))
+    gradient = ["qi_glow", "tendon_highlight"]  # 臂段 w..h 分两段，往壁渐暗
     for i, mat in enumerate(gradient):
-        d0, d1 = 1.0 + i, 2.0 + i
-        cubes.append(_box(f"glow_xp_{i}", (d0, y0, -1.0), (d1, y1, 1.0), "glow_cross", mat))
-        cubes.append(_box(f"glow_xn_{i}", (-d1, y0, -1.0), (-d0, y1, 1.0), "glow_cross", mat))
-        cubes.append(_box(f"glow_zp_{i}", (-1.0, y0, d0), (1.0, y1, d1), "glow_cross", mat))
-        cubes.append(_box(f"glow_zn_{i}", (-1.0, y0, -d1), (1.0, y1, -d0), "glow_cross", mat))
+        d0, d1 = w + i, w + 1.0 + i
+        cubes.append(_box(f"glow_xp_{i}", (d0, y0, -w), (d1, y1, w), "glow_cross", mat))
+        cubes.append(_box(f"glow_xn_{i}", (-d1, y0, -w), (-d0, y1, w), "glow_cross", mat))
+        cubes.append(_box(f"glow_zp_{i}", (-w, y0, d0), (w, y1, d1), "glow_cross", mat))
+        cubes.append(_box(f"glow_zn_{i}", (-w, y0, -d1), (w, y1, -d0), "glow_cross", mat))
     return cubes
 
 
@@ -168,29 +171,20 @@ def center_chamber(single_z: int) -> List[dict]:
 # =============================================================================
 
 def bone_ridge(single_z: int, flip: bool = False) -> List[dict]:
-    """膜上 1 宽的骨脊，高出膜面 2px。
+    """膜上 1 宽的骨脊，高出膜面 2px，只落在单口那一臂上（z 绝对值 2..4），不压中心 4×4 的亮通道。
 
-    合流器（single_z=+1）：从中心沿流向伸到出口 +Z。
-    分流器（single_z=-1）：从入口 -Z 伸到中心，再分叉成两条阶梯朝 ±X 两条出臂。
+    合流器（single_z=+1）：在出口 +Z 那一臂。
+    分流器（single_z=-1）：在入口 -Z 那一臂；两条出臂（±X）上不放骨脊。
     flip=True 只给差分自证用：造一条朝反的坏脊。
     """
     g = "bone_ridge"
     y0, y1 = RIDGE_Y
-    cubes = [_box("ridge_main", (-0.5, y0, 0.0), (0.5, y1, 4.0), g, "bone_main")]
-    cubes.append(_box("ridge_cap", (-0.25, y1, 0.5), (0.25, y1 + 0.25, 4.0), g, "bone_dark"))
-    if single_z < 0:
-        # 分流：入口侧长脊（镜像后在 -Z）+ 两条朝 ±X 的 1×1 阶梯
-        stem = _mirror_z(cubes, -1)
-        legs = []
-        for sx in (-1, 1):
-            xa = (0.5, 1.5) if sx > 0 else (-1.5, -0.5)
-            xb = (1.5, 2.5) if sx > 0 else (-2.5, -1.5)
-            legs.append(_box(f"ridge_leg_a{sx:+d}", (xa[0], y0, -0.5), (xa[1], y1, 0.5), g, "bone_main"))
-            legs.append(_box(f"ridge_leg_b{sx:+d}", (xb[0], y0, -0.5), (xb[1], y1, 0.5), g, "bone_main"))
-        cubes = stem + legs
-        # 脊以 single_z=-1 的约定在 -Z；flip 时翻到 +Z
-        return _mirror_z(cubes, -1) if flip else cubes
-    return _mirror_z(cubes, -1) if flip else cubes
+    z0, z1 = RIDGE_Z
+    cubes = [_box("ridge_main", (-0.5, y0, z0), (0.5, y1, z1), g, "bone_main")]
+    cubes.append(_box("ridge_cap", (-0.25, y1, z0 + 0.5), (0.25, y1 + 0.25, z1), g, "bone_dark"))
+    # 默认朝 +Z；分流器取 -Z，flip 再把它翻回反侧
+    mirrored = (single_z < 0) != flip
+    return _mirror_z(cubes, -1) if mirrored else cubes
 
 
 # =============================================================================
@@ -290,6 +284,24 @@ def check_structure(cubes: List[dict], single_z: int) -> None:
         cz = (p["from"][2] + p["to"][2]) / 2
         assert abs(abs(cx) - POST_CENTER) < 1e-6 and abs(abs(cz) - POST_CENTER) < 1e-6, f"骨柱 {p['name']} 不在腔体四角: ({cx},{cz})"
 
+    # 十字亮通道：中心 4×4，四臂宽 4 一直伸到腔壁
+    cross = [c for c in cubes if c.get("group") == "glow_cross"]
+    center = next(c for c in cross if c["name"] == "glow_center")
+    center_width = (center["to"][0] - center["from"][0], center["to"][2] - center["from"][2])
+    assert center_width == (4.0, 4.0), f"十字中心应为 4×4，实际 {center_width}"
+    for c in cross:
+        across = (c["to"][2] - c["from"][2]) if c["name"].startswith(("glow_xp", "glow_xn")) else (c["to"][0] - c["from"][0])
+        if c is not center:
+            assert across == 4.0, f"{c['name']} 通道宽应为 4，实际 {across}"
+    assert max(abs(c["to"][0]) for c in cross) == CHAMBER_HALF and max(abs(c["to"][2]) for c in cross) == CHAMBER_HALF, "十字臂应伸到腔壁"
+
+    # 骨脊不压中心：任何骨脊立方体都不得和中心 4×4 在 x/z 上重叠
+    for c in cubes:
+        if c["name"].startswith("ridge_"):
+            overlaps = c["from"][0] < CROSS_HALF_WIDTH and c["to"][0] > -CROSS_HALF_WIDTH \
+                and c["from"][2] < CROSS_HALF_WIDTH and c["to"][2] > -CROSS_HALF_WIDTH
+            assert not overlaps, f"{c['name']} 压在十字中心 4×4 上"
+
     # 骨脊方向：脊的重心应落在单口一侧（合流在出口侧，分流在入口侧）
     ridge = [c for c in cubes if c["name"].startswith("ridge_main")]
     assert len(ridge) == 1, "应有一条主骨脊"
@@ -317,6 +329,13 @@ def self_test(single_z: int, label: str) -> None:
 
     flipped = [c for c in cubes if not c["name"].startswith("ridge_")] + bone_ridge(single_z, flip=True)
     must_fail("骨脊朝反", flipped, lambda cs: check_structure(cs, single_z))
+
+    narrow = [dict(c, **{"from": [c["from"][0], c["from"][1], -1.0], "to": [c["to"][0], c["to"][1], 1.0]})
+              if c["name"] in ("glow_xp_0", "glow_xp_1") else c for c in cubes]
+    must_fail("十字通道变窄", narrow, lambda cs: check_structure(cs, single_z))
+
+    on_center = cubes + [_box("ridge_over_center", (-0.5, 10.5, -1.0), (0.5, 12.0, 1.0), "bone_ridge", "bone_main")]
+    must_fail("骨脊压中心", on_center, lambda cs: check_structure(cs, single_z))
 
     corner = cubes + [_box("corner_block", (-8.0, 0.0, -8.0), (-6.0, 8.0, -6.0), "x", "bone_main")]
     must_fail("外角有骨块", corner, lambda cs: check_structure(cs, single_z))

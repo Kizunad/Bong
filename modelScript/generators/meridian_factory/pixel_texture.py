@@ -203,7 +203,7 @@ FIBER_SLOPE = 0.75
 FIBER_HALF_WIDTH = 0.28     # 约 1 texel 宽
 FIBER_GLOW_WIDTH = 0.5      # 筋丝两侧高光带宽度（约 1 texel）
 FIBER_REF_HALF_H = 3.0      # 斜率标定用的标准半高（标准截面 8×6 的半高）
-ARC_BAND_HALF_WIDTH = 0.6   # 弧管亮带半宽（占半截面的比例）
+ARC_BAND_HALF_WIDTH = 0.45  # 弧管亮带半宽（占半截面的比例）
 
 
 @dataclass(frozen=True)
@@ -242,8 +242,8 @@ def _share_a_face(a: Tuple[np.ndarray, np.ndarray], b: Tuple[np.ndarray, np.ndar
 def _make_frame(lo: np.ndarray, hi: np.ndarray, continuous: bool) -> TubeFrame:
     size = hi - lo
     half = np.maximum(size / 2, 1e-6)
-    # 弧管沿 z 走，外弧侧在局部 -x：亮带往外弧偏半个半宽
-    shift = (-0.5 * half[0], 0.0, 0.0) if continuous else (0.0, 0.0, 0.0)
+    # 弧管沿 z 走，外弧侧在局部 -x：亮带贴着外弧偏 3/4 半宽
+    shift = (-0.75 * half[0], 0.0, 0.0) if continuous else (0.0, 0.0, 0.0)
     return TubeFrame(
         center=tuple((lo + hi) / 2),
         half=tuple(half),
