@@ -584,13 +584,14 @@ RIDGE_COLOR = hex_color("#b05050")      # 肉褶脊
 GROOVE_COLOR = hex_color("#5a1a1a")     # 褶间压暗
 APERTURE_EDGE = hex_color("#f6dcc4")    # 口内亮芯：边缘
 APERTURE_CENTER = hex_color("#fff8ec")  # 口内亮芯：正中
+APERTURE_PAD_REACH = 2.0                # 口底亮芯垫的半径（px），与 gen_emitter.GLOW_PAD_RADIUS 一致
 
 
 def _fold_painter(base: Color, seed: int) -> Painter:
     """褶脊 / 褶间：一个固定底色，只留很轻的明暗起伏，两种底色的反差就是「褶」。"""
 
     def paint(p: Vec, axis: int) -> Color:
-        return shade(base, (value_noise(p, 1.6, seed) - 0.5) * 0.18 + (texel_noise(p, seed + 1) - 0.5) * 0.06)
+        return shade(base, (value_noise(p, 1.6, seed) - 0.5) * 0.08 + (texel_noise(p, seed + 1) - 0.5) * 0.03)
 
     return paint
 
@@ -604,8 +605,19 @@ def _aperture_core_painter(cube: dict) -> Painter:
     return paint
 
 
+def _glow_pad_painter(reach: float) -> Painter:
+    """口底亮芯垫：按离口中心的水平距离，中心 #fff8ec 往外渐变到 #f6dcc4（跨柱连续，不按单个柱子取半径）。"""
+
+    def paint(p: Vec, axis: int) -> Color:
+        return mix(APERTURE_CENTER, APERTURE_EDGE, min(1.0, math.hypot(p[0], p[2]) / reach))
+
+    return paint
+
+
 def emitter_override(cube: dict, default: Painter) -> Optional[Painter]:
     group, material = cube.get("group"), cube.get("material")
+    if group == "dome" and material == "qi_glow":
+        return _glow_pad_painter(APERTURE_PAD_REACH)
     if group == "dome" and material == "flesh_lit":
         return _fold_painter(RIDGE_COLOR, 181)
     if group == "dome" and material == "flesh_dark":
