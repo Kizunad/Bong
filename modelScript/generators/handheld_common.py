@@ -34,7 +34,7 @@ CANVAS_BG = (28, 29, 33)
 TILE = 480
 
 Cube = dict
-View = Tuple[str, float, float]      # (标签, yaw, pitch)，标签写出实际照到的面
+View = tuple      # (标签, yaw, pitch[, focus])，标签写出实际照到的面；focus = (中心 xyz px, 取景跨度 px)
 
 def cube(name: str, lo: Sequence[float], hi: Sequence[float], material: str, group: str) -> Cube:
     return {"name": name, "from": [float(v) for v in lo], "to": [float(v) for v in hi],
@@ -59,9 +59,10 @@ def check_geometry(cubes: List[Cube]) -> None:
     _assert_no_coplanar_faces(cubes)
 
 
-def write_model(cubes: List[Cube], model_id: str, override: Optional[Override] = None) -> Path:
+def write_model(cubes: List[Cube], model_id: str, override: Optional[Override] = None, check: bool = True) -> Path:
     """平色版：<id>.bbmodel，每个材质一个纯色（handheld_texture.flat_override）。"""
-    check_geometry(cubes)
+    if check:
+        check_geometry(cubes)
     out = MODEL_DIR / f"{model_id}.bbmodel"
     write_textured_bbmodel(cubes, out, model_id, None, override or flat_override)
     return out
@@ -74,20 +75,26 @@ def write_model_tex(cubes: List[Cube], model_id: str, override: Optional[Overrid
     return out
 
 
-def write_check_tex(flat_path: Path, tex_path: Path, model_id: str, view: View, ref_name: Optional[str] = None) -> Path:
-    """check_tex.png：左参考 / 中平色 / 右贴图，三格都用同一个视角。"""
+def write_check_tex(flat_path: Path, tex_path: Path, model_id: str, views: "Sequence[View] | View",
+                    ref_name: Optional[str] = None) -> Path:
+    """check_tex.png：左参考 / 中平色 / 右贴图；给多个视角时，每个视角各加一对（平色、贴图）。
+    视角可以带第 4 项 focus=(中心 xyz px, 取景跨度 px)，用来拉近看剑头 / 矛头。"""
     out_dir = REVIEW_ROOT / model_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    label, yaw, pitch = view
+    if views and isinstance(views[0], str):
+        views = [views]                          # 传进来的是单个视角
     tiles = []
     ref_path = REVIEW_ROOT / "exploded" / (ref_name or f"{model_id}.png")
     if ref_path.exists():
         ref = Image.open(ref_path).convert("RGB")
         ref = ref.resize((int(ref.width * TILE / ref.height), TILE), Image.Resampling.LANCZOS)
         tiles.append(_labeled(ref, f"REFERENCE ({ref_path.name})"))
-    for title, path in (("FLAT", flat_path), ("TEXTURED", tex_path)):
-        image, _ = render(path, yaw=yaw, pitch=pitch, size=TILE, bg=BG, shading="mc")
-        tiles.append(_labeled(image, f"{title}: {label}"))
+    for view in views:
+        label, yaw, pitch = view[:3]
+        focus = view[3] if len(view) > 3 else None
+        for title, path in (("FLAT", flat_path), ("TEXTURED", tex_path)):
+            image, _ = render(path, yaw=yaw, pitch=pitch, size=TILE, bg=BG, shading="mc", focus=focus)
+            tiles.append(_labeled(image, f"{title}: {label}"))
     canvas = Image.new("RGB", (sum(t.width for t in tiles) + 8 * (len(tiles) - 1), tiles[0].height), CANVAS_BG)
     x = 0
     for tile in tiles:
