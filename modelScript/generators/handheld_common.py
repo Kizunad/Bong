@@ -19,7 +19,9 @@ sys.path.insert(0, str(GENERATORS.parent))
 
 from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from common_parts import _assert_no_coplanar_faces  # noqa: E402
-from pixel_texture import Override, write_textured_bbmodel  # noqa: E402
+from pixel_texture import (  # noqa: E402
+    Color, Override, Painter, Vec, hex_color, mix, shade, texel_noise, value_noise, write_textured_bbmodel,
+)
 
 REPO = GENERATORS.parents[1]
 MODEL_DIR = GENERATORS.parent / "models"
@@ -35,9 +37,8 @@ View = Tuple[str, float, float]      # (标签, yaw, pitch)，标签写出实际
 
 # 器物调色板：骨 / 石走各自画笔，这里只给没有专用画笔的材质一个底色
 PALETTE: Dict[str, Tuple[int, int, int]] = {
-    "stone": (104, 102, 96),
-    "stone_dark": (52, 50, 48),
-    "stone_lit": (138, 134, 124),
+    "base_stone": (104, 102, 96),
+    "stone_dark": (58, 55, 50),
     "rust": (122, 74, 48),
     "talisman_paper": (214, 196, 158),
     "talisman_dark": (92, 70, 48),
@@ -46,6 +47,36 @@ PALETTE: Dict[str, Tuple[int, int, int]] = {
     "ash": (74, 72, 70),
     "void": (24, 20, 28),
 }
+
+
+# 斑驳材质：两个底色按噪声混拼，再随机压暗几块。石与木混拼出粗糙的傀儡感，不出现整块纯色
+MOTTLED_PAIRS: Dict[str, Tuple[Color, Color]] = {
+    "stone": (hex_color("#8a8478"), hex_color("#a39d90")),
+    "wood": (hex_color("#6b4a2f"), hex_color("#7d5a3a")),
+}
+MOTTLE_SCALE = 2.2          # 两个底色之间的混拼块大小（px）
+PATCH_SCALE = 1.1           # 压暗斑块的大小（px）
+PATCH_THRESHOLD = 0.72      # 斑块噪声超过它就压暗
+PATCH_SHADE = -0.16
+RENDER_SHADE = -0.14        # 渲染器 mc 光照会把贴图提亮一档，整体先压暗一点，实际看到的才接近指定色
+
+
+def _mottled_painter(pair: Tuple[Color, Color], seed: int) -> Painter:
+    def paint(p: Vec, axis: int) -> Color:
+        blend = 0.75 * value_noise(p, MOTTLE_SCALE, seed) + 0.25 * texel_noise(p, seed + 1)
+        color = shade(mix(pair[0], pair[1], blend * 1.3 - 0.15), RENDER_SHADE)
+        if value_noise(p, PATCH_SCALE, seed + 2) > PATCH_THRESHOLD:
+            color = shade(color, PATCH_SHADE)
+        return color
+
+    return paint
+
+
+def mottled_override(cube: dict, default: Painter) -> Optional[Painter]:
+    pair = MOTTLED_PAIRS.get(cube.get("material", ""))
+    if pair is None:
+        return None
+    return _mottled_painter(pair, 301 if cube["material"] == "stone" else 311)
 
 
 def cube(name: str, lo: Sequence[float], hi: Sequence[float], material: str, group: str) -> Cube:
@@ -74,7 +105,7 @@ def check_geometry(cubes: List[Cube]) -> None:
 def write_model(cubes: List[Cube], model_id: str, override: Optional[Override] = None) -> Path:
     check_geometry(cubes)
     out = MODEL_DIR / f"{model_id}.bbmodel"
-    write_textured_bbmodel(cubes, out, model_id, PALETTE, override)
+    write_textured_bbmodel(cubes, out, model_id, PALETTE, override or mottled_override)
     return out
 
 
