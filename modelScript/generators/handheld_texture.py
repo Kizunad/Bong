@@ -23,7 +23,7 @@
   rust_iron      锈铁：同上，再大片锈斑（橙褐）
   copper_green   铜绿：绿色斑驳，局部露出铜色
   copper_edge    铜色刃口：亮铜色，贴近边缘处磨亮
-  stone / stone_dark / stone_lit / base_stone   石：灰褐混拼斑块、细裂纹、偶有褐渍
+  stone / stone_dark / stone_lit / base_stone   石：深灰褐错缝砖块、暗色砖缝、细裂纹、少量苔绿与褐渍
   bone_main / bone_dark / bone_lit / bone        骨：象牙色，顺长轴细纹，蚀孔
   wood / wood_dark   木：顺长轴木纹，端面年轮，偶有木节
   rope           麻绳：斜向拧股
@@ -78,18 +78,41 @@ def _grain_noise(cube: dict, p: Vec, axis: int, across_scale: float, along_scale
 
 # ---- 各材质的画笔工厂：factory(cube) -> Painter ---------------------------------------
 
+BRICK_W, BRICK_H = 4.0, 2.0     # 砖块大小（px），上下行错开半块
+SEAM_WIDTH = 0.5                # 砖缝宽（1 texel）
+
+
+def _face_plane(p: Vec, axis: int) -> Tuple[float, float]:
+    """点所在面内的两个坐标 (水平, 竖直)；顶底面用 (x, z)。"""
+    if axis == 1:
+        return p[0], p[2]
+    if axis == 0:
+        return p[2], p[1]
+    return p[0], p[1]
+
+
 def _stone(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """石：深灰褐的错缝砖块（每块明暗不同）+ 暗色砖缝 + 细裂纹 + 少量苔绿和褐渍。"""
     a, b = hex_color(base_a), hex_color(base_b)
-    crack, stain = shade(a, -0.55), hex_color("#8a5a40")
+    seam, moss, stain = shade(a, -0.5), hex_color("#566a44"), hex_color("#8a5a40")
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
-            t = 0.6 * value_noise(p, 1.6, seed) + 0.4 * texel_noise(p, seed + 1)
-            color = shade(mix(a, b, t * 1.5 - 0.25), (value_noise(p, 0.9, seed + 4) - 0.5) * 0.34)
-            if abs(value_noise(p, 3.6, seed + 2) - 0.5) < 0.022:
-                color = mix(color, crack, 0.55)
-            if value_noise(p, 4.0, seed + 3) > 0.7:
-                color = mix(color, stain, 0.4)
+            u, v = _face_plane(p, axis)
+            row = math.floor(v / BRICK_H)
+            shifted = u + (BRICK_W / 2 if row % 2 else 0.0)
+            col = math.floor(shifted / BRICK_W)
+            brick_tone = texel_noise((col, row, axis), seed + 5) - 0.5          # 每块砖自己的明暗
+            t = 0.55 * value_noise(p, 1.6, seed) + 0.45 * texel_noise(p, seed + 1)
+            color = shade(mix(a, b, t * 1.6 - 0.3), brick_tone * 0.3 + (value_noise(p, 0.9, seed + 4) - 0.5) * 0.3)
+            if (v - row * BRICK_H) < SEAM_WIDTH or (shifted - col * BRICK_W) < SEAM_WIDTH:
+                color = mix(color, seam, 0.8)                                    # 砖缝
+            elif abs(value_noise(p, 3.6, seed + 2) - 0.5) < 0.02:
+                color = mix(color, seam, 0.5)                                    # 细裂纹
+            if value_noise(p, 3.0, seed + 6) > 0.8 and texel_noise(p, seed + 7) > 0.35:
+                color = mix(color, moss, 0.55)                                   # 苔绿
+            elif value_noise(p, 4.0, seed + 3) > 0.78:
+                color = mix(color, stain, 0.3)
             return color
 
         return paint
@@ -267,10 +290,10 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "rust_iron": _iron("#4e525a", 0.42, 411),
     "copper_green": _copper_green(421),
     "copper_edge": _copper_edge(431),
-    "stone": _stone("#8a8478", "#a39d90", 441),
-    "stone_dark": _stone("#4a4640", "#5c5850", 442),
-    "stone_lit": _stone("#a39d90", "#bcb6a8", 443),
-    "base_stone": _stone("#68665f", "#7c7a72", 444),
+    "stone": _stone("#6a665c", "#837e72", 441),
+    "stone_dark": _stone("#35322d", "#47433d", 442),
+    "stone_lit": _stone("#837e72", "#9d978a", 443),
+    "base_stone": _stone("#504e48", "#625f58", 444),
     "bone": _bone("#d8ccb0", 451),
     "bone_main": _bone("#d8ccb0", 451),
     "bone_dark": _bone("#b8a888", 452),
@@ -296,7 +319,7 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
 # 平色对照版：每个材质一个纯色（取该材质画笔的中间色）
 FLAT_COLORS: Dict[str, str] = {
     "iron": "#4e525a", "rust_iron": "#6a5048", "copper_green": "#4a8a70", "copper_edge": "#c98a4a",
-    "stone": "#969084", "stone_dark": "#524e46", "stone_lit": "#b0aa9c", "base_stone": "#706e66",
+    "stone": "#756f64", "stone_dark": "#3e3a35", "stone_lit": "#8d877b", "base_stone": "#585650",
     "bone": "#d8ccb0", "bone_main": "#d8ccb0", "bone_dark": "#b8a888", "bone_lit": "#ece2c8",
     "wood": "#745230", "wood_dark": "#523824", "rope": "#8e6038",
     "cloth": "#7a5a46", "cloth_dark": "#4a3a30", "cloth_red": "#7a2a24",
