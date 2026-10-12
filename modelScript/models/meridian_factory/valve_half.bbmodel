@@ -20,7 +20,7 @@
       "to": [
         4.0,
         8.0,
-        -2.5
+        -2.8
       ],
       "faces": {
         "north": {
@@ -78,7 +78,7 @@
           "texture": 0
         }
       },
-      "uuid": "21720480-8ed4-493e-8873-073cd2b8597c"
+      "uuid": "2e5feb5d-5d43-4630-807d-7d3b80b5d89c"
     },
     {
       "name": "half_tube_rear_hl_bot",
@@ -91,7 +91,7 @@
       "to": [
         3.9,
         2.8,
-        -2.55
+        -2.8499999999999996
       ],
       "faces": {
         "north": {
@@ -149,7 +149,7 @@
           "texture": 0
         }
       },
-      "uuid": "415b4aec-5d27-4f25-be36-7efe9a6555cc"
+      "uuid": "bbfe88a4-6f6c-4d74-8223-f4068cc23373"
     },
     {
       "name": "half_tube_rear_hl_top",
@@ -162,7 +162,7 @@
       "to": [
         3.9,
         8.05,
-        -2.55
+        -2.8499999999999996
       ],
       "faces": {
         "north": {
@@ -220,7 +220,7 @@
           "texture": 0
         }
       },
-      "uuid": "9bed1b86-9f41-43b6-9381-e00177e6c17a"
+      "uuid": "88d37a67-5796-4345-9c28-fce36c426e99"
     },
     {
       "name": "half_tube_rear_qi_core",
@@ -233,7 +233,7 @@
       "to": [
         1.0,
         6.0,
-        -2.55
+        -2.8499999999999996
       ],
       "faces": {
         "north": {
@@ -291,7 +291,7 @@
           "texture": 0
         }
       },
-      "uuid": "68738c3c-4efd-471e-a280-6ccb3a7aca95"
+      "uuid": "d379bdf7-541a-4b81-a6dc-3d193fd7e190"
     },
     {
       "name": "half_tube_front_main",
@@ -299,7 +299,7 @@
       "from": [
         -4.0,
         2.0,
-        2.5
+        2.8
       ],
       "to": [
         4.0,
@@ -362,7 +362,7 @@
           "texture": 0
         }
       },
-      "uuid": "68189b73-0338-45c5-92f3-8de625e52f1b"
+      "uuid": "8a8882b0-5ccc-4751-987d-dfe0a9ffc502"
     },
     {
       "name": "half_tube_front_hl_bot",
@@ -370,7 +370,7 @@
       "from": [
         -3.9,
         1.95,
-        2.55
+        2.8499999999999996
       ],
       "to": [
         3.9,
@@ -433,7 +433,7 @@
           "texture": 0
         }
       },
-      "uuid": "b9441919-809a-4c07-9f5a-c319b7fc136b"
+      "uuid": "1efaca38-3ef8-492a-adcf-504bdf3830c9"
     },
     {
       "name": "half_tube_front_hl_top",
@@ -441,7 +441,7 @@
       "from": [
         -3.9,
         7.2,
-        2.55
+        2.8499999999999996
       ],
       "to": [
         3.9,
@@ -504,7 +504,7 @@
           "texture": 0
         }
       },
-      "uuid": "bf584528-664a-491e-86bb-832e18d4ab99"
+      "uuid": "2a9002b3-e546-4a4f-8c30-930caf0d9680"
     },
     {
       "name": "half_tube_front_qi_core",
@@ -512,7 +512,7 @@
       "from": [
         -1.0,
         4.0,
-        2.55
+        2.8499999999999996
       ],
       "to": [
         1.0,
@@ -575,7 +575,7 @@
           "texture": 0
         }
       },
-      "uuid": "5d3f7b37-7311-444e-8131-a584e3517d76"
+      "uuid": "82d14cf4-bd57-49ef-a804-d65d1b9d4f5e"
     },
     {
       "name": "half_collar_rear_bot",
@@ -646,7 +646,7 @@
           "texture": 0
         }
       },
-      "uuid": "5e1657c2-946c-47e4-a147-966c89ea4067"
+      "uuid": "f5c4fb42-b9e9-454d-af1e-45de1ac55742"
     },
     {
       "name": "half_collar_rear_top",
@@ -717,7 +717,7 @@
           "texture": 0
         }
       },
-      "uuid": "d897c786-714b-42de-8db1-b4fbf39e18c4"
+      "uuid": "5f44ab03-3a61-4e27-b157-a4be4180fc04"
     },
     {
       "name": "half_collar_rear_l",
@@ -788,7 +788,7 @@
           "texture": 0
         }
       },
-      "uuid": "0845442a-e0bd-4cf2-b0c2-847365b166dd"
+      "uuid": "05cccdd1-6707-4363-a6dd-e15dc3de0951"
     },
     {
       "name": "half_collar_rear_r",
@@ -859,7 +859,7 @@
           "texture": 0
         }
       },
-      "uuid": "bd16bb53-338c-498d-963b-df7eb412f705"
+      "uuid": "cd2b24b2-4207-4cca-9ac3-ad8273204211"
     },
     {
       "name": "half_collar_front_bot",
@@ -930,7 +930,7 @@
           "texture": 0
         }
       },
-      "uuid": "11d1037c-b69e-4b23-b313-d8adfcb90485"
+      "uuid": "e7e4b10a-e805-4256-92b6-16db3167bfda"
     },
     {
       "name": "half_collar_front_top",
@@ -1001,7 +1001,7 @@
           "texture": 0
         }
       },
-      "uuid": "98554848-3c82-42b8-b2f5-f4aa6bba3df2"
+      "uuid": "2de1b6f6-e372-41be-95c8-d5e5704ddf15"
     },
     {
       "name": "half_collar_front_l",
@@ -1072,7 +1072,7 @@
           "texture": 0
         }
       },
-      "uuid": "85869c4d-e2de-4f24-9416-31d9bbe7e225"
+      "uuid": "93866eb6-6994-4c55-89b9-442e2fa42614"
     },
     {
       "name": "half_collar_front_r",
@@ -1143,7 +1143,7 @@
           "texture": 0
         }
       },
-      "uuid": "12b12c1d-fd3c-4ab7-9cdd-c2914a1c002c"
+      "uuid": "7b0bc6d0-e3a8-4715-a97a-38a4233c6d15"
     },
     {
       "name": "half_port_r_t_w",
@@ -1214,7 +1214,7 @@
           "texture": 0
         }
       },
-      "uuid": "9b19786e-9422-4f30-9a71-c55ae85a6e7d"
+      "uuid": "81a35ae9-21d4-48c1-852d-c2ae5caea79a"
     },
     {
       "name": "half_port_r_t_e",
@@ -1285,7 +1285,7 @@
           "texture": 0
         }
       },
-      "uuid": "05d314f2-833a-47ce-91c0-731806aba88f"
+      "uuid": "ae00c71e-846a-465b-aabc-69e25282292e"
     },
     {
       "name": "half_port_r_t_n",
@@ -1356,7 +1356,7 @@
           "texture": 0
         }
       },
-      "uuid": "5cfa3e95-394a-4536-b524-21e785678620"
+      "uuid": "9a809478-b323-4fe4-8398-7074ce3ec3c8"
     },
     {
       "name": "half_port_r_t_s",
@@ -1427,7 +1427,7 @@
           "texture": 0
         }
       },
-      "uuid": "d127d212-df11-49fa-bf51-e643a0d97867"
+      "uuid": "1933c414-69cf-43b9-bd35-7befdc28806c"
     },
     {
       "name": "half_port_r_t_hole",
@@ -1498,7 +1498,7 @@
           "texture": 0
         }
       },
-      "uuid": "0b9bcb2e-0aa3-4f99-9f9a-108a2d814c45"
+      "uuid": "175d4625-3c9e-4c99-8512-34de36d39d7d"
     },
     {
       "name": "half_port_r_b_w",
@@ -1569,7 +1569,7 @@
           "texture": 0
         }
       },
-      "uuid": "8dbbdaee-8eed-467a-8b91-a60032245084"
+      "uuid": "c021608f-33d6-4118-a192-9f2c2e856aba"
     },
     {
       "name": "half_port_r_b_e",
@@ -1640,7 +1640,7 @@
           "texture": 0
         }
       },
-      "uuid": "c977b6dd-30b7-408f-baea-9741d9a5d78d"
+      "uuid": "bfd8044b-eb57-465e-a872-6d93c176ce9b"
     },
     {
       "name": "half_port_r_b_n",
@@ -1711,7 +1711,7 @@
           "texture": 0
         }
       },
-      "uuid": "706f6d73-cf3d-4b73-9973-a00f26ea3f95"
+      "uuid": "c221a262-e27c-40cb-acc5-da9306f565df"
     },
     {
       "name": "half_port_r_b_s",
@@ -1782,7 +1782,7 @@
           "texture": 0
         }
       },
-      "uuid": "953c6989-ce02-41f7-8cfc-04590ae34dbb"
+      "uuid": "bb9b0235-2d11-4604-8410-e5168eba7521"
     },
     {
       "name": "half_port_r_b_hole",
@@ -1853,7 +1853,7 @@
           "texture": 0
         }
       },
-      "uuid": "0fa8f199-ec36-4eb5-b419-d3499a859a2a"
+      "uuid": "0fc27407-e126-4465-94f1-301bf4abbc36"
     },
     {
       "name": "half_port_f_t_w",
@@ -1924,7 +1924,7 @@
           "texture": 0
         }
       },
-      "uuid": "edcfe480-f477-4230-85aa-7ee567570f60"
+      "uuid": "2e93e8fe-56ca-4922-aabe-2fa4b545cbaa"
     },
     {
       "name": "half_port_f_t_e",
@@ -1995,7 +1995,7 @@
           "texture": 0
         }
       },
-      "uuid": "c278c1ad-24d3-4969-967d-0dea9b216b93"
+      "uuid": "2db3fe11-c260-4c19-aec2-7d6326330b7a"
     },
     {
       "name": "half_port_f_t_n",
@@ -2066,7 +2066,7 @@
           "texture": 0
         }
       },
-      "uuid": "215126d8-b3a0-4e7f-84b2-9080bb8a419f"
+      "uuid": "8fde2b0f-74b7-46b5-9eab-054967f2a081"
     },
     {
       "name": "half_port_f_t_s",
@@ -2137,7 +2137,7 @@
           "texture": 0
         }
       },
-      "uuid": "2940d1eb-7b5b-4806-b20d-9a6889f4d624"
+      "uuid": "ec5e8f64-025b-434d-bf15-ddbb194b6659"
     },
     {
       "name": "half_port_f_t_hole",
@@ -2208,7 +2208,7 @@
           "texture": 0
         }
       },
-      "uuid": "a8ca515a-de5a-4ee8-9894-719f98f77b80"
+      "uuid": "fe4b07cd-56b2-4b40-ba3b-6c68c57f3809"
     },
     {
       "name": "half_port_f_b_w",
@@ -2279,7 +2279,7 @@
           "texture": 0
         }
       },
-      "uuid": "16dcb145-df3d-4d5e-8d05-c2019102520a"
+      "uuid": "54bf8fd1-bc7d-4b32-adce-8ac7d72a86eb"
     },
     {
       "name": "half_port_f_b_e",
@@ -2350,7 +2350,7 @@
           "texture": 0
         }
       },
-      "uuid": "8a40a7d2-13b0-4462-91a3-0d7d6226e9fa"
+      "uuid": "876a1c64-0f13-4c56-b17c-daec87663995"
     },
     {
       "name": "half_port_f_b_n",
@@ -2421,7 +2421,7 @@
           "texture": 0
         }
       },
-      "uuid": "ee66dcf3-5b20-4ef2-ae8a-cf2583fcd767"
+      "uuid": "6ed81a9d-8744-4893-a175-f3dadd97e65b"
     },
     {
       "name": "half_port_f_b_s",
@@ -2492,7 +2492,7 @@
           "texture": 0
         }
       },
-      "uuid": "f524302e-db32-4e14-ac7e-3817bb535793"
+      "uuid": "cb6e0482-2150-44ab-ade7-96c75985b9b9"
     },
     {
       "name": "half_port_f_b_hole",
@@ -2563,7 +2563,7 @@
           "texture": 0
         }
       },
-      "uuid": "62d03924-bbdd-449f-8460-6393711875ba"
+      "uuid": "d4888032-a545-4529-b40c-67b3131e8eb7"
     },
     {
       "name": "half_sph_bot_mid",
@@ -2571,12 +2571,12 @@
       "from": [
         -4.0,
         0.0,
-        -2.5
+        -2.8
       ],
       "to": [
         4.0,
         2.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -2634,7 +2634,7 @@
           "texture": 0
         }
       },
-      "uuid": "172a0210-4447-46e1-a088-8607fd3aa771"
+      "uuid": "b8e431e7-b17c-490d-9045-c8bc4ea4dfe4"
     },
     {
       "name": "half_sph_top_mid",
@@ -2642,12 +2642,12 @@
       "from": [
         -4.0,
         8.0,
-        -2.5
+        -2.8
       ],
       "to": [
         4.0,
-        11.0,
-        2.5
+        11.6,
+        2.8
       ],
       "faces": {
         "north": {
@@ -2705,20 +2705,20 @@
           "texture": 0
         }
       },
-      "uuid": "d508a228-3ce6-4277-ba1a-4d55c0f1e234"
+      "uuid": "decb8fd3-0cfa-46cc-a871-e88b58ee1de4"
     },
     {
       "name": "half_sph_l_mid",
       "box_uv": false,
       "from": [
-        -6.5,
+        -7.0,
         2.0,
-        -2.5
+        -2.8
       ],
       "to": [
         -4.0,
         8.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -2776,7 +2776,7 @@
           "texture": 0
         }
       },
-      "uuid": "7691299d-5485-4e18-a2da-74dec8c3d768"
+      "uuid": "65c08961-ca94-49ff-b3a6-31b38ac8961b"
     },
     {
       "name": "half_sph_r_mid",
@@ -2784,12 +2784,12 @@
       "from": [
         4.0,
         2.0,
-        -2.5
+        -2.8
       ],
       "to": [
-        6.5,
+        7.0,
         8.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -2847,20 +2847,20 @@
           "texture": 0
         }
       },
-      "uuid": "9b7f9c36-35f9-4720-8705-743a87856588"
+      "uuid": "f4918272-70a7-4d9f-a721-48e10da66a25"
     },
     {
       "name": "half_sph_c_bl",
       "box_uv": false,
       "from": [
-        -5.5,
+        -6.0,
         1.0,
-        -2.5
+        -2.8
       ],
       "to": [
         -4.0,
         2.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -2918,7 +2918,7 @@
           "texture": 0
         }
       },
-      "uuid": "7f36484f-103e-4aae-a757-af1d2750658c"
+      "uuid": "48492bb3-dd10-4af6-8a90-771c30e65229"
     },
     {
       "name": "half_sph_c_br",
@@ -2926,12 +2926,12 @@
       "from": [
         4.0,
         1.0,
-        -2.5
+        -2.8
       ],
       "to": [
-        5.5,
+        6.0,
         2.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -2989,20 +2989,20 @@
           "texture": 0
         }
       },
-      "uuid": "4703b7cf-7a30-49a3-9110-3fc6a91d15f0"
+      "uuid": "165725d5-d57e-49d8-b3e5-3d90daef9d32"
     },
     {
       "name": "half_sph_c_tl",
       "box_uv": false,
       "from": [
-        -5.5,
+        -6.0,
         8.0,
-        -2.5
+        -2.8
       ],
       "to": [
         -4.0,
-        10.0,
-        2.5
+        10.6,
+        2.8
       ],
       "faces": {
         "north": {
@@ -3060,7 +3060,7 @@
           "texture": 0
         }
       },
-      "uuid": "a9a77b74-ced4-49b6-8f89-de1f37274af0"
+      "uuid": "bfe6d154-25d2-4d5b-bf9e-a43bfbe565a5"
     },
     {
       "name": "half_sph_c_tr",
@@ -3068,12 +3068,12 @@
       "from": [
         4.0,
         8.0,
-        -2.5
+        -2.8
       ],
       "to": [
-        5.5,
-        10.0,
-        2.5
+        6.0,
+        10.6,
+        2.8
       ],
       "faces": {
         "north": {
@@ -3131,20 +3131,20 @@
           "texture": 0
         }
       },
-      "uuid": "10d54895-37ce-4490-874a-d547a094a898"
+      "uuid": "67339f72-64a8-4f5d-9b3e-fa7e79cf74c4"
     },
     {
       "name": "half_fold_f1_top",
       "box_uv": false,
       "from": [
-        -4.7,
-        9.5,
-        -3.3
+        -5.2,
+        10.1,
+        -3.5999999999999996
       ],
       "to": [
-        4.7,
-        10.5,
-        -2.5
+        5.2,
+        11.1,
+        -2.8
       ],
       "faces": {
         "north": {
@@ -3202,20 +3202,20 @@
           "texture": 0
         }
       },
-      "uuid": "812f1bab-5ced-450c-837c-436ce8031a9e"
+      "uuid": "59cd91a7-c852-42b9-9d83-b9d65ce997b0"
     },
     {
       "name": "half_fold_f2_l",
       "box_uv": false,
       "from": [
-        -6.0,
+        -6.5,
         3.5,
-        -3.3
+        -3.5999999999999996
       ],
       "to": [
-        -5.0,
+        -5.5,
         7.5,
-        -2.5
+        -2.8
       ],
       "faces": {
         "north": {
@@ -3273,20 +3273,20 @@
           "texture": 0
         }
       },
-      "uuid": "9b52d212-7f16-4f98-a537-bc3a75ace545"
+      "uuid": "e7078d13-4d60-4124-a0ee-b95b74afde41"
     },
     {
       "name": "half_fold_f3_r",
       "box_uv": false,
       "from": [
-        5.0,
+        5.5,
         3.5,
-        -3.3
+        -3.5999999999999996
       ],
       "to": [
-        6.0,
+        6.5,
         7.5,
-        -2.5
+        -2.8
       ],
       "faces": {
         "north": {
@@ -3344,20 +3344,20 @@
           "texture": 0
         }
       },
-      "uuid": "cfd179cd-6f4f-41b3-aedf-dfce2e1b75c0"
+      "uuid": "465530cd-8550-4724-95c2-4d521138cd46"
     },
     {
       "name": "half_fold_b1_top",
       "box_uv": false,
       "from": [
-        -4.7,
-        9.5,
-        2.5
+        -5.2,
+        10.1,
+        2.8
       ],
       "to": [
-        4.7,
-        10.5,
-        3.3
+        5.2,
+        11.1,
+        3.5999999999999996
       ],
       "faces": {
         "north": {
@@ -3415,20 +3415,20 @@
           "texture": 0
         }
       },
-      "uuid": "df47c9bc-234b-45cf-8078-a2cd8f0dc037"
+      "uuid": "115a6455-83d8-4636-96a2-727800a7c8bc"
     },
     {
       "name": "half_fold_b2_l",
       "box_uv": false,
       "from": [
-        -6.0,
+        -6.5,
         3.5,
-        2.5
+        2.8
       ],
       "to": [
-        -5.0,
+        -5.5,
         7.5,
-        3.3
+        3.5999999999999996
       ],
       "faces": {
         "north": {
@@ -3486,20 +3486,20 @@
           "texture": 0
         }
       },
-      "uuid": "1b585519-3b50-44b7-a5f5-995a169eb14b"
+      "uuid": "2c0b7d10-95f0-4930-b4b3-0735eb90a276"
     },
     {
       "name": "half_fold_b3_r",
       "box_uv": false,
       "from": [
-        5.0,
+        5.5,
         3.5,
-        2.5
+        2.8
       ],
       "to": [
-        6.0,
+        6.5,
         7.5,
-        3.3
+        3.5999999999999996
       ],
       "faces": {
         "north": {
@@ -3557,7 +3557,7 @@
           "texture": 0
         }
       },
-      "uuid": "38a720af-df47-4a87-837e-64d66fed5462"
+      "uuid": "42e62601-39f9-44e5-b227-3cb32ab983e8"
     },
     {
       "name": "half_con_bot",
@@ -3565,12 +3565,12 @@
       "from": [
         -4.0,
         2.0,
-        -2.5
+        -2.8
       ],
       "to": [
         4.0,
         3.5,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -3628,7 +3628,7 @@
           "texture": 0
         }
       },
-      "uuid": "3de2db87-25d7-491a-9605-1bbc80feeac8"
+      "uuid": "9242856d-6be9-46fd-9efc-fdfff682cd58"
     },
     {
       "name": "half_con_top",
@@ -3636,12 +3636,12 @@
       "from": [
         -4.0,
         6.5,
-        -2.5
+        -2.8
       ],
       "to": [
         4.0,
         8.0,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -3699,7 +3699,7 @@
           "texture": 0
         }
       },
-      "uuid": "9d35cfae-b482-449a-aa00-763ef6fd0409"
+      "uuid": "53923199-2a6e-470f-8048-df51fcf41d6a"
     },
     {
       "name": "half_con_l",
@@ -3707,12 +3707,12 @@
       "from": [
         -4.0,
         3.5,
-        -2.5
+        -2.8
       ],
       "to": [
         -2.0,
         6.5,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -3770,7 +3770,7 @@
           "texture": 0
         }
       },
-      "uuid": "adbe6bf8-0f65-47c7-a10a-6b9192192ff5"
+      "uuid": "bede120f-5817-4fdf-a90f-c35b97041244"
     },
     {
       "name": "half_con_r",
@@ -3778,12 +3778,12 @@
       "from": [
         2.0,
         3.5,
-        -2.5
+        -2.8
       ],
       "to": [
         4.0,
         6.5,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -3841,20 +3841,20 @@
           "texture": 0
         }
       },
-      "uuid": "f1e729b4-2220-4ea4-86b9-357945bf7bba"
+      "uuid": "e64c5374-400d-4598-9e4d-e15700708d40"
     },
     {
-      "name": "half_con_hole_lining",
+      "name": "half_con_hole",
       "box_uv": false,
       "from": [
         -2.0,
         3.5,
-        -2.5
+        -2.8
       ],
       "to": [
         2.0,
         6.5,
-        2.5
+        2.8
       ],
       "faces": {
         "north": {
@@ -3912,19 +3912,19 @@
           "texture": 0
         }
       },
-      "uuid": "c4d89a0e-1d2a-403b-938d-2d688ef7f83d"
+      "uuid": "7e29c48b-70c3-47d1-9e4d-7d9a0985d38d"
     },
     {
       "name": "half_bone_stem",
       "box_uv": false,
       "from": [
         -1.0,
-        11.0,
+        11.6,
         -1.0
       ],
       "to": [
         1.0,
-        13.0,
+        13.6,
         1.0
       ],
       "faces": {
@@ -3983,19 +3983,19 @@
           "texture": 0
         }
       },
-      "uuid": "9c40da11-368c-4c7a-ad5a-919cc7b5af3f"
+      "uuid": "d819311e-81d3-4824-80c8-052cf41624ec"
     },
     {
       "name": "half_wheel_ring_n",
       "box_uv": false,
       "from": [
         -3.0,
-        13.0,
+        13.6,
         -3.0
       ],
       "to": [
         3.0,
-        14.0,
+        14.6,
         -2.0
       ],
       "faces": {
@@ -4054,19 +4054,19 @@
           "texture": 0
         }
       },
-      "uuid": "7d6378f3-5a78-4f5c-8279-0f0028b04a66"
+      "uuid": "39097351-9602-4b28-9e39-bef7096ee37b"
     },
     {
       "name": "half_wheel_ring_s",
       "box_uv": false,
       "from": [
         -3.0,
-        13.0,
+        13.6,
         2.0
       ],
       "to": [
         3.0,
-        14.0,
+        14.6,
         3.0
       ],
       "faces": {
@@ -4125,19 +4125,19 @@
           "texture": 0
         }
       },
-      "uuid": "ef20704d-8c5c-4d9d-8a2d-174a98a296e7"
+      "uuid": "d270c089-07a2-420c-888c-7c87a3a24a91"
     },
     {
       "name": "half_wheel_ring_w",
       "box_uv": false,
       "from": [
         -3.0,
-        13.0,
+        13.6,
         -2.0
       ],
       "to": [
         -2.0,
-        14.0,
+        14.6,
         2.0
       ],
       "faces": {
@@ -4196,19 +4196,19 @@
           "texture": 0
         }
       },
-      "uuid": "5496d436-7f23-4749-912f-460d4aace7c9"
+      "uuid": "709e072b-f553-42ad-8cc1-ea9300009234"
     },
     {
       "name": "half_wheel_ring_e",
       "box_uv": false,
       "from": [
         2.0,
-        13.0,
+        13.6,
         -2.0
       ],
       "to": [
         3.0,
-        14.0,
+        14.6,
         2.0
       ],
       "faces": {
@@ -4267,19 +4267,19 @@
           "texture": 0
         }
       },
-      "uuid": "486b4455-281d-48ae-b968-c42ab9878731"
+      "uuid": "2da735a1-2e09-47e4-8c9c-37550fe14603"
     },
     {
       "name": "half_wheel_spoke_x",
       "box_uv": false,
       "from": [
         -2.0,
-        13.1,
+        13.7,
         -0.5
       ],
       "to": [
         2.0,
-        13.9,
+        14.5,
         0.5
       ],
       "faces": {
@@ -4338,19 +4338,19 @@
           "texture": 0
         }
       },
-      "uuid": "aae06cc1-d236-4f49-98dc-494ea7f09e15"
+      "uuid": "dfd536c1-4d43-4e82-a54a-7e533f1e86d5"
     },
     {
       "name": "half_wheel_spoke_z_n",
       "box_uv": false,
       "from": [
         -0.5,
-        13.1,
+        13.7,
         -2.0
       ],
       "to": [
         0.5,
-        13.9,
+        14.5,
         -0.5
       ],
       "faces": {
@@ -4409,19 +4409,19 @@
           "texture": 0
         }
       },
-      "uuid": "2536933e-caf2-40fd-8de6-c18e62feb713"
+      "uuid": "d2869b30-81e6-4eeb-b6a6-ebca898ec378"
     },
     {
       "name": "half_wheel_spoke_z_s",
       "box_uv": false,
       "from": [
         -0.5,
-        13.1,
+        13.7,
         0.5
       ],
       "to": [
         0.5,
-        13.9,
+        14.5,
         2.0
       ],
       "faces": {
@@ -4480,19 +4480,19 @@
           "texture": 0
         }
       },
-      "uuid": "8958b839-0011-4f50-82df-017cc94de4a8"
+      "uuid": "c2fded1d-de87-49cb-942e-a89e76fad357"
     },
     {
       "name": "half_wheel_hub_pin",
       "box_uv": false,
       "from": [
         -0.7,
-        12.8,
+        13.4,
         -0.7
       ],
       "to": [
         0.7,
-        14.2,
+        14.799999999999999,
         0.7
       ],
       "faces": {
@@ -4551,7 +4551,7 @@
           "texture": 0
         }
       },
-      "uuid": "5e8b762d-456a-4a1f-a3ba-0af9df82fd30"
+      "uuid": "90009820-342b-436e-9425-b6258fbb571f"
     }
   ],
   "outliner": [
@@ -4563,14 +4563,14 @@
         0.0
       ],
       "children": [
-        "21720480-8ed4-493e-8873-073cd2b8597c",
-        "415b4aec-5d27-4f25-be36-7efe9a6555cc",
-        "9bed1b86-9f41-43b6-9381-e00177e6c17a",
-        "68738c3c-4efd-471e-a280-6ccb3a7aca95",
-        "68189b73-0338-45c5-92f3-8de625e52f1b",
-        "b9441919-809a-4c07-9f5a-c319b7fc136b",
-        "bf584528-664a-491e-86bb-832e18d4ab99",
-        "5d3f7b37-7311-444e-8131-a584e3517d76"
+        "2e5feb5d-5d43-4630-807d-7d3b80b5d89c",
+        "bbfe88a4-6f6c-4d74-8223-f4068cc23373",
+        "88d37a67-5796-4345-9c28-fce36c426e99",
+        "d379bdf7-541a-4b81-a6dc-3d193fd7e190",
+        "8a8882b0-5ccc-4751-987d-dfe0a9ffc502",
+        "1efaca38-3ef8-492a-adcf-504bdf3830c9",
+        "2a9002b3-e546-4a4f-8c30-930caf0d9680",
+        "82d14cf4-bd57-49ef-a804-d65d1b9d4f5e"
       ]
     },
     {
@@ -4581,14 +4581,14 @@
         0.0
       ],
       "children": [
-        "5e1657c2-946c-47e4-a147-966c89ea4067",
-        "d897c786-714b-42de-8db1-b4fbf39e18c4",
-        "0845442a-e0bd-4cf2-b0c2-847365b166dd",
-        "bd16bb53-338c-498d-963b-df7eb412f705",
-        "11d1037c-b69e-4b23-b313-d8adfcb90485",
-        "98554848-3c82-42b8-b2f5-f4aa6bba3df2",
-        "85869c4d-e2de-4f24-9416-31d9bbe7e225",
-        "12b12c1d-fd3c-4ab7-9cdd-c2914a1c002c"
+        "f5c4fb42-b9e9-454d-af1e-45de1ac55742",
+        "5f44ab03-3a61-4e27-b157-a4be4180fc04",
+        "05cccdd1-6707-4363-a6dd-e15dc3de0951",
+        "cd2b24b2-4207-4cca-9ac3-ad8273204211",
+        "e7e4b10a-e805-4256-92b6-16db3167bfda",
+        "2de1b6f6-e372-41be-95c8-d5e5704ddf15",
+        "93866eb6-6994-4c55-89b9-442e2fa42614",
+        "7b0bc6d0-e3a8-4715-a97a-38a4233c6d15"
       ]
     },
     {
@@ -4599,26 +4599,26 @@
         0.0
       ],
       "children": [
-        "9b19786e-9422-4f30-9a71-c55ae85a6e7d",
-        "05d314f2-833a-47ce-91c0-731806aba88f",
-        "5cfa3e95-394a-4536-b524-21e785678620",
-        "d127d212-df11-49fa-bf51-e643a0d97867",
-        "0b9bcb2e-0aa3-4f99-9f9a-108a2d814c45",
-        "8dbbdaee-8eed-467a-8b91-a60032245084",
-        "c977b6dd-30b7-408f-baea-9741d9a5d78d",
-        "706f6d73-cf3d-4b73-9973-a00f26ea3f95",
-        "953c6989-ce02-41f7-8cfc-04590ae34dbb",
-        "0fa8f199-ec36-4eb5-b419-d3499a859a2a",
-        "edcfe480-f477-4230-85aa-7ee567570f60",
-        "c278c1ad-24d3-4969-967d-0dea9b216b93",
-        "215126d8-b3a0-4e7f-84b2-9080bb8a419f",
-        "2940d1eb-7b5b-4806-b20d-9a6889f4d624",
-        "a8ca515a-de5a-4ee8-9894-719f98f77b80",
-        "16dcb145-df3d-4d5e-8d05-c2019102520a",
-        "8a40a7d2-13b0-4462-91a3-0d7d6226e9fa",
-        "ee66dcf3-5b20-4ef2-ae8a-cf2583fcd767",
-        "f524302e-db32-4e14-ac7e-3817bb535793",
-        "62d03924-bbdd-449f-8460-6393711875ba"
+        "81a35ae9-21d4-48c1-852d-c2ae5caea79a",
+        "ae00c71e-846a-465b-aabc-69e25282292e",
+        "9a809478-b323-4fe4-8398-7074ce3ec3c8",
+        "1933c414-69cf-43b9-bd35-7befdc28806c",
+        "175d4625-3c9e-4c99-8512-34de36d39d7d",
+        "c021608f-33d6-4118-a192-9f2c2e856aba",
+        "bfd8044b-eb57-465e-a872-6d93c176ce9b",
+        "c221a262-e27c-40cb-acc5-da9306f565df",
+        "bb9b0235-2d11-4604-8410-e5168eba7521",
+        "0fc27407-e126-4465-94f1-301bf4abbc36",
+        "2e93e8fe-56ca-4922-aabe-2fa4b545cbaa",
+        "2db3fe11-c260-4c19-aec2-7d6326330b7a",
+        "8fde2b0f-74b7-46b5-9eab-054967f2a081",
+        "ec5e8f64-025b-434d-bf15-ddbb194b6659",
+        "fe4b07cd-56b2-4b40-ba3b-6c68c57f3809",
+        "54bf8fd1-bc7d-4b32-adce-8ac7d72a86eb",
+        "876a1c64-0f13-4c56-b17c-daec87663995",
+        "6ed81a9d-8744-4893-a175-f3dadd97e65b",
+        "cb6e0482-2150-44ab-ade7-96c75985b9b9",
+        "d4888032-a545-4529-b40c-67b3131e8eb7"
       ]
     },
     {
@@ -4629,14 +4629,14 @@
         0.0
       ],
       "children": [
-        "172a0210-4447-46e1-a088-8607fd3aa771",
-        "d508a228-3ce6-4277-ba1a-4d55c0f1e234",
-        "7691299d-5485-4e18-a2da-74dec8c3d768",
-        "9b7f9c36-35f9-4720-8705-743a87856588",
-        "7f36484f-103e-4aae-a757-af1d2750658c",
-        "4703b7cf-7a30-49a3-9110-3fc6a91d15f0",
-        "a9a77b74-ced4-49b6-8f89-de1f37274af0",
-        "10d54895-37ce-4490-874a-d547a094a898"
+        "b8e431e7-b17c-490d-9045-c8bc4ea4dfe4",
+        "decb8fd3-0cfa-46cc-a871-e88b58ee1de4",
+        "65c08961-ca94-49ff-b3a6-31b38ac8961b",
+        "f4918272-70a7-4d9f-a721-48e10da66a25",
+        "48492bb3-dd10-4af6-8a90-771c30e65229",
+        "165725d5-d57e-49d8-b3e5-3d90daef9d32",
+        "bfe6d154-25d2-4d5b-bf9e-a43bfbe565a5",
+        "67339f72-64a8-4f5d-9b3e-fa7e79cf74c4"
       ]
     },
     {
@@ -4647,12 +4647,12 @@
         0.0
       ],
       "children": [
-        "812f1bab-5ced-450c-837c-436ce8031a9e",
-        "9b52d212-7f16-4f98-a537-bc3a75ace545",
-        "cfd179cd-6f4f-41b3-aedf-dfce2e1b75c0",
-        "df47c9bc-234b-45cf-8078-a2cd8f0dc037",
-        "1b585519-3b50-44b7-a5f5-995a169eb14b",
-        "38a720af-df47-4a87-837e-64d66fed5462"
+        "59cd91a7-c852-42b9-9d83-b9d65ce997b0",
+        "e7078d13-4d60-4124-a0ee-b95b74afde41",
+        "465530cd-8550-4724-95c2-4d521138cd46",
+        "115a6455-83d8-4636-96a2-727800a7c8bc",
+        "2c0b7d10-95f0-4930-b4b3-0735eb90a276",
+        "42e62601-39f9-44e5-b227-3cb32ab983e8"
       ]
     },
     {
@@ -4663,11 +4663,11 @@
         0.0
       ],
       "children": [
-        "3de2db87-25d7-491a-9605-1bbc80feeac8",
-        "9d35cfae-b482-449a-aa00-763ef6fd0409",
-        "adbe6bf8-0f65-47c7-a10a-6b9192192ff5",
-        "f1e729b4-2220-4ea4-86b9-357945bf7bba",
-        "c4d89a0e-1d2a-403b-938d-2d688ef7f83d"
+        "9242856d-6be9-46fd-9efc-fdfff682cd58",
+        "53923199-2a6e-470f-8048-df51fcf41d6a",
+        "bede120f-5817-4fdf-a90f-c35b97041244",
+        "e64c5374-400d-4598-9e4d-e15700708d40",
+        "7e29c48b-70c3-47d1-9e4d-7d9a0985d38d"
       ]
     },
     {
@@ -4678,15 +4678,15 @@
         0.0
       ],
       "children": [
-        "9c40da11-368c-4c7a-ad5a-919cc7b5af3f",
-        "7d6378f3-5a78-4f5c-8279-0f0028b04a66",
-        "ef20704d-8c5c-4d9d-8a2d-174a98a296e7",
-        "5496d436-7f23-4749-912f-460d4aace7c9",
-        "486b4455-281d-48ae-b968-c42ab9878731",
-        "aae06cc1-d236-4f49-98dc-494ea7f09e15",
-        "2536933e-caf2-40fd-8de6-c18e62feb713",
-        "8958b839-0011-4f50-82df-017cc94de4a8",
-        "5e8b762d-456a-4a1f-a3ba-0af9df82fd30"
+        "d819311e-81d3-4824-80c8-052cf41624ec",
+        "39097351-9602-4b28-9e39-bef7096ee37b",
+        "d270c089-07a2-420c-888c-7c87a3a24a91",
+        "709e072b-f553-42ad-8cc1-ea9300009234",
+        "2da735a1-2e09-47e4-8c9c-37550fe14603",
+        "dfd536c1-4d43-4e82-a54a-7e533f1e86d5",
+        "d2869b30-81e6-4eeb-b6a6-ebca898ec378",
+        "c2fded1d-de87-49cb-942e-a89e76fad357",
+        "90009820-342b-436e-9425-b6258fbb571f"
       ]
     }
   ],
