@@ -265,20 +265,24 @@ def arm_override(cube: dict, default: Painter) -> Optional[Painter]:
 # ---- b09 地砖：血管线 ---------------------------------------------------------
 
 FLOOR_VESSEL_CORE = hex_color("#8a2a2a")
-FLOOR_VESSEL_EDGE = hex_color("#c07868")
-FLOOR_VESSEL_CORE_HALF = 0.5          # 血管总宽 2px：芯 1px + 两侧各 0.5px 的边
-FLOOR_VESSEL_HALF = 1.0
+FLOOR_VESSEL_LIGHT = hex_color("#e8bca8")   # 血管一侧（+x）1px 高光
+FLOOR_VESSEL_SHADE = hex_color("#5a1a1a")   # 另一侧（-x）1px 暗边
+FLOOR_VESSEL_CORE_HALF = 1.0                # 芯 2px 宽
+FLOOR_VESSEL_RIM = 1.0                      # 高光 / 暗边各 1px
+FLOOR_NOISE_KEEP = 0.5                      # 底色噪点幅度压到原来的一半，血管才跳得出来
+FLOOR_BASE = hex_color("#8a2a2a")           # 压噪点时向它收拢
+FLOOR_SIDE_SHADE = -0.18                    # 侧面压暗
 FLOOR_TOP_Y = 16.0              # 地砖肉块顶面高度
 FLOOR_HALF = 8.0                # 地砖半边长
-FLOOR_VESSEL_STUB_DEPTH = 2.5         # 血管在前后侧面露出的短截深度（px）
+FLOOR_SIDE_DEPTH = 6.0          # 血管从顶面沿前后侧面往下延伸的深度（px）
+FLOOR_SIDE_VESSELS = (0, 2)     # 只让这两条延伸到侧面
 
-# 4 条沿 z 贯穿整块的粗血管：x(z) = 起点 + 振幅 * sin(2π z / 波长 + 相位)，平滑弯曲
+# 3 条沿 z 贯穿整面的血管：x(z) = 中线 + 振幅 * sin(2π z / 波长 + 相位)，平滑弯曲
 FLOOR_VESSELS = (
     # (x 中线, 振幅, 波长, 相位)
-    (-5.4, 1.3, 19.0, 0.4),
-    (-1.9, 1.6, 15.0, 2.3),
-    (1.8, 1.4, 17.0, 4.1),
-    (5.3, 1.2, 21.0, 1.2),
+    (-4.8, 1.5, 20.0, 0.4),
+    (0.2, 1.8, 16.0, 2.3),
+    (4.9, 1.5, 22.0, 4.1),
 )
 
 
@@ -287,51 +291,64 @@ def _vessel_x(vessel: tuple, z: float) -> float:
     return center + amplitude * math.sin(2 * math.pi * z / wavelength + phase)
 
 
-def _vessel_distance(vessel: tuple, x: float, z: float) -> float:
-    """点到血管中线的垂直距离（用斜率修正横向偏差）。"""
+def _vessel_offset(vessel: tuple, x: float, z: float) -> float:
+    """点到血管中线的垂直有符号距离（+x 侧为正），用斜率修正横向偏差。"""
     center, amplitude, wavelength, phase = vessel
     slope = amplitude * 2 * math.pi / wavelength * math.cos(2 * math.pi * z / wavelength + phase)
-    return abs(x - _vessel_x(vessel, z)) / math.sqrt(1 + slope * slope)
+    return (x - _vessel_x(vessel, z)) / math.sqrt(1 + slope * slope)
 
 
-def _vessel_color(color: Color, distance: float) -> Color:
-    if distance < FLOOR_VESSEL_CORE_HALF:
+def _vessel_color(color: Color, offset: float) -> Color:
+    """芯 #8a2a2a（2px）+ +x 侧 1px #e8bca8 高光 + -x 侧 1px #5a1a1a 暗边。"""
+    if abs(offset) < FLOOR_VESSEL_CORE_HALF:
         return mix(color, FLOOR_VESSEL_CORE, 0.95)
-    if distance < FLOOR_VESSEL_HALF:
-        return mix(color, FLOOR_VESSEL_EDGE, 0.95)
+    if 0 < offset < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+        return mix(color, FLOOR_VESSEL_LIGHT, 0.95)
+    if -(FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM) < offset < 0:
+        return mix(color, FLOOR_VESSEL_SHADE, 0.95)
+    return color
+
+
+def _paint_top_vessels(color: Color, p: Vec) -> Color:
+    for vessel in FLOOR_VESSELS:
+        offset = _vessel_offset(vessel, p[0], p[2])
+        if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+            return _vessel_color(color, offset)
     return color
 
 
 def _vessel_painter(default: Painter) -> Painter:
-    """顶面画 4 条整条的粗血管；血管走到前后侧面（法线 z）时在边缘露出一小截。"""
+    """地砖肉块：底色噪点压半；顶面画 3 条整条的血管；前后侧面只留压暗的底色，
+    加 1~2 条从顶面延伸下来的血管；左右侧面只有压暗的底色。"""
 
     def paint(p: Vec, axis: int) -> Color:
-        color = default(p, axis)
-        if axis == 1 and p[1] > FLOOR_TOP_Y - 1e-6:
-            for vessel in FLOOR_VESSELS:
-                distance = _vessel_distance(vessel, p[0], p[2])
-                if distance < FLOOR_VESSEL_HALF:
-                    return _vessel_color(color, distance)
-        elif axis == 2 and p[1] > FLOOR_TOP_Y - FLOOR_VESSEL_STUB_DEPTH:
+        color = mix(default(p, axis), FLOOR_BASE, 1 - FLOOR_NOISE_KEEP)
+        if axis == 1:
+            return _paint_top_vessels(color, p) if p[1] > FLOOR_TOP_Y - 1e-6 else color
+        color = shade(color, FLOOR_SIDE_SHADE)
+        if axis == 2 and p[1] > FLOOR_TOP_Y - FLOOR_SIDE_DEPTH:
             end_z = FLOOR_HALF if p[2] > 0 else -FLOOR_HALF
-            for vessel in FLOOR_VESSELS:
-                if abs(p[0] - _vessel_x(vessel, end_z)) < FLOOR_VESSEL_HALF:
-                    return _vessel_color(color, abs(p[0] - _vessel_x(vessel, end_z)))
+            for index in FLOOR_SIDE_VESSELS:
+                offset = p[0] - _vessel_x(FLOOR_VESSELS[index], end_z)
+                if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+                    return _vessel_color(color, offset)
         return color
 
     return paint
 
 
 def _vein_cell_painter(default: Painter) -> Painter:
-    """顶面凸起的小肉块：血管从上面照样画过去（按绝对坐标），不被肉块截断；其余面保持原来的淡线色。"""
+    """顶面那组 X 形几何血管块：套同一配色（顶面芯 + 高光 / 暗边，侧面压暗的芯色），
+    顶面上画出的血管照样画过它们，和块接成一体。"""
 
     def paint(p: Vec, axis: int) -> Color:
-        color = mix(default(p, axis), LINE_COLOR, 0.6)
-        if axis == 1:
-            for vessel in FLOOR_VESSELS:
-                distance = _vessel_distance(vessel, p[0], p[2])
-                if distance < FLOOR_VESSEL_HALF:
-                    return _vessel_color(color, distance)
+        if axis != 1:
+            return shade(mix(default(p, axis), FLOOR_VESSEL_CORE, 0.8), FLOOR_SIDE_SHADE)
+        color = mix(default(p, axis), FLOOR_VESSEL_CORE, 0.85)
+        for vessel in FLOOR_VESSELS:
+            offset = _vessel_offset(vessel, p[0], p[2])
+            if abs(offset) < FLOOR_VESSEL_CORE_HALF + FLOOR_VESSEL_RIM:
+                return _vessel_color(color, offset)
         return color
 
     return paint
