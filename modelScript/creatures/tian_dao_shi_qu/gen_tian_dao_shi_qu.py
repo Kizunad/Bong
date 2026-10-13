@@ -50,7 +50,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "TianDaoShiQu.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "TianDaoShiQu.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -79,9 +79,12 @@ HEAD_LIFT = 12.0                    # 头昂起的高度
 SEG_LIFT = {0: 8.0, 1: 5.0, 2: 3.0, 3: 1.5, 4: 0.5}
 WINDOW_SEGS = range(2, 12)          # 开透皮窗的体节
 LEG_SEGS = range(1, 13)             # 有足的体节
-BARREL_INSET = 1.4                  # 皮环前后两圈比中圈收小的量
+BARREL_SLICES = 5                   # 每节皮环沿 z 切的片数
+BARREL_SLICE_Z = SEG_SKIN_Z / BARREL_SLICES
+BARREL_RADIUS = 6.5                 # 皮环侧视圆弧的曲率半径（px）：越小边收得越狠
 GROOVE_INSET = 2.4                  # 腐缝比相邻较小皮环缩进的量
 TAN15 = math.tan(math.radians(15.0))
+BODY_SIDES = 24                     # 体节皮环的边数（头、齿环、尾环仍是十二边形）
 MIN_MOVING_BONES = 30
 MIN_SEGMENTS = 14
 
@@ -217,19 +220,21 @@ def edge_name(prefix: str, ang: int) -> str:
 
 
 def ring(rig: Rig, bone: str, prefix: str, yc: float, zc: float, a: float, t: float, zlen: float, *,
-         mat_for, omit: frozenset[int] = frozenset(), only: frozenset[int] | None = None) -> None:
-    """十二边形环：外切圆半径 a、径向厚 t、z 厚 zlen，边心角 0°,30°,…（0° = +X）。
+         mat_for, omit: frozenset[int] = frozenset(), only: frozenset[int] | None = None, sides: int = 12) -> None:
+    """正 sides 边形环：外切圆半径 a、径向厚 t、z 厚 zlen，边心角 0°, 360/sides°, …（0° = +X）。
 
-    每条边一根定向柱，端点落在中心线顶点上，再各向外延 t/2·tan15° 把外角补平。
+    每条边一根定向柱，端点落在中心线顶点上，再各向外延 t/2·tan(半边角) 把外角补平。
     """
+    step = 360 // sides
+    half = math.radians(step / 2)
     centre_apothem = a - t / 2
-    vertex_r = centre_apothem / math.cos(math.radians(15.0))
-    for k in range(12):
-        ang = 30 * k
+    vertex_r = centre_apothem / math.cos(half)
+    for k in range(sides):
+        ang = step * k
         if ang in omit or (only is not None and ang not in only):
             continue
-        p = [(vertex_r * math.cos(math.radians(ang + d)), yc + vertex_r * math.sin(math.radians(ang + d)), zc) for d in (-15, 15)]
-        bar(rig, bone, edge_name(prefix, ang), p[0], p[1], t / 2, zlen / 2, mat=mat_for(ang), up=(0, 0, 1), extend=t / 2 * TAN15)
+        p = [(vertex_r * math.cos(math.radians(ang) + d), yc + vertex_r * math.sin(math.radians(ang) + d), zc) for d in (-half, half)]
+        bar(rig, bone, edge_name(prefix, ang), p[0], p[1], t / 2, zlen / 2, mat=mat_for(ang), up=(0, 0, 1), extend=t / 2 * math.tan(half))
 
 
 def skin_mat(ang: int) -> str:
@@ -243,11 +248,18 @@ def groove_a(i: int) -> float:
     return min(SEG_A[i], a_next) - GROOVE_INSET
 
 
+def arc_edges(centre: int, half_width: int) -> frozenset[int]:
+    """以 centre° 为中心、±half_width° 内的 BODY_SIDES 边形边心角。"""
+    step = 360 // BODY_SIDES
+    return frozenset(ang for ang in range(0, 360, step) if abs((ang - centre + 180) % 360 - 180) <= half_width)
+
+
 def window_omit(i: int) -> frozenset[int]:
-    """透皮窗去掉的边：奇数节只开侧边，偶数节开侧边 + 上下各一条斜边，窗大小交替。"""
+    """透皮窗去掉的边：奇数节只开侧边（±15°），偶数节开侧边 ±30°，窗大小交替。"""
     if i not in WINDOW_SEGS:
         return frozenset()
-    return frozenset({0, 180}) if i % 2 else frozenset({0, 30, 330, 180, 150, 210})
+    half_width = 15 if i % 2 else 30
+    return arc_edges(0, half_width) | arc_edges(180, half_width)
 
 
 # ===========================================================================
@@ -340,20 +352,23 @@ def part_body(rig: Rig) -> None:
         a, y, z = SEG_A[i], seg_y(i), seg_z(i)
         bone = f"seg_{i}"
         omit = window_omit(i)
-        # 桶形皮环：中段 3px 取满半径，前后各 2px 收小 BARREL_INSET，一圈圈鼓出来而不是方柱
-        for tag, dz, zlen, inset in (("f", -2.5, 2.0, BARREL_INSET), ("m", 0.0, 3.0, 0.0), ("b", 2.5, 2.0, BARREL_INSET)):
-            ring(rig, bone, f"seg{i}{tag}", y, z + dz, a - inset, SKIN_T, zlen, mat_for=skin_mat, omit=omit)
+        # 桶形皮环：沿 z 切 5 片，按半径 BARREL_RADIUS 的圆弧收边（中片取满半径，前后两片收得最多），
+        # 侧视是一圈圈鼓出来的圆环，而不是三级台阶
+        for n in range(BARREL_SLICES):
+            dz = (n - (BARREL_SLICES - 1) / 2) * BARREL_SLICE_Z
+            inset = BARREL_RADIUS * (1.0 - math.sqrt(1.0 - (dz / (SEG_SKIN_Z / 2)) ** 2))
+            ring(rig, bone, f"seg{i}s{n}", y, z + dz, a - inset, SKIN_T, BARREL_SLICE_Z, mat_for=skin_mat, omit=omit, sides=BODY_SIDES)
         # 腐缝：贴在本节后缘，半径取相邻两节较小者再缩 GROOVE_INSET，缝里比皮环凹进去
         a_next = SEG_A[i + 1] if i + 1 < N_SEG else TAIL_RINGS[0][0]
-        ring(rig, bone, f"groove{i}", y, z + SEG_SKIN_Z / 2 + GROOVE_Z / 2, groove_a(i), SKIN_T, GROOVE_Z, mat_for=lambda ang: "rot_dark")
+        ring(rig, bone, f"groove{i}", y, z + SEG_SKIN_Z / 2 + GROOVE_Z / 2, groove_a(i), SKIN_T, GROOVE_Z, mat_for=lambda ang: "rot_dark", sides=BODY_SIDES)
         # 背上肉粉褶皱棱贴着中段顶面 3 条边（中段 z 只有 ±1.5）；闭合节腹面再加一道
-        top = frozenset({60, 90, 120})
-        ring(rig, bone, f"rib_a{i}", y, z - 0.8, a + 1.0, 1.0, 1.4, mat_for=lambda ang: "skin_pink", only=top)
+        top = arc_edges(90, 30)
+        ring(rig, bone, f"rib_a{i}", y, z - 0.8, a + 1.0, 1.0, 1.4, mat_for=lambda ang: "skin_pink", only=top, sides=BODY_SIDES)
         if i % 2:
-            ring(rig, bone, f"rib_b{i}", y, z + 0.9, a + 1.0, 1.0, 1.2, mat_for=lambda ang: "skin_pink", only=top)
+            ring(rig, bone, f"rib_b{i}", y, z + 0.9, a + 1.0, 1.0, 1.2, mat_for=lambda ang: "skin_pink", only=top, sides=BODY_SIDES)
         if i not in WINDOW_SEGS:
             ring(rig, bone, f"rib_c{i}", y, z, a + 1.0, 1.0, 2.6, mat_for=lambda ang: "skin_pink",
-                 only=frozenset({240, 270, 300}))
+                 only=arc_edges(270, 30), sides=BODY_SIDES)
 
 
 # ===========================================================================
