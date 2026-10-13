@@ -78,7 +78,7 @@
           "texture": 0
         }
       },
-      "uuid": "00f399c5-894a-49b4-8831-8b26a2292f50"
+      "uuid": "94cdfca8-738d-44ae-b76d-9632e8b51a6d"
     },
     {
       "name": "handle_low",
@@ -149,7 +149,7 @@
           "texture": 0
         }
       },
-      "uuid": "8af13ddc-479b-4d97-b76b-cf9e06c0b26b"
+      "uuid": "fc53a7f0-510c-4930-8454-3b8488f1c6f4"
     },
     {
       "name": "handle_high",
@@ -220,7 +220,7 @@
           "texture": 0
         }
       },
-      "uuid": "f9aad585-84db-4b45-a01c-5c4cb222c70d"
+      "uuid": "833fb7a1-44c7-4109-b154-47b80bb5ba12"
     },
     {
       "name": "wrap_a",
@@ -291,7 +291,7 @@
           "texture": 0
         }
       },
-      "uuid": "125a66b1-0fc5-4441-a225-a09d23f52673"
+      "uuid": "b9ef8f0d-db12-4c72-8b8d-74285ef4aa40"
     },
     {
       "name": "wrap_b",
@@ -362,7 +362,7 @@
           "texture": 0
         }
       },
-      "uuid": "73fe9ca9-a79a-4212-84ea-68231248c89b"
+      "uuid": "8b1ae228-26b1-4bf7-b346-8a0c0ef3b1d4"
     },
     {
       "name": "wrap_c",
@@ -433,7 +433,7 @@
           "texture": 0
         }
       },
-      "uuid": "3465840c-8066-4aea-aea8-e3eb00f668fd"
+      "uuid": "16d059b7-f697-469d-bf28-a0dd28aa2a60"
     },
     {
       "name": "wrap_knot",
@@ -504,7 +504,7 @@
           "texture": 0
         }
       },
-      "uuid": "d3e2ab8a-f5e5-4d4f-8335-f8893b7543f4"
+      "uuid": "2f8b8674-329e-41f8-9c73-42f6a14d18eb"
     },
     {
       "name": "ferrule",
@@ -575,7 +575,7 @@
           "texture": 0
         }
       },
-      "uuid": "7595f84d-8f57-42b9-afc7-cf17f76243de"
+      "uuid": "23671149-e16f-43df-be97-fb9d79dc2368"
     },
     {
       "name": "tang",
@@ -646,7 +646,7 @@
           "texture": 0
         }
       },
-      "uuid": "5462d097-c400-495b-ae78-111642a23892"
+      "uuid": "1fb2ffb0-2a87-449f-aa16-1ac8e14f7166"
     },
     {
       "name": "neck",
@@ -717,7 +717,7 @@
           "texture": 0
         }
       },
-      "uuid": "0170431d-9d6b-4484-a361-683c3f2a2698"
+      "uuid": "85d8fb2f-ba2a-4992-b651-f7b9c75a9181"
     },
     {
       "name": "blade_shoulder",
@@ -788,7 +788,7 @@
           "texture": 0
         }
       },
-      "uuid": "7381d70b-ad95-42ae-a52b-8afd811ded5b"
+      "uuid": "aa840c65-57e3-484d-afe9-807eb00bd3b8"
     },
     {
       "name": "blade_main",
@@ -859,7 +859,7 @@
           "texture": 0
         }
       },
-      "uuid": "da58a052-98f1-4c73-b1c9-fd9a1b442fe3"
+      "uuid": "6d48c554-39d5-45b7-b6ad-717c4901afd0"
     },
     {
       "name": "blade_top",
@@ -930,7 +930,7 @@
           "texture": 0
         }
       },
-      "uuid": "b8effaf7-3e86-4a05-9950-4120a2c18024"
+      "uuid": "c22f3ee4-1ac2-4326-b7c2-a989cba162c3"
     },
     {
       "name": "hook_stem",
@@ -1001,7 +1001,7 @@
           "texture": 0
         }
       },
-      "uuid": "be949501-6fec-44e7-aab4-6127a8e83c33"
+      "uuid": "d7008e30-b1b1-4535-b472-489933d98809"
     },
     {
       "name": "hook_curl",
@@ -1072,7 +1072,7 @@
           "texture": 0
         }
       },
-      "uuid": "e0b72325-be80-4b4c-9996-d403b7b4190a"
+      "uuid": "a71d1b35-a4b9-4557-a9b0-90038687c4df"
     },
     {
       "name": "hook_drop",
@@ -1143,7 +1143,7 @@
           "texture": 0
         }
       },
-      "uuid": "b5694c1b-5f31-42ed-ba95-f514cd2f45e2"
+      "uuid": "aa45fc2f-d1dc-4c68-aa94-d447b1155d9e"
     },
     {
       "name": "root_step_spine",
@@ -1214,7 +1214,7 @@
           "texture": 0
         }
       },
-      "uuid": "9829ca81-abfc-4e67-9636-5709f8220e27"
+      "uuid": "d3de980f-a736-470f-b2d0-3ed491453bfe"
     },
     {
       "name": "root_step_edge",
@@ -1285,7 +1285,7 @@
           "texture": 0
         }
       },
-      "uuid": "d9e1b8ec-ae0e-440b-a30c-1c45efaef4f5"
+      "uuid": "d25caaa2-d48e-4107-b9d7-b95a97c8d889"
     },
     {
       "name": "blade_bevel_a",
@@ -1356,7 +1356,7 @@
           "texture": 0
         }
       },
-      "uuid": "3570c01f-fc08-48a4-8e56-ae1cbdddbb95"
+      "uuid": "3be01fe8-93d4-427d-b609-6200e6163307"
     },
     {
       "name": "blade_bevel_b",
@@ -1427,7 +1427,7 @@
           "texture": 0
         }
       },
-      "uuid": "6e4d2a8a-394e-4b72-af6e-2dbc3e1d7d4f"
+      "uuid": "89cc0ce7-c5dc-4e6e-99d3-d4c36cfc519c"
     },
     {
       "name": "blade_bevel_c",
@@ -1498,7 +1498,7 @@
           "texture": 0
         }
       },
-      "uuid": "029aafb1-5a38-430b-a792-7e2810f98646"
+      "uuid": "69656923-9da4-42d5-b14e-89508e751144"
     },
     {
       "name": "blade_bevel_d",
@@ -1569,7 +1569,7 @@
           "texture": 0
         }
       },
-      "uuid": "4c60ecc4-e93a-4979-8a81-809ba6f23926"
+      "uuid": "ce88d045-a054-4804-8890-f42500fa672b"
     }
   ],
   "outliner": [
@@ -1581,18 +1581,18 @@
         0.0
       ],
       "children": [
-        "00f399c5-894a-49b4-8831-8b26a2292f50",
-        "7595f84d-8f57-42b9-afc7-cf17f76243de",
-        "5462d097-c400-495b-ae78-111642a23892",
-        "0170431d-9d6b-4484-a361-683c3f2a2698",
-        "7381d70b-ad95-42ae-a52b-8afd811ded5b",
-        "da58a052-98f1-4c73-b1c9-fd9a1b442fe3",
-        "b8effaf7-3e86-4a05-9950-4120a2c18024",
-        "be949501-6fec-44e7-aab4-6127a8e83c33",
-        "e0b72325-be80-4b4c-9996-d403b7b4190a",
-        "b5694c1b-5f31-42ed-ba95-f514cd2f45e2",
-        "9829ca81-abfc-4e67-9636-5709f8220e27",
-        "d9e1b8ec-ae0e-440b-a30c-1c45efaef4f5"
+        "94cdfca8-738d-44ae-b76d-9632e8b51a6d",
+        "23671149-e16f-43df-be97-fb9d79dc2368",
+        "1fb2ffb0-2a87-449f-aa16-1ac8e14f7166",
+        "85d8fb2f-ba2a-4992-b651-f7b9c75a9181",
+        "aa840c65-57e3-484d-afe9-807eb00bd3b8",
+        "6d48c554-39d5-45b7-b6ad-717c4901afd0",
+        "c22f3ee4-1ac2-4326-b7c2-a989cba162c3",
+        "d7008e30-b1b1-4535-b472-489933d98809",
+        "a71d1b35-a4b9-4557-a9b0-90038687c4df",
+        "aa45fc2f-d1dc-4c68-aa94-d447b1155d9e",
+        "d3de980f-a736-470f-b2d0-3ed491453bfe",
+        "d25caaa2-d48e-4107-b9d7-b95a97c8d889"
       ]
     },
     {
@@ -1603,8 +1603,8 @@
         0.0
       ],
       "children": [
-        "8af13ddc-479b-4d97-b76b-cf9e06c0b26b",
-        "f9aad585-84db-4b45-a01c-5c4cb222c70d"
+        "fc53a7f0-510c-4930-8454-3b8488f1c6f4",
+        "833fb7a1-44c7-4109-b154-47b80bb5ba12"
       ]
     },
     {
@@ -1615,10 +1615,10 @@
         0.0
       ],
       "children": [
-        "125a66b1-0fc5-4441-a225-a09d23f52673",
-        "73fe9ca9-a79a-4212-84ea-68231248c89b",
-        "3465840c-8066-4aea-aea8-e3eb00f668fd",
-        "d3e2ab8a-f5e5-4d4f-8335-f8893b7543f4"
+        "b9ef8f0d-db12-4c72-8b8d-74285ef4aa40",
+        "8b1ae228-26b1-4bf7-b346-8a0c0ef3b1d4",
+        "16d059b7-f697-469d-bf28-a0dd28aa2a60",
+        "2f8b8674-329e-41f8-9c73-42f6a14d18eb"
       ]
     },
     {
@@ -1629,10 +1629,10 @@
         0.0
       ],
       "children": [
-        "3570c01f-fc08-48a4-8e56-ae1cbdddbb95",
-        "6e4d2a8a-394e-4b72-af6e-2dbc3e1d7d4f",
-        "029aafb1-5a38-430b-a792-7e2810f98646",
-        "4c60ecc4-e93a-4979-8a81-809ba6f23926"
+        "3be01fe8-93d4-427d-b609-6200e6163307",
+        "89cc0ce7-c5dc-4e6e-99d3-d4c36cfc519c",
+        "69656923-9da4-42d5-b14e-89508e751144",
+        "ce88d045-a054-4804-8890-f42500fa672b"
       ]
     }
   ],
@@ -1642,7 +1642,7 @@
       "folder": "block",
       "namespace": "bong",
       "id": 0,
-      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAAQCAYAAABgMcdIAAAA00lEQVR4nO3bsRHBYBjHYZxKpTSAQegUCo0NVAawhNoaTmcMCxhAqVKKBYSvCC95n6fM5XL/S/X7cpfuejGrOgUGvUvJbW/d7qOn18fDayPPP1+HT6+X7q/bF62p9/Npde+fZkxWm+gJLy3n0+gJQKF+9ICsdodj9AT+0SF6ANAWaQJguz9FTwCAn/H1AHDyBYB4xQHgBA0A7dGLHgAAfJ8AAICEulWnKvoNEABoD18AACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAk9AAWEBvZnMU22AAAAABJRU5ErkJggg=="
+      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAAQCAYAAABgMcdIAAAAzUlEQVR4nO3bIQ7CMBgG0G1BEQSSA3AYJOfgKmg0BizBcQwuwAGQU0iGwm2hYqzL/vdk0zRfmoqvTVrutpumSDCvninTfnq9V63j62Xdy/qPetk6npq/K19ufe3Pv3XtP/2oF+M8n1/n0zF3BCDRLHeAqA7XW+4IAAQWpgDsL/fcEQBgNAYvAG6+AJBfcgFwgwaA6ahyBwAAhqcAAEBAZVM0Sd8AAYDp8AIAAAEpAAAQkAIAAAEpAAAQkAIAAAEpAAAQkAIAAAEpAAAQ0AfT5Rwp8Rn7CAAAAABJRU5ErkJggg=="
     }
   ]
 }

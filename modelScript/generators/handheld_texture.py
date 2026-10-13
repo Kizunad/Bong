@@ -23,6 +23,10 @@
   rust_iron      锈铁：同上，再大片锈斑（橙褐）
   rust_heavy     重锈铁：整片锈红，只在零星处露出铁色（锈铁矛头）
   steel / steel_hi   银白灵钢：浅色拉丝，steel_hi 更亮（灵锋剑身与亮脊）
+  iron_edge      暗铁刃（工具刃口）：暗锈铁身，只有贴边一线磨亮
+  stone_edge     燧石刃：比粗石亮一档，贝壳状断口弧纹，锋口一线最亮
+  spirit_wood    灵木：浅米黄带淡青，纹线偏青灰
+  spirit_green   灵纹绿：深绿底 + 亮绿纹线 + 极亮线芯，靠对比显亮（不做发光）
   glow_edge      刃口青光：青白色，靠对比出光感（不做发光层）
   silk           暗色蛛丝绳：深褐拧股
   stone_chipped  粗打石：无砖缝，崩口片状亮暗面与凹坑（石矛头）
@@ -268,12 +272,12 @@ def _ink(base: str, seed: int) -> Callable[[dict], Painter]:
 
 RUST_DEEP, RUST_MID, RUST_LIT = hex_color("#5a2818"), hex_color("#9a4e26"), hex_color("#c8803a")
 PIT_DARK = hex_color("#241410")
-HONED = hex_color("#c4c8cc")            # 刃口磨亮的一线
+HONED = hex_color("#a8acb0")            # 刃口磨亮的一线
 EDGE_HONE_WIDTH = 0.5                   # 1 texel
 
 
-def _iron(base: str, rust_amount: float, seed: int) -> Callable[[dict], Painter]:
-    """铁 / 锈铁：拉丝底色 + 零星亮划痕；锈分三层——大片锈斑（深 / 中 / 亮三档橙褐）、小锈点、点蚀坑
+def _iron(base: str, rust_amount: float, seed: int, hone: bool = False) -> Callable[[dict], Painter]:
+    """铁 / 锈铁（hone=False，整体不磨亮）；steel / iron_edge 带 hone=True：刃口一线磨亮。拉丝底色 + 零星亮划痕；锈分三层——大片锈斑（深 / 中 / 亮三档橙褐）、小锈点、点蚀坑
     （深色小坑带一圈亮边）；贴近边缘的一个 texel 磨亮成一线刃口。rust_amount = 锈斑占面积的比例。"""
     color_base = hex_color(base)
 
@@ -298,7 +302,7 @@ def _iron(base: str, rust_amount: float, seed: int) -> Callable[[dict], Painter]
                     color = mix(color, PIT_DARK, 0.85)
                 elif pit > 0.72:
                     color = shade(color, 0.12)
-            if _edge_distance(cube, p, axis) < EDGE_HONE_WIDTH:
+            if hone and _edge_distance(cube, p, axis) < EDGE_HONE_WIDTH:
                 color = mix(color, HONED, 0.75 if rust_amount < 0.6 else 0.55)    # 刃口磨亮一线
             return color
 
@@ -360,17 +364,87 @@ def _leather(base: str, seed: int) -> Callable[[dict], Painter]:
 
 
 def _cloth(base: str, seed: int) -> Callable[[dict], Painter]:
+    """布：不规则经纬（经线、纬线各自疏密不匀，不成棋盘）+ 少量褶皱暗线 + 边缘毛边。"""
     color_base = hex_color(base)
+    fold = shade(color_base, -0.3)
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
             along, across = _grain_coords(cube, p, axis)
-            weave = (math.floor(along * 2) + math.floor(across * 2)) & 1
-            color = shade(color_base, 0.07 if weave else -0.07)
-            color = shade(color, (value_noise(p, 2.6, seed) - 0.5) * 0.2)
+            warp = value_noise((across * 1.6, along * 0.15, 0.0), 1.0, seed + 3)      # 经线：顺 along 的细条，疏密不匀
+            weft = value_noise((across * 0.15, along * 1.6, 0.0), 1.0, seed + 4)      # 纬线：横向细条
+            color = shade(color_base, (warp - 0.5) * 0.14 + (weft - 0.5) * 0.14)
+            color = shade(color, (value_noise(p, 2.6, seed) - 0.5) * 0.16)
+            if abs(value_noise(p, 3.4, seed + 5) - 0.5) < 0.03:
+                color = mix(color, fold, 0.6)                # 褶皱暗线
             if _edge_distance(cube, p, axis) < 0.4 and texel_noise(p, seed + 1) > 0.5:
-                color = shade(color, -0.2)          # 毛边
+                color = shade(color, -0.2)                   # 毛边
             return color
+
+        return paint
+
+    return factory
+def _stone_edge(seed: int) -> Callable[[dict], Painter]:
+    """燧石刃：比粗石亮一档的灰白石，面上是贝壳状断口（同心的弧纹，亮暗相间），边缘一线最亮。"""
+    a, b = hex_color("#b4b0a2"), hex_color("#d2cebf")
+    ring_dark = hex_color("#7e7a6e")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            cx, cy, cz = value_noise(p, 4.0, seed) * 4, value_noise(p, 4.0, seed + 1) * 4, value_noise(p, 4.0, seed + 2) * 4
+            radius = math.sqrt((p[0] - cx) ** 2 + (p[1] - cy) ** 2 + (p[2] - cz) ** 2)
+            conchoidal = 0.5 + 0.5 * math.sin(radius * 2.4 + 3.0 * value_noise(p, 2.0, seed + 3))
+            color = mix(a, b, conchoidal * 0.8 + 0.2 * texel_noise(p, seed + 4))
+            if conchoidal < 0.12:
+                color = mix(color, ring_dark, 0.5)           # 断口弧线的暗棱
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.12)                    # 锋口一线最亮
+            return color
+
+        return paint
+
+    return factory
+
+
+def _spirit_wood(seed: int) -> Callable[[dict], Painter]:
+    """灵木：浅色木料带淡青——浅米黄底，纹线偏青灰，木节核偏深青。"""
+    a, b = hex_color("#d6d2ae"), hex_color("#bcc8a8")
+    line, knot = hex_color("#6f8a7c"), hex_color("#44645a")
+
+    def factory(cube: dict) -> Painter:
+        long_axis = _long_axis(cube)
+
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            if axis == long_axis:
+                ring = 0.5 + 0.5 * math.sin(across * 3.2 + 2.0 * value_noise(p, 1.5, seed))
+                return mix(a, line, 0.25 + 0.3 * ring)
+            base = value_noise((across * 2.2, along * 0.2, 0.0), 1.0, seed)
+            color = mix(a, b, base * 1.2)
+            wobble = 1.6 * value_noise((across * 0.8, along * 0.18, 0.0), 1.0, seed + 5)
+            if (across * 1.05 + wobble) % 1.0 < 0.3:
+                color = mix(color, line, 0.7)                 # 淡青纹线
+            if value_noise(p, 1.9, seed + 2) > 0.86:
+                color = knot
+            return color
+
+        return paint
+
+    return factory
+
+
+def _spirit_green(seed: int) -> Callable[[dict], Painter]:
+    """灵纹绿：不做发光，靠对比——深绿底、亮绿纹线、极亮的纹线中心，明暗差拉大。"""
+    deep, mid, bright, core = hex_color("#16382e"), hex_color("#2f7a58"), hex_color("#6fe0a8"), hex_color("#d8fff0")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            vein = abs(value_noise(p, 2.2, seed) - 0.5)
+            if vein < 0.03:
+                return core                                    # 纹线中心
+            if vein < 0.09:
+                return bright
+            return mix(deep, mid, value_noise(p, 1.5, seed + 1) * 1.2 + 0.2 * texel_noise(p, seed + 2))
 
         return paint
 
@@ -385,7 +459,11 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "iron": _iron("#4e525a", 0.0, 401),
     "rust_iron": _iron("#4e525a", 0.42, 411),
     "rust_heavy": _iron("#6a3a2c", 0.78, 412),
-    "steel": _iron("#aab4be", 0.0, 521),
+    "steel": _iron("#aab4be", 0.0, 521, hone=True),
+    "iron_edge": _iron("#5a5c60", 0.3, 524, hone=True),
+    "stone_edge": _stone_edge(531),
+    "spirit_wood": _spirit_wood(541),
+    "spirit_green": _spirit_green(551),
     "steel_hi": _iron("#d4dce4", 0.0, 522),
     "glow_edge": _ink("#8fe0e2", 523),
     "silk": _rope("#2a201c", "#4a3a30", 511),
@@ -422,7 +500,8 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
 
 # 平色对照版：每个材质一个纯色（取该材质画笔的中间色）
 FLAT_COLORS: Dict[str, str] = {
-    "iron": "#4e525a", "rust_iron": "#6a5048", "rust_heavy": "#7a4a38", "steel": "#aab4be", "steel_hi": "#d4dce4",
+    "iron": "#4e525a", "rust_iron": "#6a5048", "rust_heavy": "#7a4a38", "steel": "#aab4be", "steel_hi": "#d4dce4", "iron_edge": "#5a5c60",
+    "stone_edge": "#c0bcae", "spirit_wood": "#c8d0a8", "spirit_green": "#2f7a58",
     "glow_edge": "#8fe0e2", "silk": "#3a2e28", "stone_chipped": "#aaa699", "copper_green": "#4a8a70", "copper_edge": "#c98a4a",
     "stone": "#756f64", "stone_dark": "#3e3a35", "stone_lit": "#8d877b", "base_stone": "#585650",
     "bone": "#d8ccb0", "bone_main": "#d8ccb0", "bone_dark": "#b8a888", "bone_lit": "#ece2c8",

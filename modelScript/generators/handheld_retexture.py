@@ -39,7 +39,7 @@ MATERIAL_MAP: Dict[str, str] = {
     # 工具五件（刨锄 / 刮刀 / 骨骸钳 / 钝气夹 / 阵旗）
     "hoe_wood": "wood", "scr_wood": "wood", "flag_wood": "wood",
     "hoe_iron": "rust_iron", "scr_iron": "rust_iron", "clamp_iron": "rust_iron", "tong_iron": "rust_iron",
-    "hoe_edge": "steel", "scr_edge": "steel", "clamp_edge": "steel", "tong_edge": "steel",
+    "hoe_edge": "iron_edge", "scr_edge": "iron_edge", "clamp_edge": "iron_edge", "tong_edge": "iron_edge",
     "hoe_cord": "rope", "scr_cord": "rope", "clamp_cord": "rope", "tong_cord": "rope",
     "tong_bone": "bone_main", "flag_bone": "bone_main", "clamp_pad": "leather", "flag_leather": "leather",
     "flag_cloth": "cloth_tan", "flag_rune": "glow_edge",

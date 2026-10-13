@@ -78,7 +78,7 @@
           "texture": 0
         }
       },
-      "uuid": "b29b89e6-a0c4-4197-80b4-db7c2fe1c112"
+      "uuid": "c14bdea8-a224-4735-ba3b-a5fea455a153"
     },
     {
       "name": "sleeve_r",
@@ -149,7 +149,7 @@
           "texture": 0
         }
       },
-      "uuid": "1fe9a508-7188-4451-8e65-6492aa7603da"
+      "uuid": "785d0e14-5566-49ff-a0d2-511ef2a6dc63"
     },
     {
       "name": "cup_l",
@@ -220,7 +220,7 @@
           "texture": 0
         }
       },
-      "uuid": "ebffa776-8e98-405b-b0f5-542359e20d5c"
+      "uuid": "40f2ffab-8766-4242-af7d-5ec0280b1116"
     },
     {
       "name": "arm_low_l",
@@ -291,7 +291,7 @@
           "texture": 0
         }
       },
-      "uuid": "9eeef987-f0f3-4d5a-b0a7-b0ba0feead0f"
+      "uuid": "b9152238-18b5-4ec3-be4b-35a0c5f717a8"
     },
     {
       "name": "wrap_a_l",
@@ -362,7 +362,7 @@
           "texture": 0
         }
       },
-      "uuid": "a04e6e42-d8f1-4f0c-b4ff-e1ba2dc63f1b"
+      "uuid": "e9035ba3-c2be-4749-a4db-bdca471558f4"
     },
     {
       "name": "wrap_b_l",
@@ -433,7 +433,7 @@
           "texture": 0
         }
       },
-      "uuid": "938fc956-3f15-4438-9aa0-bd0cf32f9a24"
+      "uuid": "1f223007-eae7-4fd7-a63d-cd795d8d66f5"
     },
     {
       "name": "wrap_c_l",
@@ -504,7 +504,7 @@
           "texture": 0
         }
       },
-      "uuid": "d43a7535-9362-47a1-b8d5-709fc81c6298"
+      "uuid": "54fdac43-a7f0-444b-99d3-2f93f23df350"
     },
     {
       "name": "arm_bend_l",
@@ -575,7 +575,7 @@
           "texture": 0
         }
       },
-      "uuid": "1bd78019-2a40-490e-9599-2252f6d2f84d"
+      "uuid": "6328dc34-670a-4528-8402-45e7a5c5cfe4"
     },
     {
       "name": "arm_neck_l",
@@ -646,7 +646,7 @@
           "texture": 0
         }
       },
-      "uuid": "f96d4868-f8a9-4701-acf5-0e1330ec566e"
+      "uuid": "29bb3404-ece4-43d6-98e6-9baf437666fe"
     },
     {
       "name": "cup_r",
@@ -717,7 +717,7 @@
           "texture": 0
         }
       },
-      "uuid": "fc557b60-2a94-42a4-846c-f0b90297ffdd"
+      "uuid": "9864a402-ba85-484d-9ce0-8d12d9f22292"
     },
     {
       "name": "arm_row_r",
@@ -788,7 +788,7 @@
           "texture": 0
         }
       },
-      "uuid": "a0008c33-b735-4672-a4cf-ad30c96bb821"
+      "uuid": "a24c56e4-9231-444a-b734-4535133191ac"
     },
     {
       "name": "wrap_a_r",
@@ -859,7 +859,7 @@
           "texture": 0
         }
       },
-      "uuid": "13707688-a1c6-4d5e-93d7-f5ff138cbdfa"
+      "uuid": "e8be3b5a-219c-4a71-a844-1d8b770df095"
     },
     {
       "name": "wrap_b_r",
@@ -930,7 +930,7 @@
           "texture": 0
         }
       },
-      "uuid": "7e3fb0db-de4b-4f96-a7e8-b4329a9fbc4f"
+      "uuid": "be669181-9186-4ebb-b468-d4e427637b7d"
     },
     {
       "name": "wrap_c_r",
@@ -1001,7 +1001,7 @@
           "texture": 0
         }
       },
-      "uuid": "747a6897-d9cf-48c4-b28f-f7d1f82b838e"
+      "uuid": "17c1ce6a-d11a-4a2f-a9e9-b9dbdfaf3a3d"
     },
     {
       "name": "arm_bend_r",
@@ -1072,7 +1072,7 @@
           "texture": 0
         }
       },
-      "uuid": "7bf64945-ab27-4d8a-b72f-6a37c647e2e5"
+      "uuid": "b296cdaa-b69e-4bc6-8df6-db4c40d544ce"
     },
     {
       "name": "arm_neck_r",
@@ -1143,7 +1143,7 @@
           "texture": 0
         }
       },
-      "uuid": "4338c576-32d4-4819-90f1-91011b077ca7"
+      "uuid": "da7ad96d-8b72-4a54-a79e-da446ea6fbe8"
     },
     {
       "name": "pivot_plate",
@@ -1214,7 +1214,7 @@
           "texture": 0
         }
       },
-      "uuid": "f845fc62-3c88-44d2-abe0-72f9ec2b5576"
+      "uuid": "57f29fa4-710b-4034-9323-453df9b637ab"
     },
     {
       "name": "pivot_rivet_front",
@@ -1285,7 +1285,7 @@
           "texture": 0
         }
       },
-      "uuid": "fe5cc69c-75f5-4962-8e65-a2975a0fe69f"
+      "uuid": "db2d5a30-f672-4524-8b6b-ac0d9a7fcf9a"
     },
     {
       "name": "pivot_rivet_back",
@@ -1356,7 +1356,7 @@
           "texture": 0
         }
       },
-      "uuid": "724c3078-5e49-4133-84d8-67a62944dd45"
+      "uuid": "4b47688d-0fee-4ce7-89a1-d2d4e3652de4"
     },
     {
       "name": "pivot_washer_front",
@@ -1427,7 +1427,7 @@
           "texture": 0
         }
       },
-      "uuid": "15d12352-6a44-47a7-a3f1-1ace8ed9f7b8"
+      "uuid": "5b694c5f-eb3b-4848-be5f-2baba6d44a8d"
     },
     {
       "name": "pivot_washer_back",
@@ -1498,7 +1498,7 @@
           "texture": 0
         }
       },
-      "uuid": "ab08c7f9-d27f-4c07-b86e-17adfb27a5ad"
+      "uuid": "40c9af04-a2f2-46ab-bf20-5c474b03e5d6"
     },
     {
       "name": "jaw_a_l",
@@ -1569,7 +1569,7 @@
           "texture": 0
         }
       },
-      "uuid": "5e1d2c72-69b1-4b7e-b36b-ee99712bab15"
+      "uuid": "7df578ee-0454-4351-8e8e-92f0d2ccc9ab"
     },
     {
       "name": "jaw_b_l",
@@ -1640,7 +1640,7 @@
           "texture": 0
         }
       },
-      "uuid": "bab2e9dd-c3ad-4db8-b0a4-b9b1f5910c97"
+      "uuid": "a3d7eeb1-9e1e-4b11-8946-14b73f642cec"
     },
     {
       "name": "jaw_c_l",
@@ -1711,7 +1711,7 @@
           "texture": 0
         }
       },
-      "uuid": "45d75342-a106-47c8-b0fc-c8963c9c64a9"
+      "uuid": "0dc9b733-de92-4606-a576-435c5d291e87"
     },
     {
       "name": "jaw_tip_l",
@@ -1782,7 +1782,7 @@
           "texture": 0
         }
       },
-      "uuid": "922a7e53-c066-4224-b8b2-7fb75f09b819"
+      "uuid": "31b8f781-1108-4c1e-a863-36753554f49a"
     },
     {
       "name": "tooth_a_l",
@@ -1853,7 +1853,7 @@
           "texture": 0
         }
       },
-      "uuid": "f1bc0f64-30b2-44b2-befc-9e7528f1c381"
+      "uuid": "8e5eb488-15e8-4e94-8860-5b54d963694d"
     },
     {
       "name": "tooth_b_l",
@@ -1924,7 +1924,7 @@
           "texture": 0
         }
       },
-      "uuid": "615e667d-9400-4448-af6d-650a72df7ede"
+      "uuid": "9a316ba3-c75f-46d2-9956-50cd292bd3c6"
     },
     {
       "name": "tooth_b2_l",
@@ -1995,7 +1995,7 @@
           "texture": 0
         }
       },
-      "uuid": "61a8df37-20af-4d5a-9d14-ef8cbc3790c8"
+      "uuid": "9a4739c2-b77c-4fd6-8aae-ceff1a29cf7e"
     },
     {
       "name": "tooth_c_l",
@@ -2066,7 +2066,7 @@
           "texture": 0
         }
       },
-      "uuid": "a20d6ced-af69-4c66-9b39-52826afd5cd8"
+      "uuid": "1a63926c-78b4-4a5f-bd2b-95b89de14357"
     },
     {
       "name": "jaw_a_r",
@@ -2137,7 +2137,7 @@
           "texture": 0
         }
       },
-      "uuid": "00f3a20d-69cf-4bc7-b03b-38de1638a015"
+      "uuid": "d2ceb51a-cff1-4ea7-b436-7dab7230705e"
     },
     {
       "name": "jaw_b_r",
@@ -2208,7 +2208,7 @@
           "texture": 0
         }
       },
-      "uuid": "86d13a9d-0ffc-49e0-8301-8a5f0d12881b"
+      "uuid": "c820c608-3b2e-4260-9505-fd07537e7b77"
     },
     {
       "name": "jaw_c_r",
@@ -2279,7 +2279,7 @@
           "texture": 0
         }
       },
-      "uuid": "2c3945bf-c560-4457-b2c4-73522aa06233"
+      "uuid": "163dfbfb-4a20-44c9-817d-b7415039047b"
     },
     {
       "name": "jaw_tip_r",
@@ -2350,7 +2350,7 @@
           "texture": 0
         }
       },
-      "uuid": "fdd56475-2b6c-44c4-adf2-814e1c96c842"
+      "uuid": "beeb1df8-ed72-4428-864a-9d247de42400"
     },
     {
       "name": "tooth_a_r",
@@ -2421,7 +2421,7 @@
           "texture": 0
         }
       },
-      "uuid": "74a4578e-cdb6-45d3-9466-9f421e1c29ab"
+      "uuid": "4e4b80e6-f1de-4391-8390-38a439c3e773"
     },
     {
       "name": "tooth_b_r",
@@ -2492,7 +2492,7 @@
           "texture": 0
         }
       },
-      "uuid": "5a3ebebf-d709-4ce1-bb1e-3c8d77188939"
+      "uuid": "070e0188-f2da-4194-92c9-17282388f501"
     },
     {
       "name": "tooth_b2_r",
@@ -2563,7 +2563,7 @@
           "texture": 0
         }
       },
-      "uuid": "92d82c2d-999a-4c95-bc53-784ade380f03"
+      "uuid": "35f88cc7-5764-416a-9c93-6c039e239cdb"
     },
     {
       "name": "tooth_c_r",
@@ -2634,7 +2634,7 @@
           "texture": 0
         }
       },
-      "uuid": "1a04cd5d-5a92-4c32-9c82-f36b49ce94bf"
+      "uuid": "c746d67d-f9f1-48cf-8ab3-fbc4b9bac0ef"
     }
   ],
   "outliner": [
@@ -2646,8 +2646,8 @@
         0.0
       ],
       "children": [
-        "b29b89e6-a0c4-4197-80b4-db7c2fe1c112",
-        "1fe9a508-7188-4451-8e65-6492aa7603da"
+        "c14bdea8-a224-4735-ba3b-a5fea455a153",
+        "785d0e14-5566-49ff-a0d2-511ef2a6dc63"
       ]
     },
     {
@@ -2658,25 +2658,25 @@
         0.0
       ],
       "children": [
-        "ebffa776-8e98-405b-b0f5-542359e20d5c",
-        "9eeef987-f0f3-4d5a-b0a7-b0ba0feead0f",
-        "1bd78019-2a40-490e-9599-2252f6d2f84d",
-        "f96d4868-f8a9-4701-acf5-0e1330ec566e",
-        "fc557b60-2a94-42a4-846c-f0b90297ffdd",
-        "a0008c33-b735-4672-a4cf-ad30c96bb821",
-        "7bf64945-ab27-4d8a-b72f-6a37c647e2e5",
-        "4338c576-32d4-4819-90f1-91011b077ca7",
-        "f845fc62-3c88-44d2-abe0-72f9ec2b5576",
-        "15d12352-6a44-47a7-a3f1-1ace8ed9f7b8",
-        "ab08c7f9-d27f-4c07-b86e-17adfb27a5ad",
-        "5e1d2c72-69b1-4b7e-b36b-ee99712bab15",
-        "bab2e9dd-c3ad-4db8-b0a4-b9b1f5910c97",
-        "45d75342-a106-47c8-b0fc-c8963c9c64a9",
-        "922a7e53-c066-4224-b8b2-7fb75f09b819",
-        "00f3a20d-69cf-4bc7-b03b-38de1638a015",
-        "86d13a9d-0ffc-49e0-8301-8a5f0d12881b",
-        "2c3945bf-c560-4457-b2c4-73522aa06233",
-        "fdd56475-2b6c-44c4-adf2-814e1c96c842"
+        "40f2ffab-8766-4242-af7d-5ec0280b1116",
+        "b9152238-18b5-4ec3-be4b-35a0c5f717a8",
+        "6328dc34-670a-4528-8402-45e7a5c5cfe4",
+        "29bb3404-ece4-43d6-98e6-9baf437666fe",
+        "9864a402-ba85-484d-9ce0-8d12d9f22292",
+        "a24c56e4-9231-444a-b734-4535133191ac",
+        "b296cdaa-b69e-4bc6-8df6-db4c40d544ce",
+        "da7ad96d-8b72-4a54-a79e-da446ea6fbe8",
+        "57f29fa4-710b-4034-9323-453df9b637ab",
+        "5b694c5f-eb3b-4848-be5f-2baba6d44a8d",
+        "40c9af04-a2f2-46ab-bf20-5c474b03e5d6",
+        "7df578ee-0454-4351-8e8e-92f0d2ccc9ab",
+        "a3d7eeb1-9e1e-4b11-8946-14b73f642cec",
+        "0dc9b733-de92-4606-a576-435c5d291e87",
+        "31b8f781-1108-4c1e-a863-36753554f49a",
+        "d2ceb51a-cff1-4ea7-b436-7dab7230705e",
+        "c820c608-3b2e-4260-9505-fd07537e7b77",
+        "163dfbfb-4a20-44c9-817d-b7415039047b",
+        "beeb1df8-ed72-4428-864a-9d247de42400"
       ]
     },
     {
@@ -2687,12 +2687,12 @@
         0.0
       ],
       "children": [
-        "a04e6e42-d8f1-4f0c-b4ff-e1ba2dc63f1b",
-        "938fc956-3f15-4438-9aa0-bd0cf32f9a24",
-        "d43a7535-9362-47a1-b8d5-709fc81c6298",
-        "13707688-a1c6-4d5e-93d7-f5ff138cbdfa",
-        "7e3fb0db-de4b-4f96-a7e8-b4329a9fbc4f",
-        "747a6897-d9cf-48c4-b28f-f7d1f82b838e"
+        "e9035ba3-c2be-4749-a4db-bdca471558f4",
+        "1f223007-eae7-4fd7-a63d-cd795d8d66f5",
+        "54fdac43-a7f0-444b-99d3-2f93f23df350",
+        "e8be3b5a-219c-4a71-a844-1d8b770df095",
+        "be669181-9186-4ebb-b468-d4e427637b7d",
+        "17c1ce6a-d11a-4a2f-a9e9-b9dbdfaf3a3d"
       ]
     },
     {
@@ -2703,16 +2703,16 @@
         0.0
       ],
       "children": [
-        "fe5cc69c-75f5-4962-8e65-a2975a0fe69f",
-        "724c3078-5e49-4133-84d8-67a62944dd45",
-        "f1bc0f64-30b2-44b2-befc-9e7528f1c381",
-        "615e667d-9400-4448-af6d-650a72df7ede",
-        "61a8df37-20af-4d5a-9d14-ef8cbc3790c8",
-        "a20d6ced-af69-4c66-9b39-52826afd5cd8",
-        "74a4578e-cdb6-45d3-9466-9f421e1c29ab",
-        "5a3ebebf-d709-4ce1-bb1e-3c8d77188939",
-        "92d82c2d-999a-4c95-bc53-784ade380f03",
-        "1a04cd5d-5a92-4c32-9c82-f36b49ce94bf"
+        "db2d5a30-f672-4524-8b6b-ac0d9a7fcf9a",
+        "4b47688d-0fee-4ce7-89a1-d2d4e3652de4",
+        "8e5eb488-15e8-4e94-8860-5b54d963694d",
+        "9a316ba3-c75f-46d2-9956-50cd292bd3c6",
+        "9a4739c2-b77c-4fd6-8aae-ceff1a29cf7e",
+        "1a63926c-78b4-4a5f-bd2b-95b89de14357",
+        "4e4b80e6-f1de-4391-8390-38a439c3e773",
+        "070e0188-f2da-4194-92c9-17282388f501",
+        "35f88cc7-5764-416a-9c93-6c039e239cdb",
+        "c746d67d-f9f1-48cf-8ab3-fbc4b9bac0ef"
       ]
     }
   ],
@@ -2722,7 +2722,7 @@
       "folder": "block",
       "namespace": "bong",
       "id": 0,
-      "source": "data:image/png;base64,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"
+      "source": "data:image/png;base64,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"
     }
   ]
 }
