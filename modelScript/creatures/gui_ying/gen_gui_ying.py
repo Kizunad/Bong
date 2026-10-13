@@ -547,7 +547,7 @@ def write_bbmodel(cubes: List[Cube], out_path: Path, name: str = MODEL_ID, with_
         by_group.setdefault(c["group"], []).append(elem["uuid"])
     if with_bones:
         table = bone_table()
-        nodes = {n: {"name": n, "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
+        nodes = {n: {"name": n, "uuid": str(uuid.uuid4()), "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
         outliner = []
         for n, (parent, _) in table.items():
             if parent is None:
@@ -684,11 +684,13 @@ def write_textured(cubes: List[Cube], out_path: Path, flat: bool = False) -> Pat
     doc = json.loads(out_path.read_text(encoding="utf-8"))
     by_group = {g["name"]: g["children"] for g in doc["outliner"]}
     table = bone_table()
-    nodes = {n: {"name": n, "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
+    nodes = {n: {"name": n, "uuid": str(uuid.uuid4()), "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
     outliner = []
     for n, (parent, _) in table.items():
         (outliner if parent is None else nodes[parent]["children"]).append(nodes[n])
     doc["outliner"] = outliner
+    for element in doc["elements"]:
+        element["type"] = "cube"            # 离线 codec 只认显式声明的 cube
     doc["textures"][0]["folder"] = "entity"
     out_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     return out_path
