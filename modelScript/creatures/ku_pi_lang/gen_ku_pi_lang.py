@@ -46,12 +46,12 @@ MODELS_DIR = REPO / "modelScript" / "models"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/ku_pi_lang")
 PARTS_DIR = REVIEW_DIR / "parts"
 EXPLODED_REF = REVIEW_DIR / "exploded.png"
-PREV_BBMODEL = CREATURE_DIR / "KuPiLang_round2.bbmodel"
+PREV_BBMODEL = CREATURE_DIR / "KuPiLang_prev.bbmodel"
 BBMODEL_OUT = CREATURE_DIR / "KuPiLang.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "KuPiLang.bbmodel"
 
 ROUND_TAG = "Round 3/3"
-PREV_TAG = "Round 2"
+PREV_TAG = "上一版（已过 Round 2 闸门）"
 
 # 材质必须 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -103,6 +103,10 @@ SIDE_BONES = [
     ("toes_b", (3.1, 0.9, 6.3), "paw_b"),
     ("pelt_flank", (2.8, 13.0, 3.0), "spine_lumbar"),
     ("pelt_shoulder", (3.4, 14.0, -3.0), "thorax"),
+    # 垂挂的碎皮单独成骨：随机撕裂不对称，且要跟着各自的肢体动
+    ("elbow_rag", (4.4, 8.7, -4.2), "arm"),
+    ("shin_rag", (4.1, 7.6, 4.8), "shin"),
+    ("thigh_rag", (4.5, 11.2, 5.4), "thigh"),
 ]
 
 MIN_MOVING_BONES = 32
@@ -487,10 +491,11 @@ def part_pelt(rig: Rig) -> None:
         # 披在肋上的皮：每片都是「椎侧 → 肋背 → 赤道」贴肋铺下，再自由垂下，末端锯齿。
         # 前三根肋（0、1 和 2 的大半）全裸；左右撕裂的位置不同，各露出两段肋。
         drape(rig, shoulder, side_name("drape_shoulder", s), 2, s, rng.uniform(1.2, 2.0), "pelt_dark", rng, width=0.8)
-        drape_plan = ((4, 3.6), (5, 1.4), (7, 1.3)) if s < 0 else ((3, 2.4), (4, 4.4), (6, 2.0), (7, 1.2))
+        # Round 3：披皮的肋从 3~4 根增到 5 根（相邻肋间距 1.2，宽度压在 1.1 以内才不互咬）
+        drape_plan = ((3, 2.2), (4, 3.6), (5, 2.4), (6, 1.8), (7, 1.3)) if s < 0 else ((3, 2.4), (4, 4.4), (5, 1.8), (6, 2.6))
         for i, hang in drape_plan:
             drape(rig, flank, side_name(f"drape{i}", s), i, s, hang * rng.uniform(0.8, 1.2),
-                  mats_cycle[(i + (1 if s > 0 else 0)) % 5], rng, width=rng.uniform(0.8, 1.35))
+                  mats_cycle[(i + (1 if s > 0 else 0)) % 5], rng, width=rng.uniform(0.8, 1.1))
         # 后腿后侧挂的碎皮（像一条破裤腿）
         for k, z in enumerate((7.2, 8.2, 9.2)):
             rag(rig, flank, side_name(f"breech_rag{k}", s), (mx(3.95, s), 11.8, z), rng.uniform(2.2, 3.6), 0.9, s, rng,
@@ -507,6 +512,16 @@ def part_pelt(rig: Rig) -> None:
         for k, z in enumerate((6.9, 7.8, 8.7)):
             tuft(rig, "hips", side_name(f"rump_tuft{k}", s), (mx(1.7 - 0.2 * k, s), 13.8, z), 1.4 + 0.3 * (k % 2), 0.7,
                  "pelt_mangy" if k % 2 else "pelt_dark")
+        # Round 3 补肉与残皮：颈侧的干肌、前臂 / 小腿垂下的碎皮、第三片腹下碎皮、大腿外侧的挂皮
+        box(rig, "neck_base", side_name("neck_muscle", s), (mx(0.6, s), 14.6, -7.6), (mx(1.3, s), 16.0, -5.4), mat="pelt_mangy")
+        rag(rig, side_name("elbow_rag", s), side_name("elbow_rag_piece", s), (mx(4.45, s), 8.7, -4.2), rng.uniform(2.4, 3.2), 0.85, s, rng,
+            "pelt_rust" if s < 0 else "pelt_dark", flare_deg=8.0)
+        rag(rig, side_name("shin_rag", s), side_name("shin_rag_piece", s), (mx(4.15, s), 7.6, 4.8), rng.uniform(2.2, 3.0), 0.9, s, rng,
+            "pelt_dark" if s < 0 else "pelt_rust", flare_deg=8.0)
+        rag(rig, flank, side_name("belly_rag2", s), (mx(1.4, s), 10.9, 6.2), rng.uniform(1.4, 2.2), 0.8, s, rng, "pelt_mangy",
+            flare_deg=6.0)
+        rag(rig, side_name("thigh_rag", s), side_name("thigh_rag_piece", s), (mx(4.55, s), 11.2, 5.4), rng.uniform(2.6, 3.8), 1.1, s, rng,
+            "pelt_mangy", flare_deg=10.0)
         # 颈鬃垂下的毛（左右镜像，所以不带随机）
         for k, z in enumerate((-6.7, -5.7)):
             rag(rig, "neck_base", side_name(f"neck_fringe{k}", s), (mx(2.05, s), 15.7, z), 2.6 + 0.6 * k, 0.95, s, None,
@@ -524,16 +539,16 @@ def toe_group(rig: Rig, bone: str, s: float, tag: str, base_z: float, x0: float,
 
     forward 取 -1（朝 -Z 前）。趾尖落在 y≈0.2，爪尖贴地。
     """
-    offs = (-0.85, -0.3, 0.3, 0.85)
+    offs = (-1.05, -0.35, 0.35, 1.05)
     lens = (0.95, 1.4, 1.4, 0.95)
     for k, (o, ln) in enumerate(zip(offs, lens)):
         xo = x0 + s * o
         a = (xo, 0.95, base_z)
         b = (xo + s * o * 0.12, 0.45, base_z + forward * ln)
         c = (xo + s * o * 0.2, 0.18, base_z + forward * (ln + 0.85))
-        bar(rig, bone, side_name(f"toe_{tag}{k}", s), a, b, 0.27, 0.27, mat="bone_white")
+        bar(rig, bone, side_name(f"toe_{tag}{k}", s), a, b, 0.33, 0.33, mat="bone_white")
         bar(rig, bone, side_name(f"claw_{tag}{k}", s), b, c, 0.17, 0.17, mat="bone_dark")
-    box(rig, bone, side_name(f"pad_{tag}", s), (x0 - 0.6, 0.0, base_z + forward * 0.35 - 0.45), (x0 + 0.6, 0.45, base_z + forward * 0.35 + 0.45),
+    box(rig, bone, side_name(f"pad_{tag}", s), (x0 - 1.3, 0.0, base_z + forward * 0.35 - 0.45), (x0 + 1.3, 0.45, base_z + forward * 0.35 + 0.45),
         mat="bone_dark")
 
 
@@ -550,15 +565,15 @@ def front_leg(rig: Rig, s: float) -> None:
     bar(rig, sh, side_name("scapula_pelt", s), (mx(3.25, s), 14.6, -4.6), (mx(3.95, s), 12.6, -5.0), 0.45, 0.16, mat="pelt_mangy",
         up=(s, 0, 0.1))
     # 肱骨：骨干 + 两条筋 + 肉块残余
-    bar(rig, ar, side_name("humerus", s), shoulder, elbow, 0.5, 0.5, mat="bone_white")
+    bar(rig, ar, side_name("humerus", s), shoulder, elbow, 0.7, 0.7, mat="bone_white")
     bar(rig, ar, side_name("humerus_sinew", s), (mx(3.75, s), 10.6, -5.0), (mx(3.8, s), 8.0, -3.8), 0.18, 0.2, mat="flesh_scab")
-    bar(rig, ar, side_name("humerus_muscle", s), (mx(3.6, s), 11.0, -5.0), (mx(3.7, s), 9.2, -4.4), 0.45, 0.35, mat="pelt_rust")
+    bar(rig, ar, side_name("humerus_muscle", s), (mx(4.1, s), 11.2, -5.0), (mx(4.15, s), 8.8, -4.2), 0.7, 0.5, mat="pelt_rust", up=(s, 0, 0))
     box(rig, ar, side_name("shoulder_knob", s), (mx(2.9, s), 10.4, -5.7), (mx(3.7, s), 11.5, -4.8), mat="bone_white")
     # 肘：鹰嘴后翘
     bar(rig, fo, side_name("olecranon", s), (mx(3.4, s), 7.6, -3.4), (mx(3.4, s), 8.0, -2.4), 0.4, 0.4, mat="bone_white")
     # 前臂：桡骨 + 尺骨并行，之间露缝
-    bar(rig, fo, side_name("radius", s), (mx(3.6, s), 7.3, -3.5), (mx(3.3, s), 3.1, -4.7), 0.27, 0.27, mat="bone_white")
-    bar(rig, fo, side_name("ulna", s), (mx(3.05, s), 7.3, -3.2), (mx(2.9, s), 3.1, -4.4), 0.27, 0.27, mat="bone_white")
+    bar(rig, fo, side_name("radius", s), (mx(3.75, s), 7.3, -3.5), (mx(3.45, s), 3.1, -4.7), 0.36, 0.36, mat="bone_white")
+    bar(rig, fo, side_name("ulna", s), (mx(3.0, s), 7.3, -3.2), (mx(2.85, s), 3.1, -4.4), 0.36, 0.36, mat="bone_white")
     bar(rig, fo, side_name("forearm_sinew", s), (mx(3.3, s), 6.6, -3.2), (mx(3.1, s), 4.4, -4.2), 0.2, 0.2, mat="flesh_scab")
     bar(rig, fo, side_name("forearm_tuft", s), (mx(3.5, s), 7.0, -3.6), (mx(3.55, s), 5.4, -4.2), 0.3, 0.3, mat="pelt_mangy")
     # 腕 + 掌骨
@@ -575,7 +590,7 @@ def hind_leg(rig: Rig, s: float) -> None:
     pb, tb = side_name("paw_b", s), side_name("toes_b", s)
     hip, stifle, hock, mtp = (mx(3.1, s), 12.0, 6.8), (mx(3.2, s), 7.6, 3.8), (mx(3.1, s), 4.0, 7.6), (mx(3.1, s), 0.95, 6.7)
     # 股骨 + 大腿残肉（上半截带毛，下半截露骨）
-    bar(rig, th, side_name("femur", s), hip, stifle, 0.55, 0.55, mat="bone_white")
+    bar(rig, th, side_name("femur", s), hip, stifle, 0.8, 0.8, mat="bone_white")
     bar(rig, th, side_name("thigh_muscle", s), (mx(3.6, s), 12.2, 6.8), (mx(3.5, s), 9.6, 5.4), 1.1, 0.8, mat="pelt_rust", up=(s, 0, 0))
     bar(rig, th, side_name("thigh_fur_top", s), (mx(3.6, s), 13.0, 6.8), (mx(3.55, s), 11.6, 6.0), 0.95, 0.65, mat="pelt_dark", up=(s, 0, 0))
     bar(rig, th, side_name("thigh_sinew", s), (mx(3.9, s), 9.4, 5.4), (mx(3.85, s), 7.8, 4.2), 0.2, 0.22, mat="flesh_scab")
@@ -583,16 +598,16 @@ def hind_leg(rig: Rig, s: float) -> None:
     # 膝：髌骨在前（-Z）
     box(rig, th, side_name("patella", s), (mx(2.7, s), 7.3, 2.9), (mx(3.7, s), 8.4, 3.7), mat="fang_white")
     # 胫骨 + 腓骨，向后下斜
-    bar(rig, sn, side_name("tibia", s), stifle, hock, 0.45, 0.45, mat="bone_white")
-    bar(rig, sn, side_name("fibula", s), (mx(2.75, s), 7.4, 4.3), (mx(2.7, s), 4.3, 7.4), 0.2, 0.2, mat="bone_white")
+    bar(rig, sn, side_name("tibia", s), stifle, hock, 0.62, 0.62, mat="bone_white")
+    bar(rig, sn, side_name("fibula", s), (mx(2.35, s), 7.4, 4.3), (mx(2.3, s), 4.3, 7.4), 0.25, 0.25, mat="bone_white")
     bar(rig, sn, side_name("shin_tuft", s), (mx(3.55, s), 7.4, 4.6), (mx(3.6, s), 5.2, 6.4), 0.35, 0.25, mat="pelt_mangy")
     # 跗：跟骨向后上翘，跟腱从胫骨绷到跟骨尖
-    bar(rig, hk, side_name("calcaneus", s), hock, (mx(3.1, s), 5.6, 9.1), 0.42, 0.42, mat="bone_white")
+    bar(rig, hk, side_name("calcaneus", s), hock, (mx(3.1, s), 5.6, 9.1), 0.55, 0.55, mat="bone_white")
     bar(rig, hk, side_name("achilles", s), (mx(3.4, s), 7.0, 5.6), (mx(3.4, s), 5.6, 9.0), 0.17, 0.2, mat="flesh_scab")
     box(rig, hk, side_name("hock_joint", s), (mx(2.55, s), 3.4, 6.9), (mx(3.65, s), 4.6, 8.0), mat="bone_white")
     # 跖骨两根并行，近乎竖直
     for k, o in enumerate((-0.4, 0.4)):
-        bar(rig, pb, side_name(f"metatarsal{k}", s), (mx(3.1 + o, s), 3.6, 7.3), (mx(3.1 + o, s), 1.05, 6.7), 0.24, 0.24, mat="bone_white")
+        bar(rig, pb, side_name(f"metatarsal{k}", s), (mx(3.1 + o, s), 3.6, 7.3), (mx(3.1 + o, s), 1.05, 6.7), 0.32, 0.32, mat="bone_white")
     bar(rig, pb, side_name("metatarsal_tuft", s), (mx(3.6, s), 3.4, 7.3), (mx(3.6, s), 1.6, 6.9), 0.25, 0.3, mat="pelt_dark")
     toe_group(rig, tb, s, "b", 6.65, mx(3.1, s), -1.0)
 
@@ -661,7 +676,8 @@ def moving_bones(rig: Rig) -> list[str]:
 # 门禁
 # ===========================================================================
 # 对称门只认 _l/_r 成对；这些是有意不对称的撕裂件与皮片
-ASYM = ("ear_l", "ear_r", "pelt_flank_l", "pelt_flank_r", "pelt_shoulder_l", "pelt_shoulder_r")
+ASYM = ("ear_l", "ear_r", "pelt_flank_l", "pelt_flank_r", "pelt_shoulder_l", "pelt_shoulder_r",
+        "elbow_rag_l", "elbow_rag_r", "shin_rag_l", "shin_rag_r", "thigh_rag_l", "thigh_rag_r")
 
 # 软覆盖：皮 / 肉 / 筋彼此叠压是造型意图（残皮堆叠）；皮与骨互穿仍然要报
 _SOFT_MATS = ("pelt_dark", "pelt_mangy", "pelt_rust", "flesh_scab")
