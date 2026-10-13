@@ -726,8 +726,18 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "cloth_grey": _cloth("#6a6c6a", 485),
     "cloth_sage": _cloth("#60704f", 486),
     "rune_lit": _ink("#a8f0d8", 561),
-    "slate_dark": _ink("#26262c", 562),
+    "slate_ink": _ink("#26262c", 562),
     "ember": _ink("#f0a048", 563),
+    # 诡影（负灵域漩涡）：深灰石环 / 浅灰带 / 碎石 / 枯叶，轮廓全靠明暗对比
+    "slate": _stone_chipped("#585560", "#6e6a72", 601),
+    "slate_dark": _stone_chipped("#46434c", "#58555e", 602),
+    "slate_lit": _stone_chipped("#706c74", "#8a868c", 603),
+    "slate_rim": _stone_chipped("#2c2a32", "#3a3740", 604),
+    "ash_band": _stone_chipped("#b4b0a6", "#cac6ba", 605),
+    "rubble": _stone_chipped("#98948c", "#b0aca2", 606),
+    "rubble_dark": _stone_chipped("#5e5a58", "#767270", 607),
+    "dry_leaf": _leather("#76624a", 608),
+    "dry_leaf_vein": _leather("#4a3c2a", 609),
 }
 
 # 生物材质（兽皮 / 藓 / 角 / 蹄 / 眼）
@@ -759,10 +769,13 @@ FLAT_COLORS: Dict[str, str] = {
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
     "bone_stain": "#8a7658", "wood_lit": "#947048", "rope_dark": "#4e3c26", "copper_dark": "#7a4a2a",
-    "cloth_grey": "#6a6c6a", "cloth_sage": "#60704f", "rune_lit": "#a8f0d8", "slate_dark": "#26262c", "ember": "#f0a048",
+    "cloth_grey": "#6a6c6a", "cloth_sage": "#60704f", "rune_lit": "#a8f0d8", "slate_ink": "#26262c", "ember": "#f0a048",
     "fur_dark": "#4a4038", "fur_mangy": "#6a5e50", "fur_rust": "#7c4632", "scab_flesh": "#6a2e2c", "eye_amber": "#e8962a",
     "chitin_white": "#cac1aa", "chitin_ochre": "#ae9a68", "chitin_grey": "#7e7868", "chitin_dark": "#3a342c",
     "marrow_amber": "#c8964a", "claw_rust": "#78563a", "bone_dust": "#f4f2ea",
+    "slate": "#605d68", "slate_dark": "#4c4954", "slate_lit": "#7a767c", "slate_rim": "#312f38",
+    "ash_band": "#bdb9ae", "rubble": "#a09c94", "rubble_dark": "#665f5d",
+    "dry_leaf": "#76624a", "dry_leaf_vein": "#4a3c2a",
 }
 FLAT_COLORS.update({
     "hide": "#685d50", "hide_dark": "#494239", "hide_light": "#8a7d6a", "hide_fold": "#342f2a",

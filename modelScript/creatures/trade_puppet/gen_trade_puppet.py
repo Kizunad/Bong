@@ -956,7 +956,7 @@ from pixel_texture import build_atlas  # noqa: E402
 TEX_MATERIAL = {
     "bone": "bone_main", "bone_lt": "bone_lit", "bone_dk": "bone_dark", "wood_lt": "wood_lit",
     "rope_dk": "rope_dark", "copper_dk": "copper_dark", "verdigris": "copper_green",
-    "cloth_sand": "cloth_tan", "copper": "copper_edge", "wood_dk": "wood_dark", "coin": "bone_lit", "stone_dk": "slate_dark", "rune": "rune_lit",
+    "cloth_sand": "cloth_tan", "copper": "copper_edge", "wood_dk": "wood_dark", "coin": "bone_lit", "stone_dk": "slate_ink", "rune": "rune_lit",
 }
 
 
