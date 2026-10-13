@@ -12,1262 +12,30 @@
   },
   "elements": [
     {
-      "name": "moss_base_mid",
+      "name": "moss_hump_base",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0cb8a9df-d3f3-44d8-a1aa-6fee3ac7c12b",
+      "uuid": "e323fbca-c1f8-458a-a44f-e4c52203af18",
       "from": [
-        -6.2,
-        17.5,
-        -7.5
+        -5.8,
+        18.85,
+        -8.5
       ],
       "to": [
-        6.2,
-        19.0,
-        9.5
+        5.8,
+        20.38,
+        -4.75
       ],
       "autouv": 0,
       "color": 4,
       "origin": [
         0.0,
-        18.25,
-        1.0
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l1",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "f9912f10-47e1-497d-9d50-b1b9a6316fc6",
-      "from": [
-        -7.4,
-        15.8,
-        -6.5
-      ],
-      "to": [
-        -6.15,
-        18.2,
-        -4.0
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        -6.775,
-        17.0,
-        -5.25
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l2",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "4f66c416-d908-44ea-a72b-6bf4b109bf6c",
-      "from": [
-        -7.55,
-        15.0,
-        -3.8
-      ],
-      "to": [
-        -6.15,
-        18.0,
-        -0.8
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        -6.85,
-        16.5,
-        -2.3
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l3",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "e26c6de9-6ba5-43c1-b07e-3a402dffdf3c",
-      "from": [
-        -7.35,
-        15.6,
-        -0.6
-      ],
-      "to": [
-        -6.15,
-        18.2,
-        2.2
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        -6.75,
-        16.9,
-        0.8
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l4",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "8ffb4a37-5f86-4d4c-9d17-0cd1085a7cca",
-      "from": [
-        -7.45,
-        14.8,
-        2.4
-      ],
-      "to": [
-        -6.15,
-        17.8,
-        5.2
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        -6.8,
-        16.3,
-        3.8
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l5",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "540b1f62-5912-4e95-ad26-aa7e7ea49e3e",
-      "from": [
-        -7.25,
-        15.9,
-        5.4
-      ],
-      "to": [
-        -6.15,
-        18.0,
-        7.8
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        -6.7,
-        16.95,
-        6.6
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_l6",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "f1ebaf6a-3430-4ebd-a77a-d1bec7b86b15",
-      "from": [
-        -7.25,
-        14.2,
-        -1.8
-      ],
-      "to": [
-        -6.1,
-        16.5,
-        0.4
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        -6.675,
-        15.35,
-        -0.7
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r1",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "dba876c0-b6e3-4daf-8428-ded12ea0d1e9",
-      "from": [
-        6.15,
-        15.8,
-        -6.5
-      ],
-      "to": [
-        7.4,
-        18.2,
-        -4.0
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        6.775,
-        17.0,
-        -5.25
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r2",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "7103ffa0-4038-4539-aff4-2bc3d3c0e112",
-      "from": [
-        6.15,
-        15.0,
-        -3.8
-      ],
-      "to": [
-        7.55,
-        18.0,
-        -0.8
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        6.85,
-        16.5,
-        -2.3
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r3",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "5be0baf2-5e0b-4b22-a73a-12f8ae04a550",
-      "from": [
-        6.15,
-        15.6,
-        -0.6
-      ],
-      "to": [
-        7.35,
-        18.2,
-        2.2
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        6.75,
-        16.9,
-        0.8
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r4",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "433dc897-029f-43e9-a130-e9c546d004d4",
-      "from": [
-        6.15,
-        14.8,
-        2.4
-      ],
-      "to": [
-        7.45,
-        17.8,
-        5.2
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        6.8,
-        16.3,
-        3.8
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r5",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "096f4adf-c6f9-4aea-ad44-163aeb75aa9a",
-      "from": [
-        6.15,
-        15.9,
-        5.4
-      ],
-      "to": [
-        7.25,
-        18.0,
-        7.8
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        6.7,
-        16.95,
-        6.6
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_hang_r6",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "1056a0fe-7626-4ff7-88f1-a57103123014",
-      "from": [
-        6.2,
-        14.2,
-        -1.8
-      ],
-      "to": [
-        7.25,
-        16.5,
-        0.4
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        6.725,
-        15.35,
-        -0.7
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_shelf_flank_l",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "69b7a209-5295-4eb2-94a4-6935fc70a9c7",
-      "from": [
-        -6.85,
-        17.2,
-        1.2
-      ],
-      "to": [
-        -5.65,
-        18.6,
-        3.8
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        -6.25,
-        17.9,
-        2.5
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_shelf_flank_r",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "221305d6-e030-4a31-abb4-1c1947752fd0",
-      "from": [
-        5.65,
-        17.2,
-        1.2
-      ],
-      "to": [
-        6.85,
-        18.6,
-        3.8
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        6.25,
-        17.9,
-        2.5
+        19.615,
+        -6.625
       ],
       "rotation": [
         0.0,
@@ -1339,23 +107,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "73e90316-b663-4875-941c-3727b78eb810",
+      "uuid": "28e2be15-7f8c-45f6-9604-a28f69088485",
       "from": [
-        -5.4,
-        19.1,
+        -5.3,
+        20.42,
         -7.8
       ],
       "to": [
-        5.4,
-        21.4,
-        -4.8
+        5.3,
+        21.78,
+        -4.93
       ],
       "autouv": 0,
       "color": 5,
       "origin": [
         0.0,
-        20.25,
-        -6.3
+        21.1,
+        -6.365
       ],
       "rotation": [
         0.0,
@@ -1427,22 +195,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7ecc727d-a750-42de-bb23-514421f295bd",
+      "uuid": "da681abb-ae6c-4881-a08c-733061c2ec14",
       "from": [
-        -5.2,
-        21.35,
+        -5.1,
+        21.85,
         -4.9
       ],
       "to": [
-        5.2,
-        23.2,
+        5.1,
+        23.3,
         0.4
       ],
       "autouv": 0,
       "color": 5,
       "origin": [
         0.0,
-        22.275,
+        22.575,
         -2.25
       ],
       "rotation": [
@@ -1508,270 +276,6 @@
       }
     },
     {
-      "name": "moss_spine_shelf_a",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "4c288042-0e46-4800-ad30-d501e9b1d60f",
-      "from": [
-        -4.8,
-        18.1,
-        0.6
-      ],
-      "to": [
-        4.8,
-        20.2,
-        4.8
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        0.0,
-        19.15,
-        2.7
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_spine_shelf_b",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "90f47489-298e-480f-b5ae-b89aa125c729",
-      "from": [
-        -4.65,
-        17.9,
-        5.0
-      ],
-      "to": [
-        4.65,
-        19.8,
-        8.8
-      ],
-      "autouv": 0,
-      "color": 5,
-      "origin": [
-        0.0,
-        18.85,
-        6.9
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            17,
-            17,
-            31,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_rump_crest",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "23e251be-92c0-4b9e-bc57-2d5e3cebf8a5",
-      "from": [
-        -4.2,
-        17.6,
-        9.0
-      ],
-      "to": [
-        4.2,
-        19.2,
-        12.2
-      ],
-      "autouv": 0,
-      "color": 4,
-      "origin": [
-        0.0,
-        18.4,
-        10.6
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            1,
-            17,
-            15,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
       "name": "moss_crest_peak_c",
       "box_uv": false,
       "rescale": false,
@@ -1779,10 +283,10 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3b01591c-25b9-4b35-818f-e1389aa450b2",
+      "uuid": "78c2d0bd-2a3c-4992-9770-f4aa7b9954b0",
       "from": [
         -2.6,
-        23.15,
+        23.33,
         -4.0
       ],
       "to": [
@@ -1794,7 +298,7 @@
       "color": 6,
       "origin": [
         0.0,
-        23.875,
+        23.965,
         -2.525
       ],
       "rotation": [
@@ -1867,22 +371,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d44ae95f-145f-42bf-9b58-a2a3d113119d",
+      "uuid": "89984cd3-55aa-44c3-ae10-259bc375e82e",
       "from": [
-        -3.6,
-        22.85,
+        -3.8,
+        23.33,
         -3.2
       ],
       "to": [
-        -1.8,
-        24.1,
+        -2.63,
+        24.15,
         0.2
       ],
       "autouv": 0,
       "color": 6,
       "origin": [
-        -2.7,
-        23.475,
+        -3.215,
+        23.74,
         -1.5
       ],
       "rotation": [
@@ -1955,22 +459,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f4874661-44aa-4068-963c-7336f14feef0",
+      "uuid": "1301f3ba-08ac-4f78-8737-62a52b47c7ea",
       "from": [
-        1.8,
-        22.85,
+        2.63,
+        23.33,
         -3.2
       ],
       "to": [
-        3.6,
-        24.1,
+        3.8,
+        24.15,
         0.2
       ],
       "autouv": 0,
       "color": 6,
       "origin": [
-        2.7,
-        23.475,
+        3.215,
+        23.74,
         -1.5
       ],
       "rotation": [
@@ -2036,470 +540,30 @@
       }
     },
     {
-      "name": "moss_boss_spine_1",
+      "name": "moss_nodule_hump_front",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7e9b4184-cf12-4ac8-8900-629fa123db1f",
+      "uuid": "11293e11-44be-4a5d-9738-ee1c023b6b89",
       "from": [
-        -2.4,
-        20.15,
-        1.5
-      ],
-      "to": [
-        0.2,
-        21.6,
-        3.8
-      ],
-      "autouv": 0,
-      "color": 6,
-      "origin": [
-        -1.1,
-        20.875,
-        2.65
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_boss_spine_2",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "52b8887b-1435-4029-b322-e10fc9021d8e",
-      "from": [
-        -0.2,
-        19.75,
-        4.2
-      ],
-      "to": [
-        2.5,
-        21.1,
-        6.6
-      ],
-      "autouv": 0,
-      "color": 6,
-      "origin": [
-        1.15,
-        20.425,
-        5.4
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_boss_rump",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "e24b412f-ff20-4174-b3f2-5f507fc47d01",
-      "from": [
-        -1.8,
-        19.15,
-        7.8
-      ],
-      "to": [
-        1.8,
-        20.4,
-        10.6
-      ],
-      "autouv": 0,
-      "color": 6,
-      "origin": [
-        0.0,
-        19.775,
-        9.2
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_boss_shoulder_l",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "4e0d5cab-1ffe-4239-9998-ee5fb4e9da80",
-      "from": [
-        -4.8,
-        19.8,
+        -2.0,
+        21.82,
         -7.2
       ],
       "to": [
-        -2.8,
-        21.0,
-        -5.2
-      ],
-      "autouv": 0,
-      "color": 6,
-      "origin": [
-        -3.8,
-        20.4,
-        -6.2
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_boss_shoulder_r",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "8218eb50-de2c-4aae-bdfe-a6399b8cf650",
-      "from": [
-        2.8,
-        19.8,
-        -7.2
-      ],
-      "to": [
-        4.8,
-        21.0,
-        -5.2
-      ],
-      "autouv": 0,
-      "color": 6,
-      "origin": [
-        3.8,
-        20.4,
-        -6.2
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            33,
-            17,
-            47,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "moss_nodule_spine_top",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "4d21b991-0cda-4569-952a-32e09508c794",
-      "from": [
-        -1.2,
-        21.65,
-        2.8
-      ],
-      "to": [
-        1.2,
-        22.8,
-        4.4
+        2.0,
+        22.75,
+        -5.0
       ],
       "autouv": 0,
       "color": 6,
       "origin": [
         0.0,
-        22.225,
-        3.6
+        22.285,
+        -6.1
       ],
       "rotation": [
         0.0,
@@ -2571,23 +635,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "aa9c97a0-a0cc-429f-938a-ab2a19ba2ad1",
+      "uuid": "ece55285-1959-4bd4-9d7d-b825db58f1c5",
       "from": [
-        -2.8,
-        22.1,
-        -1.8
+        -2.5,
+        23.33,
+        -0.95
       ],
       "to": [
         -0.8,
-        23.4,
-        -0.2
+        24.0,
+        0.3
       ],
       "autouv": 0,
       "color": 6,
       "origin": [
-        -1.8,
-        22.75,
-        -1.0
+        -1.65,
+        23.665,
+        -0.325
       ],
       "rotation": [
         0.0,
@@ -2659,22 +723,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "56ce79e2-9e26-47b3-b307-2ec4cdeecbff",
+      "uuid": "9315cd87-ec7e-4f7c-ac11-76eb1da06256",
       "from": [
         -1.4,
-        24.55,
+        24.63,
         -2.8
       ],
       "to": [
         -0.6,
-        25.1,
+        25.15,
         -2.0
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
         -1.0,
-        24.825,
+        24.89,
         -2.4
       ],
       "rotation": [
@@ -2747,22 +811,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f5449bdf-22f7-4317-88e6-ec8f6e3e6151",
+      "uuid": "18b24aa1-5f8f-4c20-b31c-3645ec2f0c7a",
       "from": [
         0.8,
-        24.55,
+        24.63,
         -2.2
       ],
       "to": [
         1.6,
-        25.1,
+        25.15,
         -1.4
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
         1.2,
-        24.825,
+        24.89,
         -1.8
       ],
       "rotation": [
@@ -2835,23 +899,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ec399199-b1b8-4fc7-b5ac-a3dcfe633b58",
+      "uuid": "85f2671b-2de9-449e-aa35-9b9f498ebca5",
       "from": [
-        -3.4,
-        23.15,
-        -1.2
+        -3.5,
+        24.18,
+        -1.8
       ],
       "to": [
-        -2.7,
-        23.7,
-        -0.5
+        -2.8,
+        24.7,
+        -1.1
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        -3.05,
-        23.425,
-        -0.85
+        -3.15,
+        24.44,
+        -1.45
       ],
       "rotation": [
         0.0,
@@ -2923,23 +987,727 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "729d5043-bdad-4785-bece-99de2c1f03a2",
+      "uuid": "d6533682-80d6-405f-bb6c-2c094a13a642",
       "from": [
-        2.5,
-        23.15,
-        -0.95
+        2.8,
+        24.18,
+        -1.5
       ],
       "to": [
-        3.2,
-        23.7,
-        -0.28
+        3.5,
+        24.7,
+        -0.8
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        2.85,
-        23.425,
-        -0.615
+        3.15,
+        24.44,
+        -1.15
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_hump_front",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5af51a5b-63aa-42f9-8bc0-e0327e411a78",
+      "from": [
+        -0.5,
+        22.78,
+        -6.4
+      ],
+      "to": [
+        0.3,
+        23.3,
+        -5.6
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        -0.1,
+        23.04,
+        -6.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "0aae0feb-3f3a-4732-9c99-760973d9dffe",
+      "from": [
+        -7.35,
+        15.6,
+        -7.2
+      ],
+      "to": [
+        -6.23,
+        18.2,
+        -5.0
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -6.79,
+        16.9,
+        -6.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l1_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "dfbed214-fa81-4835-9d3b-885d538c3b49",
+      "from": [
+        -7.45,
+        14.3,
+        -6.6
+      ],
+      "to": [
+        -6.55,
+        15.57,
+        -5.4
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -7.0,
+        14.935,
+        -6.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "46293761-aef9-43c5-a2a3-62443715d9b5",
+      "from": [
+        -7.55,
+        14.8,
+        -4.8
+      ],
+      "to": [
+        -6.23,
+        18.0,
+        -2.2
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        -6.89,
+        16.4,
+        -3.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l2_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8f765062-65c1-4a4d-9daa-e30afde120a8",
+      "from": [
+        -7.65,
+        13.4,
+        -4.1
+      ],
+      "to": [
+        -6.75,
+        14.77,
+        -2.8
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -7.2,
+        14.085,
+        -3.45
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5db4648e-81a4-441d-a42b-3d6c7f5ab294",
+      "from": [
+        -7.4,
+        15.5,
+        -2.0
+      ],
+      "to": [
+        -6.23,
+        18.2,
+        0.2
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -6.815,
+        16.85,
+        -0.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_boss_shoulder_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7bbf8798-9296-4cac-b3bc-afb3a1de2a66",
+      "from": [
+        -4.8,
+        20.48,
+        -7.2
+      ],
+      "to": [
+        -2.8,
+        21.2,
+        -5.2
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -3.8,
+        20.84,
+        -6.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_shoulder_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "5b19a315-ed16-43b5-8287-543dcd294d7a",
+      "from": [
+        -4.2,
+        21.23,
+        -6.4
+      ],
+      "to": [
+        -3.5,
+        21.75,
+        -5.7
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        -3.85,
+        21.49,
+        -6.05
       ],
       "rotation": [
         0.0,
@@ -3011,23 +1779,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7d729da8-75d2-4f05-b507-882d818b9844",
+      "uuid": "d628ae3f-0d35-4b18-bd8c-03de9ef603fe",
       "from": [
-        -7.65,
+        -7.85,
         16.2,
-        -2.2
+        -3.8
       ],
       "to": [
-        -7.15,
+        -7.58,
         16.9,
-        -1.5
+        -3.1
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        -7.4,
+        -7.715,
         16.55,
-        -1.85
+        -3.45
       ],
       "rotation": [
         0.0,
@@ -3092,30 +1860,558 @@
       }
     },
     {
-      "name": "floret_flank_l2",
+      "name": "moss_hang_r1",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "40978f9f-98ad-4df3-9cdb-06a2520779c3",
+      "uuid": "d20635fb-43fe-4d2f-b324-539d695981c2",
       "from": [
-        -7.55,
+        6.23,
         15.6,
-        3.8
+        -7.2
       ],
       "to": [
-        -7.05,
-        16.3,
-        4.5
+        7.35,
+        18.2,
+        -5.0
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.79,
+        16.9,
+        -6.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r1_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "4bc65bfd-9fff-4b70-9c1e-b52447c844d5",
+      "from": [
+        6.55,
+        14.3,
+        -6.6
+      ],
+      "to": [
+        7.45,
+        15.57,
+        -5.4
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        7.0,
+        14.935,
+        -6.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "76540f48-3ad2-4d4f-b8d6-c7a73e4b196d",
+      "from": [
+        6.23,
+        14.8,
+        -4.8
+      ],
+      "to": [
+        7.55,
+        18.0,
+        -2.2
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        6.89,
+        16.4,
+        -3.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r2_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1b814db3-217e-4266-aa9a-8a0a31e0458f",
+      "from": [
+        6.75,
+        13.4,
+        -4.1
+      ],
+      "to": [
+        7.65,
+        14.77,
+        -2.8
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        7.2,
+        14.085,
+        -3.45
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r3",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9035373e-39f9-49a3-ba68-83c445945f72",
+      "from": [
+        6.23,
+        15.5,
+        -2.0
+      ],
+      "to": [
+        7.4,
+        18.2,
+        0.2
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.815,
+        16.85,
+        -0.9
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_boss_shoulder_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "19abdfde-7b56-496e-be66-df1cf4464bed",
+      "from": [
+        2.8,
+        20.48,
+        -7.2
+      ],
+      "to": [
+        4.8,
+        21.2,
+        -5.2
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        3.8,
+        20.84,
+        -6.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_shoulder_r",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f37412e4-e2b7-4fd5-9602-39e9241131fb",
+      "from": [
+        3.5,
+        21.23,
+        -6.4
+      ],
+      "to": [
+        4.2,
+        21.75,
+        -5.7
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        -7.3,
-        15.95,
-        4.15
+        3.85,
+        21.49,
+        -6.05
       ],
       "rotation": [
         0.0,
@@ -3187,23 +2483,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b9c7b5ee-5ff9-4e3c-98ba-45c1901f1bc2",
+      "uuid": "4b2d6e30-9855-4a30-bd69-630087371c52",
       "from": [
-        7.15,
+        7.58,
         16.2,
-        -2.2
+        -3.8
       ],
       "to": [
-        7.65,
+        7.85,
         16.9,
-        -1.5
+        -3.1
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        7.4,
+        7.715,
         16.55,
-        -1.85
+        -3.45
       ],
       "rotation": [
         0.0,
@@ -3268,30 +2564,30 @@
       }
     },
     {
-      "name": "floret_flank_r2",
+      "name": "moss_base_mid",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5c84871d-ead0-40ab-bd7e-fe929e3948e7",
+      "uuid": "89c2154a-40f8-4b12-9da8-3206a850ddf2",
       "from": [
-        7.05,
-        15.6,
-        3.8
+        -6.2,
+        17.5,
+        -4.55
       ],
       "to": [
-        7.55,
-        16.3,
-        4.5
+        6.2,
+        19.0,
+        9.2
       ],
       "autouv": 0,
-      "color": 7,
+      "color": 4,
       "origin": [
-        7.3,
-        15.95,
-        4.15
+        0.0,
+        18.25,
+        2.325
       ],
       "rotation": [
         0.0,
@@ -3301,54 +2597,494 @@
       "faces": {
         "north": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
             31
           ],
           "texture": 0
         },
         "south": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
             31
           ],
           "texture": 0
         },
         "east": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
             31
           ],
           "texture": 0
         },
         "west": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
             31
           ],
           "texture": 0
         },
         "up": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
             31
           ],
           "texture": 0
         },
         "down": {
           "uv": [
-            49,
+            1,
             17,
-            63,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_spine_shelf_a",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "737807f0-a5c0-421c-8f8d-2d1e5daf3147",
+      "from": [
+        -5.0,
+        19.03,
+        0.45
+      ],
+      "to": [
+        5.0,
+        20.3,
+        4.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        0.0,
+        19.665,
+        2.625
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_spine_shelf_b",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "491bdb95-d249-4164-90e7-5b557e6aa4bf",
+      "from": [
+        -4.65,
+        19.03,
+        4.85
+      ],
+      "to": [
+        4.65,
+        19.95,
+        8.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        0.0,
+        19.49,
+        6.825
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_boss_spine_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "1912e2c1-cbc4-4139-be32-504693a5b300",
+      "from": [
+        -2.4,
+        20.33,
+        1.2
+      ],
+      "to": [
+        0.2,
+        21.6,
+        3.8
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -1.1,
+        20.965,
+        2.5
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_boss_spine_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "22c07ae4-fca3-4efa-beb7-5de435a6cc4e",
+      "from": [
+        -0.2,
+        20.33,
+        3.85
+      ],
+      "to": [
+        2.5,
+        21.2,
+        6.4
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        1.15,
+        20.765,
+        5.125
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_nodule_spine_top",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "cda61547-5bfe-467f-83da-57cd8d0ed3e0",
+      "from": [
+        -1.2,
+        21.63,
+        2.2
+      ],
+      "to": [
+        1.2,
+        22.6,
+        3.75
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        0.0,
+        22.115,
+        2.975
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
             31
           ],
           "texture": 0
@@ -3363,23 +3099,23 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4f596385-1b67-47e0-816a-0ece0e3e9f56",
+      "uuid": "2202831c-f70f-45ae-a57c-0ab07b3402c6",
       "from": [
         -1.8,
-        21.55,
-        2.4
+        21.63,
+        1.4
       ],
       "to": [
         -1.1,
-        22.1,
-        3.1
+        22.15,
+        2.1
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
         -1.45,
-        21.825,
-        2.75
+        21.89,
+        1.75
       ],
       "rotation": [
         0.0,
@@ -3451,22 +3187,22 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1c0383bf-baf8-4580-b491-42f017180ef9",
+      "uuid": "acd2c1f7-ae5c-47e6-8e85-b1212478ac90",
       "from": [
         1.2,
-        21.05,
+        21.23,
         5.0
       ],
       "to": [
         1.9,
-        21.6,
+        21.75,
         5.7
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
         1.55,
-        21.325,
+        21.49,
         5.35
       ],
       "rotation": [
@@ -3532,206 +3268,30 @@
       }
     },
     {
-      "name": "floret_rump",
+      "name": "floret_spine_3",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6b82aef7-275d-45d6-a319-4d950b4c2c35",
+      "uuid": "a875c42b-ef4f-43ac-8810-00d1d9b4c60d",
       "from": [
-        -0.5,
-        20.35,
-        9.0
-      ],
-      "to": [
-        0.3,
-        20.9,
-        9.8
-      ],
-      "autouv": 0,
-      "color": 7,
-      "origin": [
-        -0.1,
-        20.625,
-        9.4
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "floret_shoulder",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "a83a4d33-f40f-4796-b9d5-e225887e49f3",
-      "from": [
-        -4.2,
-        20.95,
-        -6.4
-      ],
-      "to": [
-        -3.5,
-        21.5,
-        -5.7
-      ],
-      "autouv": 0,
-      "color": 7,
-      "origin": [
-        -3.85,
-        21.225,
-        -6.05
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "south": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "east": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "west": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "up": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        },
-        "down": {
-          "uv": [
-            49,
-            17,
-            63,
-            31
-          ],
-          "texture": 0
-        }
-      }
-    },
-    {
-      "name": "floret_tail_base",
-      "box_uv": false,
-      "rescale": false,
-      "locked": false,
-      "render_order": "default",
-      "allow_mirror_modeling": true,
-      "type": "cube",
-      "uuid": "c6871e79-6834-42b5-a160-786ada36d440",
-      "from": [
-        -0.4,
-        18.25,
-        11.2
+        -0.3,
+        22.63,
+        2.7
       ],
       "to": [
         0.4,
-        18.8,
-        11.8
+        23.15,
+        3.4
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        0.0,
-        18.525,
-        11.5
+        0.05,
+        22.89,
+        3.05
       ],
       "rotation": [
         0.0,
@@ -3796,30 +3356,558 @@
       }
     },
     {
-      "name": "floret_neck_root",
+      "name": "moss_hang_l4",
       "box_uv": false,
       "rescale": false,
       "locked": false,
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6eb45262-403e-4d2c-8d47-8aa27fee6e70",
+      "uuid": "57a45779-7c42-46f8-b596-0baf4860f3b4",
       "from": [
-        -2.2,
-        17.85,
-        -9.8
+        -7.45,
+        15.2,
+        0.4
       ],
       "to": [
-        -1.5,
-        18.4,
-        -9.1
+        -6.23,
+        18.1,
+        2.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        -6.84,
+        16.65,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l4_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "19e9b2f8-2fa3-484a-b04b-b6784c017108",
+      "from": [
+        -7.55,
+        13.8,
+        1.0
+      ],
+      "to": [
+        -6.65,
+        15.17,
+        2.2
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        -7.1,
+        14.485,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "7ad7e810-e8c8-4f87-bcf8-ec09a16bf5ee",
+      "from": [
+        -7.5,
+        14.6,
+        3.0
+      ],
+      "to": [
+        -6.23,
+        17.8,
+        5.6
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -6.865,
+        16.2,
+        4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l5_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "93ae23c3-70ab-493f-9a11-ea1a612e47b7",
+      "from": [
+        -7.65,
+        13.2,
+        3.7
+      ],
+      "to": [
+        -6.75,
+        14.57,
+        4.9
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        -7.2,
+        13.885,
+        4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l6",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d63c81bf-bb74-43a5-83bf-81331cfb814f",
+      "from": [
+        -7.3,
+        15.6,
+        5.8
+      ],
+      "to": [
+        -6.23,
+        18.0,
+        8.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        -6.765,
+        16.8,
+        7.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_l7",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "36233edf-d87d-435c-84cc-72f77f285a81",
+      "from": [
+        -6.95,
+        16.0,
+        8.6
+      ],
+      "to": [
+        -5.85,
+        18.2,
+        10.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        -6.4,
+        17.1,
+        9.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_flank_l2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "14874763-ea35-4a91-aaa5-a4b5f2266567",
+      "from": [
+        -7.78,
+        15.6,
+        3.8
+      ],
+      "to": [
+        -7.53,
+        16.3,
+        4.5
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        -1.85,
-        18.125,
-        -9.45
+        -7.655,
+        15.95,
+        4.15
       ],
       "rotation": [
         0.0,
@@ -3891,23 +3979,639 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "608b08c8-12fc-4d15-a45d-53f93594cf47",
+      "uuid": "f279f3ed-bda8-4679-b8dd-2fb376eabb9d",
       "from": [
-        -7.45,
-        14.6,
-        0.2
+        -7.72,
+        14.55,
+        1.2
       ],
       "to": [
-        -6.95,
-        15.2,
-        0.9
+        -7.48,
+        15.1,
+        1.9
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        -7.2,
-        14.9,
-        0.55
+        -7.6,
+        14.825,
+        1.55
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r4",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "031928a2-a69e-4050-bcc4-305008200c3d",
+      "from": [
+        6.23,
+        15.2,
+        0.4
+      ],
+      "to": [
+        7.45,
+        18.1,
+        2.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        6.84,
+        16.65,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r4_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "15f075c9-5b43-44b1-a405-6db274c7cd23",
+      "from": [
+        6.65,
+        13.8,
+        1.0
+      ],
+      "to": [
+        7.55,
+        15.17,
+        2.2
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        7.1,
+        14.485,
+        1.6
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r5",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9702351d-d2bb-4cb2-a28c-51e26d5c9e77",
+      "from": [
+        6.23,
+        14.6,
+        3.0
+      ],
+      "to": [
+        7.5,
+        17.8,
+        5.6
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.865,
+        16.2,
+        4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r5_tip",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "92fe5e37-33a2-4d64-a25e-c630dc024700",
+      "from": [
+        6.75,
+        13.2,
+        3.7
+      ],
+      "to": [
+        7.65,
+        14.57,
+        4.9
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        7.2,
+        13.885,
+        4.3
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r6",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "bd2be153-b9b7-4fb5-af09-eb1977747838",
+      "from": [
+        6.23,
+        15.6,
+        5.8
+      ],
+      "to": [
+        7.3,
+        18.0,
+        8.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        6.765,
+        16.8,
+        7.1
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_hang_r7",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "8deb641b-a61d-490e-b85b-416f299e23c4",
+      "from": [
+        5.85,
+        16.0,
+        8.6
+      ],
+      "to": [
+        6.95,
+        18.2,
+        10.8
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        6.4,
+        17.1,
+        9.7
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_flank_r2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "fb6946c1-84b2-4faa-9576-d051afb8719c",
+      "from": [
+        7.53,
+        15.6,
+        3.8
+      ],
+      "to": [
+        7.78,
+        16.3,
+        4.5
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        7.655,
+        15.95,
+        4.15
       ],
       "rotation": [
         0.0,
@@ -3979,23 +4683,463 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6b5c226a-2dd5-4967-9698-f95ef607c1bb",
+      "uuid": "1d1ad40b-d543-4d94-b55f-15d89fd7f5ea",
       "from": [
-        6.95,
-        14.6,
-        0.2
+        7.48,
+        14.55,
+        1.2
       ],
       "to": [
-        7.45,
-        15.2,
-        0.9
+        7.72,
+        15.1,
+        1.9
       ],
       "autouv": 0,
       "color": 7,
       "origin": [
-        7.2,
-        14.9,
-        0.55
+        7.6,
+        14.825,
+        1.55
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_rump_base",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "f30a8884-00c8-4710-81aa-1ab83966d559",
+      "from": [
+        -4.4,
+        17.2,
+        9.25
+      ],
+      "to": [
+        4.4,
+        18.8,
+        12.4
+      ],
+      "autouv": 0,
+      "color": 4,
+      "origin": [
+        0.0,
+        18.0,
+        10.825
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1,
+            17,
+            15,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_rump_shelf",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9d3bd693-5769-41f4-83ce-3d59186b72b6",
+      "from": [
+        -3.6,
+        18.83,
+        8.85
+      ],
+      "to": [
+        3.6,
+        19.65,
+        11.6
+      ],
+      "autouv": 0,
+      "color": 5,
+      "origin": [
+        0.0,
+        19.24,
+        10.225
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            17,
+            17,
+            31,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "moss_boss_rump",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "52f6d939-4902-4b38-a4e0-54c8b1ce9ae8",
+      "from": [
+        -1.8,
+        19.68,
+        7.8
+      ],
+      "to": [
+        1.8,
+        20.6,
+        10.6
+      ],
+      "autouv": 0,
+      "color": 6,
+      "origin": [
+        0.0,
+        20.14,
+        9.2
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            33,
+            17,
+            47,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_rump_1",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "d1b549e3-50a2-400a-a658-55b342748634",
+      "from": [
+        -0.5,
+        20.63,
+        9.0
+      ],
+      "to": [
+        0.3,
+        21.15,
+        9.8
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        -0.1,
+        20.89,
+        9.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49,
+            17,
+            63,
+            31
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "floret_rump_2",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "9477a2f9-e69b-41d8-9a1f-91aca6d80508",
+      "from": [
+        1.2,
+        19.68,
+        10.8
+      ],
+      "to": [
+        1.9,
+        20.2,
+        11.5
+      ],
+      "autouv": 0,
+      "color": 7,
+      "origin": [
+        1.55,
+        19.94,
+        11.15
       ],
       "rotation": [
         0.0,
@@ -4073,7 +5217,7 @@
         0.0,
         0.0
       ],
-      "uuid": "cd37667d-f112-448c-88b4-56e338229aa1",
+      "uuid": "8f3e6c33-138f-4ab8-bf5b-5803f2872d23",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -4082,18 +5226,18 @@
       "autouv": 0,
       "children": [
         {
-          "name": "body",
+          "name": "hips",
           "origin": [
             0.0,
-            13.0,
-            0.0
+            12.0,
+            8.0
           ],
           "rotation": [
             0.0,
             0.0,
             0.0
           ],
-          "uuid": "4eaa776c-d3e5-46fc-b809-d428b04abb9b",
+          "uuid": "0885ab51-d976-4d75-a2e2-335551cf6962",
           "export": true,
           "mirror_uv": false,
           "isOpen": false,
@@ -4101,65 +5245,19 @@
           "visibility": true,
           "autouv": 0,
           "children": [
-            "0cb8a9df-d3f3-44d8-a1aa-6fee3ac7c12b",
-            "f9912f10-47e1-497d-9d50-b1b9a6316fc6",
-            "4f66c416-d908-44ea-a72b-6bf4b109bf6c",
-            "e26c6de9-6ba5-43c1-b07e-3a402dffdf3c",
-            "8ffb4a37-5f86-4d4c-9d17-0cd1085a7cca",
-            "540b1f62-5912-4e95-ad26-aa7e7ea49e3e",
-            "f1ebaf6a-3430-4ebd-a77a-d1bec7b86b15",
-            "dba876c0-b6e3-4daf-8428-ded12ea0d1e9",
-            "7103ffa0-4038-4539-aff4-2bc3d3c0e112",
-            "5be0baf2-5e0b-4b22-a73a-12f8ae04a550",
-            "433dc897-029f-43e9-a130-e9c546d004d4",
-            "096f4adf-c6f9-4aea-ad44-163aeb75aa9a",
-            "1056a0fe-7626-4ff7-88f1-a57103123014",
-            "69b7a209-5295-4eb2-94a4-6935fc70a9c7",
-            "221305d6-e030-4a31-abb4-1c1947752fd0",
-            "73e90316-b663-4875-941c-3727b78eb810",
-            "7ecc727d-a750-42de-bb23-514421f295bd",
-            "4c288042-0e46-4800-ad30-d501e9b1d60f",
-            "90f47489-298e-480f-b5ae-b89aa125c729",
-            "23e251be-92c0-4b9e-bc57-2d5e3cebf8a5",
-            "3b01591c-25b9-4b35-818f-e1389aa450b2",
-            "d44ae95f-145f-42bf-9b58-a2a3d113119d",
-            "f4874661-44aa-4068-963c-7336f14feef0",
-            "7e9b4184-cf12-4ac8-8900-629fa123db1f",
-            "52b8887b-1435-4029-b322-e10fc9021d8e",
-            "e24b412f-ff20-4174-b3f2-5f507fc47d01",
-            "4e0d5cab-1ffe-4239-9998-ee5fb4e9da80",
-            "8218eb50-de2c-4aae-bdfe-a6399b8cf650",
-            "4d21b991-0cda-4569-952a-32e09508c794",
-            "aa9c97a0-a0cc-429f-938a-ab2a19ba2ad1",
-            "56ce79e2-9e26-47b3-b307-2ec4cdeecbff",
-            "f5449bdf-22f7-4317-88e6-ec8f6e3e6151",
-            "ec399199-b1b8-4fc7-b5ac-a3dcfe633b58",
-            "729d5043-bdad-4785-bece-99de2c1f03a2",
-            "7d729da8-75d2-4f05-b507-882d818b9844",
-            "40978f9f-98ad-4df3-9cdb-06a2520779c3",
-            "b9c7b5ee-5ff9-4e3c-98ba-45c1901f1bc2",
-            "5c84871d-ead0-40ab-bd7e-fe929e3948e7",
-            "4f596385-1b67-47e0-816a-0ece0e3e9f56",
-            "1c0383bf-baf8-4580-b491-42f017180ef9",
-            "6b82aef7-275d-45d6-a319-4d950b4c2c35",
-            "a83a4d33-f40f-4796-b9d5-e225887e49f3",
-            "c6871e79-6834-42b5-a160-786ada36d440",
-            "6eb45262-403e-4d2c-8d47-8aa27fee6e70",
-            "608b08c8-12fc-4d15-a45d-53f93594cf47",
-            "6b5c226a-2dd5-4967-9698-f95ef607c1bb",
             {
-              "name": "neck",
+              "name": "lumbar",
               "origin": [
                 0.0,
-                13.0,
-                -10.8
+                13.5,
+                2.0
               ],
               "rotation": [
                 0.0,
                 0.0,
                 0.0
               ],
-              "uuid": "c3d14e41-e947-413d-a4c6-683c0fdd53c9",
+              "uuid": "12b8f455-a2f7-4915-a1cf-9ede50fc81df",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
@@ -4168,18 +5266,18 @@
               "autouv": 0,
               "children": [
                 {
-                  "name": "head",
+                  "name": "thorax",
                   "origin": [
                     0.0,
-                    10.5,
-                    -16.0
+                    14.5,
+                    -6.0
                   ],
                   "rotation": [
                     0.0,
                     0.0,
                     0.0
                   ],
-                  "uuid": "ba69fe11-dd54-4f6a-b65b-8d7a769c42af",
+                  "uuid": "7be3d245-9ac6-4e07-9028-f7df7123993a",
                   "export": true,
                   "mirror_uv": false,
                   "isOpen": false,
@@ -4188,32 +5286,585 @@
                   "autouv": 0,
                   "children": [
                     {
-                      "name": "jaw",
+                      "name": "neck_base",
                       "origin": [
                         0.0,
-                        5.0,
-                        -18.5
+                        13.5,
+                        -10.8
                       ],
                       "rotation": [
                         0.0,
                         0.0,
                         0.0
                       ],
-                      "uuid": "e5b74bdf-68d1-4301-933d-54b39ef5fe0b",
+                      "uuid": "e636c1ee-68b3-42f1-82b0-5eb87c362301",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
                       "locked": false,
                       "visibility": true,
                       "autouv": 0,
-                      "children": []
+                      "children": [
+                        {
+                          "name": "neck_top",
+                          "origin": [
+                            0.0,
+                            11.5,
+                            -15.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "8599eab0-8d4d-49b0-9c76-f41b0acd8e70",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            {
+                              "name": "head",
+                              "origin": [
+                                0.0,
+                                10.0,
+                                -17.5
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "8111a16f-8c4a-444e-9085-a9a000f2d038",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                {
+                                  "name": "jaw",
+                                  "origin": [
+                                    0.0,
+                                    5.5,
+                                    -19.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "19678661-3c39-4128-a458-bab6a58a339e",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    {
+                                      "name": "moss_beard",
+                                      "origin": [
+                                        0.0,
+                                        3.8,
+                                        -26.0
+                                      ],
+                                      "rotation": [
+                                        0.0,
+                                        0.0,
+                                        0.0
+                                      ],
+                                      "uuid": "95bbb83e-dc8e-448f-88d1-0dfe62cb1faf",
+                                      "export": true,
+                                      "mirror_uv": false,
+                                      "isOpen": false,
+                                      "locked": false,
+                                      "visibility": true,
+                                      "autouv": 0,
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "ear_l",
+                                  "origin": [
+                                    -5.35,
+                                    12.8,
+                                    -16.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "3b194ff9-1ce2-4bef-8cc7-49bc22f05e4a",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                },
+                                {
+                                  "name": "ear_r",
+                                  "origin": [
+                                    5.35,
+                                    12.8,
+                                    -16.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "f4f37ef9-f326-4af5-bc18-c4c20ed384fb",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                },
+                                {
+                                  "name": "horn_l",
+                                  "origin": [
+                                    -5.0,
+                                    14.5,
+                                    -20.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "14762853-6e55-4a96-a8d8-a053e1ee2f1e",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                },
+                                {
+                                  "name": "horn_r",
+                                  "origin": [
+                                    5.0,
+                                    14.5,
+                                    -20.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "11b064e9-59df-4226-b91a-99f249084343",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "name": "neck_moss_dewlap",
+                          "origin": [
+                            0.0,
+                            6.5,
+                            -13.5
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "b28ebd08-27e1-45f5-b062-2cf188816618",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "name": "leg_fl_thigh",
+                      "origin": [
+                        -6.5,
+                        11.0,
+                        -7.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "b31a1e77-2eb1-4818-b6d3-6e1f4d2b074b",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        {
+                          "name": "leg_fl_knee",
+                          "origin": [
+                            -6.5,
+                            7.5,
+                            -7.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "e85e4fa4-164f-4f56-bd05-83e5ef5305c3",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            {
+                              "name": "leg_fl_shank",
+                              "origin": [
+                                -6.5,
+                                4.5,
+                                -7.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "b5e9f79c-5218-459f-bf9f-0f9baa936538",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                {
+                                  "name": "foot_fl",
+                                  "origin": [
+                                    -6.5,
+                                    1.8,
+                                    -7.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "2ce3428b-195b-4312-8bcd-e88ed488c417",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "leg_fr_thigh",
+                      "origin": [
+                        6.5,
+                        11.0,
+                        -7.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "e465a352-3c87-4679-9b78-8a258cf0dd48",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        {
+                          "name": "leg_fr_knee",
+                          "origin": [
+                            6.5,
+                            7.5,
+                            -7.0
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "51a2a032-27c6-45b4-a7bb-9b899bd2cdb1",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            {
+                              "name": "leg_fr_shank",
+                              "origin": [
+                                6.5,
+                                4.5,
+                                -7.0
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "8cdc44e7-98bc-46af-adfc-72be15601444",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                {
+                                  "name": "foot_fr",
+                                  "origin": [
+                                    6.5,
+                                    1.8,
+                                    -7.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "3e601e58-9ef4-43f0-ae7d-c9c5e1eccbd9",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "moss_hump_crest",
+                      "origin": [
+                        0.0,
+                        21.0,
+                        -3.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "1dbbfdf1-63cd-4e4e-b032-4fcbf4359d72",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "e323fbca-c1f8-458a-a44f-e4c52203af18",
+                        "28e2be15-7f8c-45f6-9604-a28f69088485",
+                        "da681abb-ae6c-4881-a08c-733061c2ec14",
+                        "78c2d0bd-2a3c-4992-9770-f4aa7b9954b0",
+                        "89984cd3-55aa-44c3-ae10-259bc375e82e",
+                        "1301f3ba-08ac-4f78-8737-62a52b47c7ea",
+                        "11293e11-44be-4a5d-9738-ee1c023b6b89",
+                        "ece55285-1959-4bd4-9d7d-b825db58f1c5",
+                        "9315cd87-ec7e-4f7c-ac11-76eb1da06256",
+                        "18b24aa1-5f8f-4c20-b31c-3645ec2f0c7a",
+                        "85f2671b-2de9-449e-aa35-9b9f498ebca5",
+                        "d6533682-80d6-405f-bb6c-2c094a13a642",
+                        "5af51a5b-63aa-42f9-8bc0-e0327e411a78"
+                      ]
+                    },
+                    {
+                      "name": "moss_flank_fl",
+                      "origin": [
+                        -6.0,
+                        16.5,
+                        -4.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "27908b25-5d38-455e-9ec9-a3d956dff26d",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "0aae0feb-3f3a-4732-9c99-760973d9dffe",
+                        "dfbed214-fa81-4835-9d3b-885d538c3b49",
+                        "46293761-aef9-43c5-a2a3-62443715d9b5",
+                        "8f765062-65c1-4a4d-9daa-e30afde120a8",
+                        "5db4648e-81a4-441d-a42b-3d6c7f5ab294",
+                        "7bbf8798-9296-4cac-b3bc-afb3a1de2a66",
+                        "5b19a315-ed16-43b5-8287-543dcd294d7a",
+                        "d628ae3f-0d35-4b18-bd8c-03de9ef603fe"
+                      ]
+                    },
+                    {
+                      "name": "moss_flank_fr",
+                      "origin": [
+                        6.0,
+                        16.5,
+                        -4.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "4e641175-e988-42ab-9ca4-47e382020dc5",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        "d20635fb-43fe-4d2f-b324-539d695981c2",
+                        "4bc65bfd-9fff-4b70-9c1e-b52447c844d5",
+                        "76540f48-3ad2-4d4f-b8d6-c7a73e4b196d",
+                        "1b814db3-217e-4266-aa9a-8a0a31e0458f",
+                        "9035373e-39f9-49a3-ba68-83c445945f72",
+                        "19abdfde-7b56-496e-be66-df1cf4464bed",
+                        "f37412e4-e2b7-4fd5-9602-39e9241131fb",
+                        "4b2d6e30-9855-4a30-bd69-630087371c52"
+                      ]
                     }
+                  ]
+                },
+                {
+                  "name": "moss_spine_mid",
+                  "origin": [
+                    0.0,
+                    18.5,
+                    3.0
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "b9cfe2a8-cf5d-4dc1-990a-ba3f2d6d1e2f",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "89c2154a-40f8-4b12-9da8-3206a850ddf2",
+                    "737807f0-a5c0-421c-8f8d-2d1e5daf3147",
+                    "491bdb95-d249-4164-90e7-5b557e6aa4bf",
+                    "1912e2c1-cbc4-4139-be32-504693a5b300",
+                    "22c07ae4-fca3-4efa-beb7-5de435a6cc4e",
+                    "cda61547-5bfe-467f-83da-57cd8d0ed3e0",
+                    "2202831c-f70f-45ae-a57c-0ab07b3402c6",
+                    "acd2c1f7-ae5c-47e6-8e85-b1212478ac90",
+                    "a875c42b-ef4f-43ac-8810-00d1d9b4c60d"
+                  ]
+                },
+                {
+                  "name": "moss_flank_bl",
+                  "origin": [
+                    -6.0,
+                    16.0,
+                    4.0
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "1b403d67-db18-4844-864e-25984e3b13fb",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "57a45779-7c42-46f8-b596-0baf4860f3b4",
+                    "19e9b2f8-2fa3-484a-b04b-b6784c017108",
+                    "7ad7e810-e8c8-4f87-bcf8-ec09a16bf5ee",
+                    "93ae23c3-70ab-493f-9a11-ea1a612e47b7",
+                    "d63c81bf-bb74-43a5-83bf-81331cfb814f",
+                    "36233edf-d87d-435c-84cc-72f77f285a81",
+                    "14874763-ea35-4a91-aaa5-a4b5f2266567",
+                    "f279f3ed-bda8-4679-b8dd-2fb376eabb9d"
+                  ]
+                },
+                {
+                  "name": "moss_flank_br",
+                  "origin": [
+                    6.0,
+                    16.0,
+                    4.0
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "ab902952-0ea9-4c31-a363-78df397f96c5",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    "031928a2-a69e-4050-bcc4-305008200c3d",
+                    "15f075c9-5b43-44b1-a405-6db274c7cd23",
+                    "9702351d-d2bb-4cb2-a28c-51e26d5c9e77",
+                    "92fe5e37-33a2-4d64-a25e-c630dc024700",
+                    "bd2be153-b9b7-4fb5-af09-eb1977747838",
+                    "8deb641b-a61d-490e-b85b-416f299e23c4",
+                    "fb6946c1-84b2-4faa-9576-d051afb8719c",
+                    "1d1ad40b-d543-4d94-b55f-15d89fd7f5ea"
                   ]
                 }
               ]
             },
             {
-              "name": "tail",
+              "name": "tail_1",
               "origin": [
                 0.0,
                 13.5,
@@ -4224,128 +5875,86 @@
                 0.0,
                 0.0
               ],
-              "uuid": "ef8ffcaa-a6a6-4fd4-9e41-e8d97fa2f3a7",
+              "uuid": "62ab766d-1867-49df-8b22-cd0d303c3c85",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
               "locked": false,
               "visibility": true,
               "autouv": 0,
-              "children": []
-            }
-          ]
-        },
-        {
-          "name": "leg_fl",
-          "origin": [
-            -6.5,
-            9.0,
-            -7.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "uuid": "479655e7-4e68-4a34-8899-4657913994a6",
-          "export": true,
-          "mirror_uv": false,
-          "isOpen": false,
-          "locked": false,
-          "visibility": true,
-          "autouv": 0,
-          "children": [
+              "children": [
+                {
+                  "name": "tail_2",
+                  "origin": [
+                    0.0,
+                    11.0,
+                    12.8
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "4182fab0-fdd8-4a49-8fa2-750fb9ec409c",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    {
+                      "name": "tail_3",
+                      "origin": [
+                        0.0,
+                        8.5,
+                        13.4
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "89e074a1-260f-42d6-a9a8-4f96b0374099",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        {
+                          "name": "tail_moss",
+                          "origin": [
+                            0.0,
+                            6.0,
+                            13.8
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "8db227ad-0614-42d2-9f2f-9ed7b56d8477",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
             {
-              "name": "foot_fl",
+              "name": "leg_bl_thigh",
               "origin": [
                 -6.5,
-                4.5,
-                -7.0
-              ],
-              "rotation": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "uuid": "6009280f-1236-45df-9c75-d6d00332eddd",
-              "export": true,
-              "mirror_uv": false,
-              "isOpen": false,
-              "locked": false,
-              "visibility": true,
-              "autouv": 0,
-              "children": []
-            }
-          ]
-        },
-        {
-          "name": "leg_fr",
-          "origin": [
-            6.5,
-            9.0,
-            -7.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "uuid": "e2a49afd-f252-491c-9fbb-3739c1671cdd",
-          "export": true,
-          "mirror_uv": false,
-          "isOpen": false,
-          "locked": false,
-          "visibility": true,
-          "autouv": 0,
-          "children": [
-            {
-              "name": "foot_fr",
-              "origin": [
-                6.5,
-                4.5,
-                -7.0
-              ],
-              "rotation": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "uuid": "3f4ab17f-3dac-40dd-ad60-cd02bc4ad31d",
-              "export": true,
-              "mirror_uv": false,
-              "isOpen": false,
-              "locked": false,
-              "visibility": true,
-              "autouv": 0,
-              "children": []
-            }
-          ]
-        },
-        {
-          "name": "leg_bl",
-          "origin": [
-            -6.5,
-            9.5,
-            7.5
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "uuid": "9da7e1a9-94f2-431a-bf2b-89b003c0f00a",
-          "export": true,
-          "mirror_uv": false,
-          "isOpen": false,
-          "locked": false,
-          "visibility": true,
-          "autouv": 0,
-          "children": [
-            {
-              "name": "foot_bl",
-              "origin": [
-                -6.5,
-                4.5,
+                11.5,
                 7.5
               ],
               "rotation": [
@@ -4353,42 +5962,86 @@
                 0.0,
                 0.0
               ],
-              "uuid": "b038c212-470e-4925-bda1-ecf77fa34965",
+              "uuid": "e2c53025-2879-498f-b425-389eb02f9454",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
               "locked": false,
               "visibility": true,
               "autouv": 0,
-              "children": []
-            }
-          ]
-        },
-        {
-          "name": "leg_br",
-          "origin": [
-            6.5,
-            9.5,
-            7.5
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "uuid": "d3a079a2-1350-49f8-bdf7-420d11faa6d3",
-          "export": true,
-          "mirror_uv": false,
-          "isOpen": false,
-          "locked": false,
-          "visibility": true,
-          "autouv": 0,
-          "children": [
+              "children": [
+                {
+                  "name": "leg_bl_hock",
+                  "origin": [
+                    -6.5,
+                    8.0,
+                    7.5
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "ab45e3c5-f2bf-4097-9112-e0102fbca30d",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    {
+                      "name": "leg_bl_shank",
+                      "origin": [
+                        -6.5,
+                        4.5,
+                        7.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "a1354f80-8cad-49f4-b815-2b9c1ecdd64f",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        {
+                          "name": "foot_bl",
+                          "origin": [
+                            -6.5,
+                            1.8,
+                            7.5
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "ce9925fa-e873-4f31-93be-b4be4b8a752b",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
             {
-              "name": "foot_br",
+              "name": "leg_br_thigh",
               "origin": [
                 6.5,
-                4.5,
+                11.5,
                 7.5
               ],
               "rotation": [
@@ -4396,14 +6049,107 @@
                 0.0,
                 0.0
               ],
-              "uuid": "566d929d-6d12-4885-a41f-5692fc4d3768",
+              "uuid": "7c416d34-194c-4406-ac0d-296e260b761e",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
               "locked": false,
               "visibility": true,
               "autouv": 0,
-              "children": []
+              "children": [
+                {
+                  "name": "leg_br_hock",
+                  "origin": [
+                    6.5,
+                    8.0,
+                    7.5
+                  ],
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "uuid": "b5a2a068-3176-4643-8e68-b737fa24839c",
+                  "export": true,
+                  "mirror_uv": false,
+                  "isOpen": false,
+                  "locked": false,
+                  "visibility": true,
+                  "autouv": 0,
+                  "children": [
+                    {
+                      "name": "leg_br_shank",
+                      "origin": [
+                        6.5,
+                        4.5,
+                        7.5
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "uuid": "1db6baab-6c7c-42ed-928f-c23cc174c55b",
+                      "export": true,
+                      "mirror_uv": false,
+                      "isOpen": false,
+                      "locked": false,
+                      "visibility": true,
+                      "autouv": 0,
+                      "children": [
+                        {
+                          "name": "foot_br",
+                          "origin": [
+                            6.5,
+                            1.8,
+                            7.5
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "2ff18136-8020-4a5d-a072-aed2ea791756",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "moss_rump_crest",
+              "origin": [
+                0.0,
+                17.5,
+                8.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "uuid": "f95383c5-386b-4878-9c16-0ce834c022f3",
+              "export": true,
+              "mirror_uv": false,
+              "isOpen": false,
+              "locked": false,
+              "visibility": true,
+              "autouv": 0,
+              "children": [
+                "f30a8884-00c8-4710-81aa-1ab83966d559",
+                "9d3bd693-5769-41f4-83ce-3d59186b72b6",
+                "52f6d939-4902-4b38-a4e0-54c8b1ce9ae8",
+                "d1b549e3-50a2-400a-a658-55b342748634",
+                "9477a2f9-e69b-41d8-9a1f-91aca6d80508"
+              ]
             }
           ]
         }
@@ -4422,7 +6168,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": false,
-      "uuid": "c6f8d7da-aa37-4024-b01c-b3376d60935a",
+      "uuid": "a00fd8fc-d6ee-4561-8b96-7832ddde5ef2",
       "source": "data:image/png;base64,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"
     }
   ]

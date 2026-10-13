@@ -3,23 +3,20 @@
 
 设计理念与世界观（正典依据与 Round 2 深度打磨）：
 - 任务卡：末世生物批次 #4 can_bei_tuo 残背驮兽（§七 大迁徙）。
-- 外形要点与 Round 2 意见全面落实：
-  1. 躯干：高耸肩峰驼背 + 圆滚桶状身躯，多层逐级收边方块做出弧面，侧腹增加皮肤褶皱横纹；
-  2. 头与颈：大而低垂的重头，宽扁鼻吻与立体鼻孔，两侧向前微弯的短粗双角，小眼睛深陷眼窝，下巴与颈下挂着灰绿垂藓须；
-  3. 噬灵藓：多层阶梯叠块起伏堆叠（底层基底、中层驼峰主苔与腰脊厚阶、顶层苍老藓瘤），边缘向下垂挂须状藓舌，点缀少量白色寄生小花点；
-  4. 腿：粗短柱状但有粗大膝关节与飞节，每蹄明确分 2 瓣偶蹄，腿侧附生少量藓斑；
-  5. 尾：短粗垂尾末端带灰绿藓穗与毛簇。
-- 体素精度与部件数：
-  采用 0.5px 级精度细化阶梯过渡，部件数从 Round 1 的 48 块翻近三倍达到 135+ 块；
-  全模型 0 项共面冲突。
+- 外形要点与 Round 2 意见全面落实（0.5px 精度，部件数比 Round 1 翻四倍以上）：
+  1. 躯干：高耸肩峰驼背 + 圆滚桶状身躯，多层逐级收边方块做出弧面，侧腹增加 4 道皮肤褶皱横纹；
+  2. 头与颈：大而低垂的重头，宽扁鼻吻与外扩立体鼻孔，两侧向前弯的 4 段式短粗双角，小眼深陷眼窝带下眼袋与粗眉骨，下巴与颈下挂着分缕灰绿垂藓须；
+  3. 噬灵藓：背上三层高低错落的藓块，边缘向下垂成 16 缕参差须状藓舌，点缀 18 处白色寄生小花点，分挂在 7 根独立藓骨上走路能晃；
+  4. 腿：粗短柱状，膝部与后肢飞节粗大外凸，每蹄明确分两瓣偶蹄并带前倾蹄尖与后悬蹄，腿侧挂少量藓斑与垂须；
+  5. 尾：4 节可摆动短尾，末端带蓬松噬灵藓穗与白花。
 - 骨骼架构：
-  复用 dainu_lion / stitched_beast / fauna_v2 标准四足骨架规范：
-  地面 y=0，头朝 -Z，尾朝 +Z。
-  骨骼层级：root -> body (含 neck->head->jaw, tail)；四足 leg_fl/foot_fl, leg_fr/foot_fr, leg_bl/foot_bl, leg_br/foot_br。
+  满足四足兽 >= 32 根硬性下限，共定义 41 根骨骼（含 40 根带几何独立可动关节 + 1 root）：
+  脊柱 3 节（hips, lumbar, thorax）、颈 2 节（neck_base, neck_top）+ 颈垂藓 1、
+  头 1、下颌 1、下巴垂藓 1、双耳 2、双角 2、尾 4 节、四腿各 4 段（共 16）、背部与侧肋噬灵藓动骨 7 根。
 
 用法：
-    python3 modelScript/creatures/can_bei_tuo/gen_can_bei_tuo.py             # 生成完整模型与审阅图
-    python3 modelScript/creatures/can_bei_tuo/gen_can_bei_tuo.py --part head # 单部件预览
+    python3 modelScript/creatures/can_bei_tuo/gen_can_bei_tuo.py             # 生成分部件预览、完整模型与审阅图
+    python3 modelScript/creatures/can_bei_tuo/gen_can_bei_tuo.py --part head # 单部件模型生成
     python3 modelScript/creatures/can_bei_tuo/gen_can_bei_tuo.py --self-test # 运行门禁差分自证
 """
 
@@ -40,6 +37,7 @@ REPO = Path(__file__).resolve().parents[3]
 CREATURE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = REPO / "modelScript" / "models"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/can_bei_tuo")
+PARTS_DIR = REVIEW_DIR / "parts"
 
 # 引入渲染工具与中文字体支持
 sys.path.insert(0, str(REPO / "modelScript" / "core"))
@@ -227,276 +225,406 @@ class CreatureRig:
 
 
 # ──────────────────────────────────────────────────────────────── 骨骼树结构定义
+# 41 根骨骼定义（含 40 根带几何可动关节 + 1 root，满足四足兽 >= 32 根硬性下限）
+BONES_DEF: list[tuple[str, str | None, tuple[float, float, float], str]] = [
+    # (name, parent, pivot, description)
+    ("root", None, (0.0, 0.0, 0.0), "世界根节点"),
+
+    # 脊柱与主干链 (hips -> lumbar -> thorax -> neck -> head -> jaw)
+    ("hips", "root", (0.0, 12.0, 8.0), "骨盆/后臀脊柱 (脊柱第3节)"),
+    ("lumbar", "hips", (0.0, 13.5, 2.0), "腰脊柱中段 (脊柱第2节)"),
+    ("thorax", "lumbar", (0.0, 14.5, -6.0), "前胸胸廓与肩峰根 (脊柱第1节)"),
+
+    # 颈部 (2 节) 与头部器官
+    ("neck_base", "thorax", (0.0, 13.5, -10.8), "颈根下段 (颈第1节)"),
+    ("neck_top", "neck_base", (0.0, 11.5, -15.0), "颈上段 (颈第2节)"),
+    ("neck_moss_dewlap", "neck_base", (0.0, 6.5, -13.5), "颈喉部悬挂垂藓裙须"),
+    ("head", "neck_top", (0.0, 10.0, -17.5), "硕大低垂头颅骨"),
+    ("jaw", "head", (0.0, 5.5, -19.5), "张合下颌"),
+    ("moss_beard", "jaw", (0.0, 3.8, -26.0), "下巴底悬挂垂藓须"),
+    ("ear_l", "head", (-5.35, 12.8, -16.5), "左耳可动关节"),
+    ("ear_r", "head", (5.35, 12.8, -16.5), "右耳可动关节"),
+    ("horn_l", "head", (-5.0, 14.5, -20.5), "左前弯短粗角"),
+    ("horn_r", "head", (5.0, 14.5, -20.5), "右前弯短粗角"),
+
+    # 多节尾链 (4 节)
+    ("tail_1", "hips", (0.0, 13.5, 12.0), "尾节 1 (尾根)"),
+    ("tail_2", "tail_1", (0.0, 11.0, 12.8), "尾节 2 (尾中)"),
+    ("tail_3", "tail_2", (0.0, 8.5, 13.4), "尾节 3 (尾梢)"),
+    ("tail_moss", "tail_3", (0.0, 6.0, 13.8), "尾末藓穗毛簇"),
+
+    # 前左肢 (4 段)
+    ("leg_fl_thigh", "thorax", (-6.5, 11.0, -7.0), "前左肩胛大腿"),
+    ("leg_fl_knee", "leg_fl_thigh", (-6.5, 7.5, -7.0), "前左粗大膝关节"),
+    ("leg_fl_shank", "leg_fl_knee", (-6.5, 4.5, -7.0), "前左腕管小腿"),
+    ("foot_fl", "leg_fl_shank", (-6.5, 1.8, -7.0), "前左二瓣偶蹄掌"),
+
+    # 前右肢 (4 段)
+    ("leg_fr_thigh", "thorax", (6.5, 11.0, -7.0), "前右肩胛大腿"),
+    ("leg_fr_knee", "leg_fr_thigh", (6.5, 7.5, -7.0), "前右粗大膝关节"),
+    ("leg_fr_shank", "leg_fr_knee", (6.5, 4.5, -7.0), "前右腕管小腿"),
+    ("foot_fr", "leg_fr_shank", (6.5, 1.8, -7.0), "前右二瓣偶蹄掌"),
+
+    # 后左肢 (4 段)
+    ("leg_bl_thigh", "hips", (-6.5, 11.5, 7.5), "后左股部大腿"),
+    ("leg_bl_hock", "leg_bl_thigh", (-6.5, 8.0, 7.5), "后左粗大飞节关节"),
+    ("leg_bl_shank", "leg_bl_hock", (-6.5, 4.5, 7.5), "后左跖部小腿"),
+    ("foot_bl", "leg_bl_shank", (-6.5, 1.8, 7.5), "后左二瓣偶蹄掌"),
+
+    # 后右肢 (4 段)
+    ("leg_br_thigh", "hips", (6.5, 11.5, 7.5), "后右股部大腿"),
+    ("leg_br_hock", "leg_br_thigh", (6.5, 8.0, 7.5), "后右粗大飞节关节"),
+    ("leg_br_shank", "leg_br_hock", (6.5, 4.5, 7.5), "后右跖部小腿"),
+    ("foot_br", "leg_br_shank", (6.5, 1.8, 7.5), "后右二瓣偶蹄掌"),
+
+    # 背脊与侧悬噬灵藓动骨 (7 根，行走/呼吸时晃动)
+    ("moss_hump_crest", "thorax", (0.0, 21.0, -3.0), "驼峰顶起伏主藓瘤"),
+    ("moss_flank_fl", "thorax", (-6.0, 16.5, -4.0), "前左侧垂挂藓裙"),
+    ("moss_flank_fr", "thorax", (6.0, 16.5, -4.0), "前右侧垂挂藓裙"),
+    ("moss_spine_mid", "lumbar", (0.0, 18.5, 3.0), "腰脊背阶梯叠苔"),
+    ("moss_flank_bl", "lumbar", (-6.0, 16.0, 4.0), "后左侧垂挂藓裙"),
+    ("moss_flank_br", "lumbar", (6.0, 16.0, 4.0), "后右侧垂挂藓裙"),
+    ("moss_rump_crest", "hips", (0.0, 17.5, 8.0), "后臀背起伏藓台"),
+]
+
+
 def setup_bones(rig: CreatureRig) -> None:
-    """定义残背驮兽标准四足骨架层级（复用 dainu_lion / stitched_beast 规范）。"""
-    rig.bone("root", (0.0, 0.0, 0.0), parent=None)
-
-    # 躯干（宽厚驼峰躯干，pivot 在背部中央）
-    rig.bone("body", (0.0, 13.0, 0.0), parent="root")
-
-    # 粗短垂颈与大重头
-    rig.bone("neck", (0.0, 13.0, -10.8), parent="body")
-    rig.bone("head", (0.0, 10.5, -16.0), parent="neck")
-    rig.bone("jaw", (0.0, 5.0, -18.5), parent="head")
-
-    # 短尾
-    rig.bone("tail", (0.0, 13.5, 12.0), parent="body")
-
-    # 四根粗柱短腿
-    # 前左肢
-    rig.bone("leg_fl", (-6.5, 9.0, -7.0), parent="root")
-    rig.bone("foot_fl", (-6.5, 4.5, -7.0), parent="leg_fl")
-
-    # 前右肢
-    rig.bone("leg_fr", (6.5, 9.0, -7.0), parent="root")
-    rig.bone("foot_fr", (6.5, 4.5, -7.0), parent="leg_fr")
-
-    # 后左肢
-    rig.bone("leg_bl", (-6.5, 9.5, 7.5), parent="root")
-    rig.bone("foot_bl", (-6.5, 4.5, 7.5), parent="leg_bl")
-
-    # 后右肢
-    rig.bone("leg_br", (6.5, 9.5, 7.5), parent="root")
-    rig.bone("foot_br", (6.5, 4.5, 7.5), parent="leg_br")
+    """定义残背驮兽标准四足骨架层级（41 根骨骼）。"""
+    for bname, p, piv, _ in BONES_DEF:
+        rig.bone(bname, piv, parent=p)
 
 
 # ──────────────────────────────────────────────────────────────── 分部件建模
 def part_body(rig: CreatureRig) -> None:
-    """1. 躯干部分：高耸肩峰驼背 + 圆滚桶状身躯，多层逐级收边方块做出弧面，侧腹增加皮肤褶皱横纹。"""
-    # 核心下层腹躯 (底层微缩)
-    rig.cube("body", "torso_lower", (-6.8, 6.15, -9.0), (6.8, 10.35, 11.0), mat="hide_base")
-    # 核心中层肋躯 (最宽处，圆滚桶状)
-    rig.cube("body", "torso_mid", (-7.6, 10.38, -9.6), (7.6, 14.5, 11.5), mat="hide_base")
-    # 核心上层背躯
-    rig.cube("body", "torso_upper", (-7.0, 14.45, -9.2), (7.0, 16.8, 11.2), mat="hide_base")
-    # 下腹微下坠厚垂板（低矮底盘）
-    rig.cube("body", "belly_sag", (-5.6, 5.2, -5.5), (5.6, 6.10, 7.5), mat="hide_belly")
-    # 前胸厚拱肌肉面
-    rig.cube("body", "chest_mass", (-6.5, 7.5, -11.8), (6.5, 15.8, -9.65), mat="hide_dark")
-    # 臀后圆弧厚臀
-    rig.cube("body", "rump_mass", (-6.5, 7.8, 11.55), (6.5, 15.6, 13.2), mat="hide_dark")
+    """1. 躯干部分：高耸肩峰驼背 + 圆滚桶状身体，多层 0.5px 逐级收边做出弧面，侧面皮肤褶皱横纹。"""
+    # ── hips 骨骼（骨盆与圆润后臀弧面）──
+    rig.cube("hips", "torso_lower", (-6.8, 6.15, -9.0), (6.8, 9.42, 11.0), mat="hide_base")
+    rig.cube("hips", "torso_lower_bevel", (-6.2, 5.65, -8.2), (6.2, 6.12, 10.2), mat="hide_belly")
+    rig.cube("hips", "rump_bevel_mid", (-6.7, 8.4, 11.05), (6.7, 15.0, 11.52), mat="hide_base")
+    rig.cube("hips", "rump_mass", (-6.3, 7.8, 11.55), (6.3, 15.6, 13.15), mat="hide_dark")
+    rig.cube("hips", "rump_cap_back", (-5.5, 8.8, 13.20), (5.5, 14.6, 13.95), mat="hide_dark")
+    rig.cube("hips", "rump_top_slope", (-5.7, 15.65, 11.25), (5.7, 16.55, 12.75), mat="hide_dark")
+    rig.cube("hips", "flank_fold_rear_l1", (-7.35, 10.2, 8.4), (-6.85, 13.6, 10.4), mat="skin_fold")
+    rig.cube("hips", "flank_fold_rear_r1", (6.85, 10.2, 8.4), (7.35, 13.6, 10.4), mat="skin_fold")
+    rig.cube("hips", "flank_fold_rear_l2", (-7.15, 8.8, 10.5), (-6.65, 12.2, 11.45), mat="skin_fold")
+    rig.cube("hips", "flank_fold_rear_r2", (6.65, 8.8, 10.5), (7.15, 12.2, 11.45), mat="skin_fold")
 
-    # 高耸肩峰驼背 (Withers Hump - 前高后低陡峭拱起)
-    rig.cube("body", "hump_base", (-6.0, 16.75, -8.8), (6.0, 19.2, 1.65), mat="hide_dark")
-    rig.cube("body", "hump_peak", (-5.0, 19.15, -7.5), (5.0, 21.6, -0.5), mat="hide_dark")
-    rig.cube("body", "hump_crest", (-3.8, 21.55, -6.0), (3.8, 22.8, -2.0), mat="hide_dark")
-    # 腰臀背中脊
-    rig.cube("body", "spine_ridge", (-4.6, 16.78, 1.75), (4.6, 18.2, 11.5), mat="hide_dark")
+    # ── lumbar 骨骼（圆滚桶状中段腰腹 + 0.5px 弧面过渡 + 4 道侧腹横向褶皱）──
+    rig.cube("lumbar", "torso_mid_lower_bevel", (-7.2, 9.45, -9.3), (7.2, 10.35, 11.25), mat="hide_base")
+    rig.cube("lumbar", "torso_mid", (-7.6, 10.38, -9.6), (7.6, 14.5, 11.5), mat="hide_base")
+    rig.cube("lumbar", "torso_mid_upper_bevel", (-7.3, 14.53, -9.4), (7.3, 15.45, 11.35), mat="hide_base")
+    rig.cube("lumbar", "belly_sag", (-5.6, 5.10, -5.5), (5.6, 5.62, 7.5), mat="hide_belly")
+    rig.cube("lumbar", "belly_keel", (-4.4, 4.60, -3.5), (4.4, 5.07, 5.5), mat="hide_belly")
+    rig.cube("lumbar", "spine_ridge", (-4.6, 16.82, 1.75), (4.6, 18.2, 11.5), mat="hide_dark")
 
-    # 侧面皮肤褶皱横纹 (skin folds - 左右两侧各 3 条深浅相间横向凸纹)
-    # 左侧横纹
-    rig.cube("body", "skin_fold_l1", (-7.95, 8.5, -4.5), (-7.55, 9.4, 2.5), mat="skin_fold")
-    rig.cube("body", "skin_fold_l2", (-8.05, 10.55, -6.5), (-7.55, 11.5, 5.5), mat="skin_fold")
-    rig.cube("body", "skin_fold_l3", (-7.95, 12.6, -5.0), (-7.55, 13.5, 4.0), mat="skin_fold")
-    # 右侧横纹
-    rig.cube("body", "skin_fold_r1", (7.55, 8.5, -4.5), (7.95, 9.4, 2.5), mat="skin_fold")
-    rig.cube("body", "skin_fold_r2", (7.55, 10.55, -6.5), (8.05, 11.5, 5.5), mat="skin_fold")
-    rig.cube("body", "skin_fold_r3", (7.55, 12.6, -5.0), (7.95, 13.5, 4.0), mat="skin_fold")
+    # 侧面皮肤褶皱横纹 (左右各 4 条高低错落横向皮褶)
+    rig.cube("lumbar", "skin_fold_l1", (-7.95, 8.5, -4.5), (-7.25, 9.3, 2.5), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_l2", (-8.10, 10.55, -6.5), (-7.63, 11.35, 5.5), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_l3", (-8.00, 12.05, -5.8), (-7.63, 12.80, 4.8), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_l4", (-7.90, 13.50, -5.0), (-7.63, 14.25, 4.0), mat="skin_fold")
 
-    # 前肩与后臀肌肉横向厚褶
-    rig.cube("body", "shoulder_fold_l", (-7.5, 11.0, -9.0), (-6.95, 14.0, -7.5), mat="skin_fold")
-    rig.cube("body", "shoulder_fold_r", (6.95, 11.0, -9.0), (7.5, 14.0, -7.5), mat="skin_fold")
-    rig.cube("body", "flank_fold_rear_l", (-7.3, 10.5, 8.5), (-6.85, 13.5, 10.5), mat="skin_fold")
-    rig.cube("body", "flank_fold_rear_r", (6.85, 10.5, 8.5), (7.3, 13.5, 10.5), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_r1", (7.25, 8.5, -4.5), (7.95, 9.3, 2.5), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_r2", (7.63, 10.55, -6.5), (8.10, 11.35, 5.5), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_r3", (7.63, 12.05, -5.8), (8.00, 12.80, 4.8), mat="skin_fold")
+    rig.cube("lumbar", "skin_fold_r4", (7.63, 13.50, -5.0), (7.90, 14.25, 4.0), mat="skin_fold")
+
+    # ── thorax 骨骼（前胸弧面与高耸肩峰驼背 4 层阶梯收边）──
+    rig.cube("thorax", "torso_upper", (-7.0, 15.48, -9.2), (7.0, 16.8, 11.2), mat="hide_base")
+    rig.cube("thorax", "chest_bevel", (-6.8, 7.2, -10.6), (6.8, 15.9, -9.63), mat="hide_base")
+    rig.cube("thorax", "chest_mass", (-6.3, 7.6, -11.8), (6.3, 15.6, -10.63), mat="hide_dark")
+    rig.cube("thorax", "chest_prow", (-5.6, 8.2, -12.5), (5.6, 14.6, -11.83), mat="hide_dark")
+    rig.cube("thorax", "sternum_plate", (-4.6, 6.2, -11.2), (4.6, 7.55, -8.5), mat="hide_belly")
+
+    rig.cube("thorax", "shoulder_fold_l1", (-7.55, 10.8, -9.0), (-7.05, 14.2, -7.6), mat="skin_fold")
+    rig.cube("thorax", "shoulder_fold_r1", (7.05, 10.8, -9.0), (7.55, 14.2, -7.6), mat="skin_fold")
+    rig.cube("thorax", "shoulder_fold_l2", (-7.40, 9.2, -10.2), (-6.85, 12.6, -9.1), mat="skin_fold")
+    rig.cube("thorax", "shoulder_fold_r2", (6.85, 9.2, -10.2), (7.40, 12.6, -9.1), mat="skin_fold")
+
+    # 高耸肩峰驼背 (Withers Hump - 4 层 0.5px 阶梯收边隆起)
+    rig.cube("thorax", "hump_base", (-6.0, 16.83, -8.8), (6.0, 18.8, 1.65), mat="hide_dark")
+    rig.cube("thorax", "hump_mid", (-5.4, 18.83, -8.2), (5.4, 20.4, 0.6), mat="hide_dark")
+    rig.cube("thorax", "hump_peak", (-4.7, 20.43, -7.5), (4.7, 21.8, -0.5), mat="hide_dark")
+    rig.cube("thorax", "hump_crest", (-3.8, 21.83, -6.2), (3.8, 22.8, -1.8), mat="hide_dark")
 
 
 def part_neck(rig: CreatureRig) -> None:
-    """2. 颈部与垂悬颈藓：粗壮短颈，下倾支撑重头，颈下喉部悬挂垂藓须。"""
-    # 颈主体向前下倾斜
-    rig.cube("neck", "neck_core", (-5.2, 9.0, -16.2), (5.2, 15.6, -10.8), mat="hide_base")
-    # 颈上沿厚鬃肉垫
-    rig.cube("neck", "neck_crest", (-4.2, 15.55, -15.5), (4.2, 17.8, -11.0), mat="hide_dark")
-    # 喉部下垂厚皮
-    rig.cube("neck", "neck_throat", (-4.4, 7.4, -15.0), (4.4, 9.15, -11.5), mat="hide_belly")
+    """2. 颈部与颈下垂藓：粗短垂颈分 2 节（neck_base, neck_top），喉底垂悬多缕藓须（neck_moss_dewlap）。"""
+    # ── neck_base（颈根下段）──
+    rig.cube("neck_base", "neck_core_rear", (-5.2, 8.8, -14.2), (5.2, 15.4, -10.82), mat="hide_base")
+    rig.cube("neck_base", "neck_throat_rear", (-4.4, 7.2, -14.0), (4.4, 8.77, -11.23), mat="hide_belly")
+    rig.cube("neck_base", "neck_fold_l", (-5.55, 9.6, -13.8), (-5.23, 14.4, -12.2), mat="skin_fold")
+    rig.cube("neck_base", "neck_fold_r", (5.23, 9.6, -13.8), (5.55, 14.4, -12.2), mat="skin_fold")
 
-    # 颈下喉部垂悬藓须 (moss_dewlap - 随重头下倾自然向下悬垂)
-    rig.cube("neck", "neck_moss_beard_c", (-1.2, 4.6, -14.2), (1.2, 7.42, -12.4), mat="moss_layer2")
-    rig.cube("neck", "neck_moss_beard_l", (-2.8, 5.6, -13.8), (-1.15, 7.50, -12.0), mat="moss_layer1")
-    rig.cube("neck", "neck_moss_beard_r", (1.15, 5.6, -13.8), (2.8, 7.50, -12.0), mat="moss_layer1")
-    rig.cube("neck", "neck_moss_tuft_low", (-0.7, 3.8, -13.6), (0.7, 4.7, -12.8), mat="moss_crust")
+    # ── neck_top（颈上段前倾）──
+    rig.cube("neck_top", "neck_core_front", (-4.9, 8.2, -16.8), (4.9, 14.8, -14.23), mat="hide_base")
+    rig.cube("neck_top", "neck_crest", (-4.2, 15.43, -15.8), (4.2, 17.4, -11.9), mat="hide_dark")
+    rig.cube("neck_top", "neck_throat_front", (-4.0, 6.8, -16.4), (4.0, 8.17, -14.05), mat="hide_belly")
+
+    # ── neck_moss_dewlap（喉底悬挂垂藓须，随步伐晃动）──
+    rig.cube("neck_moss_dewlap", "neck_moss_base", (-3.2, 6.2, -15.2), (3.2, 7.17, -11.8), mat="moss_layer1")
+    rig.cube("neck_moss_dewlap", "neck_moss_beard_c", (-1.3, 4.2, -14.4), (1.3, 6.17, -12.4), mat="moss_layer2")
+    rig.cube("neck_moss_dewlap", "neck_moss_beard_l", (-2.8, 4.8, -13.9), (-1.35, 6.17, -12.1), mat="moss_layer1")
+    rig.cube("neck_moss_dewlap", "neck_moss_beard_r", (1.35, 4.8, -13.9), (2.8, 6.17, -12.1), mat="moss_layer1")
+    rig.cube("neck_moss_dewlap", "neck_moss_strand_l", (-2.3, 3.6, -13.5), (-1.4, 4.77, -12.5), mat="moss_crust")
+    rig.cube("neck_moss_dewlap", "neck_moss_strand_r", (1.4, 3.6, -13.5), (2.3, 4.77, -12.5), mat="moss_crust")
+    rig.cube("neck_moss_dewlap", "neck_moss_tuft_low", (-0.8, 2.9, -13.8), (0.8, 4.17, -12.8), mat="moss_crust")
+    rig.cube("neck_moss_dewlap", "neck_moss_floret", (-0.35, 3.3, -14.55), (0.35, 3.9, -13.95), mat="moss_flower")
 
 
 def part_head(rig: CreatureRig) -> None:
-    """3. 头部、角与下颌：头部显著做大，大而低垂的重头，宽扁吻部与立体鼻孔，两侧向前弯短粗角，下巴挂垂藓须。"""
-    # 沉重大脑颅
+    """3. 头部、双耳、前弯双角与下巴胡藓：大而低垂，宽扁吻部与立体鼻孔，4 段前弯短粗角，深陷小眼。"""
+    # ── head 骨骼（硕大低垂脑颅与宽扁鼻吻）──
     rig.cube("head", "head_cranium", (-5.4, 7.6, -23.5), (5.4, 14.5, -16.0), mat="hide_base")
-    # 平阔前额斜面
-    rig.cube("head", "head_forehead", (-4.8, 9.5, -21.5), (4.8, 15.2, -17.0), mat="hide_dark")
+    rig.cube("head", "head_crown", (-4.6, 14.53, -22.2), (4.6, 15.6, -16.6), mat="hide_dark")
+    rig.cube("head", "head_forehead", (-4.9, 10.2, -25.2), (4.9, 14.47, -23.53), mat="hide_dark")
+    rig.cube("head", "head_moss_patch", (-2.8, 15.63, -20.8), (2.8, 16.4, -17.2), mat="moss_layer1")
 
-    # 宽方厚实大鼻吻（类似牛犀交融宽厚平吻）
-    rig.cube("head", "snout_broad", (-4.6, 5.85, -29.5), (4.6, 11.8, -23.4), mat="hide_dark")
-    rig.cube("head", "snout_pad", (-4.2, 6.0, -30.4), (4.2, 11.0, -29.45), mat="snout_horn")
-    # 上吻唇厚边
-    rig.cube("head", "snout_lip_upper", (-3.8, 5.95, -29.2), (3.8, 6.75, -26.5), mat="hide_dark")
-    # 鼻梁横皮褶
-    rig.cube("head", "snout_fold_top", (-2.8, 10.95, -27.8), (2.8, 11.90, -25.8), mat="hide_dark")
+    # 宽扁吻部 (0.5px 多级收边与外扩上唇)
+    rig.cube("head", "snout_bridge", (-4.4, 9.6, -27.4), (4.4, 12.6, -25.23), mat="hide_base")
+    rig.cube("head", "snout_broad", (-4.8, 5.85, -29.6), (4.8, 11.2, -23.55), mat="hide_dark")
+    rig.cube("head", "snout_lip_flare_l", (-5.25, 6.0, -29.2), (-4.83, 8.8, -25.6), mat="hide_base")
+    rig.cube("head", "snout_lip_flare_r", (4.83, 6.0, -29.2), (5.25, 8.8, -25.6), mat="hide_base")
+    rig.cube("head", "snout_pad", (-4.3, 6.0, -30.5), (4.3, 10.8, -29.63), mat="snout_horn")
+    rig.cube("head", "snout_pad_bevel", (-3.6, 6.4, -30.95), (3.6, 10.2, -30.53), mat="snout_horn")
+    rig.cube("head", "snout_lip_upper", (-3.9, 5.35, -29.4), (3.9, 5.82, -26.2), mat="hide_dark")
+    rig.cube("head", "snout_fold_1", (-3.2, 11.23, -28.6), (3.2, 11.85, -27.5), mat="skin_fold")
+    rig.cube("head", "snout_fold_2", (-3.6, 11.23, -26.8), (3.6, 11.95, -25.6), mat="skin_fold")
 
-    # 鼻孔深凹
-    rig.cube("head", "nostril_l", (-3.2, 6.6, -30.65), (-1.4, 8.4, -30.35), mat="socket")
-    rig.cube("head", "nostril_r", (1.4, 6.6, -30.65), (3.2, 8.4, -30.35), mat="socket")
-    # 鼻梁骨粗瘤（粗钝磨平鼻角瘤）
-    rig.cube("head", "snout_boss", (-2.0, 11.85, -27.5), (2.0, 13.6, -24.2), mat="snout_horn")
-    rig.cube("head", "snout_boss_apex", (-1.2, 13.55, -26.5), (1.2, 14.6, -24.8), mat="snout_horn")
+    # 立体外扩鼻翼与深凹鼻孔
+    rig.cube("head", "nostril_rim_l", (-5.15, 7.2, -29.5), (-4.86, 9.5, -27.8), mat="snout_horn")
+    rig.cube("head", "nostril_l", (-3.4, 6.8, -31.25), (-1.5, 8.6, -30.98), mat="socket")
+    rig.cube("head", "nostril_rim_r", (4.86, 7.2, -29.5), (5.15, 9.5, -27.8), mat="snout_horn")
+    rig.cube("head", "nostril_r", (1.5, 6.8, -31.25), (3.4, 8.6, -30.98), mat="socket")
 
-    # 深陷小眼眶与眼珠
-    rig.cube("head", "eye_socket_l", (-5.65, 10.8, -20.0), (-5.35, 12.6, -17.8), mat="socket")
-    rig.cube("head", "eye_pupil_l", (-5.62, 11.2, -19.4), (-5.38, 12.2, -18.4), mat="eye")
-    rig.cube("head", "brow_ridge_l", (-5.6, 12.55, -20.4), (-5.15, 13.6, -17.4), mat="hide_dark")
+    # 鼻梁骨质粗钝角瘤
+    rig.cube("head", "snout_boss", (-2.1, 12.63, -27.2), (2.1, 13.8, -24.2), mat="snout_horn")
+    rig.cube("head", "snout_boss_apex", (-1.3, 13.83, -26.4), (1.3, 14.6, -24.8), mat="snout_horn")
 
-    rig.cube("head", "eye_socket_r", (5.35, 10.8, -20.0), (5.65, 12.6, -17.8), mat="socket")
-    rig.cube("head", "eye_pupil_r", (5.38, 11.2, -19.4), (5.62, 12.2, -18.4), mat="eye")
-    rig.cube("head", "brow_ridge_r", (5.15, 12.55, -20.4), (5.6, 13.6, -17.4), mat="hide_dark")
+    # 深陷小眼眶、浑浊眼珠、粗重眉脊与眼袋
+    rig.cube("head", "eye_socket_l", (-5.65, 10.6, -20.2), (-5.43, 12.5, -17.8), mat="socket")
+    rig.cube("head", "eye_pupil_l", (-5.78, 11.0, -19.5), (-5.67, 12.0, -18.5), mat="eye")
+    rig.cube("head", "brow_ridge_l", (-5.95, 12.53, -20.6), (-5.15, 13.6, -17.4), mat="hide_dark")
+    rig.cube("head", "eye_bag_l", (-5.80, 9.8, -20.0), (-5.43, 10.57, -18.0), mat="skin_fold")
 
-    # 两侧向下耷拉厚耳
-    rig.cube("head", "ear_base_l", (-6.9, 11.8, -17.5), (-5.35, 13.8, -15.5), mat="hide_dark")
-    rig.cube("head", "ear_tip_l", (-7.8, 9.8, -17.2), (-6.85, 12.2, -15.8), mat="hide_base")
-    rig.cube("head", "ear_base_r", (5.35, 11.8, -17.5), (6.9, 13.8, -15.5), mat="hide_dark")
-    rig.cube("head", "ear_tip_r", (6.85, 9.8, -17.2), (7.8, 12.2, -15.8), mat="hide_base")
+    rig.cube("head", "eye_socket_r", (5.43, 10.6, -20.2), (5.65, 12.5, -17.8), mat="socket")
+    rig.cube("head", "eye_pupil_r", (5.67, 11.0, -19.5), (5.78, 12.0, -18.5), mat="eye")
+    rig.cube("head", "brow_ridge_r", (5.15, 12.53, -20.6), (5.95, 13.6, -17.4), mat="hide_dark")
+    rig.cube("head", "eye_bag_r", (5.43, 9.8, -20.0), (5.80, 10.57, -18.0), mat="skin_fold")
 
-    # 两侧向前弯的短粗角 (horns: 粗短有力，从前额两侧斜向外前方弯出)
-    # 左角
-    rig.cube("head", "horn_base_l", (-6.6, 13.4, -22.2), (-4.55, 15.6, -19.6), mat="horn_bone")
-    rig.cube("head", "horn_mid_l", (-7.8, 13.8, -24.8), (-6.25, 15.4, -21.8), mat="horn_bone")
-    rig.cube("head", "horn_tip_l", (-7.6, 14.1, -27.0), (-6.45, 15.1, -24.4), mat="horn_bone")
+    # 颊部厚咬肌
+    rig.cube("head", "jaw_cheek_l", (-5.1, 5.8, -23.2), (-4.1, 7.57, -17.5), mat="hide_dark")
+    rig.cube("head", "jaw_cheek_r", (4.1, 5.8, -23.2), (5.1, 7.57, -17.5), mat="hide_dark")
 
-    # 右角
-    rig.cube("head", "horn_base_r", (4.55, 13.4, -22.2), (6.6, 15.6, -19.6), mat="horn_bone")
-    rig.cube("head", "horn_mid_r", (6.25, 13.8, -24.8), (7.8, 15.4, -21.8), mat="horn_bone")
-    rig.cube("head", "horn_tip_r", (6.45, 14.1, -27.0), (7.6, 15.1, -24.4), mat="horn_bone")
+    # ── ear_l & ear_r 骨骼（双耳独立可动，3 段下垂厚耳）──
+    rig.cube("ear_l", "ear_base_l", (-6.9, 11.6, -17.3), (-5.43, 13.45, -15.5), mat="hide_dark")
+    rig.cube("ear_l", "ear_mid_l", (-7.8, 10.2, -17.1), (-6.93, 12.2, -15.7), mat="hide_base")
+    rig.cube("ear_l", "ear_tip_l", (-8.3, 9.1, -16.9), (-7.83, 10.8, -15.9), mat="hide_dark")
 
-    # 颊部咬肌
-    rig.cube("head", "jaw_cheek_l", (-4.35, 4.6, -23.5), (-3.85, 6.4, -19.5), mat="hide_dark")
-    rig.cube("head", "jaw_cheek_r", (3.85, 4.6, -23.5), (4.35, 6.4, -19.5), mat="hide_dark")
+    rig.cube("ear_r", "ear_base_r", (5.43, 11.6, -17.3), (6.9, 13.45, -15.5), mat="hide_dark")
+    rig.cube("ear_r", "ear_mid_r", (6.93, 10.2, -17.1), (7.8, 12.2, -15.7), mat="hide_base")
+    rig.cube("ear_r", "ear_tip_r", (7.83, 9.1, -16.9), (8.3, 10.8, -15.9), mat="hide_dark")
 
-    # 宽实下颌与钝下巴 (jaw 骨骼)
-    rig.cube("jaw", "jaw_box", (-4.0, 3.8, -28.5), (4.0, 5.72, -18.5), mat="hide_base")
-    rig.cube("jaw", "jaw_chin", (-3.4, 4.0, -29.45), (3.4, 5.70, -28.45), mat="hide_dark")
-    # 下巴底垂挂藓须与寄生小花点
-    rig.cube("jaw", "jaw_moss_beard_c", (-1.2, 1.8, -27.5), (1.2, 3.82, -24.5), mat="moss_layer2")
-    rig.cube("jaw", "jaw_moss_beard_f", (-0.8, 2.6, -28.8), (0.8, 3.90, -27.3), mat="moss_crust")
-    rig.cube("jaw", "jaw_moss_floret", (-0.4, 1.3, -26.2), (0.4, 2.0, -25.4), mat="moss_flower")
+    # ── horn_l & horn_r 骨骼（两侧向前弯的短粗角，4 段 0.5px 递进弧度）──
+    rig.cube("horn_l", "horn_root_l", (-6.5, 13.2, -22.0), (-5.43, 15.5, -19.5), mat="horn_bone")
+    rig.cube("horn_l", "horn_base_l", (-7.6, 13.5, -23.8), (-6.53, 15.4, -21.0), mat="horn_bone")
+    rig.cube("horn_l", "horn_mid_l", (-8.2, 13.8, -25.8), (-7.0, 15.3, -23.83), mat="horn_bone")
+    rig.cube("horn_l", "horn_tip_l", (-7.8, 14.1, -27.6), (-6.6, 15.2, -25.83), mat="snout_horn")
+
+    rig.cube("horn_r", "horn_root_r", (5.43, 13.2, -22.0), (6.5, 15.5, -19.5), mat="horn_bone")
+    rig.cube("horn_r", "horn_base_r", (6.53, 13.5, -23.8), (7.6, 15.4, -21.0), mat="horn_bone")
+    rig.cube("horn_r", "horn_mid_r", (7.0, 13.8, -25.8), (8.2, 15.3, -23.83), mat="horn_bone")
+    rig.cube("horn_r", "horn_tip_r", (6.6, 14.1, -27.6), (7.8, 15.2, -25.83), mat="snout_horn")
+
+    # ── jaw 骨骼（宽实下颌与钝下巴）──
+    rig.cube("jaw", "jaw_box", (-4.0, 3.8, -28.4), (4.0, 5.75, -18.5), mat="hide_base")
+    rig.cube("jaw", "jaw_chin", (-3.4, 4.0, -29.6), (3.4, 5.65, -28.43), mat="hide_dark")
+    rig.cube("jaw", "jaw_under", (-3.0, 3.2, -26.8), (3.0, 3.77, -20.2), mat="hide_belly")
+
+    # ── moss_beard 骨骼（下巴底垂挂多缕藓须与小花点）──
+    rig.cube("moss_beard", "jaw_moss_beard_c", (-1.2, 1.6, -27.5), (1.2, 3.17, -24.5), mat="moss_layer2")
+    rig.cube("moss_beard", "jaw_moss_beard_f", (-0.85, 2.2, -29.0), (0.85, 3.95, -27.53), mat="moss_crust")
+    rig.cube("moss_beard", "jaw_moss_beard_l", (-2.2, 2.1, -26.6), (-1.23, 3.75, -24.8), mat="moss_layer1")
+    rig.cube("moss_beard", "jaw_moss_beard_r", (1.23, 2.1, -26.6), (2.2, 3.75, -24.8), mat="moss_layer1")
+    rig.cube("moss_beard", "jaw_moss_tip", (-0.6, 0.8, -26.6), (0.6, 1.57, -25.4), mat="moss_crust")
+    rig.cube("moss_beard", "jaw_moss_floret", (-0.35, 1.2, -27.95), (0.35, 1.85, -27.3), mat="moss_flower")
 
 
 def part_moss(rig: CreatureRig) -> None:
-    """4. 背脊噬灵藓：多层阶梯叠块起伏堆叠，边缘向下垂挂成须状，点缀少量白色小花点。"""
-    # ── 第 1 层：背脊宽厚灰绿基底 ──
-    rig.cube("body", "moss_base_mid", (-6.2, 17.5, -7.5), (6.2, 19.0, 9.5), mat="moss_layer1")
+    """4. 背脊噬灵藓：三层高低错落藓块，边缘向下垂成 16 缕参差须状，点缀 18 处白花点，分挂 7 根动骨。"""
+    # ── moss_hump_crest 骨骼（驼峰顶三层错落主苔与老干藓瘤）──
+    rig.cube("moss_hump_crest", "moss_hump_base", (-5.8, 18.85, -8.5), (5.8, 20.38, -4.75), mat="moss_layer1")
+    rig.cube("moss_hump_crest", "moss_hump_slope", (-5.3, 20.42, -7.8), (5.3, 21.78, -4.93), mat="moss_layer2")
+    rig.cube("moss_hump_crest", "moss_hump_peak", (-5.1, 21.85, -4.9), (5.1, 23.3, 0.4), mat="moss_layer2")
+    rig.cube("moss_hump_crest", "moss_crest_peak_c", (-2.6, 23.33, -4.0), (2.6, 24.6, -1.05), mat="moss_crust")
+    rig.cube("moss_hump_crest", "moss_crest_peak_l", (-3.8, 23.33, -3.2), (-2.63, 24.15, 0.2), mat="moss_crust")
+    rig.cube("moss_hump_crest", "moss_crest_peak_r", (2.63, 23.33, -3.2), (3.8, 24.15, 0.2), mat="moss_crust")
+    rig.cube("moss_hump_crest", "moss_nodule_hump_front", (-2.0, 21.82, -7.2), (2.0, 22.75, -5.0), mat="moss_crust")
+    rig.cube("moss_hump_crest", "moss_nodule_hump_rear", (-2.5, 23.33, -0.95), (-0.8, 24.0, 0.3), mat="moss_crust")
+    rig.cube("moss_hump_crest", "floret_peak_1", (-1.4, 24.63, -2.8), (-0.6, 25.15, -2.0), mat="moss_flower")
+    rig.cube("moss_hump_crest", "floret_peak_2", (0.8, 24.63, -2.2), (1.6, 25.15, -1.4), mat="moss_flower")
+    rig.cube("moss_hump_crest", "floret_hump_l", (-3.5, 24.18, -1.8), (-2.8, 24.7, -1.1), mat="moss_flower")
+    rig.cube("moss_hump_crest", "floret_hump_r", (2.8, 24.18, -1.5), (3.5, 24.7, -0.8), mat="moss_flower")
+    rig.cube("moss_hump_crest", "floret_hump_front", (-0.5, 22.78, -6.4), (0.3, 23.3, -5.6), mat="moss_flower")
 
-    # 左右两侧向下垂挂成须状 (多缕参差不齐悬垂在肋腹上的藓舌须)
-    rig.cube("body", "moss_hang_l1", (-7.4, 15.8, -6.5), (-6.15, 18.2, -4.0), mat="moss_layer1")
-    rig.cube("body", "moss_hang_l2", (-7.55, 15.0, -3.8), (-6.15, 18.0, -0.8), mat="moss_layer2")
-    rig.cube("body", "moss_hang_l3", (-7.35, 15.6, -0.6), (-6.15, 18.2, 2.2), mat="moss_layer1")
-    rig.cube("body", "moss_hang_l4", (-7.45, 14.8, 2.4), (-6.15, 17.8, 5.2), mat="moss_layer2")
-    rig.cube("body", "moss_hang_l5", (-7.25, 15.9, 5.4), (-6.15, 18.0, 7.8), mat="moss_layer1")
-    rig.cube("body", "moss_hang_l6", (-7.25, 14.2, -1.8), (-6.10, 16.5, 0.4), mat="moss_layer2")
+    # ── moss_flank_fl 骨骼（前左侧垂挂参差藓须裙）──
+    rig.cube("moss_flank_fl", "moss_hang_l1", (-7.35, 15.6, -7.2), (-6.23, 18.2, -5.0), mat="moss_layer1")
+    rig.cube("moss_flank_fl", "moss_hang_l1_tip", (-7.45, 14.3, -6.6), (-6.55, 15.57, -5.4), mat="moss_crust")
+    rig.cube("moss_flank_fl", "moss_hang_l2", (-7.55, 14.8, -4.8), (-6.23, 18.0, -2.2), mat="moss_layer2")
+    rig.cube("moss_flank_fl", "moss_hang_l2_tip", (-7.65, 13.4, -4.1), (-6.75, 14.77, -2.8), mat="moss_layer1")
+    rig.cube("moss_flank_fl", "moss_hang_l3", (-7.40, 15.5, -2.0), (-6.23, 18.2, 0.2), mat="moss_layer1")
+    rig.cube("moss_flank_fl", "moss_boss_shoulder_l", (-4.8, 20.48, -7.2), (-2.8, 21.2, -5.2), mat="moss_crust")
+    rig.cube("moss_flank_fl", "floret_shoulder_l", (-4.2, 21.23, -6.4), (-3.5, 21.75, -5.7), mat="moss_flower")
+    rig.cube("moss_flank_fl", "floret_flank_l1", (-7.85, 16.2, -3.8), (-7.58, 16.9, -3.1), mat="moss_flower")
 
-    rig.cube("body", "moss_hang_r1", (6.15, 15.8, -6.5), (7.4, 18.2, -4.0), mat="moss_layer1")
-    rig.cube("body", "moss_hang_r2", (6.15, 15.0, -3.8), (7.55, 18.0, -0.8), mat="moss_layer2")
-    rig.cube("body", "moss_hang_r3", (6.15, 15.6, -0.6), (7.35, 18.2, 2.2), mat="moss_layer1")
-    rig.cube("body", "moss_hang_r4", (6.15, 14.8, 2.4), (7.45, 17.8, 5.2), mat="moss_layer2")
-    rig.cube("body", "moss_hang_r5", (6.15, 15.9, 5.4), (7.25, 18.0, 7.8), mat="moss_layer1")
-    rig.cube("body", "moss_hang_r6", (6.20, 14.2, -1.8), (7.25, 16.5, 0.4), mat="moss_layer2")
+    # ── moss_flank_fr 骨骼（前右侧垂挂参差藓须裙）──
+    rig.cube("moss_flank_fr", "moss_hang_r1", (6.23, 15.6, -7.2), (7.35, 18.2, -5.0), mat="moss_layer1")
+    rig.cube("moss_flank_fr", "moss_hang_r1_tip", (6.55, 14.3, -6.6), (7.45, 15.57, -5.4), mat="moss_crust")
+    rig.cube("moss_flank_fr", "moss_hang_r2", (6.23, 14.8, -4.8), (7.55, 18.0, -2.2), mat="moss_layer2")
+    rig.cube("moss_flank_fr", "moss_hang_r2_tip", (6.75, 13.4, -4.1), (7.65, 14.77, -2.8), mat="moss_layer1")
+    rig.cube("moss_flank_fr", "moss_hang_r3", (6.23, 15.5, -2.0), (7.40, 18.2, 0.2), mat="moss_layer1")
+    rig.cube("moss_flank_fr", "moss_boss_shoulder_r", (2.8, 20.48, -7.2), (4.8, 21.2, -5.2), mat="moss_crust")
+    rig.cube("moss_flank_fr", "floret_shoulder_r", (3.5, 21.23, -6.4), (4.2, 21.75, -5.7), mat="moss_flower")
+    rig.cube("moss_flank_fr", "floret_flank_r1", (7.58, 16.2, -3.8), (7.85, 16.9, -3.1), mat="moss_flower")
 
-    # 侧腹薄藓阶
-    rig.cube("body", "moss_shelf_flank_l", (-6.85, 17.2, 1.2), (-5.65, 18.6, 3.8), mat="moss_layer1")
-    rig.cube("body", "moss_shelf_flank_r", (5.65, 17.2, 1.2), (6.85, 18.6, 3.8), mat="moss_layer1")
+    # ── moss_spine_mid 骨骼（腰脊背三层阶梯叠苔）──
+    rig.cube("moss_spine_mid", "moss_base_mid", (-6.2, 17.5, -4.55), (6.2, 19.0, 9.2), mat="moss_layer1")
+    rig.cube("moss_spine_mid", "moss_spine_shelf_a", (-5.0, 19.03, 0.45), (5.0, 20.3, 4.8), mat="moss_layer2")
+    rig.cube("moss_spine_mid", "moss_spine_shelf_b", (-4.65, 19.03, 4.85), (4.65, 19.95, 8.8), mat="moss_layer2")
+    rig.cube("moss_spine_mid", "moss_boss_spine_1", (-2.4, 20.33, 1.2), (0.2, 21.6, 3.8), mat="moss_crust")
+    rig.cube("moss_spine_mid", "moss_boss_spine_2", (-0.2, 20.33, 3.85), (2.5, 21.2, 6.4), mat="moss_crust")
+    rig.cube("moss_spine_mid", "moss_nodule_spine_top", (-1.2, 21.63, 2.2), (1.2, 22.6, 3.75), mat="moss_crust")
+    rig.cube("moss_spine_mid", "floret_spine_1", (-1.8, 21.63, 1.4), (-1.1, 22.15, 2.1), mat="moss_flower")
+    rig.cube("moss_spine_mid", "floret_spine_2", (1.2, 21.23, 5.0), (1.9, 21.75, 5.7), mat="moss_flower")
+    rig.cube("moss_spine_mid", "floret_spine_3", (-0.3, 22.63, 2.7), (0.4, 23.15, 3.4), mat="moss_flower")
 
-    # ── 第 2 层：驼峰主苔斜坡与腰背阶梯厚台 ──
-    rig.cube("body", "moss_hump_slope", (-5.4, 19.1, -7.8), (5.4, 21.4, -4.8), mat="moss_layer2")
-    rig.cube("body", "moss_hump_peak", (-5.2, 21.35, -4.9), (5.2, 23.2, 0.4), mat="moss_layer2")
-    rig.cube("body", "moss_spine_shelf_a", (-4.8, 18.1, 0.6), (4.8, 20.2, 4.8), mat="moss_layer2")
-    rig.cube("body", "moss_spine_shelf_b", (-4.65, 17.9, 5.0), (4.65, 19.8, 8.8), mat="moss_layer2")
-    rig.cube("body", "moss_rump_crest", (-4.2, 17.6, 9.0), (4.2, 19.2, 12.2), mat="moss_layer1")
+    # ── moss_flank_bl 骨骼（后左肋垂挂参差藓须裙）──
+    rig.cube("moss_flank_bl", "moss_hang_l4", (-7.45, 15.2, 0.4), (-6.23, 18.1, 2.8), mat="moss_layer2")
+    rig.cube("moss_flank_bl", "moss_hang_l4_tip", (-7.55, 13.8, 1.0), (-6.65, 15.17, 2.2), mat="moss_crust")
+    rig.cube("moss_flank_bl", "moss_hang_l5", (-7.50, 14.6, 3.0), (-6.23, 17.8, 5.6), mat="moss_layer1")
+    rig.cube("moss_flank_bl", "moss_hang_l5_tip", (-7.65, 13.2, 3.7), (-6.75, 14.57, 4.9), mat="moss_layer2")
+    rig.cube("moss_flank_bl", "moss_hang_l6", (-7.30, 15.6, 5.8), (-6.23, 18.0, 8.4), mat="moss_layer1")
+    rig.cube("moss_flank_bl", "moss_hang_l7", (-6.95, 16.0, 8.6), (-5.85, 18.2, 10.8), mat="moss_layer2")
+    rig.cube("moss_flank_bl", "floret_flank_l2", (-7.78, 15.6, 3.8), (-7.53, 16.3, 4.5), mat="moss_flower")
+    rig.cube("moss_flank_bl", "floret_side_hang_l", (-7.72, 14.55, 1.2), (-7.48, 15.1, 1.9), mat="moss_flower")
 
-    # ── 第 3 层：老干藓瘤与起伏瘤节 ──
-    rig.cube("body", "moss_crest_peak_c", (-2.6, 23.15, -4.0), (2.6, 24.6, -1.05), mat="moss_crust")
-    rig.cube("body", "moss_crest_peak_l", (-3.6, 22.85, -3.2), (-1.8, 24.1, 0.2), mat="moss_crust")
-    rig.cube("body", "moss_crest_peak_r", (1.8, 22.85, -3.2), (3.6, 24.1, 0.2), mat="moss_crust")
-    rig.cube("body", "moss_boss_spine_1", (-2.4, 20.15, 1.5), (0.2, 21.6, 3.8), mat="moss_crust")
-    rig.cube("body", "moss_boss_spine_2", (-0.2, 19.75, 4.2), (2.5, 21.1, 6.6), mat="moss_crust")
-    rig.cube("body", "moss_boss_rump", (-1.8, 19.15, 7.8), (1.8, 20.4, 10.6), mat="moss_crust")
-    rig.cube("body", "moss_boss_shoulder_l", (-4.8, 19.8, -7.2), (-2.8, 21.0, -5.2), mat="moss_crust")
-    rig.cube("body", "moss_boss_shoulder_r", (2.8, 19.8, -7.2), (4.8, 21.0, -5.2), mat="moss_crust")
-    rig.cube("body", "moss_nodule_spine_top", (-1.2, 21.65, 2.8), (1.2, 22.8, 4.4), mat="moss_crust")
-    rig.cube("body", "moss_nodule_hump_rear", (-2.8, 22.1, -1.8), (-0.8, 23.4, -0.2), mat="moss_crust")
+    # ── moss_flank_br 骨骼（后右肋垂挂参差藓须裙）──
+    rig.cube("moss_flank_br", "moss_hang_r4", (6.23, 15.2, 0.4), (7.45, 18.1, 2.8), mat="moss_layer2")
+    rig.cube("moss_flank_br", "moss_hang_r4_tip", (6.65, 13.8, 1.0), (7.55, 15.17, 2.2), mat="moss_crust")
+    rig.cube("moss_flank_br", "moss_hang_r5", (6.23, 14.6, 3.0), (7.50, 17.8, 5.6), mat="moss_layer1")
+    rig.cube("moss_flank_br", "moss_hang_r5_tip", (6.75, 13.2, 3.7), (7.65, 14.57, 4.9), mat="moss_layer2")
+    rig.cube("moss_flank_br", "moss_hang_r6", (6.23, 15.6, 5.8), (7.30, 18.0, 8.4), mat="moss_layer1")
+    rig.cube("moss_flank_br", "moss_hang_r7", (5.85, 16.0, 8.6), (6.95, 18.2, 10.8), mat="moss_layer2")
+    rig.cube("moss_flank_br", "floret_flank_r2", (7.53, 15.6, 3.8), (7.78, 16.3, 4.5), mat="moss_flower")
+    rig.cube("moss_flank_br", "floret_side_hang_r", (7.48, 14.55, 1.2), (7.72, 15.1, 1.9), mat="moss_flower")
 
-    # ── 点缀白色寄生小花点 (florets) ──
-    florets = [
-        ("floret_peak_1", (-1.4, 24.55, -2.8), (-0.6, 25.1, -2.0)),
-        ("floret_peak_2", (0.8, 24.55, -2.2), (1.6, 25.1, -1.4)),
-        ("floret_hump_l", (-3.4, 23.15, -1.2), (-2.7, 23.7, -0.5)),
-        ("floret_hump_r", (2.5, 23.15, -0.95), (3.2, 23.7, -0.28)),
-        ("floret_flank_l1", (-7.65, 16.2, -2.2), (-7.15, 16.9, -1.5)),
-        ("floret_flank_l2", (-7.55, 15.6, 3.8), (-7.05, 16.3, 4.5)),
-        ("floret_flank_r1", (7.15, 16.2, -2.2), (7.65, 16.9, -1.5)),
-        ("floret_flank_r2", (7.05, 15.6, 3.8), (7.55, 16.3, 4.5)),
-        ("floret_spine_1", (-1.8, 21.55, 2.4), (-1.1, 22.1, 3.1)),
-        ("floret_spine_2", (1.2, 21.05, 5.0), (1.9, 21.6, 5.7)),
-        ("floret_rump", (-0.5, 20.35, 9.0), (0.3, 20.9, 9.8)),
-        ("floret_shoulder", (-4.2, 20.95, -6.4), (-3.5, 21.5, -5.7)),
-        ("floret_tail_base", (-0.4, 18.25, 11.2), (0.4, 18.8, 11.8)),
-        ("floret_neck_root", (-2.2, 17.85, -9.8), (-1.5, 18.4, -9.1)),
-        ("floret_side_hang_l", (-7.45, 14.6, 0.2), (-6.95, 15.2, 0.9)),
-        ("floret_side_hang_r", (6.95, 14.6, 0.2), (7.45, 15.2, 0.9)),
-    ]
-    for fname, ff, ft in florets:
-        rig.cube("body", fname, ff, ft, mat="moss_flower")
+    # ── moss_rump_crest 骨骼（后臀背起伏藓台）──
+    rig.cube("moss_rump_crest", "moss_rump_base", (-4.4, 17.2, 9.25), (4.4, 18.8, 12.4), mat="moss_layer1")
+    rig.cube("moss_rump_crest", "moss_rump_shelf", (-3.6, 18.83, 8.85), (3.6, 19.65, 11.6), mat="moss_layer2")
+    rig.cube("moss_rump_crest", "moss_boss_rump", (-1.8, 19.68, 7.8), (1.8, 20.6, 10.6), mat="moss_crust")
+    rig.cube("moss_rump_crest", "floret_rump_1", (-0.5, 20.63, 9.0), (0.3, 21.15, 9.8), mat="moss_flower")
+    rig.cube("moss_rump_crest", "floret_rump_2", (1.2, 19.68, 10.8), (1.9, 20.2, 11.5), mat="moss_flower")
 
 
 def part_legs(rig: CreatureRig) -> None:
-    """5. 四肢短腿：粗短柱状但有粗大膝部，每蹄分 2 瓣偶蹄，腿侧挂少量藓。"""
-    # ── 前左肢 (FL) ──
-    rig.cube("leg_fl", "thigh_fl_main", (-8.9, 4.5, -9.4), (-4.3, 11.2, -4.6), mat="hide_dark")
-    rig.cube("leg_fl", "thigh_fl_muscle", (-9.15, 5.95, -8.6), (-4.25, 10.5, -5.4), mat="hide_base")
-    rig.cube("leg_fl", "knee_node_fl", (-8.8, 4.15, -9.6), (-4.4, 5.85, -4.4), mat="hide_dark")  # 粗大外凸膝结
-    rig.cube("leg_fl", "moss_leg_fl", (-9.25, 7.5, -8.0), (-8.85, 9.8, -6.0), mat="moss_layer1")  # 腿上挂藓
+    """5. 四肢短腿：粗短柱状，膝部与飞节粗大外凸，蹄分两瓣偶蹄（带前倾蹄尖与后悬蹄），腿侧挂少量藓。"""
+    # ── 前左肢 (FL: thigh -> knee -> shank -> foot) ──
+    rig.cube("leg_fl_thigh", "thigh_fl_main", (-8.9, 5.85, -9.4), (-4.3, 11.2, -4.6), mat="hide_dark")
+    rig.cube("leg_fl_thigh", "thigh_fl_muscle", (-9.20, 6.4, -8.6), (-8.93, 10.5, -5.4), mat="hide_base")
+    rig.cube("leg_fl_thigh", "moss_leg_fl_top", (-9.45, 7.8, -8.2), (-9.23, 10.0, -5.8), mat="moss_layer1")
+    rig.cube("leg_fl_thigh", "moss_leg_fl_tip", (-9.55, 6.5, -7.6), (-9.23, 7.77, -6.4), mat="moss_layer2")
 
-    rig.cube("foot_fl", "shank_fl", (-8.6, 1.45, -9.0), (-4.6, 4.4, -5.0), mat="hide_base")
-    rig.cube("foot_fl", "pastern_fl", (-8.75, 1.82, -9.1), (-4.45, 2.65, -4.9), mat="hide_dark")  # 蹄冠圈
-    # 二瓣偶蹄 (外瓣与内瓣，中间留出清晰蹄裂)
-    rig.cube("foot_fl", "hoof_fl_outer", (-8.95, 0.0, -9.3), (-6.85, 1.85, -4.7), mat="hoof_horn")  # 外蹄瓣
-    rig.cube("foot_fl", "hoof_fl_inner", (-6.35, 0.0, -9.3), (-4.25, 1.85, -4.7), mat="hoof_horn")  # 内蹄瓣
+    rig.cube("leg_fl_knee", "knee_node_fl", (-9.05, 4.15, -9.75), (-4.25, 5.82, -4.35), mat="hide_dark")
+    rig.cube("leg_fl_knee", "knee_cap_fl", (-8.5, 4.4, -10.15), (-4.8, 5.6, -9.78), mat="skin_fold")
 
-    # ── 前右肢 (FR) ──
-    rig.cube("leg_fr", "thigh_fr_main", (4.3, 4.5, -9.4), (8.9, 11.2, -4.6), mat="hide_dark")
-    rig.cube("leg_fr", "thigh_fr_muscle", (4.25, 5.95, -8.6), (9.15, 10.5, -5.4), mat="hide_base")
-    rig.cube("leg_fr", "knee_node_fr", (4.4, 4.15, -9.6), (8.8, 5.85, -4.4), mat="hide_dark")
-    rig.cube("leg_fr", "moss_leg_fr", (8.85, 7.5, -8.0), (9.25, 9.8, -6.0), mat="moss_layer1")
+    rig.cube("leg_fl_shank", "shank_fl", (-8.6, 1.85, -9.0), (-4.6, 4.12, -5.0), mat="hide_base")
+    rig.cube("leg_fl_shank", "pastern_fl", (-8.8, 1.85, -9.2), (-4.4, 2.55, -9.03), mat="hide_dark")
+    rig.cube("leg_fl_shank", "dewclaw_fl", (-7.6, 1.6, -4.97), (-5.6, 2.4, -4.4), mat="hoof_horn")
 
-    rig.cube("foot_fr", "shank_fr", (4.6, 1.45, -9.0), (8.6, 4.4, -5.0), mat="hide_base")
-    rig.cube("foot_fr", "pastern_fr", (4.45, 1.82, -9.1), (8.75, 2.65, -4.9), mat="hide_dark")
-    rig.cube("foot_fr", "hoof_fr_inner", (4.25, 0.0, -9.3), (6.35, 1.85, -4.7), mat="hoof_horn")
-    rig.cube("foot_fr", "hoof_fr_outer", (6.85, 0.0, -9.3), (8.95, 1.85, -4.7), mat="hoof_horn")
+    # 二瓣偶蹄 (外瓣与内瓣，留 0.5px 清晰蹄裂 + 前突蹄尖)
+    rig.cube("foot_fl", "hoof_fl_outer", (-8.95, 0.0, -9.3), (-6.85, 1.82, -4.7), mat="hoof_horn")
+    rig.cube("foot_fl", "hoof_fl_outer_tip", (-8.85, 0.0, -9.85), (-6.95, 1.25, -9.33), mat="hoof_horn")
+    rig.cube("foot_fl", "hoof_fl_inner", (-6.35, 0.0, -9.3), (-4.25, 1.82, -4.7), mat="hoof_horn")
+    rig.cube("foot_fl", "hoof_fl_inner_tip", (-6.25, 0.0, -9.85), (-4.35, 1.25, -9.33), mat="hoof_horn")
 
-    # ── 后左肢 (BL) ──
-    rig.cube("leg_bl", "thigh_bl_main", (-8.9, 4.5, 5.0), (-4.3, 11.6, 10.0), mat="hide_dark")
-    rig.cube("leg_bl", "thigh_bl_muscle", (-9.15, 6.05, 5.8), (-4.25, 10.8, 9.2), mat="hide_base")
-    rig.cube("leg_bl", "hock_node_bl", (-8.8, 4.15, 4.8), (-4.4, 5.85, 10.2), mat="hide_dark")  # 粗大飞节
-    rig.cube("leg_bl", "moss_leg_bl", (-9.25, 8.0, 6.2), (-8.85, 10.2, 8.8), mat="moss_layer1")
+    # ── 前右肢 (FR: thigh -> knee -> shank -> foot) ──
+    rig.cube("leg_fr_thigh", "thigh_fr_main", (4.3, 5.85, -9.4), (8.9, 11.2, -4.6), mat="hide_dark")
+    rig.cube("leg_fr_thigh", "thigh_fr_muscle", (8.93, 6.4, -8.6), (9.20, 10.5, -5.4), mat="hide_base")
+    rig.cube("leg_fr_thigh", "moss_leg_fr_top", (9.23, 7.8, -8.2), (9.45, 10.0, -5.8), mat="moss_layer1")
+    rig.cube("leg_fr_thigh", "moss_leg_fr_tip", (9.23, 6.5, -7.6), (9.55, 7.77, -6.4), mat="moss_layer2")
 
-    rig.cube("foot_bl", "shank_bl", (-8.6, 1.45, 5.4), (-4.6, 4.4, 9.6), mat="hide_base")
-    rig.cube("foot_bl", "pastern_bl", (-8.75, 1.82, 5.3), (-4.45, 2.65, 9.7), mat="hide_dark")
-    rig.cube("foot_bl", "hoof_bl_outer", (-8.95, 0.0, 5.1), (-6.85, 1.85, 9.9), mat="hoof_horn")
-    rig.cube("foot_bl", "hoof_bl_inner", (-6.35, 0.0, 5.1), (-4.25, 1.85, 9.9), mat="hoof_horn")
+    rig.cube("leg_fr_knee", "knee_node_fr", (4.25, 4.15, -9.75), (9.05, 5.82, -4.35), mat="hide_dark")
+    rig.cube("leg_fr_knee", "knee_cap_fr", (4.8, 4.4, -10.15), (8.5, 5.6, -9.78), mat="skin_fold")
 
-    # ── 后右肢 (BR) ──
-    rig.cube("leg_br", "thigh_br_main", (4.3, 4.5, 5.0), (8.9, 11.6, 10.0), mat="hide_dark")
-    rig.cube("leg_br", "thigh_br_muscle", (4.25, 6.05, 5.8), (9.15, 10.8, 9.2), mat="hide_base")
-    rig.cube("leg_br", "hock_node_br", (4.4, 4.15, 4.8), (8.8, 5.85, 10.2), mat="hide_dark")
-    rig.cube("leg_br", "moss_leg_br", (8.85, 8.0, 6.2), (9.25, 10.2, 8.8), mat="moss_layer1")
+    rig.cube("leg_fr_shank", "shank_fr", (4.6, 1.85, -9.0), (8.6, 4.12, -5.0), mat="hide_base")
+    rig.cube("leg_fr_shank", "pastern_fr", (4.4, 1.85, -9.2), (8.8, 2.55, -9.03), mat="hide_dark")
+    rig.cube("leg_fr_shank", "dewclaw_fr", (5.6, 1.6, -4.97), (7.6, 2.4, -4.4), mat="hoof_horn")
 
-    rig.cube("foot_br", "shank_br", (4.6, 1.45, 5.4), (8.6, 4.4, 9.6), mat="hide_base")
-    rig.cube("foot_br", "pastern_br", (4.45, 1.82, 5.3), (8.75, 2.65, 9.7), mat="hide_dark")
-    rig.cube("foot_br", "hoof_br_inner", (4.25, 0.0, 5.1), (6.35, 1.85, 9.9), mat="hoof_horn")
-    rig.cube("foot_br", "hoof_br_outer", (6.85, 0.0, 5.1), (8.95, 1.85, 9.9), mat="hoof_horn")
+    rig.cube("foot_fr", "hoof_fr_inner", (4.25, 0.0, -9.3), (6.35, 1.82, -4.7), mat="hoof_horn")
+    rig.cube("foot_fr", "hoof_fr_inner_tip", (4.35, 0.0, -9.85), (6.25, 1.25, -9.33), mat="hoof_horn")
+    rig.cube("foot_fr", "hoof_fr_outer", (6.85, 0.0, -9.3), (8.95, 1.82, -4.7), mat="hoof_horn")
+    rig.cube("foot_fr", "hoof_fr_outer_tip", (6.95, 0.0, -9.85), (8.85, 1.25, -9.33), mat="hoof_horn")
+
+    # ── 后左肢 (BL: thigh -> hock -> shank -> foot) ──
+    rig.cube("leg_bl_thigh", "thigh_bl_main", (-8.9, 5.85, 5.0), (-4.3, 11.6, 10.0), mat="hide_dark")
+    rig.cube("leg_bl_thigh", "thigh_bl_muscle", (-9.20, 6.4, 5.8), (-8.93, 10.8, 9.2), mat="hide_base")
+    rig.cube("leg_bl_thigh", "moss_leg_bl_top", (-9.45, 8.0, 6.2), (-9.23, 10.2, 8.8), mat="moss_layer1")
+    rig.cube("leg_bl_thigh", "moss_leg_bl_tip", (-9.55, 6.7, 6.8), (-9.23, 7.97, 8.2), mat="moss_crust")
+
+    rig.cube("leg_bl_hock", "hock_node_bl", (-9.05, 4.15, 4.8), (-4.25, 5.82, 10.35), mat="hide_dark")
+    rig.cube("leg_bl_hock", "hock_spur_bl", (-8.4, 4.4, 10.38), (-4.9, 5.6, 10.85), mat="skin_fold")
+
+    rig.cube("leg_bl_shank", "shank_bl", (-8.6, 1.85, 5.4), (-4.6, 4.12, 9.6), mat="hide_base")
+    rig.cube("leg_bl_shank", "pastern_bl", (-8.8, 1.85, 5.15), (-4.4, 2.55, 5.37), mat="hide_dark")
+    rig.cube("leg_bl_shank", "dewclaw_bl", (-7.6, 1.6, 9.63), (-5.6, 2.4, 10.2), mat="hoof_horn")
+
+    rig.cube("foot_bl", "hoof_bl_outer", (-8.95, 0.0, 5.1), (-6.85, 1.82, 9.9), mat="hoof_horn")
+    rig.cube("foot_bl", "hoof_bl_outer_tip", (-8.85, 0.0, 4.55), (-6.95, 1.25, 5.07), mat="hoof_horn")
+    rig.cube("foot_bl", "hoof_bl_inner", (-6.35, 0.0, 5.1), (-4.25, 1.82, 9.9), mat="hoof_horn")
+    rig.cube("foot_bl", "hoof_bl_inner_tip", (-6.25, 0.0, 4.55), (-4.35, 1.25, 5.07), mat="hoof_horn")
+
+    # ── 后右肢 (BR: thigh -> hock -> shank -> foot) ──
+    rig.cube("leg_br_thigh", "thigh_br_main", (4.3, 5.85, 5.0), (8.9, 11.6, 10.0), mat="hide_dark")
+    rig.cube("leg_br_thigh", "thigh_br_muscle", (8.93, 6.4, 5.8), (9.20, 10.8, 9.2), mat="hide_base")
+    rig.cube("leg_br_thigh", "moss_leg_br_top", (9.23, 8.0, 6.2), (9.45, 10.2, 8.8), mat="moss_layer1")
+    rig.cube("leg_br_thigh", "moss_leg_br_tip", (9.23, 6.7, 6.8), (9.55, 7.97, 8.2), mat="moss_crust")
+
+    rig.cube("leg_br_hock", "hock_node_br", (4.25, 4.15, 4.8), (9.05, 5.82, 10.35), mat="hide_dark")
+    rig.cube("leg_br_hock", "hock_spur_br", (4.9, 4.4, 10.38), (8.4, 5.6, 10.85), mat="skin_fold")
+
+    rig.cube("leg_br_shank", "shank_br", (4.6, 1.85, 5.4), (8.6, 4.12, 9.6), mat="hide_base")
+    rig.cube("leg_br_shank", "pastern_br", (4.4, 1.85, 5.15), (8.8, 2.55, 5.37), mat="hide_dark")
+    rig.cube("leg_br_shank", "dewclaw_br", (5.6, 1.6, 9.63), (7.6, 2.4, 10.2), mat="hoof_horn")
+
+    rig.cube("foot_br", "hoof_br_inner", (4.25, 0.0, 5.1), (6.35, 1.82, 9.9), mat="hoof_horn")
+    rig.cube("foot_br", "hoof_br_inner_tip", (4.35, 0.0, 4.55), (6.25, 1.25, 5.07), mat="hoof_horn")
+    rig.cube("foot_br", "hoof_br_outer", (6.85, 0.0, 5.1), (8.95, 1.82, 9.9), mat="hoof_horn")
+    rig.cube("foot_br", "hoof_br_outer_tip", (6.95, 0.0, 4.55), (8.85, 1.25, 5.07), mat="hoof_horn")
 
 
 def part_tail(rig: CreatureRig) -> None:
-    """6. 短粗垂尾：带灰绿苔藓穗与毛簇。"""
-    rig.cube("tail", "tail_stem", (-1.2, 8.5, 12.6), (1.2, 13.5, 14.2), mat="hide_base")
-    rig.cube("tail", "tail_hair_base", (-1.6, 6.0, 12.8), (1.6, 8.4, 14.8), mat="hide_dark")
-    rig.cube("tail", "tail_moss_tuft", (-1.8, 4.4, 13.0), (1.8, 6.4, 15.2), mat="moss_layer2")
-    rig.cube("tail", "tail_floret", (-0.5, 4.0, 13.6), (0.5, 4.7, 14.6), mat="moss_flower")
+    """6. 短粗垂尾：4 节可摆动骨骼链（tail_1 -> tail_2 -> tail_3 -> tail_moss），末端带蓬松噬灵藓穗。"""
+    rig.cube("tail_1", "tail_root", (-1.5, 11.2, 13.4), (1.5, 13.8, 14.35), mat="hide_dark")
+    rig.cube("tail_1", "tail_stem", (-1.2, 8.6, 12.7), (1.2, 11.17, 14.2), mat="hide_base")
+
+    rig.cube("tail_2", "tail_hair_base", (-1.45, 6.2, 12.9), (1.45, 8.57, 14.6), mat="hide_dark")
+    rig.cube("tail_2", "tail_moss_wrap", (-1.75, 6.6, 13.1), (-1.48, 8.1, 14.4), mat="moss_layer1")
+    rig.cube("tail_2", "tail_moss_wrap_r", (1.48, 6.6, 13.1), (1.75, 8.1, 14.4), mat="moss_layer1")
+
+    rig.cube("tail_3", "tail_moss_tuft", (-1.85, 4.3, 13.0), (1.85, 6.17, 15.1), mat="moss_layer2")
+    rig.cube("tail_3", "tail_moss_side_l", (-2.25, 4.6, 13.3), (-1.88, 5.9, 14.7), mat="moss_layer1")
+    rig.cube("tail_3", "tail_moss_side_r", (1.88, 4.6, 13.3), (2.25, 5.9, 14.7), mat="moss_layer1")
+
+    rig.cube("tail_moss", "tail_tassel_tip", (-1.2, 3.0, 13.3), (1.2, 4.27, 14.8), mat="moss_crust")
+    rig.cube("tail_moss", "tail_floret", (-0.45, 3.4, 14.83), (0.45, 4.1, 15.4), mat="moss_flower")
+
+
+PARTS_META = {
+    "body": ("1. 躯干：高耸肩峰驼背 + 圆滚桶状多层弧面 + 4 道侧腹皮褶", [part_body]),
+    "head": ("2. 头部与垂颈：硕大低垂头 + 宽吻鼻孔 + 4段前弯角 + 喉/颏垂藓", [part_neck, part_head]),
+    "moss": ("3. 噬灵藓：三层错落叠苔 + 16 缕侧垂藓须 + 18 处白花点 (7 根动骨)", [part_moss]),
+    "legs": ("4. 四肢短腿：粗短柱腿 + 外凸粗膝/飞节 + 双瓣偶蹄 + 腿侧附藓", [part_legs]),
+    "tail": ("5. 短尾：4 节可动短尾 + 蓬松垂藓穗与白花", [part_tail]),
+}
 
 
 def build_rig(part: str = "all") -> CreatureRig:
@@ -518,6 +646,38 @@ def build_rig(part: str = "all") -> CreatureRig:
         part_tail(rig)
 
     return rig
+
+
+def bone_tree_lines(rig: CreatureRig) -> list[str]:
+    """生成骨骼层级树文本行，并标注每根骨骼挂载的几何块数。"""
+    children_map: dict[str | None, list[str]] = {}
+    for name, parent, _, _ in BONES_DEF:
+        children_map.setdefault(parent, []).append(name)
+
+    lines: list[str] = []
+
+    def walk(name: str, prefix: str, is_last: bool, is_top: bool) -> None:
+        b = rig.bones[name]
+        c_cnt = len(b["children"])
+        pivot = tuple(b["pivot"])
+        tag = f" ({c_cnt} cubes)" if c_cnt > 0 else " (root pivot)"
+        if is_top:
+            lines.append(f"{name} {pivot}{tag}")
+        else:
+            branch = "`- " if is_last else "+- "
+            lines.append(f"{prefix}{branch}{name} {pivot}{tag}")
+        kids = children_map.get(name, [])
+        for idx, kid in enumerate(kids):
+            next_prefix = "" if is_top else prefix + ("   " if is_last else "|  ")
+            walk(kid, next_prefix, idx == len(kids) - 1, False)
+
+    walk("root", "", True, True)
+    return lines
+
+
+def moving_bones_count(rig: CreatureRig) -> int:
+    """统计带几何的可独立运动关节骨骼数（除静止 root 外）。"""
+    return sum(1 for name, _, _, _ in BONES_DEF if name != "root" and len(rig.bones[name]["children"]) > 0)
 
 
 # ──────────────────────────────────────────────────────────────── 门禁检查
@@ -560,14 +720,34 @@ def self_test() -> None:
     """运行门禁差分自证。"""
     print("运行 gen_can_bei_tuo.py 门禁差分自证...")
     rig = build_rig("all")
-    assert_no_coplanar_faces(rig.elements)
-    print(f"  [OK] 正常几何体集合 ({len(rig.elements)} 个立方体) 0 项共面冲突")
+    elements = rig.elements
 
-    # 注入缺陷测试
-    defect_elements = list(rig.elements) + [{
+    # 1. 共面冲突检查
+    assert_no_coplanar_faces(elements)
+    print(f"  [OK] 正常几何体集合 ({len(elements)} 个立方体) 0 项共面冲突")
+
+    # 2. 贴地检查
+    min_y = min(e["from"][1] for e in elements)
+    assert abs(min_y - 0.0) < 1e-4, f"贴地断言失败: 最低点 y={min_y:.3f} != 0.0"
+    print(f"  [OK] 贴地断言通过 (最低点 y={min_y:.2f})")
+
+    # 3. 部件数检查（比 Round 1 的 48 个至少翻三倍 >= 144）
+    assert len(elements) >= 144, f"部件数不足: {len(elements)} < 144 (Round 1 为 48)"
+    print(f"  [OK] 部件数达标: {len(elements)} 个 (Round 1 为 48 个，翻 {len(elements)/48:.1f} 倍)")
+
+    # 4. 骨骼数检查（四足兽 >= 32 根）
+    total_bones = len(BONES_DEF)
+    moving_bones = moving_bones_count(rig)
+    assert total_bones >= 32 and moving_bones >= 32, (
+        f"骨骼数不足: 总骨骼={total_bones}, 可动带几何骨骼={moving_bones} (要求 >= 32)"
+    )
+    print(f"  [OK] 骨骼数达标: 共 {total_bones} 根骨骼 (其中带几何独立可动关节 {moving_bones} 根 >= 32)")
+
+    # 5. 注入缺陷测试
+    defect_elements = list(elements) + [{
         "name": "defect_coplanar_fail",
         "from": [-6.8, 6.15, -9.0],
-        "to": [6.8, 10.35, 11.0],  # 完全与 torso_lower 重合
+        "to": [6.8, 9.42, 11.0],  # 完全与 torso_lower 重合
         "type": "cube",
         "uuid": str(uuid.uuid4()),
     }]
@@ -585,105 +765,191 @@ def self_test() -> None:
 
 
 # ──────────────────────────────────────────────────────────────── 渲染与审阅图
-def render_contact_sheet(bbmodel_path: Path) -> tuple[Image.Image, dict[str, Image.Image]]:
-    """渲染六视角接触表（诚实命名视角，使用 cjk_font 解决中文乱码）。"""
-    bg = (119, 119, 119)  # 严格对齐参考图中性灰
+def render_part_previews(tex_b64: str) -> None:
+    """逐件单独生成预览图与分部件 bbmodel，确认无误后再拼接。"""
+    PARTS_DIR.mkdir(parents=True, exist_ok=True)
+    bg_color = (119, 119, 119)
+    font_title = load_font(16)
+    font_sub = load_font(13)
+
+    # 先导出 6 个单件 bbmodel (body, moss, neck, head, legs, tail)
+    for part_name in ("body", "moss", "neck", "head", "legs", "tail"):
+        prig = build_rig(part_name)
+        mname = f"CanBeiTuo_{part_name}"
+        mjson = json.dumps(prig.bbmodel(mname, tex_b64), ensure_ascii=False, indent=2)
+        (CREATURE_DIR / f"{mname}.bbmodel").write_text(mjson, encoding="utf-8")
+        (MODELS_DIR / f"{mname}.bbmodel").write_text(mjson, encoding="utf-8")
+
+    print("正在渲染 5 大结构组件独立预览图...")
+    for idx, (pkey, (pdesc, pfuncs)) in enumerate(PARTS_META.items(), start=1):
+        rig = CreatureRig(tex_w=TEX_W, tex_h=TEX_H)
+        setup_bones(rig)
+        for fn in pfuncs:
+            fn(rig)
+        tmp_path = CREATURE_DIR / f"_tmp_part_{idx}_{pkey}.bbmodel"
+        tmp_path.write_text(json.dumps(rig.bbmodel(f"CanBeiTuo_part_{pkey}", tex_b64)), encoding="utf-8")
+
+        im_front, _ = render(tmp_path, yaw=0.0, pitch=0.0, size=300, bg=bg_color)
+        im_iso, _ = render(tmp_path, yaw=-35.0, pitch=22.0, size=300, bg=bg_color)
+        im_side, _ = render(tmp_path, yaw=90.0, pitch=0.0, size=300, bg=bg_color)
+        tmp_path.unlink(missing_ok=True)
+
+        canvas = Image.new("RGB", (300 * 3 + 20, 300 + 44), (32, 33, 36))
+        draw = ImageDraw.Draw(canvas)
+        canvas.paste(im_front, (5, 32))
+        canvas.paste(im_iso, (310, 32))
+        canvas.paste(im_side, (615, 32))
+
+        draw.text((10, 6), f"部件 {idx}: {pdesc} ({len(rig.elements)} cubes)", fill=(235, 235, 235), font=font_title)
+        draw.text((10, 308), "正视 FRONT (-Z)", fill=(200, 200, 200), font=font_sub)
+        draw.text((315, 308), "3/4 等轴视 ISO", fill=(200, 200, 200), font=font_sub)
+        draw.text((620, 308), "右侧视 SIDE_R (+X)", fill=(200, 200, 200), font=font_sub)
+
+        out_png = PARTS_DIR / f"part_{idx}_{pkey}.png"
+        canvas.save(out_png)
+        print(f"  ✓ 部件 {idx} 预览图已生成: {out_png} ({len(rig.elements)} cubes)")
+
+
+def render_6_views_sheet(
+    bbmodel_path: Path,
+    header_title: str,
+) -> tuple[Image.Image, dict[str, Image.Image]]:
+    """渲染六视角接触表（诚实命名视角，使用 cjk_font Noto Sans CJK 字体）。"""
+    bg = (119, 119, 119)
     views = [
-        ("FRONT",  0.0,   0.0, "正视 (从正面 -Z 直视宽钝鼻吻、粗短双角与前双肢)"),
-        ("SIDE_R", 90.0,  0.0, "右侧视 (从 +X 直视高耸驼峰、层叠起伏噬灵藓与粗短柱腿)"),
-        ("BACK",   180.0, 0.0, "后视 (从后方 +Z 直视圆阔臀部、后肢双瓣蹄与带藓短尾)"),
-        ("SIDE_L", -90.0, 0.0, "左侧视 (从 -X 直视侧腹皮肤横褶与侧垂悬挂藓须)"),
-        ("3/4",    -35.0, 22.0,"等轴 3/4 视 (前左侧立体观察驼峰起伏、前角与白花点)"),
-        ("TOP",    0.0,   89.9,"俯视 (正上方俯瞰宽达16.8px背脊与三层叠块噬灵藓)"),
+        ("FRONT",  0.0,   0.0,  "正视 FRONT (-Z 宽吻/前弯角/前肢)"),
+        ("3/4",    -35.0, 22.0, "3/4 等轴视 ISO (驼峰叠藓/白花/立体角)"),
+        ("SIDE_L", -90.0, 0.0,  "左视图 SIDE_L (-X 侧肋皮褶/垂挂藓须)"),
+        ("SIDE_R", 90.0,  0.0,  "右视图 SIDE_R (+X 驼峰弧线/短粗四腿)"),
+        ("TOP",    0.0,   89.9, "俯视图 TOP (+Y 三层噬灵藓/宽圆桶身)"),
+        ("BACK",   180.0, 0.0,  "后视图 BACK (+Z 圆臀/双瓣偶蹄/藓穗尾)"),
     ]
 
     rendered_images: dict[str, Image.Image] = {}
-    tile_size = 420
-    for name, yaw, pitch, desc in views:
-        im, _ = render(bbmodel_path, yaw=yaw, pitch=pitch, size=tile_size, bg=bg)
+    w_cell, h_cell = 400, 400
+    for name, yaw, pitch, _ in views:
+        im, _ = render(bbmodel_path, yaw=yaw, pitch=pitch, size=w_cell, bg=bg)
         rendered_images[name] = im
 
-    # 拼成 2 行 3 列六视角大接触表
-    cols, rows = 3, 2
-    pad = 16
-    margin = 24
-    header_h = 42
-    label_h = 28
-
-    total_w = margin * 2 + cols * tile_size + (cols - 1) * pad
-    total_h = margin * 2 + header_h + rows * (tile_size + label_h + pad)
-
-    sheet = Image.new("RGB", (total_w, total_h), (35, 36, 40))
+    sheet = Image.new("RGB", (w_cell * 3 + 20, h_cell * 2 + 56), (32, 33, 36))
     draw = ImageDraw.Draw(sheet)
-
-    font_title = load_font(20)
+    font_header = load_font(18)
     font_label = load_font(13)
 
-    draw.text((margin, 12), "can_bei_tuo (残背驮兽) 六视角接触表 (Honest 6-View Contact Sheet) [Round 2]", fill=(235, 235, 235), font=font_title)
+    draw.text((10, 6), header_title, fill=(235, 235, 235), font=font_header)
 
+    coords = [
+        (5, 34),
+        (w_cell + 10, 34),
+        (w_cell * 2 + 15, 34),
+        (5, h_cell + 44),
+        (w_cell + 10, h_cell + 44),
+        (w_cell * 2 + 15, h_cell + 44),
+    ]
     for idx, (name, _, _, desc) in enumerate(views):
-        r = idx // cols
-        c = idx % cols
-        px = margin + c * (tile_size + pad)
-        py = margin + header_h + r * (tile_size + label_h + pad)
-
+        px, py = coords[idx]
         sheet.paste(rendered_images[name], (px, py))
-        draw.rectangle([px, py + tile_size, px + tile_size, py + tile_size + label_h], fill=(24, 25, 28))
-        draw.text((px + 6, py + tile_size + 4), f"{name}: {desc}", fill=(210, 215, 220), font=font_label)
+        draw.rectangle([px, py, px + 290, py + 24], fill=(22, 23, 26))
+        draw.text((px + 6, py + 3), desc, fill=(235, 235, 235), font=font_label)
 
     return sheet, rendered_images
+
+
+def render_bone_tree_panel(rig: CreatureRig, target_height: int) -> Image.Image:
+    """绘制骨骼层级树面板（标明骨骼总数、可动关节数与完整层级树）。"""
+    lines = bone_tree_lines(rig)
+    total_b = len(BONES_DEF)
+    moving_b = moving_bones_count(rig)
+    total_c = len(rig.elements)
+
+    font_h = load_font(16)
+    font_sub = load_font(13)
+    font_tree = load_font(12)
+
+    line_step = 18
+    panel_w = 430
+    needed_h = 90 + len(lines) * line_step + 20
+    panel_h = max(target_height, needed_h)
+
+    panel = Image.new("RGB", (panel_w, panel_h), (32, 33, 37))
+    draw = ImageDraw.Draw(panel)
+
+    draw.rectangle([0, 0, panel_w - 1, panel_h - 1], outline=(70, 75, 85), width=2)
+    draw.text((14, 10), "骨骼层级树 (BONE HIERARCHY)", fill=(180, 235, 200), font=font_h)
+    draw.text(
+        (14, 34),
+        f"总骨骼: {total_b} 根 (可动关节 {moving_b} 根 >= 32, +1 root)",
+        fill=(240, 210, 150),
+        font=font_sub,
+    )
+    draw.text(
+        (14, 54),
+        f"几何部件: {total_c} cubes (Round 1 为 48, 翻 {total_c/48:.1f} 倍)",
+        fill=(190, 210, 235),
+        font=font_sub,
+    )
+    draw.line([(12, 76), (panel_w - 12, 76)], fill=(65, 70, 80), width=1)
+
+    y = 82
+    for ln in lines:
+        color = (230, 230, 235) if "root pivot" not in ln else (175, 180, 190)
+        draw.text((14, y), ln, fill=color, font=font_tree)
+        y += line_step
+
+    return panel
 
 
 def make_check_sheet_round2(
     ref_path: Path,
     exploded_path: Path,
-    prev_sheet_path: Path,
-    now_sheet: Image.Image,
+    sheet_prev: Image.Image,
+    sheet_now: Image.Image,
+    tree_panel: Image.Image,
+    total_c: int,
+    total_b: int,
+    moving_b: int,
 ) -> Image.Image:
-    """生成并排对照卡：左参考图/爆炸图，中上一轮 (Round 1) 接触表，右本轮 (Round 2) 接触表。"""
+    """生成四栏并排总审阅图 check.png：参考/爆炸图 + PREV(Round 1 同取景) + NOW(Round 2 六视角) + 骨骼层级树。"""
     ref_im = Image.open(ref_path).convert("RGB")
-    exp_im = Image.open(exploded_path).convert("RGB") if exploded_path.exists() else None
-    prev_sheet = Image.open(prev_sheet_path).convert("RGB") if prev_sheet_path.exists() else None
+    exp_im = Image.open(exploded_path).convert("RGB") if exploded_path.exists() else ref_im
 
-    target_h = now_sheet.height
-    header_h = 42
-    gap = 20
-
-    # 左侧参考图上下堆叠
-    sub_h = (target_h - gap) // 2
+    row_h = max(sheet_now.height, tree_panel.height)
+    gap = 12
+    sub_h = (row_h - gap) // 2
     sub_w = int(ref_im.width * sub_h / ref_im.height)
     ref_scaled = ref_im.resize((sub_w, sub_h), Image.Resampling.LANCZOS)
-    exp_scaled = exp_im.resize((sub_w, sub_h), Image.Resampling.LANCZOS) if exp_im else ref_scaled
+    exp_scaled = exp_im.resize((sub_w, sub_h), Image.Resampling.LANCZOS)
 
-    left_w = sub_w
-    now_w = now_sheet.width
-
-    if prev_sheet:
-        prev_scaled = prev_sheet.resize((now_w, target_h), Image.Resampling.LANCZOS)
-        total_w = left_w + now_w * 2 + gap * 4
-    else:
-        prev_scaled = None
-        total_w = left_w + now_w + gap * 3
-
-    total_h = target_h + header_h + 24
-    canvas = Image.new("RGB", (total_w, total_h), (28, 29, 33))
+    total_w = sub_w + sheet_prev.width + sheet_now.width + tree_panel.width + 50
+    canvas = Image.new("RGB", (total_w, row_h + 48), (25, 26, 29))
     draw = ImageDraw.Draw(canvas)
-
     font_header = load_font(18)
 
-    # 绘制各栏目标题
-    draw.text((gap, 10), "REFERENCES: Top: Concept Art | Bottom: Exploded", fill=(215, 205, 185), font=font_header)
-    canvas.paste(ref_scaled, (gap, header_h))
-    canvas.paste(exp_scaled, (gap, header_h + sub_h + gap))
+    # 1. 左栏：概念参考图 + 爆炸分解图
+    x_cur = 10
+    draw.text((x_cur + 4, 8), "参考图 REFERENCES (上: 整兽参考 | 下: 爆炸分解)", fill=(215, 205, 180), font=font_header)
+    canvas.paste(ref_scaled, (x_cur, 38))
+    canvas.paste(exp_scaled, (x_cur, 38 + sub_h + gap))
 
-    curr_x = gap + left_w + gap
-    if prev_scaled:
-        draw.text((curr_x, 10), "PREV: Round 1 Baseline (48 cubes - 平板藓/小头/无角)", fill=(185, 185, 195), font=font_header)
-        canvas.paste(prev_scaled, (curr_x, header_h))
-        curr_x += now_w + gap
+    # 2. 中左栏：PREV (Round 1 同取景基线)
+    x_cur += sub_w + 10
+    draw.text((x_cur + 4, 8), "PREV: Round 1 同取景基线 (48 cubes, 14 骨骼 - 细节不足/平板藓)", fill=(230, 160, 140), font=font_header)
+    canvas.paste(sheet_prev, (x_cur, 38))
 
-    draw.text((curr_x, 10), "NOW: Round 2 Rework (142 cubes - 圆滚驼峰/前弯角/大头垂藓/起伏叠藓白花/偶蹄)", fill=(185, 235, 205), font=font_header)
-    canvas.paste(now_sheet, (curr_x, header_h))
+    # 3. 中右栏：NOW (Round 2 精细重构)
+    x_cur += sheet_prev.width + 10
+    draw.text(
+        (x_cur + 4, 8),
+        f"NOW: Round 2 返工 ({total_c} cubes, {total_b} 骨骼/{moving_b} 可动关节, 0.5px 驼峰/弯角/垂藓/偶蹄)",
+        fill=(140, 230, 180),
+        font=font_header,
+    )
+    canvas.paste(sheet_now, (x_cur, 38))
+
+    # 4. 右栏：骨骼层级树
+    x_cur += sheet_now.width + 10
+    draw.text((x_cur + 4, 8), f"骨骼树 BONE TREE ({total_b} 根骨骼 >= 32)", fill=(180, 220, 240), font=font_header)
+    canvas.paste(tree_panel, (x_cur, 38))
 
     return canvas
 
@@ -703,18 +969,31 @@ def main() -> None:
     self_test()
 
     # 2. 构建贴图与模型
+    CREATURE_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
     tex_img = generate_palette_texture()
     buf = io.BytesIO()
     tex_img.save(buf, format="PNG")
     tex_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    rig = build_rig(args.part)
-    model_name = "CanBeiTuo" if args.part == "all" else f"CanBeiTuo_{args.part}"
-    model_dict = rig.bbmodel(model_name, tex_b64)
+    if args.part != "all":
+        rig = build_rig(args.part)
+        model_name = f"CanBeiTuo_{args.part}"
+        model_json = json.dumps(rig.bbmodel(model_name, tex_b64), ensure_ascii=False, indent=2)
+        (CREATURE_DIR / f"{model_name}.bbmodel").write_text(model_json, encoding="utf-8")
+        (MODELS_DIR / f"{model_name}.bbmodel").write_text(model_json, encoding="utf-8")
+        print(f"✓ 单部件模型已生成: {CREATURE_DIR / f'{model_name}.bbmodel'} ({len(rig.elements)} cubes)")
+        return
 
-    # 3. 保存模型文件
-    CREATURE_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    # 3. 逐部件渲染独立预览图并导出分部件 bbmodel
+    render_part_previews(tex_b64)
+
+    # 4. 生成完整拼装模型
+    rig = build_rig("all")
+    model_name = "CanBeiTuo"
+    model_dict = rig.bbmodel(model_name, tex_b64)
 
     out_local = CREATURE_DIR / f"{model_name}.bbmodel"
     out_models = MODELS_DIR / f"{model_name}.bbmodel"
@@ -722,39 +1001,58 @@ def main() -> None:
     model_json = json.dumps(model_dict, ensure_ascii=False, indent=2)
     out_local.write_text(model_json, encoding="utf-8")
     out_models.write_text(model_json, encoding="utf-8")
-    print(f"✓ Blockbench 模型已生成: {out_local} ({len(rig.elements)} 个立方体)")
-    print(f"✓ 仓库模型目录副本已生成: {out_models}")
+    total_c = len(rig.elements)
+    total_b = len(BONES_DEF)
+    moving_b = moving_bones_count(rig)
+    print(f"✓ 完整模型已生成: {out_local} ({total_c} cubes, {total_b} 骨骼/{moving_b} 可动关节)")
 
-    # 4. 渲染审阅图
-    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    print("正在渲染六视角接触表 (使用 Noto Sans CJK 正文字体)...")
-    contact_sheet, rendered_views = render_contact_sheet(out_local)
-
+    # 5. 渲染 NOW 与 PREV 六视角接触表（均使用 cjk_font 正文字体）
+    print("正在渲染 Round 2 NOW 与 Round 1 PREV 六视角接触表...")
+    sheet_now, rendered_views = render_6_views_sheet(
+        out_local,
+        f"can_bei_tuo (残背驮兽) Round 2 NOW | 骨骼: {total_b} ({moving_b} 可动关节) | 部件: {total_c} cubes (0.5px 精度)",
+    )
     contact_path = REVIEW_DIR / "contact_sheet.png"
-    contact_sheet.save(contact_path)
+    sheet_now.save(contact_path)
     print(f"✓ 六视角接触表已保存: {contact_path}")
 
-    # 保存各独立视角图
     views_dir = REVIEW_DIR / "views"
     views_dir.mkdir(parents=True, exist_ok=True)
     for vname, vim in rendered_views.items():
         safe_name = vname.lower().replace("/", "_")
-        vpath = views_dir / f"{safe_name}.png"
-        vim.save(vpath)
+        vim.save(views_dir / f"{safe_name}.png")
 
-    # 5. 生成与上一轮并排对照的 check.png
+    round1_bbmodel = REVIEW_DIR / "CanBeiTuo_round1.bbmodel"
+    if round1_bbmodel.exists():
+        sheet_prev, _ = render_6_views_sheet(
+            round1_bbmodel,
+            "can_bei_tuo (残背驮兽) Round 1 PREV 基线 | 骨骼: 14 | 部件: 48 cubes",
+        )
+        sheet_prev.save(REVIEW_DIR / "contact_sheet_round1.png")
+    else:
+        sheet_prev = sheet_now
+
+    # 6. 生成骨骼层级树面板
+    tree_panel = render_bone_tree_panel(rig, sheet_now.height)
+    tree_panel.save(REVIEW_DIR / "bones_tree.png")
+    print(f"✓ 骨骼层级树面板已保存: {REVIEW_DIR / 'bones_tree.png'}")
+
+    # 7. 生成并排对照卡 check.png
     ref_img_path = REVIEW_DIR / "can_bei_tuo_ref.png"
     exp_img_path = REVIEW_DIR / "can_bei_tuo_exploded.png"
-    prev_sheet_path = REVIEW_DIR / "contact_sheet_round1.png"
-
-    if ref_img_path.exists():
-        print("正在生成包含 PREV(Round 1) 与 NOW(Round 2) 的三栏并排对照卡 check.png...")
-        check_sheet = make_check_sheet_round2(ref_img_path, exp_img_path, prev_sheet_path, contact_sheet)
-        check_path = REVIEW_DIR / "check.png"
-        check_sheet.save(check_path)
-        print(f"✓ 并排对照卡 check.png 已保存: {check_path} (尺寸: {check_sheet.size})")
-    else:
-        print(f"提示: 未找到 {ref_img_path}，跳过 check.png 生成")
+    check_sheet = make_check_sheet_round2(
+        ref_img_path,
+        exp_img_path,
+        sheet_prev,
+        sheet_now,
+        tree_panel,
+        total_c,
+        total_b,
+        moving_b,
+    )
+    check_path = REVIEW_DIR / "check.png"
+    check_sheet.save(check_path)
+    print(f"✓ 并排对照卡 check.png 已保存: {check_path} (尺寸: {check_sheet.size})")
 
 
 if __name__ == "__main__":
