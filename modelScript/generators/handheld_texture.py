@@ -455,6 +455,85 @@ def _void(cube: dict) -> Painter:
     return lambda p, axis: shade(hex_color("#181418"), (texel_noise(p, 9) - 0.5) * 0.15)
 
 
+def _fur(base: str, seed: int) -> Callable[[dict], Painter]:
+    """绒毛（蛾胸腹、兽毛）：沿 z（身体轴）拉长的明暗毛流，零星亮毛尖与暗隙。"""
+    color_base = hex_color(base)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            flow = value_noise((p[0] * 1.7, p[1] * 1.7, p[2] * 0.55), 1.0, seed)
+            color = shade(color_base, (flow - 0.5) * 0.5)
+            roll = texel_noise(p, seed + 1)
+            if roll > 0.88:
+                color = shade(color, 0.28)                   # 亮毛尖
+            elif roll < 0.07:
+                color = shade(color, -0.4)                   # 毛间暗隙
+            return color
+
+        return paint
+
+    return factory
+
+
+def _membrane(base: str, seed: int) -> Callable[[dict], Painter]:
+    """翼膜（蛾 / 蝠）：浅褐灰底，沿翅展方向（x）的细纤维，零星深斑点，贴近边缘处磨暗。"""
+    color_base = hex_color(base)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            fiber = value_noise((p[0] * 0.5, p[1] * 1.5, p[2] * 1.8), 1.0, seed)
+            color = shade(color_base, (fiber - 0.5) * 0.28)
+            roll = texel_noise(p, seed + 1)
+            if roll > 0.93:
+                color = shade(color, -0.22)                  # 灰斑
+            elif roll < 0.04:
+                color = shade(color, 0.16)
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, -0.12)                  # 边缘发暗
+            return color
+
+        return paint
+
+    return factory
+
+
+def _eyespot(base: str, seed: int) -> Callable[[dict], Painter]:
+    """翅上的眼斑：深褐底，成团的浅色环点（噪声峰值处留一个浅芯）。"""
+    color_base = hex_color(base)
+    core = hex_color("#d8c8a0")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            blob = value_noise(p, 1.6, seed)
+            color = shade(color_base, (texel_noise(p, seed + 1) - 0.5) * 0.18)
+            if blob > 0.62:
+                return mix(color, core, 0.85)                # 眼斑浅芯
+            if blob > 0.54:
+                return shade(color_base, -0.4)               # 芯外一圈深环
+            return color
+
+        return paint
+
+    return factory
+
+
+def _chitin(base: str, seed: int) -> Callable[[dict], Painter]:
+    """几丁质（触角干 / 腿节 / 关节）：顺长轴的细亮纹，零星刮痕。"""
+    color_base = hex_color(base)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            streak = _grain_noise(cube, p, axis, 2.2, 0.15, seed)
+            color = shade(color_base, (streak - 0.5) * 0.4)
+            if texel_noise(p, seed + 1) > 0.92:
+                color = shade(color, 0.3)
+            return color
+
+        return paint
+
+    return factory
+
+
 PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "iron": _iron("#4e525a", 0.0, 401),
     "rust_iron": _iron("#4e525a", 0.42, 411),
@@ -534,3 +613,32 @@ def flat_override(cube: dict, default: Painter) -> Optional[Painter]:
         return None
     color = hex_color(code)
     return lambda p, axis: color
+
+
+# 枯灯蛾（ku_deng_e）：绒毛 / 翼膜 / 翅脉 / 眼斑 / 几丁质 / 腹尖残光（残光只靠亮黄的高对比，不做发光层）
+PAINTERS.update({
+    "moth_fur_dk": _fur("#3e3832", 701),
+    "moth_fur": _fur("#5e564a", 702),
+    "moth_fur_lt": _fur("#857a68", 703),
+    "moth_fur_pale": _fur("#b8aa8c", 704),
+    "moth_band": _fur("#b09a74", 705),
+    "moth_chit_dk": _chitin("#2a221c", 711),
+    "moth_chit": _chitin("#4a3a2c", 712),
+    "moth_chit_lt": _chitin("#7a6248", 713),
+    "moth_eye": _chitin("#16121a", 714),
+    "moth_eye_hi": _chitin("#8a7c78", 715),
+    "moth_wing": _membrane("#c4b498", 721),
+    "moth_wing_lt": _membrane("#dcd2bc", 722),
+    "moth_eyespot": _eyespot("#6a5238", 723),
+    "moth_vein": _ink("#3e2a1c", 724),
+    "moth_wing_edge": _ink("#5e4228", 725),
+    "moth_glow": _ink("#ffd23c", 731),
+    "moth_glow_hi": _ink("#fff3a0", 732),
+    "moth_ember": _ink("#d89020", 733),
+})
+FLAT_COLORS.update({
+    "moth_fur_dk": "#4a433b", "moth_fur": "#6a6152", "moth_fur_lt": "#8e8370", "moth_fur_pale": "#bcae90", "moth_band": "#b4a07a",
+    "moth_chit_dk": "#30271f", "moth_chit": "#4f3f31", "moth_chit_lt": "#7e664c", "moth_eye": "#1a161e", "moth_eye_hi": "#8e807c",
+    "moth_wing": "#c8b89c", "moth_wing_lt": "#e0d6c0", "moth_eyespot": "#7a6040", "moth_vein": "#46301f", "moth_wing_edge": "#62462c",
+    "moth_glow": "#ffd23c", "moth_glow_hi": "#fff3a0", "moth_ember": "#d89020",
+})

@@ -665,12 +665,84 @@ def full_run() -> None:
     make_check(p, model, total)
 
 
+# ───────────────────────────────────────────────────────────── 像素贴图（画笔库 handheld_texture，材质见 moth_* 条目）
+TEXTURE_MATERIAL = {name: f"moth_{name}" for name in MATS}
+TEXTURE_MATERIAL["wing_stain"] = "moth_eyespot"          # 翅上褐斑画成眼斑
+
+
+def write_textured(p: Puppet, out_path: Path, flat: bool = False) -> Path:
+    """每面独立 UV 的像素贴图版（flat=True 出平色对照）。write_textured_bbmodel 只按组平铺 outliner，
+    这里按 BONES 改回真骨骼层级（带枢轴、uuid），动画才绑得上。"""
+    sys.path.insert(0, str(REPO / "modelScript" / "generators"))
+    sys.path.insert(0, str(REPO / "modelScript" / "generators" / "meridian_factory"))
+    from handheld_texture import flat_override, handheld_override  # noqa: E402
+    from pixel_texture import write_textured_bbmodel  # noqa: E402
+
+    rig = p.rig
+    names = list(MATS)
+    per_row = rig.tex // rig.swatch
+    owner = {uid: bone for bone, b in rig.bones.items() for uid in b["children"]}
+    cubes = []
+    for el in rig.elements:
+        uv = el["faces"]["north"]["uv"]
+        material = names[int(uv[1] // rig.swatch) * per_row + int(uv[0] // rig.swatch)]
+        cube = {"name": el["name"], "from": el["from"], "to": el["to"], "material": TEXTURE_MATERIAL[material],
+                "group": owner[el["uuid"]]}
+        if any(el["rotation"]):
+            cube["rotation"], cube["origin"] = el["rotation"], el["origin"]
+        cubes.append(cube)
+    write_textured_bbmodel(cubes, out_path, MODEL_ID, None, flat_override if flat else handheld_override)
+    doc = json.loads(out_path.read_text(encoding="utf-8"))
+    by_group = {g["name"]: g["children"] for g in doc["outliner"]}
+    import uuid as uuidlib
+    nodes = {name: {"name": name, "uuid": str(uuidlib.uuid4()), "origin": list(pivot), "children": list(by_group.get(name, []))}
+             for name, _, pivot, _ in BONES}
+    outliner = []
+    for name, parent, _, _ in BONES:
+        (outliner if parent is None else nodes[parent]["children"]).append(nodes[name])
+    doc["outliner"] = outliner
+    for element in doc["elements"]:
+        element["type"] = "cube"            # 离线 codec 只认显式声明的 cube
+    doc["textures"][0]["folder"] = "entity"
+    out_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    return out_path
+
+
+def render_check_tex(p: Puppet) -> None:
+    """check_tex.png：参考 | 平色 | 贴图，三个视角各一对（TOP 看翅膜 / 3/4 / FRONT）。"""
+    flat = write_textured(p, CREATURE_DIR / "_tmp_flat.bbmodel", flat=True)
+    tex = write_textured(p, CREATURE_DIR / "KuDengE_tex.bbmodel")
+    size = 440
+    views = (("3/4 FRONT-RIGHT", 150.0, 22.0), ("TOP +y（翅膜）", 180.0, 89.9), ("BACK +z（腹尖残光）", 0.0, 8.0))
+    ref = Image.open(REVIEW_DIR / f"{MODEL_ID}.png").convert("RGB")
+    ref = ref.resize((int(ref.width * size / ref.height), size), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (ref.width + len(views) * 2 * (size + 8) + 8, size + 30), (28, 29, 33))
+    draw = ImageDraw.Draw(canvas)
+    font = load_font(13)
+    canvas.paste(ref, (0, 30))
+    draw.text((4, 8), "REFERENCE", fill=(215, 205, 180), font=font)
+    x = ref.width + 8
+    for label, yaw, pitch in views:
+        for title, path in (("FLAT", flat), ("TEXTURED", tex)):
+            canvas.paste(render(path, yaw=yaw, pitch=pitch, size=size, bg=BG, shading="mc")[0], (x, 30))
+            draw.text((x + 4, 8), f"{title}: {label}", fill=(230, 230, 230), font=font)
+            x += size + 8
+    flat.unlink()
+    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    canvas.save(REVIEW_DIR / "check_tex.png")
+    print(f"✓ {tex.name}；check_tex.png → {REVIEW_DIR}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--part", choices=sorted(PART_FUNCS))
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--gates", action="store_true")
+    ap.add_argument("--tex", action="store_true", help="只出像素贴图版 KuDengE_tex.bbmodel 与 check_tex.png")
     args = ap.parse_args()
+    if args.tex:
+        render_check_tex(build(list(PART_FUNCS.values())))
+        return
     if not (args.part or args.self_test or args.gates):
         full_run()
         return
