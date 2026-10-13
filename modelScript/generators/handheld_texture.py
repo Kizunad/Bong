@@ -784,6 +784,46 @@ FLAT_COLORS.update({
 })
 
 
+# ---- 金属 / 甲壳 / 软腹（锈甲鳖虫批次补充）-----------------------------------------------
+
+
+def _gold(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """碎金片：顺长轴的拉丝金色，成片发暗的氧化斑，零星亮划痕，边缘磨亮。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    tarnish = hex_color("#5a4426")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            streak = _grain_noise(cube, p, axis, 3.0, 0.4, seed)
+            color = mix(a, b, streak * 1.2 - 0.1)
+            if value_noise(p, 2.2, seed + 1) > 0.7:
+                color = mix(color, tarnish, 0.55)             # 氧化斑
+            if texel_noise(p, seed + 2) > 0.95:
+                color = shade(color, 0.22)                    # 亮划痕
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.12)
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "gold": _gold("#a88a42", "#d2b062", 751),
+    "gold_dull": _gold("#7a6234", "#a8884a", 752),
+    "rivet": _iron("#2e2622", 0.25, 753),
+    "shell_dark": _horn("#3a3230", 754),
+    "shell_mid": _horn("#5e5248", 755),
+    "belly_pale": _hide("#b8aa8c", "#d2c6a8", 756, crease_amount=0.3),
+    "belly_seg": _hide("#7e6e56", "#9a8a6c", 757, crease_amount=0.8),
+})
+FLAT_COLORS.update({
+    "gold": "#bc9a50", "gold_dull": "#92763e", "rivet": "#2e2622", "shell_dark": "#3a3230", "shell_mid": "#5e5248",
+    "belly_pale": "#c4b698", "belly_seg": "#8a7a5e",
+})
+
+
 def painter_for(material: str, cube: dict) -> Optional[Painter]:
     """材质名 → 画笔（带整体压暗补偿）。不认识的材质返回 None。"""
     factory = PAINTERS.get(material)
