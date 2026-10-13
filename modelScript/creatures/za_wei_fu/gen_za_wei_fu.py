@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""杂尾蝠（za_wei_fu）Blockbench .bbmodel 程序化生成器 —— Round 1/3，只做几何。
+"""杂尾蝠（za_wei_fu）Blockbench .bbmodel 程序化生成器 —— Round 3/3（翼膜暗褐带血管纹、撕裂代替破洞、侧视加厚），只做几何。
 
 正典依据：docs/worldview.md §十三 幽暗地穴——地穴里成群的蝙蝠，循真元波动扑人。任务卡：末世生物批次 #7
 （.task-wasteland-creatures.md）「尾巴杂接着别种兽尾的地穴蝙蝠，循真元波动扑人，成群」。
 
-外形：瘦小的灰黑蝙蝠，比原版大一圈（翼展约 36px，加耳高约 37px）。翼膜是暗红褐的破膜（逐格体素铺出，
-带破洞和参差的撕边），翼骨细长，每侧翅有肩 / 上臂 / 前臂 / 腕 / 拇指爪 / 三根指骨；大耳朵（里面是粉色耳肉）、
+外形：瘦小的灰黑蝙蝠，比原版大一圈（翼展约 36px，加耳高约 37px）。翼膜是暗褐皮膜（逐格体素铺出，
+带血管纹、斜向撕裂和参差的后缘），翼骨细长，每侧翅有肩 / 上臂 / 前臂 / 腕 / 拇指爪 / 三根指骨；大耳朵（里面是粉色耳肉）、
 塌鼻、满口细牙、一点红的眼。特征是尾巴不是它自己的：接上来的一截——鼠尾（裸皮，带环纹和稀毛）→ 蜥尾（鳞片 +
 背棘）→ 蛇尾（深色细鳞、浅色腹纹，尾尖卷起），三个接口各有红肉缝圈、黑线针脚和十字骨钉。
 
@@ -57,8 +57,9 @@ MATS = {
     "fur":         (68, 64, 68),
     "fur_lt":      (98, 92, 94),      # 毛尖 / 颊毛
     "belly":       (156, 144, 130),   # 胸前浅色 V 纹
-    "membrane":    (112, 66, 62),     # 翼膜（暗红褐）
-    "membrane_lt": (134, 82, 74),
+    "membrane":    (80, 64, 52),      # 翼膜（暗褐皮膜，Round 3 由偏红改为暗褐）
+    "membrane_lt": (100, 80, 62),
+    "membrane_vein": (100, 54, 46),   # 膜上的血管纹（暗红，细线）
     "muscle":      (124, 60, 58),     # 翼臂肌腱
     "ear_skin":    (172, 112, 110),   # 耳内粉肉
     "ear_vein":    (142, 86, 88),
@@ -102,6 +103,8 @@ _SOFT = (
     ("bone", "bone_lt"), ("bone", "bone_dk"), ("bone_lt", "bone_dk"), ("claw", "bone_dk"),
     ("eye", "fur_dk"), ("eye_red", "eye"), ("void", "fur_dk"), ("nose", "fur_dk"), ("nose", "void"),
 )
+# 血管格与膜同层，软覆盖关系同 membrane
+_SOFT += tuple(("membrane_vein", other) for pair in _SOFT if "membrane" in pair for other in pair if other != "membrane")
 SOFT_OVER = frozenset(frozenset(p) for p in _SOFT)
 
 # ───────────────────────────────────────────────────────────── 骨骼树
@@ -276,18 +279,18 @@ def part_neck(p: Puppet) -> None:
 def part_chest(p: Puppet) -> None:
     """胸：毛层逐级收边的桶身 + 肩带毛垫 + 胸前浅色 V 纹 + 背脊骨刺 + 腹侧乱毛簇。"""
     b = "body_chest"
-    p.box(b, "chest_core", (-2.6, 17.6, -2.4), (2.6, 21.4, 2.4), "fur_dk")
-    p.box(b, "chest_upper", (-2.6, 21.4, -2.0), (2.6, 23.4, 2.0), "fur")
-    p.pair(b, "yoke", (2.6, 21.4, -1.6), (3.0, 23.4, 1.6), "fur_dk", sided=False)
+    p.box(b, "chest_core", (-2.6, 17.6, -3.2), (2.6, 21.4, 3.2), "fur_dk")
+    p.box(b, "chest_upper", (-2.6, 21.4, -2.7), (2.6, 23.4, 2.8), "fur")
+    p.pair(b, "yoke", (2.6, 21.4, -2.4), (3.0, 23.4, 2.4), "fur_dk", sided=False)
     # 胸前 V 纹（浅色）：上宽下窄两层
-    p.box(b, "vpatch_upper", (-1.6, 20.0, -2.9), (1.6, 22.3, -2.4), "belly")
-    p.box(b, "vpatch_lower", (-1.0, 17.8, -2.9), (1.0, 20.0, -2.4), "belly")
-    p.pair(b, "vpatch_edge", (1.6, 20.6, -2.7), (2.1, 22.0, -2.0), "fur_lt", sided=False)
+    p.box(b, "vpatch_upper", (-1.6, 20.0, -3.7), (1.6, 22.3, -3.2), "belly")
+    p.box(b, "vpatch_lower", (-1.0, 17.8, -3.7), (1.0, 20.0, -3.2), "belly")
+    p.pair(b, "vpatch_edge", (1.6, 20.6, -3.5), (2.1, 22.0, -2.8), "fur_lt", sided=False)
     # 背面：毛板 + 脊椎骨刺
-    p.box(b, "back_fur", (-2.2, 17.8, 2.4), (2.2, 23.0, 2.9), "fur")
+    p.box(b, "back_fur", (-2.2, 17.8, 3.2), (2.2, 23.0, 3.7), "fur")
     for i in range(4):
         y = 18.4 + i * 1.3
-        p.box(b, f"spine_nub_{i}", (-0.4, y, 2.9), (0.4, y + 0.7, 3.4), "bone_dk")
+        p.box(b, f"spine_nub_{i}", (-0.4, y, 3.7), (0.4, y + 0.7, 4.2), "bone_dk")
     p.pair(b, "flank_tuft_a", (2.6, 18.2, -1.0), (3.2, 19.2, 0.4), "fur_lt", sided=False)
     p.pair(b, "flank_tuft_b", (2.6, 19.6, 0.4), (3.1, 20.4, 1.6), "fur", sided=False)
 
@@ -295,23 +298,23 @@ def part_chest(p: Puppet) -> None:
 def part_hips(p: Puppet) -> None:
     """臀：毛桶 + 腰窝 + 尾根毛簇（尾巴是接上来的，所以根部有一圈乱毛盖住缝合线）。"""
     b = "body_hips"
-    p.box(b, "hips_core", (-2.2, 14.0, -2.0), (2.2, 17.2, 2.2), "fur_dk")
-    p.box(b, "hips_cap", (-1.8, 17.2, -1.6), (1.8, 17.6, 1.8), "fur")
-    p.pair(b, "hip_fur", (2.2, 14.8, -1.2), (2.7, 16.8, 1.4), "fur", sided=False)
-    p.box(b, "rump_fur", (-1.8, 14.4, 2.2), (1.8, 16.6, 2.7), "fur")
+    p.box(b, "hips_core", (-2.2, 14.0, -2.7), (2.2, 17.2, 3.0), "fur_dk")
+    p.box(b, "hips_cap", (-1.8, 17.2, -2.4), (1.8, 17.6, 2.6), "fur")
+    p.pair(b, "hip_fur", (2.2, 14.8, -2.0), (2.7, 16.8, 2.2), "fur", sided=False)
+    p.box(b, "rump_fur", (-1.8, 14.4, 3.0), (1.8, 16.6, 3.5), "fur")
     p.pair(b, "tail_root_tuft_a", (0.4, 13.8, 1.0), (1.4, 14.1, 2.6), "fur_lt", sided=False)
 
 
 def part_fur(p: Puppet) -> None:
     """乱毛簇：胸侧 / 背面 / 臀 / 颈领上散的小毛块，打破桶身的方正轮廓（逐个落在已有表面上）。"""
-    p.pair("body_chest", "fur_side_a", (2.7, 19.0, 1.0), (3.3, 19.9, 1.8), "fur", sided=False)
+    p.pair("body_chest", "fur_side_a", (2.7, 19.0, 1.8), (3.3, 19.9, 2.6), "fur", sided=False)
     p.pair("body_chest", "fur_side_b", (2.7, 17.8, -0.4), (3.3, 18.5, 0.5), "fur_lt", sided=False)
-    p.pair("body_chest", "fur_side_c", (2.6, 20.6, -1.8), (3.0, 21.2, -1.0), "fur_lt", sided=False)
-    p.pair("body_chest", "fur_back_a", (0.8, 19.6, 2.9), (1.5, 20.4, 3.5), "fur_lt", sided=False)
-    p.pair("body_chest", "fur_back_b", (1.4, 21.4, 2.9), (2.0, 22.2, 3.4), "fur", sided=False)
-    p.pair("body_chest", "fur_back_c", (0.3, 22.2, 2.95), (0.9, 22.9, 3.3), "fur", sided=False)
-    p.pair("body_hips", "fur_rump_a", (0.7, 15.0, 2.7), (1.3, 15.9, 3.2), "fur_lt", sided=False)
-    p.pair("body_hips", "fur_rump_b", (1.6, 16.0, 2.7), (2.1, 16.7, 3.1), "fur", sided=False)
+    p.pair("body_chest", "fur_side_c", (2.6, 20.6, -2.6), (3.0, 21.2, -1.8), "fur_lt", sided=False)
+    p.pair("body_chest", "fur_back_a", (0.8, 19.6, 3.7), (1.5, 20.4, 4.3), "fur_lt", sided=False)
+    p.pair("body_chest", "fur_back_b", (1.4, 21.4, 3.7), (2.0, 22.2, 4.2), "fur", sided=False)
+    p.pair("body_chest", "fur_back_c", (0.3, 22.2, 3.75), (0.9, 22.9, 4.1), "fur", sided=False)
+    p.pair("body_hips", "fur_rump_a", (0.75, 15.0, 3.5), (1.3, 15.9, 4.0), "fur_lt", sided=False)
+    p.pair("body_hips", "fur_rump_b", (1.6, 16.0, 3.5), (2.1, 16.7, 3.9), "fur", sided=False)
     p.pair("body_hips", "fur_hip_side", (2.7, 15.4, -0.4), (3.2, 16.2, 0.4), "fur_lt", sided=False)
     p.pair("neck", "fur_ruff_tip", (1.0, 23.4, 1.8), (1.6, 24.3, 2.3), "fur_lt", sided=False)
     p.pair("head", "fur_brow_tuft", (1.0, 28.9, -3.7), (1.6, 29.5, -2.8), "fur_lt", sided=False)
@@ -362,10 +365,21 @@ MEMBRANE_OUTLINE = tuple(_w(x, y) for x, y in (   # 右翼膜外轮廓（x, y）
     (12.6, 12.0), (8.2, 14.2), (2.8, 14.8),
 ))
 MEMBRANE_SPLIT_X = 10.0          # 以此分内侧 / 外侧两片
-MEMBRANE_HOLES = {               # 破洞（圆心 x, y, 半径）：左右不同，破膜本来就不对称
-    "r": ((13.0, 21.4, 1.4), (9.0, 17.6, 1.1), (15.4, 15.8, 1.0)),
-    "l": ((12.0, 16.8, 1.3), (8.2, 21.2, 1.0), (14.6, 23.4, 1.2)),
+MEMBRANE_TEARS = {               # 撕裂（圆心 x, y, 半长, 半宽, 长轴角度°）：细长斜口、贴边豁口，左右不同（破膜本来就不对称）
+    "r": ((14.0, 19.0, 3.2, 0.55, 35.0), (9.5, 16.2, 2.2, 0.5, -60.0), (16.2, 22.4, 2.0, 0.45, 20.0),
+          (11.0, 12.0, 2.0, 0.5, 80.0), (7.6, 18.2, 1.1, 0.8, 20.0)),
+    "l": ((13.0, 17.5, 2.8, 0.5, -30.0), (8.5, 21.5, 1.5, 0.7, 70.0), (17.0, 18.5, 2.2, 0.45, -15.0),
+          (10.5, 12.4, 1.8, 0.5, 100.0), (15.0, 24.4, 1.3, 0.5, 45.0)),
 }
+# 后缘（指尖之间的扇贝边）：只在这一段做噪声撕边；贴臂骨和贴身的边不撕，免得膜脱离骨架
+MEMBRANE_TRAILING = MEMBRANE_OUTLINE[3:10]
+# 血管纹：从指节 / 肘往后缘扇贝凹口和贴身一侧放射的几条线，格子落在线 0.42px 内就用血管材质
+VEIN_SEGMENTS = (
+    (FINGER_KNUCKLE["a"], MEMBRANE_OUTLINE[4]), (FINGER_KNUCKLE["b"], MEMBRANE_OUTLINE[6]),
+    (FINGER_KNUCKLE["c"], MEMBRANE_OUTLINE[8]), (WING_E[:2], MEMBRANE_OUTLINE[9]),
+    (WING_W[:2], MEMBRANE_OUTLINE[5]), (WING_E[:2], MEMBRANE_OUTLINE[8]),
+    (_w(8.0, 21.0), _w(11.0, 17.0)), (_w(12.4, 22.5), _w(14.6, 20.2)),
+)
 
 
 def _inside(poly, x: float, y: float) -> bool:
@@ -385,10 +399,40 @@ def _edge_distance(poly, x: float, y: float) -> float:
     return best
 
 
+def _in_tear(tears, x: float, y: float, ix: int, iy: int) -> bool:
+    """点是否落在某道撕裂里：旋转椭圆，边缘按格号加一点抖动，让口子的边是锯齿而不是光滑椭圆。"""
+    for cx, cy, half_len, half_wid, angle in tears:
+        c, sn = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        u, v = (x - cx) * c + (y - cy) * sn, -(x - cx) * sn + (y - cy) * c
+        jag = 0.22 * math.sin(ix * 2.1 + iy * 1.3)
+        if (u / half_len) ** 2 + (v / half_wid) ** 2 < 1.0 + jag:
+            return True
+    return False
+
+
+def _trailing_distance(x: float, y: float) -> float:
+    best = 9e9
+    for (x0, y0), (x1, y1) in zip(MEMBRANE_TRAILING, MEMBRANE_TRAILING[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+        best = min(best, math.hypot(x - (x0 + t * dx), y - (y0 + t * dy)))
+    return best
+
+
+def _near_vein(x: float, y: float) -> bool:
+    for (x0, y0), (x1, y1) in ((a[:2], b[:2]) for a, b in VEIN_SEGMENTS):
+        dx, dy = x1 - x0, y1 - y0
+        t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+        if math.hypot(x - (x0 + t * dx), y - (y0 + t * dy)) < 0.42:
+            return True
+    return False
+
+
 def membrane_cells(side: str) -> list[tuple[int, int]]:
-    """右翼 / 左翼的膜格（1px 格的左下角整数坐标，x 为右侧坐标系下的格号）：多边形内 − 破洞 − 撕边随机缺格，
-    再剔除没有四邻接的孤格（它们在门禁里会被判悬空）。左翼用不同的破洞，所以左右不镜像。"""
-    holes = MEMBRANE_HOLES[side]
+    """右翼 / 左翼的膜格（1px 格的左下角整数坐标，x 为右侧坐标系下的格号）：多边形内 − 撕裂 − 后缘噪声撕边，
+    再剔除没有四邻接的孤格（它们在门禁里会被判悬空）。左翼用不同的撕裂和噪声相位，所以左右不镜像。"""
+    tears = MEMBRANE_TEARS[side]
+    phase = 1.7 if side == "l" else 0.0
     cells = set()
     for ix in range(0, 24):
         for iy in range(8, 34):
@@ -397,11 +441,11 @@ def membrane_cells(side: str) -> list[tuple[int, int]]:
                 continue
             if 2 <= ix <= 4 and 19 <= iy <= 24:          # 肩球 / 肌块占着这一块，膜从它外面开始
                 continue
-            if any(math.hypot(cx - hx, cy - hy) < hr for hx, hy, hr in holes):
+            if _in_tear(tears, cx, cy, ix, iy):
                 continue
-            ragged = _edge_distance(MEMBRANE_OUTLINE, cx, cy) < 1.3 and ((ix * 73 + iy * 31 + (7 if side == "l" else 0)) % 5 == 0)
-            if ragged:
-                continue
+            wobble = math.sin(ix * 1.7 + iy * 0.9 + phase) + math.sin(ix * 0.6 - iy * 2.3 + 1.0 + phase)
+            if _trailing_distance(cx, cy) < min(2.1, max(0.0, 1.0 + 0.55 * wobble)):
+                continue                                  # 后缘撕出深浅不一的豁口
             cells.add((ix, iy))
     changed = True
     while changed:
@@ -462,13 +506,16 @@ def _mx(pt):
 
 
 def part_membranes(p: Puppet) -> None:
-    """翼膜：1px 体素格逐格铺出（厚 0.4），破洞 + 撕边；内外两片分骨，右翼与左翼破洞不同；
+    """翼膜：1px 体素格逐格铺出（厚 0.4），撕裂 + 后缘撕边 + 血管纹；内外两片分骨，右翼与左翼破洞不同；
     格子的明暗按位置哈希在 membrane / membrane_lt 间错开，读作斑驳的旧膜。"""
     for side, sign in (("r", 1), ("l", -1)):
         for ix, iy in membrane_cells(side):
             x0, x1 = (ix, ix + 1) if sign > 0 else (-ix - 1, -ix)
             bone = f"membrane_{'in' if ix + 0.5 < MEMBRANE_SPLIT_X else 'out'}_{side}"
-            mat = "membrane_lt" if (ix * 5 + iy * 3) % 7 == 0 else "membrane"
+            if _near_vein(ix + 0.5, iy + 0.5):
+                mat = "membrane_vein"
+            else:
+                mat = "membrane_lt" if (ix * 5 + iy * 3) % 7 == 0 else "membrane"
             p.box(bone, f"mem_{ix:02d}_{iy:02d}_{side}x", (x0, iy, -0.2), (x1, iy + 1, 0.2), mat)
 
 
@@ -819,7 +866,7 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     ref_p = REVIEW_DIR / f"{MODEL_ID}_ref.png"
     exp_p = REVIEW_DIR / f"{MODEL_ID}_exploded.png"
     font_h = load_font(18)
-    six = render_six_views(model_path, f"za_wei_fu（杂尾蝠）round 1/3 · {p.total()} cubes · "
+    six = render_six_views(model_path, f"za_wei_fu（杂尾蝠）round 3/3 · {p.total()} cubes · "
                                        f"{len(p.rig.bones)} 骨（可动 {moving_bone_count(p)}）· 门禁违例 {gate_total}")
     row = same_framing_row(model_path, ref_p)
     tree = bone_tree_panel(p, six.height + row.height + 10)
@@ -838,7 +885,7 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     d.text((10, 48 + ref_s.height), "爆炸分解图", fill=(215, 205, 180), font=font_h)
     canvas.paste(exp_s, (10, 78 + ref_s.height))
     x = lw + 25
-    d.text((x, 8), "本模型（几何 only：无贴图 / 动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
+    d.text((x, 8), "本模型（Round 3 几何：无贴图 / 动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
     canvas.paste(six, (x, 38))
     canvas.paste(row, (x, 38 + six.height + 10))
     x += mid_w + 15
