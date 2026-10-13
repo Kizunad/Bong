@@ -36,6 +36,13 @@ CLOSEUP_SPAN = 12.0             # 特写取景跨度（px）
 MATERIAL_MAP: Dict[str, str] = {
     "hemp": "rope", "stone": "stone_chipped", "bone": "bone_main", "rust": "rust_heavy", "rust_dark": "rust_iron",
     "grip": "wood_dark", "cord": "rope", "glow": "glow_edge",
+    # 工具五件（刨锄 / 刮刀 / 骨骸钳 / 钝气夹 / 阵旗）
+    "hoe_wood": "wood", "scr_wood": "wood", "flag_wood": "wood",
+    "hoe_iron": "rust_iron", "scr_iron": "rust_iron", "clamp_iron": "rust_iron", "tong_iron": "rust_iron",
+    "hoe_edge": "steel", "scr_edge": "steel", "clamp_edge": "steel", "tong_edge": "steel",
+    "hoe_cord": "rope", "scr_cord": "rope", "clamp_cord": "rope", "tong_cord": "rope",
+    "tong_bone": "bone_main", "flag_bone": "bone_main", "clamp_pad": "leather", "flag_leather": "leather",
+    "flag_cloth": "cloth_tan", "flag_rune": "glow_edge",
 }
 
 
@@ -103,6 +110,25 @@ REGISTRY: Dict[str, Piece] = {
     "rusted_iron_spear": Piece(_spear_cubes("rusted_iron_spear"), long_item_views, check_geometry=False),
     "ling_feng_sword": Piece(_sword_cubes, long_item_views, check_geometry=False),
 }
+
+
+def _held_piece(module_name: str) -> Callable[[], List[Cube]]:
+    """单件 HeldItem 模块（模块里 items() 只有一件）的几何。"""
+    def build() -> List[Cube]:
+        import importlib
+
+        return held_cubes(importlib.import_module(module_name).items()[0])
+
+    return build
+
+
+REGISTRY.update({
+    "bao_chu": Piece(_held_piece("gen_bao_chu"), long_item_views, check_geometry=False),
+    "gua_dao": Piece(_held_piece("gen_gua_dao"), long_item_views, check_geometry=False),
+    "gu_hai_qian": Piece(_held_piece("gen_gu_hai_qian"), long_item_views, check_geometry=False),
+    "dun_qi_jia": Piece(_held_piece("gen_dun_qi_jia"), long_item_views, check_geometry=False),
+    "array_flag": Piece(_held_piece("gen_array_flag_held"), long_item_views, check_geometry=False),
+})
 
 
 def retexture(piece_id: str) -> None:

@@ -32,7 +32,8 @@
   bone_main / bone_dark / bone_lit / bone        骨：象牙色，顺长轴细纹，蚀孔
   wood / wood_dark   木：顺长轴木纹，端面年轮，偶有木节
   rope           麻绳：斜向拧股
-  cloth / cloth_dark / cloth_red   布幡：经纬编织，边缘磨损
+  cloth / cloth_dark / cloth_red / cloth_tan   布幡：经纬编织，边缘毛边磨损
+  leather        皮（夹垫、缠皮）：深褐，细密皱纹，边缘磨浅，零星裂口
   paper / paper_ochre / paper_frost / paper_scorch   符纸：纤维、斑渍、边缘发焦
   ink_ochre / ink_blue / ink_cinnabar / cinnabar / cinnabar_dark   颜料：干笔飞白
   void           深坑 / 暗孔：近黑
@@ -177,8 +178,8 @@ def _wood(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
                 base = value_noise((across * 2.2, along * 0.2, 0.0), 1.0, seed)
                 color = mix(a, b, (0.7 * base + 0.3 * texel_noise(p, seed + 1)) * 1.4 - 0.2)
                 wobble = 1.6 * value_noise((across * 0.8, along * 0.18, 0.0), 1.0, seed + 5)
-                if (across * 1.05 + wobble) % 1.0 < 0.26:     # 深色木纹线
-                    color = mix(color, line_dark, 0.65)
+                if (across * 1.05 + wobble) % 1.0 < 0.32:     # 深色木纹线
+                    color = mix(color, line_dark, 0.8)
             knot = value_noise(p, 1.9, seed + 2)
             if knot > 0.86:
                 color = knot_core                              # 木节核
@@ -336,6 +337,28 @@ def _copper_edge(seed: int) -> Callable[[dict], Painter]:
     return factory
 
 
+def _leather(base: str, seed: int) -> Callable[[dict], Painter]:
+    """皮（夹垫、旗杆缠皮）：深褐，细密皱纹（两个方向的细线网），边缘磨浅，零星裂口。"""
+    color_base = hex_color(base)
+    crease, worn = shade(color_base, -0.35), shade(color_base, 0.2)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(color_base, (value_noise(p, 1.8, seed) - 0.5) * 0.3)
+            wrinkle = abs(value_noise(p, 1.1, seed + 1) - 0.5)
+            if wrinkle < 0.05:
+                color = mix(color, crease, 0.7)              # 皱纹
+            if texel_noise(p, seed + 2) > 0.94:
+                color = mix(color, crease, 0.6)              # 裂口
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = mix(color, worn, 0.45)                # 边缘磨浅
+            return color
+
+        return paint
+
+    return factory
+
+
 def _cloth(base: str, seed: int) -> Callable[[dict], Painter]:
     color_base = hex_color(base)
 
@@ -383,6 +406,8 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "cloth": _cloth("#7a5a46", 481),
     "cloth_dark": _cloth("#4a3a30", 482),
     "cloth_red": _cloth("#7a2a24", 483),
+    "cloth_tan": _cloth("#8a6c3e", 484),
+    "leather": _leather("#5c4230", 485),
     "paper": _paper("#c8b48a", 491),
     "paper_ochre": _paper("#b09664", 492),
     "paper_frost": _paper("#808e98", 493),
@@ -402,7 +427,7 @@ FLAT_COLORS: Dict[str, str] = {
     "stone": "#756f64", "stone_dark": "#3e3a35", "stone_lit": "#8d877b", "base_stone": "#585650",
     "bone": "#d8ccb0", "bone_main": "#d8ccb0", "bone_dark": "#b8a888", "bone_lit": "#ece2c8",
     "wood": "#745230", "wood_dark": "#523824", "rope": "#8e6038",
-    "cloth": "#7a5a46", "cloth_dark": "#4a3a30", "cloth_red": "#7a2a24",
+    "cloth": "#7a5a46", "cloth_dark": "#4a3a30", "cloth_red": "#7a2a24", "cloth_tan": "#8a6c3e", "leather": "#5c4230",
     "paper": "#c8b48a", "paper_ochre": "#b09664", "paper_frost": "#808e98", "paper_scorch": "#3a3230",
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
