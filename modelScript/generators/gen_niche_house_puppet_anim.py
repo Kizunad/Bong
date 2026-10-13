@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """守家傀儡（niche_house_puppet）GeckoLib 骨骼 + 动画。
 
-外形**一块都不改**：几何、UV、贴图全部取自已落地的 `modelScript/models/niche_house_puppet.bbmodel`（91 个立方体、
+外形**一块都不改**：几何、UV、贴图全部取自已落地的带贴图版 `modelScript/models/niche_house_puppet_tex.bbmodel`（91 个立方体、
 512×32 图集）。这里做两件事：**按关节分骨**、**从零写动画**（没有套任何已有动画）。
 
 ## 第 2 次返工（用户原话：「应该可以从台阶上下来移动」）
@@ -66,7 +66,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[2]
-SOURCE = REPO / "modelScript" / "models" / "niche_house_puppet.bbmodel"
+SOURCE = REPO / "modelScript" / "models" / "niche_house_puppet_tex.bbmodel"      # 带像素贴图的版本（平色版贴图只有几百字节）
 OUT_ROOT = REPO / "modelScript" / "models" / "niche_house_puppet_anim"
 GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/niche_house_puppet")
 NAME = "niche_house_puppet"
