@@ -1,4 +1,4 @@
-"""锈甲鳖虫（xiu_jia_bie）几何部件库 —— Round 1/3。
+"""锈甲鳖虫（xiu_jia_bie）几何部件库 —— Round 3/3。
 
 依据 worldview.md §九 L848「金银如废土」：啃废金属为生的甲虫。外形要点（任务卡 #6）：
 扁圆厚重的背甲，由锈铁片 / 碎金片 / 铜片层层叠成（片缘翘起、带铆钉孔和锈斑凹坑），
@@ -152,7 +152,9 @@ PLATE_T = 0.8  # 金属片厚
 # 沿曲面法线倾斜的符号约定：渲染器的欧拉角正方向要靠渲出来的图核对（见 Round 1 接触表的说明）
 TILT_X = 1.0
 TILT_Z = -1.0
-EDGE_CURL = -5.0
+EDGE_CURL = -8.0  # Round 3：5 → 8，整片再往上掀一点，片与片之间露出阴影缝
+LIP_H = 1.25      # 前缘翘边高度（Round 1 是 0.55，侧视读成一条平线）
+JITTER_X = 3.0    # 每片再随机歪一点，不像整齐的瓦
 ROW_Z = [-11.0 + 4.4 * k for k in range(6)]  # 6 行
 COL_X = [1.9, 5.3, 8.7]  # 鞘翅 3 列（每侧）；第 4 列是侧裙
 SKIRT_X = 11.2
@@ -191,7 +193,7 @@ def _plate(rig, bone: str, name: str, x: float, z: float, w: float, l: float, k:
     mat_rng = random.Random(k * 100 + j * 10 + (0 if sx < 0 else 1))
     px = sx * x
     nx, ny, nz = _dome_normal(px, z)
-    rot_x = TILT_X * math.degrees(math.atan2(nz, ny)) + EDGE_CURL  # EDGE_CURL：前沿略翘，瓦片感
+    rot_x = TILT_X * math.degrees(math.atan2(nz, ny)) + EDGE_CURL + geo.uniform(-JITTER_X, JITTER_X)
     rot_z = TILT_Z * math.degrees(math.atan2(nx, ny))
     lift = 0.3 * (k % 3) + geo.uniform(0.0, 0.25)  # 行间错高，避免同面叠压
     c = _dome_y(px, z)
@@ -207,7 +209,14 @@ def _plate(rig, bone: str, name: str, x: float, z: float, w: float, l: float, k:
 
     hw, hl, ht = w / 2, l / 2, PLATE_T / 2
     piece("plate", (-hw, -ht, -hl), (hw, ht, hl), mat)
-    piece("lip", (-hw + 0.25, ht, -hl), (hw - 0.25, ht + 0.55, -hl + 0.55), mat)  # 前缘翘边
+    piece("lip", (-hw + 0.25, ht, -hl), (hw - 0.25, ht + LIP_H, -hl + 0.7), mat)  # 前缘翘边
+    piece("lip_tip", (-hw + 0.9, ht + LIP_H, -hl - 0.1), (hw - 0.9, ht + LIP_H + 0.4, -hl + 0.5), mat)  # 翘边卷口
+    piece("under", (-hw + 0.5, -ht - 0.7, -hl + 0.2), (hw - 0.5, -ht, -0.4), "rust_dark")  # 翘起后露出的阴影
+    if geo.random() < 0.55:  # 后缘也有翘的
+        piece("lip_b", (-hw + 0.4, ht, hl - 0.6), (hw - 0.4, ht + 0.75, hl), mat)
+    if x >= 8.7:  # 外侧列：外缘卷起
+        a, b = sorted((sx * (hw - 0.6), sx * hw))
+        piece("lip_s", (a, ht, -hl + 0.8), (b, ht + 0.9, hl - 0.8), mat)
     # 四角小铆钉（取符号才左右镜像）。只放两颗时两点加一块斑读成人脸，所以铺四角
     for sub, lx, lz in (("rivet_a", sx * (hw - 0.7), -hl + 1.5), ("rivet_b", -sx * (hw - 0.7), -hl + 1.5),
                         ("rivet_c", sx * (hw - 0.7), hl - 0.8), ("rivet_d", -sx * (hw - 0.7), hl - 0.8)):

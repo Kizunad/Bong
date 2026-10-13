@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""锈甲鳖虫（xiu_jia_bie）Blockbench .bbmodel 生成器 —— Round 1/3。
+"""锈甲鳖虫（xiu_jia_bie）Blockbench .bbmodel 生成器 —— Round 3/3。
 
 几何全部在同目录 xiu_jia_bie_parts.py 里（按部件拆成 part_*()）；本文件负责：
 装配 Rig、门禁（gatekit）、逐件预览、完整模型、六视角接触表 check.png。
@@ -35,7 +35,7 @@ from cjk_font import load_font  # noqa: E402
 
 import xiu_jia_bie_parts as parts  # noqa: E402
 
-ROUND = 1
+ROUND = 3
 BONE_FLOOR = 30  # 任务卡：多足虫类每体节 1 骨 + 每腿 2~3 段，≥ 30
 GROUND_TOL = 0.5  # 最低点允许离地的距离（趾尖斜杆的下角）
 
