@@ -41,6 +41,11 @@
   paper / paper_ochre / paper_frost / paper_scorch   符纸：纤维、斑渍、边缘发焦
   ink_ochre / ink_blue / ink_cinnabar / cinnabar / cinnabar_dark   颜料：干笔飞白
   void           深坑 / 暗孔：近黑
+  fur_dark / fur_mangy / fur_rust   枯毛（生物用）：顺身长的毛流、深色毛根与浅色毛尖，一块块脱毛露出灰褐的皮
+  scab_flesh     结痂暗红肉 / 牙龈：痂块、湿亮点、裂缝
+  eye_amber      琥珀眼：深褐眼缘 + 亮琥珀 + 近白高光（靠对比，不做发光）
+  chitin_white / chitin_ochre / chitin_grey / chitin_dark   骨质甲壳（蜈蚣 / 虫类）：沿长轴的棱纹、细裂纹、骨粉点、蚀孔
+  marrow_amber / claw_rust / bone_dust   髓渍 / 锈褐爪尖 / 白色骨粉
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
 """
@@ -451,6 +456,92 @@ def _spirit_green(seed: int) -> Callable[[dict], Painter]:
     return factory
 
 
+def _fur(base_a: str, base_b: str, seed: int, bald: float = 0.0) -> Callable[[dict], Painter]:
+    """枯毛（生物用）：顺身长（z）的细毛流——z 向拉长的噪声当毛束，毛束明暗不匀，零星深色毛根和浅色毛尖；
+    bald > 0 时有一块块脱毛露出灰褐的皮（占面积 bald 的比例），脱毛边缘最暗。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    skin, skin_dark = hex_color("#7a6454"), hex_color("#4a3a32")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            strand = value_noise((p[0] * 2.6, p[1] * 2.6, p[2] * 0.4), 1.0, seed)
+            color = mix(a, b, 0.65 * strand + 0.35 * texel_noise(p, seed + 1))
+            color = shade(color, (value_noise(p, 2.4, seed + 2) - 0.5) * 0.2)
+            if texel_noise(p, seed + 3) > 0.9:
+                color = shade(color, -0.35)                  # 深色毛根
+            elif texel_noise(p, seed + 4) > 0.93:
+                color = shade(color, 0.22)                   # 浅色毛尖
+            if bald > 0:
+                patch = value_noise(p, 2.1, seed + 9)
+                if patch > 1.0 - bald:
+                    color = mix(skin, skin_dark, value_noise(p, 1.2, seed + 10))     # 脱毛露皮
+                elif patch > 1.0 - bald - 0.05:
+                    color = mix(color, skin_dark, 0.6)                              # 脱毛边缘
+            return color
+
+        return paint
+
+    return factory
+
+
+def _scab(seed: int) -> Callable[[dict], Painter]:
+    """结痂的暗红肉 / 牙龈：暗红底，一块块更暗的痂，偶有湿亮的小点，细裂缝。"""
+    a, b = hex_color("#5c2826"), hex_color("#7a3630")
+    crust, wet, crack = hex_color("#34181a"), hex_color("#b0584c"), hex_color("#220e10")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = mix(a, b, value_noise(p, 1.6, seed) * 1.2)
+            if value_noise(p, 2.0, seed + 1) > 0.7:
+                color = mix(color, crust, 0.7)               # 结痂
+            if texel_noise(p, seed + 2) > 0.95:
+                color = mix(color, wet, 0.6)                 # 湿亮点
+            if abs(value_noise(p, 3.2, seed + 3) - 0.5) < 0.03:
+                color = crack
+            return color
+
+        return paint
+
+    return factory
+
+
+def _eye_amber(cube: dict) -> Painter:
+    """琥珀眼：不做发光，靠对比——深褐眼缘、亮琥珀眼体、一点近白的高光。"""
+    rim, body, lit = hex_color("#5a3410"), hex_color("#e8962a"), hex_color("#ffe39a")
+
+    def paint(p: Vec, axis: int) -> Color:
+        if _edge_distance(cube, p, axis) < 0.35:
+            return rim
+        return lit if texel_noise(p, 77) > 0.8 else mix(body, lit, 0.25 * texel_noise(p, 78))
+
+    return paint
+
+
+def _chitin(base_a: str, base_b: str, seed: int, crack_amount: float = 1.0) -> Callable[[dict], Painter]:
+    """骨质甲壳（蜈蚣 / 虫类用）：骨白到灰黄的底，沿长轴的细棱纹，一道道发暗的细裂纹，
+    零星白色骨粉小点，贴边处磨亮。crack_amount 控制裂纹疏密。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    crack, dust = shade(a, -0.5), hex_color("#f4f0e4")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            ridge = _grain_noise(cube, p, axis, 3.2, 0.5, seed)
+            color = mix(a, b, 0.5 * ridge + 0.5 * value_noise(p, 1.8, seed + 1))
+            if abs(value_noise(p, 2.8, seed + 2) - 0.5) < 0.03 * crack_amount:
+                color = mix(color, crack, 0.75)              # 裂纹
+            if texel_noise(p, seed + 3) > 0.9:
+                color = mix(color, dust, 0.6)                # 骨粉
+            elif texel_noise(p, seed + 4) > 0.94:
+                color = shade(color, -0.25)                  # 蚀孔
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.08)
+            return color
+
+        return paint
+
+    return factory
+
+
 def _void(cube: dict) -> Painter:
     return lambda p, axis: shade(hex_color("#181418"), (texel_noise(p, 9) - 0.5) * 0.15)
 
@@ -495,6 +586,19 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "ink_cinnabar": _ink("#b02a20", 503),
     "cinnabar": _ink("#a02820", 504),
     "cinnabar_dark": _ink("#5c1814", 505),
+    # 生物用（枯皮狼 / 髓蛀蜈）
+    "fur_dark": _fur("#3e3630", "#5a4e44", 601, bald=0.18),
+    "fur_mangy": _fur("#5c5146", "#7e7060", 602, bald=0.3),
+    "fur_rust": _fur("#6e3a2c", "#8e5238", 603, bald=0.22),
+    "scab_flesh": _scab(604),
+    "eye_amber": _eye_amber,
+    "chitin_white": _chitin("#dcd4c0", "#bcb298", 611),
+    "chitin_ochre": _chitin("#c0ac78", "#9c8a5c", 612),
+    "chitin_grey": _chitin("#8e8878", "#6e6a5e", 613),
+    "chitin_dark": _chitin("#2e2a24", "#463e34", 614, 0.5),
+    "marrow_amber": _ink("#c8964a", 615),
+    "claw_rust": _ink("#78563a", 616),
+    "bone_dust": _ink("#f4f2ea", 617),
     "void": _void,
 }
 
@@ -510,6 +614,9 @@ FLAT_COLORS: Dict[str, str] = {
     "paper": "#c8b48a", "paper_ochre": "#b09664", "paper_frost": "#808e98", "paper_scorch": "#3a3230",
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
+    "fur_dark": "#4a4038", "fur_mangy": "#6a5e50", "fur_rust": "#7c4632", "scab_flesh": "#6a2e2c", "eye_amber": "#e8962a",
+    "chitin_white": "#cac1aa", "chitin_ochre": "#ae9a68", "chitin_grey": "#7e7868", "chitin_dark": "#3a342c",
+    "marrow_amber": "#c8964a", "claw_rust": "#78563a", "bone_dust": "#f4f2ea",
 }
 
 
