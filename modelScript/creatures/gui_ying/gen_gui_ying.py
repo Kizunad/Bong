@@ -628,7 +628,7 @@ def render_sheets(prev_model: Path | None = None) -> None:
     shots = [(label, render(whole, yaw=yaw, pitch=pitch, size=420, bg=bg)[0]) for label, yaw, pitch in VIEWS]
     contact = Image.new("RGB", (3 * 430 + 10, 2 * 450 + 30), (35, 36, 40))
     draw = ImageDraw.Draw(contact)
-    draw.text((10, 6), f"gui_ying round2 |{bones} moving bones | {len(all_cubes())} cubes", fill=(180, 220, 210))
+    draw.text((10, 6), f"gui_ying round3 |{bones} moving bones | {len(all_cubes())} cubes", fill=(180, 220, 210))
     for idx, (label, im) in enumerate(shots):
         x, y = 10 + (idx % 3) * 430, 28 + (idx // 3) * 450
         draw.text((x + 4, y), label, fill=(230, 230, 230))
@@ -652,10 +652,10 @@ def render_sheets(prev_model: Path | None = None) -> None:
     x = ref.width + 20
     if prev_view:
         canvas.paste(prev_view, (x, 30))
-        draw.text((x + 4, 8), "PREVIOUS ROUND, same framing (6741 cubes)", fill=(210, 160, 150))
+        draw.text((x + 4, 8), "PREVIOUS ROUND, same framing", fill=(210, 160, 150))
         x += h + 10
     canvas.paste(same_view, (x, 30))
-    draw.text((x + 4, 8), f"NOW (round 2), same framing yaw-30 pitch32 ({len(all_cubes())} cubes)", fill=(180, 220, 210))
+    draw.text((x + 4, 8), f"NOW (round 3), same framing yaw-30 pitch32 ({len(all_cubes())} cubes)", fill=(180, 220, 210))
     x += h + 10
     canvas.paste(tree_panel, (x, 30))
     draw.text((x + 4, 8), f"BONE HIERARCHY  |  {bones} moving bones", fill=(180, 220, 210))
