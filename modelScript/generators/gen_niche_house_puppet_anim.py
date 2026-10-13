@@ -15,18 +15,25 @@
    **walk（地面上循环的沉重步态，阵核随步伐微亮）**、**strike_ground（地面上的扑击，从 walk 的第 0 帧衔接）**、
    **return（转身走回、迈上底座、转回 dormant 姿态）**、exhausted（阵核耗尽，改成真正的屈膝瘫倒）。
 
-## 骨骼（会动的 29 根，另有静止的 root / base；任务卡人形 / 傀儡 ≥ 28）
+## 第 3 次返工（用户原话：「考虑到行走时底座会单独留在原地，建议分成两个部件」）
 
-    root
-    ├─ base                         底座（不动）
-    └─ puppet                       傀儡本体的总枢轴：位移 / 转身都动它
-       ├─ thigh_l → shin_l → foot_l       thigh_r → shin_r → foot_r
-       └─ pelvis                    胯（脊第 1 节）
-          └─ chest                  胸（脊第 2 节）
-             ├─ core                胸口笼格 + 阵符石（阵核，缩放表现亮灭）
-             ├─ spine               背脊 + 五对木刺
-             ├─ head → jaw          颅骨 + 颈、下颌
-             └─ arm_l/r → forearm_l/r → claw_{l,r}_{0,1,2} → claw_{l,r}_{0,1,2}_tip
+**底座拆成独立模型**：`niche_house_puppet_base`（只有 `base` 一根骨、没有动画，放在原地不动）；
+`niche_house_puppet`（傀儡本体）的 geo 里**不再有 `base` 骨和 `root` 骨**，`puppet` 就是最顶层的总枢轴。
+动画里的 `puppet` 位移（`GROUND` 等）都是**相对傀儡自身出生点（站在底座上的位置）的偏移**，底座是另一个实体，不在这份动画里。
+预览 GIF 用一份临时合成的 geo（傀儡 + 静止底座，只给预览用，不交付）才看得到「傀儡走开、底座留在原地」。
+
+## 骨骼（傀儡本体会动的 29 根；任务卡人形 / 傀儡 ≥ 28）
+
+    puppet                          傀儡本体的总枢轴（最顶层）：位移 / 转身都动它
+    ├─ thigh_l → shin_l → foot_l       thigh_r → shin_r → foot_r
+    └─ pelvis                       胯（脊第 1 节）
+       └─ chest                     胸（脊第 2 节）
+          ├─ core                   胸口笼格 + 阵符石（阵核，缩放表现亮灭）
+          ├─ spine                  背脊 + 五对木刺
+          ├─ head → jaw             颅骨 + 颈、下颌
+          └─ arm_l/r → forearm_l/r → claw_{l,r}_{0,1,2} → claw_{l,r}_{0,1,2}_tip
+
+    niche_house_puppet_base：base（单骨，静止，独立 geo）
 
 坐标：bbmodel 的正面在 +Z，GeckoLib 生物约定面朝 -Z，导出 geo 时把 z 取反（傀儡左右对称，不会出错）；动画里「向前」
 是 -Z，「向上」+Y，转角单位度，位移单位 px。转角符号（实测）：位于枢轴**下方**的肢体（臂、腿）x 为正 = 向后摆，
@@ -35,7 +42,7 @@
 **落地约定**：底座高 1.5px。傀儡站在底座上时 `puppet` 位移为 0；站在地面上时 `puppet` 位移 `GROUND = (0, -1.5, -9)`
 （下沉 1.5、向前 9px，脚后跟离底座前沿 2.7px）。地面上的 walk / strike_ground 都带这个位移；底座始终留在原点。
 
-产物写到 `modelScript/models/niche_house_puppet_anim/`（geo / animations / textures 三件套，布局和 client 资源树一致），
+产物写到 `modelScript/models/niche_house_puppet_anim/`（geo ×2 / animations / textures 套件，布局和 client 资源树一致），
 **暂不装进 client 资源树、不接线**。
 
 用法：
@@ -51,8 +58,10 @@ import copy
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -61,7 +70,9 @@ SOURCE = REPO / "modelScript" / "models" / "niche_house_puppet.bbmodel"
 OUT_ROOT = REPO / "modelScript" / "models" / "niche_house_puppet_anim"
 GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/niche_house_puppet")
 NAME = "niche_house_puppet"
+BASE_NAME = "niche_house_puppet_base"
 IDENTIFIER = f"geometry.bong.{NAME}"
+BASE_IDENTIFIER = f"geometry.bong.{BASE_NAME}"
 CLIP_PREFIX = f"animation.bong.{NAME}."
 
 BASE_HEIGHT = 1.5
@@ -75,9 +86,7 @@ CLAW_X = {"l": (-7.95, -6.5, -5.05), "r": (5.05, 6.5, 7.95)}     # 三指爪各�
 CLAW_BASE_END_Z = 3.5                                              # 指根 z 1.5..3.5，爪尖接在 3.5 之后
 
 BONES: Dict[str, Tuple[Optional[str], Tuple[float, float, float]]] = {
-    "root": (None, (0.0, 0.0, 0.0)),
-    "base": ("root", (0.0, 0.0, 0.0)),
-    "puppet": ("root", (0.0, 0.0, 0.0)),
+    "puppet": (None, (0.0, 0.0, 0.0)),
     "pelvis": ("puppet", (0.0, 5.5, 0.0)),
     "chest": ("pelvis", (0.0, 6.0, 0.0)),
     "core": ("chest", (0.0, 9.0, 1.0)),
@@ -95,18 +104,19 @@ for side, sx in (("l", -1.0), ("r", 1.0)):
         BONES[f"claw_{side}_{k}"] = (f"forearm_{side}", (CLAW_X[side][k], 2.4, 1.5))
         BONES[f"claw_{side}_{k}_tip"] = (f"claw_{side}_{k}", (CLAW_X[side][k], 2.3, CLAW_BASE_END_Z))
 
-STATIC_BONES = {"root", "base"}
-
-
 def moving_bones() -> List[str]:
-    return [b for b in BONES if b not in STATIC_BONES]
+    """傀儡本体 geo 里的骨头全部会动（底座在另一个 geo 里，不算）。"""
+    return list(BONES)
+
+
+def is_base_cube(cube_name: str) -> bool:
+    return cube_name.startswith("base_")
 
 
 def bone_of(cube_name: str) -> str:
-    """每个立方体归哪根骨头——只看名字（leg_shin 的拆分在 `split_shin`，拆出来的两块名字带后缀）。"""
+    """每个傀儡本体立方体归哪根骨头——只看名字（leg_shin 的拆分在 `split_shin`，拆出来的两块名字带后缀）。
+    底座立方体不归傀儡的任何骨头（见 `is_base_cube`，它们进独立的底座 geo）。"""
     n = cube_name
-    if n.startswith("base_"):
-        return "base"
     m = re.match(r"leg_foot_(l|r)$", n)
     if m:
         return f"foot_{m.group(1)}"
@@ -182,19 +192,37 @@ def expanded_elements(bb: dict) -> List[dict]:
     return out
 
 
+def _geo_cube(element: dict) -> dict:
+    lo, hi = element["from"], element["to"]
+    faces = {}
+    for face, data in element["faces"].items():
+        out_face = {"north": "south", "south": "north"}.get(face, face)          # z 取反后南北互换
+        faces[out_face] = _uv(face, data["uv"])
+    return {
+        "origin": [lo[0], lo[1], -hi[2]],                                         # z 取反：[-hi_z, -lo_z]
+        "size": [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]],
+        "uv": faces,
+    }
+
+
+def _geo_document(bb: dict, identifier: str, bones: List[dict]) -> dict:
+    width, height = bb["resolution"]["width"], bb["resolution"]["height"]
+    return {
+        "format_version": "1.12.0",
+        "minecraft:geometry": [{
+            "description": {"identifier": identifier, "texture_width": width, "texture_height": height,
+                            "visible_bounds_width": 4, "visible_bounds_height": 2, "visible_bounds_offset": [0, 1, 0]},
+            "bones": bones,
+        }],
+    }
+
+
 def build_geo(bb: dict) -> dict:
+    """傀儡本体 geo：没有底座、没有 base / root 骨，`puppet` 是最顶层。"""
     by_bone: Dict[str, List[dict]] = {name: [] for name in BONES}
     for element in expanded_elements(bb):
-        lo, hi = element["from"], element["to"]
-        faces = {}
-        for face, data in element["faces"].items():
-            out_face = {"north": "south", "south": "north"}.get(face, face)      # z 取反后南北互换
-            faces[out_face] = _uv(face, data["uv"])
-        by_bone[bone_of(element["name"])].append({
-            "origin": [lo[0], lo[1], -hi[2]],                                     # z 取反：[-hi_z, -lo_z]
-            "size": [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]],
-            "uv": faces,
-        })
+        if not is_base_cube(element["name"]):
+            by_bone[bone_of(element["name"])].append(_geo_cube(element))
     bones = []
     for name, (parent, pivot) in BONES.items():
         bone = {"name": name, "pivot": [pivot[0], pivot[1], -pivot[2]]}
@@ -203,15 +231,20 @@ def build_geo(bb: dict) -> dict:
         if by_bone[name]:
             bone["cubes"] = by_bone[name]
         bones.append(bone)
-    width, height = bb["resolution"]["width"], bb["resolution"]["height"]
-    return {
-        "format_version": "1.12.0",
-        "minecraft:geometry": [{
-            "description": {"identifier": IDENTIFIER, "texture_width": width, "texture_height": height,
-                            "visible_bounds_width": 4, "visible_bounds_height": 2, "visible_bounds_offset": [0, 1, 0]},
-            "bones": bones,
-        }],
-    }
+    return _geo_document(bb, IDENTIFIER, bones)
+
+
+def build_base_geo(bb: dict) -> dict:
+    """底座独立 geo：只有 `base` 一根骨，不带动画，放在原地不动。"""
+    cubes = [_geo_cube(e) for e in bb["elements"] if is_base_cube(e["name"])]
+    return _geo_document(bb, BASE_IDENTIFIER, [{"name": "base", "pivot": [0.0, 0.0, 0.0], "cubes": cubes}])
+
+
+def build_preview_geo(geo: dict, base_geo: dict) -> dict:
+    """只给预览 GIF 用：傀儡 + 静止底座合成一份 geo（底座骨没有关键帧，所以留在原地）。不交付、不进资源树。"""
+    merged = copy.deepcopy(geo)
+    merged["minecraft:geometry"][0]["bones"] += copy.deepcopy(base_geo["minecraft:geometry"][0]["bones"])
+    return merged
 
 
 # ── 动画 ──────────────────────────────────────────────────────────────────
@@ -504,11 +537,16 @@ def build_animations() -> dict:
 # ── 门禁 ──────────────────────────────────────────────────────────────────
 
 
-def check_rig(bb: dict, geo: dict) -> None:
-    """外形不变：geo 里的立方体体积、整体包围盒都和原 bbmodel 一致（个数 = 原个数 + 每条腿拆出的 1 块）；
-    父骨存在、无环；会动的骨头 ≥ 28 且全挂在 puppet 下；底座在静止的 base 骨里；腿三段都有几何。"""
+def check_rig(bb: dict, geo: dict, base_geo: dict) -> None:
+    """外形不变：傀儡 + 底座两个 geo 合起来，立方体体积、整体包围盒都和原 bbmodel 一致（个数 = 原个数 + 每条腿拆出的 1 块）；
+    傀儡 geo 里没有底座立方体、没有 base / root 骨，`puppet` 是唯一的顶层骨，其余骨头全挂在它下面；
+    父骨存在、无环；骨头 ≥ 28；腿三段都有几何；底座 geo 只有一根无父的 base 骨。"""
+    base_bones = base_geo["minecraft:geometry"][0]["bones"]
+    assert [b["name"] for b in base_bones] == ["base"], f"底座 geo 的骨头应只有 base: {[b['name'] for b in base_bones]}"
+    assert base_bones[0].get("cubes") and base_bones[0].get("parent") is None, "base 骨要有几何且没有父骨"
     bones = geo["minecraft:geometry"][0]["bones"]
     by_name = {b["name"]: b for b in bones}
+    assert "base" not in by_name and "root" not in by_name, "傀儡 geo 里不该再有 base / root 骨（底座已拆成独立模型）"
     for b in bones:
         assert b.get("parent") is None or b["parent"] in by_name, f"{b['name']} 的父骨 {b.get('parent')} 不存在"
         seen, cur = {b["name"]}, b.get("parent")
@@ -516,7 +554,10 @@ def check_rig(bb: dict, geo: dict) -> None:
             assert cur not in seen, f"骨骼层级有环: {b['name']}"
             seen.add(cur)
             cur = by_name[cur].get("parent")
-    cubes = [c for b in bones for c in b.get("cubes", [])]
+    puppet_cubes = [c for b in bones for c in b.get("cubes", [])]
+    cubes = puppet_cubes + base_bones[0]["cubes"]
+    base_count = sum(1 for e in bb["elements"] if is_base_cube(e["name"]))
+    assert len(base_bones[0]["cubes"]) == base_count, f"底座 geo 立方体数 {len(base_bones[0]['cubes'])} != 底座原个数 {base_count}"
     assert len(cubes) == len(bb["elements"]) + 2, f"立方体数 {len(cubes)} != 原 {len(bb['elements'])} + 2（两条腿各拆一块）"
     vol_geo = sum(c["size"][0] * c["size"][1] * c["size"][2] for c in cubes)
     vol_bb = sum((e["to"][0] - e["from"][0]) * (e["to"][1] - e["from"][1]) * (e["to"][2] - e["from"][2]) for e in bb["elements"])
@@ -527,13 +568,11 @@ def check_rig(bb: dict, geo: dict) -> None:
     bhi = [max(e["to"][i] for e in bb["elements"]) for i in range(3)]
     assert lo[0] == blo[0] and hi[0] == bhi[0] and lo[1] == blo[1] and hi[1] == bhi[1], "x/y 包围盒变了"
     assert abs(lo[2] + bhi[2]) < 1e-9 and abs(hi[2] + blo[2]) < 1e-9, "z 包围盒不是原 bbmodel 的镜像"
-    moving = [name for name in by_name if name not in STATIC_BONES]
-    assert len(moving) >= MIN_MOVING_BONES, f"会动的骨头只有 {len(moving)} 根，要 ≥{MIN_MOVING_BONES}"
-    assert by_name["base"].get("cubes"), "base 骨没有几何（底座要单独成一根不动的骨）"
-    assert by_name["base"].get("parent") == "root" and by_name["puppet"].get("parent") == "root", "base / puppet 应是 root 的子骨"
-    for name in moving:
+    assert len(by_name) >= MIN_MOVING_BONES, f"会动的骨头只有 {len(by_name)} 根，要 ≥{MIN_MOVING_BONES}"
+    assert by_name["puppet"].get("parent") is None, "puppet 应是最顶层的骨"
+    for name in by_name:
         cur = name
-        while by_name[cur].get("parent") not in (None, "root"):
+        while by_name[cur].get("parent") is not None:
             cur = by_name[cur]["parent"]
         assert cur == "puppet", f"{name} 没有挂在 puppet 下（傀儡本体要能整体离开底座）"
     for side in ("l", "r"):
@@ -576,14 +615,13 @@ def _same_pose(a: dict, b: dict, ta: float, tb: float, tol: float = 0.6) -> Opti
 
 
 def check_animations(animations: dict) -> None:
-    """每段都有；循环段首尾同值；一次性段末帧在长度上；底座不动；在底座上的段傀儡不离开底座；
+    """每段都有；循环段首尾同值；一次性段末帧在长度上；动画里没有底座骨；在底座上的段傀儡不离开出生点（位移相对傀儡自身）；
     段与段能接上：wake 末 = step_down 起，step_down 末 = return 起，return 末 = dormant 起，walk 起 = strike_ground 起。"""
     clips = animations["animations"]
     assert set(clips) == {f"{CLIP_PREFIX}{n}" for n in CLIPS}, f"动画段不对: {sorted(clips)}"
     for full, clip in clips.items():
         for bone, channels in clip["bones"].items():
-            assert bone in BONES, f"{full}: 未知骨 {bone}"
-            assert bone not in STATIC_BONES, f"{full}: 静止的 {bone} 不许有关键帧"
+            assert bone in BONES, f"{full}: 未知骨 {bone}（底座已拆出，动画里不许再有 base）"
             for channel, keys in channels.items():
                 times = sorted(float(t) for t in keys)
                 if clip.get("loop"):
@@ -613,11 +651,11 @@ def check_animations(animations: dict) -> None:
 
 def self_test() -> None:
     bb = json.loads(SOURCE.read_text(encoding="utf-8"))
-    geo = build_geo(bb)
-    check_rig(bb, geo)
+    geo, base_geo = build_geo(bb), build_base_geo(bb)
+    check_rig(bb, geo, base_geo)
     animations = build_animations()
     check_animations(animations)
-    print(f"  [OK] 骨架 {len(BONES)} 根（会动的 {len(moving_bones())}，≥{MIN_MOVING_BONES}；另有静止的 root / base）、"
+    print(f"  [OK] 傀儡骨架 {len(BONES)} 根（≥{MIN_MOVING_BONES}，无 base / root）+ 独立底座 geo（1 根骨）、"
           f"{len(bb['elements']) + 2} 个立方体（体积 / 包围盒与原 bbmodel 一致），{len(CLIPS)} 段动画、衔接门禁通过")
 
     def must_fail(name: str, fn) -> None:
@@ -633,13 +671,20 @@ def self_test() -> None:
 
     broken = copy.deepcopy(geo)
     bone_of_geo(broken, "chest")["cubes"].pop()
-    must_fail("丢一个立方体", lambda: check_rig(bb, broken))
+    must_fail("丢一个立方体", lambda: check_rig(bb, broken, base_geo))
     no_shin = copy.deepcopy(geo)
     bone_of_geo(no_shin, "shin_l").pop("cubes")
-    must_fail("小腿没有几何（腿没拆成三段）", lambda: check_rig(bb, no_shin))
+    must_fail("小腿没有几何（腿没拆成三段）", lambda: check_rig(bb, no_shin, base_geo))
     detached = copy.deepcopy(geo)
-    bone_of_geo(detached, "pelvis")["parent"] = "root"
-    must_fail("胯没挂在 puppet 下", lambda: check_rig(bb, detached))
+    bone_of_geo(detached, "pelvis")["parent"] = None
+    must_fail("胯没挂在 puppet 下", lambda: check_rig(bb, detached, base_geo))
+    with_base = copy.deepcopy(geo)
+    with_base["minecraft:geometry"][0]["bones"].append({"name": "base", "pivot": [0, 0, 0], "parent": "puppet",
+                                                        "cubes": copy.deepcopy(base_geo["minecraft:geometry"][0]["bones"][0]["cubes"])})
+    must_fail("傀儡 geo 里还留着 base 骨", lambda: check_rig(bb, with_base, base_geo))
+    hollow_base = copy.deepcopy(base_geo)
+    hollow_base["minecraft:geometry"][0]["bones"][0]["cubes"].pop()
+    must_fail("底座 geo 少一个立方体", lambda: check_rig(bb, geo, hollow_base))
     bad_loop = copy.deepcopy(animations)
     track = bad_loop["animations"][f"{CLIP_PREFIX}walk"]["bones"]["thigh_l"]["rotation"]
     track[max(track, key=float)] = [99.0, 0.0, 0.0]
@@ -649,7 +694,7 @@ def self_test() -> None:
     must_fail("一次性段末帧不在长度上", lambda: check_animations(bad_end))
     base_moves = copy.deepcopy(animations)
     base_moves["animations"][f"{CLIP_PREFIX}walk"]["bones"]["base"] = {"position": {"0.0": [0, 0, 0], "1.6": [0, 0, 0]}}
-    must_fail("底座有关键帧", lambda: check_animations(base_moves))
+    must_fail("动画里还有底座骨", lambda: check_animations(base_moves))
     cut = copy.deepcopy(animations)
     cut["animations"][f"{CLIP_PREFIX}step_down"]["bones"]["puppet"]["position"]["2.3"] = [0.0, 0.0, 0.0]
     must_fail("step_down 没落到地面", lambda: check_animations(cut))
@@ -665,27 +710,43 @@ def self_test() -> None:
     must_fail("没有归属的立方体", lambda: bone_of("mystery_cube"))
 
 
+def write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
 def write_assets() -> Path:
     bb = json.loads(SOURCE.read_text(encoding="utf-8"))
-    geo, animations = build_geo(bb), build_animations()
-    check_rig(bb, geo)
+    geo, base_geo, animations = build_geo(bb), build_base_geo(bb), build_animations()
+    check_rig(bb, geo, base_geo)
     check_animations(animations)
-    (OUT_ROOT / "geo").mkdir(parents=True, exist_ok=True)
-    (OUT_ROOT / "animations").mkdir(parents=True, exist_ok=True)
+    write_json(OUT_ROOT / "geo" / f"{NAME}.geo.json", geo)
+    write_json(OUT_ROOT / "geo" / f"{BASE_NAME}.geo.json", base_geo)
+    write_json(OUT_ROOT / "animations" / f"{NAME}.animation.json", animations)
+    texture = base64.b64decode(bb["textures"][0]["source"].split(",", 1)[1])
     texture_dir = OUT_ROOT / "textures" / "entity" / "fauna"
     texture_dir.mkdir(parents=True, exist_ok=True)
-    (OUT_ROOT / "geo" / f"{NAME}.geo.json").write_text(json.dumps(geo, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    (OUT_ROOT / "animations" / f"{NAME}.animation.json").write_text(json.dumps(animations, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    source = bb["textures"][0]["source"].split(",", 1)[1]
-    (texture_dir / f"{NAME}.png").write_bytes(base64.b64decode(source))
+    for name in (NAME, BASE_NAME):                    # 底座和傀儡共用同一张图集
+        (texture_dir / f"{name}.png").write_bytes(texture)
     return OUT_ROOT
 
 
 def render_gifs(size: int) -> None:
+    """GIF 用临时合成的预览资源（傀儡 + 静止底座），看得到傀儡走开、底座留在原地。不交付。"""
+    bb = json.loads(SOURCE.read_text(encoding="utf-8"))
+    preview_root = Path(tempfile.mkdtemp(prefix="house_puppet_preview_"))
+    write_json(preview_root / "geo" / f"{NAME}.geo.json", build_preview_geo(build_geo(bb), build_base_geo(bb)))
+    write_json(preview_root / "animations" / f"{NAME}.animation.json", build_animations())
+    texture_dir = preview_root / "textures" / "entity" / "fauna"
+    texture_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(OUT_ROOT / "textures" / "entity" / "fauna" / f"{NAME}.png", texture_dir / f"{NAME}.png")
     GIF_DIR.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, str(REPO / "modelScript" / "tools" / "creature_anim_frames.py"), "--name", NAME,
-           "--assets", str(OUT_ROOT), "--gif", "--size", str(size), "--out", str(GIF_DIR), "--facing=-z"]
-    subprocess.run(cmd, check=True, cwd=REPO / "modelScript" / "tools")
+           "--assets", str(preview_root), "--gif", "--size", str(size), "--out", str(GIF_DIR), "--facing=-z"]
+    try:
+        subprocess.run(cmd, check=True, cwd=REPO / "modelScript" / "tools")
+    finally:
+        shutil.rmtree(preview_root, ignore_errors=True)
 
 
 def main() -> None:
