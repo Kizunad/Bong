@@ -326,8 +326,8 @@ def _copper_green(seed: int) -> Callable[[dict], Painter]:
     return factory
 
 
-def _copper_edge(seed: int) -> Callable[[dict], Painter]:
-    body, bright = hex_color("#c98a4a"), hex_color("#e6b070")
+def _copper_edge(seed: int, body_code: str = "#c98a4a", bright_code: str = "#e6b070") -> Callable[[dict], Painter]:
+    body, bright = hex_color(body_code), hex_color(bright_code)
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
@@ -496,6 +496,16 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "cinnabar": _ink("#a02820", 504),
     "cinnabar_dark": _ink("#5c1814", 505),
     "void": _void,
+    # 游商傀儡补的材质：骨渍 / 浅木 / 暗绳 / 暗铜 / 灰青布 / 阵盘亮纹与暗底 / 眼窝余烬（亮纹与余烬只靠亮度对比）
+    "bone_stain": _bone("#8a7658", 454),
+    "wood_lit": _wood("#8e6a44", "#a07c52", 463),
+    "rope_dark": _rope("#3a2c1c", "#6e5638", 472),
+    "copper_dark": _copper_edge(432, "#7a4a2a", "#a86a3c"),
+    "cloth_grey": _cloth("#6a6c6a", 485),
+    "cloth_sage": _cloth("#60704f", 486),
+    "rune_lit": _ink("#a8f0d8", 561),
+    "slate_dark": _ink("#26262c", 562),
+    "ember": _ink("#f0a048", 563),
 }
 
 # 平色对照版：每个材质一个纯色（取该材质画笔的中间色）
@@ -510,6 +520,8 @@ FLAT_COLORS: Dict[str, str] = {
     "paper": "#c8b48a", "paper_ochre": "#b09664", "paper_frost": "#808e98", "paper_scorch": "#3a3230",
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
+    "bone_stain": "#8a7658", "wood_lit": "#947048", "rope_dark": "#4e3c26", "copper_dark": "#7a4a2a",
+    "cloth_grey": "#6a6c6a", "cloth_sage": "#60704f", "rune_lit": "#a8f0d8", "slate_dark": "#26262c", "ember": "#f0a048",
 }
 
 

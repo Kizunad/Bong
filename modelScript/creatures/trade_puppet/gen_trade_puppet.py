@@ -946,6 +946,74 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     print(f"✓ check.png → {out} ({canvas.width}×{canvas.height})")
 
 
+# ───────────────────────────────────────────────────────────── 像素贴图（复用 generators/handheld_texture.py 画笔库）
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
+sys.path.insert(0, str(REPO / "modelScript" / "generators" / "meridian_factory"))
+import handheld_texture  # noqa: E402
+from pixel_texture import build_atlas  # noqa: E402
+
+# 本文件的色块材质名 → 画笔库材质名（同名的不列）
+TEX_MATERIAL = {
+    "bone": "bone_main", "bone_lt": "bone_lit", "bone_dk": "bone_dark", "wood_lt": "wood_lit",
+    "rope_dk": "rope_dark", "copper_dk": "copper_dark", "verdigris": "copper_green",
+    "cloth_sand": "cloth_tan", "copper": "copper_edge", "wood_dk": "wood_dark", "coin": "bone_lit", "stone_dk": "slate_dark", "rune": "rune_lit",
+}
+
+
+def textured_doc(p: Puppet, name: str, flat: bool = False) -> dict:
+    """在绑定稿 bbmodel 上换成每面独立 UV 的像素图集（骨骼层级、几何不动）。flat=True 出平色对照版。"""
+    # rigkit 的 color 是「材质序号 % 8」会撞号，按 uv 色块反推真实材质名（同 gate_rig）
+    per_row = p.rig.tex // p.rig.swatch
+    paint_cubes = []
+    for el in p.rig.elements:
+        uv = el["faces"]["north"]["uv"]
+        material = list(MATS)[int(uv[1] // p.rig.swatch) * per_row + int(uv[0] // p.rig.swatch)]
+        paint_cubes.append({"name": el["name"], "from": el["from"], "to": el["to"],
+                            "material": TEX_MATERIAL.get(material, material)})
+    override = handheld_texture.flat_override if flat else handheld_texture.handheld_override
+    atlas, uvs = build_atlas(paint_cubes, override=override)
+    import base64
+    import io
+    buf = io.BytesIO()
+    atlas.save(buf, format="PNG")
+    doc = copy.deepcopy(p.rig.bbmodel(name))
+    doc["resolution"] = {"width": atlas.width, "height": atlas.height}
+    doc["textures"][0]["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    for el, face_uvs in zip(doc["elements"], uvs):
+        for face, uv in face_uvs.items():
+            el["faces"][face]["uv"] = uv
+    return doc
+
+
+def tex_run() -> None:
+    """贴图版 TradePuppet_tex.bbmodel + 平色对照 + check_tex.png（参考图 | 平色 3/4 | 贴图 3/4 / 正 / 侧 / 背）。"""
+    p = build(list(PART_FUNCS.values()))
+    out = CREATURE_DIR / "TradePuppet_tex.bbmodel"
+    out.write_text(json.dumps(textured_doc(p, "TradePuppet_tex"), ensure_ascii=False, indent=1), encoding="utf-8")
+    flat = CREATURE_DIR / "_tmp_flat.bbmodel"
+    flat.write_text(json.dumps(textured_doc(p, "TradePuppet_flat", flat=True)), encoding="utf-8")
+    try:
+        h = 760
+        font = load_font(16)
+        ref = Image.open(REVIEW_DIR / f"{MODEL_ID}_ref.png").convert("RGB")
+        ref = ref.resize((round(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)
+        tiles = [("参考图", ref), ("平色 3/4", fit_height(render_model(flat, 150.0, 18.0, 900), h))]
+        for label, yaw, pitch in (("贴图 3/4", 150.0, 18.0), ("贴图 正", 180.0, 0.0), ("贴图 左侧", 90.0, 0.0), ("贴图 背", 0.0, 0.0)):
+            tiles.append((label, fit_height(render_model(out, yaw, pitch, 900), h)))
+        sheet = Image.new("RGB", (sum(t.width + 12 for _, t in tiles) + 12, h + 44), (28, 29, 33))
+        d = ImageDraw.Draw(sheet)
+        x = 12
+        for label, tile in tiles:
+            d.text((x, 10), label, fill=(235, 235, 235), font=font)
+            sheet.paste(tile, (x, 36))
+            x += tile.width + 12
+        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        sheet.save(REVIEW_DIR / "check_tex.png")
+    finally:
+        flat.unlink(missing_ok=True)
+    print(f"✓ {out}\n✓ check_tex.png → {REVIEW_DIR / 'check_tex.png'}")
+
+
 def full_run() -> None:
     """全量：自证 → 全套门禁 → 写 bbmodel → 分件预览 → 接触表 / 骨骼树 / check.png。"""
     p = build(list(PART_FUNCS.values()))
@@ -970,7 +1038,11 @@ def main() -> None:
     ap.add_argument("--part", choices=sorted(PART_FUNCS))
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--gates", action="store_true")
+    ap.add_argument("--tex", action="store_true", help="只出贴图版 bbmodel 与 check_tex.png")
     args = ap.parse_args()
+    if args.tex:
+        tex_run()
+        return
     if not (args.part or args.self_test or args.gates):
         full_run()
         return
