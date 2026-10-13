@@ -939,6 +939,71 @@ FLAT_COLORS.update({
 })
 
 
+# ---- 焦羽 / 雷痕（劫雷鸦批次补充）-----------------------------------------------------------
+
+
+def _glint(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
+    """面心最亮、向边缘渐暗的小亮件（灵光碎块 / 雷痕 / 眼白）：不做发光层，只靠对比，零星亮点。"""
+    a, b = hex_color(base), hex_color(core)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            depth = min(_edge_distance(cube, p, axis), 2.0) / 2.0
+            color = mix(a, b, depth * 0.85)
+            return shade(color, (texel_noise(p, seed) - 0.5) * 0.08)
+
+        return paint
+
+    return factory
+
+
+def _feather(base_a: str, base_b: str, seed: int, scorch: float = 0.0) -> Callable[[dict], Painter]:
+    """羽片：顺长轴的细羽枝（横向细密明暗），中线一道更亮的羽轴，边缘一圈偏亮的羽缘；
+    scorch > 0 时再撒焦斑（发暗的卷边）与零星灰烬亮点。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    char, ash = shade(a, -0.4), hex_color("#9a9690")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            streak = _grain_noise(cube, p, axis, 4.2, 0.35, seed)
+            color = mix(a, b, streak)
+            if value_noise(p, 2.4, seed + 1) > 0.62:
+                color = shade(color, -0.12)                   # 一片一片发暗的羽区
+            long_axis = _long_axis(cube)
+            if axis != long_axis:
+                across_axis = 3 - long_axis - axis
+                centre = (cube["from"][across_axis] + cube["to"][across_axis]) / 2
+                if abs(p[across_axis] - centre) < 0.3:
+                    color = shade(color, 0.16)                # 羽轴
+            if scorch and value_noise(p, 1.8, seed + 2) > 1.0 - 0.45 * scorch:
+                color = mix(color, char, 0.6)                 # 焦斑
+            if scorch and texel_noise(p, seed + 3) > 0.96:
+                color = mix(color, ash, 0.5)                  # 灰烬点
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.1)
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "crow_black": _feather("#1c1a22", "#322e3a", 811),
+    "crow_dark": _feather("#2e2a36", "#4a4454", 812),
+    "crow_char": _feather("#6a4430", "#946240", 813, scorch=1.0),
+    "crow_ash": _feather("#68666c", "#8c8a90", 814, scorch=0.6),
+    "bolt_blue": _glint("#6ea8e8", "#eaf8ff", 815),
+    "eye_white": _glint("#cdd2ec", "#ffffff", 816),
+    "crow_beak": _horn("#524238", 817),
+    "crow_claw": _horn("#26222a", 818),
+})
+FLAT_COLORS.update({
+    "crow_black": "#282630", "crow_dark": "#3c3846", "crow_char": "#7e5236", "crow_ash": "#7c7a80",
+    "bolt_blue": "#a0d0ff", "eye_white": "#fafaff", "crow_beak": "#4e4038", "crow_claw": "#24202a",
+})
+
+
 def painter_for(material: str, cube: dict) -> Optional[Painter]:
     """材质名 → 画笔（带整体压暗补偿）。不认识的材质返回 None。"""
     factory = PAINTERS.get(material)
