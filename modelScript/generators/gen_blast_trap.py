@@ -70,7 +70,8 @@ def main() -> None:
     cubes = all_cubes()
     model = hc.write_model(cubes, MODEL_ID)
     print(f"✓ {MODEL_ID}: {len(cubes)} 个立方体 → {model}")
-    print(f"✓ check.png → {hc.write_check(model, MODEL_ID, VIEWS)}")
+    if hc.review_available():
+        print(f"✓ check.png → {hc.write_check(model, MODEL_ID, VIEWS)}")
 
 
 if __name__ == "__main__":

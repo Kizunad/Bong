@@ -33,11 +33,12 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from common_parts import _assert_no_coplanar_faces, bone_ring_port, outlet_8x6
-from organ_common import bounds, extend_materials, render_review, write_bbmodel
+from organ_common import bounds, extend_materials, path_cells, render_review, surface_vein_cubes, thicken, write_bbmodel
 
 REPO = Path(__file__).resolve().parents[3]
 ORGAN_ID = "liver"
@@ -69,27 +70,39 @@ COLUMNS: List[Tuple[float, float, float, float]] = [
 CAP_INSET = 1.5  # 每列首末行半深收进去的量
 BUMP = [0, 1, 0, -1, 1, 0, -1, 0]  # 中间各行前 / 后表面的 Z 起伏（px）
 
-# 叶脉：(折线 (x, y), 浮起 px, 分块范围)。沿 x 每 2px 一块，边界落在半格上以避开列边界（4 的倍数）。
-LEAF_VEINS = {
-    "left_main": ([(-22.0, 9.0), (-18.0, 13.0), (-14.0, 17.0), (-10.0, 21.0)], 0.5, (-22.5, -9.5)),
-    "left_branch": ([(-18.0, 13.0), (-16.0, 9.0), (-15.0, 5.0)], 0.4, (-17.5, -13.5)),
-    "right_main": ([(5.0, 18.0), (9.0, 16.0), (13.0, 14.0), (17.0, 11.0), (21.0, 9.0)], 0.5, (4.5, 21.5)),
-}
-VEIN_HALF_W = 1.3
-VEIN_Y_SHIFT = 0.07  # 叶脉整体上抬一点，免得上下沿落在行格线（偶数）上与肝体共面
-SINK = 2.5  # 叶脉背面埋进体内的深度，要大于相邻行 ±1 起伏之差
-SINK_STEP = 0.1  # 每条叶脉再错开一点，免得背面共面
+# 血管树（几何）：胆管树 #c07868（贴图加 1px #e8bca8 高光）+ 左右叶各一棵绿色叶脉树（#5aa060）。
+# 都从肝门（正面中部，y≈10）出发：主干 2×2，分 2 级、每级一分二，末梢 1×1，贴肝前表面连续走；
+# 相邻格表面高差超过 0.5px 的地方在较低那格上垫半格，血管不断。
+# 格 (ix, iy) 占 x [ix+X_OFF, ix+X_OFF+1]、y [iy+Y_OFF, iy+Y_OFF+1]：x 错开 0.5（避开肝列界 4 的倍数），
+# y 错开（肝行界在偶数），主干行和各树之间再错开，免得侧面共面。
+X_OFF = 0.5
+Y_OFF_BRANCH = 0.25
+Y_OFF_LEAF = 0.4
+Y_OFF_TRUNK = 0.5
+SINK = 3.0                  # 背面埋进肝体的深度，要大于相邻行 ±1 起伏之差
+SINK_STEP = 0.1             # 各级再错开一点，免得背面共面
+TRUNK_PROUD = 2.0           # 主干 2×2：2 宽、凸出 2px
+BRANCH_PROUD = 1.0          # 支脉 / 末梢 1×1
+LEAF_TRUNK_PROUD = 1.8      # 叶脉主干比胆管主干略矮，两者在肝门重叠处才不共面
 
-# 胆管：#e8bca8 肉质管，从肝正面中部伸出，主干往上到 y≈17 后分两叉各朝左上 / 右上。
-# 每 1px 高一节，y 整体错开 0.25，避开肝体行格线（偶数）共面。
-DUCT_Y_OFFSET = 0.25
-DUCT_TRUNK_Y = (10.0, 17.0)   # 主干高度范围（加偏移）
-DUCT_TRUNK_W = 4.2            # 主干宽（x）
-DUCT_BRANCH_STEPS = 6         # 两叉各 6 节，y 17 → 23（再高右叉就出了肝体）
-DUCT_BRANCH_W = 2.6
-DUCT_BRANCH_DX = 1.3          # 每上升 1px，叉向外偏的 px
-DUCT_T = 2.5                  # 管厚（z），再厚前凸会超出 32 深的外包
-DUCT_EMBED = 0.8              # 管后表面埋进肝体前表面的深度
+# 胆管树（左侧路点 (ix, iy)，右侧镜像）：主干是 x ±1 的竖直行，再分两级
+DUCT_TRUNK_ROWS = (10, 16)  # iy 10..15，y 10.5..16.5
+DUCT_B1 = [(-2, 16), (-5, 20)]
+DUCT_B2 = [[(-5, 20), (-10, 24)], [(-5, 20), (-4, 24)]]
+
+# 叶脉树：主干是 2×2 的斜阶梯，一级两支，每支再分两个末梢
+LEAF_TREES = {
+    "l": {
+        "trunk": [(-2, 12), (-8, 15)],
+        "b1": [[(-8, 15), (-13, 19)], [(-8, 15), (-12, 10)]],
+        "b2": [[(-13, 19), (-18, 21)], [(-13, 19), (-16, 15)], [(-12, 10), (-18, 11)], [(-12, 10), (-15, 6)]],
+    },
+    "r": {
+        "trunk": [(1, 12), (7, 14)],
+        "b1": [[(7, 14), (12, 17)], [(7, 14), (11, 8)]],
+        "b2": [[(12, 17), (17, 14)], [(12, 17), (14, 18)], [(11, 8), (17, 9)], [(11, 8), (15, 5)]],
+    },
+}
 
 OUTLET_CENTER_X = 0.1         # 管套左右沿 x=±4 正好落在肝列界上，整体错开 0.1
 OUTLET_CENTER_Y = 5.05        # 开口 y 2.05..8.05；错开 0.05 避开行格线共面
@@ -135,17 +148,6 @@ def _front_z(x0: float, x1: float, y0: float, y1: float) -> float:
     return max(hits)
 
 
-def _interp_x(points: List[Tuple[float, float]], x: float) -> float:
-    """折线（x 单调）在 x 处的 y。"""
-    pts = sorted(points)
-    if x <= pts[0][0]:
-        return pts[0][1]
-    for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
-        if xa <= x <= xb:
-            return ya + (yb - ya) * (x - xa) / (xb - xa)
-    return pts[-1][1]
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 部件
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,46 +157,53 @@ def part_01_body() -> List[dict]:
     return [_cube(s["tag"], (s["x0"], s["y0"], -s["zb"]), (s["x1"], s["y1"], s["zf"]), "liver_body", s["mat"]) for s in SURFACE]
 
 
-def part_02_leaf_veins() -> List[dict]:
-    """3 条 #5aa060 叶脉（左叶主脉 + 一条分支，右叶一条）。"""
+
+
+def _mirror_cells(cells: set) -> set:
+    """左侧格镜像到右侧：格 (ix, iy) 占 x [ix+0.5, ix+1.5]，镜像后占 [-ix-1.5, -ix-0.5]，即格号 -ix-2。"""
+    return {(-ix - 2, iy) for ix, iy in cells}
+
+
+def _cells(paths) -> set:
+    cells: set = set()
+    for wp in paths:
+        cells |= path_cells(wp)
+    return cells
+
+
+def part_02_leaf_trees() -> List[dict]:
+    """左右叶各一棵绿色叶脉树：2×2 斜主干 → 一级两支 → 末梢 1×1，木色 #5aa060。"""
     cubes: List[dict] = []
-    for index, (name, (points, proud, (start, end))) in enumerate(LEAF_VEINS.items()):
-        sink = SINK + index * SINK_STEP
-        t = start
-        while t < end - 1e-6:
-            t1 = min(t + ROW_H, end)
-            yc = _interp_x(points, (t + t1) / 2) + VEIN_Y_SHIFT
-            y0, y1 = yc - VEIN_HALF_W, yc + VEIN_HALF_W
-            zf = _front_z(t, t1, y0, y1)
-            cubes.append(_cube(f"vein_{name}_{t:g}", (t, y0, zf - sink), (t1, y1, zf + proud), "leaf_veins", "wood"))
-            t = t1
+    for tag, spec in LEAF_TREES.items():
+        trunk = thicken(path_cells(spec["trunk"]))
+        b1 = _cells(spec["b1"]) - trunk
+        b2 = _cells(spec["b2"]) - trunk - b1
+        levels = [
+            (f"leaf_{tag}_trunk", trunk, SINK, "wood", LEAF_TRUNK_PROUD),
+            (f"leaf_{tag}_b1", b1, SINK + SINK_STEP, "wood", BRANCH_PROUD),
+            (f"leaf_{tag}_b2", b2, SINK + 2 * SINK_STEP, "wood", BRANCH_PROUD),
+        ]
+        cubes += surface_vein_cubes(levels, _front_z, X_OFF, Y_OFF_LEAF, "leaf_tree")
     return cubes
 
 
-def part_03_bile_duct() -> List[dict]:
-    """胆管：#e8bca8 肉质管，从肝中部正面伸出，先一根主干，再分成左右两叉斜着往上。"""
-    g = "bile_duct"
+def part_03_duct_tree() -> List[dict]:
+    """胆管树 #c07868：肝门（正面中部 y≈10）长出 2 宽主干，往上到 y≈16 分两支，每支再分两个末梢。"""
+    g = "duct_tree"
     cubes: List[dict] = []
-
-    def segment(name: str, cx: float, width: float, y0: float, y1: float) -> None:
-        x0, x1 = cx - width / 2, cx + width / 2
-        zf = _front_z(x0, x1, y0, y1)
-        z0 = zf - DUCT_EMBED
-        cubes.append(_cube(name, (x0, y0, z0), (x1, y1, z0 + DUCT_T), g, "tendon_highlight"))
-        cubes.append(_cube(f"{name}_hl", (cx - 0.3, y0, z0 + DUCT_T), (cx + 0.3, y1, z0 + DUCT_T + 0.3), g, "qi_glow"))
-
-    y = DUCT_TRUNK_Y[0] + DUCT_Y_OFFSET
-    i = 0
-    while y < DUCT_TRUNK_Y[1] + DUCT_Y_OFFSET - 1e-6:
-        segment(f"duct_trunk_{i}", 0.0, DUCT_TRUNK_W, y, y + 1.0)
-        y += 1.0
-        i += 1
-
-    y_fork = DUCT_TRUNK_Y[1] + DUCT_Y_OFFSET
-    for k in range(DUCT_BRANCH_STEPS):
-        cx = DUCT_BRANCH_W / 2 + 0.05 + DUCT_BRANCH_DX * k   # 起点错开 0.05，避开 x=0 的肝列界
-        for side, sx in (("l", -1.0), ("r", 1.0)):
-            segment(f"duct_{side}_{k}", sx * cx, DUCT_BRANCH_W, y_fork + k, y_fork + k + 1.0)
+    # 主干：x ±1 的竖直行，每 1px 高一块，前表面贴肝体 + 2px
+    for iy in range(*DUCT_TRUNK_ROWS):
+        y0, y1 = iy + Y_OFF_TRUNK, iy + Y_OFF_TRUNK + 1.0
+        zf = _front_z(-1.0, 1.0, y0, y1)
+        cubes.append(_cube(f"duct_trunk_{iy}", (-1.0, y0, zf + TRUNK_PROUD - SINK - 0.3), (1.0, y1, zf + TRUNK_PROUD), g, "tendon_fiber"))
+    b1 = _cells([DUCT_B1])
+    b2 = _cells(DUCT_B2) - b1
+    for tag, flip in (("l", lambda c: c), ("r", _mirror_cells)):
+        levels = [
+            (f"duct_b1{tag}", flip(b1), SINK, "tendon_fiber", BRANCH_PROUD),
+            (f"duct_b2{tag}", flip(b2), SINK + SINK_STEP, "tendon_fiber", BRANCH_PROUD),
+        ]
+        cubes += surface_vein_cubes(levels, _front_z, X_OFF, Y_OFF_BRANCH, g)
     return cubes
 
 
@@ -216,8 +225,8 @@ def part_05_outlet() -> List[dict]:
 
 PARTS = [
     ("body", part_01_body),
-    ("leaf_veins", part_02_leaf_veins),
-    ("bile_duct", part_03_bile_duct),
+    ("leaf_trees", part_02_leaf_trees),
+    ("duct_tree", part_03_duct_tree),
     ("inlets", part_04_inlets),
     ("outlet", part_05_outlet),
 ]
@@ -257,30 +266,94 @@ def self_test() -> None:
     assert thick.index(max(thick)) < len(thick) // 2 and right[3] < left[3], "楔形方向不对：应当左厚右薄"
     print("  [OK] 楔形左厚右薄")
 
-    check_duct_and_outlet(cubes)
-    print("  [OK] 胆管是 #e8bca8 肉管、主干居中后分两叉；输出口是 +Z 向 8×6 标准套管")
-    no_fork = [c for c in cubes if not c["name"].startswith("duct_l_")]
-    for name, bad in (("胆管只剩一叉", no_fork),
-                      ("胆管改回骨色", [dict(c, material="bone_main") if c["name"].startswith("duct_") else c for c in cubes]),
-                      ("输出口被压扁", [dict(c, to=[c["to"][0], c["from"][1] + 1.0, c["to"][2]]) if c["name"] == "outlet_lining" else c for c in cubes])):
+    check_trees_and_outlet(cubes)
+    print("  [OK] 胆管树 #c07868 + 左右叶脉树（木色）：主干 2 宽、支脉 1×1、各分 2 级、整棵连成一块、相邻格台阶 ≤0.5px；输出口 +Z 向 8×6")
+    duct = [c for c in cubes if c["group"] == "duct_tree"]
+    leaf = [c for c in cubes if c["group"] == "leaf_tree"]
+    rest = [c for c in cubes if c["group"] not in ("duct_tree", "leaf_tree")]
+    # 把左侧一级支中段（iy 17、18）整段拿掉，末梢侧就和主干断开
+    gap = [c for c in duct if c["name"].startswith("duct_b1l_") and re.match(r".*_(17|18)(_half)?$", c["name"])]
+    assert gap, "注入用的中段格不存在"
+    cases = (
+        ("拿掉胆管一级支中段", rest + leaf + [c for c in duct if c not in gap]),
+        ("去掉过台阶半格", rest + duct + [c for c in leaf if not c["name"].endswith("_half")]),
+        ("胆管改回骨色", rest + leaf + [dict(c, material="bone_main") for c in duct]),
+        ("叶脉树少一棵", rest + duct + [c for c in leaf if not c["name"].startswith("leaf_r_")]),
+        ("末梢变 2 宽", rest + duct + [dict(c, to=[c["to"][0] + 1.0, c["to"][1], c["to"][2]]) if c["name"].startswith("leaf_l_b2_") and not c["name"].endswith("_half") else c for c in leaf]),
+        ("输出口被压扁", [dict(c, to=[c["to"][0], c["from"][1] + 1.0, c["to"][2]]) if c["name"] == "outlet_lining" else c for c in cubes]),
+    )
+    for name, bad in cases:
         try:
-            check_duct_and_outlet(bad)
+            check_trees_and_outlet(bad)
         except AssertionError:
             print(f"  [OK] 注入「{name}」被拦截")
         else:
             raise RuntimeError(f"门禁失效：注入「{name}」没被拦住")
 
 
-def check_duct_and_outlet(cubes: List[dict]) -> None:
-    """胆管：材质 #e8bca8、有主干和左右两叉、两叉向外张开；输出口：内衬 8 宽 × 6 高，底边离地约 2。"""
-    duct = [c for c in cubes if c["name"].startswith("duct_") and not c["name"].endswith("_hl")]
-    assert duct and all(c["material"] == "tendon_highlight" for c in duct), "胆管必须是 #e8bca8 肉质管"
+def _touch(a: dict, b: dict) -> bool:
+    return all(a["from"][i] <= b["to"][i] + 1e-6 and b["from"][i] <= a["to"][i] + 1e-6 for i in range(3))
+
+
+def _connected(tree: List[dict]) -> bool:
+    seen, stack = {0}, [0]
+    while stack:
+        i = stack.pop()
+        for j in range(len(tree)):
+            if j not in seen and _touch(tree[i], tree[j]):
+                seen.add(j)
+                stack.append(j)
+    return len(seen) == len(tree)
+
+
+_CELL_NAME = re.compile(r"^(?P<prefix>.+)_(?P<ix>-?\d+)_(?P<iy>-?\d+)(?P<half>_half)?$")
+
+
+def _check_steps(tree: List[dict], label: str) -> None:
+    """同一棵树里，相邻 1×1 格（含补的半格）的前表面高差 ≤0.5px。"""
+    tops: Dict[str, float] = {}
+    cells: Dict[Tuple[int, int], str] = {}
+    for c in tree:
+        m = _CELL_NAME.match(c["name"])
+        if not m or "trunk" in m["prefix"] and m["prefix"].startswith("duct"):
+            continue
+        key = f"{m['prefix']}_{m['ix']}_{m['iy']}"
+        tops[key] = max(tops.get(key, 0.0), c["to"][2])
+        if not m["half"]:
+            cells[(int(m["ix"]), int(m["iy"]))] = key
+    for (ix, iy), key in cells.items():
+        for nb in ((ix + 1, iy), (ix, iy + 1)):
+            other = cells.get(nb)
+            if other is not None:
+                assert abs(tops[key] - tops[other]) <= 0.5 + 1e-6, f"{label}: {key} 与 {other} 前表面高差 {abs(tops[key] - tops[other]):.2f} > 0.5"
+
+
+def check_trees_and_outlet(cubes: List[dict]) -> None:
+    """胆管树 / 叶脉树门禁 + 输出口门禁。"""
+    duct = [c for c in cubes if c["group"] == "duct_tree"]
+    assert duct and all(c["material"] == "tendon_fiber" for c in duct), "胆管树必须是 #c07868（tendon_fiber）"
     trunk = [c for c in duct if c["name"].startswith("duct_trunk_")]
-    left = sorted((c for c in duct if c["name"].startswith("duct_l_")), key=lambda c: c["from"][1])
-    right = sorted((c for c in duct if c["name"].startswith("duct_r_")), key=lambda c: c["from"][1])
-    assert trunk and left and right, "胆管应有主干和左右两叉"
-    assert all(abs(c["from"][0] + c["to"][0]) < 0.2 for c in trunk), "主干应在肝正中"
-    assert (left[-1]["from"][0] + left[-1]["to"][0]) / 2 < -4 < 4 < (right[-1]["from"][0] + right[-1]["to"][0]) / 2, "两叉没有向外张开"
+    assert trunk and all(abs(c["to"][0] - c["from"][0] - 2.0) < 1e-6 and abs(c["from"][0] + c["to"][0]) < 1e-6 for c in trunk), "胆管主干应是居中的 2 宽"
+    for tag in ("b1l", "b1r", "b2l", "b2r"):
+        assert any(c["name"].startswith(f"duct_{tag}_") for c in duct), f"胆管缺 {tag}"
+    for c in duct:
+        if c["name"].startswith(("duct_b1", "duct_b2")) and not c["name"].endswith("_half"):
+            assert abs(c["to"][0] - c["from"][0] - 1.0) < 1e-6 and abs(c["to"][1] - c["from"][1] - 1.0) < 1e-6, f"{c['name']} 支脉应是 1×1"
+    assert _connected(duct), "胆管树断成多块"
+    _check_steps(duct, "胆管树")
+
+    leaf = [c for c in cubes if c["group"] == "leaf_tree"]
+    for tag in ("l", "r"):
+        tree = [c for c in leaf if c["name"].startswith(f"leaf_{tag}_")]
+        assert tree and all(c["material"] == "wood" for c in tree), f"叶脉树 {tag} 缺失或不是木色"
+        for level in ("trunk", "b1", "b2"):
+            assert any(c["name"].startswith(f"leaf_{tag}_{level}_") for c in tree), f"叶脉树 {tag} 缺 {level}"
+        for c in tree:
+            if c["name"].startswith((f"leaf_{tag}_b1", f"leaf_{tag}_b2")) and not c["name"].endswith("_half"):
+                assert abs(c["to"][0] - c["from"][0] - 1.0) < 1e-6 and abs(c["to"][1] - c["from"][1] - 1.0) < 1e-6, f"{c['name']} 应是 1×1"
+        assert _connected(tree), f"叶脉树 {tag} 断成多块"
+        _check_steps(tree, f"叶脉树 {tag}")
+
     lining = next((c for c in cubes if c["name"] == "outlet_lining"), None)
     assert lining is not None, "缺输出口"
     assert abs(lining["to"][0] - lining["from"][0] - 8.0) < 1e-6 and abs(lining["to"][1] - lining["from"][1] - 6.0) < 1e-6, "输出口内衬必须是 8 宽 × 6 高"

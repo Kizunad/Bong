@@ -224,7 +224,8 @@ def main() -> None:
         cubes = BUILDERS[tier]()
         path = hc.write_model(cubes, model_id(tier))
         print(f"✓ {model_id(tier)}: {len(cubes)} 个立方体 → {path}")
-        print(f"✓ check.png → {hc.write_check(path, model_id(tier), VIEWS)}")
+        if hc.review_available():
+            print(f"✓ check.png → {hc.write_check(path, model_id(tier), VIEWS)}")
 
 
 if __name__ == "__main__":

@@ -81,76 +81,13 @@ RES = 64
 # =============================================================================
 
 def build_floor_flesh_cubes() -> List[dict]:
-    """1. floor_flesh (血肉地砖，主色 #8a2a2a，调度指定连续血管网 + 3 块暗斑 + 2 个亮点)。"""
+    """1. floor_flesh (血肉地砖，主色 #8a2a2a)。
+
+    贴图打磨（调度审第 2 次）：原来浮起的 63 块血管块、3 块暗斑、2 个亮点全部删掉，
+    地面只留一个平整的满格肉块，血管由统一贴图工序（piece_overrides.floor_override）画在顶面。"""
     cubes = []
     # ── 满格实心基底 (主色 #8a2a2a, y in [0, 16]) ──
     cubes.append({"name": "flesh_block", "from": [-8.0, 0.0, -8.0], "to": [8.0, 16.0, 8.0], "group": "base_block", "material": "flesh_main"})
-
-    # ── 调度指定固定路径血管网络 (#b05050, 浮起 0.5px: y in [16.0, 16.5], 加粗至 2px 宽管条) ──
-    # 主血管 A: (0,5)(1,5)(2,6)(3,6)(4,7)(5,7)(6,8)(7,8)(8,8)(9,9)(10,9)(11,10)(12,10)(13,11)(14,11)(15,12)
-    path_a = [(0, 5), (1, 5), (2, 6), (3, 6), (4, 7), (5, 7), (6, 8), (7, 8), (8, 8), (9, 9), (10, 9), (11, 10), (12, 10), (13, 11), (14, 11), (15, 12)]
-    # 支 B (从 A 的 (7,8) 分出向上至北缘 (10,0)): (7,7)(7,6)(8,5)(8,4)(9,3)(9,2)(10,1)(10,0)
-    path_b = [(7, 7), (7, 6), (8, 5), (8, 4), (9, 3), (9, 2), (10, 1), (10, 0)]
-    # 支 C (从 A 的 (11,10) 分出向下至南缘 (9,15)): (11,11)(11,12)(10,13)(10,14)(9,15)
-    path_c = [(11, 11), (11, 12), (10, 13), (10, 14), (9, 15)]
-    # 细支 D (从 A 的 (2,6) 分出向西至西缘 (0,10)): (2,7)(1,8)(1,9)(0,10)
-    path_d = [(2, 7), (1, 8), (1, 9), (0, 10)]
-
-    w2_cells = set()
-    for (x, z) in path_a:
-        w2_cells.add((x, z))
-        if z - 1 >= 0:
-            w2_cells.add((x, z - 1))
-    for (x, z) in path_b:
-        w2_cells.add((x, z))
-        if x - 1 >= 0:
-            w2_cells.add((x - 1, z))
-    for (x, z) in path_c:
-        w2_cells.add((x, z))
-        if x + 1 < 16:
-            w2_cells.add((x + 1, z))
-    for (x, z) in path_d:
-        w2_cells.add((x, z))
-        if z + 1 < 16:
-            w2_cells.add((x, z + 1))
-
-    for idx, (gx, gz) in enumerate(sorted(w2_cells)):
-        cubes.append({
-            "name": f"vein_cell_{idx}",
-            "from": [float(gx - 8), 16.0, float(gz - 8)],
-            "to":   [float(gx - 7), 16.5, float(gz - 7)],
-            "group": "veins",
-            "material": "flesh_lit",
-        })
-
-    # ── 3 块大暗斑 (#5a1a1a, y in [16.0, 16.15]): 4x3, 3x4, 3x3 (避开血管空白区) ──
-    spots = [
-        ("dark_spot_4x3", -7.0, -3.0, -7.0, -4.0),  # x in [1, 5], z in [1, 4] -> 4x3
-        ("dark_spot_3x4",  4.0,  7.0, -6.0, -2.0),  # x in [12, 15], z in [2, 6] -> 3x4
-        ("dark_spot_3x3", -4.0, -1.0,  3.0,  6.0),  # x in [4, 7], z in [11, 14] -> 3x3
-    ]
-    for sname, x0, x1, z0, z1 in spots:
-        cubes.append({
-            "name": sname,
-            "from": [x0, 16.0, z0],
-            "to":   [x1, 16.15, z1],
-            "group": "spots",
-            "material": "flesh_dark",
-        })
-
-    # ── 2 个 1x1 亮点 (#c88a7a, y in [16.0, 16.25]) ──
-    sparkles = [
-        ("sparkle_1", -5.0, 2.0),  # 网格 (3, 10)
-        ("sparkle_2",  5.0, 0.0),  # 网格 (13, 8)
-    ]
-    for sp_name, sx, sz in sparkles:
-        cubes.append({
-            "name": sp_name,
-            "from": [sx, 16.0, sz],
-            "to":   [sx + 1.0, 16.25, sz + 1.0],
-            "group": "sparkles",
-            "material": "flesh_glow",
-        })
 
     return cubes
 
