@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""髓蛀蜈（sui_zhu_wu）多足生物模型程序化生成器 —— Round 2/3。
+"""髓蛀蜈（sui_zhu_wu）多足生物模型程序化生成器 —— Round 3/3。
 
 依据 worldview.md §十三 鲸落遗骸：钻进鲸落化石里啃骨髓的长节蜈蚣。
 
@@ -49,7 +49,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "SuiZhuWu.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "SuiZhuWu.bbmodel"
 
-ROUND_TAG = "Round 2/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -270,9 +270,13 @@ def _ring(rig: Rig, k: int) -> None:
     for j in range(count):
         theta = math.radians(360.0 / count * j + (15.0 if k % 2 else 0.0))
         r_in, r_out = radius * 1.0, radius + 0.7
+        # Round 3：每枚齿两段——粗基沿切向先扭出去，细尖再继续扭并向前挑，整圈读成一圈螺旋刃
+        r_mid = (r_in + r_out) / 2 + 0.05
         a = (r_in * math.cos(theta), Y_C + r_in * math.sin(theta), zk - half_z + 0.3)
+        m = (r_mid * math.cos(theta + twist * 0.5), Y_C + r_mid * math.sin(theta + twist * 0.5), zk - half_z - 0.45)
         b = (r_out * math.cos(theta + twist), Y_C + r_out * math.sin(theta + twist), zk - half_z - 1.1)
-        bar(rig, bone, f"tooth_{k}_{j}", a, b, 0.32, 0.32, mat=mat_tooth)
+        bar(rig, bone, f"tooth_{k}_{j}_base", a, m, 0.34, 0.34, mat=mat_tooth)
+        bar(rig, bone, f"tooth_{k}_{j}_tip", along(m, b, 0.1), b, 0.22, 0.22, mat="bone_white")
 
 
 # ===========================================================================
