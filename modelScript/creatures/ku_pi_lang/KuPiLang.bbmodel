@@ -27,7 +27,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a338e220-187c-4cc6-8ca1-ffac0a34cbd3",
+      "uuid": "6dc24861-24c7-4e67-be68-ae857c631d1b",
       "from": [
         -2.0,
         13.5,
@@ -116,7 +116,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8c49c944-84e9-4799-aa33-b6f89a96e9fd",
+      "uuid": "171adfe1-99c4-49a8-b1b6-6e40ddd4e11c",
       "from": [
         -1.5,
         16.4,
@@ -205,7 +205,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "69d6746f-8bcf-4c81-b56b-fc24d985180d",
+      "uuid": "54fa7a5e-51ba-4cc4-a697-98bf3cc768ab",
       "from": [
         -0.8,
         17.0,
@@ -294,7 +294,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6c8e0a36-a52a-4c41-afb3-7dcbb3016d2b",
+      "uuid": "64405462-0478-4438-ae4d-ebce642787aa",
       "from": [
         -2.2,
         15.4,
@@ -383,7 +383,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "bd98f3ad-2893-4d8b-9359-20fd16c1eaf4",
+      "uuid": "9e700106-a0a4-45e2-8bd0-6002abc8adc3",
       "from": [
         -0.5,
         16.5,
@@ -472,7 +472,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e3731710-94c6-47a5-bec1-97d992ec83f1",
+      "uuid": "2aa23237-ca50-4237-bc4e-5c89657fe285",
       "from": [
         -2.7,
         14.0,
@@ -561,7 +561,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8ca7cd5b-a1a7-446e-b5c5-5c98415c322a",
+      "uuid": "f9179ec0-8754-425b-8e89-9b710708edc5",
       "from": [
         2.0,
         14.0,
@@ -650,7 +650,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "10001a55-2a90-4d40-be8b-37a2ea44c4cb",
+      "uuid": "7962c074-aa5e-4e81-8002-9d1138f80f56",
       "from": [
         -2.45,
         14.5,
@@ -739,7 +739,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4dec7c1c-a1a1-40e2-9606-30b3fa465bab",
+      "uuid": "5d9f8b84-275e-4bf1-b601-f174a4bffb4f",
       "from": [
         -2.48,
         14.7,
@@ -828,7 +828,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3540dba0-82f4-4eb6-83ae-7655e390bb40",
+      "uuid": "6f4cf152-462e-4a6f-9863-22aa32276ba7",
       "from": [
         1.85,
         14.5,
@@ -917,7 +917,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a3f24fc6-61a2-4219-b588-919ff616030f",
+      "uuid": "0767cf12-a0d8-41eb-8787-03725e0a8f13",
       "from": [
         1.9,
         14.7,
@@ -1006,7 +1006,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0ee24572-db99-4a29-832a-0ab47fee7cb3",
+      "uuid": "4d13b878-52d0-4b0f-812e-10987a4a7fd5",
       "from": [
         -1.6,
         13.2,
@@ -1095,7 +1095,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2795578d-36a4-486d-b598-936c160bb2f5",
+      "uuid": "9cc0ec0b-fde9-46c6-b8ab-a03adfe14a65",
       "from": [
         -1.2,
         13.4,
@@ -1184,7 +1184,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "370e7be9-970f-4d79-b76e-4f835f5633db",
+      "uuid": "6f9a36fe-47d0-42d1-897a-f44557dcf35d",
       "from": [
         -0.9,
         13.6,
@@ -1273,7 +1273,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b86e5c26-80df-4e16-8e0f-30e143cba8ba",
+      "uuid": "0aeacc4f-3554-498e-904b-b802a8eb573a",
       "from": [
         -0.7,
         14.2,
@@ -1362,7 +1362,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "09a0ef7b-640f-4273-936f-4c5c9f119bde",
+      "uuid": "d26cd3d5-1398-41ed-9660-88c75cf2169a",
       "from": [
         -1.35,
         12.0,
@@ -1451,7 +1451,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "40a77d8f-e47f-440f-89ad-bb5d47adcaee",
+      "uuid": "424c9a82-911c-4cdb-bee3-b032ce6281cd",
       "from": [
         0.95,
         12.0,
@@ -1540,7 +1540,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "67c2e7c6-7753-41b2-8be0-9e42793c3fb5",
+      "uuid": "c8122729-8714-4561-bcdd-2503bd07499c",
       "from": [
         -0.75,
         12.8,
@@ -1629,7 +1629,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1bd9bd55-5407-4c0b-81f1-550337956fae",
+      "uuid": "e7777ce8-2eb8-4c1c-969e-4667448ad4e5",
       "from": [
         0.25,
         12.8,
@@ -1718,7 +1718,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "21ecd103-4df4-4867-8436-62a544aa9e3a",
+      "uuid": "8041a5b1-4d3f-49e8-a661-8e70a4a4e05c",
       "from": [
         -1.48,
         12.6,
@@ -1807,7 +1807,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7dc1ebbe-0999-406a-9173-5b971141c81c",
+      "uuid": "2828a1ac-f6f9-42f8-885b-e5ccdc61ded3",
       "from": [
         1.08,
         12.6,
@@ -1896,7 +1896,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "96cd9f52-0c2b-4a19-93f9-4848e8a0731c",
+      "uuid": "57c5e607-a621-4827-85da-39619b22a70d",
       "from": [
         -1.52,
         12.8,
@@ -1985,7 +1985,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7556901e-794c-404a-a1cc-60cd094b94c0",
+      "uuid": "c4f125a3-db75-4495-98dd-3be48fbd615b",
       "from": [
         1.15,
         12.8,
@@ -2074,7 +2074,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "9b427427-0a04-4479-b34f-b515ee537adf",
+      "uuid": "7586331c-09f6-4628-86cf-442f13bb9a42",
       "from": [
         -1.4,
         11.8,
@@ -2163,7 +2163,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "231d5471-e474-4702-8e55-876ca7916a4e",
+      "uuid": "43988979-50e1-4a95-9d71-24ce8fc3faa8",
       "from": [
         -1.3,
         11.2,
@@ -2252,7 +2252,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "faae9313-240b-46d6-9de3-f5f18a7f523a",
+      "uuid": "526d511b-ec60-4859-9099-d0ac1528d64b",
       "from": [
         0.7,
         11.2,
@@ -2341,7 +2341,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2152c329-3b8b-439b-8dc5-c3251051489e",
+      "uuid": "0d32dad8-3131-48c5-bb35-7c333215f607",
       "from": [
         -0.9,
         10.6,
@@ -2430,7 +2430,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "68b74b9c-87c3-41bc-92a1-54fac1f554dd",
+      "uuid": "aa80f638-a977-4b8f-aa61-4f09f0660834",
       "from": [
         -0.6,
         11.6,
@@ -2509,7 +2509,7 @@
           "texture": 0
         }
       },
-      "bone_name": "jaw"
+      "bone_name": "tongue"
     },
     {
       "name": "fang_d_l",
@@ -2519,7 +2519,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f4d5da47-ba5e-4ead-a85d-1dd19d91d37f",
+      "uuid": "c71e34fa-e135-49e4-8fac-1eeb52b8876a",
       "from": [
         -1.05,
         11.8,
@@ -2608,7 +2608,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "67773d31-c50a-4852-b59c-d307f4f9eb15",
+      "uuid": "56c3f1d0-b358-4d01-aeb4-efd0a0400280",
       "from": [
         0.65,
         11.8,
@@ -2697,7 +2697,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ec973a89-c687-4e9a-aa02-d3c1ee264ab5",
+      "uuid": "70124a1b-f22f-4f34-bd17-207614a534de",
       "from": [
         -0.65,
         11.8,
@@ -2786,7 +2786,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0ca5e761-67fb-4973-99d4-6e8c1c68f4ac",
+      "uuid": "03196e4f-27d9-439a-858f-9952fd04ed04",
       "from": [
         0.25,
         11.8,
@@ -2875,7 +2875,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "fc0b21e8-b18e-4acc-a64e-5a3da7dd4e88",
+      "uuid": "04ab458d-9723-4d73-ac53-268e6ded68ec",
       "from": [
         -1.25,
         12.0,
@@ -2964,7 +2964,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ed792688-1672-4e19-8a97-3a9e5443b711",
+      "uuid": "5b40ca0d-afd9-4fbd-aa3f-c54b4e548dba",
       "from": [
         0.85,
         12.0,
@@ -3053,7 +3053,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "79f51d47-1245-4d7c-9b7c-203916ba0ebb",
+      "uuid": "d5aa30c8-2d1f-4590-9e33-553a5327ae89",
       "from": [
         -2.7,
         16.2,
@@ -3142,7 +3142,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "9dfa1a8f-4655-4b61-9861-d902af5f2c27",
+      "uuid": "f01fc4d4-d714-4e2c-8c60-e79621f2ed10",
       "from": [
         -2.4,
         17.8,
@@ -3231,7 +3231,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "9f2f1772-26d3-4732-8d9f-42b7c0fb0277",
+      "uuid": "68bbdbcc-2b9b-41d3-ae94-5f47e02b3ebf",
       "from": [
         -2.2,
         18.8,
@@ -3320,7 +3320,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5f349c1a-a3a4-4d98-b0bd-4e3fc4bf44fe",
+      "uuid": "9b9201f9-e9ae-4d0e-9857-fce0f44c1e2c",
       "from": [
         1.4,
         16.2,
@@ -3409,7 +3409,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2137dea6-7698-4aad-b093-161a6b02a4ba",
+      "uuid": "f8381b6f-8c33-4007-a0a3-050efcfd9d48",
       "from": [
         1.6,
         17.8,
@@ -3498,7 +3498,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "747e3769-d084-45ba-86a2-596609a3427e",
+      "uuid": "ec176d08-bdb8-46f2-9055-8700935cf783",
       "from": [
         1.8,
         19.4,
@@ -3587,7 +3587,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e7348f47-1eb2-49a4-8399-169e3d2775ab",
+      "uuid": "c3d1d1e7-78a2-4b65-9da9-ef4ed8738537",
       "from": [
         2.35,
         18.2,
@@ -3676,7 +3676,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "04750ba0-d4be-479a-a52f-54f395da8eed",
+      "uuid": "c9d6b354-55be-43f6-b770-cb584dfcccc5",
       "from": [
         -1.4,
         13.0,
@@ -3755,7 +3755,7 @@
           "texture": 0
         }
       },
-      "bone_name": "neck"
+      "bone_name": "neck_upper"
     },
     {
       "name": "neck_throat",
@@ -3765,7 +3765,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "31a30a0d-b906-482a-a937-a6842e2f067e",
+      "uuid": "ea75ac68-99aa-48ee-9072-76b318eea84b",
       "from": [
         -1.1,
         11.6,
@@ -3844,7 +3844,7 @@
           "texture": 0
         }
       },
-      "bone_name": "neck"
+      "bone_name": "neck_upper"
     },
     {
       "name": "neck_mane_l",
@@ -3854,7 +3854,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8c1eb4dc-0073-4524-b9d7-51b20761acc3",
+      "uuid": "64042236-9ae0-4d0c-88b1-7071f1d14084",
       "from": [
         -1.9,
         13.4,
@@ -3933,7 +3933,7 @@
           "texture": 0
         }
       },
-      "bone_name": "neck"
+      "bone_name": "neck_base"
     },
     {
       "name": "neck_mane_r",
@@ -3943,7 +3943,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "47f55194-0a92-492d-ab57-0115a6fa8783",
+      "uuid": "f8177c10-70e3-476f-89e2-96f65dae35aa",
       "from": [
         1.3,
         13.4,
@@ -4022,7 +4022,7 @@
           "texture": 0
         }
       },
-      "bone_name": "neck"
+      "bone_name": "neck_base"
     },
     {
       "name": "vertebra_body_0",
@@ -4032,7 +4032,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "04320a27-5e01-4007-8fdf-0258b861b441",
+      "uuid": "9f0cac62-051e-4366-9c72-b2e20994546b",
       "from": [
         -0.6,
         14.8,
@@ -4121,7 +4121,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "cb719dc8-2d6b-497f-bba4-0e7ca0e86585",
+      "uuid": "a2dfba66-73bb-4a8a-8590-62d7669d1a27",
       "from": [
         -0.3,
         15.6,
@@ -4210,7 +4210,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f860a52e-8577-430b-aa74-b562bfa63195",
+      "uuid": "3b14b68b-a9a0-4b0d-a05c-0e37b2f4f475",
       "from": [
         -1.0,
         14.95,
@@ -4299,7 +4299,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "81eb3e0d-75ac-4eee-ba05-525513409666",
+      "uuid": "1c20f168-7608-43b0-975d-127e5fab9a6a",
       "from": [
         0.6,
         14.95,
@@ -4388,7 +4388,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7444ad74-aaa4-4d74-9e2d-19be336c955c",
+      "uuid": "9adb2677-bb0c-4887-a33f-07bbb9f8fc77",
       "from": [
         -0.6,
         15.0,
@@ -4477,7 +4477,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "914429e6-281c-408b-a30e-c0fdb7d42d54",
+      "uuid": "0c3503fb-1484-4150-90a4-bd586e41b6a3",
       "from": [
         -0.3,
         15.8,
@@ -4566,7 +4566,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1609cd58-9908-476c-9c45-a2c53dd8110d",
+      "uuid": "990cf0f7-2792-46f7-8f35-6e5ed09a1bbc",
       "from": [
         -1.0,
         15.15,
@@ -4655,7 +4655,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "876a39a3-6bef-43f0-85a2-3550ba2e384e",
+      "uuid": "48926b3f-1ae4-4b09-ade3-5a6472ded95a",
       "from": [
         0.6,
         15.15,
@@ -4744,7 +4744,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6629d967-736f-4dd9-b789-1876e5bf977a",
+      "uuid": "20bfc201-9670-4541-bf60-0c4927a72b72",
       "from": [
         -0.6,
         14.9,
@@ -4833,7 +4833,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2a4fc741-bf33-4f0c-9279-5a6978a62b25",
+      "uuid": "4bac28e7-9d39-438e-8d52-2899c66a9b15",
       "from": [
         -0.3,
         15.7,
@@ -4922,7 +4922,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "cdca9f33-ccf3-4531-8f3c-748ff4f99cc7",
+      "uuid": "0a35ac8e-558c-4a91-9b52-f5dccbf3bacf",
       "from": [
         -1.0,
         15.05,
@@ -5011,7 +5011,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "45ce2a47-594b-41c0-bcd9-4acfd2ec829f",
+      "uuid": "83fb2356-abec-4c2a-8e2d-c4f949d4f5a9",
       "from": [
         0.6,
         15.05,
@@ -5100,7 +5100,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "62a05c4d-9ced-447a-9747-e30e570ba70c",
+      "uuid": "7635a691-30e0-4399-a424-a801d694e5a4",
       "from": [
         -0.6,
         14.6,
@@ -5189,7 +5189,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "43d5ac5b-8130-4355-a2d8-24668d1e7930",
+      "uuid": "714f6e87-c0b0-404b-a15b-caef8c5e4d60",
       "from": [
         -0.3,
         15.4,
@@ -5278,7 +5278,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f0d6f006-f792-4237-8aa7-d3557e796013",
+      "uuid": "a6dd917d-d46b-493a-9610-732a23e26a31",
       "from": [
         -1.0,
         14.75,
@@ -5367,7 +5367,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e370428a-496a-4217-810f-13da4f7aca5f",
+      "uuid": "456a0fbd-9f9b-48fc-8aa0-8d76280cb73f",
       "from": [
         0.6,
         14.75,
@@ -5456,7 +5456,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d68b3db3-2497-4900-8bec-654990a82524",
+      "uuid": "cf918c39-3639-41f8-bb78-17ad1d0f1b0b",
       "from": [
         -0.6,
         14.2,
@@ -5545,7 +5545,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "45b28a04-54e2-43fd-8a89-f330b8e25d67",
+      "uuid": "2db0f819-d938-46c4-b3d6-108947f11dcd",
       "from": [
         -0.3,
         15.0,
@@ -5634,7 +5634,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d2c90b37-77b8-4c2e-9923-6f4e471b671f",
+      "uuid": "50f2e678-9454-4994-8b21-7f9af0e13ee5",
       "from": [
         -1.0,
         14.35,
@@ -5723,7 +5723,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "552b9dd2-0dbd-44bf-8f7d-7a461d01ffd6",
+      "uuid": "91cf435e-371b-4ccb-b4cc-36f03749bb80",
       "from": [
         0.6,
         14.35,
@@ -5812,7 +5812,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b8b49769-d71d-406f-bd7c-b11400854ca8",
+      "uuid": "a14e5f28-21ae-4223-87da-e6465ae2713d",
       "from": [
         -0.6,
         13.8,
@@ -5901,7 +5901,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "edd418d9-9adf-4cd3-83ab-6fe8d5c7164a",
+      "uuid": "673dcb43-59db-4256-9831-4c2f2f100e7e",
       "from": [
         -0.3,
         14.6,
@@ -5990,7 +5990,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4195b6aa-eae8-4fa3-be0c-b69717fd79a0",
+      "uuid": "7715b177-8809-41e7-aa56-638bf4628e91",
       "from": [
         -1.0,
         13.95,
@@ -6079,7 +6079,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "153d1647-c601-4ed1-b13f-51f5ad53aab0",
+      "uuid": "a5069cec-d8c1-4380-ba47-def3a2e4bf35",
       "from": [
         0.6,
         13.95,
@@ -6168,7 +6168,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "03ce7144-7a5f-4151-8714-5288db25641a",
+      "uuid": "bcb62d7a-7db1-453f-b46b-393b0d9e380f",
       "from": [
         -0.6,
         13.5,
@@ -6257,7 +6257,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6fba422a-e2f4-4e0d-853e-97f1a1783711",
+      "uuid": "46eb1e68-64df-47fa-99d2-17abf6250c38",
       "from": [
         -0.3,
         14.3,
@@ -6346,7 +6346,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "daaa7a6d-f09f-4e23-be5f-407cfdc2c9e4",
+      "uuid": "4cfde551-a94c-43b6-b7dd-cddd042ae5a8",
       "from": [
         -1.0,
         13.65,
@@ -6435,7 +6435,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2f4958c3-9d07-4bc1-b8ad-9bbfd9289808",
+      "uuid": "3da1f18f-256c-4e90-a6c0-4722fac66f11",
       "from": [
         0.6,
         13.65,
@@ -6524,7 +6524,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6b54eb25-a22c-4167-b25b-88f13d89c07f",
+      "uuid": "965144a3-1b43-4257-b493-8cc795a90c86",
       "from": [
         -0.6,
         13.2,
@@ -6613,7 +6613,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5ba280e5-0b56-4c32-bab6-bf8112d04169",
+      "uuid": "be1262a9-d53c-4bf2-8add-089255d37763",
       "from": [
         -0.3,
         14.0,
@@ -6702,7 +6702,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6c0f9650-5fef-4ab2-b545-fd028f2fef44",
+      "uuid": "e5950109-c69c-4f2e-bd5c-5442dd4c12d7",
       "from": [
         -1.0,
         13.35,
@@ -6791,7 +6791,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "82f1b8c6-ebe5-4111-8b6e-7733b2499a24",
+      "uuid": "5a77ae54-49ff-484f-8ac9-3ad770066caf",
       "from": [
         0.6,
         13.35,
@@ -6880,7 +6880,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6439d7dc-36e2-4fdb-8859-d3fec7c81bd8",
+      "uuid": "0f80bef6-2bb4-4fbf-acbb-950c24d8cd05",
       "from": [
         -0.6,
         13.0,
@@ -6969,7 +6969,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0ab0bb14-cc1a-4158-a1a1-96e15f6440a0",
+      "uuid": "10021994-9acc-4ec0-be11-2e1ddcb599f9",
       "from": [
         -0.3,
         13.8,
@@ -7058,7 +7058,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "51356b8a-a508-4231-aea3-9e8d7e014de3",
+      "uuid": "853ddf0c-b74e-4a45-8203-46639c602577",
       "from": [
         -1.0,
         13.15,
@@ -7147,7 +7147,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ccdd570f-2e1b-420b-8cae-d5f925804cad",
+      "uuid": "2ea9df62-80ab-4443-92f2-82034478673e",
       "from": [
         0.6,
         13.15,
@@ -7236,7 +7236,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8c990ac4-3f15-4f51-b6b0-a15e3c55e206",
+      "uuid": "40313bed-f1f4-48f2-89a4-0507692b4f0b",
       "from": [
         -0.6,
         12.8,
@@ -7325,7 +7325,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1889e841-0ccd-4051-8804-466a8f8bc288",
+      "uuid": "86c3f617-1c53-4cea-817e-2147d5743117",
       "from": [
         -0.3,
         13.6,
@@ -7414,7 +7414,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4ddef3d8-4b89-4363-9a8c-f6db4598d43f",
+      "uuid": "244b7bd0-2705-49c0-b113-23fa8692ca81",
       "from": [
         -1.0,
         12.95,
@@ -7503,7 +7503,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "22b94d1f-7903-4f11-9f93-2e86c18aec43",
+      "uuid": "a23db047-86c6-4c5b-b220-9f4dabf12332",
       "from": [
         0.6,
         12.95,
@@ -7592,7 +7592,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d31873b1-e4f0-4062-97ef-4f80d65ef15f",
+      "uuid": "8f449516-ccd8-4d96-ba6d-f1a555c1d730",
       "from": [
         -0.6,
         12.6,
@@ -7681,7 +7681,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "51520580-592e-446b-8b86-ff3d54a29109",
+      "uuid": "847e5f88-6c3c-4f1b-8326-f6404c17972c",
       "from": [
         -0.3,
         13.4,
@@ -7770,7 +7770,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c4283d6a-ade0-40a6-8801-f4ff80288cf0",
+      "uuid": "cd64f9bf-79af-4b7b-abf6-f06d000fb650",
       "from": [
         -1.0,
         12.75,
@@ -7859,7 +7859,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0555f51c-b7b4-4387-87fc-88519c332fd3",
+      "uuid": "901a2da6-e2d6-4237-a388-b5a8ecd1d7fb",
       "from": [
         0.6,
         12.75,
@@ -7948,7 +7948,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c20441af-a80a-48c8-adf6-017d986af9c0",
+      "uuid": "e4f563e9-0a14-41ef-b1b7-0c9cd1172e12",
       "from": [
         -0.6,
         12.3,
@@ -8037,7 +8037,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ca665922-3fdd-42c6-8587-d2c01a8f437f",
+      "uuid": "e4e2a57d-5f53-408b-b63e-a413f6fb5217",
       "from": [
         -0.3,
         13.1,
@@ -8126,7 +8126,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b8594f0a-2949-49e8-a3b5-576ad26d43a0",
+      "uuid": "d9fc2323-31ee-4740-b40d-bb0deb18b0b9",
       "from": [
         -1.0,
         12.45,
@@ -8215,7 +8215,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "735eedcc-a639-43dc-9c46-41ce3f5ed2d6",
+      "uuid": "89962ba2-2d01-4a92-a745-cf0980eba9f5",
       "from": [
         0.6,
         12.45,
@@ -8304,7 +8304,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "343e3542-ae7e-40a6-8812-15cdcbd9bd62",
+      "uuid": "d0ee7baf-7bda-4032-928c-1c57513e434d",
       "from": [
         -1.4,
         13.7,
@@ -8393,7 +8393,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8abbb72a-9de3-4690-ba0e-6e5a8b124bd8",
+      "uuid": "8b815602-ac7f-4cd4-b21d-2645786ae346",
       "from": [
         -2.0,
         12.38,
@@ -8482,7 +8482,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8007aee2-8780-4b9c-bf4d-6928a9065a84",
+      "uuid": "f74585dd-69ae-4a78-ba51-a7a0654a78aa",
       "from": [
         -2.7,
         11.28,
@@ -8571,7 +8571,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0be47ce0-2700-4c14-beba-330c9e2dd984",
+      "uuid": "fbc22877-c898-48a0-b162-7195e07e9ea7",
       "from": [
         -2.58,
         10.4,
@@ -8660,7 +8660,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0b547eef-0196-45a6-a6d6-28d3f81e0aaf",
+      "uuid": "8cffe961-255b-42e6-a791-086ddbe20b2c",
       "from": [
         0.65,
         13.7,
@@ -8749,7 +8749,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ef9e8ef9-2c8f-46a1-9bc4-d1648a64d53c",
+      "uuid": "261f5383-671f-427f-a826-16ad6b9299ce",
       "from": [
         1.32,
         12.38,
@@ -8838,7 +8838,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3f55959b-690d-43a1-abe1-f96480fb4a7d",
+      "uuid": "1b93b59c-71b9-4e56-b9b1-ebb047dee8f9",
       "from": [
         1.92,
         11.28,
@@ -8927,7 +8927,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c2742232-8562-4890-9a4b-89a11c023f95",
+      "uuid": "9e83d165-4103-4c1f-baf9-1ae1c8da1535",
       "from": [
         2.08,
         10.4,
@@ -9016,7 +9016,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "65a40ba2-4b9e-4c96-affa-645a659b07ef",
+      "uuid": "bb167d68-619c-43e6-918d-80a40e191beb",
       "from": [
         -1.5,
         13.625,
@@ -9105,7 +9105,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6625747e-d781-48df-a8e4-6679962f3cec",
+      "uuid": "2f867660-679b-4c30-b913-3a08d49d7258",
       "from": [
         -2.3,
         12.095,
@@ -9194,7 +9194,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "df95c7a5-ba8a-4c49-9a91-67adfa622d6c",
+      "uuid": "442af89f-850f-4286-9b5e-1cc0131b118a",
       "from": [
         -3.1,
         10.82,
@@ -9283,7 +9283,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "07d6c5b4-5f19-4e82-899c-5012894bff08",
+      "uuid": "b94c34a3-9de9-4924-881d-1b348016f03f",
       "from": [
         -2.98,
         9.8,
@@ -9372,7 +9372,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6bf0daf6-3764-49ad-b675-148006d1eb1c",
+      "uuid": "16ce421e-2929-49be-9313-ee572114ed3e",
       "from": [
         0.65,
         13.625,
@@ -9461,7 +9461,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "27d52853-6512-4af3-90e8-1552f19cabbf",
+      "uuid": "b2feeab5-25c0-45dc-b904-ea702b09f335",
       "from": [
         1.42,
         12.095,
@@ -9550,7 +9550,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6af058f9-d976-44bd-bc10-85ba23de86c1",
+      "uuid": "b6dee3bf-eed9-44c6-be37-a63608e2222c",
       "from": [
         2.22,
         10.82,
@@ -9639,7 +9639,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b28e8e86-a883-4411-9270-b881c02f2aa9",
+      "uuid": "cb336b3c-89cd-4a62-8251-492e0ad82fb2",
       "from": [
         2.48,
         9.8,
@@ -9728,7 +9728,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ef4cc952-57b2-4484-864d-e6ca0666787a",
+      "uuid": "4d41aa3f-09a7-491b-bff3-bae14a1c7058",
       "from": [
         -1.5,
         13.55,
@@ -9817,7 +9817,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d8b1f53e-d191-4030-9dcf-ea961081b292",
+      "uuid": "77527306-5fbd-4ffb-9c87-1215c14868fa",
       "from": [
         -2.4,
         12.05,
@@ -9906,7 +9906,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c212d0dd-59d7-482e-9a4e-e0aeb68f2128",
+      "uuid": "beaffbe6-47bb-47a3-bbc4-01570b3fabd6",
       "from": [
         -3.1,
         10.8,
@@ -9995,7 +9995,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1850553e-bea1-4cf8-a201-06ebf72f329a",
+      "uuid": "ec9dfb4c-145e-431f-bf20-a69ad3ad01b0",
       "from": [
         -2.98,
         9.8,
@@ -10084,7 +10084,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4a9b5bb4-1ce8-44d2-8c94-f887f8f8cfa8",
+      "uuid": "1dbfbdb8-5d46-4358-af86-c6c8ec461072",
       "from": [
         0.65,
         13.55,
@@ -10173,7 +10173,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6dbb38e0-e1db-4047-aeec-badf27150cb3",
+      "uuid": "14332913-0e70-4930-a7a4-4e97e7281343",
       "from": [
         1.42,
         12.05,
@@ -10262,7 +10262,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "86eee276-a5cc-45b1-96fb-91b6000ecdf5",
+      "uuid": "985f1cfa-38d1-4f06-bf6c-4ed613c9adaa",
       "from": [
         2.32,
         10.8,
@@ -10351,7 +10351,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a2c12e22-9fc9-4097-8683-4f45b065175d",
+      "uuid": "b8f59094-ad53-49d8-b0ac-3d8eeb4a43ff",
       "from": [
         2.48,
         9.8,
@@ -10440,7 +10440,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1b1c5ea1-ee75-4200-bec4-0de06cf51959",
+      "uuid": "3ee06db5-ab61-45dd-bcb4-712566112192",
       "from": [
         -1.4,
         13.3,
@@ -10529,7 +10529,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1cbfc3a1-9e82-481c-876d-8dd2a1b2c546",
+      "uuid": "c6a59fd4-161e-4233-b459-5639118d427a",
       "from": [
         -2.2,
         11.98,
@@ -10618,7 +10618,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c09ea0fe-e8c3-4775-8980-6150ff828a00",
+      "uuid": "ed15a711-ddc0-4acb-85ba-44e2a73068b0",
       "from": [
         -2.9,
         10.88,
@@ -10707,7 +10707,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c769322a-e903-4463-8994-50a343782e37",
+      "uuid": "4f36cad0-a798-4ee6-9ed0-ae317e058ccb",
       "from": [
         -2.78,
         10.0,
@@ -10796,7 +10796,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "13c30878-23e7-4dde-bd51-63f02158920e",
+      "uuid": "dc888d8d-9783-411a-a60b-92deec3cb27a",
       "from": [
         0.65,
         13.3,
@@ -10885,7 +10885,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2fefbda5-e928-43ab-bca1-14ab78cc3a10",
+      "uuid": "04a7f09c-0c00-492b-80e2-e6ff169406c8",
       "from": [
         1.32,
         11.98,
@@ -10974,7 +10974,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ddb80134-5ad7-441a-8750-424a874c7ac8",
+      "uuid": "c4abc182-4300-48e7-b3d7-983dfc70ff86",
       "from": [
         2.12,
         10.88,
@@ -11063,7 +11063,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a5c10363-3a5f-4a7a-9f9f-09aa08500f41",
+      "uuid": "43bd103c-2510-461f-a5d3-0d929a69859a",
       "from": [
         2.28,
         10.0,
@@ -11152,7 +11152,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "28eddd46-fa52-43bf-a1d3-125fc7f64fda",
+      "uuid": "8f5a385b-0903-41b1-a529-abdba76e3a06",
       "from": [
         -1.3,
         13.05,
@@ -11241,7 +11241,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "eea950dc-0e8f-4f08-bd68-cfb65506548b",
+      "uuid": "cdf4ffec-b762-49b2-a3d7-830aad5dec7b",
       "from": [
         -2.0,
         11.91,
@@ -11330,7 +11330,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2dc86f64-fe1e-4acd-adbb-dc1cbee0aaf9",
+      "uuid": "3a3770dc-f31f-4a73-81da-f3b4424cbfe1",
       "from": [
         -2.7,
         10.96,
@@ -11419,7 +11419,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "525bf82f-12d1-4709-a3b8-e639bd1ce2a7",
+      "uuid": "fbca7f3a-f942-49ea-ad63-5b5fb009c620",
       "from": [
         -2.58,
         10.2,
@@ -11508,7 +11508,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6ad9008e-4a91-4347-a49a-2560b29d89ec",
+      "uuid": "6dd631ff-5acf-4773-a80a-565292d0fec6",
       "from": [
         0.65,
         13.05,
@@ -11597,7 +11597,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "975e1e37-f84f-448a-82c5-a0ce0e4b0d4a",
+      "uuid": "5a144a91-aed0-4ef8-8fa0-5f22e689bff5",
       "from": [
         1.22,
         11.91,
@@ -11686,7 +11686,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "53067054-e2ed-444f-913d-a823783ba2d9",
+      "uuid": "a80a71d7-dfeb-4561-be7b-fa1cdf298042",
       "from": [
         1.92,
         10.96,
@@ -11775,7 +11775,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f477db3d-fa6d-43e3-a176-45bdfdce0d37",
+      "uuid": "47660dfb-77c3-426c-ba99-9794ee501d30",
       "from": [
         2.08,
         10.2,
@@ -11864,7 +11864,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6c64de77-f49e-4663-b50b-e0e1b133c427",
+      "uuid": "1c6d591a-4372-4998-8b56-89c1cc7f2d91",
       "from": [
         -1.2,
         12.85,
@@ -11953,7 +11953,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ce198500-5158-4588-a9bb-c3ba750e22b1",
+      "uuid": "e32fb39a-4ffd-4b3c-9f5e-b7d8574d9c30",
       "from": [
         -1.8,
         11.95,
@@ -12042,7 +12042,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "9b33999d-0064-49b0-a935-6745a7934286",
+      "uuid": "93f84bef-4f8e-417f-8442-9d64231625a9",
       "from": [
         -2.4,
         11.2,
@@ -12131,7 +12131,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "9de0326c-df11-4224-868f-ad41e767a01c",
+      "uuid": "9c2bf7b9-0e68-42db-8137-42aac805d972",
       "from": [
         -2.28,
         10.6,
@@ -12220,7 +12220,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "bd1a6e97-32f0-4c1f-8d42-7d53f015e19d",
+      "uuid": "300db715-305e-4579-a777-789149b6139b",
       "from": [
         0.65,
         12.85,
@@ -12309,7 +12309,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7b44f04c-7b93-4a65-83f6-709a53ca43ee",
+      "uuid": "e3e1900b-d379-411d-905d-2a8e6ddd8e23",
       "from": [
         1.12,
         11.95,
@@ -12398,7 +12398,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f9fb9f84-e37c-4e86-bdb1-033a19afcefe",
+      "uuid": "318d43e2-7470-4178-b730-5cf74cdbb730",
       "from": [
         1.72,
         11.2,
@@ -12487,7 +12487,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2316eb7d-8973-4dc1-b3b7-a04d94a9f7f7",
+      "uuid": "6c8f1384-c217-47c3-bac9-56750202f1a3",
       "from": [
         1.78,
         10.6,
@@ -12576,7 +12576,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "27fef85b-110d-4e24-abbe-bfcde0d2c7c2",
+      "uuid": "dfc807e7-eeaf-48fc-ba94-fe64b4891069",
       "from": [
         -1.1,
         12.65,
@@ -12665,7 +12665,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a4584944-0ea7-45b4-8cce-a760e927def7",
+      "uuid": "29155cfc-98ab-4efe-b145-bec35d730176",
       "from": [
         -1.6,
         11.99,
@@ -12754,7 +12754,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "cd7c4511-2d7f-467b-841f-0875865897b7",
+      "uuid": "8e52d783-82fc-4f84-b765-f936d8813b6f",
       "from": [
         -2.1,
         11.44,
@@ -12843,7 +12843,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "bd3ddf2d-00b2-46cf-9326-f34f3dc84d7f",
+      "uuid": "4ec76b7b-1b9b-4f73-8f12-b99f52e5fe12",
       "from": [
         -1.98,
         11.0,
@@ -12932,7 +12932,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c5241491-4772-4488-9107-95c0701214f8",
+      "uuid": "a3856c1e-d18c-4c41-b894-a5a24b7501e9",
       "from": [
         0.65,
         12.65,
@@ -13021,7 +13021,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7ffc40be-99b4-46a3-a5f8-4374e1297a5e",
+      "uuid": "c7a65b7b-de39-481e-a936-395d5dcdb7ef",
       "from": [
         1.02,
         11.99,
@@ -13110,7 +13110,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7f29b3be-19ea-402b-9ff7-4683115387c8",
+      "uuid": "f4c346e9-9342-4575-be5b-47821da3f177",
       "from": [
         1.52,
         11.44,
@@ -13199,7 +13199,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e83841e7-e0cb-4583-9d8a-a38cc1564af3",
+      "uuid": "f6d0d354-8aad-40a3-b857-42a4f2ab4f04",
       "from": [
         1.48,
         11.0,
@@ -13288,7 +13288,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "01f134ba-a122-4688-a29e-762bc51dd2e7",
+      "uuid": "cf044eb7-fd64-4b23-ad0d-89393902665c",
       "from": [
         -0.4,
         9.4,
@@ -13377,7 +13377,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "231ebd8c-97d2-4a51-93f3-86b744a9fa7a",
+      "uuid": "7a6c53ce-e38a-4aa0-80e9-5273d1d51989",
       "from": [
         -0.3,
         9.6,
@@ -13466,7 +13466,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a2962e1e-029a-43df-ae22-c27183eaaaa1",
+      "uuid": "775ef46c-ac83-48c9-b4e3-06ae36e4e947",
       "from": [
         -2.3,
         15.2,
@@ -13555,7 +13555,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8a2b829d-f341-45d7-b33f-d9510d3d5da3",
+      "uuid": "9b30e1ee-91c9-48c2-92f4-1c27f9792161",
       "from": [
         -2.9,
         14.2,
@@ -13644,7 +13644,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d12414de-dd99-4e70-ac06-840836d922be",
+      "uuid": "13bedab9-53c3-4d6c-9c84-f1bfd2a93f7a",
       "from": [
         2.2,
         14.2,
@@ -13733,7 +13733,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f4028482-ae51-4a14-a6bc-faab1b9f9149",
+      "uuid": "799051df-3c33-467a-9c76-419fb82c1e3b",
       "from": [
         -3.05,
         12.8,
@@ -13822,7 +13822,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ddaa29c4-c2b5-4d56-ad00-2a04212e9bc9",
+      "uuid": "01b6d699-8e40-4d2a-9f94-568f33ee2873",
       "from": [
         2.55,
         12.8,
@@ -13911,7 +13911,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ebcd906a-91ed-4c77-9e5a-05dbfd613364",
+      "uuid": "b3347ff3-4964-4278-904b-1852bc18ba7a",
       "from": [
         -2.95,
         12.2,
@@ -14000,7 +14000,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "739b1f1f-060a-4530-8721-7358bf1e31f8",
+      "uuid": "3706bb94-d4ad-4e5f-be56-478a6f24fea2",
       "from": [
         2.45,
         12.2,
@@ -14089,7 +14089,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b0c5194c-2456-4a22-a612-97f2ece93dd4",
+      "uuid": "76918ab0-a30a-4aac-af16-8afb37f618ed",
       "from": [
         -2.75,
         11.6,
@@ -14178,7 +14178,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "335721ca-c5b9-480d-a0bd-684a0f2e439a",
+      "uuid": "52e2d1ef-d936-4b79-a4f3-4248f7e4c74b",
       "from": [
         2.25,
         11.6,
@@ -14267,7 +14267,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b8772573-515f-41b8-943c-f3ce6e6c5edb",
+      "uuid": "588b3b02-6c5b-449f-9709-95634385c289",
       "from": [
         -2.45,
         11.15,
@@ -14356,7 +14356,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a12f1e01-72c6-4daa-9eba-757228601f43",
+      "uuid": "5a41d36b-ed38-46d9-a468-e1e4cb2e0ba2",
       "from": [
         1.95,
         11.15,
@@ -14445,7 +14445,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dad1d2c8-2fa6-4184-8b12-1e16401f8736",
+      "uuid": "98e1b010-b2af-4229-807a-d70308fbc045",
       "from": [
         -2.25,
         10.8,
@@ -14534,7 +14534,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7071beef-ae9d-440b-9673-b6f4fbbfd6f9",
+      "uuid": "11d6e6d9-380a-4545-9cf0-6811edb52fec",
       "from": [
         1.75,
         10.8,
@@ -14623,7 +14623,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f0cb74f0-9712-4cd1-9039-f95a91995f24",
+      "uuid": "d326ef55-cd5b-4c47-a9a8-b3240eef34bb",
       "from": [
         -1.3,
         11.2,
@@ -14712,7 +14712,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "70cf679f-64e5-441b-93a1-21344fbc44e1",
+      "uuid": "66026a1f-1a4b-4a71-b164-03de6c6bfb01",
       "from": [
         -1.8,
         11.6,
@@ -14801,7 +14801,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ea18deb3-9826-418b-926a-cc7d60c0596c",
+      "uuid": "62050a94-e892-4b56-bc4a-d41a97c8ba39",
       "from": [
         1.2,
         11.6,
@@ -14890,7 +14890,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1302eb6c-27d8-4a2c-9fb0-424548c04003",
+      "uuid": "ebb03627-d51d-4542-9b49-a999979c5a54",
       "from": [
         -2.2,
         12.35,
@@ -14979,7 +14979,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "feea643b-a3ee-49d0-ac28-8953a770a48b",
+      "uuid": "1180e2e9-4c6c-4b08-a53b-ab72782bcccc",
       "from": [
         -2.8,
         11.4,
@@ -15068,7 +15068,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c6e70a2c-e2d7-4ca5-8639-2363dfffee03",
+      "uuid": "cc5f88da-1ec3-4fc3-be08-73294f5b63f2",
       "from": [
         2.0,
         11.4,
@@ -15157,7 +15157,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1ecef4e8-490d-4612-99a4-c8b742a2cb1b",
+      "uuid": "e3e437a0-1f26-4eab-aa9b-845d7bb9648a",
       "from": [
         -2.6,
         13.0,
@@ -15246,7 +15246,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3be7f947-7984-4573-b6eb-f98125b07ef1",
+      "uuid": "e9ca8d63-11d4-4bf6-a628-cef99a8fb298",
       "from": [
         2.0,
         13.0,
@@ -15335,7 +15335,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ba23c605-dfaa-45e1-aa99-068859093916",
+      "uuid": "be0486bb-d869-4097-aded-5ceda14cfec6",
       "from": [
         -2.5,
         11.8,
@@ -15424,7 +15424,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "42377af9-1361-4442-8600-644b7296b43e",
+      "uuid": "fbc5130e-9b61-4aa7-91b2-af8a679143d5",
       "from": [
         1.8,
         11.8,
@@ -15513,7 +15513,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ccbf759c-1fa2-4d1b-ba62-52fc27e35c6c",
+      "uuid": "a5479fc1-4bf0-4fcb-a47f-54fb9ae08aa2",
       "from": [
         -3.35,
         9.5,
@@ -15602,7 +15602,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a05f1f8f-d89b-4567-89bc-2e82b69f54b9",
+      "uuid": "e23687d2-69e5-4564-a9cf-d5f3ebf6cc74",
       "from": [
         -3.55,
         10.5,
@@ -15691,7 +15691,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "76de6dc0-ff4d-4079-b028-479da8a7053c",
+      "uuid": "e01bea11-6547-452f-af6f-e6bff11a062f",
       "from": [
         -3.1,
         6.8,
@@ -15780,7 +15780,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dfd09b22-84a6-4140-91d9-431b322a236d",
+      "uuid": "0b53f51f-8787-4f90-90a1-9838b2d153ab",
       "from": [
         -3.15,
         6.4,
@@ -15869,7 +15869,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ab571318-7844-475b-9a0f-f2d8431c00a4",
+      "uuid": "0ef7f4c9-8c7f-490b-8b38-c3855f06d1fe",
       "from": [
         -3.0,
         1.8,
@@ -15948,7 +15948,7 @@
           "texture": 0
         }
       },
-      "bone_name": "arm_l"
+      "bone_name": "forearm_l"
     },
     {
       "name": "wrist_joint_l",
@@ -15958,7 +15958,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d937fc46-b022-49a2-a625-e1368e8b6570",
+      "uuid": "c6ad6c9f-8b0b-4e82-a9d0-a1cbf294fdcd",
       "from": [
         -3.05,
         1.2,
@@ -16037,7 +16037,7 @@
           "texture": 0
         }
       },
-      "bone_name": "arm_l"
+      "bone_name": "forearm_l"
     },
     {
       "name": "metacarpus_l",
@@ -16047,7 +16047,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "46d8b0c9-83be-4a7a-a487-ff92360017c0",
+      "uuid": "b5d35b64-2878-4e0a-a6ed-dc1df3c0563e",
       "from": [
         -3.1,
         0.4,
@@ -16136,7 +16136,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e78b69a8-ba4c-4d09-b25d-d877482464a3",
+      "uuid": "3d425c0e-eaf9-4ab5-8609-5a890df0f890",
       "from": [
         -3.55,
         0.0,
@@ -16225,7 +16225,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ebcec63b-7d2a-4839-832b-fd2563b67fd5",
+      "uuid": "3ab1c903-e94b-4cc3-9580-12c0b1787f52",
       "from": [
         -3.5,
         0.0,
@@ -16314,7 +16314,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8df48487-bdaa-45f1-b5ea-80d43c243886",
+      "uuid": "9d1a4d41-d96c-4264-a428-2e8a2ef41152",
       "from": [
         -3.05,
         0.0,
@@ -16403,7 +16403,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0e6ee9d3-f7c6-4856-8fa5-0cc1ff0b0340",
+      "uuid": "a4957127-de3e-4127-85ff-07101331960a",
       "from": [
         -3.0,
         0.0,
@@ -16492,7 +16492,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "839296db-fd3e-4be0-92d4-ce3aa7233468",
+      "uuid": "00dede02-86f6-4025-9711-d6f22ec2652b",
       "from": [
         -2.55,
         0.0,
@@ -16581,7 +16581,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b3c8d614-863f-4b15-9419-73ed89308cbe",
+      "uuid": "8fdf7527-f854-4151-bc70-83b6f43d045a",
       "from": [
         -2.5,
         0.0,
@@ -16670,7 +16670,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7fc224de-ac13-44c9-8070-d1cb11aa9a1d",
+      "uuid": "b7dd1bfb-95a9-4467-987b-6f4720e62d59",
       "from": [
         -2.05,
         0.0,
@@ -16759,7 +16759,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dd1635be-058b-4d76-b49e-99a23f29b6c9",
+      "uuid": "d7c66173-eb9d-4ee9-b4fa-aeb7c46188d0",
       "from": [
         -2.0,
         0.0,
@@ -16848,7 +16848,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4b5915c6-ec12-441c-924c-cce51c8d9b04",
+      "uuid": "a5461236-47c8-4754-841a-7e70e1765d20",
       "from": [
         2.25,
         9.5,
@@ -16937,7 +16937,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "88195c78-befe-4068-9d2e-437241508755",
+      "uuid": "a4146668-94c2-4db5-92ad-0899ff35b004",
       "from": [
         3.25,
         10.5,
@@ -17026,7 +17026,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5437679c-475e-44c8-8947-5e8003885fc6",
+      "uuid": "c298c216-2636-43cc-b479-f0aa1c1eea95",
       "from": [
         2.3,
         6.8,
@@ -17115,7 +17115,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "df8de311-63cd-4292-a4b8-d9c275b178a0",
+      "uuid": "4f5620d7-b26e-4426-9e06-af8c4339ec4d",
       "from": [
         2.25,
         6.4,
@@ -17204,7 +17204,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2c496ec3-4bed-41c3-8f80-d4c060cc2b88",
+      "uuid": "77a5168b-0f59-48da-8914-8397efb8116f",
       "from": [
         2.2,
         1.8,
@@ -17283,7 +17283,7 @@
           "texture": 0
         }
       },
-      "bone_name": "arm_r"
+      "bone_name": "forearm_r"
     },
     {
       "name": "wrist_joint_r",
@@ -17293,7 +17293,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c5584096-4803-42b8-89e5-b7a0956a267e",
+      "uuid": "540f7cd8-1965-4dc6-bd18-da2f5da53e4a",
       "from": [
         2.15,
         1.2,
@@ -17372,7 +17372,7 @@
           "texture": 0
         }
       },
-      "bone_name": "arm_r"
+      "bone_name": "forearm_r"
     },
     {
       "name": "metacarpus_r",
@@ -17382,7 +17382,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "554e4673-3f19-4383-bd55-913e4828b285",
+      "uuid": "3e6fb402-3d76-4fc1-94a9-cd4da5ed456f",
       "from": [
         2.1,
         0.4,
@@ -17471,7 +17471,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f0bd45bb-8bf2-4d19-a357-d4fd77e60710",
+      "uuid": "39b366b1-9caf-4f83-834c-adbda28b33a9",
       "from": [
         1.65,
         0.0,
@@ -17560,7 +17560,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "cf235255-8a10-41ed-a39b-25021c080474",
+      "uuid": "dfa38586-1bc7-4102-8613-0b10cf4bb80a",
       "from": [
         1.7,
         0.0,
@@ -17649,7 +17649,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7ef0b542-6c3a-4cad-914e-eca67c983592",
+      "uuid": "ffad1523-edd6-469d-9331-e2781f438901",
       "from": [
         2.15,
         0.0,
@@ -17738,7 +17738,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "735be78b-a11e-4ae0-a75e-1ba11f9e2e7a",
+      "uuid": "a3784923-0f5a-41e2-a4be-39c29634c5ef",
       "from": [
         2.2,
         0.0,
@@ -17827,7 +17827,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "cef72d1a-a564-4ae4-9319-a53dfa151b49",
+      "uuid": "86798fd1-323d-4d74-ac52-b2f1c42e75a6",
       "from": [
         2.65,
         0.0,
@@ -17916,7 +17916,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e32b0528-0435-4b1f-abd0-f15047333817",
+      "uuid": "0126e471-b3ad-41bb-b0c3-06f091f1a111",
       "from": [
         2.7,
         0.0,
@@ -18005,7 +18005,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "17e29a10-2d52-4344-a58a-18b511e58882",
+      "uuid": "f16fde6d-7ce6-4813-bda8-186fbe3acfb3",
       "from": [
         3.15,
         0.0,
@@ -18094,7 +18094,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0c7db2f0-7b32-4c42-88ab-62525630f41f",
+      "uuid": "dffb6435-98ac-4898-b518-00a54df372b3",
       "from": [
         3.2,
         0.0,
@@ -18176,6 +18176,184 @@
       "bone_name": "paw_fr"
     },
     {
+      "name": "femur_thigh_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "565192b1-f385-4ad7-bec7-89d6e496cc25",
+      "from": [
+        -3.4,
+        7.2,
+        4.4
+      ],
+      "to": [
+        -1.8,
+        12.2,
+        7.6
+      ],
+      "autouv": 0,
+      "color": 0,
+      "origin": [
+        -2.6,
+        9.7,
+        6.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            1.0,
+            1.0,
+            15.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_l"
+    },
+    {
+      "name": "femur_trochanter_l",
+      "box_uv": false,
+      "rescale": false,
+      "locked": false,
+      "render_order": "default",
+      "allow_mirror_modeling": true,
+      "type": "cube",
+      "uuid": "28bccc6c-1186-4ad9-bb50-6a58c49ef49b",
+      "from": [
+        -3.6,
+        9.8,
+        5.2
+      ],
+      "to": [
+        -3.3,
+        11.5,
+        6.8
+      ],
+      "autouv": 0,
+      "color": 3,
+      "origin": [
+        -3.45,
+        10.65,
+        6.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            49.0,
+            1.0,
+            63.0,
+            15.0
+          ],
+          "texture": 0
+        }
+      },
+      "bone_name": "thigh_l"
+    },
+    {
       "name": "knee_patella_l",
       "box_uv": false,
       "rescale": false,
@@ -18183,7 +18361,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d3c985e7-9d3d-4048-83be-af6eab8147bf",
+      "uuid": "650fc140-d024-491a-9458-eb219be8a4bf",
       "from": [
         -3.15,
         6.6,
@@ -18272,7 +18450,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4b4621cd-5230-4c0e-a654-fe413beeb2c9",
+      "uuid": "314eaec1-0318-4c87-9639-873a7d36eb45",
       "from": [
         -3.0,
         6.0,
@@ -18361,7 +18539,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dad168fb-26ea-474f-a6ff-f7971f39dc6f",
+      "uuid": "98e82288-87ae-4768-8899-dedec449d131",
       "from": [
         -3.1,
         3.2,
@@ -18450,7 +18628,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "19895490-b17a-4cb2-9a86-5d8bcf5d0c07",
+      "uuid": "1d251553-7391-44ac-b08d-9a72fc8911bf",
       "from": [
         -3.05,
         2.2,
@@ -18539,7 +18717,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f9f7c5dc-3e9b-4bc5-800c-811301c2978f",
+      "uuid": "45613e05-b902-4179-b379-2779463bcc5e",
       "from": [
         -2.9,
         2.0,
@@ -18628,7 +18806,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d5c5df4a-4612-4722-bc63-48aeef950e0e",
+      "uuid": "abf926c7-bd31-4235-a29c-ababa16e7d83",
       "from": [
         -2.95,
         1.0,
@@ -18717,7 +18895,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e99dd6f6-7901-4125-94c1-4c1e70860cd7",
+      "uuid": "6e67c8a0-1b7f-48cd-8582-42814915c1a3",
       "from": [
         -3.0,
         0.6,
@@ -18806,7 +18984,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "b139bda4-cd05-4f4a-bfb3-2800c2cd4d62",
+      "uuid": "39992134-94a7-4543-94fb-3b237862bc8a",
       "from": [
         -3.6,
         0.0,
@@ -18895,7 +19073,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c6fafb1f-fcef-471a-b25a-c949c4cc7191",
+      "uuid": "e7ee41ce-8fa6-4f00-a8b8-677d28904919",
       "from": [
         -3.55,
         0.0,
@@ -18984,7 +19162,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "58521d3d-f9c3-4bba-9d03-c922ac89bac1",
+      "uuid": "87a5f21f-efef-4ceb-8df9-036158a464e3",
       "from": [
         -3.1,
         0.0,
@@ -19073,7 +19251,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "a9a4e73d-f841-4435-ac52-bcdbdfec0056",
+      "uuid": "d9ae09b5-fc55-4ef3-965e-faf03b0162c7",
       "from": [
         -3.05,
         0.0,
@@ -19162,7 +19340,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d6ddeb97-5155-48e0-8aa8-775bc7687f07",
+      "uuid": "f4a3dbf2-64b1-4743-bcb3-f28ce5489132",
       "from": [
         -2.6,
         0.0,
@@ -19251,7 +19429,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f4c8259f-18b8-4e53-8746-8bc42cdfc133",
+      "uuid": "6357c74c-e623-4c52-90a5-79e3a90a85b7",
       "from": [
         -2.55,
         0.0,
@@ -19340,7 +19518,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "0fa5f493-3ed8-43ec-91c7-409bf181efa2",
+      "uuid": "cbb556e9-1669-4e1f-9a4a-d2db0ee451d9",
       "from": [
         -2.1,
         0.0,
@@ -19429,7 +19607,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "af877829-3092-4962-8a69-2ebcffbabad9",
+      "uuid": "b8334e02-f48b-4716-b0d6-b552c0bbe831",
       "from": [
         -2.05,
         0.0,
@@ -19518,7 +19696,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "27de5e54-f947-48d0-8819-b85c65cf412a",
+      "uuid": "37f2bc35-76c0-4b47-8d96-2bc2640f5209",
       "from": [
         1.8,
         7.2,
@@ -19607,7 +19785,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "29cd823c-4993-4af9-8556-7371977c354a",
+      "uuid": "58f0529f-1ec7-4ac5-82e8-9e2fd752b502",
       "from": [
         3.3,
         9.8,
@@ -19696,7 +19874,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1df52e86-316c-488c-93c0-ffab3e26cf2d",
+      "uuid": "4b31ef17-e674-4919-a6e0-92c1ae94fee9",
       "from": [
         2.15,
         6.6,
@@ -19785,7 +19963,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "ed3b7f44-8a0a-4f7d-9687-8a36b05df8e6",
+      "uuid": "74af56ef-6735-4700-8941-40ad9ea83ecf",
       "from": [
         2.3,
         6.0,
@@ -19874,7 +20052,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d3d13c5b-f0b4-4633-98bb-8ae0ee8e20fe",
+      "uuid": "3430719a-699b-4dd9-934b-2bf0cd9198e0",
       "from": [
         2.2,
         3.2,
@@ -19963,7 +20141,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "8fda0927-9894-47de-bd4c-45e908e56003",
+      "uuid": "63989a6e-3dee-4849-a519-48dd97694d64",
       "from": [
         2.25,
         2.2,
@@ -20052,7 +20230,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "6bae734a-3247-486c-b8e0-7b047013115b",
+      "uuid": "28e9d325-d878-4c8d-b8f3-eded977e42c4",
       "from": [
         2.4,
         2.0,
@@ -20141,7 +20319,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f3e4a092-dff5-4977-9f76-9aede90c2c6a",
+      "uuid": "22b0dfb8-9946-4d72-994d-d2f9552bcb95",
       "from": [
         2.35,
         1.0,
@@ -20230,7 +20408,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5e4fb0ca-7584-434f-9e2e-38d3bf138af1",
+      "uuid": "7fef24d7-036f-49bb-abc3-261b730cf5df",
       "from": [
         2.3,
         0.6,
@@ -20319,7 +20497,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "c81f5782-813d-473c-9ea9-49f3bb5980b1",
+      "uuid": "faafac1b-18f4-4572-b3b6-1f511746b2f5",
       "from": [
         1.7,
         0.0,
@@ -20408,7 +20586,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "bd141ae3-9f51-4b29-a610-b009ba865b49",
+      "uuid": "24c8d279-d7a9-4830-b81f-b92290e313ba",
       "from": [
         1.75,
         0.0,
@@ -20497,7 +20675,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7006de3c-ee66-418e-a45b-35170326ba7b",
+      "uuid": "010edf1c-f0c9-4747-84fe-e36bbdc95394",
       "from": [
         2.2,
         0.0,
@@ -20586,7 +20764,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "36fd67a0-6dfb-48a6-ace3-09a2c8a8bdf8",
+      "uuid": "243e24f0-97ee-4671-a0ca-04150ed1da0c",
       "from": [
         2.25,
         0.0,
@@ -20675,7 +20853,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "52e718fd-e3b3-43d5-a38a-05fb1493c90e",
+      "uuid": "0915519d-08f0-4094-acb5-649df4d3392f",
       "from": [
         2.7,
         0.0,
@@ -20764,7 +20942,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "29c8be29-efc4-401e-9652-af65d34ab27d",
+      "uuid": "7a097e19-5eaf-43a5-9e15-52088e358d7c",
       "from": [
         2.75,
         0.0,
@@ -20853,7 +21031,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f4244c21-9f8b-4c51-8d87-05bfe1d243d4",
+      "uuid": "916153b6-29a8-48ba-976b-ce53232f414d",
       "from": [
         3.2,
         0.0,
@@ -20942,7 +21120,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "7803db6c-d0c0-4302-879a-cbdbb78f4b30",
+      "uuid": "020aaa0b-4574-4750-a084-4afb2f46888e",
       "from": [
         3.25,
         0.0,
@@ -21031,7 +21209,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d799bba4-2a12-478b-a056-b4a78033d4bd",
+      "uuid": "b9c90e09-e79e-40d8-b0b7-83d3e33b38e7",
       "from": [
         -0.65,
         11.5,
@@ -21110,7 +21288,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_base"
+      "bone_name": "tail_1"
     },
     {
       "name": "tail_vertebra_1",
@@ -21120,7 +21298,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "17137686-fd97-472a-a92b-73cf62eceb80",
+      "uuid": "0bd5ff3f-1132-4f03-9dd6-69b684d5490f",
       "from": [
         -0.58,
         10.4,
@@ -21199,7 +21377,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_base"
+      "bone_name": "tail_2"
     },
     {
       "name": "tail_vertebra_2",
@@ -21209,7 +21387,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "4c1df4f8-fdc3-4e9d-ad98-16045d1bea6a",
+      "uuid": "a1c223e2-a997-46bd-8afe-ff2d17789ad6",
       "from": [
         -0.5,
         9.2,
@@ -21288,7 +21466,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_mid"
+      "bone_name": "tail_3"
     },
     {
       "name": "tail_vertebra_3",
@@ -21298,7 +21476,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e86011eb-2bb9-4ee3-b997-36c55eb89a54",
+      "uuid": "469994d9-02cd-4302-9aaa-b571658c0019",
       "from": [
         -0.44,
         7.9,
@@ -21377,7 +21555,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_mid"
+      "bone_name": "tail_4"
     },
     {
       "name": "tail_vertebra_4",
@@ -21387,7 +21565,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "dea8aca0-bbfc-419a-8ef1-4384337303bb",
+      "uuid": "341bbc97-2772-4c24-8ff3-5b5609a34603",
       "from": [
         -0.38,
         6.5,
@@ -21466,7 +21644,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_mid"
+      "bone_name": "tail_5"
     },
     {
       "name": "tail_vertebra_5",
@@ -21476,7 +21654,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "1647ef4e-aeca-4e1f-8f9f-bc5c663d9da2",
+      "uuid": "a00a50d4-fc01-4597-8d54-cfc93e060660",
       "from": [
         -0.32,
         5.2,
@@ -21555,7 +21733,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_6"
     },
     {
       "name": "tail_vertebra_6",
@@ -21565,7 +21743,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "5487f01d-fed3-44b4-adf3-316706306d04",
+      "uuid": "0c2d8b36-f8df-4e63-a3df-9a4303674698",
       "from": [
         -0.28,
         3.8,
@@ -21644,7 +21822,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     },
     {
       "name": "tail_vertebra_7",
@@ -21654,7 +21832,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "f5872c27-bba0-4c6f-8d35-40ed87d49f4a",
+      "uuid": "19b9adfc-a019-4e30-b0c7-c0350789353d",
       "from": [
         -0.22,
         2.6,
@@ -21733,7 +21911,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     },
     {
       "name": "tail_fur_base",
@@ -21743,7 +21921,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "87099828-bc03-4757-9d4d-84654fcc8354",
+      "uuid": "98126e1e-caf4-42ef-8ccc-e450e983aac9",
       "from": [
         -0.8,
         11.6,
@@ -21822,7 +22000,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_base"
+      "bone_name": "tail_1"
     },
     {
       "name": "tail_fur_tip_1",
@@ -21832,7 +22010,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "3d507fc1-2324-4e22-9c41-d5de46611e33",
+      "uuid": "7a8796bc-f9a0-4980-9965-29cdebec5efb",
       "from": [
         -0.45,
         2.2,
@@ -21911,7 +22089,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     },
     {
       "name": "tail_fur_tip_2",
@@ -21921,7 +22099,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "e9b6fcff-0fa0-47c8-84b2-30b9f168f98f",
+      "uuid": "e85ef93c-c72d-437b-8091-bc80a548b6ef",
       "from": [
         -0.3,
         1.8,
@@ -22000,7 +22178,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     },
     {
       "name": "tail_fur_tip_3",
@@ -22010,7 +22188,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "d7ea6d10-f6dc-42e8-ac2d-0d5f481444fe",
+      "uuid": "d33d55e8-ce34-4088-8022-c4e823699c21",
       "from": [
         -0.48,
         1.5,
@@ -22089,7 +22267,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     },
     {
       "name": "tail_fur_tip_4",
@@ -22099,7 +22277,7 @@
       "render_order": "default",
       "allow_mirror_modeling": true,
       "type": "cube",
-      "uuid": "2b95d6fd-e735-4a4a-88dc-20639a9d78fd",
+      "uuid": "e96326e9-b063-4dfb-ac33-36567bc08dae",
       "from": [
         0.22,
         1.5,
@@ -22178,7 +22356,7 @@
           "texture": 0
         }
       },
-      "bone_name": "tail_tip"
+      "bone_name": "tail_7"
     }
   ],
   "outliner": [
@@ -22194,7 +22372,7 @@
         0.0,
         0.0
       ],
-      "uuid": "7307c8a3-c874-4379-9f49-5efc3ff0b25e",
+      "uuid": "c3366584-d8e8-42fa-80b0-7035c9fcc96d",
       "export": true,
       "mirror_uv": false,
       "isOpen": false,
@@ -22214,7 +22392,7 @@
             0.0,
             0.0
           ],
-          "uuid": "b24d82b2-69fb-4da4-a804-be9ae2828d66",
+          "uuid": "d67ee370-828d-4c18-a1a4-85f6a49a71e1",
           "export": true,
           "mirror_uv": false,
           "isOpen": false,
@@ -22222,21 +22400,21 @@
           "visibility": true,
           "autouv": 0,
           "children": [
-            "d31873b1-e4f0-4062-97ef-4f80d65ef15f",
-            "51520580-592e-446b-8b86-ff3d54a29109",
-            "c4283d6a-ade0-40a6-8801-f4ff80288cf0",
-            "0555f51c-b7b4-4387-87fc-88519c332fd3",
-            "c20441af-a80a-48c8-adf6-017d986af9c0",
-            "ca665922-3fdd-42c6-8587-d2c01a8f437f",
-            "b8594f0a-2949-49e8-a3b5-576ad26d43a0",
-            "735eedcc-a639-43dc-9c46-41ce3f5ed2d6",
-            "1302eb6c-27d8-4a2c-9fb0-424548c04003",
-            "feea643b-a3ee-49d0-ac28-8953a770a48b",
-            "c6e70a2c-e2d7-4ca5-8639-2363dfffee03",
-            "1ecef4e8-490d-4612-99a4-c8b742a2cb1b",
-            "3be7f947-7984-4573-b6eb-f98125b07ef1",
-            "ba23c605-dfaa-45e1-aa99-068859093916",
-            "42377af9-1361-4442-8600-644b7296b43e",
+            "8f449516-ccd8-4d96-ba6d-f1a555c1d730",
+            "847e5f88-6c3c-4f1b-8326-f6404c17972c",
+            "cd64f9bf-79af-4b7b-abf6-f06d000fb650",
+            "901a2da6-e2d6-4237-a388-b5a8ecd1d7fb",
+            "e4f563e9-0a14-41ef-b1b7-0c9cd1172e12",
+            "e4e2a57d-5f53-408b-b63e-a413f6fb5217",
+            "d9fc2323-31ee-4740-b40d-bb0deb18b0b9",
+            "89962ba2-2d01-4a92-a745-cf0980eba9f5",
+            "ebb03627-d51d-4542-9b49-a999979c5a54",
+            "1180e2e9-4c6c-4b08-a53b-ab72782bcccc",
+            "cc5f88da-1ec3-4fc3-be08-73294f5b63f2",
+            "e3e437a0-1f26-4eab-aa9b-845d7bb9648a",
+            "e9ca8d63-11d4-4bf6-a628-cef99a8fb298",
+            "be0486bb-d869-4097-aded-5ceda14cfec6",
+            "fbc5130e-9b61-4aa7-91b2-af8a679143d5",
             {
               "name": "spine_lumbar",
               "origin": [
@@ -22249,7 +22427,7 @@
                 0.0,
                 0.0
               ],
-              "uuid": "8610fdb2-1cd5-486e-b677-f5ffc1b71b27",
+              "uuid": "82ec301f-fcd8-4537-aede-4c272daf56a1",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
@@ -22257,49 +22435,49 @@
               "visibility": true,
               "autouv": 0,
               "children": [
-                "b8b49769-d71d-406f-bd7c-b11400854ca8",
-                "edd418d9-9adf-4cd3-83ab-6fe8d5c7164a",
-                "4195b6aa-eae8-4fa3-be0c-b69717fd79a0",
-                "153d1647-c601-4ed1-b13f-51f5ad53aab0",
-                "03ce7144-7a5f-4151-8714-5288db25641a",
-                "6fba422a-e2f4-4e0d-853e-97f1a1783711",
-                "daaa7a6d-f09f-4e23-be5f-407cfdc2c9e4",
-                "2f4958c3-9d07-4bc1-b8ad-9bbfd9289808",
-                "6b54eb25-a22c-4167-b25b-88f13d89c07f",
-                "5ba280e5-0b56-4c32-bab6-bf8112d04169",
-                "6c0f9650-5fef-4ab2-b545-fd028f2fef44",
-                "82f1b8c6-ebe5-4111-8b6e-7733b2499a24",
-                "6439d7dc-36e2-4fdb-8859-d3fec7c81bd8",
-                "0ab0bb14-cc1a-4158-a1a1-96e15f6440a0",
-                "51356b8a-a508-4231-aea3-9e8d7e014de3",
-                "ccdd570f-2e1b-420b-8cae-d5f925804cad",
-                "8c990ac4-3f15-4f51-b6b0-a15e3c55e206",
-                "1889e841-0ccd-4051-8804-466a8f8bc288",
-                "4ddef3d8-4b89-4363-9a8c-f6db4598d43f",
-                "22b94d1f-7903-4f11-9f93-2e86c18aec43",
-                "6c64de77-f49e-4663-b50b-e0e1b133c427",
-                "ce198500-5158-4588-a9bb-c3ba750e22b1",
-                "9b33999d-0064-49b0-a935-6745a7934286",
-                "9de0326c-df11-4224-868f-ad41e767a01c",
-                "bd1a6e97-32f0-4c1f-8d42-7d53f015e19d",
-                "7b44f04c-7b93-4a65-83f6-709a53ca43ee",
-                "f9fb9f84-e37c-4e86-bdb1-033a19afcefe",
-                "2316eb7d-8973-4dc1-b3b7-a04d94a9f7f7",
-                "27fef85b-110d-4e24-abbe-bfcde0d2c7c2",
-                "a4584944-0ea7-45b4-8cce-a760e927def7",
-                "cd7c4511-2d7f-467b-841f-0875865897b7",
-                "bd3ddf2d-00b2-46cf-9326-f34f3dc84d7f",
-                "c5241491-4772-4488-9107-95c0701214f8",
-                "7ffc40be-99b4-46a3-a5f8-4374e1297a5e",
-                "7f29b3be-19ea-402b-9ff7-4683115387c8",
-                "e83841e7-e0cb-4583-9d8a-a38cc1564af3",
-                "b8772573-515f-41b8-943c-f3ce6e6c5edb",
-                "a12f1e01-72c6-4daa-9eba-757228601f43",
-                "dad1d2c8-2fa6-4184-8b12-1e16401f8736",
-                "7071beef-ae9d-440b-9673-b6f4fbbfd6f9",
-                "f0cb74f0-9712-4cd1-9039-f95a91995f24",
-                "70cf679f-64e5-441b-93a1-21344fbc44e1",
-                "ea18deb3-9826-418b-926a-cc7d60c0596c",
+                "a14e5f28-21ae-4223-87da-e6465ae2713d",
+                "673dcb43-59db-4256-9831-4c2f2f100e7e",
+                "7715b177-8809-41e7-aa56-638bf4628e91",
+                "a5069cec-d8c1-4380-ba47-def3a2e4bf35",
+                "bcb62d7a-7db1-453f-b46b-393b0d9e380f",
+                "46eb1e68-64df-47fa-99d2-17abf6250c38",
+                "4cfde551-a94c-43b6-b7dd-cddd042ae5a8",
+                "3da1f18f-256c-4e90-a6c0-4722fac66f11",
+                "965144a3-1b43-4257-b493-8cc795a90c86",
+                "be1262a9-d53c-4bf2-8add-089255d37763",
+                "e5950109-c69c-4f2e-bd5c-5442dd4c12d7",
+                "5a77ae54-49ff-484f-8ac9-3ad770066caf",
+                "0f80bef6-2bb4-4fbf-acbb-950c24d8cd05",
+                "10021994-9acc-4ec0-be11-2e1ddcb599f9",
+                "853ddf0c-b74e-4a45-8203-46639c602577",
+                "2ea9df62-80ab-4443-92f2-82034478673e",
+                "40313bed-f1f4-48f2-89a4-0507692b4f0b",
+                "86c3f617-1c53-4cea-817e-2147d5743117",
+                "244b7bd0-2705-49c0-b113-23fa8692ca81",
+                "a23db047-86c6-4c5b-b220-9f4dabf12332",
+                "1c6d591a-4372-4998-8b56-89c1cc7f2d91",
+                "e32fb39a-4ffd-4b3c-9f5e-b7d8574d9c30",
+                "93f84bef-4f8e-417f-8442-9d64231625a9",
+                "9c2bf7b9-0e68-42db-8137-42aac805d972",
+                "300db715-305e-4579-a777-789149b6139b",
+                "e3e1900b-d379-411d-905d-2a8e6ddd8e23",
+                "318d43e2-7470-4178-b730-5cf74cdbb730",
+                "6c8f1384-c217-47c3-bac9-56750202f1a3",
+                "dfc807e7-eeaf-48fc-ba94-fe64b4891069",
+                "29155cfc-98ab-4efe-b145-bec35d730176",
+                "8e52d783-82fc-4f84-b765-f936d8813b6f",
+                "4ec76b7b-1b9b-4f73-8f12-b99f52e5fe12",
+                "a3856c1e-d18c-4c41-b894-a5a24b7501e9",
+                "c7a65b7b-de39-481e-a936-395d5dcdb7ef",
+                "f4c346e9-9342-4575-be5b-47821da3f177",
+                "f6d0d354-8aad-40a3-b857-42a4f2ab4f04",
+                "588b3b02-6c5b-449f-9709-95634385c289",
+                "5a41d36b-ed38-46d9-a468-e1e4cb2e0ba2",
+                "98e1b010-b2af-4229-807a-d70308fbc045",
+                "11d6e6d9-380a-4545-9cf0-6811edb52fec",
+                "d326ef55-cd5b-4c47-a9a8-b3240eef34bb",
+                "66026a1f-1a4b-4a71-b164-03de6c6bfb01",
+                "62050a94-e892-4b56-bc4a-d41a97c8ba39",
                 {
                   "name": "thorax",
                   "origin": [
@@ -22312,7 +22490,7 @@
                     0.0,
                     0.0
                   ],
-                  "uuid": "8e5078e0-c0a7-43fa-8c8a-49faf62d47d3",
+                  "uuid": "ad63c011-90d4-41c9-b505-f628ecb5d774",
                   "export": true,
                   "mirror_uv": false,
                   "isOpen": false,
@@ -22320,90 +22498,90 @@
                   "visibility": true,
                   "autouv": 0,
                   "children": [
-                    "04320a27-5e01-4007-8fdf-0258b861b441",
-                    "cb719dc8-2d6b-497f-bba4-0e7ca0e86585",
-                    "f860a52e-8577-430b-aa74-b562bfa63195",
-                    "81eb3e0d-75ac-4eee-ba05-525513409666",
-                    "7444ad74-aaa4-4d74-9e2d-19be336c955c",
-                    "914429e6-281c-408b-a30e-c0fdb7d42d54",
-                    "1609cd58-9908-476c-9c45-a2c53dd8110d",
-                    "876a39a3-6bef-43f0-85a2-3550ba2e384e",
-                    "6629d967-736f-4dd9-b789-1876e5bf977a",
-                    "2a4fc741-bf33-4f0c-9279-5a6978a62b25",
-                    "cdca9f33-ccf3-4531-8f3c-748ff4f99cc7",
-                    "45ce2a47-594b-41c0-bcd9-4acfd2ec829f",
-                    "62a05c4d-9ced-447a-9747-e30e570ba70c",
-                    "43d5ac5b-8130-4355-a2d8-24668d1e7930",
-                    "f0d6f006-f792-4237-8aa7-d3557e796013",
-                    "e370428a-496a-4217-810f-13da4f7aca5f",
-                    "d68b3db3-2497-4900-8bec-654990a82524",
-                    "45b28a04-54e2-43fd-8a89-f330b8e25d67",
-                    "d2c90b37-77b8-4c2e-9923-6f4e471b671f",
-                    "552b9dd2-0dbd-44bf-8f7d-7a461d01ffd6",
-                    "343e3542-ae7e-40a6-8812-15cdcbd9bd62",
-                    "8abbb72a-9de3-4690-ba0e-6e5a8b124bd8",
-                    "8007aee2-8780-4b9c-bf4d-6928a9065a84",
-                    "0be47ce0-2700-4c14-beba-330c9e2dd984",
-                    "0b547eef-0196-45a6-a6d6-28d3f81e0aaf",
-                    "ef9e8ef9-2c8f-46a1-9bc4-d1648a64d53c",
-                    "3f55959b-690d-43a1-abe1-f96480fb4a7d",
-                    "c2742232-8562-4890-9a4b-89a11c023f95",
-                    "65a40ba2-4b9e-4c96-affa-645a659b07ef",
-                    "6625747e-d781-48df-a8e4-6679962f3cec",
-                    "df95c7a5-ba8a-4c49-9a91-67adfa622d6c",
-                    "07d6c5b4-5f19-4e82-899c-5012894bff08",
-                    "6bf0daf6-3764-49ad-b675-148006d1eb1c",
-                    "27d52853-6512-4af3-90e8-1552f19cabbf",
-                    "6af058f9-d976-44bd-bc10-85ba23de86c1",
-                    "b28e8e86-a883-4411-9270-b881c02f2aa9",
-                    "ef4cc952-57b2-4484-864d-e6ca0666787a",
-                    "d8b1f53e-d191-4030-9dcf-ea961081b292",
-                    "c212d0dd-59d7-482e-9a4e-e0aeb68f2128",
-                    "1850553e-bea1-4cf8-a201-06ebf72f329a",
-                    "4a9b5bb4-1ce8-44d2-8c94-f887f8f8cfa8",
-                    "6dbb38e0-e1db-4047-aeec-badf27150cb3",
-                    "86eee276-a5cc-45b1-96fb-91b6000ecdf5",
-                    "a2c12e22-9fc9-4097-8683-4f45b065175d",
-                    "1b1c5ea1-ee75-4200-bec4-0de06cf51959",
-                    "1cbfc3a1-9e82-481c-876d-8dd2a1b2c546",
-                    "c09ea0fe-e8c3-4775-8980-6150ff828a00",
-                    "c769322a-e903-4463-8994-50a343782e37",
-                    "13c30878-23e7-4dde-bd51-63f02158920e",
-                    "2fefbda5-e928-43ab-bca1-14ab78cc3a10",
-                    "ddb80134-5ad7-441a-8750-424a874c7ac8",
-                    "a5c10363-3a5f-4a7a-9f9f-09aa08500f41",
-                    "28eddd46-fa52-43bf-a1d3-125fc7f64fda",
-                    "eea950dc-0e8f-4f08-bd68-cfb65506548b",
-                    "2dc86f64-fe1e-4acd-adbb-dc1cbee0aaf9",
-                    "525bf82f-12d1-4709-a3b8-e639bd1ce2a7",
-                    "6ad9008e-4a91-4347-a49a-2560b29d89ec",
-                    "975e1e37-f84f-448a-82c5-a0ce0e4b0d4a",
-                    "53067054-e2ed-444f-913d-a823783ba2d9",
-                    "f477db3d-fa6d-43e3-a176-45bdfdce0d37",
-                    "01f134ba-a122-4688-a29e-762bc51dd2e7",
-                    "231ebd8c-97d2-4a51-93f3-86b744a9fa7a",
-                    "a2962e1e-029a-43df-ae22-c27183eaaaa1",
-                    "8a2b829d-f341-45d7-b33f-d9510d3d5da3",
-                    "d12414de-dd99-4e70-ac06-840836d922be",
-                    "f4028482-ae51-4a14-a6bc-faab1b9f9149",
-                    "ddaa29c4-c2b5-4d56-ad00-2a04212e9bc9",
-                    "ebcd906a-91ed-4c77-9e5a-05dbfd613364",
-                    "739b1f1f-060a-4530-8721-7358bf1e31f8",
-                    "b0c5194c-2456-4a22-a612-97f2ece93dd4",
-                    "335721ca-c5b9-480d-a0bd-684a0f2e439a",
+                    "9f0cac62-051e-4366-9c72-b2e20994546b",
+                    "a2dfba66-73bb-4a8a-8590-62d7669d1a27",
+                    "3b14b68b-a9a0-4b0d-a05c-0e37b2f4f475",
+                    "1c20f168-7608-43b0-975d-127e5fab9a6a",
+                    "9adb2677-bb0c-4887-a33f-07bbb9f8fc77",
+                    "0c3503fb-1484-4150-90a4-bd586e41b6a3",
+                    "990cf0f7-2792-46f7-8f35-6e5ed09a1bbc",
+                    "48926b3f-1ae4-4b09-ade3-5a6472ded95a",
+                    "20bfc201-9670-4541-bf60-0c4927a72b72",
+                    "4bac28e7-9d39-438e-8d52-2899c66a9b15",
+                    "0a35ac8e-558c-4a91-9b52-f5dccbf3bacf",
+                    "83fb2356-abec-4c2a-8e2d-c4f949d4f5a9",
+                    "7635a691-30e0-4399-a424-a801d694e5a4",
+                    "714f6e87-c0b0-404b-a15b-caef8c5e4d60",
+                    "a6dd917d-d46b-493a-9610-732a23e26a31",
+                    "456a0fbd-9f9b-48fc-8aa0-8d76280cb73f",
+                    "cf918c39-3639-41f8-bb78-17ad1d0f1b0b",
+                    "2db0f819-d938-46c4-b3d6-108947f11dcd",
+                    "50f2e678-9454-4994-8b21-7f9af0e13ee5",
+                    "91cf435e-371b-4ccb-b4cc-36f03749bb80",
+                    "d0ee7baf-7bda-4032-928c-1c57513e434d",
+                    "8b815602-ac7f-4cd4-b21d-2645786ae346",
+                    "f74585dd-69ae-4a78-ba51-a7a0654a78aa",
+                    "fbc22877-c898-48a0-b162-7195e07e9ea7",
+                    "8cffe961-255b-42e6-a791-086ddbe20b2c",
+                    "261f5383-671f-427f-a826-16ad6b9299ce",
+                    "1b93b59c-71b9-4e56-b9b1-ebb047dee8f9",
+                    "9e83d165-4103-4c1f-baf9-1ae1c8da1535",
+                    "bb167d68-619c-43e6-918d-80a40e191beb",
+                    "2f867660-679b-4c30-b913-3a08d49d7258",
+                    "442af89f-850f-4286-9b5e-1cc0131b118a",
+                    "b94c34a3-9de9-4924-881d-1b348016f03f",
+                    "16ce421e-2929-49be-9313-ee572114ed3e",
+                    "b2feeab5-25c0-45dc-b904-ea702b09f335",
+                    "b6dee3bf-eed9-44c6-be37-a63608e2222c",
+                    "cb336b3c-89cd-4a62-8251-492e0ad82fb2",
+                    "4d41aa3f-09a7-491b-bff3-bae14a1c7058",
+                    "77527306-5fbd-4ffb-9c87-1215c14868fa",
+                    "beaffbe6-47bb-47a3-bbc4-01570b3fabd6",
+                    "ec9dfb4c-145e-431f-bf20-a69ad3ad01b0",
+                    "1dbfbdb8-5d46-4358-af86-c6c8ec461072",
+                    "14332913-0e70-4930-a7a4-4e97e7281343",
+                    "985f1cfa-38d1-4f06-bf6c-4ed613c9adaa",
+                    "b8f59094-ad53-49d8-b0ac-3d8eeb4a43ff",
+                    "3ee06db5-ab61-45dd-bcb4-712566112192",
+                    "c6a59fd4-161e-4233-b459-5639118d427a",
+                    "ed15a711-ddc0-4acb-85ba-44e2a73068b0",
+                    "4f36cad0-a798-4ee6-9ed0-ae317e058ccb",
+                    "dc888d8d-9783-411a-a60b-92deec3cb27a",
+                    "04a7f09c-0c00-492b-80e2-e6ff169406c8",
+                    "c4abc182-4300-48e7-b3d7-983dfc70ff86",
+                    "43bd103c-2510-461f-a5d3-0d929a69859a",
+                    "8f5a385b-0903-41b1-a529-abdba76e3a06",
+                    "cdf4ffec-b762-49b2-a3d7-830aad5dec7b",
+                    "3a3770dc-f31f-4a73-81da-f3b4424cbfe1",
+                    "fbca7f3a-f942-49ea-ad63-5b5fb009c620",
+                    "6dd631ff-5acf-4773-a80a-565292d0fec6",
+                    "5a144a91-aed0-4ef8-8fa0-5f22e689bff5",
+                    "a80a71d7-dfeb-4561-be7b-fa1cdf298042",
+                    "47660dfb-77c3-426c-ba99-9794ee501d30",
+                    "cf044eb7-fd64-4b23-ad0d-89393902665c",
+                    "7a6c53ce-e38a-4aa0-80e9-5273d1d51989",
+                    "775ef46c-ac83-48c9-b4e3-06ae36e4e947",
+                    "9b30e1ee-91c9-48c2-92f4-1c27f9792161",
+                    "13bedab9-53c3-4d6c-9c84-f1bfd2a93f7a",
+                    "799051df-3c33-467a-9c76-419fb82c1e3b",
+                    "01b6d699-8e40-4d2a-9f94-568f33ee2873",
+                    "b3347ff3-4964-4278-904b-1852bc18ba7a",
+                    "3706bb94-d4ad-4e5f-be56-478a6f24fea2",
+                    "76918ab0-a30a-4aac-af16-8afb37f618ed",
+                    "52e2d1ef-d936-4b79-a4f3-4248f7e4c74b",
                     {
-                      "name": "neck",
+                      "name": "neck_base",
                       "origin": [
                         0.0,
-                        13.5,
-                        -6.5
+                        13.0,
+                        -5.5
                       ],
                       "rotation": [
                         0.0,
                         0.0,
                         0.0
                       ],
-                      "uuid": "f03aad63-e5d8-4dbe-8a43-cc3ecf5e58c8",
+                      "uuid": "bb992d49-00ca-4e7d-8349-8cd453c0ba99",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22411,23 +22589,21 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "04750ba0-d4be-479a-a52f-54f395da8eed",
-                        "31a30a0d-b906-482a-a937-a6842e2f067e",
-                        "8c1eb4dc-0073-4524-b9d7-51b20761acc3",
-                        "47f55194-0a92-492d-ab57-0115a6fa8783",
+                        "64042236-9ae0-4d0c-88b1-7071f1d14084",
+                        "f8177c10-70e3-476f-89e2-96f65dae35aa",
                         {
-                          "name": "head",
+                          "name": "neck_upper",
                           "origin": [
                             0.0,
-                            14.5,
-                            -10.0
+                            14.0,
+                            -8.0
                           ],
                           "rotation": [
                             0.0,
                             0.0,
                             0.0
                           ],
-                          "uuid": "1de1ed52-0f54-4fc9-a780-e34006547a46",
+                          "uuid": "0b77f867-24e8-417f-899b-2cbfcb52fd47",
                           "export": true,
                           "mirror_uv": false,
                           "isOpen": false,
@@ -22435,30 +22611,21 @@
                           "visibility": true,
                           "autouv": 0,
                           "children": [
-                            "a338e220-187c-4cc6-8ca1-ffac0a34cbd3",
-                            "8c49c944-84e9-4799-aa33-b6f89a96e9fd",
-                            "69d6746f-8bcf-4c81-b56b-fc24d985180d",
-                            "6c8e0a36-a52a-4c41-afb3-7dcbb3016d2b",
-                            "bd98f3ad-2893-4d8b-9359-20fd16c1eaf4",
-                            "e3731710-94c6-47a5-bec1-97d992ec83f1",
-                            "8ca7cd5b-a1a7-446e-b5c5-5c98415c322a",
-                            "10001a55-2a90-4d40-be8b-37a2ea44c4cb",
-                            "4dec7c1c-a1a1-40e2-9606-30b3fa465bab",
-                            "3540dba0-82f4-4eb6-83ae-7655e390bb40",
-                            "a3f24fc6-61a2-4219-b588-919ff616030f",
+                            "c9d6b354-55be-43f6-b770-cb584dfcccc5",
+                            "ea75ac68-99aa-48ee-9072-76b318eea84b",
                             {
-                              "name": "snout",
+                              "name": "head",
                               "origin": [
                                 0.0,
-                                13.5,
-                                -11.8
+                                14.5,
+                                -10.0
                               ],
                               "rotation": [
                                 0.0,
                                 0.0,
                                 0.0
                               ],
-                              "uuid": "1c0d2fb6-2074-4bc5-afaf-385c833ae901",
+                              "uuid": "2c1d21b9-cef4-4068-87d2-81da2f9d2f0c",
                               "export": true,
                               "mirror_uv": false,
                               "isOpen": false,
@@ -22466,102 +22633,157 @@
                               "visibility": true,
                               "autouv": 0,
                               "children": [
-                                "0ee24572-db99-4a29-832a-0ab47fee7cb3",
-                                "2795578d-36a4-486d-b598-936c160bb2f5",
-                                "370e7be9-970f-4d79-b76e-4f835f5633db",
-                                "b86e5c26-80df-4e16-8e0f-30e143cba8ba",
-                                "09a0ef7b-640f-4273-936f-4c5c9f119bde",
-                                "40a77d8f-e47f-440f-89ad-bb5d47adcaee",
-                                "67c2e7c6-7753-41b2-8be0-9e42793c3fb5",
-                                "1bd9bd55-5407-4c0b-81f1-550337956fae",
-                                "21ecd103-4df4-4867-8436-62a544aa9e3a",
-                                "7dc1ebbe-0999-406a-9173-5b971141c81c",
-                                "96cd9f52-0c2b-4a19-93f9-4848e8a0731c",
-                                "7556901e-794c-404a-a1cc-60cd094b94c0"
-                              ]
-                            },
-                            {
-                              "name": "jaw",
-                              "origin": [
-                                0.0,
-                                12.2,
-                                -10.5
-                              ],
-                              "rotation": [
-                                0.0,
-                                0.0,
-                                0.0
-                              ],
-                              "uuid": "77dca0a9-1aa8-403f-a357-17bb1e12b7dc",
-                              "export": true,
-                              "mirror_uv": false,
-                              "isOpen": false,
-                              "locked": false,
-                              "visibility": true,
-                              "autouv": 0,
-                              "children": [
-                                "9b427427-0a04-4479-b34f-b515ee537adf",
-                                "231d5471-e474-4702-8e55-876ca7916a4e",
-                                "faae9313-240b-46d6-9de3-f5f18a7f523a",
-                                "2152c329-3b8b-439b-8dc5-c3251051489e",
-                                "68b74b9c-87c3-41bc-92a1-54fac1f554dd",
-                                "f4d5da47-ba5e-4ead-a85d-1dd19d91d37f",
-                                "67773d31-c50a-4852-b59c-d307f4f9eb15",
-                                "ec973a89-c687-4e9a-aa02-d3c1ee264ab5",
-                                "0ca5e761-67fb-4973-99d4-6e8c1c68f4ac",
-                                "fc0b21e8-b18e-4acc-a64e-5a3da7dd4e88",
-                                "ed792688-1672-4e19-8a97-3a9e5443b711"
-                              ]
-                            },
-                            {
-                              "name": "ear_l",
-                              "origin": [
-                                -2.0,
-                                16.5,
-                                -9.0
-                              ],
-                              "rotation": [
-                                0.0,
-                                0.0,
-                                0.0
-                              ],
-                              "uuid": "d2d6e803-5ca6-4782-a1ca-e13a5770ec00",
-                              "export": true,
-                              "mirror_uv": false,
-                              "isOpen": false,
-                              "locked": false,
-                              "visibility": true,
-                              "autouv": 0,
-                              "children": [
-                                "79f51d47-1245-4d7c-9b7c-203916ba0ebb",
-                                "9dfa1a8f-4655-4b61-9861-d902af5f2c27",
-                                "9f2f1772-26d3-4732-8d9f-42b7c0fb0277"
-                              ]
-                            },
-                            {
-                              "name": "ear_r",
-                              "origin": [
-                                2.0,
-                                16.5,
-                                -9.0
-                              ],
-                              "rotation": [
-                                0.0,
-                                0.0,
-                                0.0
-                              ],
-                              "uuid": "5b36c33f-f7a3-40ad-b02e-6a74f6c45ea8",
-                              "export": true,
-                              "mirror_uv": false,
-                              "isOpen": false,
-                              "locked": false,
-                              "visibility": true,
-                              "autouv": 0,
-                              "children": [
-                                "5f349c1a-a3a4-4d98-b0bd-4e3fc4bf44fe",
-                                "2137dea6-7698-4aad-b093-161a6b02a4ba",
-                                "747e3769-d084-45ba-86a2-596609a3427e",
-                                "e7348f47-1eb2-49a4-8399-169e3d2775ab"
+                                "6dc24861-24c7-4e67-be68-ae857c631d1b",
+                                "171adfe1-99c4-49a8-b1b6-6e40ddd4e11c",
+                                "54fa7a5e-51ba-4cc4-a697-98bf3cc768ab",
+                                "64405462-0478-4438-ae4d-ebce642787aa",
+                                "9e700106-a0a4-45e2-8bd0-6002abc8adc3",
+                                "2aa23237-ca50-4237-bc4e-5c89657fe285",
+                                "f9179ec0-8754-425b-8e89-9b710708edc5",
+                                "7962c074-aa5e-4e81-8002-9d1138f80f56",
+                                "5d9f8b84-275e-4bf1-b601-f174a4bffb4f",
+                                "6f4cf152-462e-4a6f-9863-22aa32276ba7",
+                                "0767cf12-a0d8-41eb-8787-03725e0a8f13",
+                                {
+                                  "name": "snout",
+                                  "origin": [
+                                    0.0,
+                                    13.5,
+                                    -11.8
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "fa2f711d-381f-4646-9c4a-63021f69d19b",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "4d13b878-52d0-4b0f-812e-10987a4a7fd5",
+                                    "9cc0ec0b-fde9-46c6-b8ab-a03adfe14a65",
+                                    "6f9a36fe-47d0-42d1-897a-f44557dcf35d",
+                                    "0aeacc4f-3554-498e-904b-b802a8eb573a",
+                                    "d26cd3d5-1398-41ed-9660-88c75cf2169a",
+                                    "424c9a82-911c-4cdb-bee3-b032ce6281cd",
+                                    "c8122729-8714-4561-bcdd-2503bd07499c",
+                                    "e7777ce8-2eb8-4c1c-969e-4667448ad4e5",
+                                    "8041a5b1-4d3f-49e8-a661-8e70a4a4e05c",
+                                    "2828a1ac-f6f9-42f8-885b-e5ccdc61ded3",
+                                    "57c5e607-a621-4827-85da-39619b22a70d",
+                                    "c4f125a3-db75-4495-98dd-3be48fbd615b"
+                                  ]
+                                },
+                                {
+                                  "name": "jaw",
+                                  "origin": [
+                                    0.0,
+                                    12.2,
+                                    -10.5
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "3a245419-b713-412d-ba34-bb4605c2a11c",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "7586331c-09f6-4628-86cf-442f13bb9a42",
+                                    "43988979-50e1-4a95-9d71-24ce8fc3faa8",
+                                    "526d511b-ec60-4859-9099-d0ac1528d64b",
+                                    "0d32dad8-3131-48c5-bb35-7c333215f607",
+                                    "c71e34fa-e135-49e4-8fac-1eeb52b8876a",
+                                    "56c3f1d0-b358-4d01-aeb4-efd0a0400280",
+                                    "70124a1b-f22f-4f34-bd17-207614a534de",
+                                    "03196e4f-27d9-439a-858f-9952fd04ed04",
+                                    "04ab458d-9723-4d73-ac53-268e6ded68ec",
+                                    "5b40ca0d-afd9-4fbd-aa3f-c54b4e548dba",
+                                    {
+                                      "name": "tongue",
+                                      "origin": [
+                                        0.0,
+                                        11.8,
+                                        -12.5
+                                      ],
+                                      "rotation": [
+                                        0.0,
+                                        0.0,
+                                        0.0
+                                      ],
+                                      "uuid": "e8e4d3e0-f0c1-4ab9-b9cd-29be152ba1f0",
+                                      "export": true,
+                                      "mirror_uv": false,
+                                      "isOpen": false,
+                                      "locked": false,
+                                      "visibility": true,
+                                      "autouv": 0,
+                                      "children": [
+                                        "aa80f638-a977-4b8f-aa61-4f09f0660834"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "ear_l",
+                                  "origin": [
+                                    -2.0,
+                                    16.5,
+                                    -9.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "84e6e4d5-8d97-4377-8f8c-c04f4f7d2d20",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "d5aa30c8-2d1f-4590-9e33-553a5327ae89",
+                                    "f01fc4d4-d714-4e2c-8c60-e79621f2ed10",
+                                    "68bbdbcc-2b9b-41d3-ae94-5f47e02b3ebf"
+                                  ]
+                                },
+                                {
+                                  "name": "ear_r",
+                                  "origin": [
+                                    2.0,
+                                    16.5,
+                                    -9.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "cb48569f-78f4-45f6-b79c-f4a3c5bd6e6c",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "9b9201f9-e9ae-4d0e-9857-fce0f44c1e2c",
+                                    "f8381b6f-8c33-4007-a0a3-050efcfd9d48",
+                                    "ec176d08-bdb8-46f2-9055-8700935cf783",
+                                    "c3d1d1e7-78a2-4b65-9da9-ef4ed8738537"
+                                  ]
+                                }
                               ]
                             }
                           ]
@@ -22580,7 +22802,7 @@
                         0.0,
                         0.0
                       ],
-                      "uuid": "28d23d4f-e772-40dd-99b2-5ea3f4ee07e6",
+                      "uuid": "f134c7d8-9ac0-413f-8f16-fbb3b69043c7",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22588,13 +22810,13 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "ccbf759c-1fa2-4d1b-ba62-52fc27e35c6c",
-                        "a05f1f8f-d89b-4567-89bc-2e82b69f54b9",
+                        "a5479fc1-4bf0-4fcb-a47f-54fb9ae08aa2",
+                        "e23687d2-69e5-4564-a9cf-d5f3ebf6cc74",
                         {
                           "name": "arm_l",
                           "origin": [
                             -2.8,
-                            6.5,
+                            7.5,
                             -4.0
                           ],
                           "rotation": [
@@ -22602,7 +22824,7 @@
                             0.0,
                             0.0
                           ],
-                          "uuid": "7b36adf9-5490-4011-8dbd-3b5c30906ee2",
+                          "uuid": "4caaaa1d-46e6-4f6e-9ecf-b3e9b1b6ac2f",
                           "export": true,
                           "mirror_uv": false,
                           "isOpen": false,
@@ -22610,15 +22832,13 @@
                           "visibility": true,
                           "autouv": 0,
                           "children": [
-                            "76de6dc0-ff4d-4079-b028-479da8a7053c",
-                            "dfd09b22-84a6-4140-91d9-431b322a236d",
-                            "ab571318-7844-475b-9a0f-f2d8431c00a4",
-                            "d937fc46-b022-49a2-a625-e1368e8b6570",
+                            "e01bea11-6547-452f-af6f-e6bff11a062f",
+                            "0b53f51f-8787-4f90-90a1-9838b2d153ab",
                             {
-                              "name": "paw_fl",
+                              "name": "forearm_l",
                               "origin": [
                                 -2.8,
-                                0.0,
+                                3.5,
                                 -4.0
                               ],
                               "rotation": [
@@ -22626,7 +22846,7 @@
                                 0.0,
                                 0.0
                               ],
-                              "uuid": "ea263aac-5931-4ba5-a3b1-f9bb31caa823",
+                              "uuid": "4f7b49d4-779e-4bc5-bd8d-a7c8ccfdf3cd",
                               "export": true,
                               "mirror_uv": false,
                               "isOpen": false,
@@ -22634,15 +22854,39 @@
                               "visibility": true,
                               "autouv": 0,
                               "children": [
-                                "46d8b0c9-83be-4a7a-a487-ff92360017c0",
-                                "e78b69a8-ba4c-4d09-b25d-d877482464a3",
-                                "ebcec63b-7d2a-4839-832b-fd2563b67fd5",
-                                "8df48487-bdaa-45f1-b5ea-80d43c243886",
-                                "0e6ee9d3-f7c6-4856-8fa5-0cc1ff0b0340",
-                                "839296db-fd3e-4be0-92d4-ce3aa7233468",
-                                "b3c8d614-863f-4b15-9419-73ed89308cbe",
-                                "7fc224de-ac13-44c9-8070-d1cb11aa9a1d",
-                                "dd1635be-058b-4d76-b49e-99a23f29b6c9"
+                                "0ef7f4c9-8c7f-490b-8b38-c3855f06d1fe",
+                                "c6ad6c9f-8b0b-4e82-a9d0-a1cbf294fdcd",
+                                {
+                                  "name": "paw_fl",
+                                  "origin": [
+                                    -2.8,
+                                    0.0,
+                                    -4.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "dbb008d8-ec93-4bb9-93e6-88a9ec1eddfd",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "b5d35b64-2878-4e0a-a6ed-dc1df3c0563e",
+                                    "3d425c0e-eaf9-4ab5-8609-5a890df0f890",
+                                    "3ab1c903-e94b-4cc3-9580-12c0b1787f52",
+                                    "9d1a4d41-d96c-4264-a428-2e8a2ef41152",
+                                    "a4957127-de3e-4127-85ff-07101331960a",
+                                    "00dede02-86f6-4025-9711-d6f22ec2652b",
+                                    "8fdf7527-f854-4151-bc70-83b6f43d045a",
+                                    "b7dd1bfb-95a9-4467-987b-6f4720e62d59",
+                                    "d7c66173-eb9d-4ee9-b4fa-aeb7c46188d0"
+                                  ]
+                                }
                               ]
                             }
                           ]
@@ -22661,7 +22905,7 @@
                         0.0,
                         0.0
                       ],
-                      "uuid": "f174de7d-eaf1-4657-b5ac-a16434c54986",
+                      "uuid": "f47f6f57-a6d6-4dd3-9c81-172f63872b95",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22669,13 +22913,13 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "4b5915c6-ec12-441c-924c-cce51c8d9b04",
-                        "88195c78-befe-4068-9d2e-437241508755",
+                        "a5461236-47c8-4754-841a-7e70e1765d20",
+                        "a4146668-94c2-4db5-92ad-0899ff35b004",
                         {
                           "name": "arm_r",
                           "origin": [
                             2.8,
-                            6.5,
+                            7.5,
                             -4.0
                           ],
                           "rotation": [
@@ -22683,7 +22927,7 @@
                             0.0,
                             0.0
                           ],
-                          "uuid": "159791c7-34b5-49b2-972f-9a4c9b98db0a",
+                          "uuid": "9d32ea18-1841-478e-9335-933d979915b0",
                           "export": true,
                           "mirror_uv": false,
                           "isOpen": false,
@@ -22691,15 +22935,13 @@
                           "visibility": true,
                           "autouv": 0,
                           "children": [
-                            "5437679c-475e-44c8-8947-5e8003885fc6",
-                            "df8de311-63cd-4292-a4b8-d9c275b178a0",
-                            "2c496ec3-4bed-41c3-8f80-d4c060cc2b88",
-                            "c5584096-4803-42b8-89e5-b7a0956a267e",
+                            "c298c216-2636-43cc-b479-f0aa1c1eea95",
+                            "4f5620d7-b26e-4426-9e06-af8c4339ec4d",
                             {
-                              "name": "paw_fr",
+                              "name": "forearm_r",
                               "origin": [
                                 2.8,
-                                0.0,
+                                3.5,
                                 -4.0
                               ],
                               "rotation": [
@@ -22707,7 +22949,7 @@
                                 0.0,
                                 0.0
                               ],
-                              "uuid": "732eeaba-2984-4e3f-bf48-cabf673f19b1",
+                              "uuid": "bce1aae1-02c6-4854-8e31-b17c0787f382",
                               "export": true,
                               "mirror_uv": false,
                               "isOpen": false,
@@ -22715,15 +22957,39 @@
                               "visibility": true,
                               "autouv": 0,
                               "children": [
-                                "554e4673-3f19-4383-bd55-913e4828b285",
-                                "f0bd45bb-8bf2-4d19-a357-d4fd77e60710",
-                                "cf235255-8a10-41ed-a39b-25021c080474",
-                                "7ef0b542-6c3a-4cad-914e-eca67c983592",
-                                "735be78b-a11e-4ae0-a75e-1ba11f9e2e7a",
-                                "cef72d1a-a564-4ae4-9319-a53dfa151b49",
-                                "e32b0528-0435-4b1f-abd0-f15047333817",
-                                "17e29a10-2d52-4344-a58a-18b511e58882",
-                                "0c7db2f0-7b32-4c42-88ab-62525630f41f"
+                                "77a5168b-0f59-48da-8914-8397efb8116f",
+                                "540f7cd8-1965-4dc6-bd18-da2f5da53e4a",
+                                {
+                                  "name": "paw_fr",
+                                  "origin": [
+                                    2.8,
+                                    0.0,
+                                    -4.0
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "2b5e8654-595c-45a2-a7c9-0b987c161254",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "3e6fb402-3d76-4fc1-94a9-cd4da5ed456f",
+                                    "39b366b1-9caf-4f83-834c-adbda28b33a9",
+                                    "dfa38586-1bc7-4102-8613-0b10cf4bb80a",
+                                    "ffad1523-edd6-469d-9331-e2781f438901",
+                                    "a3784923-0f5a-41e2-a4be-39c29634c5ef",
+                                    "86798fd1-323d-4d74-ac52-b2f1c42e75a6",
+                                    "0126e471-b3ad-41bb-b0c3-06f091f1a111",
+                                    "f16fde6d-7ce6-4813-bda8-186fbe3acfb3",
+                                    "dffb6435-98ac-4898-b518-00a54df372b3"
+                                  ]
+                                }
                               ]
                             }
                           ]
@@ -22735,10 +23001,10 @@
               ]
             },
             {
-              "name": "tail_base",
+              "name": "tail_1",
               "origin": [
                 0.0,
-                11.0,
+                11.5,
                 9.5
               ],
               "rotation": [
@@ -22746,7 +23012,7 @@
                 0.0,
                 0.0
               ],
-              "uuid": "3b082bc6-ca79-48ba-b5a2-cb8019dc1a3f",
+              "uuid": "c1e42908-23e9-4e7b-87bb-dd667d9fd53e",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
@@ -22754,22 +23020,21 @@
               "visibility": true,
               "autouv": 0,
               "children": [
-                "d799bba4-2a12-478b-a056-b4a78033d4bd",
-                "17137686-fd97-472a-a92b-73cf62eceb80",
-                "87099828-bc03-4757-9d4d-84654fcc8354",
+                "b9c90e09-e79e-40d8-b0b7-83d3e33b38e7",
+                "98126e1e-caf4-42ef-8ccc-e450e983aac9",
                 {
-                  "name": "tail_mid",
+                  "name": "tail_2",
                   "origin": [
                     0.0,
-                    9.8,
-                    12.8
+                    10.5,
+                    11.0
                   ],
                   "rotation": [
                     0.0,
                     0.0,
                     0.0
                   ],
-                  "uuid": "4fef2623-840f-4c7d-8ae4-9dec3bc0f883",
+                  "uuid": "f05f147e-0954-4c48-a15d-1f7bdda57420",
                   "export": true,
                   "mirror_uv": false,
                   "isOpen": false,
@@ -22777,22 +23042,20 @@
                   "visibility": true,
                   "autouv": 0,
                   "children": [
-                    "4c1df4f8-fdc3-4e9d-ad98-16045d1bea6a",
-                    "e86011eb-2bb9-4ee3-b997-36c55eb89a54",
-                    "dea8aca0-bbfc-419a-8ef1-4384337303bb",
+                    "0bd5ff3f-1132-4f03-9dd6-69b684d5490f",
                     {
-                      "name": "tail_tip",
+                      "name": "tail_3",
                       "origin": [
                         0.0,
-                        6.8,
-                        16.5
+                        9.5,
+                        12.8
                       ],
                       "rotation": [
                         0.0,
                         0.0,
                         0.0
                       ],
-                      "uuid": "83f9145c-b2c7-4cde-a96f-fbf23b0a2e32",
+                      "uuid": "bfac5410-4ade-4b0d-bb91-8efa9b635b9b",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22800,13 +23063,104 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "1647ef4e-aeca-4e1f-8f9f-bc5c663d9da2",
-                        "5487f01d-fed3-44b4-adf3-316706306d04",
-                        "f5872c27-bba0-4c6f-8d35-40ed87d49f4a",
-                        "3d507fc1-2324-4e22-9c41-d5de46611e33",
-                        "e9b6fcff-0fa0-47c8-84b2-30b9f168f98f",
-                        "d7ea6d10-f6dc-42e8-ac2d-0d5f481444fe",
-                        "2b95d6fd-e735-4a4a-88dc-20639a9d78fd"
+                        "a1c223e2-a997-46bd-8afe-ff2d17789ad6",
+                        {
+                          "name": "tail_4",
+                          "origin": [
+                            0.0,
+                            8.2,
+                            14.6
+                          ],
+                          "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                          ],
+                          "uuid": "f6cb3993-07f1-4462-8114-4dc1f658b4da",
+                          "export": true,
+                          "mirror_uv": false,
+                          "isOpen": false,
+                          "locked": false,
+                          "visibility": true,
+                          "autouv": 0,
+                          "children": [
+                            "469994d9-02cd-4302-9aaa-b571658c0019",
+                            {
+                              "name": "tail_5",
+                              "origin": [
+                                0.0,
+                                6.8,
+                                16.5
+                              ],
+                              "rotation": [
+                                0.0,
+                                0.0,
+                                0.0
+                              ],
+                              "uuid": "688a92e8-dd56-4ddc-bac2-449f81ab0cda",
+                              "export": true,
+                              "mirror_uv": false,
+                              "isOpen": false,
+                              "locked": false,
+                              "visibility": true,
+                              "autouv": 0,
+                              "children": [
+                                "341bbc97-2772-4c24-8ff3-5b5609a34603",
+                                {
+                                  "name": "tail_6",
+                                  "origin": [
+                                    0.0,
+                                    5.2,
+                                    18.6
+                                  ],
+                                  "rotation": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                  ],
+                                  "uuid": "70aa8c03-b8a3-460c-ba02-9cad216ee4bf",
+                                  "export": true,
+                                  "mirror_uv": false,
+                                  "isOpen": false,
+                                  "locked": false,
+                                  "visibility": true,
+                                  "autouv": 0,
+                                  "children": [
+                                    "a00a50d4-fc01-4597-8d54-cfc93e060660",
+                                    {
+                                      "name": "tail_7",
+                                      "origin": [
+                                        0.0,
+                                        3.5,
+                                        20.8
+                                      ],
+                                      "rotation": [
+                                        0.0,
+                                        0.0,
+                                        0.0
+                                      ],
+                                      "uuid": "e19f035e-489f-40ac-80f0-ad05e2732fde",
+                                      "export": true,
+                                      "mirror_uv": false,
+                                      "isOpen": false,
+                                      "locked": false,
+                                      "visibility": true,
+                                      "autouv": 0,
+                                      "children": [
+                                        "0c2d8b36-f8df-4e63-a3df-9a4303674698",
+                                        "19b9adfc-a019-4e30-b0c7-c0350789353d",
+                                        "7a8796bc-f9a0-4980-9965-29cdebec5efb",
+                                        "e85ef93c-c72d-437b-8091-bc80a548b6ef",
+                                        "d33d55e8-ce34-4088-8022-c4e823699c21",
+                                        "e96326e9-b063-4dfb-ac33-36567bc08dae"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
                       ]
                     }
                   ]
@@ -22825,7 +23179,7 @@
                 0.0,
                 0.0
               ],
-              "uuid": "d1a07c93-7e88-47c4-b45f-6c73ff346179",
+              "uuid": "85354a85-fabc-4ac7-a31e-fc653ec8a1a6",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
@@ -22833,8 +23187,10 @@
               "visibility": true,
               "autouv": 0,
               "children": [
-                "d3c985e7-9d3d-4048-83be-af6eab8147bf",
-                "4b4621cd-5230-4c0e-a654-fe413beeb2c9",
+                "565192b1-f385-4ad7-bec7-89d6e496cc25",
+                "28bccc6c-1186-4ad9-bb50-6a58c49ef49b",
+                "650fc140-d024-491a-9458-eb219be8a4bf",
+                "314eaec1-0318-4c87-9639-873a7d36eb45",
                 {
                   "name": "shin_l",
                   "origin": [
@@ -22847,7 +23203,7 @@
                     0.0,
                     0.0
                   ],
-                  "uuid": "9f5e08df-925b-4c30-9983-016b6b0b0524",
+                  "uuid": "a84d8ac0-49bc-4621-ab02-6b0040fcc91a",
                   "export": true,
                   "mirror_uv": false,
                   "isOpen": false,
@@ -22855,7 +23211,7 @@
                   "visibility": true,
                   "autouv": 0,
                   "children": [
-                    "dad168fb-26ea-474f-a6ff-f7971f39dc6f",
+                    "98e82288-87ae-4768-8899-dedec449d131",
                     {
                       "name": "hock_l",
                       "origin": [
@@ -22868,7 +23224,7 @@
                         0.0,
                         0.0
                       ],
-                      "uuid": "3760c0d7-3b71-4d7f-b719-a0ebf3ece795",
+                      "uuid": "17c96a68-8eac-415a-a02e-b92eedb2bc54",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22876,9 +23232,9 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "19895490-b17a-4cb2-9a86-5d8bcf5d0c07",
-                        "f9f7c5dc-3e9b-4bc5-800c-811301c2978f",
-                        "d5c5df4a-4612-4722-bc63-48aeef950e0e",
+                        "1d251553-7391-44ac-b08d-9a72fc8911bf",
+                        "45613e05-b902-4179-b379-2779463bcc5e",
+                        "abf926c7-bd31-4235-a29c-ababa16e7d83",
                         {
                           "name": "paw_bl",
                           "origin": [
@@ -22891,7 +23247,7 @@
                             0.0,
                             0.0
                           ],
-                          "uuid": "8f15d661-f239-4cc6-bc12-27c2d1fa0427",
+                          "uuid": "47f9f5d3-6563-4363-8b5b-a5c506ae27f8",
                           "export": true,
                           "mirror_uv": false,
                           "isOpen": false,
@@ -22899,15 +23255,15 @@
                           "visibility": true,
                           "autouv": 0,
                           "children": [
-                            "e99dd6f6-7901-4125-94c1-4c1e70860cd7",
-                            "b139bda4-cd05-4f4a-bfb3-2800c2cd4d62",
-                            "c6fafb1f-fcef-471a-b25a-c949c4cc7191",
-                            "58521d3d-f9c3-4bba-9d03-c922ac89bac1",
-                            "a9a4e73d-f841-4435-ac52-bcdbdfec0056",
-                            "d6ddeb97-5155-48e0-8aa8-775bc7687f07",
-                            "f4c8259f-18b8-4e53-8746-8bc42cdfc133",
-                            "0fa5f493-3ed8-43ec-91c7-409bf181efa2",
-                            "af877829-3092-4962-8a69-2ebcffbabad9"
+                            "6e67c8a0-1b7f-48cd-8582-42814915c1a3",
+                            "39992134-94a7-4543-94fb-3b237862bc8a",
+                            "e7ee41ce-8fa6-4f00-a8b8-677d28904919",
+                            "87a5f21f-efef-4ceb-8df9-036158a464e3",
+                            "d9ae09b5-fc55-4ef3-965e-faf03b0162c7",
+                            "f4a3dbf2-64b1-4743-bcb3-f28ce5489132",
+                            "6357c74c-e623-4c52-90a5-79e3a90a85b7",
+                            "cbb556e9-1669-4e1f-9a4a-d2db0ee451d9",
+                            "b8334e02-f48b-4716-b0d6-b552c0bbe831"
                           ]
                         }
                       ]
@@ -22928,7 +23284,7 @@
                 0.0,
                 0.0
               ],
-              "uuid": "742a5551-7c9f-4dce-9e63-9be0f6c55486",
+              "uuid": "2ab40d3b-d3e7-40de-a02d-836d3b4d9c80",
               "export": true,
               "mirror_uv": false,
               "isOpen": false,
@@ -22936,10 +23292,10 @@
               "visibility": true,
               "autouv": 0,
               "children": [
-                "27de5e54-f947-48d0-8819-b85c65cf412a",
-                "29cd823c-4993-4af9-8556-7371977c354a",
-                "1df52e86-316c-488c-93c0-ffab3e26cf2d",
-                "ed3b7f44-8a0a-4f7d-9687-8a36b05df8e6",
+                "37f2bc35-76c0-4b47-8d96-2bc2640f5209",
+                "58f0529f-1ec7-4ac5-82e8-9e2fd752b502",
+                "4b31ef17-e674-4919-a6e0-92c1ae94fee9",
+                "74af56ef-6735-4700-8941-40ad9ea83ecf",
                 {
                   "name": "shin_r",
                   "origin": [
@@ -22952,7 +23308,7 @@
                     0.0,
                     0.0
                   ],
-                  "uuid": "3b7673a0-b2d2-434a-8dd1-bc2a20df2f2a",
+                  "uuid": "bcec8757-5c25-422d-a696-81db57e652b5",
                   "export": true,
                   "mirror_uv": false,
                   "isOpen": false,
@@ -22960,7 +23316,7 @@
                   "visibility": true,
                   "autouv": 0,
                   "children": [
-                    "d3d13c5b-f0b4-4633-98bb-8ae0ee8e20fe",
+                    "3430719a-699b-4dd9-934b-2bf0cd9198e0",
                     {
                       "name": "hock_r",
                       "origin": [
@@ -22973,7 +23329,7 @@
                         0.0,
                         0.0
                       ],
-                      "uuid": "f9855119-408e-4fd0-9401-2974440d2d80",
+                      "uuid": "ed7c6f0f-ee49-4162-84f3-efae0ae9a668",
                       "export": true,
                       "mirror_uv": false,
                       "isOpen": false,
@@ -22981,9 +23337,9 @@
                       "visibility": true,
                       "autouv": 0,
                       "children": [
-                        "8fda0927-9894-47de-bd4c-45e908e56003",
-                        "6bae734a-3247-486c-b8e0-7b047013115b",
-                        "f3e4a092-dff5-4977-9f76-9aede90c2c6a",
+                        "63989a6e-3dee-4849-a519-48dd97694d64",
+                        "28e9d325-d878-4c8d-b8f3-eded977e42c4",
+                        "22b0dfb8-9946-4d72-994d-d2f9552bcb95",
                         {
                           "name": "paw_br",
                           "origin": [
@@ -22996,7 +23352,7 @@
                             0.0,
                             0.0
                           ],
-                          "uuid": "a9663862-0534-4a63-951c-f5c31d80a122",
+                          "uuid": "f0419986-0f91-4292-886a-a595656ca744",
                           "export": true,
                           "mirror_uv": false,
                           "isOpen": false,
@@ -23004,15 +23360,15 @@
                           "visibility": true,
                           "autouv": 0,
                           "children": [
-                            "5e4fb0ca-7584-434f-9e2e-38d3bf138af1",
-                            "c81f5782-813d-473c-9ea9-49f3bb5980b1",
-                            "bd141ae3-9f51-4b29-a610-b009ba865b49",
-                            "7006de3c-ee66-418e-a45b-35170326ba7b",
-                            "36fd67a0-6dfb-48a6-ace3-09a2c8a8bdf8",
-                            "52e718fd-e3b3-43d5-a38a-05fb1493c90e",
-                            "29c8be29-efc4-401e-9652-af65d34ab27d",
-                            "f4244c21-9f8b-4c51-8d87-05bfe1d243d4",
-                            "7803db6c-d0c0-4302-879a-cbdbb78f4b30"
+                            "7fef24d7-036f-49bb-abc3-261b730cf5df",
+                            "faafac1b-18f4-4572-b3b6-1f511746b2f5",
+                            "24c8d279-d7a9-4830-b81f-b92290e313ba",
+                            "010edf1c-f0c9-4747-84fe-e36bbdc95394",
+                            "243e24f0-97ee-4671-a0ca-04150ed1da0c",
+                            "0915519d-08f0-4094-acb5-649df4d3392f",
+                            "7a097e19-5eaf-43a5-9e15-52088e358d7c",
+                            "916153b6-29a8-48ba-976b-ce53232f414d",
+                            "020aaa0b-4574-4750-a084-4afb2f46888e"
                           ]
                         }
                       ]
@@ -23038,7 +23394,7 @@
       "visible": true,
       "mode": "bitmap",
       "saved": true,
-      "uuid": "527aea71-7b97-4206-84f5-6b9ac846b8ff",
+      "uuid": "5e752fb4-c5b1-4f1f-bba4-8409ae0e0eb8",
       "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAOJElEQVR4nO1Z245cx3Vdp6rO/do9Qw1F0ZYDSTRiwZYNwwj0lvxd/iF/kA/IT+QhD7EuZhjKliiSHnb36XO/VlUeuvdGzxf0Q6YAgkCjp8+ufVlr7XWcf/n6j9ZxHMzzDM/zsCwLHMeB4zgYxxFpmsIYg3EcAQBhGKJpGvi+D8/z8ItntxiGAU+ePMG7d++glIIQAkopaK0BAK7rQmsN13UxzzOEENBaw/d9tP/5DZIkAQCs68p/FwQB+r7HOI4oigJVVfFvz/MMKSWstfjX//h3CCEwTRPHvywLoijCPM+I4xhCCJRliaIoQHf1fR9lWUIopfD27x+wKytYa2Gtheu6EELAWotlWfiB67ri5/f38H0f4zhiXVdYayGlxPF4xHa7hed5cBwHwzBACIEgCPDqr2/gui5evv4R4zjCdV30fY+maSCEQF3X0FpDSom+7zFNEwDAWgsAWJYFQRBACAEpJYqiQBRFMMbAdV04jgNjDCdZaw0hBBzHQdd1/HvLsqDveziOg6o63Vc0TYOPP7rFTZFBSgnf9/Hz+3ssy4KbmxsopaCUgjEGWZbho5sNHMdBlmVQSmEYBvi+D2stvn35Gl3XQSmFLMtgjEEcx3h6W0BrjV8++4grkKYpkiRBEAQIggDTNHHlHMfBNE1Y1xWO4yCKIizLAtd1Ya1F27aY5xmu60IpBWstkiTBd998A2MMlFJY1xXGGPi+j6ZpuJPXdUXf93BdF77vQ9zc3MAYw63lui7SKEDbtuj7HtZazPOMIAh4PKjl6roGAG6/Xz1/ijiOIaXEsizQWmO328F1XSzLgh/f3iMMQw5inmccDgeuJADUdQ2lFHa7HV4sCwBwXDRaxhgkSYIsy2Ct5fH8/MULLMuCLMsAAI7jwPd9pGnKXSyEQBiGCMPw1KVlWSKKInieB601yrJEkiS4vb2F53mYpolnFwB/Nk0TgiAAAJ5ppRQcx+EWDMOQRymKInz+q+ew1kIpBd/34fs+sizjBFlr8RtrEYYhnj17hv82hhNPI0jf6/sefd+jbVtIKSGlhOd5kFJyNxGeaK25O4qiwDRNjHlinmd8+PABbdsiz3P4vs8zopTCdrvl+bLWous6eJ4HAEiShCs+DAOGYcC6rvyPkhSGIWOGUoqrPU0TXyyKImit8cr3MQwD+r7n5Bpj0LYt4wsADMPAoxOGIV9aCAEAUEqh6zr0fQ+tNT774gus64qyLDneeZ4h4jhGO0yI4xht22JZFqzrijAMsSwLdrsdPhyOOFQNHMfheQqCAHVd84PzPH/QelT5aZrwPz/8hL++ec/t37Ytg5RSCp+NI9q2heu6+HyaoLVGlmX47bmzpJT4R2O4AHEcw3EctG3LQE2M8+2f/4xxHCGlZCagJGqtGbgdxzkxRNd1+PT5Mw6IsqiUQtM08DwPRRpjm6domgZJkuBwOGAcR75AFEUYxxFd18EYw5Wlsfr4yQZf/MMvMI4jA2MYhnyJbwBIKeG6Lr49j1DTNDh8/DHquoa1Fq98H1VVoSgKHjEhBKIo4kQAwD99/TUD3LquSNOUgZVG8XIMRZZlmKaJ25cQ/RLdXdeF53nopxMdxXGMOI65+suy4Ief3vGlgyCA4zj437/9zEkahgFxHHNrUrJd18WXF5QnpUQQBBiGAWVZcicS3RJT0SjQ6HqeB9/3Mc8zdxkAaK3R9z3CMOTEEZM0TQNBrWOthTmDThiG2G63GMcR9/sSVVWh73vcbnI4jsNzRRwshMCzj7YYhgFSSvzw0zsYY/Dlrz9jIKRuIDAty5IR/XUYIo5j1iHTNEEIgc1mw+Ca5znSNAUAPN3vmbWyLMM8z8xY1MEEmEop1HWNvu+RZRk/N89zElYC7z/suaLjeR6HYUBRFEijAJvNBr7vAwCqqmJxFIYhfN9n6vF9H23b4stffwZrLd69e8coTSNDIBXHMYIgQJIk8H0fUkoYYyClRBiGCIIAu90OeZ4zPR4OB0zThDd5Dmst0xsAvHr5ktkqiiJu8WVZ8PbNG/4uJXocxxMLaK3x/OM7nu/9sWYRU5YlACAIAkZqEkBKKVZWNCokVYdhgFIKh7pHHMdY15VlKnF63/dY1xVN07AMJgAlHZGmKeq6fjC/n7YtqqrCNE2sAI0x+OoPf+AO6vuegTHLMvz2q68YBEkoUcKF67qo6xphGJ7aJA5R1zW6roOUkpORpinGceQsep7HQTVNg6ZpuCqvf3wLANikJ/qz1vLIEE5QRcIwRFVVmOeZ5/r+/h6e53GyiLOllPjbuWMIu+h7+/0ebduy0nz96hV83+euMcbAcRy8/P77B/JeaK3hed6p9YeJAS8IAm4VrTWqqnpQHQIUAiZ6gDGGET8MQyil4HkelFLY7/dIkgTzPPPltNa4ublhrU5aHwA+bVumTlrIwjNeAEDXdUjTlJcn0iWO4+B3v/89hBDwfR9KKUzThL989x0+f/GCtYgxBmJdVwapp09ueJEBwBsfLSOkxY0x8DwPx+MRbdsiyzKuEGFE0zQ8+5dLDMnReZ5ZszdNw91By5LjONjd3WEYBmRZxpRXVRXqumbWatsWSikEQYDj8YhpmnBzc8NijLbOOI7xxz/9idnH8zxaAQS35yVy0spIomEYBr4MzWpRFJjnGcfjkZNI2j2KIlZk1DlaaxyPR/58HEdOMi0/VDEaQ9d1MU0TmqbBsiw8jiSlfd9HnucwxrBUr+ua95emafhe4zgyy03TdIrtl5/cWdr7pZRcFQI5kqzGGOZkUlZhGOLd2/fIz6hMtEZ/b4xhyUqanpJHgPSX7//rwUhIKRHGMcr9niU0XSw60+D+/p4x4Kd/+2cAYIwiSg/DEK7rsqSnveBSb1hrIaSUyPOclwZqm6ZpmPM3mw2vnqTHSVhEUcQ/RqKItkWtNRsrl/uEUoqpcF1XxFmGKIo4AfN5DACguL1lw6Sra3R1jaIoGKTjOMZms2ENQ4KIFh4aDYqVzB6SyIJaN45j3rBIJ9Ns9X2PoiiwLAt83+eRoYzP88yMcGlMEP3FcQytNWuBtm3hn5ceIQSGtsW6rowh1IlBmvNCREmXUgIAr7PWWuz3+wduEWkAGqEnT57wskUiK8/z00jT7NHyQG1Hmp4uTHKSAORwOCBJEjYd4jjGMAzI85zdG0oSCaAwDFlXOI7DIifMTv83TYPb21veRew8Yuo67qq2bZn36ZJaa9zd3XF3kQ6YpomLWJYl6wayyEg5iiiKGDEJ/CiTdHHP8yCEYLSmy9DmeLlfUyUIBEmWEk1SFUhxWmuxDj3is8ExDAMc71S9sixZu9OOQMkktiCc8TwPVVUhyzKWz8uy8PZId6R7kdMk5nlmBL00MeiBhPqkF+hhtHRkWfZgDa6qCuM4oixLdm5o5gnFqXLE5VJKLGch5Lou7DwhSRLWA7T8eGeGsNayNPc8j3eT58+f87ZJHUwL1+FwgLUWQRBw7MuynDrgUtqO44gkSVgEUUKo9YgSSeQQ5VALk64gt+jvuwM8z0OWZVjXldXkpetc1/UDICVAJnbouu7kVZyfQwzjui7CMGTb7u3bt+i6jhNGoGit5c4g4DTGoO97KKoS8T6pJ3M2IMgvlFKyJiftXhQF1kUjDE/yOUkSkLQmbX93u0VZlmyikBSu65oT6/s+hFKoj0emK1qjgzTD3J1mn8as6zquYNd1SJIEXdfh7u4OdV0zVlBHE0NcepwAsN1uIcZxRNM0bE0TkDRNw8Yl+QOXqpFsK3JpaLabpmEHmby+SyHkeR6rN1JpnudhvTBe6W+MMZi7lg0OYoe4uGUsouK4rothGLAsC+8qQgjs9/sHc38JkNZaiEtzYRgGuK6L/X6P7XYL3/eZFVzXZY+dlieiIWstV5MohujwUndLKdmoCIIA2+0WXdfxsuSdXRziaxoDUqNkeJqpY5CVUvJvkBU2zzOapmG6JfN0miZEUcQjDgCCtDUhN81L3/cQQuB4PDJ6ZlmGMAw5u1prriah/ziOOBwODJw0YrTW0l5BpiQl2FqL9fwuQrguVJghzDbc3lQE0vD0ssMYg2VZmGKpSORVOI6DNE150aJuJTYRWZbh7u6O1RZRHyFwEARI05S1O71UIKAjG4pAUkqJJEkevM2h8dJaY7PZ4P7Dnj+n6mutocLk5D41DebuiObw4SRzz0p1GAYI18XxeGTp7HkettstF2m73TJWkA5Y1xU3NzcPwJA6S1lrUVUVtNbI8xx930NKyQ4MdYXWmn+QhAmhdhRFD14/0feIm8mPpweHgcdihqgxSRIMdclWN624Xdc9WGvbqkKapjwWtNuTXUY4o7Xmt1QkfUmYEeCflahAlmUPpC8FVhTFgzdDNOP0IDIrlVLYVw2jLbUlvbIilXhpSZNMVUpx8PS3pOfHcUR8ttooDgJPWp0v13BiJ/qfXr3RZ5TsPM+xLAuSJIGw1vICRK+6aK0ldCXAICubvmutZcB7ertl+iR3aLfbYRgGfptMCXBdF5988gnmecYwDEy5zlmBBufdQUqJ8Tyz5PYE57dY5AaR23zpGJNZQ6KH4iWfgTpmt9tBUXsRBdKXaOmYpomlKC0SpO+naYJezYNXU+S3XTrG9HKTqiClxP39PeI4RlYUWM/CSJ/9gPW8q9PzCE+UUjDnYlGMaZqyzU4iqCgK1HXNfiM5SPRbVAitNRwAp/L+Pz3i2gFc+zwm4NoBXPs8JuDaAVz7PCbg2gFc+zwm4NoBXPs8JuDaAVz7PCbg2gFc+zwm4NoBXPs8JuDaAVz7PCbg2gFc+zwm4NoBXPs8JuDaAVz7PCbg2gFc+zwm4NoBXPs8JuDaAVz7PCbg2gFc+/wfAPCK1HrPr3YAAAAASUVORK5CYII="
     }
   ]

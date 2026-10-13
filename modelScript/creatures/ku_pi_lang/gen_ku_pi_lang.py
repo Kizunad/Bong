@@ -33,6 +33,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "modelScript" / "tools"))
+from cjk_font import load_font  # noqa: E402
+
 CREATURE_DIR = REPO / "modelScript" / "creatures" / "ku_pi_lang"
 MODELS_DIR = REPO / "modelScript" / "models"
 REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/ku_pi_lang")
@@ -132,32 +135,48 @@ def generate_texture() -> Image.Image:
 
 
 # -----------------------------------------------------------------------------
-# 骨骼层级与 Rig 容器
+# 骨骼层级与 Rig 容器 (四足兽严格满足骨骼数 >= 32 要求)
 # -----------------------------------------------------------------------------
 BONE_DEFS = [
+    # (name, pivot, parent)
     ("root",          (0.0, 0.0, 0.0),      None),
     ("hips",          (0.0, 11.5, 6.0),     "root"),
     ("spine_lumbar",  (0.0, 12.0, 2.0),     "hips"),
     ("thorax",        (0.0, 12.5, -2.0),    "spine_lumbar"),
-    ("neck",          (0.0, 13.5, -6.5),    "thorax"),
-    ("head",          (0.0, 14.5, -10.0),   "neck"),
+    # 颈 2 节
+    ("neck_base",     (0.0, 13.0, -5.5),    "thorax"),
+    ("neck_upper",    (0.0, 14.0, -8.0),    "neck_base"),
+    # 头部独立关节
+    ("head",          (0.0, 14.5, -10.0),   "neck_upper"),
     ("snout",         (0.0, 13.5, -11.8),   "head"),
     ("jaw",           (0.0, 12.2, -10.5),   "head"),
+    ("tongue",        (0.0, 11.8, -12.5),   "jaw"),
     ("ear_l",         (-2.0, 16.5, -9.0),   "head"),
     ("ear_r",         (2.0, 16.5, -9.0),    "head"),
-    ("tail_base",     (0.0, 11.0, 9.5),     "hips"),
-    ("tail_mid",      (0.0, 9.8, 12.8),     "tail_base"),
-    ("tail_tip",      (0.0, 6.8, 16.5),     "tail_mid"),
+    # 秃尾 7 节下垂骨节
+    ("tail_1",        (0.0, 11.5, 9.5),     "hips"),
+    ("tail_2",        (0.0, 10.5, 11.0),    "tail_1"),
+    ("tail_3",        (0.0, 9.5, 12.8),     "tail_2"),
+    ("tail_4",        (0.0, 8.2, 14.6),     "tail_3"),
+    ("tail_5",        (0.0, 6.8, 16.5),     "tail_4"),
+    ("tail_6",        (0.0, 5.2, 18.6),     "tail_5"),
+    ("tail_7",        (0.0, 3.5, 20.8),     "tail_6"),
+    # 前肢左 4 段 (肩胛 -> 肱骨 -> 前臂桡尺骨 -> 前掌)
     ("shoulder_l",    (-2.8, 11.5, -4.5),   "thorax"),
-    ("arm_l",         (-2.8, 6.5, -4.0),    "shoulder_l"),
-    ("paw_fl",        (-2.8, 0.0, -4.0),    "arm_l"),
+    ("arm_l",         (-2.8, 7.5, -4.0),    "shoulder_l"),
+    ("forearm_l",     (-2.8, 3.5, -4.0),    "arm_l"),
+    ("paw_fl",        (-2.8, 0.0, -4.0),    "forearm_l"),
+    # 前肢右 4 段
     ("shoulder_r",    (2.8, 11.5, -4.5),    "thorax"),
-    ("arm_r",         (2.8, 6.5, -4.0),     "shoulder_r"),
-    ("paw_fr",        (2.8, 0.0, -4.0),     "arm_r"),
+    ("arm_r",         (2.8, 7.5, -4.0),     "shoulder_r"),
+    ("forearm_r",     (2.8, 3.5, -4.0),     "arm_r"),
+    ("paw_fr",        (2.8, 0.0, -4.0),     "forearm_r"),
+    # 趾行后肢左 4 段 (股骨大腿 -> 胫骨小腿 -> 跗骨/跟骨后折 -> 后掌)
     ("thigh_l",       (-2.6, 10.5, 6.5),    "hips"),
     ("shin_l",        (-2.7, 5.5, 7.5),     "thigh_l"),
     ("hock_l",        (-2.7, 2.5, 5.5),     "shin_l"),
     ("paw_bl",        (-2.7, 0.0, 4.5),     "hock_l"),
+    # 趾行后肢右 4 段
     ("thigh_r",       (2.6, 10.5, 6.5),     "hips"),
     ("shin_r",        (2.7, 5.5, 7.5),      "thigh_r"),
     ("hock_r",        (2.7, 2.5, 5.5),      "shin_r"),
@@ -329,7 +348,7 @@ def part_head(rig: Rig) -> None:
     rig.cube("jaw", "jaw_ramus_l",        [-1.3, 11.2, -13.6], [-0.7, 12.4, -11.5], mat="bone_white")
     rig.cube("jaw", "jaw_ramus_r",        [0.7, 11.2, -13.6],  [1.3, 12.4, -11.5],  mat="bone_white")
     rig.cube("jaw", "jaw_chin",           [-0.9, 10.6, -16.2], [0.9, 11.8, -13.6], mat="bone_white")
-    rig.cube("jaw", "jaw_tongue",         [-0.6, 11.6, -15.0], [0.6, 12.2, -12.0], mat="flesh_scab") # 暗红舌头
+    rig.cube("tongue", "jaw_tongue",      [-0.6, 11.6, -15.0], [0.6, 12.2, -12.0], mat="flesh_scab") # 暗红舌头(独立舌骨关节)
 
     # 下犬齿与下门齿 (向上突刺错开)
     rig.cube("jaw", "fang_d_l",           [-1.05, 11.8, -15.4], [-0.65, 13.2, -14.5], mat="fang_white") # 左下犬齿
@@ -351,11 +370,11 @@ def part_head(rig: Rig) -> None:
     rig.cube("ear_r", "ear_r_tip",        [1.8, 19.4, -9.5],  [2.4, 20.6, -8.9],  mat="pelt_dark")
     rig.cube("ear_r", "ear_r_notch",      [2.35, 18.2, -9.65], [2.75, 19.2, -8.75], mat="flesh_scab") # 撕咬缺口
 
-    # ── 颈部 ──
-    rig.cube("neck", "neck_upper",        [-1.4, 13.0, -8.6], [1.4, 15.6, -6.0],  mat="pelt_mangy")
-    rig.cube("neck", "neck_throat",       [-1.1, 11.6, -8.2], [1.1, 13.0, -6.2],  mat="flesh_scab")
-    rig.cube("neck", "neck_mane_l",       [-1.9, 13.4, -7.8], [-1.3, 16.2, -5.8], mat="pelt_dark")
-    rig.cube("neck", "neck_mane_r",       [1.3, 13.4, -7.8],  [1.9, 16.2, -5.8],  mat="pelt_dark")
+    # ── 颈部 2 节关节 (颈前部与颈基部) ──
+    rig.cube("neck_upper", "neck_upper",  [-1.4, 13.0, -8.6], [1.4, 15.6, -6.0],  mat="pelt_mangy")
+    rig.cube("neck_upper", "neck_throat", [-1.1, 11.6, -8.2], [1.1, 13.0, -6.2],  mat="flesh_scab")
+    rig.cube("neck_base",  "neck_mane_l", [-1.9, 13.4, -7.8], [-1.3, 16.2, -5.8], mat="pelt_dark")
+    rig.cube("neck_base",  "neck_mane_r", [1.3, 13.4, -7.8],  [1.9, 16.2, -5.8],  mat="pelt_dark")
 
 
 def part_spine(rig: Rig) -> None:
@@ -466,13 +485,13 @@ def part_pelt(rig: Rig) -> None:
 
 def part_limbs_tail(rig: Rig) -> None:
     """5. 四肢与尾巴：前肢大腿/小腿/掌+4钩爪；后肢反关节(跟骨后折)+4利爪；尾巴逐节变细骨节尾。"""
-    # ── 左前肢 (-X) ──
+    # ── 左前肢 (-X) 4 段关节 ──
     rig.cube("shoulder_l", "scapula_l",        [-3.35, 9.5, -5.6],  [-2.25, 13.8, -3.4], mat="pelt_dark")
     rig.cube("shoulder_l", "scapula_spine_l",  [-3.55, 10.5, -4.8], [-3.25, 13.0, -4.0], mat="bone_white") # 肩胛冈
     rig.cube("arm_l",      "humerus_l",        [-3.1, 6.8, -5.2],  [-2.3, 10.2, -4.0], mat="pelt_mangy")
     rig.cube("arm_l",      "elbow_olecranon_l",[-3.15, 6.4, -3.95],[-2.25, 7.6, -3.15],mat="bone_white") # 后突鹰嘴
-    rig.cube("arm_l",      "forearm_radius_l", [-3.0, 1.8, -4.95], [-2.2, 7.0, -3.95], mat="pelt_mangy")
-    rig.cube("arm_l",      "wrist_joint_l",    [-3.05, 1.2, -5.1], [-2.15, 2.0, -4.1], mat="bone_white")
+    rig.cube("forearm_l",  "forearm_radius_l", [-3.0, 1.8, -4.95], [-2.2, 7.0, -3.95], mat="pelt_mangy") # 前臂
+    rig.cube("forearm_l",  "wrist_joint_l",    [-3.05, 1.2, -5.1], [-2.15, 2.0, -4.1], mat="bone_white") # 腕关节
     rig.cube("paw_fl",     "metacarpus_l",     [-3.1, 0.4, -5.3],  [-2.1, 1.4, -3.9],  mat="pelt_dark")
 
     # 4 根独立前爪 (左)
@@ -481,13 +500,13 @@ def part_limbs_tail(rig: Rig) -> None:
         rig.cube("paw_fl", f"toe_fl_{digit}",  [dx - 0.20, 0.0, -5.9], [dx + 0.20, 0.7, -5.2], mat="pelt_dark")
         rig.cube("paw_fl", f"claw_fl_{digit}", [dx - 0.15, 0.0, -6.6], [dx + 0.15, 0.4, -5.9], mat="bone_dark")
 
-    # ── 右前肢 (+X) (对称) ──
+    # ── 右前肢 (+X) 4 段关节 (对称) ──
     rig.cube("shoulder_r", "scapula_r",        [2.25, 9.5, -5.6],   [3.35, 13.8, -3.4],  mat="pelt_dark")
     rig.cube("shoulder_r", "scapula_spine_r",  [3.25, 10.5, -4.8],  [3.55, 13.0, -4.0],  mat="bone_white")
     rig.cube("arm_r",      "humerus_r",        [2.3, 6.8, -5.2],   [3.1, 10.2, -4.0],  mat="pelt_mangy")
     rig.cube("arm_r",      "elbow_olecranon_r",[2.25, 6.4, -3.95], [3.15, 7.6, -3.15], mat="bone_white")
-    rig.cube("arm_r",      "forearm_radius_r", [2.2, 1.8, -4.95],  [3.0, 7.0, -3.95],  mat="pelt_mangy")
-    rig.cube("arm_r",      "wrist_joint_r",    [2.15, 1.2, -5.1],  [3.05, 2.0, -4.1],  mat="bone_white")
+    rig.cube("forearm_r",  "forearm_radius_r", [2.2, 1.8, -4.95],  [3.0, 7.0, -3.95],  mat="pelt_mangy")
+    rig.cube("forearm_r",  "wrist_joint_r",    [2.15, 1.2, -5.1],  [3.05, 2.0, -4.1],  mat="bone_white")
     rig.cube("paw_fr",     "metacarpus_r",     [2.1, 0.4, -5.3],   [3.1, 1.4, -3.9],   mat="pelt_dark")
 
     for digit, x_off in enumerate([-0.75, -0.25, 0.25, 0.75]):
@@ -495,6 +514,9 @@ def part_limbs_tail(rig: Rig) -> None:
         rig.cube("paw_fr", f"toe_fr_{digit}",  [dx - 0.20, 0.0, -5.9], [dx + 0.20, 0.7, -5.2], mat="pelt_dark")
         rig.cube("paw_fr", f"claw_fr_{digit}", [dx - 0.15, 0.0, -6.6], [dx + 0.15, 0.4, -5.9], mat="bone_dark")
 
+    # ── 左后肢 (-X) 4 段关节 (股骨大腿 -> 胫骨小腿 -> 反关节跟骨后折 -> 后掌) ──
+    rig.cube("thigh_l", "femur_thigh_l",      [-3.4, 7.2, 4.4],  [-1.8, 12.2, 7.6], mat="pelt_dark")
+    rig.cube("thigh_l", "femur_trochanter_l", [-3.6, 9.8, 5.2],  [-3.3, 11.5, 6.8], mat="bone_white") # 股骨大转子
     # 后折膝关节与后突跟骨
     rig.cube("thigh_l", "knee_patella_l",     [-3.15, 6.6, 3.8], [-2.15, 8.0, 4.8], mat="bone_white") # 膝盖髌骨
     rig.cube("thigh_l", "knee_tendon_l",      [-3.0, 6.0, 4.6],  [-2.3, 7.2, 5.4],  mat="flesh_scab")  # 膝侧韧带
@@ -525,27 +547,27 @@ def part_limbs_tail(rig: Rig) -> None:
         rig.cube("paw_br", f"toe_br_{digit}",  [dx - 0.20, 0.0, 3.4], [dx + 0.20, 0.7, 4.6], mat="pelt_dark")
         rig.cube("paw_br", f"claw_br_{digit}", [dx - 0.15, 0.0, 2.6], [dx + 0.15, 0.4, 3.4], mat="bone_dark")
 
-    # ── 逐节变细的 8 节下垂骨节尾 ──
+    # ── 逐节变细的 8 节下垂骨节尾 (分配进 7 个独立尾椎骨骼) ──
     tail_nodes = [
         # (z0, z1, y0, y1, rx, bone)
-        ( 9.2, 10.8, 11.5, 12.6, 0.65, "tail_base"), # 尾椎 1 (根部)
-        (10.8, 12.4, 10.4, 11.5, 0.58, "tail_base"), # 尾椎 2
-        (12.4, 14.0,  9.2, 10.3, 0.50, "tail_mid"),  # 尾椎 3
-        (14.0, 15.6,  7.9,  9.0, 0.44, "tail_mid"),  # 尾椎 4
-        (15.6, 17.2,  6.5,  7.6, 0.38, "tail_mid"),  # 尾椎 5
-        (17.2, 18.6,  5.2,  6.2, 0.32, "tail_tip"),  # 尾椎 6
-        (18.6, 20.0,  3.8,  4.8, 0.28, "tail_tip"),  # 尾椎 7
-        (20.0, 21.2,  2.6,  3.6, 0.22, "tail_tip"),  # 尾椎 8 (尖端)
+        ( 9.2, 10.8, 11.5, 12.6, 0.65, "tail_1"), # 尾椎 1
+        (10.8, 12.4, 10.4, 11.5, 0.58, "tail_2"), # 尾椎 2
+        (12.4, 14.0,  9.2, 10.3, 0.50, "tail_3"), # 尾椎 3
+        (14.0, 15.6,  7.9,  9.0, 0.44, "tail_4"), # 尾椎 4
+        (15.6, 17.2,  6.5,  7.6, 0.38, "tail_5"), # 尾椎 5
+        (17.2, 18.6,  5.2,  6.2, 0.32, "tail_6"), # 尾椎 6
+        (18.6, 20.0,  3.8,  4.8, 0.28, "tail_7"), # 尾椎 7 (尖段)
+        (20.0, 21.2,  2.6,  3.6, 0.22, "tail_7"), # 尾椎 8 (尖端)
     ]
     for i, (tz0, tz1, ty0, ty1, rx, b_name) in enumerate(tail_nodes):
         rig.cube(b_name, f"tail_vertebra_{i}", [-rx, ty0, tz0], [rx, ty1, tz1], mat="bone_white")
 
     # 尾根残毛与尾尖残毛
-    rig.cube("tail_base", "tail_fur_base",  [-0.8, 11.6,  9.3], [0.8, 12.8, 10.6], mat="pelt_mangy")
-    rig.cube("tail_tip",  "tail_fur_tip_1", [-0.45, 2.2, 20.8], [0.45, 3.8, 22.2], mat="pelt_dark")
-    rig.cube("tail_tip",  "tail_fur_tip_2", [-0.30, 1.8, 22.2], [0.30, 3.0, 23.2], mat="pelt_dark")
-    rig.cube("tail_tip",  "tail_fur_tip_3", [-0.48, 1.5, 21.6], [-0.22, 2.6, 22.8], mat="pelt_mangy")
-    rig.cube("tail_tip",  "tail_fur_tip_4", [ 0.22, 1.5, 21.6], [ 0.48, 2.6, 22.8], mat="pelt_mangy")
+    rig.cube("tail_1", "tail_fur_base",   [-0.8, 11.6,  9.3], [0.8, 12.8, 10.6], mat="pelt_mangy")
+    rig.cube("tail_7", "tail_fur_tip_1",  [-0.45, 2.2, 20.8], [0.45, 3.8, 22.2], mat="pelt_dark")
+    rig.cube("tail_7", "tail_fur_tip_2",  [-0.30, 1.8, 22.2], [0.30, 3.0, 23.2], mat="pelt_dark")
+    rig.cube("tail_7", "tail_fur_tip_3",  [-0.48, 1.5, 21.6], [-0.22, 2.6, 22.8], mat="pelt_mangy")
+    rig.cube("tail_7", "tail_fur_tip_4",  [ 0.22, 1.5, 21.6], [ 0.48, 2.6, 22.8], mat="pelt_mangy")
 
 
 PARTS = {
@@ -562,6 +584,40 @@ def build_full() -> Rig:
     for _, (_, func) in PARTS.items():
         func(rig)
     return rig
+
+
+def bone_tree_lines() -> List[str]:
+    """生成骨骼层级树文本行，并标注每根骨骼挂载的几何块数。"""
+    rig = build_full()
+    children_map: Dict[str | None, List[str]] = {}
+    for name, _, parent in BONE_DEFS:
+        children_map.setdefault(parent, []).append(name)
+
+    lines: List[str] = []
+
+    def walk(name: str, prefix: str, is_last: bool, is_top: bool) -> None:
+        b = rig.bones[name]
+        c_cnt = len(b["children"])
+        pivot = b["pivot"]
+        tag = f" ({c_cnt} cubes)" if c_cnt > 0 else " (root pivot)"
+        if is_top:
+            lines.append(f"{name} {pivot}{tag}")
+        else:
+            branch = "`- " if is_last else "+- "
+            lines.append(f"{prefix}{branch}{name} {pivot}{tag}")
+        kids = children_map.get(name, [])
+        for idx, kid in enumerate(kids):
+            next_prefix = "" if is_top else prefix + ("   " if is_last else "|  ")
+            walk(kid, next_prefix, idx == len(kids) - 1, False)
+
+    walk("root", "", True, True)
+    return lines
+
+
+def moving_bones_count() -> int:
+    """统计带几何的可独立运动关节骨骼数（除静止 root 外）。"""
+    rig = build_full()
+    return sum(1 for name, _, _ in BONE_DEFS if name != "root" and len(rig.bones[name]["children"]) > 0)
 
 
 # =============================================================================
@@ -632,11 +688,19 @@ def self_test():
     assert 35.0 <= total_len <= 45.0, f"体长超出预期范围: total_len={total_len:.2f}"
     print(f"  [OK] 尺寸断言通过 (体高 {max_y:.1f}px, 吻尾纵长 {total_len:.1f}px)")
 
-    # 4. 部件数检查 (必须至少翻三倍: >= 240 个)
+    # 4. 部件数检查 (必须至少翻三倍: >= 249 个)
     assert len(elements) >= 249, f"部件数不足: {len(elements)} < 249"
-    print(f"  [OK] 部件数达标: {len(elements)} 个 (Round 1 为 83 个，翻满整整三倍)")
+    print(f"  [OK] 部件数达标: {len(elements)} 个 (Round 1 为 83 个，翻三倍以上)")
 
-    # 5. 缺陷注入拦截测试
+    # 5. 骨骼数检查 (四足兽独立可动关节 >= 32 根)
+    total_bones = len(BONE_DEFS)
+    moving_bones = moving_bones_count()
+    assert total_bones >= 32 and moving_bones >= 32, (
+        f"骨骼数不足: 总骨骼={total_bones}, 可动带几何骨骼={moving_bones} (要求 >= 32)"
+    )
+    print(f"  [OK] 骨骼数达标: 共 {total_bones} 根骨骼 (其中带几何独立可动关节 {moving_bones} 根 >= 32)")
+
+    # 6. 缺陷注入拦截测试
     defect_rig = build_full()
     defect_rig.cube("thorax", "inject_coplanar_fail", [-2.0, 13.5, -11.5], [2.0, 16.4, -8.5], mat="pelt_dark")
     caught = False
@@ -661,6 +725,8 @@ def render_part_previews(tex_img: Image.Image):
 
     PARTS_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)
+    font_title = load_font(16)
+    font_sub = load_font(13)
     print("渲染 5 大部件独立预览图...")
 
     for i, (part_key, (part_name, func)) in enumerate(PARTS.items(), start=1):
@@ -676,16 +742,16 @@ def render_part_previews(tex_img: Image.Image):
         im_iso, _   = render(part_bbmodel, yaw=-45.0, pitch=25.0, size=300, bg=bg_color)
         im_side, _  = render(part_bbmodel, yaw=-90.0, pitch=0.0, size=300, bg=bg_color)
 
-        canvas = Image.new("RGB", (300 * 3 + 20, 300 + 40), (32, 33, 36))
+        canvas = Image.new("RGB", (300 * 3 + 20, 300 + 44), (32, 33, 36))
         draw = ImageDraw.Draw(canvas)
-        canvas.paste(im_front, (5, 30))
-        canvas.paste(im_iso, (310, 30))
-        canvas.paste(im_side, (615, 30))
+        canvas.paste(im_front, (5, 32))
+        canvas.paste(im_iso, (310, 32))
+        canvas.paste(im_side, (615, 32))
 
-        draw.text((10, 8), f"PART {i}: {part_name} ({len(rig.elements)} cubes)", fill=(235, 235, 235))
-        draw.text((10, 305), "FRONT", fill=(180, 180, 180))
-        draw.text((315, 305), "3/4 ISOMETRIC", fill=(180, 180, 180))
-        draw.text((620, 305), "SIDE", fill=(180, 180, 180))
+        draw.text((10, 6), f"部件 {i}: {part_name} ({len(rig.elements)} cubes)", fill=(235, 235, 235), font=font_title)
+        draw.text((10, 308), "正视 FRONT (-Z)", fill=(200, 200, 200), font=font_sub)
+        draw.text((315, 308), "3/4 等轴视 ISO", fill=(200, 200, 200), font=font_sub)
+        draw.text((620, 308), "侧视 SIDE (-X)", fill=(200, 200, 200), font=font_sub)
 
         preview_out = PARTS_DIR / f"part_{i}_{part_key}.png"
         canvas.save(preview_out)
@@ -695,17 +761,68 @@ def render_part_previews(tex_img: Image.Image):
         part_bbmodel.unlink(missing_ok=True)
 
 
+def render_bone_tree_panel(target_height: int) -> Image.Image:
+    """绘制骨骼层级树面板（标明骨骼总数、可动关节数与完整层级树）。"""
+    lines = bone_tree_lines()
+    total_b = len(BONE_DEFS)
+    moving_b = moving_bones_count()
+    rig = build_full()
+    total_c = len(rig.elements)
+
+    font_h = load_font(16)
+    font_sub = load_font(13)
+    font_tree = load_font(12)
+
+    line_step = 18
+    panel_w = 420
+    needed_h = 90 + len(lines) * line_step + 20
+    panel_h = max(target_height, needed_h)
+
+    panel = Image.new("RGB", (panel_w, panel_h), (32, 33, 37))
+    draw = ImageDraw.Draw(panel)
+
+    draw.rectangle([0, 0, panel_w - 1, panel_h - 1], outline=(70, 75, 85), width=2)
+    draw.text((14, 12), f"骨骼层级树 (BONE HIERARCHY)", fill=(180, 235, 200), font=font_h)
+    draw.text(
+        (14, 36),
+        f"总骨骼: {total_b} 根 (可动关节 {moving_b} 根 >= 32, +1 root)",
+        fill=(240, 210, 150),
+        font=font_sub,
+    )
+    draw.text(
+        (14, 56),
+        f"几何部件: {total_c} cubes (Round 1 为 83, 翻 3 倍+)",
+        fill=(190, 210, 235),
+        font=font_sub,
+    )
+    draw.line([(12, 78), (panel_w - 12, 78)], fill=(65, 70, 80), width=1)
+
+    y = 86
+    for ln in lines:
+        color = (230, 230, 235) if "root pivot" not in ln else (175, 180, 190)
+        draw.text((14, y), ln, fill=color, font=font_tree)
+        y += line_step
+
+    return panel
+
+
 def render_contact_and_check(now_bbmodel: Path, prev_bbmodel: Path):
-    """输出包含 NOW 与 PREV (Round 1) 同取景对比及爆炸参考图的完整 check.png。"""
+    """输出包含六视角、与 Round 1 同取景并排对比、骨骼数及骨骼层级树的 check.png。"""
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     bg_color = (119, 119, 119)
+    font_header = load_font(18)
+    font_label = load_font(13)
 
     print("渲染 NOW (Round 2) 与 PREV (Round 1) 六视角对比图...")
     w_cell, h_cell = 400, 400
 
-    def render_6_views(path: Path) -> Image.Image:
+    total_b = len(BONE_DEFS)
+    moving_b = moving_bones_count()
+    total_c = len(build_full().elements)
+
+    def render_6_views(path: Path, header_tag: str) -> Image.Image:
         im_front, _ = render(path, yaw=0.0, pitch=0.0, size=w_cell, bg=bg_color)
         im_iso, _   = render(path, yaw=-45.0, pitch=25.0, size=w_cell, bg=bg_color)
         im_side_l, _= render(path, yaw=-90.0, pitch=0.0, size=w_cell, bg=bg_color)
@@ -713,71 +830,102 @@ def render_contact_and_check(now_bbmodel: Path, prev_bbmodel: Path):
         im_top, _   = render(path, yaw=0.0, pitch=89.9, size=w_cell, bg=bg_color)
         im_back, _  = render(path, yaw=180.0, pitch=0.0, size=w_cell, bg=bg_color)
 
-        sheet = Image.new("RGB", (w_cell * 3 + 20, h_cell * 2 + 30), (32, 33, 36))
+        sheet = Image.new("RGB", (w_cell * 3 + 20, h_cell * 2 + 56), (32, 33, 36))
         s_draw = ImageDraw.Draw(sheet)
+        s_draw.text((10, 6), header_tag, fill=(235, 235, 235), font=font_header)
+
         views = [
-            ("FRONT (-Z Head)", im_front, 5, 5),
-            ("3/4 ISOMETRIC",   im_iso, w_cell + 10, 5),
-            ("SIDE_L (-X Flank)", im_side_l, w_cell * 2 + 15, 5),
-            ("SIDE_R (+X Flank)", im_side_r, 5, h_cell + 15),
-            ("TOP (+Y Spine)",    im_top, w_cell + 10, h_cell + 15),
-            ("BACK (+Z Tail)",    im_back, w_cell * 2 + 15, h_cell + 15),
+            ("正视 FRONT (-Z 头吻)",   im_front, 5, 34),
+            ("3/4 等轴视 ISOMETRIC",  im_iso, w_cell + 10, 34),
+            ("左视图 SIDE_L (-X 肋侧)", im_side_l, w_cell * 2 + 15, 34),
+            ("右视图 SIDE_R (+X 肋侧)", im_side_r, 5, h_cell + 44),
+            ("俯视图 TOP (+Y 脊柱)",   im_top, w_cell + 10, h_cell + 44),
+            ("后视图 BACK (+Z 骨尾)",  im_back, w_cell * 2 + 15, h_cell + 44),
         ]
         for title, img_v, px, py in views:
             sheet.paste(img_v, (px, py))
-            s_draw.rectangle([px, py, px + 280, py + 22], fill=(22, 23, 26))
-            s_draw.text((px + 6, py + 4), title, fill=(235, 235, 235))
+            s_draw.rectangle([px, py, px + 260, py + 24], fill=(22, 23, 26))
+            s_draw.text((px + 6, py + 3), title, fill=(235, 235, 235), font=font_label)
         return sheet
 
-    sheet_now = render_6_views(now_bbmodel)
-    # 保存当前的独立 render.png
+    sheet_now = render_6_views(
+        now_bbmodel,
+        f"ku_pi_lang (枯皮狼) Round 2 NOW | 骨骼: {total_b} ({moving_b} 可动关节) | 部件: {total_c} cubes (0.5px 精度)",
+    )
+    # 保存当前的独立 render.png / contact_sheet.png
     sheet_now.save(REVIEW_DIR / "render.png")
+    sheet_now.save(REVIEW_DIR / "contact_sheet.png")
     print(f"✓ 当前六视角接触表已保存: {REVIEW_DIR / 'render.png'}")
 
     has_prev = prev_bbmodel.exists()
-    sheet_prev = render_6_views(prev_bbmodel) if has_prev else None
+    sheet_prev = (
+        render_6_views(prev_bbmodel, "ku_pi_lang (枯皮狼) Round 1 PREV 基线 | 骨骼: 22 | 部件: 83 cubes")
+        if has_prev
+        else None
+    )
 
-    # 组合 check.png: 左栏 爆炸参考图 / 中栏 PREV (Round 1) / 右栏 NOW (Round 2)
+    # 生成骨骼层级树面板并单独保存一份
     target_h = sheet_now.height
+    tree_panel = render_bone_tree_panel(target_h)
+    tree_panel.save(REVIEW_DIR / "bones_tree.png")
+
+    # 调整高度对齐
+    row_h = max(target_h, tree_panel.height)
     ref_im = Image.open(EXPLODED_REF).convert("RGB") if EXPLODED_REF.exists() else None
     if ref_im:
-        ref_w = int(ref_im.width * target_h / ref_im.height)
-        ref_scaled = ref_im.resize((ref_w, target_h), Image.Resampling.LANCZOS)
+        ref_w = int(ref_im.width * row_h / ref_im.height)
+        ref_scaled = ref_im.resize((ref_w, row_h), Image.Resampling.LANCZOS)
     else:
         ref_w = 400
-        ref_scaled = Image.new("RGB", (ref_w, target_h), (50, 50, 50))
+        ref_scaled = Image.new("RGB", (ref_w, row_h), (50, 50, 50))
 
+    # 组合 check.png: 左栏 爆炸参考图 | 中左 PREV (Round 1) | 中右 NOW (Round 2) | 右栏 骨骼层级树
     if sheet_prev:
-        total_w = ref_w + sheet_prev.width + sheet_now.width + 40
-        canvas_check = Image.new("RGB", (total_w, target_h + 46), (25, 26, 29))
+        total_w = ref_w + sheet_prev.width + sheet_now.width + tree_panel.width + 50
+        canvas_check = Image.new("RGB", (total_w, row_h + 48), (25, 26, 29))
         c_draw = ImageDraw.Draw(canvas_check)
 
         # 1. 左栏 爆炸参考图
-        canvas_check.paste(ref_scaled, (10, 36))
-        c_draw.text((15, 10), "EXPLODED REFERENCE (exploded.png)", fill=(215, 205, 180))
+        x_cur = 10
+        canvas_check.paste(ref_scaled, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), "爆炸参考图 EXPLODED REF (5 大部件)", fill=(215, 205, 180), font=font_header)
 
-        # 2. 中栏 PREV (Round 1: 83 cubes)
-        px = ref_w + 20
-        canvas_check.paste(sheet_prev, (px, 36))
-        c_draw.text((px + 6, 10), "PREV: Round 1 (83 cubes - coarse blocky base)", fill=(230, 160, 140))
+        # 2. 中左 PREV (Round 1: 83 cubes)
+        x_cur += ref_w + 10
+        canvas_check.paste(sheet_prev, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), "PREV: Round 1 同取景基线 (83 cubes, 22 bones)", fill=(230, 160, 140), font=font_header)
 
-        # 3. 右栏 NOW (Round 2: 240+ cubes)
-        nx = px + sheet_prev.width + 10
-        canvas_check.paste(sheet_now, (nx, 36))
-        c_draw.text((nx + 6, 10), "NOW: Round 2 (240+ cubes - 0.5px hollow ribcage / individual vertebrae)", fill=(140, 230, 180))
+        # 3. 中右 NOW (Round 2: 251 cubes, 35 bones)
+        x_cur += sheet_prev.width + 10
+        canvas_check.paste(sheet_now, (x_cur, 38))
+        c_draw.text(
+            (x_cur + 4, 8),
+            f"NOW: Round 2 返工 ({total_c} cubes, {total_b} 骨骼/{moving_b} 可动关节, 0.5px 透空肋腔+12节脊椎)",
+            fill=(140, 230, 180),
+            font=font_header,
+        )
+
+        # 4. 右栏 骨骼层级树
+        x_cur += sheet_now.width + 10
+        canvas_check.paste(tree_panel, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), f"骨骼树 BONE TREE ({total_b} 骨骼 >= 32)", fill=(180, 220, 240), font=font_header)
     else:
-        total_w = ref_w + sheet_now.width + 30
-        canvas_check = Image.new("RGB", (total_w, target_h + 46), (25, 26, 29))
+        total_w = ref_w + sheet_now.width + tree_panel.width + 40
+        canvas_check = Image.new("RGB", (total_w, row_h + 48), (25, 26, 29))
         c_draw = ImageDraw.Draw(canvas_check)
-        canvas_check.paste(ref_scaled, (10, 36))
-        c_draw.text((15, 10), "EXPLODED REFERENCE (exploded.png)", fill=(215, 205, 180))
-        nx = ref_w + 20
-        canvas_check.paste(sheet_now, (nx, 36))
-        c_draw.text((nx + 6, 10), "NOW: Round 2 (240+ cubes - 0.5px precision)", fill=(140, 230, 180))
+        x_cur = 10
+        canvas_check.paste(ref_scaled, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), "爆炸参考图 EXPLODED REF", fill=(215, 205, 180), font=font_header)
+        x_cur += ref_w + 10
+        canvas_check.paste(sheet_now, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), f"NOW: Round 2 ({total_c} cubes, {total_b} 骨骼)", fill=(140, 230, 180), font=font_header)
+        x_cur += sheet_now.width + 10
+        canvas_check.paste(tree_panel, (x_cur, 38))
+        c_draw.text((x_cur + 4, 8), f"骨骼树 BONE TREE ({total_b} 骨骼 >= 32)", fill=(180, 220, 240), font=font_header)
 
     check_out = REVIEW_DIR / "check.png"
     canvas_check.save(check_out)
-    print(f"✓ 全新对标卡已保存 (左参考 / 中 PREV / 右 NOW): {check_out}")
+    print(f"✓ 全新对标卡已保存 (含参考图 / PREV / NOW 六视角 / 骨骼数与骨骼层级树): {check_out}")
 
 
 # =============================================================================
