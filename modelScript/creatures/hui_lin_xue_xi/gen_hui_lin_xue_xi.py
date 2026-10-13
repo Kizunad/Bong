@@ -49,7 +49,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "HuiLinXueXi.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "HuiLinXueXi.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质必须 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
