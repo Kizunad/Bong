@@ -939,6 +939,64 @@ FLAT_COLORS.update({
 })
 
 
+# ---- 冰晶 / 霜毛 / 白雾（冻髓鹿批次补充）-----------------------------------------------
+
+
+def _ice(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """结晶灵气：顺晶柱长轴的竖向棱面（一条条明暗不同的刻面），内部几道更亮的白纹，尖端和边缘最亮；
+    不做发光，只靠面与面的明暗对比读出「冰」。"""
+    deep, light = hex_color(base_a), hex_color(base_b)
+    glint = hex_color("#f2fafc")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            facet = value_noise((across * 2.2, along * 0.25, 0.0), 1.0, seed)
+            color = mix(deep, light, 0.25 + 0.75 * facet)
+            if value_noise((across * 4.0, along * 0.35, 0.0), 1.0, seed + 1) > 0.78:
+                color = mix(color, glint, 0.55)               # 内部白纹
+            if texel_noise(p, seed + 2) > 0.94:
+                color = shade(color, -0.2)                    # 零星气泡暗点
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = mix(color, glint, 0.3)                # 棱线反光
+            return color
+
+        return paint
+
+    return factory
+
+
+def _mist(seed: int) -> Callable[[dict], Painter]:
+    """白雾：近白，边缘一圈略暗略蓝，中间偶有更亮的絮点；靠和背景的明度差读出来。"""
+    core, rim = hex_color("#f2f6f8"), hex_color("#c4d2dc")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = mix(core, rim, 0.5 * value_noise(p, 1.6, seed) + 0.3 * texel_noise(p, seed + 1))
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = mix(color, rim, 0.5)
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "frost_fur_ash": _fur("#a29c90", "#c0bbb0", 761, bald=0.04),
+    "frost_fur_pale": _fur("#c8c8c2", "#e4e4de", 762),
+    "frost_fur_dark": _fur("#5a524b", "#7a7068", 763, bald=0.1),
+    "bone_grey": _bone("#bcb6a6", 764),
+    "ice_pale": _ice("#9cc0d6", "#d6ecf6", 765),
+    "ice_deep": _ice("#4c82b4", "#86b4da", 766),
+    "mist": _mist(767),
+})
+FLAT_COLORS.update({
+    "frost_fur_ash": "#b0aa9e", "frost_fur_pale": "#d4d4ce", "frost_fur_dark": "#6a6058", "bone_grey": "#bcb6a6",
+    "ice_pale": "#bcdcec", "ice_deep": "#74a4cc", "mist": "#e4ecf0",
+})
+
+
 def painter_for(material: str, cube: dict) -> Optional[Painter]:
     """材质名 → 画笔（带整体压暗补偿）。不认识的材质返回 None。"""
     factory = PAINTERS.get(material)
