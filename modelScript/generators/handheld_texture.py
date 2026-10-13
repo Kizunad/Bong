@@ -455,6 +455,124 @@ def _void(cube: dict) -> Painter:
     return lambda p, axis: shade(hex_color("#181418"), (texel_noise(p, 9) - 0.5) * 0.15)
 
 
+# ---- 生物材质（兽皮 / 藓 / 角 / 蹄 / 眼）：末世生物批次补进同一个库 ---------------------------
+
+
+def _hide(base_a: str, base_b: str, seed: int, crease_amount: float = 0.5) -> Callable[[dict], Painter]:
+    """兽皮：两档色的斑块底 + 细碎皱纹暗线 + 零星浅色硬皮斑；边缘磨浅。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    crease, callus = shade(a, -0.38), shade(b, 0.16)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            blotch = value_noise(p, 3.4, seed) * 0.65 + value_noise(p, 1.4, seed + 1) * 0.35
+            color = mix(a, b, blotch * 1.25 - 0.1)
+            color = shade(color, (texel_noise(p, seed + 2) - 0.5) * 0.14)
+            if abs(value_noise(p, 1.3, seed + 3) - 0.5) < 0.07 * crease_amount:
+                color = mix(color, crease, 0.65)              # 皱纹
+            if value_noise(p, 2.0, seed + 4) > 0.8 and texel_noise(p, seed + 5) > 0.35:
+                color = mix(color, callus, 0.55)              # 硬皮斑
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.07)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _moss(base_dark: str, base_light: str, seed: int) -> Callable[[dict], Painter]:
+    """噬灵藓：成簇绒团（团内亮、团缝暗），簇顶灰白孢尖，偶有枯褐斑；靠对比，不做发光。"""
+    dark, light = hex_color(base_dark), hex_color(base_light)
+    spore, dead = shade(light, 0.38), hex_color("#6a5e3c")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            clump = value_noise(p, 1.7, seed)
+            fine = texel_noise(p, seed + 1)
+            color = shade(mix(dark, light, clump * 1.5 - 0.2), (fine - 0.5) * 0.2)
+            if clump > 0.66 and fine > 0.6:
+                color = mix(color, spore, 0.7)
+            if value_noise(p, 3.0, seed + 2) > 0.84:
+                color = mix(color, dead, 0.5)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _horn(base: str, seed: int) -> Callable[[dict], Painter]:
+    """角质：顺长轴细棱，隔一段一道深色环脊，裂纹稀疏。"""
+    light = hex_color(base)
+    dark = shade(light, -0.3)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            streak = value_noise((across * 3.0, along * 0.5, 0.0), 1.0, seed)
+            color = mix(dark, light, 0.35 + 0.65 * streak)
+            if (along * 0.9 + 1.5 * value_noise(p, 2.0, seed + 1)) % 3.0 < 0.5:
+                color = mix(color, dark, 0.55)
+            if texel_noise(p, seed + 2) > 0.95:
+                color = mix(color, dark, 0.7)
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.08)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _hoof(seed: int) -> Callable[[dict], Painter]:
+    """蹄：近黑角质，细竖纹，崩口处露出灰白。"""
+    base, chip = hex_color("#2c2826"), hex_color("#6a645a")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(base, (value_noise((p[0] * 2.5, p[1] * 0.4, p[2] * 2.5), 1.0, seed) - 0.5) * 0.35)
+            if texel_noise(p, seed + 1) > 0.93:
+                color = mix(color, chip, 0.7)
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.12)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _eye(cube: dict) -> Painter:
+    """眼：近黑浑浊面，中心偏上一小块亮斑（靠对比读出眼神）。"""
+    center = [(cube["from"][i] + cube["to"][i]) / 2 for i in range(3)]
+
+    def paint(p: Vec, axis: int) -> Color:
+        if math.dist(p, (center[0], center[1] + 0.2, center[2])) < 0.45:
+            return hex_color("#a8a290")
+        return shade(hex_color("#1c1a18"), (texel_noise(p, 601) - 0.5) * 0.2)
+
+    return paint
+
+
+def _flower(seed: int) -> Callable[[dict], Painter]:
+    """藓花：灰白花瓣，顶面带暖黄花芯，瓣缘淡褐。"""
+    petal, core, rim = hex_color("#e6e6da"), hex_color("#d8c070"), hex_color("#b8a890")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(petal, (texel_noise(p, seed) - 0.5) * 0.1)
+            if axis == 1:
+                color = mix(color, core, 0.45)
+            if _edge_distance(cube, p, axis) < 0.4:
+                color = mix(color, rim, 0.5)
+            return color
+
+        return paint
+
+    return factory
+
+
 PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "iron": _iron("#4e525a", 0.0, 401),
     "rust_iron": _iron("#4e525a", 0.42, 411),
@@ -498,6 +616,22 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "void": _void,
 }
 
+# 生物材质（兽皮 / 藓 / 角 / 蹄 / 眼）
+PAINTERS.update({
+    "hide": _hide("#5c5248", "#7a6e5e", 701),
+    "hide_dark": _hide("#403a34", "#575048", 702),
+    "hide_light": _hide("#7a6e5e", "#9a8c78", 703),
+    "hide_fold": _hide("#2c2824", "#3c3631", 704, crease_amount=1.0),
+    "moss_dark": _moss("#2e382a", "#53684a", 711),
+    "moss": _moss("#44553a", "#78905f", 712),
+    "moss_light": _moss("#62784c", "#a2b284", 713),
+    "moss_flower": _flower(721),
+    "horn": _horn("#8a7c6a", 731),
+    "horn_dark": _horn("#6a5e50", 732),
+    "hoof": _hoof(741),
+    "eye": _eye,
+})
+
 # 平色对照版：每个材质一个纯色（取该材质画笔的中间色）
 FLAT_COLORS: Dict[str, str] = {
     "iron": "#4e525a", "rust_iron": "#6a5048", "rust_heavy": "#7a4a38", "steel": "#aab4be", "steel_hi": "#d4dce4", "iron_edge": "#5a5c60",
@@ -511,6 +645,51 @@ FLAT_COLORS: Dict[str, str] = {
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
 }
+FLAT_COLORS.update({
+    "hide": "#685d50", "hide_dark": "#494239", "hide_light": "#8a7d6a", "hide_fold": "#342f2a",
+    "moss_dark": "#364c30", "moss": "#52703f", "moss_light": "#7a9a5e", "moss_flower": "#e6e6da",
+    "horn": "#7a6e5e", "horn_dark": "#5a5044", "hoof": "#2c2826", "eye": "#1c1a18",
+})
+
+
+# ---- 金属 / 甲壳 / 软腹（锈甲鳖虫批次补充）-----------------------------------------------
+
+
+def _gold(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """碎金片：顺长轴的拉丝金色，成片发暗的氧化斑，零星亮划痕，边缘磨亮。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    tarnish = hex_color("#5a4426")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            streak = _grain_noise(cube, p, axis, 3.0, 0.4, seed)
+            color = mix(a, b, streak * 1.2 - 0.1)
+            if value_noise(p, 2.2, seed + 1) > 0.7:
+                color = mix(color, tarnish, 0.55)             # 氧化斑
+            if texel_noise(p, seed + 2) > 0.95:
+                color = shade(color, 0.22)                    # 亮划痕
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.12)
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "gold": _gold("#a88a42", "#d2b062", 751),
+    "gold_dull": _gold("#7a6234", "#a8884a", 752),
+    "rivet": _iron("#2e2622", 0.25, 753),
+    "chitin_dark": _horn("#3a3230", 754),
+    "chitin_mid": _horn("#5e5248", 755),
+    "belly_pale": _hide("#b8aa8c", "#d2c6a8", 756, crease_amount=0.3),
+    "belly_seg": _hide("#7e6e56", "#9a8a6c", 757, crease_amount=0.8),
+})
+FLAT_COLORS.update({
+    "gold": "#bc9a50", "gold_dull": "#92763e", "rivet": "#2e2622", "chitin_dark": "#3a3230", "chitin_mid": "#5e5248",
+    "belly_pale": "#c4b698", "belly_seg": "#8a7a5e",
+})
 
 
 def painter_for(material: str, cube: dict) -> Optional[Painter]:

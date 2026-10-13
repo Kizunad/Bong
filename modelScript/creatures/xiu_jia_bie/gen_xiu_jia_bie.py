@@ -43,9 +43,14 @@ GROUND_TOL = 0.5  # 最低点允许离地的距离（趾尖斜杆的下角）
 class XiuJiaBieRig(Rig):
     """rigkit.Rig + 按「族」写 element.color（原因同 can_bei_tuo：材质 >8 种会撞色）。"""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cube_mats: dict[str, str] = {}  # element uuid -> parts.MATS 里的材质名，贴图版用
+
     def cube(self, bone, name, frm, to, *, rot=None, org=None, mat="chitin_mid"):
         el = super().cube(bone, name, frm, to, rot=rot, org=org, mat=mat)
         el["color"] = parts.FAMILY_ORDER.index(parts.FAMILY[mat])
+        self.cube_mats[el["uuid"]] = mat
         return el
 
 
