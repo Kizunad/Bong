@@ -896,6 +896,51 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     print(f"✓ check.png → {out} ({canvas.width}×{canvas.height})")
 
 
+# ───────────────────────────────────────────────────────────── 像素贴图（复用 generators/handheld_texture.py 画笔库）
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
+import handheld_texture  # noqa: E402
+
+# 本文件的色块材质名 → 画笔库材质名（同名的不列）
+TEX_MATERIAL = {
+    "fur_dk": "fur_dark", "fur_lt": "fur_lit", "belly": "belly_fur", "membrane_lt": "membrane_lit",
+    "muscle": "muscle_flesh", "nose": "nose_pink", "eye": "void", "eye_red": "ink_cinnabar", "tooth": "bone_lit",
+    "bone": "bone_main", "bone_lt": "bone_lit", "bone_dk": "bone_dark", "claw": "claw_dark",
+    "rat": "rat_skin", "rat_dk": "rat_skin_dark", "hair": "hair_dark", "flesh_ring": "flesh_seam",
+    "thread": "silk", "pin": "bone_lit", "lizard": "lizard_scale", "lizard_dk": "lizard_scale_dark",
+    "lizard_lt": "lizard_scale_lit", "snake": "snake_scale", "snake_dk": "snake_scale_dark", "snake_lt": "snake_belly",
+}
+
+
+def tex_run() -> None:
+    """贴图版 ZaWeiFu_tex.bbmodel + 平色对照 + check_tex.png（参考图 | 平色 3/4 | 贴图 3/4 / 正 / 侧 / 背）。"""
+    p = build(list(PART_FUNCS.values()))
+    out = CREATURE_DIR / "ZaWeiFu_tex.bbmodel"
+    out.write_text(json.dumps(handheld_texture.textured_rig_doc(p.rig, "ZaWeiFu_tex", TEX_MATERIAL), ensure_ascii=False, indent=1),
+                   encoding="utf-8")
+    flat = CREATURE_DIR / "_tmp_flat.bbmodel"
+    flat.write_text(json.dumps(handheld_texture.textured_rig_doc(p.rig, "ZaWeiFu_flat", TEX_MATERIAL, flat=True)), encoding="utf-8")
+    try:
+        h = 760
+        font = load_font(16)
+        ref = Image.open(REVIEW_DIR / f"{MODEL_ID}_ref.png").convert("RGB")
+        ref = ref.resize((round(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)
+        tiles = [("参考图", ref), ("平色 3/4", fit_height(render_model(flat, 150.0, 18.0, 900), h))]
+        for label, yaw, pitch in (("贴图 3/4", 150.0, 18.0), ("贴图 正", 180.0, 0.0), ("贴图 左侧", 90.0, 0.0), ("贴图 背", 0.0, 0.0)):
+            tiles.append((label, fit_height(render_model(out, yaw, pitch, 900), h)))
+        sheet = Image.new("RGB", (sum(t.width + 12 for _, t in tiles) + 12, h + 44), (28, 29, 33))
+        d = ImageDraw.Draw(sheet)
+        x = 12
+        for label, tile in tiles:
+            d.text((x, 10), label, fill=(235, 235, 235), font=font)
+            sheet.paste(tile, (x, 36))
+            x += tile.width + 12
+        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        sheet.save(REVIEW_DIR / "check_tex.png")
+    finally:
+        flat.unlink(missing_ok=True)
+    print(f"✓ {out}\n✓ check_tex.png → {REVIEW_DIR / 'check_tex.png'}")
+
+
 def full_run() -> None:
     """全量：自证 → 全套门禁 → 写 bbmodel → 分件预览 → 接触表 / 骨骼树 / check.png。"""
     p = build(list(PART_FUNCS.values()))
@@ -920,7 +965,11 @@ def main() -> None:
     ap.add_argument("--part", choices=sorted(PART_FUNCS))
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--gates", action="store_true")
+    ap.add_argument("--tex", action="store_true", help="只出贴图版 bbmodel 与 check_tex.png")
     args = ap.parse_args()
+    if args.tex:
+        tex_run()
+        return
     if not (args.part or args.self_test or args.gates):
         full_run()
         return

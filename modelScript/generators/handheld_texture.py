@@ -54,7 +54,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "meridian_factory"))
 
-from pixel_texture import Color, Painter, Vec, hex_color, mix, shade, texel_noise, value_noise  # noqa: E402
+from pixel_texture import Color, Painter, Vec, build_atlas, hex_color, mix, shade, texel_noise, value_noise  # noqa: E402
 
 RENDER_COMPENSATION = -0.08     # 渲染器的 mc 光照会把贴图提亮一档，整体先压暗一点，实际看到的接近指定色
 ROPE_PERIOD = 1.5               # 绳股一个明暗周期的长度（px）
@@ -451,6 +451,91 @@ def _spirit_green(seed: int) -> Callable[[dict], Painter]:
     return factory
 
 
+def _fur(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """毛：沿竖直（y）方向的细长毛束明暗相间，一簇一簇深浅不同，零星亮毛尖和暗根。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            strand = value_noise((p[0] * 3.0, p[1] * 0.35, p[2] * 3.0), 1.0, seed)
+            color = mix(a, b, strand * 1.3 - 0.1)
+            color = shade(color, (value_noise(p, 1.6, seed + 1) - 0.5) * 0.24)
+            grain = texel_noise(p, seed + 2)
+            if grain > 0.93:
+                color = shade(color, 0.22)              # 亮毛尖
+            elif grain < 0.05:
+                color = shade(color, -0.3)              # 暗毛根
+            return color
+
+        return paint
+
+    return factory
+
+
+def _skin(base: str, seed: int, vein: float = 0.03) -> Callable[[dict], Painter]:
+    """裸皮 / 肉：细皱纹 + 斑驳 + 极细的暗红血管线（vein = 血管线的粗细，0 则不画）。"""
+    color_base = hex_color(base)
+    crease, vein_color = shade(color_base, -0.28), mix(shade(color_base, -0.3), hex_color("#8a2a2a"), 0.5)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(color_base, (value_noise(p, 1.5, seed) - 0.5) * 0.26 + (texel_noise(p, seed + 1) - 0.5) * 0.08)
+            if abs(value_noise(p, 1.1, seed + 2) - 0.5) < 0.04:
+                color = mix(color, crease, 0.6)          # 皱纹
+            if vein and abs(value_noise(p, 2.2, seed + 3) - 0.5) < vein:
+                color = mix(color, vein_color, 0.75)     # 血管
+            return color
+
+        return paint
+
+    return factory
+
+
+def _membrane(base: str, seed: int, vein: bool = False) -> Callable[[dict], Painter]:
+    """皮膜（蝠翼）：暗褐革质，细皱 + 大块明暗斑 + 细密暗纹；vein=True 是血管格：暗红底，中心一线更亮。"""
+    color_base = hex_color(base)
+    crease = shade(color_base, -0.3)
+    core = shade(color_base, 0.28)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(color_base, (value_noise(p, 2.4, seed) - 0.5) * 0.3 + (texel_noise(p, seed + 1) - 0.5) * 0.1)
+            if abs(value_noise(p, 0.9, seed + 2) - 0.5) < 0.05:
+                color = mix(color, crease, 0.55)
+            if vein and abs(value_noise(p, 1.8, seed + 3) - 0.5) < 0.12:
+                color = mix(color, core, 0.5)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _scales(base_a: str, base_b: str, seed: int, cell: float = 1.5) -> Callable[[dict], Painter]:
+    """鳞：错缝排布的小鳞片，每片自己的明暗，片间一线暗缝，片的上缘一线亮边。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    seam = shade(a, -0.5)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            u, v = _face_plane(p, axis)
+            row = math.floor(v / cell)
+            shifted = u + (cell / 2 if row % 2 else 0.0)
+            col = math.floor(shifted / cell)
+            color = mix(a, b, texel_noise((col, row, axis), seed))
+            color = shade(color, (texel_noise(p, seed + 1) - 0.5) * 0.1)
+            fv, fu = (v - row * cell) / cell, (shifted - col * cell) / cell
+            if fv < 0.22 or fu < 0.22:
+                return mix(color, seam, 0.7)             # 鳞缝
+            if fv > 0.78:
+                return shade(color, 0.14)                # 鳞片上缘亮边
+            return color
+
+        return paint
+
+    return factory
+
+
 def _void(cube: dict) -> Painter:
     return lambda p, axis: shade(hex_color("#181418"), (texel_noise(p, 9) - 0.5) * 0.15)
 
@@ -486,6 +571,30 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "cloth_red": _cloth("#7a2a24", 483),
     "cloth_tan": _cloth("#8a6c3e", 484),
     "leather": _leather("#5c4230", 485),
+    # 杂尾蝠补的材质：毛 / 皮膜 / 裸皮肉 / 三种尾鳞
+    "fur_dark": _fur("#2a282c", "#403c40", 601),
+    "fur": _fur("#403c40", "#5c5658", 602),
+    "fur_lit": _fur("#5c5658", "#807a7a", 603),
+    "belly_fur": _fur("#9a8c7a", "#b8aa94", 604),
+    "membrane": _membrane("#50402f", 611),
+    "membrane_lit": _membrane("#645038", 612),
+    "membrane_vein": _membrane("#64362e", 613, vein=True),
+    "muscle_flesh": _skin("#7c3c3a", 621),
+    "ear_skin": _skin("#ac706e", 622),
+    "ear_vein": _skin("#8a5658", 623, vein=0.0),
+    "nose_pink": _skin("#a05c5c", 624, vein=0.0),
+    "gum": _skin("#94424a", 625),
+    "flesh_seam": _skin("#98403c", 626, vein=0.05),
+    "rat_skin": _skin("#a27c76", 627),
+    "rat_skin_dark": _skin("#805e5c", 628),
+    "hair_dark": _ink("#342a2a", 629),
+    "claw_dark": _ink("#2c2828", 630),
+    "lizard_scale": _scales("#626c4a", "#7a8458", 631),
+    "lizard_scale_dark": _scales("#44502f", "#566238", 632),
+    "lizard_scale_lit": _scales("#828860", "#989e72", 633),
+    "snake_scale": _scales("#3a4042", "#4c5456", 634, 1.2),
+    "snake_scale_dark": _scales("#262a2e", "#363c40", 635, 1.2),
+    "snake_belly": _scales("#948c76", "#aca48a", 636, 1.2),
     "paper": _paper("#c8b48a", 491),
     "paper_ochre": _paper("#b09664", 492),
     "paper_frost": _paper("#808e98", 493),
@@ -507,6 +616,12 @@ FLAT_COLORS: Dict[str, str] = {
     "bone": "#d8ccb0", "bone_main": "#d8ccb0", "bone_dark": "#b8a888", "bone_lit": "#ece2c8",
     "wood": "#745230", "wood_dark": "#523824", "rope": "#8e6038",
     "cloth": "#7a5a46", "cloth_dark": "#4a3a30", "cloth_red": "#7a2a24", "cloth_tan": "#8a6c3e", "leather": "#5c4230",
+    "fur_dark": "#34303a", "fur": "#4c484a", "fur_lit": "#6c6668", "belly_fur": "#aa9c88", "membrane": "#58482f",
+    "membrane_lit": "#6c5840", "membrane_vein": "#6c382e", "muscle_flesh": "#7c3c3a", "ear_skin": "#ac706e",
+    "ear_vein": "#8a5658", "nose_pink": "#a05c5c", "gum": "#94424a", "flesh_seam": "#98403c", "rat_skin": "#a27c76",
+    "rat_skin_dark": "#805e5c", "hair_dark": "#342a2a", "claw_dark": "#2c2828", "lizard_scale": "#6c7650",
+    "lizard_scale_dark": "#4c5834", "lizard_scale_lit": "#8c9268", "snake_scale": "#444c4e", "snake_scale_dark": "#2e3236",
+    "snake_belly": "#a09880",
     "paper": "#c8b48a", "paper_ochre": "#b09664", "paper_frost": "#808e98", "paper_scorch": "#3a3230",
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
@@ -534,3 +649,35 @@ def flat_override(cube: dict, default: Painter) -> Optional[Painter]:
         return None
     color = hex_color(code)
     return lambda p, axis: color
+
+
+def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = False) -> dict:
+    """生物流水线共用：在 rigkit.Rig 的绑定稿 bbmodel 上换成每面独立 UV 的像素图集（骨骼层级、几何不动）。
+
+    rig 里每个立方体的材质名按贴图色块位置反推（rigkit 的 color 字段会撞号）；material_map 把生成器自己的
+    材质名映射成本库材质名，同名的可以不列。flat=True 出平色对照版。
+    """
+    import base64
+    import copy
+    import io
+
+    per_row = rig.tex // rig.swatch
+    names = list(rig.mats)
+    cubes = []
+    for el in rig.elements:
+        uv = el["faces"]["north"]["uv"]
+        material = names[int(uv[1] // rig.swatch) * per_row + int(uv[0] // rig.swatch)]
+        material = material_map.get(material, material)
+        if material not in PAINTERS:
+            raise KeyError(f"画笔库里没有材质 {material}（立方体 {el['name']}）")
+        cubes.append({"name": el["name"], "from": el["from"], "to": el["to"], "material": material})
+    atlas, uvs = build_atlas(cubes, override=flat_override if flat else handheld_override)
+    buf = io.BytesIO()
+    atlas.save(buf, format="PNG")
+    doc = copy.deepcopy(rig.bbmodel(name))
+    doc["resolution"] = {"width": atlas.width, "height": atlas.height}
+    doc["textures"][0]["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    for el, face_uvs in zip(doc["elements"], uvs):
+        for face, uv in face_uvs.items():
+            el["faces"][face]["uv"] = uv
+    return doc
