@@ -338,6 +338,8 @@ def part_ribs(p: Puppet) -> None:
     p.box(b, "sternum", (-0.7, 25.7, -2.6), (0.7, 31.7, -1.8), "bone_lt")
     p.box(b, "xiphoid", (-0.4, 24.9, -2.4), (0.4, 25.7, -1.8), "bone_dk")
     p.box(b, "manubrium", (-1.6, 31.7, -2.6), (1.6, 32.5, -1.7), "bone_lt")
+    # 胸腔内壁：肋骨之间透出的是一块近黑的暗板，而不是背后货箱的木色（Round 3：肋骨读作「骨压在暗处」）
+    p.box(b, "chest_cavity", (-4.1, 25.0, -0.5), (4.1, 31.2, -0.1), "void")
     # 胸椎背面与肋骨交接处的绳扎（把两节肋骨组扎成一束）
     p.box(b, "rib_lash_low", (-4.6, 26.05, 1.9), (4.6, 26.55, 2.2), "rope_dk")
     p.box(b, "rib_lash_high", (-4.2, 29.65, 1.9), (4.2, 30.15, 2.2), "rope")
@@ -914,7 +916,7 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     ref_p = REVIEW_DIR / f"{MODEL_ID}_ref.png"
     exp_p = REVIEW_DIR / f"{MODEL_ID}_exploded.png"
     font_h = load_font(18)
-    six = render_six_views(model_path, f"trade_puppet（游商傀儡）round 1/3 · {p.total()} cubes · "
+    six = render_six_views(model_path, f"trade_puppet（游商傀儡）round 3/3 · {p.total()} cubes · "
                                        f"{len(p.rig.bones)} 骨（可动 {moving_bone_count(p)}）· 门禁违例 {gate_total}")
     row = same_framing_row(model_path, ref_p)
     tree = bone_tree_panel(p, six.height + row.height + 10)
@@ -933,7 +935,7 @@ def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     d.text((10, 48 + ref_s.height), "爆炸分解图", fill=(215, 205, 180), font=font_h)
     canvas.paste(exp_s, (10, 78 + ref_s.height))
     x = lw + 25
-    d.text((x, 8), "本模型（几何 only：无贴图 / 动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
+    d.text((x, 8), "本模型（Round 3 几何：无贴图 / 动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
     canvas.paste(six, (x, 38))
     canvas.paste(row, (x, 38 + six.height + 10))
     x += mid_w + 15
