@@ -51,7 +51,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "DongSuiLu.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "DongSuiLu.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质必须 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -569,8 +569,8 @@ def rib_outer_x(i: int, y: float) -> float:
 
 
 def drape(rig: Rig, bone: str, name: str, i: int, s: float, hang: float, mat: str, rng: random.Random,
-          width: float = 1.0) -> None:
-    """一片贴着第 i 根肋外侧铺下来的披毛：椎侧 → 肋背 → 赤道，再自由垂下 hang 个单位，末端锯齿。"""
+          width: float = 1.0) -> Vec:
+    """一片贴着第 i 根肋外侧铺下来的披毛：椎侧 → 肋背 → 赤道，再自由垂下 hang 个单位，末端锯齿；返回披毛末端的点，供挂冰凌。"""
     zc, w, yt, _, depth = RIBS[i]
     y_eq = yt - 0.45 * depth
     off = 0.43
@@ -584,6 +584,7 @@ def drape(rig: Rig, bone: str, name: str, i: int, s: float, hang: float, mat: st
         path.append((path[2][0] + hang * t * flare + rng.uniform(-0.1, 0.1) * s, y_eq - hang * t, zc + rng.uniform(-0.15, 0.15)))
     widths = [width, width, width * 0.95, width * 0.8, width * 0.6, width * 0.32]
     skin_strip(rig, bone, name, path, widths, s, mat)
+    return path[-1]
 
 
 def part_pelt(rig: Rig) -> None:
@@ -595,12 +596,10 @@ def part_pelt(rig: Rig) -> None:
         plan = ((0, 3.0), (1, 4.2), (2, 3.4), (6, 2.4), (7, 1.8))
         for i, hang in plan:
             bone = RIBS[i][3]
-            drape(rig, bone, side_name(f"drape{i}", s), i, s, hang * rng.uniform(0.9, 1.1), mats_cycle[i % 5], rng, width=0.82)
-            # 毛边挂冰凌
-            zc, w, yt, _, depth = RIBS[i]
-            y_eq = yt - 0.45 * depth
+            hem = drape(rig, bone, side_name(f"drape{i}", s), i, s, hang * rng.uniform(0.9, 1.1), mats_cycle[i % 5], rng, width=0.82)
             if i in (1, 7):
-                icicle(rig, bone, side_name(f"drape_ice{i}", s), (mx(w + 0.5 + hang * 0.26, s), y_eq - hang, zc), 1.6, 0.34, "ice_pale")
+                # 毛边挂冰凌：冰凌顶端就是披毛末端，不另算位置（披毛的垂长带随机，另算会脱开）
+                icicle(rig, bone, side_name(f"drape_ice{i}", s), (hem[0], hem[1] + 0.15, hem[2]), 1.6, 0.34, "ice_pale")
         # 背脊毛带：沿脊两侧，向外略翻，肩隆处最厚
         for k in range(6):
             z0 = SPINE_Z0 + k * 2.4
