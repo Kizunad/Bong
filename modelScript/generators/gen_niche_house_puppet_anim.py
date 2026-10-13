@@ -412,57 +412,65 @@ WALK_PERIOD = 1.6          # 沉重：一个周期（左右各一步）1.6s
 def walk_pose(phase: float, offset: Tuple[float, float, float] = GROUND, yaw: float = 0.0) -> Pose:
     """沉重步态在 phase（0~1，一个周期）处的姿态；phase 0 = 左脚在前着地。
 
-    - 腿：大腿前后摆 ±20°，摆动腿抬起时小腿折 42°、脚掌翻起；
-    - 身体：落脚时下沉 0.35px，胯左右倾 ±3°、胸反向拧 ±5°（重物步态）；
-    - 手臂和同侧腿反向摆 14°，前臂微屈；头随步点一点；
+    - 腿：大腿前后摆 ±34°，摆动腿抬起时小腿折 62°、脚掌翻起，两条腿交替清楚可见；
+    - 身体：落脚时下沉、摆腿时抬起（起伏 0.8px），重心随支撑腿左右移 0.8px，胯左右倾 ±5°、胸反向拧 ±6°（重物步态）；
+    - 手臂和同侧腿反向摆 26°，前臂随之屈伸；头随步点一点；
     - 阵核在每次落脚时亮一下（1.0 → 1.15，随步伐微亮）。"""
     a = 2 * math.pi * phase
     lift_l = max(0.0, -math.sin(a))          # 左腿在 phase 0.5~1 向前摆：抬起
     lift_r = max(0.0, math.sin(a))           # 右腿在 phase 0~0.5 向前摆
-    bob = -0.35 * math.cos(2 * a)
+    bob = -0.4 * math.cos(2 * a)             # 落脚（phase 0 / 0.5）最低，摆腿中段最高，起伏共 0.8px
+    sway = -0.8 * math.sin(a)                # 重心移向支撑腿（右腿摆动时移向左）
     pulse = 1.0 + 0.15 * max(0.0, math.cos(2 * a)) ** 2
     return merge(
-        puppet((offset[0], offset[1] + bob, offset[2]), yaw),
-        legs((-20.0 * math.cos(a), 42.0 * lift_l, -12.0 * lift_l + 4.0 * max(0.0, math.cos(a))),
-             (20.0 * math.cos(a), 42.0 * lift_r, -12.0 * lift_r + 4.0 * max(0.0, -math.cos(a)))),
-        {"pelvis": {"rot": [-1.0, 0.0, 3.0 * math.sin(a)]}, "chest": {"rot": [-1.0, 5.0 * math.cos(a), -2.0 * math.sin(a)]},
-         "head": {"rot": [-4.0 + 1.5 * math.cos(2 * a), -2.0 * math.cos(a), 0.0]}, "jaw": {"rot": [2.0, 0.0, 0.0]}},
-        {"arm_l": {"rot": [14.0 * math.cos(a), 0.0, 9.0]}, "arm_r": {"rot": [-14.0 * math.cos(a), 0.0, -9.0]},
-         "forearm_l": {"rot": [-14.0 - 4.0 * math.cos(a), 0.0, 3.0]}, "forearm_r": {"rot": [-14.0 + 4.0 * math.cos(a), 0.0, -3.0]}},
+        puppet((offset[0] + sway, offset[1] + bob, offset[2]), yaw),
+        legs((-34.0 * math.cos(a), 62.0 * lift_l, -16.0 * lift_l + 6.0 * max(0.0, math.cos(a))),
+             (34.0 * math.cos(a), 62.0 * lift_r, -16.0 * lift_r + 6.0 * max(0.0, -math.cos(a)))),
+        {"pelvis": {"rot": [-1.0, 0.0, 5.0 * math.sin(a)]}, "chest": {"rot": [-1.0, 6.0 * math.cos(a), -3.0 * math.sin(a)]},
+         "head": {"rot": [-4.0 + 2.0 * math.cos(2 * a), -2.0 * math.cos(a), 0.0]}, "jaw": {"rot": [2.0, 0.0, 0.0]}},
+        {"arm_l": {"rot": [26.0 * math.cos(a), 0.0, 9.0]}, "arm_r": {"rot": [-26.0 * math.cos(a), 0.0, -9.0]},
+         "forearm_l": {"rot": [-16.0 - 8.0 * math.cos(a), 0.0, 3.0]}, "forearm_r": {"rot": [-16.0 + 8.0 * math.cos(a), 0.0, -3.0]}},
         curl("l", 12.0, 6.0), curl("r", 12.0, 6.0), core(pulse),
     )
 
 
 def walk() -> dict:
-    """行走（循环 1.6s，地面上）：沉重的傀儡步态，每 0.2s 一个关键帧；首尾同值。"""
-    keys = [(i * 0.2, walk_pose(i / 8.0)) for i in range(8)]
+    """行走（循环 1.6s，地面上）：沉重的傀儡步态，每 0.1s 一个关键帧（16 个）；首尾同值。"""
+    keys = [(i * 0.1, walk_pose(i / 16.0)) for i in range(16)]
     keys.append((WALK_PERIOD, keys[0][1]))
     return build_clip(WALK_PERIOD, True, keys)
 
 
 def step_down() -> dict:
-    """从底座台阶迈下来（一次 1.6s）：起点是 wake 的 READY（在底座上）。身体前倾 → 右脚抬起迈过底座前沿 → 右脚落地、
-    整个身子随之下沉 1.5px → 左脚跟着迈下 → 两脚站稳。终点是 GROUND_READY（puppet 位移 = GROUND）。"""
-    lean1 = merge(READY, puppet((0.0, 0.1, -2.0)), spine((8.0, 0.0, 0.0)),
-                  legs((6.0, 4.0, 0.0), (-42.0, 50.0, -22.0)),
-                  {"arm_l": {"rot": [12.0, 0.0, 10.0]}, "arm_r": {"rot": [-12.0, 0.0, -10.0]}})
-    over = merge(READY, puppet((0.0, -0.3, -5.2)), spine((12.0, 0.0, 0.0)),
-                 legs((10.0, 10.0, 4.0), (-38.0, 24.0, -34.0)),
-                 {"arm_l": {"rot": [16.0, 0.0, 10.0]}, "arm_r": {"rot": [-16.0, 0.0, -10.0]}})
-    land_r = merge(READY, puppet((0.0, -1.5, -6.8)), spine((10.0, 0.0, 0.0)),
-                   legs((24.0, 10.0, 6.0), (-26.0, 30.0, -4.0)),
-                   {"arm_l": {"rot": [6.0, 0.0, 10.0]}, "arm_r": {"rot": [-6.0, 0.0, -10.0]}}, core(1.12))
-    swing_l = merge(READY, puppet((0.0, -1.5, -8.0)), spine((6.0, 0.0, 0.0)),
-                    legs((-38.0, 52.0, -22.0), (10.0, 6.0, 4.0)),
-                    {"arm_l": {"rot": [-10.0, 0.0, 10.0]}, "arm_r": {"rot": [10.0, 0.0, -10.0]}})
-    land_l = merge(READY, puppet((0.0, -1.5, -9.0)), spine((3.0, 0.0, 0.0)),
-                   legs((-14.0, 14.0, 0.0), (14.0, 6.0, 4.0)), core(1.12))
-    keys = [(0.0, READY), (0.28, lean1), (0.58, over), (0.82, land_r), (1.1, swing_l), (1.34, land_l), (1.6, GROUND_READY)]
-    return build_clip(1.6, False, keys)
+    """从底座台阶迈下来（一次 2.3s）：起点是 wake 的 READY（在底座上）。
+    ① 重心移到左腿（身体略右后仰、微下沉）→ ② **右腿抬起**（大腿前提 52°、小腿折 70°，身子仍在底座上方，微升）
+    → ③ 右脚向前探出底座前沿（重心前移、上身前倾）→ ④ **整体下沉一个底座高度（1.5px）**，右脚落地，
+    左腿被拖在台阶上向后伸 → ⑤ **左腿抬起跟下**（小腿折起绕过前沿）→ ⑥ 左脚落地并拢，起身站稳。
+    终点是 GROUND_READY（puppet 位移 = GROUND）。"""
+    shift = merge(READY, puppet((-0.7, -0.15, 0.0)), spine((-3.0, 0.0, 4.0)),
+                  legs((2.0, 4.0, 0.0), (0.0, 6.0, 0.0)),
+                  {"arm_l": {"rot": [8.0, 0.0, 10.0]}, "arm_r": {"rot": [-8.0, 0.0, -10.0]}})
+    lift_r = merge(READY, puppet((-0.5, 0.25, -0.8)), spine((2.0, 0.0, 3.0)),
+                   legs((4.0, 6.0, 0.0), (-52.0, 70.0, -12.0)),
+                   {"arm_l": {"rot": [16.0, 0.0, 10.0]}, "arm_r": {"rot": [-16.0, 0.0, -10.0]}})
+    reach_r = merge(READY, puppet((0.0, 0.0, -3.4)), spine((14.0, 0.0, 0.0)),
+                    legs((16.0, 14.0, 4.0), (-48.0, 26.0, -30.0)),
+                    {"arm_l": {"rot": [20.0, 0.0, 10.0]}, "arm_r": {"rot": [-20.0, 0.0, -10.0]}})
+    drop_r = merge(READY, puppet((0.0, -1.5, -6.6)), spine((12.0, 0.0, 0.0)),
+                   legs((34.0, 6.0, 10.0), (-28.0, 20.0, -2.0)),
+                   {"arm_l": {"rot": [4.0, 0.0, 10.0]}, "arm_r": {"rot": [-4.0, 0.0, -10.0]}}, core(1.14))
+    lift_l = merge(READY, puppet((0.0, -1.5, -7.6)), spine((8.0, 0.0, 0.0)),
+                   legs((-50.0, 72.0, -14.0), (12.0, 4.0, 2.0)),
+                   {"arm_l": {"rot": [-12.0, 0.0, 10.0]}, "arm_r": {"rot": [12.0, 0.0, -10.0]}})
+    land_l = merge(READY, puppet((0.0, -1.5, -9.0)), spine((4.0, 0.0, 0.0)),
+                   legs((-16.0, 14.0, 0.0), (14.0, 6.0, 4.0)), core(1.12))
+    keys = [(0.0, READY), (0.3, shift), (0.7, lift_r), (1.0, reach_r), (1.3, drop_r), (1.65, lift_l), (1.95, land_l),
+            (2.3, GROUND_READY)]
+    return build_clip(2.3, False, keys)
 
 
 def return_clip() -> dict:
-    """走回底座（一次 3.3s）：起点 GROUND_READY → 转身 180°（头先转）→ 沉重地走回底座前沿 → 右脚、左脚依次迈上台阶（身子升回
+    """走回底座（一次 3.9s）：起点 GROUND_READY → 转身 180°（头先转）→ 沉重地走回底座前沿 → 右脚、左脚依次迈上台阶（身子升回
     原位）→ 站定后转回正面（再转 180°，累计 360°）、含胸垂头、阵核暗下去 → 终点就是 dormant 的第 0 帧（在底座上）。"""
     turn_head = merge(GROUND_READY, {"head": {"rot": [-4.0, 70.0, 0.0]}}, spine((-2.0, 30.0, 0.0)), puppet(GROUND, 40.0))
     turned = merge(walk_pose(0.0, GROUND, 180.0), {"head": {"rot": [-4.0, 0.0, 0.0]}})
@@ -472,12 +480,15 @@ def return_clip() -> dict:
     up_r = merge(READY, puppet((0.0, -0.1, -2.0), 180.0), spine((10.0, 0.0, 0.0)), legs((20.0, 8.0, 4.0), (-30.0, 22.0, -10.0)))
     step_l = merge(READY, puppet((0.0, 0.3, -0.8), 180.0), spine((6.0, 0.0, 0.0)), legs((-50.0, 56.0, -24.0), (18.0, 6.0, 4.0)))
     on_base = merge(READY, puppet((0.0, 0.0, 0.0), 180.0), spine((4.0, 0.0, 0.0)), legs((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), core(1.05))
-    turning = merge(SLUMP, puppet((0.0, 0.0, 0.0), 270.0), core(0.95))
+    # 转回正面时身体保持 READY 站姿（竖直、不含胸），只转 puppet 的 yaw；转完站定后再原地收成 dormant 的含胸垂头姿态，
+    # 避免「边转身边含胸」把侧面的含胸姿态叠在转角上，读成侧倾 / 压扁。
+    turning = merge(READY, puppet((0.0, 0.0, 0.0), 270.0), core(1.05))
+    facing_front = merge(READY, puppet((0.0, 0.0, 0.0), 360.0), core(1.05))
     dormant_end = merge(SLUMP, puppet((0.0, 0.0, 0.0), 360.0), core(0.9))
     keys = [(0.0, GROUND_READY), (0.3, turn_head), (0.6, turned), (0.8, walks[1]), (1.0, walks[2]), (1.2, walks[3]),
             (1.4, walks[4]), (1.6, walks[5]), (1.85, step_r), (2.1, up_r), (2.35, step_l), (2.6, on_base),
-            (2.95, turning), (3.3, dormant_end)]
-    return build_clip(3.3, False, keys)
+            (2.95, turning), (3.3, facing_front), (3.9, dormant_end)]
+    return build_clip(3.9, False, keys)
 
 
 CLIPS: Dict[str, Callable[[], dict]] = {
@@ -640,10 +651,10 @@ def self_test() -> None:
     base_moves["animations"][f"{CLIP_PREFIX}walk"]["bones"]["base"] = {"position": {"0.0": [0, 0, 0], "1.6": [0, 0, 0]}}
     must_fail("底座有关键帧", lambda: check_animations(base_moves))
     cut = copy.deepcopy(animations)
-    cut["animations"][f"{CLIP_PREFIX}step_down"]["bones"]["puppet"]["position"]["1.6"] = [0.0, 0.0, 0.0]
+    cut["animations"][f"{CLIP_PREFIX}step_down"]["bones"]["puppet"]["position"]["2.3"] = [0.0, 0.0, 0.0]
     must_fail("step_down 没落到地面", lambda: check_animations(cut))
     broken_chain = copy.deepcopy(animations)
-    broken_chain["animations"][f"{CLIP_PREFIX}return"]["bones"]["head"]["rotation"]["3.3"] = [40.0, 0.0, 0.0]
+    broken_chain["animations"][f"{CLIP_PREFIX}return"]["bones"]["head"]["rotation"]["3.9"] = [40.0, 0.0, 0.0]
     must_fail("return 末帧接不上 dormant", lambda: check_animations(broken_chain))
     broken_walk = copy.deepcopy(animations)
     broken_walk["animations"][f"{CLIP_PREFIX}strike_ground"]["bones"]["thigh_l"]["rotation"]["0.0"] = [-5.0, 0.0, 0.0]
