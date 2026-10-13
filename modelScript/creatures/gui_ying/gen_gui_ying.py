@@ -57,14 +57,15 @@ Cube = dict
 # ── 配色：只有深色边 + 一条高对比的骨灰色环线，没有半透明 ─────────────────────────
 PALETTE: Dict[str, Tuple[int, int, int]] = {
     "void": (8, 7, 12),            # 空洞：全模型最暗
-    "rim": (26, 24, 31),           # 环的外缘 / 内缘深色边
-    "body": (58, 54, 64),          # 环体
-    "body_lit": (84, 80, 90),      # 环体偶尔亮一块，避免一整片死色
-    "line": (214, 208, 197),       # 环线：骨灰色，和深边的亮度差拉满
-    "ash": (152, 148, 142),        # 碎灰
-    "ash_dark": (96, 92, 90),
-    "leaf": (118, 98, 68),         # 枯叶
-    "leaf_dark": (78, 64, 46),
+    "rim": (50, 47, 54),           # 环的外缘 / 内缘：深灰（不再是近黑）
+    "body": (88, 84, 90),          # 环体：深灰石块
+    "body_dark": (70, 67, 74),     # 石块的暗面
+    "body_lit": (112, 108, 112),   # 石块的亮面
+    "line": (184, 180, 172),       # 环线：浅灰（不再是近白），和深边仍拉开亮度差
+    "ash": (152, 148, 142),        # 碎石亮面
+    "ash_dark": (96, 92, 90),      # 碎石暗面
+    "leaf": (118, 98, 68),         # 枯叶叶片
+    "leaf_dark": (74, 60, 42),     # 枯叶叶脉
 }
 MATERIALS = tuple(PALETTE)
 
@@ -77,7 +78,7 @@ def luminance(rgb: Tuple[int, int, int]) -> float:
 
 AXIS_PITCH_DEG = 38.0                       # 开口方向朝前上方 38°
 CENTER = np.array([0.0, 20.0, 8.0])         # 旋涡中心（局部原点），世界坐标；z 向前挪 8，让整团（含拖到尖端的碎屑）在 ±24 内
-HOVER_Y = 4.0                               # 整体最低点悬空 4px
+HOVER_Y = 3.0                               # 整体最低点悬空 4px
 LAYER_COUNT = 6
 LAYERS = [
     # 外半径, 环宽, 深度 w（开口 = 0，往里为负）, 相位（度，每层多转 17°）
@@ -100,7 +101,7 @@ DEBRIS_GROUPS = 10                          # 碎屑沿螺旋线切成 10 组，
 DEBRIS_R = (18.2, 21.0)                     # 碎屑绕旋半径：必须在最外层之外
 DEBRIS_W = (4.0, -20.0)
 CONTRAST_MIN = 120.0                        # 环线与深色边的亮度差下限
-CELL = 0.5                                  # 体素边长（px）：环宽只有 2.4~3.4px，1px 体素会把环打成噪点
+CELL = 1.0                                  # 体素边长（px）：立方体数必须 < 2000（调度意见③），所以回到 1px 体素；环宽 2.4~3.4px 靠 3 格宽 + 环线读出
 
 U_HAT = np.array([1.0, 0.0, 0.0])
 _PITCH = math.radians(AXIS_PITCH_DEG)
@@ -110,9 +111,9 @@ V_HAT = np.cross(W_HAT, U_HAT)
 Cell = Tuple[int, int, int]
 Cells = Dict[Cell, str]
 
-GRID_X = range(-56, 56)                     # 单位：CELL
-GRID_Y = range(0, 112)
-GRID_Z = range(-60, 60)
+GRID_X = range(int(-28 / CELL), int(28 / CELL))      # 单位：CELL
+GRID_Y = range(0, int(56 / CELL))
+GRID_Z = range(int(-30 / CELL), int(30 / CELL))
 
 
 def _grid() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -175,8 +176,10 @@ def ring_cells(i: int) -> Cells:
     mask = _surface(body | spike)
 
     mat = np.full(xs.shape, MATERIALS.index("body"), dtype=int)
-    lit = ((np.floor(u / 2) * 7 + np.floor(v / 2) * 13 + np.floor(w / 2) * 5 + i * 3) % 8) == 0
-    mat[lit] = MATERIALS.index("body_lit")
+    # 石块纹：2px 一块的石砖，三档明暗按哈希铺开（粒度取 2px 是为了不把体素合并打碎）
+    block = (np.floor(u / 2) * 7 + np.floor(v / 2) * 13 + np.floor(w / 2) * 5 + i * 3) % 7
+    mat[block == 0] = MATERIALS.index("body_lit")
+    mat[block >= 4] = MATERIALS.index("body_dark")
     front = w >= spec["w"] + LAYER_THICK / 2 - CELL * 1.5                   # 朝开口的那一面
     line_band = (r >= spec["r_out"] - 2.0) & (r <= spec["r_out"] - 1.0) & front
     mat[line_band] = MATERIALS.index("line")
@@ -222,44 +225,77 @@ def debris_group_cells(seed: int = 7) -> Dict[str, Cells]:
         local = np.array([radius * math.cos(theta), radius * math.sin(theta), w])
         world = CENTER + local[0] * U_HAT + local[1] * V_HAT + local[2] * W_HAT
         base = [int(math.floor(world[a])) * per_px for a in range(3)]
-        if rng.random() < 0.55:
-            size = (1, 1, 1)
-            material = "ash" if rng.random() < 0.6 else "ash_dark"
-        else:
-            size = rng.choice(((3, 1, 2), (2, 1, 3), (3, 2, 1), (1, 2, 3), (2, 3, 1)))
-            material = "leaf" if rng.random() < 0.6 else "leaf_dark"
+        shape = rubble_shape(rng) if rng.random() < 0.5 else leaf_shape(rng)
         cells = groups[f"debris_{min(DEBRIS_GROUPS - 1, k * DEBRIS_GROUPS // DEBRIS_COUNT):02d}"]
-        for dx in range(size[0] * per_px):
-            for dy in range(size[1] * per_px):
-                for dz in range(size[2] * per_px):
-                    cell = (base[0] + dx, base[1] + dy, base[2] + dz)
-                    if cell not in taken:
-                        taken.add(cell)
-                        cells[cell] = material
+        for (dx, dy, dz), material in shape.items():
+            cell = (base[0] + dx, base[1] + dy, base[2] + dz)
+            if cell not in taken:
+                taken.add(cell)
+                cells[cell] = material
     return groups
+
+
+def rubble_shape(rng: random.Random) -> Cells:
+    """多面碎石：菱形截面的小石块（|x|/a + |y|/b + |z|/c ≤ 1，所以每个面都是斜切的 facet），
+    朝一个方向的几个面是亮面 ash，另一侧是暗面 ash_dark，读成有棱有角的石头而不是方块。"""
+    a, b, c = (rng.choice((2.0, 2.5, 3.0)) * 0.5 / CELL for _ in range(3))      # 半径 1~1.5px，随体素边长换算成格数
+    reach = int(math.ceil(max(a, b, c)))
+    light = np.array([rng.choice((-1, 1)), 1, rng.choice((-1, 1))])
+    shape: Cells = {}
+    for x in range(-reach, reach + 1):
+        for y in range(-reach, reach + 1):
+            for z in range(-reach, reach + 1):
+                if abs(x) / a + abs(y) / b + abs(z) / c <= 1.05:
+                    shape[(x, y, z)] = "ash" if (np.array([x, y, z]) * light).sum() >= 0 else "ash_dark"
+    return shape
+
+
+def leaf_shape(rng: random.Random) -> Cells:
+    """枯叶片：一格厚的椭圆叶片（长 7~9 格、宽 4~5 格），中轴一条叶脉（leaf_dark）加两对斜侧脉；叶片所在平面随机取三个轴向之一。"""
+    length, width = max(3, round(rng.choice((7, 8, 9)) * 0.5 / CELL)), max(2, round(rng.choice((4, 5)) * 0.5 / CELL))
+    axes = list(range(3))
+    rng.shuffle(axes)
+    shape: Cells = {}
+    for i in range(-(length // 2), length // 2 + 1):
+        for j in range(-(width // 2), width // 2 + 1):
+            if (i / (length / 2 + 0.3)) ** 2 + (j / (width / 2 + 0.3)) ** 2 > 1.0:
+                continue
+            vein = j == 0 or (abs(j) == 1 and abs(i) in (1, 3) and i * j > 0 if abs(i) <= 3 else False)
+            cell = [0, 0, 0]
+            cell[axes[0]], cell[axes[1]] = i, j
+            shape[tuple(cell)] = "leaf_dark" if vein else "leaf"
+    return shape
 
 
 # ── 体素 → 立方体（沿 x 合并同材质连续体素） ─────────────────────────────────────
 
 
 def cells_to_cubes(cells: Cells, name: str, group: str, y_shift: float = 0.0) -> List[Cube]:
-    rows: Dict[Tuple[int, int, str], List[int]] = {}
-    for (x, y, z), material in cells.items():
-        rows.setdefault((y, z, material), []).append(x)
+    """贪心三维合并：同材质的体素先沿 x 连成条、再沿 y 叠成面、再沿 z 叠成块，一个块 = 一个立方体。"""
+    remaining = dict(cells)
     cubes: List[Cube] = []
-    for (y, z, material), xs in sorted(rows.items()):
-        xs.sort()
-        start = prev = xs[0]
-        for x in xs[1:] + [None]:
-            if x is not None and x == prev + 1:
-                prev = x
-                continue
-            cubes.append({"name": f"{name}_{len(cubes):04d}",
-                          "from": [round(start * CELL, 4), round(y * CELL + y_shift, 4), round(z * CELL, 4)],
-                          "to": [round((prev + 1) * CELL, 4), round((y + 1) * CELL + y_shift, 4), round((z + 1) * CELL, 4)],
-                          "group": group, "material": material})
-            if x is not None:
-                start = prev = x
+    for cell in sorted(cells, key=lambda c: (c[2], c[1], c[0])):
+        material = remaining.get(cell)
+        if material is None:
+            continue
+        x0, y0, z0 = cell
+        x1 = x0
+        while remaining.get((x1 + 1, y0, z0)) == material:
+            x1 += 1
+        y1 = y0
+        while all(remaining.get((x, y1 + 1, z0)) == material for x in range(x0, x1 + 1)):
+            y1 += 1
+        z1 = z0
+        while all(remaining.get((x, y, z1 + 1)) == material for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)):
+            z1 += 1
+        for x in range(x0, x1 + 1):
+            for y in range(y0, y1 + 1):
+                for z in range(z0, z1 + 1):
+                    del remaining[(x, y, z)]
+        cubes.append({"name": f"{name}_{len(cubes):04d}",
+                      "from": [round(x0 * CELL, 4), round(y0 * CELL + y_shift, 4), round(z0 * CELL, 4)],
+                      "to": [round((x1 + 1) * CELL, 4), round((y1 + 1) * CELL + y_shift, 4), round((z1 + 1) * CELL, 4)],
+                      "group": group, "material": material})
     return cubes
 
 
@@ -381,6 +417,7 @@ def check_contrast(palette: Dict[str, Tuple[int, int, int]]) -> None:
 
 def check_cubes(cubes: List[Cube]) -> None:
     """成品门禁：共面（无旋转块被跳过）、外包 48×48×48 内且悬空 ≥0、六层环都在、空洞在、碎屑在环外且数量够。"""
+    assert len(cubes) < MAX_CUBES, f"立方体 {len(cubes)} 个，要 < {MAX_CUBES}"
     _assert_no_coplanar_faces(cubes)
     lo = [min(c["from"][i] for c in cubes) for i in range(3)]
     hi = [max(c["to"][i] for c in cubes) for i in range(3)]
@@ -406,6 +443,7 @@ def check_cubes(cubes: List[Cube]) -> None:
 
 
 MIN_MOVING_BONES = 16
+MAX_CUBES = 2000                            # 调度意见③：一只生物 6741 个立方体太多，压到 2000 以内
 
 
 def check_bones(cubes: List[Cube], table=None, minimum: int = MIN_MOVING_BONES) -> int:
@@ -460,6 +498,7 @@ def self_test() -> None:
     inner = {"name": "debris_inject", "from": [float(origin[0]), float(origin[1]), float(origin[2])],
              "to": [float(origin[0]) + 1, float(origin[1]) + 1, float(origin[2]) + 1], "group": "debris_00", "material": "ash"}
     must_fail("碎屑落进环内", lambda: check_cubes(cubes + [inner]))
+    must_fail("立方体太多", lambda: check_cubes(cubes * 2))
     twin = dict(cubes[0], name="dup")
     must_fail("共面", lambda: check_cubes(cubes + [twin]))
 
