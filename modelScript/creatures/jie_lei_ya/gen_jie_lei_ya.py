@@ -48,7 +48,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "JieLeiYa.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "JieLeiYa.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -69,7 +69,6 @@ FEATHER_MATS = ("feather_black", "feather_dark", "char_brown", "ash_grey")
 BODY_Y = 14.0                       # 躯干体轴高度
 CHEST_Z, BELLY_Z, RUMP_Z = -8.5, -0.5, 6.0
 RUMP_END_Z = 12.0
-CHEST_R, BELLY_R, RUMP_R = 5.2, 5.4, 4.2
 MIN_MOVING_BONES = 24
 
 # 右翼关节点（左翼取 x 反号）：肩 → 肘 → 腕 → 手尖
@@ -290,12 +289,25 @@ def part_neck(rig: Rig) -> None:
 # ===========================================================================
 # 3. 躯干：八棱芯 + 七条鳞状羽列
 # ===========================================================================
+# 躯干半径沿 z 的折线：胸口接颈处收窄，胸腹最鼓，臀往尾收细成一颗蛋
+CORE_PROFILE = ((CHEST_Z, 4.2), (-5.5, 5.2), (-1.0, 5.7), (3.0, 5.5), (7.0, 4.6), (RUMP_END_Z, 3.0))
+CORE_SLICES = 8
+CORE_RING_T = 2.0                  # 外壳环径向厚；里面再填一个八棱芯，不透光
+CORE_SIDES = 16
+
+
 def core_radius(z: float) -> float:
-    if z < -0.5:
-        return CHEST_R
-    if z < 6.0:
-        return BELLY_R
-    return RUMP_R
+    for (z0, r0), (z1, r1) in zip(CORE_PROFILE, CORE_PROFILE[1:]):
+        if z <= z1:
+            t = min(1.0, max(0.0, (z - z0) / (z1 - z0)))
+            return r0 + (r1 - r0) * (t * t * (3.0 - 2.0 * t))
+    return CORE_PROFILE[-1][1]
+
+
+def core_y(z: float) -> float:
+    """躯干中心高度：臀部略低 0.4，和原稿一致。"""
+    t = min(1.0, max(0.0, (z - 3.0) / 6.0))
+    return BODY_Y - 0.4 * (t * t * (3.0 - 2.0 * t))
 
 
 def octa_core(rig: Rig, bone: str, stem: str, yc: float, z0: float, z1: float, r: float) -> None:
@@ -307,15 +319,39 @@ def octa_core(rig: Rig, bone: str, stem: str, yc: float, z0: float, z1: float, r
              mat="feather_dark")
 
 
+def poly_ring(rig: Rig, bone: str, stem: str, yc: float, z0: float, z1: float, apothem: float, t: float) -> None:
+    """CORE_SIDES 边形环：边心角 0°, 22.5°, …（0° = +X）。左右镜像边共用词干（折到 x≥0 一侧），才对得上镜像门。"""
+    step = 360.0 / CORE_SIDES
+    half = math.radians(step / 2)
+    vertex_r = (apothem - t / 2) / math.cos(half)
+    zc, zlen = (z0 + z1) / 2, z1 - z0
+    for k in range(CORE_SIDES):
+        ang = step * k
+        pts = [(vertex_r * math.cos(math.radians(ang) + d), yc + vertex_r * math.sin(math.radians(ang) + d), zc) for d in (-half, half)]
+        cx = math.cos(math.radians(ang))
+        if abs(cx) < 1e-6:
+            name = f"{stem}_a{k}"
+        else:
+            name = f"{stem}_a{k if cx > 0 else (CORE_SIDES // 2 - k) % CORE_SIDES}{'_r' if cx > 0 else '_l'}"
+        frm, to, rot, org = shaft_box(pts[0], pts[1], t / 2, zlen / 2, t / 2 * math.tan(half), (0.0, 0.0, 1.0))
+        rig.cube(bone, name, frm, to, rot=rot, org=org, mat="feather_dark" if k % 2 else "feather_black")
+
+
 ROW_PHIS = (0.0, 35.0, 65.0, -35.0, -65.0)        # 两侧羽列的环向角（°，自水平向上为正）
 BLADE_LEN = 4.6
 BLADE_STRIDE = 3.4
 
 
 def part_torso(rig: Rig) -> None:
-    octa_core(rig, "spine_0", "chest", BODY_Y, CHEST_Z, BELLY_Z, CHEST_R)
-    octa_core(rig, "spine_1", "belly", BODY_Y, BELLY_Z, RUMP_Z, BELLY_R)
-    octa_core(rig, "spine_1", "rump", BODY_Y - 0.4, RUMP_Z, RUMP_END_Z, RUMP_R)
+    """躯干 = 沿 z 切 8 片的十六边形环（半径跟着 CORE_PROFILE 走成一颗蛋）+ 每片里一个八棱芯。"""
+    dz = (RUMP_END_Z - CHEST_Z) / CORE_SLICES
+    for n in range(CORE_SLICES):
+        z0, z1 = CHEST_Z + dz * n, CHEST_Z + dz * (n + 1)
+        zm = (z0 + z1) / 2
+        r, yc = core_radius(zm), core_y(zm)
+        bone = "spine_0" if zm < CHEST_Z + 8.0 else "spine_1"
+        poly_ring(rig, bone, f"torso{n}", yc, z0, z1, r, CORE_RING_T)
+        octa_core(rig, bone, f"core{n}", yc, z0, z1, r - CORE_RING_T)
     rows = [(phi, True) for phi in ROW_PHIS] + [(90.0, False), (-90.0, False)]
     for ri, (phi, sided) in enumerate(rows):
         ph = math.radians(phi)
@@ -326,7 +362,8 @@ def part_torso(rig: Rig) -> None:
             k = 0
             while z + BLADE_LEN <= RUMP_END_Z + 0.2:
                 r = core_radius(z)
-                a = (nrm[0] * (r + 0.35), BODY_Y + nrm[1] * (r + 0.35), z)
+                yc = core_y(z)
+                a = (nrm[0] * (r + 0.35), yc + nrm[1] * (r + 0.35), z)
                 b = (a[0] + nrm[0] * 0.8, a[1] + nrm[1] * 0.8, z + BLADE_LEN)
                 bone = "spine_0" if z < CHEST_Z + 8.0 else "spine_1"
                 feather(rig, bone, f"body{ri}_{k}", tag, a, b, 1.55, 0.35, mat="feather_black" if (k + ri) % 2 else "feather_dark",
@@ -494,7 +531,7 @@ def part_bolts(rig: Rig) -> None:
             base = lerp3(WING_W, WING_T, PRIMARY_T[g])
             base = (s * base[0], base[1] - 0.2, base[2] + 0.4)
             ang = math.radians(PRIMARY_ANGLE[g])
-            d = (s * math.cos(ang), 0.06, math.sin(ang))
+            d = (s * math.cos(ang), 0.16, math.sin(ang))
             ln = PRIMARY_LEN[g]
             a = (base[0] + d[0] * ln * 0.2, base[1] + d[1] * ln * 0.2, base[2] + d[2] * ln * 0.2)
             b = (base[0] + d[0] * ln * 0.78, base[1] + d[1] * ln * 0.78, base[2] + d[2] * ln * 0.78)
@@ -504,9 +541,9 @@ def part_bolts(rig: Rig) -> None:
         a = (a[0], a[1] - 0.4, a[2] + 3.0)
         b = (a[0] + s * 2.4, a[1], a[2] + 11.0)
         bolt_line(rig, f"sec_out{t}", "bolt_s_", t, a, b, lateral=(s, 0.0, 0.0), rise=0.65, zig=0.7)
-        # 胸侧：沿躯干侧面贴着八棱芯外那圈羽（半径 CHEST_R + 1.5）折线下行
-        c0 = (s * (CHEST_R + 1.5), BODY_Y + 2.4, CHEST_Z + 1.2)
-        c1 = (s * (CHEST_R + 1.5), BODY_Y - 1.6, CHEST_Z + 7.2)
+        # 胸侧：沿躯干侧面贴着八棱芯外那圈羽（半径 core_radius + 1.5）折线下行
+        c0 = (s * (core_radius(CHEST_Z + 1.2) + 1.5), BODY_Y + 2.4, CHEST_Z + 1.2)
+        c1 = (s * (core_radius(CHEST_Z + 7.2) + 1.5), BODY_Y - 1.6, CHEST_Z + 7.2)
         bolt_line(rig, "spine_0", "bolt_c_", t, c0, c1, lateral=(0.0, 0.0, 1.0), rise=0.0, zig=0.8)
     # 尾羽中片上一条
     a, b = (0.0, 14.0 + 0.35 + 0.25, TAIL_Z0 + 8.0), (0.0, 14.0 - 1.5 + 0.35 + 0.25 - 0.3, TAIL_Z0 + 22.0)
