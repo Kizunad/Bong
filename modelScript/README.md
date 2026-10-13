@@ -16,6 +16,20 @@ pip install -r modelScript/requirements.txt
 
 项目根的 `bbmodel.toml` 告诉库「根在哪、产出往哪写、命名空间叫什么」。
 
+## 玩家 25 关节骨架与校准动画
+
+`player_rig/` 为 Kizuna-Players-Animation 生成骨架模板和校准动画（交付物只进模组仓，生成脚本留在这里）：
+
+```bash
+python3 -m modelScript.player_rig.generate --mod-repo ~/Code/Kizuna-Players-Animation   # 重新生成全部交付物
+python3 -m unittest modelScript.player_rig.tests.test_vanilla                           # 原版几何重建 vs 游戏导出
+python -m modelScript.player_rig.compare --out DIR   # 零姿态逐像素对照（需 bbmodel-maker）
+python -m modelScript.player_rig.preview --out DIR   # 五个校准动画的三视角关键帧 + GIF
+```
+
+几何复用 `client/tools/bbmodel_convert/blockbench_convert.js` 的 Bedrock codec；接口以模组仓
+`docs/asset-contract.md` 为准。
+
 ## 生物资源接入 client
 
 `exporters/export_creature_assets.py` 将最终 Rig 的几何、内嵌 PNG、绑定动画一起导出，
