@@ -47,7 +47,7 @@ from bbmodel_maker.render.held_item_common import (
 import handheld_textures as textures
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from handheld_check import write_check_sheet  # noqa: E402
+from handheld_check import review_available, write_check_sheet  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models"
@@ -173,7 +173,7 @@ def main() -> None:
     outputs = write_assets(items(), bbmodel_dir=BBMODEL_DIR, client_resources=None, render_previews=False)
     bbmodel = outputs[f"bbmodel:{ITEM_ID}"]
     print(f"[bbmodel] {bbmodel.relative_to(REPO)}")
-    if not args.no_check:
+    if not args.no_check and review_available():
         print(f"[check] {write_check_sheet(bbmodel, ITEM_ID)}")
 
 

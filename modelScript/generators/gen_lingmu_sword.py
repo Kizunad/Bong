@@ -490,7 +490,7 @@ def main():
     bbmodel_path = outputs[f"bbmodel:{item.key}"]
     print(f"✓ Blockbench 模型已生成: {bbmodel_path}")
 
-    if not args.no_preview:
+    if not args.no_preview and REVIEW_DIR.parents[2].is_dir():          # CI / golden 沙箱里没有 model-review
         render_views(bbmodel_path)
 
 

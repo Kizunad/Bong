@@ -23,6 +23,12 @@ from bbmodel_maker.render.render_bbmodel import render
 from PIL import Image, ImageDraw
 
 REVIEW_ROOT = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/handheld")
+
+
+def review_available() -> bool:
+    """审阅图目录所在的 model-review 是否存在。CI 与 golden 沙箱里没有它，出图要跳过而不是在无权限路径上 mkdir 崩掉。"""
+    return REVIEW_ROOT.parents[1].is_dir()
+
 BACKGROUND = (119, 119, 119)
 PANEL_BACKGROUND = (28, 29, 33)
 LABEL_BACKGROUND = (24, 25, 28)

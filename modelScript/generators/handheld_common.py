@@ -28,6 +28,12 @@ REPO = GENERATORS.parents[1]
 MODEL_DIR = GENERATORS.parent / "models"
 REVIEW_ROOT = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/handheld")
 
+
+def review_available() -> bool:
+    """审阅图目录所在的 model-review 是否存在。CI 与 golden 沙箱里没有它，出图要跳过而不是在无权限路径上 mkdir 崩掉。"""
+    return REVIEW_ROOT.parents[1].is_dir()
+
+
 BG = (119, 119, 119)
 LABEL_BG = (24, 25, 28)
 CANVAS_BG = (28, 29, 33)

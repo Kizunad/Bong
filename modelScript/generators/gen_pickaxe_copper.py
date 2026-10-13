@@ -623,7 +623,8 @@ def main():
         json.dump(bb_json, f, indent=2)
     print(f"✓ PickaxeCopper bbmodel 写入成功: {BBMODEL_OUT} (包含 {len(cubes)} 个立方体)")
 
-    render_views(BBMODEL_OUT)
+    if REVIEW_DIR.parents[2].is_dir():          # CI / golden 沙箱里没有 model-review，跳过出图
+        render_views(BBMODEL_OUT)
 
 
 if __name__ == "__main__":
