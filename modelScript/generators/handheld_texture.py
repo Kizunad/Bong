@@ -496,6 +496,16 @@ PAINTERS: Dict[str, Callable[[dict], Painter]] = {
     "cinnabar": _ink("#a02820", 504),
     "cinnabar_dark": _ink("#5c1814", 505),
     "void": _void,
+    # 诡影（负灵域漩涡）：深灰石环 / 浅灰带 / 碎石 / 枯叶，轮廓全靠明暗对比
+    "slate": _stone_chipped("#585560", "#6e6a72", 601),
+    "slate_dark": _stone_chipped("#46434c", "#58555e", 602),
+    "slate_lit": _stone_chipped("#706c74", "#8a868c", 603),
+    "slate_rim": _stone_chipped("#2c2a32", "#3a3740", 604),
+    "ash_band": _stone_chipped("#b4b0a6", "#cac6ba", 605),
+    "rubble": _stone_chipped("#98948c", "#b0aca2", 606),
+    "rubble_dark": _stone_chipped("#5e5a58", "#767270", 607),
+    "dry_leaf": _leather("#76624a", 608),
+    "dry_leaf_vein": _leather("#4a3c2a", 609),
 }
 
 # 平色对照版：每个材质一个纯色（取该材质画笔的中间色）
@@ -510,6 +520,9 @@ FLAT_COLORS: Dict[str, str] = {
     "paper": "#c8b48a", "paper_ochre": "#b09664", "paper_frost": "#808e98", "paper_scorch": "#3a3230",
     "ink_ochre": "#a8741c", "ink_blue": "#32546f", "ink_cinnabar": "#b02a20", "cinnabar": "#a02820",
     "cinnabar_dark": "#5c1814", "void": "#181418",
+    "slate": "#605d68", "slate_dark": "#4c4954", "slate_lit": "#7a767c", "slate_rim": "#312f38",
+    "ash_band": "#bdb9ae", "rubble": "#a09c94", "rubble_dark": "#665f5d",
+    "dry_leaf": "#76624a", "dry_leaf_vein": "#4a3c2a",
 }
 
 

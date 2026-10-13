@@ -664,13 +664,69 @@ def render_sheets(prev_model: Path | None = None) -> None:
     print(f"[sheets] {REVIEW_DIR}  (bones={bones})")
 
 
+# ── 像素贴图（画笔库 handheld_texture，诡影的材质见该文件 "slate" 等条目） ───────────────
+
+TEXTURE_MATERIAL = {
+    "void": "void", "rim": "slate_rim", "body": "slate", "body_dark": "slate_dark", "body_lit": "slate_lit",
+    "line": "ash_band", "ash": "rubble", "ash_dark": "rubble_dark", "leaf": "dry_leaf", "leaf_dark": "dry_leaf_vein",
+}
+
+
+def write_textured(cubes: List[Cube], out_path: Path, flat: bool = False) -> Path:
+    """每面独立 UV 的像素贴图版（flat=True 出平色对照）。write_textured_bbmodel 只会按组平铺 outliner，
+    这里再把它改回真骨骼层级（枢轴在轴线上），动画才绑得上。"""
+    sys.path.insert(0, str(REPO / "modelScript" / "generators"))
+    from handheld_texture import flat_override, handheld_override  # noqa: E402
+    from pixel_texture import write_textured_bbmodel  # noqa: E402
+
+    mapped = [dict(c, material=TEXTURE_MATERIAL[c["material"]]) for c in cubes]
+    write_textured_bbmodel(mapped, out_path, MODEL_ID, None, flat_override if flat else handheld_override)
+    doc = json.loads(out_path.read_text(encoding="utf-8"))
+    by_group = {g["name"]: g["children"] for g in doc["outliner"]}
+    table = bone_table()
+    nodes = {n: {"name": n, "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
+    outliner = []
+    for n, (parent, _) in table.items():
+        (outliner if parent is None else nodes[parent]["children"]).append(nodes[n])
+    doc["outliner"] = outliner
+    doc["textures"][0]["folder"] = "entity"
+    out_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    return out_path
+
+
+def render_check_tex() -> None:
+    """check_tex.png：平色 | 贴图，三个视角各一对。"""
+    from bbmodel_maker.render.render_bbmodel import render
+
+    flat = write_textured(all_cubes(), MODEL_DIR / "GuiYing_flat_tmp.bbmodel", flat=True)
+    tex = write_textured(all_cubes(), MODEL_DIR / "GuiYing_tex.bbmodel")
+    bg, size = (119, 119, 119), 440
+    views = (("3/4 FRONT-RIGHT (yaw-30 pitch32)", -30.0, 32.0), ("FRONT +Z (yaw0 pitch0)", 0.0, 0.0), ("SIDE +X (yaw90 pitch0)", 90.0, 0.0))
+    canvas = Image.new("RGB", (len(views) * 2 * (size + 8), size + 30), (28, 29, 33))
+    draw = ImageDraw.Draw(canvas)
+    x = 0
+    for label, yaw, pitch in views:
+        for title, path in (("FLAT", flat), ("TEXTURED", tex)):
+            canvas.paste(render(path, yaw=yaw, pitch=pitch, size=size, bg=bg, shading="mc")[0], (x, 30))
+            draw.text((x + 4, 8), f"{title}: {label}", fill=(230, 230, 230))
+            x += size + 8
+    flat.unlink()
+    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    canvas.save(REVIEW_DIR / "check_tex.png")
+    print(f"[tex] {tex.relative_to(REPO)}  check_tex.png → {REVIEW_DIR}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tex", action="store_true", help="只出像素贴图版 GuiYing_tex.bbmodel 与 check_tex.png")
     parser.add_argument("--sheet", action="store_true", help="另出 parts.png / contact_sheet.png / check.png")
     parser.add_argument("--prev", type=Path, help="上一轮的 bbmodel，check.png 里按同取景并排")
     args = parser.parse_args()
     print("gen_gui_ying 自检…")
     self_test()
+    if args.tex:
+        render_check_tex()
+        return
     path = write_bbmodel(all_cubes(), MODEL_DIR / "GuiYing_round1.bbmodel")
     print(f"[bbmodel] {path.relative_to(REPO)}")
     if args.sheet:
