@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""枯灯蛾（ku_deng_e）Blockbench .bbmodel 程序化生成器 —— Round 1/3，只做几何。
+"""枯灯蛾（ku_deng_e）Blockbench .bbmodel 程序化生成器 —— Round 3/3，几何。
 
 正典依据：docs/worldview.md §二「天道陷阱（伪灵脉）」L38、§十三 L1277：天道会在荒野升起短期的高灵气点引诱修士
 自相残杀。枯灯蛾是这类陷阱的**指示物**：聚在伪灵脉和灵眼周围的大蛾，看见它们成群盘旋，多半有人要死。
@@ -175,9 +175,11 @@ def _fur_pick(ix: int, iy: int, iz: int, weights) -> str:
     return weights[-1][0]
 
 
-def fur_ellipsoid(p: Puppet, bone: str, tag: str, center, radii, weights, band=None, solid=False) -> None:
+def fur_ellipsoid(p: Puppet, bone: str, tag: str, center, radii, weights, band=None, solid=False,
+                 fluff=0, fluff_z=None) -> None:
     """椭球表面的 1px 体素（只留露在外面的格），每格按哈希挑毛色；沿 x 把同色连续格并成长条。
-    band=(z 周期, 浅环占比, 浅环材质)：腹节上按 z 画一圈圈浅环。"""
+    band=(z 周期, 浅环占比, 浅环材质)：腹节上按 z 画一圈圈浅环。
+    fluff = 外圈蓬毛：表面格向外再长一层，按哈希留 fluff%（只在 fluff_z 的 z 格号范围内，避开相邻部件）；翅根一带不长。"""
     cx, cy, cz = center
     rx, ry, rz = radii
 
@@ -199,6 +201,17 @@ def fur_ellipsoid(p: Puppet, bone: str, tag: str, center, radii, weights, band=N
                 if band and ((k - int(math.floor(cz - rz))) % band[0]) < band[1]:
                     mat = band[2]
                 cells[(i, j, k)] = mat
+    if fluff:
+        lo, hi = fluff_z if fluff_z else (span[4], span[5])
+        for (i, j, k) in list(cells):
+            for d in ((1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+                ni, nj, nk = i + d[0], j + d[1], k + d[2]
+                if (ni, nj, nk) in cells or inside(ni, nj, nk) or not lo <= nk <= hi:
+                    continue
+                if ni >= 3 and 13 <= nj <= 16:        # 翅根 / 肩节一带不长蓬毛
+                    continue
+                if (abs(ni) * 31 + nj * 17 + nk * 57) % 100 < fluff:
+                    cells[(ni, nj, nk)] = _fur_pick(ni, nj, nk, weights)
     n = 0
     for (i, j, k) in sorted(cells, key=lambda c: (c[2], c[1], c[0])):
         mat = cells.get((i, j, k))
@@ -221,7 +234,7 @@ ABD_W = (("fur_dk", 52), ("fur", 38), ("fur_lt", 10))
 # ───────────────────────────────────────────────────────────── 分部件：胸 / 头 / 触角 / 口器
 def part_thorax(p: Puppet) -> None:
     """胸：一团灰褐绒毛（椭球表面，逐格毛色错落）+ 前端一圈浅色领毛 + 两个翅基肩节。"""
-    fur_ellipsoid(p, "thorax", "thorax_fur", THORAX_C, (4.4, 3.9, 4.8), THORAX_W)
+    fur_ellipsoid(p, "thorax", "thorax_fur", THORAX_C, (4.4, 3.9, 4.8), THORAX_W, fluff=62, fluff_z=(-5, 3))
     # 领毛：胸前端的一圈浅毛，脸后一环
     p.box("thorax", "collar_top", (-0.6, 15.8, -5.2), (0.6, 17.0, -4.3), "fur_pale")
     p.box("thorax", "collar_low", (-0.6, 12.4, -5.2), (0.6, 13.6, -4.3), "fur_pale")
@@ -314,10 +327,10 @@ FORE_Y, HIND_Y = 15.6, 14.9
 FORE_ROOT, HIND_ROOT = (4.2, -3.0), (4.2, 2.4)
 SEG_X = (9.0, 17.0)                       # 翅根 | 翅中 | 翅尖 的分界
 HOLES = {                                 # 破洞（圆心 x, z, 半径）：左右不同
-    ("fw", "r"): ((13.0, -1.5, 1.6), (20.5, 0.4, 1.2), (8.0, 2.4, 1.0)),
-    ("fw", "l"): ((15.5, 1.2, 1.5), (9.5, -2.5, 1.1), (21.5, -3.0, 1.0)),
-    ("hw", "r"): ((12.5, 8.0, 1.7), (16.8, 10.6, 1.0)),
-    ("hw", "l"): ((10.0, 5.6, 1.2), (15.2, 8.8, 1.8)),
+    ("fw", "r"): ((13.0, -1.5, 1.6), (20.5, 0.4, 1.2), (8.0, 2.4, 1.0), (24.0, -0.5, 1.7), (17.0, 4.8, 1.5), (11.0, -6.8, 1.3)),
+    ("fw", "l"): ((15.5, 1.2, 1.5), (9.5, -2.5, 1.1), (21.5, -3.0, 1.0), (23.6, 1.8, 1.7), (12.0, 4.6, 1.4), (17.5, -6.4, 1.3)),
+    ("hw", "r"): ((12.5, 8.0, 1.7), (16.8, 10.6, 1.0), (19.4, 9.6, 1.6), (8.2, 12.0, 1.7)),
+    ("hw", "l"): ((10.0, 5.6, 1.2), (15.2, 8.8, 1.8), (18.8, 12.6, 1.6), (9.4, 3.0, 1.2)),
 }
 STAINS = {"fw": ((14.0, -5.4, 2.4), (21.5, -1.0, 2.0)), "hw": ((15.0, 10.0, 2.2),)}   # 褐斑（近前缘 / 翅尖）
 
@@ -376,7 +389,7 @@ def wing_cells(kind: str, side: str) -> dict:
             if any(math.hypot(cx - hx, cz - hz) < hr for hx, hz, hr in holes):
                 continue
             edge = _edge_dist(poly, cx, cz)
-            if edge < 1.2 and ((ix * 73 + iz * 31 + (7 if side == "l" else 0) + (11 if kind == "hw" else 0)) % 4 == 0) and ix > 6:
+            if edge < 1.2 and ((ix * 73 + iz * 31 + (7 if side == "l" else 0) + (11 if kind == "hw" else 0)) % 3 == 0) and ix > 6:
                 continue
             if _edge_dist(poly, cx, cz, set(lead)) < 0.9 and kind == "fw":
                 mat = "wing_edge"
@@ -612,7 +625,7 @@ def bone_tree_panel(p: Puppet, height: int) -> Image.Image:
 def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     ref_p = REVIEW_DIR / f"{MODEL_ID}.png"
     font_h = load_font(18)
-    six = render_six_views(model_path, f"ku_deng_e（枯灯蛾）round 1/3 · {p.total()} cubes · "
+    six = render_six_views(model_path, f"ku_deng_e（枯灯蛾）round 3/3 · {p.total()} cubes · "
                                        f"{len(p.rig.bones)} 骨（可动 {moving_bone_count(p)}）· 门禁违例 {gate_total}")
     tree = bone_tree_panel(p, six.height)
     six.save(REVIEW_DIR / "contact_sheet.png")
