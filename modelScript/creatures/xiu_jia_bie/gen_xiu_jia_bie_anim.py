@@ -41,7 +41,7 @@ TEX_MODEL = CREATURE_DIR / "XiuJiaBie_tex.bbmodel"
 ANIMATED_MODEL = CREATURE_DIR / "XiuJiaBie_tex_animated.bbmodel"
 STAGING = CREATURE_DIR / "out"
 CODEC = REPO / "modelScript" / "exporters" / "creature_codec.cjs"
-GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/xiu_jia_bie")
+GIF_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "anim" / "xiu_jia_bie"
 MODEL_NAME = "xiu_jia_bie"  # creature_codec 只收小写蛇形名
 
 SAMPLES = 24

@@ -37,7 +37,7 @@ from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[3]
 CREATURE_DIR = Path(__file__).resolve().parent
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/za_wei_fu")
+REVIEW_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "img" / "creatures" / "za_wei_fu"
 PARTS_DIR = REVIEW_DIR / "parts"
 
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
@@ -865,6 +865,9 @@ def bone_tree_panel(p: Puppet, height: int) -> Image.Image:
 def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
     ref_p = REVIEW_DIR / f"{MODEL_ID}_ref.png"
     exp_p = REVIEW_DIR / f"{MODEL_ID}_exploded.png"
+    if not (ref_p.exists() and exp_p.exists()):
+        print(f"跳过 check.png：缺参考图 {ref_p.name} / {exp_p.name}（审阅用，非必需）")
+        return
     font_h = load_font(18)
     six = render_six_views(model_path, f"za_wei_fu（杂尾蝠）round 3/3 · {p.total()} cubes · "
                                        f"{len(p.rig.bones)} 骨（可动 {moving_bone_count(p)}）· 门禁违例 {gate_total}")
@@ -917,6 +920,10 @@ def tex_run() -> None:
     out = CREATURE_DIR / "ZaWeiFu_tex.bbmodel"
     out.write_text(json.dumps(handheld_texture.textured_rig_doc(p.rig, "ZaWeiFu_tex", TEX_MATERIAL), ensure_ascii=False, indent=1),
                    encoding="utf-8")
+    ref_p = REVIEW_DIR / f"{MODEL_ID}_ref.png"
+    if not ref_p.exists():
+        print(f"✓ {out}\n跳过 check_tex.png：缺参考图 {ref_p.name}（审阅用，非必需）")
+        return
     flat = CREATURE_DIR / "_tmp_flat.bbmodel"
     flat.write_text(json.dumps(handheld_texture.textured_rig_doc(p.rig, "ZaWeiFu_flat", TEX_MATERIAL, flat=True)), encoding="utf-8")
     try:

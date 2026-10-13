@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[3]
 CREATURE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = REPO / "modelScript" / "models"
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/xiu_jia_bie")
+REVIEW_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "img" / "creatures" / "xiu_jia_bie"
 PARTS_DIR = REVIEW_DIR / "parts"
 
 sys.path.insert(0, str(CREATURE_DIR))
@@ -258,6 +258,10 @@ def main() -> None:
     (REVIEW_DIR / "views").mkdir(exist_ok=True)
     for key, im in shots.items():
         im.save(REVIEW_DIR / "views" / f"{key.lower()}.png")
+    ref_png = REVIEW_DIR / "xiu_jia_bie_ref.png"
+    if not (ref_png.exists() and (REVIEW_DIR / "xiu_jia_bie_exploded.png").exists()):
+        print("跳过 check.png：缺参考图 / 爆炸图（审阅用，非必需）")
+        return
     tree = render_bone_tree(rig, sheet_now.height)
     tree.save(REVIEW_DIR / "bones_tree.png")
     check = make_check_sheet(sheet_now, tree, n_cubes, n_bones)

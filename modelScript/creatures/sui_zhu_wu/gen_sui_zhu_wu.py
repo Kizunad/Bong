@@ -43,7 +43,7 @@ from bbmodel_maker.rig.rigkit import Rig, shaft_box  # noqa: E402
 
 CREATURE_DIR = REPO / "modelScript" / "creatures" / "sui_zhu_wu"
 MODELS_DIR = REPO / "modelScript" / "models"
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/sui_zhu_wu")
+REVIEW_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "img" / "creatures" / "sui_zhu_wu"
 PARTS_DIR = REVIEW_DIR / "parts"
 EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "SuiZhuWu.bbmodel"

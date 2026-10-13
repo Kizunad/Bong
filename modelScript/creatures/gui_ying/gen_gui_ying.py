@@ -51,7 +51,7 @@ from common_parts import _assert_no_coplanar_faces  # noqa: E402
 
 MODEL_ID = "gui_ying"
 MODEL_DIR = REPO / "modelScript" / "models" / "gui_ying"
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/gui_ying")
+REVIEW_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "img" / "creatures" / "gui_ying"
 
 Cube = dict
 
@@ -597,7 +597,7 @@ def render_sheets(prev_model: Path | None = None) -> None:
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = Path("/tmp/claude-1000/gui_ying_parts")
+    tmp = REVIEW_DIR / "parts_tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     bg = (119, 119, 119)
     whole = write_bbmodel(all_cubes(), MODEL_DIR / "GuiYing_round1.bbmodel")
@@ -636,6 +636,9 @@ def render_sheets(prev_model: Path | None = None) -> None:
     contact.save(REVIEW_DIR / "contact_sheet.png")
 
     # check.png：左参考图 | 同取景渲染 | 骨骼树；下面六视角接触表
+    if not (REVIEW_DIR / "ref.png").exists():
+        print(f"[sheets] 跳过 check.png：缺参考图 {REVIEW_DIR / 'ref.png'}（审阅用，非必需）")
+        return
     ref = Image.open(REVIEW_DIR / "ref.png").convert("RGB")
     h = 560
     ref = ref.resize((int(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)

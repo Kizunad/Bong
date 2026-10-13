@@ -244,7 +244,7 @@ def stage_assets(scratch: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gif", type=Path, help="另出每段动画 GIF 到这个目录")
-    parser.add_argument("--scratch", type=Path, default=Path("/tmp/claude-1000/gui_ying_assets"))
+    parser.add_argument("--scratch", type=Path, default=OUT / "gif_assets")
     args = parser.parse_args()
     export()
     if args.gif:

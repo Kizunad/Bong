@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[3]
 CREATURE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = REPO / "modelScript" / "models"
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/can_bei_tuo")
+REVIEW_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "img" / "creatures" / "can_bei_tuo"
 PARTS_DIR = REVIEW_DIR / "parts"
 
 sys.path.insert(0, str(CREATURE_DIR))
@@ -276,7 +276,11 @@ def main() -> None:
     for key, im in shots.items():
         im.save(REVIEW_DIR / "views" / f"{key.lower()}.png")
 
+    ref_png = REVIEW_DIR / "can_bei_tuo_ref.png"
     prev_model = REVIEW_DIR / f"CanBeiTuo_round{PREV_ROUND}.bbmodel"
+    if not (ref_png.exists() and prev_model.exists()):
+        print(f"跳过 check.png：缺 {ref_png.name} 或 {prev_model.name}（审阅用，非必需）")
+        return
     sheet_prev, _ = render_six_views(prev_model, f"Round {PREV_ROUND}（{PREV_CUBES} cubes / {PREV_BONES} 骨）")
     sheet_prev.save(REVIEW_DIR / f"contact_sheet_round{PREV_ROUND}.png")
 

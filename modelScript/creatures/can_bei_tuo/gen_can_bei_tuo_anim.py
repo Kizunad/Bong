@@ -39,7 +39,7 @@ TEX_MODEL = CREATURE_DIR / "CanBeiTuo_tex.bbmodel"
 ANIMATED_MODEL = CREATURE_DIR / "CanBeiTuo_tex_animated.bbmodel"
 STAGING = CREATURE_DIR / "out"
 CODEC = REPO / "modelScript" / "exporters" / "creature_codec.cjs"
-GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/can_bei_tuo")
+GIF_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "anim" / "can_bei_tuo"
 MODEL_NAME = "can_bei_tuo"  # creature_codec 只收小写蛇形名
 
 SAMPLES = 24

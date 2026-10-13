@@ -53,6 +53,9 @@ def main() -> None:
     flat_path.write_text(json.dumps(rigged_textured_bbmodel(rig, mats, "CanBeiTuo_flat", flat=True)), encoding="utf-8")
     print(f"✓ {tex_path}（{len(rig.elements)} cubes）")
 
+    if not (base.REVIEW_DIR / "can_bei_tuo_ref.png").exists():
+        print("跳过 check_tex.png：缺参考图（审阅用，非必需）")
+        return
     sheet_tex, _ = base.render_six_views(tex_path, "贴图版")
     sheet_flat, _ = base.render_six_views(flat_path, "平色对照")
     flat_path.unlink(missing_ok=True)

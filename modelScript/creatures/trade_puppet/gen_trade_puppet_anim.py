@@ -34,7 +34,7 @@ NAME = "trade_puppet"
 MODEL = CREATURE_DIR / "TradePuppet_tex.bbmodel"
 CODEC = REPO / "modelScript" / "exporters" / "creature_codec.cjs"
 STAGING = REPO / "modelScript" / "out" / NAME
-GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim") / NAME
+GIF_DIR = Path(__file__).resolve().parents[2] / "out" / "review" / "anim" / NAME
 
 GROUND_TOLERANCE = 0.6   # 任何时刻模型最低点入地不得超过它（px）
 SAMPLES = 32             # 每段采样数，build_tracks 再裁掉共线帧

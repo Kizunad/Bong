@@ -68,7 +68,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 REPO = Path(__file__).resolve().parents[2]
 SOURCE = REPO / "modelScript" / "models" / "niche_house_puppet_tex.bbmodel"      # 带像素贴图的版本（平色版贴图只有几百字节）
 OUT_ROOT = REPO / "modelScript" / "models" / "niche_house_puppet_anim"
-GIF_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/anim/niche_house_puppet")
+GIF_DIR = Path(__file__).resolve().parents[1] / "out" / "review" / "anim" / "niche_house_puppet"
 NAME = "niche_house_puppet"
 BASE_NAME = "niche_house_puppet_base"
 IDENTIFIER = f"geometry.bong.{NAME}"
