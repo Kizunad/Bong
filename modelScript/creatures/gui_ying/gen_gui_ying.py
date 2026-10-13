@@ -5,9 +5,14 @@
 是唯一敢待在负灵域的生物。**没有实体、几乎看不见**，所以外形不是一只兽，而是一道旋涡：
 
     part_ring(i)    六层内凹、互相错开旋转角度的环状扭曲层（越往深处半径越小，每层绕轴多转 17°），
-                    每层是被撕开的断弧：外缘深色边、环线是高对比的骨灰色细线、内缘再压一圈深色；
-    part_throat()   旋涡的喉管：贴着最内层往里收的一圈深色管壁 + 最深处的空洞（近黑，唯一最暗的一块）；
-    part_debris()   外圈绕旋着的碎灰（1px 灰块）和枯叶碎片（3×1×2 的薄片），沿螺旋线从开口一直拖到尖端。
+    wall_cells()    旋涡的喉管壁：贴着最内层往里收的一圈深色管壁；
+    void_cells()    最深处的空洞（近黑，全模型唯一最暗的一块）；
+    debris_group_cells()  外圈绕旋着的碎灰（1px 灰块）和枯叶碎片（3×1×2 的薄片），沿螺旋线从开口一直拖到尖端，
+                    切成 10 组，每组一根骨头。
+
+**骨骼（任务卡「骨骼数下限」）**：按能独立动的关节分，不按部件分。无实体漩涡：每一圈环、每组碎片各一根，共 19 根会动的骨
+（funnel 总枢轴 + 6 圈环 + 喉管 + 空洞 + 10 组碎片）+ 一个静止的 root；枢轴都在漩涡轴线上，后面做「绕轴旋转」只要给每根骨
+不同的转速。层级树见 `bone_table()` / `bone_tree_lines()`，接触表上标了骨骼数并附层级树。
 
 **轮廓只靠深色边缘和高对比的环线读出来，不做半透明特效**（门禁里有对比度判据，先注入低对比缺陷确认拦得住）。
 
@@ -91,6 +96,7 @@ THROAT_W = (-21.0, -5.0)                    # 喉管壁沿轴向的范围
 VOID_R = 3.2                                # 最深处空洞半径
 VOID_W = (-22.5, -20.0)
 DEBRIS_COUNT = 96
+DEBRIS_GROUPS = 10                          # 碎屑沿螺旋线切成 10 组，每组一根骨头
 DEBRIS_R = (18.2, 21.0)                     # 碎屑绕旋半径：必须在最外层之外
 DEBRIS_W = (4.0, -20.0)
 CONTRAST_MIN = 120.0                        # 环线与深色边的亮度差下限
@@ -180,24 +186,33 @@ def ring_cells(i: int) -> Cells:
     return _to_cells(mask, mat)
 
 
-def throat_cells() -> Cells:
-    """喉管：贴着最内层往里收的深色管壁 + 最深处的空洞（全模型最暗的 void）。"""
+def wall_cells() -> Cells:
+    """喉管壁：贴着最内层往里收的深色管壁（带几道略亮的纹）。"""
     xs, ys, zs = _grid()
     u, v, w, r, theta = _local(xs, ys, zs)
     wall = (r >= THROAT_R[0]) & (r <= THROAT_R[1]) & (w >= THROAT_W[0]) & (w <= THROAT_W[1])
-    hole = (r < VOID_R + 0.3) & (w >= VOID_W[0]) & (w <= VOID_W[1])
-    mask = _surface(wall | hole)
     mat = np.full(xs.shape, MATERIALS.index("rim"), dtype=int)
-    mat[hole] = MATERIALS.index("void")
     streak = wall & ((np.floor(w) + np.floor(theta * 3)) % 4 == 0)
     mat[streak] = MATERIALS.index("body")
-    return _to_cells(mask, mat)
+    return _to_cells(_surface(wall), mat)
 
 
-def debris_cells(seed: int = 7) -> Cells:
-    """外圈碎屑：沿螺旋线从开口一直拖到尖端，碎灰（1px 灰块）+ 枯叶碎片（3×1×2 的薄片，朝向随机）。1px = 2 个 CELL。"""
+def void_cells() -> Cells:
+    """最深处的空洞：全模型最暗的 void。"""
+    xs, ys, zs = _grid()
+    u, v, w, r, theta = _local(xs, ys, zs)
+    wall = (r >= THROAT_R[0]) & (r <= THROAT_R[1]) & (w >= THROAT_W[0]) & (w <= THROAT_W[1])
+    hole = (r < VOID_R + 0.3) & (w >= VOID_W[0]) & (w <= VOID_W[1]) & ~wall       # 和喉管壁不重叠（同一个体素只属于一根骨头）
+    mat = np.full(xs.shape, MATERIALS.index("void"), dtype=int)
+    return _to_cells(_surface(hole), mat)
+
+
+def debris_group_cells(seed: int = 7) -> Dict[str, Cells]:
+    """外圈碎屑：沿螺旋线从开口一直拖到尖端，碎灰（1px 灰块）+ 枯叶碎片（3×1×2 的薄片，朝向随机）。1px = 2 个 CELL。
+    沿螺旋线按顺序切成 DEBRIS_GROUPS 组（每组 ≈ DEBRIS_COUNT / DEBRIS_GROUPS 片），**每组一根骨头**，所以每一段螺旋能独立转。"""
     rng = random.Random(seed)
-    cells: Cells = {}
+    groups: Dict[str, Cells] = {f"debris_{g:02d}": {} for g in range(DEBRIS_GROUPS)}
+    taken: set = set()                 # 已被某一组占掉的体素：同一个体素只属于一根骨头，互相重叠的碎片后到的让位
     per_px = int(round(1 / CELL))
     for k in range(DEBRIS_COUNT):
         t = (k + rng.random() * 0.8) / DEBRIS_COUNT
@@ -213,11 +228,15 @@ def debris_cells(seed: int = 7) -> Cells:
         else:
             size = rng.choice(((3, 1, 2), (2, 1, 3), (3, 2, 1), (1, 2, 3), (2, 3, 1)))
             material = "leaf" if rng.random() < 0.6 else "leaf_dark"
+        cells = groups[f"debris_{min(DEBRIS_GROUPS - 1, k * DEBRIS_GROUPS // DEBRIS_COUNT):02d}"]
         for dx in range(size[0] * per_px):
             for dy in range(size[1] * per_px):
                 for dz in range(size[2] * per_px):
-                    cells[(base[0] + dx, base[1] + dy, base[2] + dz)] = material
-    return cells
+                    cell = (base[0] + dx, base[1] + dy, base[2] + dz)
+                    if cell not in taken:
+                        taken.add(cell)
+                        cells[cell] = material
+    return groups
 
 
 # ── 体素 → 立方体（沿 x 合并同材质连续体素） ─────────────────────────────────────
@@ -253,18 +272,17 @@ _CACHE: Dict[str, Cells] = {}
 
 def _cells(key: str) -> Cells:
     """各部件体素缓存（一次进程内只算一遍）。"""
-    if key not in _CACHE:
-        if key.startswith("ring_"):
-            _CACHE[key] = ring_cells(int(key.split("_")[1]))
-        elif key == "throat":
-            _CACHE[key] = throat_cells()
-        else:
-            _CACHE[key] = debris_cells()
+    if not _CACHE:
+        for i in range(LAYER_COUNT):
+            _CACHE[f"ring_{i}"] = ring_cells(i)
+        _CACHE["throat"] = wall_cells()
+        _CACHE["void"] = void_cells()
+        _CACHE.update(debris_group_cells())
     return _CACHE[key]
 
 
 def _part_keys() -> List[str]:
-    return [f"ring_{i}" for i in range(LAYER_COUNT)] + ["throat", "debris"]
+    return [f"ring_{i}" for i in range(LAYER_COUNT)] + ["throat", "void"] + [f"debris_{g:02d}" for g in range(DEBRIS_GROUPS)]
 
 
 def y_shift_for_hover() -> float:
@@ -282,6 +300,64 @@ def all_cubes() -> List[Cube]:
     for part in parts().values():
         cubes.extend(part)
     return cubes
+
+
+# ── 骨骼层级：按能独立动的关节分，不按部件分 ─────────────────────────────────────
+# 任务卡「骨骼数下限」：无实体漩涡——每一圈环、每组碎片各一骨，≥ 16。root 只是静止的根，不计入。
+#
+#   root                      （静止，不计）
+#   └─ funnel                 整个漩涡（整体自旋 / 摆动的总枢轴，在漩涡中心）
+#      ├─ ring_0 … ring_5     六圈环，各自绕轴转（枢轴在各自深度的轴心上）
+#      ├─ throat              喉管壁
+#      ├─ void                最深处的空洞（可以单独收缩 / 张开）
+#      └─ debris_00 … 09      十段螺旋碎屑，各自绕轴转
+#
+# 枢轴都在轴线上（漩涡中心 + 深度 w × 轴向），后面做动画时「绕轴旋转」只需要给每根骨头不同的转速。
+
+
+def bone_table() -> Dict[str, Tuple[str | None, Tuple[float, float, float]]]:
+    """骨名 → (父骨, 枢轴世界坐标 px，已含悬空平移)。"""
+    shift = y_shift_for_hover()
+    origin = CENTER + np.array([0.0, shift, 0.0])
+
+    def on_axis(w: float) -> Tuple[float, float, float]:
+        p = origin + w * W_HAT
+        return (round(float(p[0]), 3), round(float(p[1]), 3), round(float(p[2]), 3))
+
+    table: Dict[str, Tuple[str | None, Tuple[float, float, float]]] = {
+        "root": (None, (0.0, 0.0, 0.0)),
+        "funnel": ("root", on_axis(0.0)),
+    }
+    for i, spec in enumerate(LAYERS):
+        table[f"ring_{i}"] = ("funnel", on_axis(spec["w"]))
+    table["throat"] = ("funnel", on_axis(sum(THROAT_W) / 2))
+    table["void"] = ("funnel", on_axis(sum(VOID_W) / 2))
+    for g in range(DEBRIS_GROUPS):
+        table[f"debris_{g:02d}"] = ("funnel", on_axis(0.0))
+    return table
+
+
+def bone_tree_lines(table=None) -> List[str]:
+    """骨骼层级树（文本）。"""
+    table = table or bone_table()
+    children: Dict[str | None, List[str]] = {}
+    for name, (parent, _) in table.items():
+        children.setdefault(parent, []).append(name)
+    lines: List[str] = []
+
+    def walk(name: str, prefix: str, last: bool, top: bool) -> None:
+        lines.append(name if top else f"{prefix}{'`- ' if last else '+- '}{name}")
+        kids = children.get(name, [])
+        for idx, kid in enumerate(kids):
+            walk(kid, "" if top else prefix + ("   " if last else "|  "), idx == len(kids) - 1, False)
+
+    walk("root", "", True, True)
+    return lines
+
+
+def moving_bones(table=None) -> List[str]:
+    """会动的骨头：除了静止的 root 以外全部。"""
+    return [name for name in (table or bone_table()) if name != "root"]
 
 
 # ── 门禁（每道先注入缺陷再信） ─────────────────────────────────────────────────
@@ -313,7 +389,7 @@ def check_cubes(cubes: List[Cube]) -> None:
         assert any(c["group"] == f"ring_{i}" for c in cubes), f"缺第 {i} 层环"
     void = [c for c in cubes if c["material"] == "void"]
     assert void, "没有空洞"
-    debris = [c for c in cubes if c["group"] == "debris"]
+    debris = [c for c in cubes if c["group"].startswith("debris_")]
     assert len(debris) >= 60, f"碎屑只有 {len(debris)} 条（要 ≥60）"
     ring_cubes = [c for c in cubes if c["group"].startswith("ring_")]
 
@@ -329,13 +405,40 @@ def check_cubes(cubes: List[Cube]) -> None:
     assert ring_extent <= outer + 2.5, f"环体半径 {ring_extent:.1f} 超出 {outer}"
 
 
+MIN_MOVING_BONES = 16
+
+
+def check_bones(cubes: List[Cube], table=None, minimum: int = MIN_MOVING_BONES) -> int:
+    """骨骼门禁（任务卡「骨骼数下限」）：会动的骨头 ≥16；每圈环、每组碎片各自一根骨头；父骨都存在且无环；
+    每个立方体恰好属于一根骨头（组名 = 骨名），没有空骨头（不带立方体的骨头只算分组，不计数）。返回会动的骨头数。"""
+    table = table or bone_table()
+    for name, (parent, _) in table.items():
+        assert parent is None or parent in table, f"{name} 的父骨 {parent} 不存在"
+        seen, cur = {name}, parent
+        while cur is not None:
+            assert cur not in seen, f"骨骼层级有环: {name}"
+            seen.add(cur)
+            cur = table[cur][0]
+    groups = {c["group"] for c in cubes}
+    assert groups <= set(table), f"立方体归了不存在的骨头: {sorted(groups - set(table))}"
+    for i in range(LAYER_COUNT):
+        assert f"ring_{i}" in table and f"ring_{i}" in groups, f"第 {i} 圈环没有自己的骨头"
+    for g in range(DEBRIS_GROUPS):
+        assert f"debris_{g:02d}" in table and f"debris_{g:02d}" in groups, f"第 {g} 组碎片没有自己的骨头"
+    carrying = [b for b in moving_bones(table) if b in groups]
+    assert len(carrying) >= minimum, f"带几何的会动骨头只有 {len(carrying)} 根，要 ≥{minimum}"
+    return len(carrying)
+
+
 def self_test() -> None:
     check_spec(LAYERS)
     check_contrast(PALETTE)
     cubes = all_cubes()
     check_cubes(cubes)
+    bones = check_bones(cubes)
     print(f"  [OK] {len(cubes)} 个立方体：共面 0 冲突（全部轴对齐）、六层内凹且逐层错开、空洞 {sum(1 for c in cubes if c['material'] == 'void')} 条、"
-          f"碎屑 {sum(1 for c in cubes if c['group'] == 'debris')} 条、对比度 {luminance(PALETTE['line']) - luminance(PALETTE['rim']):.0f}")
+          f"碎屑 {sum(1 for c in cubes if c['group'].startswith('debris_'))} 条、对比度 {luminance(PALETTE['line']) - luminance(PALETTE['rim']):.0f}")
+    print(f"  [OK] 骨骼：会动的 {bones} 根（≥{MIN_MOVING_BONES}），每圈环 / 每组碎片各一根，另有静止的 root")
 
     def must_fail(name: str, fn) -> None:
         try:
@@ -352,13 +455,21 @@ def self_test() -> None:
     must_fail("环线对比度过低", lambda: check_contrast(dict(PALETTE, line=(70, 66, 76))))
     must_fail("空洞比深边亮", lambda: check_contrast(dict(PALETTE, void=(90, 86, 96))))
     must_fail("没有空洞", lambda: check_cubes([c for c in cubes if c["material"] != "void"]))
-    must_fail("碎屑太少", lambda: check_cubes([c for c in cubes if c["group"] != "debris"]))
+    must_fail("碎屑太少", lambda: check_cubes([c for c in cubes if not c["group"].startswith("debris_")]))
     origin = CENTER + np.array([0.0, y_shift_for_hover(), 0.0])
     inner = {"name": "debris_inject", "from": [float(origin[0]), float(origin[1]), float(origin[2])],
-             "to": [float(origin[0]) + 1, float(origin[1]) + 1, float(origin[2]) + 1], "group": "debris", "material": "ash"}
+             "to": [float(origin[0]) + 1, float(origin[1]) + 1, float(origin[2]) + 1], "group": "debris_00", "material": "ash"}
     must_fail("碎屑落进环内", lambda: check_cubes(cubes + [inner]))
     twin = dict(cubes[0], name="dup")
     must_fail("共面", lambda: check_cubes(cubes + [twin]))
+
+    table = bone_table()
+    must_fail("碎片合并成一根骨头", lambda: check_bones([dict(c, group="debris_00") if c["group"].startswith("debris_") else c for c in cubes]))
+    must_fail("六圈环合并成一根骨头", lambda: check_bones([dict(c, group="ring_0") if c["group"].startswith("ring_") else c for c in cubes]))
+    must_fail("骨骼数不足（下限抬到 40，当前只有 18 根带几何的）", lambda: check_bones(cubes, table, minimum=40))
+    must_fail("父骨不存在", lambda: check_bones(cubes, dict(table, ring_0=("ghost", table["ring_0"][1]))))
+    must_fail("层级有环", lambda: check_bones(cubes, dict(table, funnel=("ring_0", table["funnel"][1]))))
+    must_fail("立方体归了不存在的骨", lambda: check_bones(cubes + [dict(cubes[0], name="stray", group="nowhere")]))
 
 
 # ── bbmodel / 渲染 ──────────────────────────────────────────────────────────
@@ -379,11 +490,12 @@ def build_texture() -> Image.Image:
     return im
 
 
-def write_bbmodel(cubes: List[Cube], out_path: Path, name: str = MODEL_ID) -> Path:
+def write_bbmodel(cubes: List[Cube], out_path: Path, name: str = MODEL_ID, with_bones: bool = True) -> Path:
+    """写 bbmodel。with_bones=True 时 outliner 是真的骨骼层级（嵌套分组，枢轴在轴线上）；单件预览用 False（只按组平铺）。"""
     buf = io.BytesIO()
     build_texture().save(buf, format="PNG")
     source = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-    elements, groups = [], {}
+    elements, by_group = [], {}
     for c in cubes:
         k = MATERIALS.index(c["material"])
         u0, v0 = (k % 4) * 16, (k // 4) * 16
@@ -392,10 +504,20 @@ def write_bbmodel(cubes: List[Cube], out_path: Path, name: str = MODEL_ID) -> Pa
                 "faces": {s: {"uv": uv, "texture": 0} for s in ("north", "south", "east", "west", "up", "down")},
                 "uuid": str(uuid.uuid4())}
         elements.append(elem)
-        groups.setdefault(c["group"], []).append(elem["uuid"])
+        by_group.setdefault(c["group"], []).append(elem["uuid"])
+    if with_bones:
+        table = bone_table()
+        nodes = {n: {"name": n, "origin": list(pivot), "children": list(by_group.get(n, []))} for n, (_, pivot) in table.items()}
+        outliner = []
+        for n, (parent, _) in table.items():
+            if parent is None:
+                outliner.append(nodes[n])
+            else:
+                nodes[parent]["children"].append(nodes[n])
+    else:
+        outliner = [{"name": g, "origin": [0.0, 0.0, 0.0], "children": ids} for g, ids in by_group.items()]
     doc = {"meta": {"format_version": "4.10", "model_format": "free"}, "name": name,
-           "resolution": {"width": 64, "height": 64}, "elements": elements,
-           "outliner": [{"name": g, "origin": [0.0, 0.0, 0.0], "children": ids} for g, ids in groups.items()],
+           "resolution": {"width": 64, "height": 64}, "elements": elements, "outliner": outliner,
            "textures": [{"name": name, "folder": "entity", "namespace": "bong", "id": 0, "source": source}]}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
@@ -412,6 +534,25 @@ VIEWS = (
 )
 
 
+def bone_tree_panel(height: int) -> Image.Image:
+    """骨骼层级树图：标题标出骨骼数，下面是缩进树（root 静止，不计数）。"""
+    lines = bone_tree_lines()
+    moving = len(moving_bones())
+    header = [f"BONES: {moving} moving (+ static root)", f"  1 funnel + {LAYER_COUNT} rings + throat + void + {DEBRIS_GROUPS} debris", ""]
+    font_h = 13
+    width = 330
+    panel = Image.new("RGB", (width, max(height, (len(lines) + len(header)) * font_h + 20)), (35, 36, 40))
+    draw = ImageDraw.Draw(panel)
+    y = 10
+    for text in header:
+        draw.text((10, y), text, fill=(180, 220, 210))
+        y += font_h
+    for text in lines:
+        draw.text((10, y), text, fill=(230, 230, 230))
+        y += font_h
+    return panel
+
+
 def render_sheets() -> None:
     from bbmodel_maker.render.render_bbmodel import render
 
@@ -420,50 +561,60 @@ def render_sheets() -> None:
     tmp.mkdir(parents=True, exist_ok=True)
     bg = (119, 119, 119)
     whole = write_bbmodel(all_cubes(), MODEL_DIR / "GuiYing_round1.bbmodel")
+    bones = len(moving_bones())
 
-    # 逐件预览（每件单独一张 3/4）
+    # 逐件预览（每件单独一张 3/4）：每件 = 一根骨头
     tiles = []
     for name, cubes in parts().items():
-        path = write_bbmodel(cubes, tmp / f"{name}.bbmodel", name)
-        im, _ = render(path, yaw=35.0, pitch=25.0, size=300, bg=bg)
-        tiles.append((f"{name} ({len(cubes)} cubes)", im))
-    cols = 4
+        path = write_bbmodel(cubes, tmp / f"{name}.bbmodel", name, with_bones=False)
+        im, _ = render(path, yaw=35.0, pitch=25.0, size=220, bg=bg)
+        tiles.append((f"{name} ({len(cubes)})", im))
+    cols = 6
     rows = (len(tiles) + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * 310 + 10, rows * 330 + 10), (35, 36, 40))
+    sheet = Image.new("RGB", (cols * 230 + 10, rows * 250 + 30), (35, 36, 40))
     draw = ImageDraw.Draw(sheet)
+    draw.text((10, 6), f"PARTS = BONES  ({bones} moving bones, each part is one bone)", fill=(180, 220, 210))
     for idx, (label, im) in enumerate(tiles):
-        x, y = 10 + (idx % cols) * 310, 10 + (idx // cols) * 330
+        x, y = 10 + (idx % cols) * 230, 28 + (idx // cols) * 250
         draw.text((x + 4, y), label, fill=(230, 230, 230))
         sheet.paste(im, (x, y + 18))
     sheet.save(REVIEW_DIR / "parts.png")
 
+    # 骨骼层级树
+    tree = bone_tree_panel(420)
+    tree.save(REVIEW_DIR / "bones_tree.png")
+
     # 六视角接触表
     shots = [(label, render(whole, yaw=yaw, pitch=pitch, size=420, bg=bg)[0]) for label, yaw, pitch in VIEWS]
-    contact = Image.new("RGB", (3 * 430 + 10, 2 * 450 + 10), (35, 36, 40))
+    contact = Image.new("RGB", (3 * 430 + 10, 2 * 450 + 30), (35, 36, 40))
     draw = ImageDraw.Draw(contact)
+    draw.text((10, 6), f"gui_ying round1 | {bones} moving bones | {len(all_cubes())} cubes", fill=(180, 220, 210))
     for idx, (label, im) in enumerate(shots):
-        x, y = 10 + (idx % 3) * 430, 10 + (idx // 3) * 450
+        x, y = 10 + (idx % 3) * 430, 28 + (idx // 3) * 450
         draw.text((x + 4, y), label, fill=(230, 230, 230))
         contact.paste(im, (x, y + 18))
     contact.save(REVIEW_DIR / "contact_sheet.png")
 
-    # check.png：左参考图 | 右同取景（参考图是 3/4 俯视，开口朝观众）对比，下面一行六视角缩略
+    # check.png：左参考图 | 同取景渲染 | 骨骼树；下面六视角接触表
     ref = Image.open(REVIEW_DIR / "ref.png").convert("RGB")
     h = 560
     ref = ref.resize((int(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)
     same_view, _ = render(whole, yaw=-30.0, pitch=32.0, size=h, bg=bg)
-    thumb_w = 330
-    canvas = Image.new("RGB", (max(ref.width + h + 30, 6 * thumb_w // 2 + 20), h + 40 + 360), (35, 36, 40))
+    tree_panel = bone_tree_panel(h)
+    top_w = ref.width + h + tree_panel.width + 40
+    small_w = min(top_w - 20, 1300)
+    small = contact.resize((small_w, int(small_w * contact.height / contact.width)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (top_w, 30 + h + 10 + small.height + 10), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
     canvas.paste(ref, (10, 30))
     draw.text((14, 8), "REFERENCE (ref.png)", fill=(210, 200, 180))
     canvas.paste(same_view, (ref.width + 20, 30))
     draw.text((ref.width + 24, 8), "NOW RENDER, same framing (yaw-30 pitch32)", fill=(180, 220, 210))
-    small = contact.resize((int(contact.width * 340 / contact.height * 1.0) if False else min(canvas.width - 20, 1300), int(min(canvas.width - 20, 1300) * contact.height / contact.width)), Image.Resampling.LANCZOS)
-    canvas = canvas.crop((0, 0, canvas.width, 30 + h + 10 + small.height + 10)) if canvas.height < 30 + h + 10 + small.height + 10 else canvas
+    canvas.paste(tree_panel, (ref.width + h + 30, 30))
+    draw.text((ref.width + h + 34, 8), f"BONE HIERARCHY  |  {bones} moving bones", fill=(180, 220, 210))
     canvas.paste(small, (10, 30 + h + 10))
     canvas.save(REVIEW_DIR / "check.png")
-    print(f"[sheets] {REVIEW_DIR}")
+    print(f"[sheets] {REVIEW_DIR}  (bones={bones})")
 
 
 def main() -> None:
