@@ -46,6 +46,8 @@
   eye_amber      琥珀眼：深褐眼缘 + 亮琥珀 + 近白高光（靠对比，不做发光）
   chitin_white / chitin_ochre / chitin_grey / chitin_dark   骨质甲壳（蜈蚣 / 虫类）：沿长轴的棱纹、细裂纹、骨粉点、蚀孔
   marrow_amber / claw_rust / bone_dust   髓渍 / 锈褐爪尖 / 白色骨粉
+  grub_cream / grub_pink   蛆皮（半透奶白 / 肉粉）：柔和明暗、淡红血管、环向皱；rot_brown 腐缝 / organ_red 脏器 / ichor 腐液
+  glint_amber / glint_core   吞进去的灵光碎块：面心亮、边缘渐暗成琥珀（只靠对比）
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
 """
@@ -936,6 +938,62 @@ PAINTERS.update({
 FLAT_COLORS.update({
     "gold": "#bc9a50", "gold_dull": "#92763e", "rivet": "#2e2622", "shell_dark": "#3a3230", "shell_mid": "#5e5248",
     "belly_pale": "#c4b698", "belly_seg": "#8a7a5e",
+})
+
+
+# ---- 蛆 / 脏器 / 灵光（天道尸蛆批次补充）-----------------------------------------------------
+
+
+def _grub(base: str, seed: int) -> Callable[[dict], Painter]:
+    """蛆皮：近半透的奶白底，大块柔和的明暗（皮下透出脏器的暗影）、细淡红血管、环向细皱，零星湿亮点；边缘略亮。"""
+    color_base = hex_color(base)
+    vein_color, crease = hex_color("#b8665a"), shade(color_base, -0.22)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(color_base, (value_noise(p, 2.8, seed) - 0.5) * 0.2 + (texel_noise(p, seed + 1) - 0.5) * 0.05)
+            if abs(value_noise(p, 1.9, seed + 2) - 0.5) < 0.035:
+                color = mix(color, vein_color, 0.4)          # 皮下血管
+            if abs(value_noise(p, 1.2, seed + 3) - 0.5) < 0.05:
+                color = mix(color, crease, 0.6)              # 环向皱
+            if texel_noise(p, seed + 4) > 0.96:
+                color = shade(color, 0.12)                   # 湿亮点
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.05)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _glint(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
+    """吞进去的灵光碎块：不做发光层，靠对比——面心最亮、向边缘渐暗成琥珀色，零星亮点。"""
+    a, b = hex_color(base), hex_color(core)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            depth = min(_edge_distance(cube, p, axis), 2.0) / 2.0
+            color = mix(a, b, depth * 0.85)
+            return shade(color, (texel_noise(p, seed) - 0.5) * 0.08)
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "grub_cream": _grub("#e8dcc2", 801),
+    "grub_pink": _grub("#d8aa9c", 802),
+    "rot_brown": _hide("#38221f", "#4c2f28", 803, crease_amount=1.0),
+    "organ_red": _skin("#86382f", 804, vein=0.05),
+    "glint_amber": _glint("#d8902c", "#ffe08a", 805),
+    "glint_core": _glint("#ffe9a0", "#fffbe8", 806),
+    "ichor": _hide("#5e3e20", "#7c5630", 807, crease_amount=0.3),
+})
+FLAT_COLORS.update({
+    "grub_cream": "#e0d4b8", "grub_pink": "#d0a294", "rot_brown": "#42291f", "organ_red": "#86382f",
+    "glint_amber": "#eaaa44", "glint_core": "#fff0b8", "ichor": "#6c4a28",
 })
 
 
