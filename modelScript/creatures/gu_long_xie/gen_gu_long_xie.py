@@ -75,14 +75,9 @@ MIN_MOVING_BONES = 30
 SK_C = (0.0, 22.0, 2.0)
 SK_RX, SK_RY, SK_RZ = 13.0, 11.5, 14.0
 SK_Y0 = 13.0
-SK_STEP = 1.5
 SK_WALL = 2.4                       # 环壁厚度
 SK_SOLID_ABOVE = 24.0               # 此高度以上整层实心
 SK_REAR_OPEN_BELOW = 20.5           # 此高度以下后壁敞开（露出蟹腹）
-SOCKET_X = (3.0, 8.5)               # 眼窝 |x| 范围
-SOCKET_Y = (18.0, 24.0)
-NOSE_X = 1.8                        # 鼻腔半宽
-NOSE_Y = (14.5, 17.5)
 
 # 头胸甲
 CARA_Y0, CARA_Y1 = 7.5, 13.0
@@ -122,7 +117,7 @@ def along(a, b, d: float):
 # 大小螯（大螯在右 +X，小螯在左 -X；都不对称，骨名进 ASYM）
 BIG = {
     "S": (6.5, 10.0, -5.6), "E": (15.0, 12.5, -10.5), "W": (18.0, 10.5, -19.0),
-    "palm_c": (19.0, 10.0, -25.5), "palm_h": (6.0, 5.2, 6.5),
+    "palm_c": (19.0, 10.0, -26.0), "palm_h": (7.2, 6.4, 8.0),
 }
 SMALL = {
     "S": (-6.5, 10.0, -5.6), "E": (-13.5, 11.0, -9.0), "W": (-16.0, 9.5, -13.5),
@@ -224,159 +219,222 @@ def taper(rig: Rig, bone: str, stem: str, pts: list[Vec], radii: list[float], *,
 
 
 # ===========================================================================
-# 1. 颅骨壳：体素椭球壳 + 眼窝 + 鼻腔 + 獠牙
+# 1. 颅骨壳：逐层椭圆环体素壳（圆鼓穹顶）+ 眼窝 / 鼻腔凹陷 + 缝线 + 獠牙
 # ===========================================================================
-def skull_layers() -> list[dict]:
-    """自下而上的各层：y0/y1、半宽 w、半长 l、前缘 z、后缘 z。"""
-    layers = []
+CELL = 1.2                           # 体素边长（平面与层高同取，px）
+SOCKET_C = (5.75, 21.0)              # 眼窝中心 (|x|, y)
+SOCKET_R = (3.3, 3.5)                # 眼窝椭圆半轴 (x, y)
+NOSE_C, NOSE_R = (0.0, 16.0), (1.9, 2.0)
+FRONT_DZ = -3.0                      # 相对壳心 z 的前半区：眼窝 / 鼻腔只在此区开洞
+
+
+def ellipse_at(ym: float) -> tuple[float, float]:
+    """高度 ym 处椭球截面的半宽、半长（逐层收边出弧面）。"""
+    dy = ym - SK_C[1]
+    f = math.sqrt(max(0.0, 1.0 - (dy / SK_RY) ** 2))
+    return SK_RX * f, SK_RZ * f
+
+
+def surface_z(x: float, y: float) -> float:
+    """壳前表面在 (x, y) 处的 z，用来把牙、眉弓这类凸件贴在弧面上。"""
+    w, l = ellipse_at(y)
+    return SK_C[2] - l * math.sqrt(max(0.0, 1.0 - (x / w) ** 2))
+
+
+def in_ellipse(x: float, y: float, c: tuple[float, float], r: tuple[float, float], grow: float = 1.0) -> bool:
+    return ((abs(x) - c[0]) / (r[0] * grow)) ** 2 + ((y - c[1]) / (r[1] * grow)) ** 2 < 1.0
+
+
+def in_face_hole(x: float, ym: float, dz: float, grow: float = 1.0) -> bool:
+    if dz > FRONT_DZ:
+        return False
+    return in_ellipse(x, ym, SOCKET_C, SOCKET_R, grow) or in_ellipse(x, ym, NOSE_C, NOSE_R, grow)
+
+
+def build_skull_cells() -> list[dict]:
+    """逐层铺椭圆环：顶部整层实心，下部只留壁厚；返回所有体素 {k, ix, iz, x, z, y0, mat, exposed}。"""
+    occupied: dict[tuple[int, int, int], dict] = {}
     k = 0
     while True:
-        y0 = SK_Y0 + SK_STEP * k
-        ym = y0 + SK_STEP / 2
-        dy = ym - SK_C[1]
-        if abs(dy) >= SK_RY:
+        y0 = SK_Y0 + CELL * k
+        ym = y0 + CELL / 2
+        if abs(ym - SK_C[1]) >= SK_RY:
             break
-        f = math.sqrt(1.0 - (dy / SK_RY) ** 2)
-        w, l = SK_RX * f, SK_RZ * f
-        layers.append({"k": k, "y0": y0, "y1": y0 + SK_STEP, "ym": ym, "w": w, "l": l,
-                       "zf": SK_C[2] - l, "zb": SK_C[2] + l})
+        w, l = ellipse_at(ym)
+        solid = ym > SK_SOLID_ABOVE or w - SK_WALL < 0.6 or l - SK_WALL < 0.6
+        base = "bone_white"
+        nx, nz = int(w / CELL) + 1, int(l / CELL) + 1
+        for ix in range(-nx, nx + 1):
+            for iz in range(-nz, nz + 1):
+                x, dz = ix * CELL, iz * CELL
+                if (x / w) ** 2 + (dz / l) ** 2 > 1.0:
+                    continue
+                inside = solid or (x / (w - SK_WALL)) ** 2 + (dz / (l - SK_WALL)) ** 2 >= 1.0
+                dark_lining = False
+                if not inside:
+                    # 壁内侧再往里 1.2：眼窝 / 鼻腔洞后的暗衬
+                    deep = (x / (w - SK_WALL - 1.2)) ** 2 + (dz / (l - SK_WALL - 1.2)) ** 2 >= 1.0
+                    if not (deep and dz <= FRONT_DZ and in_ellipse(x, ym, SOCKET_C, SOCKET_R, 1.3)):   # 只给眼窝衬暗，鼻腔不衬
+                        continue
+                    dark_lining = True
+                if inside and ym < SK_REAR_OPEN_BELOW and dz > 0.45 * l and not solid:
+                    continue                         # 后下方留大洞，露出蟹腹
+                if inside and in_face_hole(x, ym, dz):
+                    continue                         # 眼窝 / 鼻腔凹进去
+                mat = "crack_dark" if dark_lining else base
+                if mat != "crack_dark" and in_face_hole(x, ym, dz, 1.38):
+                    mat = "bone_grey"                # 眶缘 / 鼻缘一圈阴面骨
+                elif mat == "bone_white" and (((k // 2) * 73856093) ^ ((ix // 2) * 19349663) ^ ((iz // 2) * 83492791)) % 100 < 24:
+                    mat = "bone_grey"                # 旧骨斑：按 2×2×2 的块成片，不逐格随机
+                occupied[(k, ix, iz)] = {"k": k, "ix": ix, "iz": iz, "x": x, "z": SK_C[2] + dz, "y0": y0, "ym": ym,
+                                         "mat": mat, "dark": dark_lining, "w": w, "l": l}
         k += 1
-    return layers
+    for (kk, ix, iz), c in occupied.items():
+        c["exposed"] = (not c["dark"]) and any((kk + dk, ix + dx, iz + dz) not in occupied
+                                              for dk, dx, dz in ((1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)))
+    return list(occupied.values())
 
 
-SKULL = skull_layers()
+SKULL_CELLS = build_skull_cells()
+SKULL_INDEX = {(c["k"], c["ix"], c["iz"]): c for c in SKULL_CELLS}
+SKULL_LAYERS = max(c["k"] for c in SKULL_CELLS) + 1
 
 
-def layer_mat(k: int) -> str:
-    return "bone_grey" if k % 5 == 2 else "bone_white"
+def paint_skull_marks() -> None:
+    """缝线与裂纹：改体素材质，不加几何。矢状缝在顶上走锯齿，三条裂纹从穹顶往下爬。"""
+    rng = random.Random(77)
+    for c in SKULL_CELLS:
+        # 矢状缝：沿中线锯齿，只在顶面实心区
+        if c["exposed"] and c["ym"] > SK_SOLID_ABOVE - 2.0 and abs(c["x"]) < CELL * 0.6:
+            if c["iz"] % 2 == 0 or c["ym"] > 29.0:
+                c["mat"] = "crack_dark"
+    for n in range(4):
+        theta = rng.uniform(0.0, math.tau)
+        k = rng.randint(SKULL_LAYERS - 7, SKULL_LAYERS - 4)
+        for _ in range(8):
+            if k < 2:
+                break
+            ym = SK_Y0 + CELL * k + CELL / 2
+            w, l = ellipse_at(ym)
+            theta += rng.uniform(-0.12, 0.12)
+            ix = round(w * math.cos(theta) * 0.97 / CELL)
+            iz = round(l * math.sin(theta) * 0.97 / CELL)
+            c = SKULL_INDEX.get((k, ix, iz))
+            if c is not None and c["exposed"] and c["mat"] != "bone_grey":
+                c["mat"] = "crack_dark"
+            k -= 1
+
+
+paint_skull_marks()
 
 
 def part_skull(rig: Rig) -> None:
-    """壳按层叠：y > SK_SOLID_ABOVE 的实心板；以下是四面墙的环；眼窝、鼻腔在前墙上留洞，后下方敞开。"""
-    for L in SKULL:
-        k, y0, y1, w, zf, zb = L["k"], L["y0"], L["y1"], L["w"], L["zf"], L["zb"]
-        mat = layer_mat(k)
-        if L["ym"] > SK_SOLID_ABOVE:
-            box(rig, "shell", f"sk{k}_slab", (-w, y0, zf), (w, y1, zb), mat=mat)
-            continue
-        t = SK_WALL
-        for s in (-1.0, 1.0):
-            mbox(rig, "shell", f"sk{k}_wall", s, w - t, w, y0, y1, zf, zb, mat=mat)
-        inner = w - t
-        # 前墙：眼窝（两侧）与鼻腔（中线）挖空，剩下的分段铺：中段（中线件）+ 左右成对的外段
-        if y0 < SOCKET_Y[1] and y1 > SOCKET_Y[0]:
-            centre, side_x0 = (-SOCKET_X[0], SOCKET_X[0]), SOCKET_X[1]
-        elif y0 >= NOSE_Y[0] and y1 <= NOSE_Y[1]:
-            centre, side_x0 = None, NOSE_X
-        else:
-            centre, side_x0 = (-inner, inner), None
-        if centre is not None:
-            box(rig, "shell", f"sk{k}_front", (centre[0], y0, zf), (centre[1], y1, zf + t), mat=mat)
-        if side_x0 is not None:
-            for s in (-1.0, 1.0):
-                mbox(rig, "shell", f"sk{k}_frontw", s, side_x0, inner, y0, y1, zf, zf + t, mat=mat)
-        if L["ym"] >= SK_REAR_OPEN_BELOW:
-            box(rig, "shell", f"sk{k}_back", (-inner, y0, zb - t), (inner, y1, zb), mat=mat)
-    # 眼窝与鼻腔内壁的暗色衬：贴在前墙内面，让洞读成「深」
-    for s in (-1.0, 1.0):
-        L = next(L for L in SKULL if L["y0"] <= 20.0 < L["y1"])
-        mbox(rig, "shell", "socket_back", s, SOCKET_X[0] + 0.4, SOCKET_X[1] - 0.4, SOCKET_Y[0] + 0.5, SOCKET_Y[1] - 0.5,
-             L["zf"] + SK_WALL, L["zf"] + SK_WALL + 0.5, mat="crack_dark")
-    # 獠牙：一对，每根三段收细；左边那根只剩半截，断口一块碎骨
-    low = SKULL[0]
-    zf = low["zf"]
+    """体素按行合并成条：每层每个 z 行里连续同材质的格子并成一根 x 向长条，减少 cube 数。"""
+    rows: dict[tuple[int, int, str], list[int]] = {}
+    for c in SKULL_CELLS:
+        rows.setdefault((c["k"], c["iz"], c["mat"]), []).append(c["ix"])
+    n = 0
+    for (k, iz, mat), ixs in sorted(rows.items()):
+        ixs.sort()
+        start = prev = ixs[0]
+        for ix in ixs[1:] + [None]:
+            if ix is not None and ix == prev + 1:
+                prev = ix
+                continue
+            y0 = SK_Y0 + CELL * k
+            z = SK_C[2] + iz * CELL
+            box(rig, "shell", f"sk{n}", ((start - 0.5) * CELL, y0, z - CELL / 2), ((prev + 0.5) * CELL, y0 + CELL, z + CELL / 2), mat=mat)
+            n += 1
+            if ix is not None:
+                start = prev = ix
+    # 獠牙：一对，每根三段收细贴弧面；左边那根只剩半截
     for s, parts in ((-1.0, 2), (1.0, 3)):
         x = s * 5.2
-        pts = [(x, SK_Y0, zf + 1.2), (x + s * 0.1, SK_Y0 - 1.8, zf + 1.15), (x + s * 0.2, SK_Y0 - 3.6, zf + 1.1),
-               (x + s * 0.3, SK_Y0 - 5.2, zf + 1.0)]
+        zf = surface_z(x, SK_Y0 + CELL * 0.5) + 1.2
+        pts = [(x, SK_Y0 + 0.4, zf), (x + s * 0.1, SK_Y0 - 1.8, zf - 0.05), (x + s * 0.2, SK_Y0 - 3.6, zf - 0.1),
+               (x + s * 0.3, SK_Y0 - 5.2, zf - 0.2)]
         radii = [1.5, 1.2, 0.8, 0.3]
         taper(rig, "shell", "fang" + ("_l" if s < 0 else "_r") + "_", pts[:parts + 1], radii[:parts + 1], mat="bone_white")
     # 小门牙：左右各两颗，长短不一
     for k, (x, ln) in enumerate(((1.0, 2.8), (3.0, 2.2))):
+        zf = surface_z(x, SK_Y0 + 0.6) + 0.5
         for s in (-1.0, 1.0):
-            mbox(rig, "shell", f"incisor{k}", s, x - 0.55, x + 0.55, SK_Y0 - ln, SK_Y0, zf + 0.9, zf + 1.9, mat="bone_white")
-    # 眉弓：眼窝上缘一条凸骨，贴在前墙外面
-    Lb = next(L for L in SKULL if L["y0"] <= 24.0 < L["y1"] + 0.01 or L["y0"] <= 23.9 < L["y1"])
+            mbox(rig, "shell", f"incisor{k}", s, x - 0.55, x + 0.55, SK_Y0 - ln, SK_Y0 + 0.4, zf, zf + 1.0, mat="bone_white")
+    # 眉弓：眼窝上缘一条贴弧面的凸骨，分三段跟着前表面走
+    yb = SOCKET_C[1] + SOCKET_R[1] + 0.2
+    for k, (xa, xb) in enumerate(((2.2, 5.0), (5.0, 8.0), (8.0, 10.6))):
+        zs = surface_z((xa + xb) / 2, yb) - 0.9
+        for s in (-1.0, 1.0):
+            mbox(rig, "shell", f"brow{k}", s, xa, xb, yb - 0.4, yb + 1.0, zs, zs + 1.6, mat="bone_grey")
+    # 颧弓：眼窝下缘外侧的凸骨
     for s in (-1.0, 1.0):
-        mbox(rig, "shell", "brow", s, 2.6, Lb["w"] - 1.0, Lb["y0"] - 0.2, Lb["y1"] + 0.6, Lb["zf"] - 1.0, Lb["zf"], mat="bone_grey")
-    # 颧弓：眼窝下缘外侧一块凸骨
-    for s in (-1.0, 1.0):
-        mbox(rig, "shell", "cheek", s, 8.5, 10.0, 15.8, 18.0, SKULL[3]["zf"] + 0.2, SKULL[3]["zf"] + 2.6, mat="bone_grey")
+        zs = surface_z(9.2, 17.0) - 0.8
+        mbox(rig, "shell", "cheek", s, 8.2, 10.4, 15.8, 18.0, zs, zs + 1.6, mat="bone_grey")
 
 
 # ===========================================================================
-# 2. 壳面附着：裂纹 / 藤壶 / 苔
+# 2. 壳面附着：藤壶 / 苔
 # ===========================================================================
+def surface_point(k: int, theta: float) -> tuple[float, float, float, float, float]:
+    """第 k 层、方位角 theta 处的壳外表面点 (x, y, z, 外法向 nx, 外法向 nz)。"""
+    ym = SK_Y0 + CELL * k + CELL / 2
+    w, l = ellipse_at(ym)
+    x, dz = w * math.cos(theta), l * math.sin(theta)
+    nx, nz = x / (w * w), dz / (l * l)
+    ln = math.hypot(nx, nz)
+    return x, SK_Y0 + CELL * k, SK_C[2] + dz, nx / ln, nz / ln
+
+
 def part_crust(rig: Rig) -> None:
-    """裂纹、藤壶团、苔都是随机撒的，挂在 crust 骨下（镜像豁免）；三束垂苔对称，挂 moss_* 骨。"""
+    """藤壶团与苔点缀在弧面上；位置按「层 + 方位角」取，避开眼窝 / 鼻腔。裂纹与苔斑本体已涂在体素材质里。"""
     rng = random.Random(20261013)
-    side_layers = [L for L in SKULL if L["ym"] < SK_SOLID_ABOVE and L["ym"] > 14.0]
-    # 裂纹：每条从某层往下 4~5 层，沿墙外面锯齿下行，每段 0.4 深
-    for c in range(5):
-        L0 = rng.choice(side_layers[2:])
-        face = rng.choice(("l", "r", "f"))
-        for n in range(4):
-            L = SKULL[max(0, L0["k"] - n)]
-            off = (0.5 if n % 2 else -0.5) + rng.uniform(-0.2, 0.2)
-            if face == "f":
-                x = off * 3.0 + (c - 2) * 2.0
-                if abs(x) > L["w"] - SK_WALL - 0.5 or any(SOCKET_X[0] - 0.6 < abs(x) < SOCKET_X[1] + 0.6 for _ in (0,)) and SOCKET_Y[0] - 1 < L["ym"] < SOCKET_Y[1] + 1:
-                    continue
-                box(rig, "crust", f"crack{c}_{n}", (x - 0.35, L["y0"], L["zf"] - 0.4), (x + 0.35, L["y1"] + 0.4, L["zf"]), mat="crack_dark")
-            else:
-                s = -1.0 if face == "l" else 1.0
-                z = SK_C[2] + off * 6.0
-                x0, x1 = (L["w"], L["w"] + 0.4)
-                lo, hi = (x0, x1) if s > 0 else (-x1, -x0)
-                box(rig, "crust", f"crack{c}_{n}", (lo, L["y0"], z - 0.35), (hi, L["y1"] + 0.4, z + 0.35), mat="crack_dark")
-    # 藤壶团：每团 3 枚，底座 + 孔
-    for c in range(7):
-        L = rng.choice(side_layers)
-        face = rng.choice(("l", "r", "r", "l", "f"))
-        for n in range(3):
-            dz = rng.uniform(-2.0, 2.0)
-            dy = rng.uniform(0.0, 1.0)
-            y = L["y0"] + dy
-            if face == "f":
-                x = rng.uniform(-0.5, 0.5) * (L["w"] - SK_WALL - 1.0)
-                if SOCKET_X[0] - 1 < abs(x) < SOCKET_X[1] + 1 and SOCKET_Y[0] - 1 < L["ym"] < SOCKET_Y[1] + 1:
-                    continue
-                box(rig, "crust", f"barn{c}_{n}", (x - 0.8, y, L["zf"] - 1.0), (x + 0.8, y + 1.4, L["zf"]), mat="barnacle_grey")
-                box(rig, "crust", f"barn_hole{c}_{n}", (x - 0.4, y + 0.5, L["zf"] - 1.3), (x + 0.4, y + 0.9, L["zf"] - 1.0), mat="crack_dark")
-            else:
-                s = -1.0 if face == "l" else 1.0
-                z = SK_C[2] + dz * 3.0
-                x0, x1 = L["w"], L["w"] + 1.0
-                lo, hi = (x0, x1) if s > 0 else (-x1, -x0)
-                box(rig, "crust", f"barn{c}_{n}", (lo, y, z - 0.8), (hi, y + 1.4, z + 0.8), mat="barnacle_grey")
-                x2 = L["w"] + 1.0
-                lo2, hi2 = (x2, x2 + 0.3) if s > 0 else (-x2 - 0.3, -x2)
-                box(rig, "crust", f"barn_hole{c}_{n}", (lo2, y + 0.5, z - 0.4), (hi2, y + 0.9, z + 0.4), mat="crack_dark")
-    # 苔斑：薄片贴在外壁面
+
+    def clear_of_face(x: float, ym: float, z: float, grow: float = 1.7) -> bool:
+        return not in_face_hole(x, ym, z - SK_C[2], grow)
+
+    def place(tag: str, mat: str, size: float, k: int, theta: float, lift: float) -> bool:
+        x, y, z, nx, nz = surface_point(k, theta)
+        if not clear_of_face(x, y + CELL / 2, z):
+            return False
+        if y + CELL / 2 < SK_REAR_OPEN_BELOW and nz > 0.3:
+            return False                         # 后下方是敞开的洞，没有壳可附
+        # 外移 lift，让立方体露出壳面；半边长 size/2 保证嵌进弧面里不悬空
+        cx, cz = x + nx * lift, z + nz * lift
+        box(rig, "crust", tag, (cx - size / 2, y, cz - size / 2), (cx + size / 2, y + size, cz + size / 2), mat=mat)
+        return True
+
+    # 藤壶：每团 3 枚（一大两小），顶面一个暗孔
+    top = SKULL_LAYERS - 4
+    n = 0
     for c in range(9):
-        L = rng.choice(side_layers)
-        face = rng.choice(("l", "r", "l", "r", "f"))
-        wd, ht = rng.uniform(2.0, 4.5), rng.uniform(1.0, 1.4)
-        if face == "f":
-            x = rng.uniform(-0.6, 0.6) * (L["w"] - SK_WALL - 1.0)
-            if SOCKET_X[0] - 1 < abs(x) < SOCKET_X[1] + 1 and SOCKET_Y[0] - 1 < L["ym"] < SOCKET_Y[1] + 1:
-                continue
-            box(rig, "crust", f"moss_patch{c}", (x - wd / 2, L["y0"], L["zf"] - 0.5), (x + wd / 2, L["y0"] + ht, L["zf"]), mat="moss_olive")
-        else:
-            s = -1.0 if face == "l" else 1.0
-            z = SK_C[2] + rng.uniform(-0.6, 0.6) * L["l"]
-            x0, x1 = L["w"], L["w"] + 0.5
-            lo, hi = (x0, x1) if s > 0 else (-x1, -x0)
-            box(rig, "crust", f"moss_patch{c}", (lo, L["y0"], z - wd / 2), (hi, L["y0"] + ht, z + wd / 2), mat="moss_olive")
-    # 垂苔：从第 0 层底面往下挂，三束（前 / 左 / 右），每束三根逐渐变细
-    low = SKULL[0]
+        k0 = rng.randint(3, top)
+        th0 = rng.uniform(0.0, math.tau)
+        for j, size in enumerate((1.9, 1.4, 1.4)):
+            k = max(1, min(top, k0 + rng.randint(-1, 1)))
+            th = th0 + rng.uniform(-0.18, 0.18)
+            if place(f"barn{n}", "barnacle_grey", size, k, th, 0.35):
+                x, y, z, nx, nz = surface_point(k, th)
+                box(rig, "crust", f"barn_hole{n}", (x + nx * 1.0 - 0.35, y + size - 0.3, z + nz * 1.0 - 0.35),
+                    (x + nx * 1.0 + 0.35, y + size + 0.1, z + nz * 1.0 + 0.35), mat="crack_dark")
+            n += 1
+    # 苔团：鼓起一层薄苔 + 一条垂下去的细苔
+    for c in range(12):
+        k = rng.randint(2, top)
+        th = rng.uniform(0.0, math.tau)
+        if place(f"moss_tuft{c}", "moss_olive", rng.uniform(2.0, 3.0), k, th, 0.2) and k > 2:
+            x, y, z, nx, nz = surface_point(k - 1, th)
+            box(rig, "crust", f"moss_drip{c}", (x + nx * 0.35 - 0.35, y - 1.2, z + nz * 0.35 - 0.35),
+                (x + nx * 0.35 + 0.35, y + CELL, z + nz * 0.35 + 0.35), mat="moss_olive")
+    # 垂苔：从壳下沿往下挂，三束（前 / 左 / 右），每束三根逐渐变细
+    low = SKULL_CELLS[0]
     for k, dz in enumerate((-3.0, 0.0, 3.0)):
         ln = 1.8 - 0.2 * abs(k - 1)
         for s in (-1.0, 1.0):
-            x0 = low["w"] - SK_WALL
-            mbox(rig, f"moss_{'l' if s < 0 else 'r'}", f"moss_hang{k}", s, x0 + 0.2, x0 + 1.0, SK_Y0 - ln, SK_Y0, SK_C[2] + dz - 0.4, SK_C[2] + dz + 0.4, mat="moss_olive")
+            x0 = ellipse_at(SK_Y0 + 0.6)[0] - SK_WALL
+            mbox(rig, f"moss_{'l' if s < 0 else 'r'}", f"moss_hang{k}", s, x0 - 0.2, x0 + 0.6, SK_Y0 - ln, SK_Y0 + 0.2, SK_C[2] + dz - 0.4, SK_C[2] + dz + 0.4, mat="moss_olive")
     for s in (-1.0, 1.0):
-        mbox(rig, "moss_front", "moss_fh", s, 1.6, 2.4, SK_Y0 - 2.6, SK_Y0, low["zf"] + 0.4, low["zf"] + 1.4, mat="moss_olive")
+        zf = surface_z(2.0, SK_Y0 + 0.5)
+        mbox(rig, "moss_front", "moss_fh", s, 1.6, 2.4, SK_Y0 - 2.6, SK_Y0 + 0.2, zf + 0.2, zf + 1.2, mat="moss_olive")
 
 
 # ===========================================================================
@@ -441,7 +499,7 @@ def part_eyes(rig: Rig) -> None:
 def claw(rig: Rig, name: str, c: dict, big: bool) -> None:
     S, E, W = c["S"], c["E"], c["W"]
     pc, ph = c["palm_c"], c["palm_h"]
-    arm_r = 2.8 if big else 1.4
+    arm_r = 3.4 if big else 1.4
     s = 1.0 if pc[0] > 0 else -1.0
     arm, fore, palm, dact = f"{name}_arm", f"{name}_fore", f"{name}_palm", f"{name}_dactyl"
     bar(rig, arm, f"{name}_upper", S, along(E, S, arm_r * 0.9), arm_r, arm_r, mat="bone_white")
@@ -453,47 +511,50 @@ def claw(rig: Rig, name: str, c: dict, big: bool) -> None:
             p = lerp3(E, W, tt)
             r = arm_r * 1.15
             box(rig, fore, f"{name}_knob{k}", (p[0] - 0.9, p[1] + r, p[2] - 0.9), (p[0] + 0.9, p[1] + r + 1.0, p[2] + 0.9), mat="bone_white")
-    # 掌：三层叠成鼓肚的块 + 背脊上几粒瘤
-    x0, x1 = pc[0] - ph[0], pc[0] + ph[0]
+    # 掌：沿 y 切成 5 片，上下两端收窄，中间鼓出，做成圆鼓的掌
     y0, y1 = pc[1] - ph[1], pc[1] + ph[1]
     z0, z1 = pc[2] - ph[2], pc[2] + ph[2]
-    inset = 0.9 if big else 0.5
-    box(rig, palm, f"{name}_palm_core", (x0, y0 + inset, z0 + 0.0), (x1, y1 - inset, z1), mat="bone_white")
-    box(rig, palm, f"{name}_palm_top", (x0 + inset, y1 - inset, z0 + 0.6), (x1 - inset, y1, z1 - 0.6), mat="bone_grey")
-    box(rig, palm, f"{name}_palm_low", (x0 + inset, y0, z0 + 0.6), (x1 - inset, y0 + inset, z1 - 0.6), mat="bone_grey")
+    n_slice = 5
+    for i in range(n_slice):
+        ya, yb = y0 + (y1 - y0) * i / n_slice, y0 + (y1 - y0) * (i + 1) / n_slice
+        f = math.sqrt(max(0.0, 1.0 - (((ya + yb) / 2 - pc[1]) / ph[1]) ** 2))
+        f = 0.55 + 0.45 * f
+        box(rig, palm, f"{name}_palm_s{i}", (pc[0] - ph[0] * f, ya, pc[2] - ph[2] * (0.5 + 0.5 * f)),
+            (pc[0] + ph[0] * f, yb, pc[2] + ph[2] * (0.5 + 0.5 * f)), mat="bone_grey" if i in (0, n_slice - 1) else "bone_white")
     nk = 5 if big else 3
     for k in range(nk):
         zk = z0 + 1.2 + (z1 - z0 - 2.4) * k / max(nk - 1, 1)
         kw = 1.0 if big else 0.6
         box(rig, palm, f"{name}_bump{k}", (pc[0] - kw, y1, zk - kw), (pc[0] + kw, y1 + kw * 1.2, zk + kw), mat="bone_white")
-    # 定指（固定，随掌）：三段收细 + 内缘齿
-    fz = z1
-    f0 = (pc[0], y0 + (ph[1] * 0.45 if big else ph[1] * 0.5), fz)
-    f_pts = [f0,
-             (pc[0] - s * 0.2, f0[1] - 0.4, fz - (4.5 if big else 3.5)),
-             (pc[0] - s * 0.8, f0[1] - 0.9, fz - (8.5 if big else 6.5)),
-             (pc[0] - s * 1.5, f0[1] - 1.0, fz - (11.5 if big else 8.5))]
-    f_pts = [(p[0], p[1], p[2] - 11.0 + 11.0) for p in f_pts]
+    # 定指（固定，随掌）：三段收细 + 内缘锯齿
     # 掌朝前是 -z：手指向 -z 延伸，所以从掌前缘 z0 开始，不是 z1
     fz = z0
     f0 = (pc[0], pc[1] - ph[1] * (0.45 if big else 0.4), fz)
     L1, L2, L3 = (6.5, 12.0, 16.5) if big else (4.5, 8.0, 10.5)
     f_pts = [f0, (f0[0] - s * 0.2, f0[1] - 0.4, fz - L1), (f0[0] - s * 0.8, f0[1] - 0.9, fz - L2), (f0[0] - s * 1.5, f0[1] - 1.0, fz - L3)]
-    radii = (2.6, 2.0, 1.3, 0.45) if big else (1.3, 1.0, 0.65, 0.25)
+    radii = (3.6, 2.8, 1.8, 0.6) if big else (1.3, 1.0, 0.65, 0.25)
     taper(rig, palm, f"{name}_fixed", f_pts, list(radii), mat="bone_white")
-    for k, tt in enumerate((0.3, 0.55, 0.8)):
+    # 内缘锯齿：定指向上、动指向下，大小交错；大螯 6 枚、小螯 3 枚
+    n_teeth = 6 if big else 3
+    for k in range(n_teeth):
+        tt = 0.12 + 0.78 * k / max(n_teeth - 1, 1)
+        h = (1.9 if k % 2 == 0 else 1.2) if big else 0.9
+        wd = 0.9 if big else 0.4
         p = lerp3(f_pts[0], f_pts[3], tt)
-        r = (2.6 - 1.7 * tt) * (1.0 if big else 0.5)
-        box(rig, palm, f"{name}_ftooth{k}", (p[0] - 0.4, p[1] + r * 0.6, p[2] - 0.5), (p[0] + 0.4, p[1] + r * 0.6 + 0.9, p[2] + 0.5), mat="bone_grey")
+        r = (radii[0] + (radii[3] - radii[0]) * tt) * 0.55
+        box(rig, palm, f"{name}_ftooth{k}", (p[0] - wd, p[1] + r - 0.3, p[2] - wd), (p[0] + wd, p[1] + r + h, p[2] + wd), mat="bone_grey")
     # 动指（挂 dactyl 骨）：从掌上前缘铰出，弯向定指尖
     d0 = (pc[0], pc[1] + ph[1] * (0.62 if big else 0.55), z0 + 0.2)
-    d_pts = [d0, (d0[0] - s * 0.1, d0[1] - 0.3, z0 - L1 * 0.95), (d0[0] - s * 0.6, d0[1] - 1.4, z0 - L2 * 0.95),
-             (f_pts[3][0] + s * 0.0, f_pts[3][1] + 0.9, f_pts[3][2] - 0.2)]
+    d_pts = [d0, (d0[0] - s * 0.1, d0[1] - 0.3, z0 - L1 * 0.95), (d0[0] - s * 0.6, d0[1] - 1.6, z0 - L2 * 0.95),
+             (f_pts[3][0] + s * 0.0, f_pts[3][1] + 1.6, f_pts[3][2] - 0.2)]
     taper(rig, dact, f"{name}_dact", d_pts, list(radii), mat="bone_white")
-    for k, tt in enumerate((0.3, 0.55, 0.8)):
+    for k in range(n_teeth):
+        tt = 0.12 + 0.78 * k / max(n_teeth - 1, 1)
+        h = (1.2 if k % 2 == 0 else 1.9) if big else 0.9
+        wd = 0.9 if big else 0.4
         p = lerp3(d_pts[0], d_pts[3], tt)
-        r = (2.6 - 1.7 * tt) * (1.0 if big else 0.5)
-        box(rig, dact, f"{name}_dtooth{k}", (p[0] - 0.4, p[1] - r * 0.6 - 0.9, p[2] - 0.5), (p[0] + 0.4, p[1] - r * 0.6, p[2] + 0.5), mat="bone_grey")
+        r = (radii[0] + (radii[3] - radii[0]) * tt) * 0.55
+        box(rig, dact, f"{name}_dtooth{k}", (p[0] - wd, p[1] - r - h, p[2] - wd), (p[0] + wd, p[1] - r + 0.3, p[2] + wd), mat="bone_grey")
 
 
 def part_claw_big(rig: Rig) -> None:
@@ -507,7 +568,7 @@ def part_claw_big(rig: Rig) -> None:
         box(rig, "claw_big_palm", f"claw_barn{n}", (pc[0] + ph[0], y, z - 0.8), (pc[0] + ph[0] + 1.0, y + 1.4, z + 0.8), mat="barnacle_grey")
     for n in range(2):
         z = pc[2] + rng.uniform(-3.0, 3.0)
-        box(rig, "claw_big_palm", f"claw_moss{n}", (pc[0] + ph[0], pc[1] - 3.0 + n * 3.5, z - 1.3), (pc[0] + ph[0] + 0.5, pc[1] - 2.0 + n * 3.5, z + 1.3), mat="moss_olive")
+        box(rig, "claw_big_palm", f"claw_moss{n}", (pc[0] + ph[0] * 0.85, pc[1] - 3.0 + n * 3.5, z - 1.3), (pc[0] + ph[0] + 0.5, pc[1] - 2.0 + n * 3.5, z + 1.3), mat="moss_olive")
 
 
 def part_claw_small(rig: Rig) -> None:
@@ -565,13 +626,15 @@ def moving_bones(rig: Rig) -> list[str]:
 # 门禁
 # ===========================================================================
 # 镜像门只认 _l/_r 成对。这些骨本来就不左右对称：大小螯一大一小；壳面附着随机撒。
-ASYM = ("crust",) + tuple(f"{n}_{p}" for n in ("claw_big", "claw_small") for p in ("arm", "fore", "palm", "dactyl"))
+ASYM = ("crust", "shell") + tuple(f"{n}_{p}" for n in ("claw_big", "claw_small") for p in ("arm", "fore", "palm", "dactyl"))
 
 # 穿模门按 AABB 判：斜置的骨干和壳、关节块的 AABB 会虚报互穿。骨白 × 骨灰、锈橙 × 锈暗这类同族配对放行。
 SOFT_OVER = frozenset({
     frozenset(("bone_white", "bone_grey")), frozenset(("rust_orange", "rust_dark")),
     frozenset(("bone_white", "barnacle_grey")), frozenset(("bone_grey", "barnacle_grey")),
     frozenset(("bone_white", "moss_olive")), frozenset(("bone_grey", "moss_olive")),
+    frozenset(("rust_orange", "crack_dark")),     # 眼柄穿过眼窝后的暗衬
+    frozenset(("barnacle_grey", "crack_dark")), frozenset(("moss_olive", "crack_dark")),
     frozenset(("bone_white", "crack_dark")), frozenset(("bone_grey", "crack_dark")),
     # 关节块（锈橙 / 锈暗）套在骨白骨干端头，斜置骨干的 AABB 必然与它相交
     frozenset(("bone_white", "rust_orange")), frozenset(("bone_white", "rust_dark")),
