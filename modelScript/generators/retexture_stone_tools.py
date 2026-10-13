@@ -25,12 +25,12 @@ from handheld_common import Cube, View
 # 本件自己的材质名 → 画笔库材质名
 MATERIAL_MAP: Dict[str, str] = {
     "weathered_wood": "wood",
-    "rough_stone": "stone_chipped",       # 画笔库里没有深色玄武岩 / 燧石，粗打石最接近
-    "stone_edge": "stone_chipped",        # 同上，刃口没有单独的亮一档
+    "rough_stone": "stone_chipped",       # 粗打石：斧头 / 镐身
+    "stone_edge": "stone_edge",           # 刃口比斧身亮一档（画笔库新增）
     "hemp_binding": "rope",
-    "spirit_wood": "wood",                # 画笔库里没有浅色灵木
-    "wood_edge": "wood",
-    "spirit_vein": "copper_green",        # 画笔库里没有绿色灵纹，铜绿最接近
+    "spirit_wood": "spirit_wood",         # 灵木剑身（画笔库新增的浅色灵木）
+    "wood_edge": "spirit_wood",
+    "spirit_vein": "spirit_green",        # 绿色灵纹（画笔库新增）
     "fine_cord": "rope",
 }
 

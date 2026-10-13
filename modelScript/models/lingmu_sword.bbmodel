@@ -78,7 +78,7 @@
           "texture": 0
         }
       },
-      "uuid": "a1073ae2-4295-41ba-97e1-7a09492e4ce4"
+      "uuid": "70249a8b-f07b-4890-95e1-6504bcdc8ae8"
     },
     {
       "name": "pommel_vein_rune",
@@ -149,7 +149,7 @@
           "texture": 0
         }
       },
-      "uuid": "9e17cc1d-8125-4e56-a198-17d68b25ad7d"
+      "uuid": "4b0e6cd8-2844-48a8-98e2-8904b6d13565"
     },
     {
       "name": "grip_core",
@@ -220,7 +220,7 @@
           "texture": 0
         }
       },
-      "uuid": "bf089f4a-b874-4b6d-ad3b-4c2877a30d7a"
+      "uuid": "857785e5-2f70-47a2-b813-3b6ac0974cba"
     },
     {
       "name": "grip_wrap_0",
@@ -291,7 +291,7 @@
           "texture": 0
         }
       },
-      "uuid": "6e718452-6e27-4b69-a56f-d42be0494d51"
+      "uuid": "f1bdb069-b217-4bab-8d98-55ceaaf862ac"
     },
     {
       "name": "grip_wrap_1",
@@ -362,7 +362,7 @@
           "texture": 0
         }
       },
-      "uuid": "a3e468b4-78ae-4b2b-9600-d964c68431ec"
+      "uuid": "837bae2b-1cf4-45ca-b8a9-683f7845761b"
     },
     {
       "name": "grip_wrap_2",
@@ -433,7 +433,7 @@
           "texture": 0
         }
       },
-      "uuid": "994ccce9-6aec-4298-8774-662e7c9c60d6"
+      "uuid": "da5171b0-cfb6-4e97-b659-2a204aaf603c"
     },
     {
       "name": "grip_wrap_3",
@@ -504,7 +504,7 @@
           "texture": 0
         }
       },
-      "uuid": "26d51181-eb89-4f6e-9a6b-87a1916a21b4"
+      "uuid": "235792f1-62db-4fd9-aa14-c4bd5f9e6539"
     },
     {
       "name": "guard_beam",
@@ -575,7 +575,7 @@
           "texture": 0
         }
       },
-      "uuid": "c85a60df-aded-40c8-a2b5-3162de81b6b7"
+      "uuid": "f8cb2007-2d2e-43b9-b1a4-339b3bffee06"
     },
     {
       "name": "guard_wing_l_tip",
@@ -646,7 +646,7 @@
           "texture": 0
         }
       },
-      "uuid": "0ae3e97c-1631-4f98-90ea-bf57483c0ffe"
+      "uuid": "89a80cf6-2c78-451d-ad4f-b1e3317f516c"
     },
     {
       "name": "guard_wing_r_tip",
@@ -717,7 +717,7 @@
           "texture": 0
         }
       },
-      "uuid": "01e4b5aa-fed3-499f-8106-bc60501cfec2"
+      "uuid": "ca2b3cfb-8ef1-4a5a-9726-e6afc27230f0"
     },
     {
       "name": "guard_boss_f",
@@ -788,7 +788,7 @@
           "texture": 0
         }
       },
-      "uuid": "bb29ddeb-27e8-43d4-b2a2-942c410e1b5b"
+      "uuid": "e54bab15-dff3-43af-acb7-d1d039d39664"
     },
     {
       "name": "guard_boss_b",
@@ -859,7 +859,7 @@
           "texture": 0
         }
       },
-      "uuid": "d126137d-e9c8-4ce0-b068-ad2cfef00ed3"
+      "uuid": "1420949e-797f-49b5-84f6-d365b14fbf47"
     },
     {
       "name": "blade_base_root",
@@ -930,7 +930,7 @@
           "texture": 0
         }
       },
-      "uuid": "65ba6437-954b-4f32-8c58-a198d062c849"
+      "uuid": "1e715047-b012-4808-bc4b-280cd8925e4d"
     },
     {
       "name": "blade_spine_low",
@@ -1001,7 +1001,7 @@
           "texture": 0
         }
       },
-      "uuid": "872c94c8-b28a-4158-9b48-bf7abe692dc2"
+      "uuid": "aa7f27e7-f2dd-4ce5-8da0-a57963b08a8d"
     },
     {
       "name": "blade_spine_mid",
@@ -1072,7 +1072,7 @@
           "texture": 0
         }
       },
-      "uuid": "4f7a17b1-6cf2-4de3-be80-03c925a2bfc9"
+      "uuid": "0262164f-0d06-4de0-9b95-94362bdba17c"
     },
     {
       "name": "blade_spine_high",
@@ -1143,7 +1143,7 @@
           "texture": 0
         }
       },
-      "uuid": "4354059e-5b7b-4631-a42d-c3769b2ae7db"
+      "uuid": "a3d418b4-474d-47a0-89dc-7b6328582ce4"
     },
     {
       "name": "spirit_vein_branch_l",
@@ -1214,7 +1214,7 @@
           "texture": 0
         }
       },
-      "uuid": "7ddd5dbc-009d-4096-8922-d2152f3581f0"
+      "uuid": "2bc2201d-8748-48a7-ad08-bba11ddc309f"
     },
     {
       "name": "spirit_vein_branch_r",
@@ -1285,7 +1285,7 @@
           "texture": 0
         }
       },
-      "uuid": "a48d843f-c5ad-4afe-9caa-74514ca9fb6f"
+      "uuid": "953a5557-5cf5-4e30-b725-f306a07479d3"
     },
     {
       "name": "blade_body_low",
@@ -1356,7 +1356,7 @@
           "texture": 0
         }
       },
-      "uuid": "822ea4dc-5cac-435a-aae3-3ac04232fe56"
+      "uuid": "ac724d0e-5675-4c6a-be6b-196b17fda52e"
     },
     {
       "name": "blade_edge_l_low",
@@ -1427,7 +1427,7 @@
           "texture": 0
         }
       },
-      "uuid": "4cd15ed3-c2ff-4f73-90dc-0b5582ea66a4"
+      "uuid": "d29e5d03-8a3d-48f1-9d2b-141f9290453d"
     },
     {
       "name": "blade_edge_r_low",
@@ -1498,7 +1498,7 @@
           "texture": 0
         }
       },
-      "uuid": "aadd6718-e773-4604-b756-fa0e106b3ccc"
+      "uuid": "b5b16a1a-c1ac-48ff-8365-4ca4190ed2ca"
     },
     {
       "name": "blade_body_mid",
@@ -1569,7 +1569,7 @@
           "texture": 0
         }
       },
-      "uuid": "853a706c-1430-47ca-8163-476734e4b7bc"
+      "uuid": "043245c0-3887-43fe-8fd7-dd4afb0b3fd9"
     },
     {
       "name": "blade_edge_l_mid",
@@ -1640,7 +1640,7 @@
           "texture": 0
         }
       },
-      "uuid": "dbaf6415-4304-4a27-9797-55ba3ab19593"
+      "uuid": "b3fc05a0-4344-45e8-b5c9-113e4bc9bb87"
     },
     {
       "name": "blade_edge_r_mid",
@@ -1711,7 +1711,7 @@
           "texture": 0
         }
       },
-      "uuid": "80411064-81f7-4d0e-bd69-38b50df41d70"
+      "uuid": "0aee16d6-043a-4856-9643-ed8c923bc7f3"
     },
     {
       "name": "blade_body_high",
@@ -1782,7 +1782,7 @@
           "texture": 0
         }
       },
-      "uuid": "5d7462a4-1485-43cd-9584-110506c3972d"
+      "uuid": "07fcc103-44a3-45e3-a472-b0446bd42769"
     },
     {
       "name": "blade_edge_l_high",
@@ -1853,7 +1853,7 @@
           "texture": 0
         }
       },
-      "uuid": "d0be86eb-66b2-4b00-9182-51ab6087b5e0"
+      "uuid": "ef5c86de-6cdc-4eb9-bbb5-091fb9874dea"
     },
     {
       "name": "blade_edge_r_high",
@@ -1924,7 +1924,7 @@
           "texture": 0
         }
       },
-      "uuid": "45747e6d-ad3f-48ee-958a-d3d788366181"
+      "uuid": "de4e77a9-e612-4079-b883-905a5f0f5461"
     },
     {
       "name": "blade_tip_taper1",
@@ -1995,7 +1995,7 @@
           "texture": 0
         }
       },
-      "uuid": "a917c50d-cead-4b81-8a3a-1c5c2863665a"
+      "uuid": "046b08f4-daa2-4e59-a91f-4d76ecb73096"
     },
     {
       "name": "blade_tip_taper2",
@@ -2066,7 +2066,7 @@
           "texture": 0
         }
       },
-      "uuid": "d9b1fe7e-7fec-46dd-adfd-9780550f29e7"
+      "uuid": "8d9326d6-c2ad-4649-a24f-bc2aa1c8bc20"
     },
     {
       "name": "blade_tip_point",
@@ -2137,7 +2137,7 @@
           "texture": 0
         }
       },
-      "uuid": "08faf06d-8a04-4381-9077-2e21dcdb5f34"
+      "uuid": "6bfaac16-2436-44e4-9cdf-3593de0692f2"
     }
   ],
   "outliner": [
@@ -2149,17 +2149,17 @@
         0.0
       ],
       "children": [
-        "a1073ae2-4295-41ba-97e1-7a09492e4ce4",
-        "bf089f4a-b874-4b6d-ad3b-4c2877a30d7a",
-        "c85a60df-aded-40c8-a2b5-3162de81b6b7",
-        "0ae3e97c-1631-4f98-90ea-bf57483c0ffe",
-        "01e4b5aa-fed3-499f-8106-bc60501cfec2",
-        "bb29ddeb-27e8-43d4-b2a2-942c410e1b5b",
-        "d126137d-e9c8-4ce0-b068-ad2cfef00ed3",
-        "65ba6437-954b-4f32-8c58-a198d062c849",
-        "822ea4dc-5cac-435a-aae3-3ac04232fe56",
-        "853a706c-1430-47ca-8163-476734e4b7bc",
-        "5d7462a4-1485-43cd-9584-110506c3972d"
+        "70249a8b-f07b-4890-95e1-6504bcdc8ae8",
+        "857785e5-2f70-47a2-b813-3b6ac0974cba",
+        "f8cb2007-2d2e-43b9-b1a4-339b3bffee06",
+        "89a80cf6-2c78-451d-ad4f-b1e3317f516c",
+        "ca2b3cfb-8ef1-4a5a-9726-e6afc27230f0",
+        "e54bab15-dff3-43af-acb7-d1d039d39664",
+        "1420949e-797f-49b5-84f6-d365b14fbf47",
+        "1e715047-b012-4808-bc4b-280cd8925e4d",
+        "ac724d0e-5675-4c6a-be6b-196b17fda52e",
+        "043245c0-3887-43fe-8fd7-dd4afb0b3fd9",
+        "07fcc103-44a3-45e3-a472-b0446bd42769"
       ]
     },
     {
@@ -2170,12 +2170,12 @@
         0.0
       ],
       "children": [
-        "9e17cc1d-8125-4e56-a198-17d68b25ad7d",
-        "872c94c8-b28a-4158-9b48-bf7abe692dc2",
-        "4f7a17b1-6cf2-4de3-be80-03c925a2bfc9",
-        "4354059e-5b7b-4631-a42d-c3769b2ae7db",
-        "7ddd5dbc-009d-4096-8922-d2152f3581f0",
-        "a48d843f-c5ad-4afe-9caa-74514ca9fb6f"
+        "4b0e6cd8-2844-48a8-98e2-8904b6d13565",
+        "aa7f27e7-f2dd-4ce5-8da0-a57963b08a8d",
+        "0262164f-0d06-4de0-9b95-94362bdba17c",
+        "a3d418b4-474d-47a0-89dc-7b6328582ce4",
+        "2bc2201d-8748-48a7-ad08-bba11ddc309f",
+        "953a5557-5cf5-4e30-b725-f306a07479d3"
       ]
     },
     {
@@ -2186,10 +2186,10 @@
         0.0
       ],
       "children": [
-        "6e718452-6e27-4b69-a56f-d42be0494d51",
-        "a3e468b4-78ae-4b2b-9600-d964c68431ec",
-        "994ccce9-6aec-4298-8774-662e7c9c60d6",
-        "26d51181-eb89-4f6e-9a6b-87a1916a21b4"
+        "f1bdb069-b217-4bab-8d98-55ceaaf862ac",
+        "837bae2b-1cf4-45ca-b8a9-683f7845761b",
+        "da5171b0-cfb6-4e97-b659-2a204aaf603c",
+        "235792f1-62db-4fd9-aa14-c4bd5f9e6539"
       ]
     },
     {
@@ -2200,15 +2200,15 @@
         0.0
       ],
       "children": [
-        "4cd15ed3-c2ff-4f73-90dc-0b5582ea66a4",
-        "aadd6718-e773-4604-b756-fa0e106b3ccc",
-        "dbaf6415-4304-4a27-9797-55ba3ab19593",
-        "80411064-81f7-4d0e-bd69-38b50df41d70",
-        "d0be86eb-66b2-4b00-9182-51ab6087b5e0",
-        "45747e6d-ad3f-48ee-958a-d3d788366181",
-        "a917c50d-cead-4b81-8a3a-1c5c2863665a",
-        "d9b1fe7e-7fec-46dd-adfd-9780550f29e7",
-        "08faf06d-8a04-4381-9077-2e21dcdb5f34"
+        "d29e5d03-8a3d-48f1-9d2b-141f9290453d",
+        "b5b16a1a-c1ac-48ff-8365-4ca4190ed2ca",
+        "b3fc05a0-4344-45e8-b5c9-113e4bc9bb87",
+        "0aee16d6-043a-4856-9643-ed8c923bc7f3",
+        "ef5c86de-6cdc-4eb9-bbb5-091fb9874dea",
+        "de4e77a9-e612-4079-b883-905a5f0f5461",
+        "046b08f4-daa2-4e59-a91f-4d76ecb73096",
+        "8d9326d6-c2ad-4649-a24f-bc2aa1c8bc20",
+        "6bfaac16-2436-44e4-9cdf-3593de0692f2"
       ]
     }
   ],
@@ -2218,7 +2218,7 @@
       "folder": "block",
       "namespace": "bong",
       "id": 0,
-      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAAQCAYAAABgMcdIAAAA20lEQVR4nO3asQ2CQBgGUDAWVg7gCE5gae00Vg6hhZvQ2Vva2TmCA1jZnS1qDBrkTrn3OsIFvhASvvtDuVgvQ1EzPeyLmE6z+d1x7Pu/qynn4/nHdZPx6Puhas6Xa6fXb+vV8/lU6vdjUx2T3h/gW4apA/TFbrVNHeG3VakDAFD39wUg2o7MBwyAHvm5AmDECgDdG6QOAADEF30C8LTDN1oHgOhaFwAjewD4P2UoQmheBgD0iX8AACBDCgAAZEgBAIAMKQAAkCEFAAAypAAAQIYUAADIkAIAABm6AV+bJAdy9KB+AAAAAElFTkSuQmCC"
+      "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAAQCAYAAABgMcdIAAAA70lEQVR4nO3aMW6DMBQGYIh6n3aL1FN0anuDrsw5ADNrtm6VOvUUnbkRGbIQkiqJMKbwvm9ByJZ5ICT/NpSPu/eu6Nm/vhQ5fXz/nJznvv6trtU5bB/2+22a5DX1PVfVpOOP9dfzudfc78f26W3W6wOk8jB3AWvR1l+XG+rjYVtMPHF8Tjv8WG2q+6/TDAMQ3eIDQK4V2dkEZiICYMH+XQCwxQoA09vMXQAAkF/2HYDhCj/Zt2EA4GajA4AtewBYnrIruu56NwBgTfwDAAABCQAAEJAAAAABCQAAEJAAAAABCQAAEJAAAAABCQAAENABXnYhTUSg0qMAAAAASUVORK5CYII="
     }
   ]
 }
