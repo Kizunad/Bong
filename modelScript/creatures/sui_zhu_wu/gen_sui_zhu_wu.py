@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""髓蛀蜈（sui_zhu_wu）多足生物模型程序化生成器 —— Round 1/3。
+"""髓蛀蜈（sui_zhu_wu）多足生物模型程序化生成器 —— Round 2/3。
 
 依据 worldview.md §十三 鲸落遗骸：钻进鲸落化石里啃骨髓的长节蜈蚣。
 
@@ -49,7 +49,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "SuiZhuWu.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "SuiZhuWu.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 2/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -90,14 +90,33 @@ def seg_half_h(i: int) -> float:
 LEG_JOINTS = ("a", "b", "c")        # 股 / 胫 / 跗
 RING_COUNT = 6
 HEAD_Z = -13.0                      # 头甲中心 z
-RING_Z0 = -14.7                     # 第 0 圈钻环中心 z
-RING_PITCH = 1.4
+RING_Z0 = -15.6                     # 第 0 圈钻环中心 z
+RING_PITCH = 2.1                    # 环间距；环体厚度 ≈ 间距，六圈连成一个圆锥钻头
+RING_R0 = 4.2                       # 第 0 圈半径（比头甲半宽略大，钻头从头前凸出来）
+RING_R_STEP = 0.7                   # 每圈收细量，第 5 圈半径 0.7，收成钻尖
 TAIL_Z = seg_z(N_SEG - 1) + 3.2     # 尾节中心 z
 ANTENNA_BONES = 3
 
 
 def side_name(base: str, s: float) -> str:
     return base + ("_l" if s < 0 else "_r")
+
+
+def leg_points(i: int, s: float) -> dict[str, tuple[float, float, float]]:
+    """第 i 节 s 侧腿的关节点：股向外上方拱起，胫向外下弯成弧，跗向下收成尖爪。
+
+    相邻腿前后错开 0.5（sway），读出步态感。
+    """
+    w, z = WIDTHS[i], seg_z(i)
+    sway = 0.5 if i % 2 == 0 else -0.5
+    return {
+        "hip": (s * (w + 1.3), Y_C - 0.4, z),
+        "knee": (s * (w + 3.4), Y_C + 2.3, z + sway),
+        "mid": (s * (w + 5.2), Y_C + 1.6, z + sway * 1.2),
+        "ankle": (s * (w + 6.2), 3.2, z + sway * 1.4),
+        "toe": (s * (w + 6.8), 1.0, z + sway * 1.6),
+        "tip": (s * (w + 7.0), 0.15, z + sway * 1.6 - 0.2),
+    }
 
 
 def define_bones(rig: Rig) -> None:
@@ -112,9 +131,10 @@ def define_bones(rig: Rig) -> None:
         z, w = seg_z(i), WIDTHS[i]
         rig.bone(f"dust_{i}", (0.0, Y_C + seg_half_h(i), z), f"seg_{i}")
         for s in (-1.0, 1.0):
-            rig.bone(side_name(f"leg_{i}_a", s), (s * (w + 0.45), Y_C - 0.4, z), f"seg_{i}")
-            rig.bone(side_name(f"leg_{i}_b", s), (s * (w + 2.4), Y_C + 0.9, z), side_name(f"leg_{i}_a", s))
-            rig.bone(side_name(f"leg_{i}_c", s), (s * (w + 4.0), 2.3, z), side_name(f"leg_{i}_b", s))
+            pts = leg_points(i, s)
+            rig.bone(side_name(f"leg_{i}_a", s), pts["hip"], f"seg_{i}")
+            rig.bone(side_name(f"leg_{i}_b", s), pts["knee"], side_name(f"leg_{i}_a", s))
+            rig.bone(side_name(f"leg_{i}_c", s), pts["ankle"], side_name(f"leg_{i}_b", s))
     # 头与口器
     rig.bone("head", (0.0, Y_C, HEAD_Z), "seg_0")
     for k in range(RING_COUNT):
@@ -134,8 +154,8 @@ def define_bones(rig: Rig) -> None:
 # 触须中心线折点（右侧 x 为正；左侧取负）。六段，每骨管两段。
 ANTENNA_PATH = [
     (3.0, 7.6, HEAD_Z - 0.6),
-    (5.0, 9.4, HEAD_Z - 3.4),
-    (6.6, 9.4, HEAD_Z - 7.0),
+    (6.0, 9.0, HEAD_Z - 1.9),
+    (7.4, 9.4, HEAD_Z - 7.0),
     (8.2, 8.0, HEAD_Z - 10.4),
     (9.8, 6.0, HEAD_Z - 13.2),
     (11.2, 4.0, HEAD_Z - 15.4),
@@ -227,28 +247,32 @@ def part_head(rig: Rig) -> None:
         _ring(rig, k)
     # 钻尖
     zt = RING_Z0 - RING_PITCH * (RING_COUNT - 1)
-    bar(rig, "ring_5", "drill_point", (0.0, Y_C, zt - 0.2), (0.0, Y_C, zt - 1.9), 0.3, 0.3, mat="tooth_ivory")
+    bar(rig, "ring_5", "drill_point", (0.0, Y_C, zt - 0.9), (0.0, Y_C, zt - 4.2), 0.4, 0.4, mat="tooth_ivory")
 
 
 def _ring(rig: Rig, k: int) -> None:
-    radius = 3.1 - 0.5 * k
+    """一圈钻环。环体厚度接近环间距，六圈首尾相接成一个圆锥；齿向前、沿切向扭出去。"""
+    radius = RING_R0 - RING_R_STEP * k
     zk = RING_Z0 - RING_PITCH * k
     bone = f"ring_{k}"
     mat_core = "marrow_amber" if k % 2 else "bone_white"      # 奇数圈的环体沾着髓渍
     mat_tooth = "tooth_ivory"
     half = radius * 0.72
+    half_z = RING_PITCH / 2 - 0.6     # 留出环间空隙，齿在空隙里不碰下一圈（门禁按 AABB 判互穿）
     # 环体：方块 + 转 45° 的方块叠成八边形
-    box(rig, bone, f"ring{k}_core_a", (-half, Y_C - half, zk - 0.4), (half, Y_C + half, zk + 0.4), mat=mat_core)
-    rig.cube(bone, f"ring{k}_core_b", (-half, Y_C - half, zk - 0.4), (half, Y_C + half, zk + 0.4),
+    box(rig, bone, f"ring{k}_core_a", (-half, Y_C - half, zk - half_z), (half, Y_C + half, zk + half_z), mat=mat_core)
+    rig.cube(bone, f"ring{k}_core_b", (-half, Y_C - half, zk - half_z), (half, Y_C + half, zk + half_z),
              rot=(0.0, 0.0, 45.0), org=(0.0, Y_C, zk), mat=mat_core)
-    # 8 枚齿：像螺纹的一圈短刃，沿切向弯出去；相邻两圈旋向相反（逆向旋转感）
-    twist = 0.55 * (1 if k % 2 == 0 else -1)
-    for j in range(8):
-        theta = math.radians(45.0 * j)
-        r_in, r_out = radius * 0.9, radius + 0.45
-        a = (r_in * math.cos(theta), Y_C + r_in * math.sin(theta), zk)
-        b = (r_out * math.cos(theta + twist), Y_C + r_out * math.sin(theta + twist), zk - 0.4)
-        bar(rig, bone, f"tooth_{k}_{j}", a, b, 0.24, 0.24, mat=mat_tooth)
+    # 大圈 12 枚齿、小圈 8 枚；相邻两圈扭向相反（逆向旋转感）。齿尖朝前（-z）伸出一整个环距，
+    # 前视就是一圈圈放射的锥形尖刺。
+    twist = 0.35 * (1 if k % 2 == 0 else -1)
+    count = 12 if k < 3 else 8
+    for j in range(count):
+        theta = math.radians(360.0 / count * j + (15.0 if k % 2 else 0.0))
+        r_in, r_out = radius * 1.0, radius + 0.7
+        a = (r_in * math.cos(theta), Y_C + r_in * math.sin(theta), zk - half_z + 0.3)
+        b = (r_out * math.cos(theta + twist), Y_C + r_out * math.sin(theta + twist), zk - half_z - 1.1)
+        bar(rig, bone, f"tooth_{k}_{j}", a, b, 0.32, 0.32, mat=mat_tooth)
 
 
 # ===========================================================================
@@ -298,6 +322,11 @@ def part_plates(rig: Rig) -> None:
             # 侧甲：垂在拱下
             bar(rig, bone, f"plate_side{i}_{tag}", (mx(w, s), Y_C + 0.2 * h, z), (mx(w - 0.25, s), Y_C - 0.8 * h, z),
                 0.4, PLATE_HALF_Z - 0.15, mat="bone_grey", up=(0, 0, 1))
+            # 沿拱面凸起的骨质棱：从冠部一路压到肩，随体节交替靠前 / 靠后，读出一节节的肋
+            rib_z = z + (0.45 if i % 2 else -0.45)
+            rib = [(mx(f * w, s), arch_surface_y(i, f * w) + 0.3, rib_z) for f in (0.28, 0.55, 0.85)]
+            bar(rig, bone, f"plate_rib_a{i}_{tag}", rib[0], rib[1], 0.34, 0.3, mat="bone_white", up=(0, 0, 1))
+            bar(rig, bone, f"plate_rib_b{i}_{tag}", along(rib[1], rib[2], 0.1), rib[2], 0.34, 0.3, mat="bone_ochre", up=(0, 0, 1))
             # 肩上一对小棘
             bar(rig, bone, f"plate_spike{i}_{tag}", (mx(0.55 * w, s), Y_C + 0.86 * h + 0.3, z),
                 (mx(0.66 * w, s), Y_C + h + 1.0, z + 0.2), 0.3, 0.3, mat="bone_white")
@@ -317,26 +346,25 @@ def part_plates(rig: Rig) -> None:
 def part_legs(rig: Rig) -> None:
     for i in range(N_SEG):
         w, z = WIDTHS[i], seg_z(i)
-        # 相邻腿前后错开 0.5，读出步态感
-        sway = 0.5 if i % 2 == 0 else -0.5
         for s in (-1.0, 1.0):
             leg_a, leg_b, leg_c = (side_name(f"leg_{i}_{j}", s) for j in LEG_JOINTS)
-            hip = (mx(w + 0.45, s), Y_C - 0.4, z)
-            knee = (mx(w + 2.4, s), Y_C + 0.9, z + sway)
-            ankle = (mx(w + 4.0, s), 2.3, z + sway * 1.4)
-            toe = (mx(w + 4.5, s), 0.55, z + sway * 1.6)
-            tip = (mx(w + 4.7, s), 0.1, z + sway * 1.6 - 0.25)
-            box(rig, leg_a, side_name(f"coxa{i}", s), (mx(w + 0.2, s) - 0.45, Y_C - 0.9, z - 0.55),
-                (mx(w + 0.2, s) + 0.45, Y_C + 0.1, z + 0.55), mat="bone_grey")
-            # 每段骨干在关节处缩进 0.35，关节块（挂下一段的骨）才不会咬进上一段
-            bar(rig, leg_a, side_name(f"femur{i}", s), hip, along(knee, hip, 0.7), 0.48, 0.48, mat="bone_white")
-            box(rig, leg_b, side_name(f"knee{i}", s), (knee[0] - 0.55, knee[1] - 0.55, knee[2] - 0.55),
-                (knee[0] + 0.55, knee[1] + 0.55, knee[2] + 0.55), mat="bone_ochre")
-            bar(rig, leg_b, side_name(f"tibia{i}", s), along(knee, ankle, 0.35), along(ankle, knee, 0.35), 0.4, 0.4, mat="bone_white")
-            box(rig, leg_c, side_name(f"ankle{i}", s), (ankle[0] - 0.45, ankle[1] - 0.45, ankle[2] - 0.45),
-                (ankle[0] + 0.45, ankle[1] + 0.45, ankle[2] + 0.45), mat="rust_brown")
-            bar(rig, leg_c, side_name(f"tarsus{i}", s), along(ankle, toe, 0.3), toe, 0.3, 0.3, mat="bone_ochre")
-            bar(rig, leg_c, side_name(f"claw{i}", s), toe, tip, 0.2, 0.2, mat="rust_brown")
+            p = leg_points(i, s)
+            hip, knee, mid, ankle, toe, tip = (p[k] for k in ("hip", "knee", "mid", "ankle", "toe", "tip"))
+            box(rig, leg_a, side_name(f"coxa{i}", s), (mx(w + 0.75, s) - 0.65, Y_C - 1.1, z - 0.8),
+                (mx(w + 0.75, s) + 0.65, Y_C + 0.3, z + 0.8), mat="bone_grey")
+            # 每段骨干在关节处缩进，关节块（挂下一段的骨）才不会咬进上一段；
+            # 股、胫粗 0.9 / 0.75（上一版 0.48 / 0.4 的近两倍），胫分两截折出一道弧
+            bar(rig, leg_a, side_name(f"femur{i}", s), hip, along(knee, hip, 1.7), 0.9, 0.9, mat="bone_white")
+            box(rig, leg_b, side_name(f"knee{i}", s), (knee[0] - 1.0, knee[1] - 1.0, knee[2] - 1.0),
+                (knee[0] + 1.0, knee[1] + 1.0, knee[2] + 1.0), mat="bone_ochre")
+            bar(rig, leg_b, side_name(f"tibia_up{i}", s), along(knee, mid, 0.9), mid, 0.75, 0.75, mat="bone_white")
+            bar(rig, leg_b, side_name(f"tibia_low{i}", s), along(mid, ankle, 0.1), along(ankle, mid, 0.8), 0.7, 0.7, mat="bone_ochre")
+            box(rig, leg_c, side_name(f"ankle{i}", s), (ankle[0] - 0.8, ankle[1] - 0.8, ankle[2] - 0.8),
+                (ankle[0] + 0.8, ankle[1] + 0.8, ankle[2] + 0.8), mat="rust_brown")
+            claw_mid = along(toe, tip, 0.5 * math.dist(toe, tip))
+            bar(rig, leg_c, side_name(f"tarsus{i}", s), along(ankle, toe, 0.8), toe, 0.55, 0.55, mat="bone_ochre")
+            bar(rig, leg_c, side_name(f"claw_a{i}", s), toe, claw_mid, 0.4, 0.4, mat="rust_brown")
+            bar(rig, leg_c, side_name(f"claw_b{i}", s), claw_mid, tip, 0.22, 0.22, mat="rust_brown")
 
 
 # ===========================================================================
@@ -393,6 +421,10 @@ def part_dust_cracks(rig: Rig) -> None:
                 x = x0 + (0.3 if k % 2 else -0.3)
                 y = arch_surface_y(i, x)
                 box(rig, bone, f"crack{i}_{c}_{k}", (x - 0.14, y - 0.12, zc - 0.5), (x + 0.14, y + 0.14, zc + 0.5), mat="bone_dark")
+                # 裂口两侧翘起的碎骨唇，让裂纹有深度而不是一道黑线
+                lip = 0.5 if (i + c + k) % 2 else -0.5
+                box(rig, bone, f"crack_lip{i}_{c}_{k}", (x + lip - 0.2, y - 0.05, zc - 0.4), (x + lip + 0.2, y + 0.5, zc + 0.4),
+                    mat="bone_ochre")
         # 骨屑：顶面 4 粒、肩上 2 粒、侧甲上 2 粒，边长 0.35~0.5（再大就咬进甲板超过穿模门限）
         for n in range(8):
             if n < 4:
@@ -410,7 +442,7 @@ def part_dust_cracks(rig: Rig) -> None:
         sway = 0.5 if i % 2 == 0 else -0.5
         s = rng.choice((-1.0, 1.0))
         for n in range(3):
-            x = mx(WIDTHS[i] + 4.7 + 0.25 * n, s)
+            x = mx(WIDTHS[i] + 7.2 + 0.25 * n, s)
             zz = seg_z(i) + sway * 1.6 + 0.3 * (n - 1)
             size = 0.5 - 0.05 * n
             y0 = 0.0 if n < 2 else 0.4
@@ -657,7 +689,7 @@ def render_check(rig: Rig, now_path: Path) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="髓蛀蜈 (sui_zhu_wu) 生成器 Round 1/3")
+    ap = argparse.ArgumentParser(description="髓蛀蜈 (sui_zhu_wu) 生成器 Round 2/3")
     ap.add_argument("--self-test", action="store_true", help="门禁差分自证")
     ap.add_argument("--list", action="store_true", help="列出编号部件")
     ap.add_argument("--no-render", action="store_true", help="只写 bbmodel，不出预览图")
