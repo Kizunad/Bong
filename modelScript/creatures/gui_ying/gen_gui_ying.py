@@ -11,8 +11,9 @@
                     切成 10 组，每组一根骨头。
 
 **骨骼（任务卡「骨骼数下限」）**：按能独立动的关节分，不按部件分。无实体漩涡：每一圈环、每组碎片各一根，共 19 根会动的骨
-（funnel 总枢轴 + 6 圈环 + 喉管 + 空洞 + 10 组碎片）+ 一个静止的 root；枢轴都在漩涡轴线上，后面做「绕轴旋转」只要给每根骨
-不同的转速。层级树见 `bone_table()` / `bone_tree_lines()`，接触表上标了骨骼数并附层级树。
+（funnel 总枢轴 + 6 圈环 + 喉管 + 空洞 + 10 组碎片）+ 一个静止的 root；枢轴都在漩涡轴线上。动画约定（调度意见）：
+**整体旋转只由 funnel 总枢轴承担**（漏斗整体绕轴转）；各圈环骨只做小幅摆动（几度），**不做单环自转**，否则环带的石块图案会互相错位打架。
+层级树见 `bone_table()` / `bone_tree_lines()`，接触表上标了骨骼数并附层级树。
 
 **轮廓只靠深色边缘和高对比的环线读出来，不做半透明特效**（门禁里有对比度判据，先注入低对比缺陷确认拦得住）。
 
@@ -342,13 +343,13 @@ def all_cubes() -> List[Cube]:
 # 任务卡「骨骼数下限」：无实体漩涡——每一圈环、每组碎片各一骨，≥ 16。root 只是静止的根，不计入。
 #
 #   root                      （静止，不计）
-#   └─ funnel                 整个漩涡（整体自旋 / 摆动的总枢轴，在漩涡中心）
-#      ├─ ring_0 … ring_5     六圈环，各自绕轴转（枢轴在各自深度的轴心上）
+#   └─ funnel                 整个漩涡（整体旋转的唯一总枢轴，在漩涡中心）
+#      ├─ ring_0 … ring_5     六圈环，只做小幅摆动，不单环自转（枢轴在各自深度的轴心上）
 #      ├─ throat              喉管壁
 #      ├─ void                最深处的空洞（可以单独收缩 / 张开）
-#      └─ debris_00 … 09      十段螺旋碎屑，各自绕轴转
+#      └─ debris_00 … 09      十段螺旋碎屑，随漏斗整体转，可各自轻微错开相位
 #
-# 枢轴都在轴线上（漩涡中心 + 深度 w × 轴向），后面做动画时「绕轴旋转」只需要给每根骨头不同的转速。
+# 枢轴都在轴线上（漩涡中心 + 深度 w × 轴向）。做动画时：funnel 绕轴转整圈，ring_* 只给几度的摆动，不给转速。
 
 
 def bone_table() -> Dict[str, Tuple[str | None, Tuple[float, float, float]]]:
@@ -592,7 +593,7 @@ def bone_tree_panel(height: int) -> Image.Image:
     return panel
 
 
-def render_sheets() -> None:
+def render_sheets(prev_model: Path | None = None) -> None:
     from bbmodel_maker.render.render_bbmodel import render
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -627,7 +628,7 @@ def render_sheets() -> None:
     shots = [(label, render(whole, yaw=yaw, pitch=pitch, size=420, bg=bg)[0]) for label, yaw, pitch in VIEWS]
     contact = Image.new("RGB", (3 * 430 + 10, 2 * 450 + 30), (35, 36, 40))
     draw = ImageDraw.Draw(contact)
-    draw.text((10, 6), f"gui_ying round1 | {bones} moving bones | {len(all_cubes())} cubes", fill=(180, 220, 210))
+    draw.text((10, 6), f"gui_ying round2 |{bones} moving bones | {len(all_cubes())} cubes", fill=(180, 220, 210))
     for idx, (label, im) in enumerate(shots):
         x, y = 10 + (idx % 3) * 430, 28 + (idx // 3) * 450
         draw.text((x + 4, y), label, fill=(230, 230, 230))
@@ -639,18 +640,25 @@ def render_sheets() -> None:
     h = 560
     ref = ref.resize((int(ref.width * h / ref.height), h), Image.Resampling.LANCZOS)
     same_view, _ = render(whole, yaw=-30.0, pitch=32.0, size=h, bg=bg)
+    prev_view = render(prev_model, yaw=-30.0, pitch=32.0, size=h, bg=bg)[0] if prev_model else None
     tree_panel = bone_tree_panel(h)
-    top_w = ref.width + h + tree_panel.width + 40
+    top_w = ref.width + (h if prev_view else 0) + h + tree_panel.width + 50
     small_w = min(top_w - 20, 1300)
     small = contact.resize((small_w, int(small_w * contact.height / contact.width)), Image.Resampling.LANCZOS)
     canvas = Image.new("RGB", (top_w, 30 + h + 10 + small.height + 10), (35, 36, 40))
     draw = ImageDraw.Draw(canvas)
     canvas.paste(ref, (10, 30))
     draw.text((14, 8), "REFERENCE (ref.png)", fill=(210, 200, 180))
-    canvas.paste(same_view, (ref.width + 20, 30))
-    draw.text((ref.width + 24, 8), "NOW RENDER, same framing (yaw-30 pitch32)", fill=(180, 220, 210))
-    canvas.paste(tree_panel, (ref.width + h + 30, 30))
-    draw.text((ref.width + h + 34, 8), f"BONE HIERARCHY  |  {bones} moving bones", fill=(180, 220, 210))
+    x = ref.width + 20
+    if prev_view:
+        canvas.paste(prev_view, (x, 30))
+        draw.text((x + 4, 8), "PREVIOUS ROUND, same framing (6741 cubes)", fill=(210, 160, 150))
+        x += h + 10
+    canvas.paste(same_view, (x, 30))
+    draw.text((x + 4, 8), f"NOW (round 2), same framing yaw-30 pitch32 ({len(all_cubes())} cubes)", fill=(180, 220, 210))
+    x += h + 10
+    canvas.paste(tree_panel, (x, 30))
+    draw.text((x + 4, 8), f"BONE HIERARCHY  |  {bones} moving bones", fill=(180, 220, 210))
     canvas.paste(small, (10, 30 + h + 10))
     canvas.save(REVIEW_DIR / "check.png")
     print(f"[sheets] {REVIEW_DIR}  (bones={bones})")
@@ -659,13 +667,14 @@ def render_sheets() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sheet", action="store_true", help="另出 parts.png / contact_sheet.png / check.png")
+    parser.add_argument("--prev", type=Path, help="上一轮的 bbmodel，check.png 里按同取景并排")
     args = parser.parse_args()
     print("gen_gui_ying 自检…")
     self_test()
     path = write_bbmodel(all_cubes(), MODEL_DIR / "GuiYing_round1.bbmodel")
     print(f"[bbmodel] {path.relative_to(REPO)}")
     if args.sheet:
-        render_sheets()
+        render_sheets(args.prev)
 
 
 if __name__ == "__main__":
