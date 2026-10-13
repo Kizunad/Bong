@@ -50,9 +50,14 @@ class CanBeiTuoRig(Rig):
     这里改成：同族材质（三种皮、三种藓…）共用一个 color，门禁按族判断软覆盖。
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cube_mats: dict[str, str] = {}  # element uuid -> parts.MATS 里的材质名，贴图版用
+
     def cube(self, bone, name, frm, to, *, rot=None, org=None, mat="hide_base"):
         el = super().cube(bone, name, frm, to, rot=rot, org=org, mat=mat)
         el["color"] = parts.FAMILY_ORDER.index(parts.FAMILY[mat])
+        self.cube_mats[el["uuid"]] = mat
         return el
 
 
