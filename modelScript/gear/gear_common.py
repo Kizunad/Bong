@@ -161,11 +161,13 @@ def _tile(path: Path, view, focus, size: int):
 
 
 def render_check(build, mats: dict, gear_id: str, title: str, scratch: Path,
-                 notes=(), close_pad: float = 6.0, close_bias=(0.0, 0.0, 0.0)) -> Path:
+                 notes=(), close_pad: float = 6.0, close_bias=(0.0, 0.0, 0.0),
+                 close_at=None) -> Path:
     """出 check.png：灰模穿着该件的 正/侧/背（全身 + 挂点特写）。
 
     build(rig=...) 把穿戴件造进给定 rig。第一排全身（公共取景，三张可比），第二排以穿戴件
     包围盒为中心的特写（同一取景）。视角名由 facing='-z' 派生：FRONT 看到 -z 脸，BACK 看到 +z 背。
+    斜挎这类跨半个身体的件，包围盒特写没有意义，由调用方用 close_at=(中心, 视野跨度) 对准挂点。
     """
     scratch.mkdir(parents=True, exist_ok=True)
     gear_only = Rig(mats)
@@ -181,7 +183,7 @@ def render_check(build, mats: dict, gear_id: str, title: str, scratch: Path,
     full_focus = ((0.0, 16.0, 0.0), 40.0)
     center = tuple((lo[k] + hi[k]) / 2 + close_bias[k] for k in range(3))
     span = max(hi[k] - lo[k] for k in range(3)) + close_pad * 2
-    close_focus = (center, max(span, 14.0))
+    close_focus = close_at or (center, max(span, 14.0))
 
     tiles = []
     for view in views:
