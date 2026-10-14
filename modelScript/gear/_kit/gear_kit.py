@@ -176,6 +176,8 @@ class GearSpec:
     free_floating: frozenset = frozenset()
     min_bones: int = 6
     wear_note: str = ""              # 写进 check.png 标题的挂点说明
+    # 穿戴渲染的固定取景 ((cx, cy, cz), 跨度 px)；小件（腰带）整个人放进画面太小，可指定只看腰部
+    worn_focus: tuple | None = None
     gates: WornGates = field(init=False)
 
     def __post_init__(self) -> None:
@@ -299,7 +301,7 @@ def _focus(doc_path: Path) -> tuple[tuple[float, float, float], float]:
 
 def render_worn(spec: GearSpec, g: Gear, tmp: Path, cell: int = 420) -> Image.Image:
     tmp.write_text(json.dumps(worn_doc(g, "Worn"), ensure_ascii=False), encoding="utf-8")
-    focus = _focus(tmp)
+    focus = spec.worn_focus or _focus(tmp)
     font_h, font_l = load_font(17), load_font(12)
     sheet = Image.new("RGB", (cell * len(WORN_VIEWS) + 5 * (len(WORN_VIEWS) + 1), cell + 62), (32, 33, 36))
     d = ImageDraw.Draw(sheet)
