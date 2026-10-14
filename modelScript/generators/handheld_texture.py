@@ -46,6 +46,7 @@
   eye_amber      琥珀眼：深褐眼缘 + 亮琥珀 + 近白高光（靠对比，不做发光）
   chitin_white / chitin_ochre / chitin_grey / chitin_dark   骨质甲壳（蜈蚣 / 虫类）：沿长轴的棱纹、细裂纹、骨粉点、蚀孔
   marrow_amber / claw_rust / bone_dust   髓渍 / 锈褐爪尖 / 白色骨粉
+  skull_bone / skull_bone_old   颅骨壳：象牙骨 / 旧骨；crab_shell / crab_shell_dark 锈橙蟹甲；lichen 壳上苔；barnacle 藤壶
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
 """
@@ -1046,6 +1047,66 @@ FLAT_COLORS.update({
     "moth_chit_dk": "#30271f", "moth_chit": "#4f3f31", "moth_chit_lt": "#7e664c", "moth_eye": "#1a161e", "moth_eye_hi": "#8e807c",
     "moth_wing": "#c8b89c", "moth_wing_lt": "#e0d6c0", "moth_eyespot": "#7a6040", "moth_vein": "#46301f", "moth_wing_edge": "#62462c",
     "moth_glow": "#ffd23c", "moth_glow_hi": "#fff3a0", "moth_ember": "#d89020",
+})
+
+
+# ---- 颅骨壳 / 蟹甲 / 藤壶 / 苔（骨笼蟹批次补充）-------------------------------------------
+
+
+def _lichen(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """壳上的苔：深浅两档灰绿成团，团内细碎的暗点（苔缝）与浅色尖点（苔梢），边缘略发暗。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    gap, tip = shade(a, -0.35), shade(b, 0.28)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = mix(a, b, value_noise(p, 1.6, seed) * 0.7 + value_noise(p, 0.8, seed + 1) * 0.3)
+            if texel_noise(p, seed + 2) > 0.82:
+                color = mix(color, gap, 0.7)                  # 苔缝
+            elif texel_noise(p, seed + 3) > 0.9:
+                color = mix(color, tip, 0.7)                  # 苔梢
+            if _edge_distance(cube, p, axis) < 0.4:
+                color = shade(color, -0.12)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _barnacle(base: str, seed: int) -> Callable[[dict], Painter]:
+    """藤壶：灰白钙壳，一圈圈生长纹（同心环）+ 密密的小坑 + 零星暗点。"""
+    c = hex_color(base)
+    ring_dark, pit = shade(c, -0.3), shade(c, -0.55)
+
+    def factory(cube: dict) -> Painter:
+        centre = [(cube["from"][i] + cube["to"][i]) / 2 for i in range(3)]
+
+        def paint(p: Vec, axis: int) -> Color:
+            d = math.dist(p, centre)
+            color = shade(c, (value_noise(p, 1.4, seed) - 0.5) * 0.22)
+            if (d * 1.3) % 1.0 < 0.22:
+                color = mix(color, ring_dark, 0.55)           # 生长纹
+            if texel_noise(p, seed + 1) > 0.9:
+                color = mix(color, pit, 0.7)                  # 小坑
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "skull_bone": _bone("#dcd2b6", 831),
+    "skull_bone_old": _bone("#a49c8a", 832),
+    "crab_shell": _chitin("#b8683c", "#d88a56", 833, 0.6),
+    "crab_shell_dark": _chitin("#6e3a26", "#8c4e34", 834),
+    "lichen": _lichen("#566230", "#8c9a4c", 835),
+    "barnacle": _barnacle("#a4a49c", 836),
+})
+FLAT_COLORS.update({
+    "skull_bone": "#d2c8ac", "skull_bone_old": "#9a9282", "crab_shell": "#c47848", "crab_shell_dark": "#7c4430",
+    "lichen": "#76844a", "barnacle": "#a4a49c",
 })
 
 
