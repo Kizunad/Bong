@@ -1172,6 +1172,61 @@ FLAT_COLORS.update({
 })
 
 
+# ---- 水母伞肉 / 灵核（浮灵母批次补充）-------------------------------------------------------
+
+
+def _glint(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
+    """面心最亮、向边缘渐暗的小亮件（灵光碎块 / 雷痕 / 眼白 / 灵核）：不做发光层，只靠对比，零星亮点。"""
+    a, b = hex_color(base), hex_color(core)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            depth = min(_edge_distance(cube, p, axis), 2.0) / 2.0
+            color = mix(a, b, depth * 0.85)
+            return shade(color, (texel_noise(p, seed) - 0.5) * 0.08)
+
+        return paint
+
+    return factory
+
+
+def _jelly(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """伞肉 / 口腕：近半透的浅色胶质——两档色柔和过渡、顺长轴的细淡纹、一团团偏冷的暗云、零星高光点，边缘提亮。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    cloud = hex_color("#7890a0")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            streak = _grain_noise(cube, p, axis, 2.4, 0.3, seed)
+            color = mix(a, b, 0.55 * value_noise(p, 2.2, seed + 1) + 0.45 * streak)
+            if value_noise(p, 3.6, seed + 2) > 0.66:
+                color = mix(color, cloud, 0.16)               # 偏冷的暗云
+            if texel_noise(p, seed + 3) > 0.97:
+                color = shade(color, 0.14)                    # 高光点
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.08)
+            return color
+
+        return paint
+
+    return factory
+
+
+PAINTERS.update({
+    "bell_cream": _jelly("#dedcc8", "#f0eee0", 821),
+    "bell_grey": _jelly("#9cb0b6", "#c2d0d4", 822),
+    "bell_frill": _jelly("#cdbf9e", "#e2d8bc", 823),
+    "bell_vein": _ink("#2a3342", 824),
+    "bell_vein_slate": _ink("#62708a", 825),
+    "spirit_core": _glint("#6cdccc", "#d6fff6", 826),
+    "spirit_mote": _glint("#d8f4ee", "#ffffff", 827),
+})
+FLAT_COLORS.update({
+    "bell_cream": "#e6e4d2", "bell_grey": "#b0c0c4", "bell_frill": "#d4c8a8", "bell_vein": "#2e3644",
+    "bell_vein_slate": "#667284", "spirit_core": "#8cecdc", "spirit_mote": "#f0fffa",
+})
+
+
 def painter_for(material: str, cube: dict) -> Optional[Painter]:
     """材质名 → 画笔（带整体压暗补偿）。不认识的材质返回 None。"""
     factory = PAINTERS.get(material)
