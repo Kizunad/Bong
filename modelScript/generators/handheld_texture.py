@@ -46,6 +46,9 @@
   eye_amber      琥珀眼：深褐眼缘 + 亮琥珀 + 近白高光（靠对比，不做发光）
   chitin_white / chitin_ochre / chitin_grey / chitin_dark   骨质甲壳（蜈蚣 / 虫类）：沿长轴的棱纹、细裂纹、骨粉点、蚀孔
   marrow_amber / claw_rust / bone_dust   髓渍 / 锈褐爪尖 / 白色骨粉
+  crow_black / crow_dark / crow_char / crow_ash   焦羽（黑 / 暗 / 焦褐带焦斑 / 灰烬）：顺羽向细枝、羽轴亮线；crow_beak / crow_claw 喙与爪
+  bell_cream / bell_grey / bell_frill   水母伞肉 / 口腕：半透浅色胶质、淡纹、冷暗云；bell_vein / bell_vein_slate 深色脉纹
+  bolt_blue / eye_white / spirit_core / spirit_mote   雷痕 / 眼白 / 灵核 / 光点：面心最亮、边缘渐暗（只靠对比）
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
 """
@@ -1111,7 +1114,7 @@ FLAT_COLORS.update({
 
 
 def _glint(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
-    """面心最亮、向边缘渐暗的小亮件（灵光碎块 / 雷痕 / 眼白）：不做发光层，只靠对比，零星亮点。"""
+    """面心最亮、向边缘渐暗的小亮件（雷痕 / 眼白 / 灵核 / 光点）：不做发光层，只靠对比，零星亮点。"""
     a, b = hex_color(base), hex_color(core)
 
     def factory(cube: dict) -> Painter:
@@ -1173,21 +1176,6 @@ FLAT_COLORS.update({
 
 
 # ---- 水母伞肉 / 灵核（浮灵母批次补充）-------------------------------------------------------
-
-
-def _glint(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
-    """面心最亮、向边缘渐暗的小亮件（灵光碎块 / 雷痕 / 眼白 / 灵核）：不做发光层，只靠对比，零星亮点。"""
-    a, b = hex_color(base), hex_color(core)
-
-    def factory(cube: dict) -> Painter:
-        def paint(p: Vec, axis: int) -> Color:
-            depth = min(_edge_distance(cube, p, axis), 2.0) / 2.0
-            color = mix(a, b, depth * 0.85)
-            return shade(color, (texel_noise(p, seed) - 0.5) * 0.08)
-
-        return paint
-
-    return factory
 
 
 def _jelly(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
