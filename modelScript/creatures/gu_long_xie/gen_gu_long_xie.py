@@ -51,7 +51,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "GuLongXie.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "GuLongXie.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -133,7 +133,7 @@ def leg_points(pair: int, s: float):
     h = (s * LEG_HIP_X, LEG_HIP_Y, LEG_Z[pair])
     k = (h[0] + u[0] * LEG_REACH[0], h[1] + LEG_RISE, h[2] + u[2] * LEG_REACH[0])
     an = (k[0] + u[0] * LEG_REACH[1], 4.8, k[2] + u[2] * LEG_REACH[1])
-    t = (an[0] + u[0] * LEG_REACH[2], 0.55, an[2] + u[2] * LEG_REACH[2])
+    t = (an[0] + u[0] * LEG_REACH[2], 0.4, an[2] + u[2] * LEG_REACH[2])
     return h, k, an, t
 
 
@@ -452,16 +452,21 @@ def part_body(rig: Rig) -> None:
         mbox(rig, "body", "shoulder", s, CARA_HALF_X, CARA_RIM_X, 8.0, 12.0, z0 - 2.1, z0 + 0.5, mat="rust_dark")
         # 眼柄座：头胸甲前缘两个小丘
         mbox(rig, "body", "eye_pad", s, 2.6, 5.0, CARA_Y1, CARA_Y1 + 0.8, z0, z0 + 2.2, mat="rust_dark")
-    # 腹三节：一节比一节细，往后微微上翘卷进壳里；每节一块背甲 + 一道暗缝
-    sizes = ((4.2, 6.0), (3.8, 5.2), (3.2, 4.4))
+    # 腹三节：一节比一节细，往后微微上翘卷进壳里；每节沿 z 切三片（前后两片收窄，中片取满）成圆鼓的环，
+    # 背上一条脊，两侧各一块侧甲板，节间一道暗缝
+    sizes = ((4.6, 6.4), (4.0, 5.6), (3.4, 4.8))
     y_c = (11.0, 12.0, 13.4)
     for i in range(3):
         hx, hy = sizes[i]
-        za, zb = AB_Z[i], AB_Z[i + 1]
-        box(rig, f"ab_{i}", f"ab{i}_core", (-hx, y_c[i] - hy / 2, za), (hx, y_c[i] + hy / 2, zb - 0.8), mat="rust_orange")
-        box(rig, f"ab_{i}", f"ab{i}_seam", (-hx + 0.4, y_c[i] - hy / 2 + 0.4, zb - 0.8), (hx - 0.4, y_c[i] + hy / 2 - 0.4, zb), mat="rust_dark")
+        za, zb = AB_Z[i], AB_Z[i + 1] - 0.8
+        zl = (zb - za) / 3
+        for n, inset in enumerate((0.22, 0.0, 0.22)):
+            fx, fy = hx * (1.0 - inset), hy * (1.0 - inset)
+            box(rig, f"ab_{i}", f"ab{i}_s{n}", (-fx, y_c[i] - fy / 2, za + zl * n), (fx, y_c[i] + fy / 2, za + zl * (n + 1)), mat="rust_orange")
+        box(rig, f"ab_{i}", f"ab{i}_ridge", (-0.7, y_c[i] + hy / 2, za + 0.4), (0.7, y_c[i] + hy / 2 + 0.7, zb - 0.4), mat="rust_dark")
+        box(rig, f"ab_{i}", f"ab{i}_seam", (-hx + 0.4, y_c[i] - hy / 2 + 0.4, zb), (hx - 0.4, y_c[i] + hy / 2 - 0.4, AB_Z[i + 1]), mat="rust_dark")
         for s in (-1.0, 1.0):
-            mbox(rig, f"ab_{i}", f"ab{i}_plate", s, hx, hx + 0.8, y_c[i] - hy / 2 + 0.6, y_c[i] + hy / 2 - 0.6, za + 0.3, zb - 1.0, mat="rust_dark")
+            mbox(rig, f"ab_{i}", f"ab{i}_plate", s, hx, hx + 0.8, y_c[i] - hy / 2 + 0.6, y_c[i] + hy / 2 - 0.6, za + 0.3, zb - 0.4, mat="rust_dark")
     # 尾扇：中叶 + 两侧叶
     box(rig, "tailfan", "tailfan_c", (-1.4, 12.2, AB_Z[3] - 0.0), (1.4, 13.0, AB_Z[3] + 3.4), mat="rust_orange")
     for s in (-1.0, 1.0):
@@ -531,7 +536,7 @@ def claw(rig: Rig, name: str, c: dict, big: bool) -> None:
     fz = z0
     f0 = (pc[0], pc[1] - ph[1] * (0.45 if big else 0.4), fz)
     L1, L2, L3 = (6.5, 12.0, 16.5) if big else (4.5, 8.0, 10.5)
-    f_pts = [f0, (f0[0] - s * 0.2, f0[1] - 0.4, fz - L1), (f0[0] - s * 0.8, f0[1] - 0.9, fz - L2), (f0[0] - s * 1.5, f0[1] - 1.0, fz - L3)]
+    f_pts = [f0, (f0[0] - s * 0.2, f0[1] - 0.5, fz - L1), (f0[0] - s * 0.8, f0[1] - 0.2, fz - L2), (f0[0] - s * 1.5, f0[1] + 1.6, fz - L3)]       # 定指尖向上翘
     radii = (3.6, 2.8, 1.8, 0.6) if big else (1.3, 1.0, 0.65, 0.25)
     taper(rig, palm, f"{name}_fixed", f_pts, list(radii), mat="bone_white")
     # 内缘锯齿：定指向上、动指向下，大小交错；大螯 6 枚、小螯 3 枚
@@ -545,8 +550,8 @@ def claw(rig: Rig, name: str, c: dict, big: bool) -> None:
         box(rig, palm, f"{name}_ftooth{k}", (p[0] - wd, p[1] + r - 0.3, p[2] - wd), (p[0] + wd, p[1] + r + h, p[2] + wd), mat="bone_grey")
     # 动指（挂 dactyl 骨）：从掌上前缘铰出，弯向定指尖
     d0 = (pc[0], pc[1] + ph[1] * (0.62 if big else 0.55), z0 + 0.2)
-    d_pts = [d0, (d0[0] - s * 0.1, d0[1] - 0.3, z0 - L1 * 0.95), (d0[0] - s * 0.6, d0[1] - 1.6, z0 - L2 * 0.95),
-             (f_pts[3][0] + s * 0.0, f_pts[3][1] + 1.6, f_pts[3][2] - 0.2)]
+    d_pts = [d0, (d0[0] - s * 0.1, d0[1] - 0.3, z0 - L1 * 0.95), (d0[0] - s * 0.6, d0[1] - 1.4, z0 - L2 * 0.95),
+             (f_pts[3][0] + s * 0.0, f_pts[3][1] + 1.7, f_pts[3][2] - 0.2)]
     taper(rig, dact, f"{name}_dact", d_pts, list(radii), mat="bone_white")
     for k in range(n_teeth):
         tt = 0.12 + 0.78 * k / max(n_teeth - 1, 1)
@@ -579,24 +584,29 @@ def part_claw_small(rig: Rig) -> None:
 # 6. 步足：四对，每腿三段 + 尖爪
 # ===========================================================================
 def part_legs(rig: Rig) -> None:
+    """四对三段足：每段由三截鼓肚的方柱接成（中间粗、两端收），关节块锈橙，胫背三根棘，末端钩爪分三截弯出。"""
     for p in range(LEG_PAIRS):
         for s in (-1.0, 1.0):
             t = side_tag(s)
             h, k, a, tip = leg_points(p, s)
             la, lb, lc = (f"leg{p}_{j}{t}" for j in LEG_JOINTS)
-            # 股：髋座 + 粗骨干，膝处缩进，膝块（锈橙）挂 b 骨
-            box(rig, la, f"coxa{p}{t}", (h[0] - 2.0, h[1] - 2.0, h[2] - 1.4), (h[0] + 2.0, h[1] + 2.0, h[2] + 1.4), mat="rust_dark")
-            bar(rig, la, f"femur{p}{t}", along(h, k, 1.8), along(k, h, 2.0), 1.9, 1.9, mat="bone_white")
-            box(rig, lb, f"knee{p}{t}", (k[0] - 2.0, k[1] - 2.0, k[2] - 2.0), (k[0] + 2.0, k[1] + 2.0, k[2] + 2.0), mat="rust_orange")
-            # 胫：长、略细，背面三根小棘
-            bar(rig, lb, f"tibia{p}{t}", along(k, a, 2.2), along(a, k, 1.7), 1.5, 1.5, mat="bone_white")
+            # 股：髋座 + 粗骨干（两端 1.7、中段 2.5），膝块挂 b 骨
+            box(rig, la, f"coxa{p}{t}", (h[0] - 2.2, h[1] - 2.2, h[2] - 1.6), (h[0] + 2.2, h[1] + 2.2, h[2] + 1.6), mat="rust_dark")
+            taper(rig, la, f"femur{p}{t}_", [along(h, k, 2.0), lerp3(h, k, 0.38), lerp3(h, k, 0.68), along(k, h, 2.2)], [1.8, 2.7, 2.7, 1.9], mat="bone_white")
+            box(rig, lb, f"knee{p}{t}", (k[0] - 2.2, k[1] - 2.2, k[2] - 2.2), (k[0] + 2.2, k[1] + 2.2, k[2] + 2.2), mat="rust_orange")
+            # 胫：长、略细、中段微鼓，背面三根小棘
+            taper(rig, lb, f"tibia{p}{t}_", [along(k, a, 2.4), lerp3(k, a, 0.4), lerp3(k, a, 0.7), along(a, k, 1.8)], [1.6, 2.1, 2.0, 1.4], mat="bone_white")
             for n, tt in enumerate((0.3, 0.55, 0.8)):
                 c = lerp3(k, a, tt)
-                box(rig, lb, f"spike{p}_{n}{t}", (c[0] - 0.4, c[1] + 1.5, c[2] - 0.4), (c[0] + 0.4, c[1] + 2.6, c[2] + 0.4), mat="bone_grey")
-            box(rig, lc, f"ankle{p}{t}", (a[0] - 1.5, a[1] - 1.5, a[2] - 1.5), (a[0] + 1.5, a[1] + 1.5, a[2] + 1.5), mat="rust_dark")
-            mid = lerp3(a, tip, 0.55)
-            bar(rig, lc, f"tarsus{p}{t}", along(a, tip, 1.5), mid, 1.1, 1.1, mat="bone_grey")
-            bar(rig, lc, f"claw{p}{t}", mid, tip, 0.7, 0.7, mat="rust_dark")
+                box(rig, lb, f"spike{p}_{n}{t}", (c[0] - 0.5, c[1] + 2.0, c[2] - 0.5), (c[0] + 0.5, c[1] + 3.2, c[2] + 0.5), mat="bone_grey")
+            box(rig, lc, f"ankle{p}{t}", (a[0] - 1.7, a[1] - 1.7, a[2] - 1.7), (a[0] + 1.7, a[1] + 1.7, a[2] + 1.7), mat="rust_dark")
+            # 跗节 + 钩爪：先略外凸再向内收到点地的爪尖，像一只弯钩
+            mid = lerp3(a, tip, 0.5)
+            bar(rig, lc, f"tarsus{p}{t}", along(a, tip, 1.7), mid, 1.2, 1.2, mat="bone_grey")
+            u = (math.cos(math.radians(LEG_YAW[p])) * s, 0.0, math.sin(math.radians(LEG_YAW[p])))
+            c1 = (mid[0] + (tip[0] - mid[0]) * 0.45 + u[0] * 0.7, mid[1] + (tip[1] - mid[1]) * 0.45, mid[2] + (tip[2] - mid[2]) * 0.45 + u[2] * 0.7)
+            c2 = (mid[0] + (tip[0] - mid[0]) * 0.8 + u[0] * 0.2, mid[1] + (tip[1] - mid[1]) * 0.8, mid[2] + (tip[2] - mid[2]) * 0.8 + u[2] * 0.2)
+            taper(rig, lc, f"claw{p}{t}_", [mid, c1, c2, tip], [1.0, 0.9, 0.7, 0.5], mat="rust_dark")
 
 
 PARTS = {
