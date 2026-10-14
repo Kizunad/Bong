@@ -1160,3 +1160,18 @@ def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = 
         for face, uv in face_uvs.items():
             el["faces"][face]["uv"] = uv
     return doc
+
+
+# ---- 灰白穴鳞（灰鳞穴蜥批次补充）---------------------------------------------------------
+# 库里的 lizard_scale 是绿色沼泽蜥；地穴蜥没有日照，鳞是灰白色，骨瘤比鳞亮一档、更粗糙。
+PAINTERS.update({
+    "cave_scale": _scales("#a2a49e", "#bebeb6", 771),
+    "cave_scale_pale": _scales("#cfcfc4", "#e8e8dc", 772),
+    "cave_scale_dark": _scales("#6e7076", "#8a8c92", 773),
+    "cave_belly": _scales("#d8d0ba", "#ece4cc", 774, 1.8),
+    "cave_scar": _skin("#b49490", 775, vein=0.0),
+})
+FLAT_COLORS.update({
+    "cave_scale": "#b0b0a8", "cave_scale_pale": "#dcdcd0", "cave_scale_dark": "#7c7e84",
+    "cave_belly": "#d0c8b0", "cave_scar": "#b49490",
+})
