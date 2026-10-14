@@ -50,7 +50,7 @@ EXPLODED_REF = REVIEW_DIR / "exploded.png"
 BBMODEL_OUT = CREATURE_DIR / "FuLingMu.bbmodel"
 BBMODEL_COPY = MODELS_DIR / "FuLingMu.bbmodel"
 
-ROUND_TAG = "Round 1/3"
+ROUND_TAG = "Round 3/3"
 
 # 材质 ≤ 8 种：rigkit 把 color 写成「材质序号 % 8」，超出会让门禁把两种材质当成一种。
 MATS = {
@@ -70,13 +70,17 @@ JELLY_MATS = ("jelly_cream", "jelly_grey", "frill_tan")
 MIN_MOVING_BONES = 20
 TAN15 = math.tan(math.radians(15.0))
 
-# 伞盖四层：(骨名, 外切圆半径 A, 径向厚 t, y0, y1)；上层的外径落在下层环壁的覆盖范围内，台阶才咬得住
+# 伞盖六层：(骨名, 外切圆半径 A, 径向厚 t, y0, y1)，自下而上收成一个圆鼓的穹顶；
+# 上层的内径必须落在下层环壁覆盖范围内，台阶才咬得住
 TIERS = [
-    ("bell_3", 20.0, 7.5, 29.0, 33.5),
-    ("bell_2", 16.5, 6.5, 33.5, 37.0),
-    ("bell_1", 12.0, 5.5, 37.0, 40.0),
-    ("bell_0", 7.5, 7.5, 40.0, 42.5),     # 顶盘：t = A，中心合拢
+    ("bell_5", 20.0, 6.0, 29.0, 31.2),
+    ("bell_4", 18.4, 5.6, 31.2, 33.4),
+    ("bell_3", 16.0, 5.2, 33.4, 35.6),
+    ("bell_2", 13.2, 4.8, 35.6, 37.8),
+    ("bell_1", 9.8, 4.4, 37.8, 40.0),
+    ("bell_0", 6.0, 6.0, 40.0, 42.5),     # 顶盘：t = A，中心合拢
 ]
+BELL_LOW = TIERS[0][0]                    # 最下一层：裙瓣、触须、光点都挂它
 SIDED_STEMS = (0, 30, 60, 300, 330)       # 右半边的边心角（°，x = cos，z = sin）；左半边是镜像
 CENTER_STEMS = (90, 270)                  # 落在中线上的边心角（z = ±）
 
@@ -85,7 +89,9 @@ CORE_Y0, CORE_Y1 = 24.0, 30.0
 MANU_Y0, MANU_Y1 = 19.0, 24.0
 TENT_R = 15.5                             # 触须挂点半径
 TENT_Y = 28.0
-TENT_LEN = (9.0, 10.5, 8.3)
+TENT_SEGS = 5                             # 每束触须的节数
+TENT_LEN = (6.0, 6.2, 6.0, 5.4, 4.2)     # 各节垂长，合计 27.8（触须梢刚好点地）
+TENT_WAVE = 1.5                           # 触须左右蜿蜒的幅度（px）
 TENT_SCALE = {30: 0.9, 330: 0.8, 90: 1.0, 270: 0.72}   # 各束长度系数（按词干配对，左右一致）
 TENT_BUNDLES = ((30, False), (330, False), (90, True), (270, True))
 ORAL_STEMS = (45, 315)
@@ -132,16 +138,17 @@ def pt(u, r: float, y: float, t=None, off: float = 0.0):
 # ---------------------------------------------------------------------------
 # 骨骼
 # ---------------------------------------------------------------------------
-def tent_points(stem: int, s: float, curl: bool):
-    """触须 4 个折点：挂点 → 三节末端。非中线束第二、三节左右错开，末梢卷回。"""
+def tent_points(stem: int, s: float, wavy: bool):
+    """触须 TENT_SEGS+1 个折点：挂点 → 各节末端。每节略向外飘，wavy 的束再按正弦左右蜿蜒，末梢卷回。"""
     u, t = frame(stem, s)
     mult = TENT_SCALE[stem]
-    c1 = 1.6 if curl else 0.0
-    p0 = (u[0] * TENT_R, TENT_Y, u[2] * TENT_R)
-    p1 = (p0[0] + u[0] * 1.0, p0[1] - TENT_LEN[0] * mult, p0[2] + u[2] * 1.0)
-    p2 = (p1[0] + u[0] * 1.6 + t[0] * c1, p1[1] - TENT_LEN[1] * mult, p1[2] + u[2] * 1.6 + t[2] * c1)
-    p3 = (p2[0] + u[0] * 0.8 - t[0] * c1, p2[1] - TENT_LEN[2] * mult, p2[2] + u[2] * 0.8 - t[2] * c1)
-    return [p0, p1, p2, p3], u, t
+    amp = TENT_WAVE if wavy else 0.5
+    pts = [(u[0] * TENT_R, TENT_Y, u[2] * TENT_R)]
+    for k in range(TENT_SEGS):
+        side = amp * (math.sin(math.pi * (k + 1) / 2.0) if wavy else 0.0) * (1.0 if k < TENT_SEGS - 1 else -0.6)
+        prev = pts[-1]
+        pts.append((prev[0] + u[0] * 0.6 + t[0] * side, prev[1] - TENT_LEN[k] * mult, prev[2] + u[2] * 0.6 + t[2] * side))
+    return pts, u, t
 
 
 def oral_points(stem: int, s: float):
@@ -161,7 +168,7 @@ def define_bones(rig: Rig) -> None:
     prev = "root"
     for name, _, _, y0, _ in TIERS:
         prev = rig.bone(name, (0.0, y0, 0.0), prev)
-    rig.bone("core", (0.0, (CORE_Y0 + CORE_Y1) / 2, 0.0), "bell_0")
+    rig.bone("core", (0.0, (CORE_Y0 + CORE_Y1) / 2, 0.0), TIERS[-1][0])
     rig.bone("manu", (0.0, MANU_Y1, 0.0), "core")
     for stem, s, tag in placed(ORAL_STEMS, ()):
         pts, _, _ = oral_points(stem, s)
@@ -169,15 +176,15 @@ def define_bones(rig: Rig) -> None:
         rig.bone(f"oral_{stem}{tag}_b", pts[1], f"oral_{stem}{tag}_a")
     for stem, s, tag in placed(SIDED_STEMS, CENTER_STEMS):
         a, _, _, _ = lappet_points(stem, s)
-        rig.bone(f"lappet_{stem}{tag}", a, "bell_3")
+        rig.bone(f"lappet_{stem}{tag}", a, BELL_LOW)
     for stem, centre in TENT_BUNDLES:
         for s in ((1.0,) if centre else (-1.0, 1.0)):
             tag = "" if centre else side_tag(s)
             pts, _, _ = tent_points(stem, s, not centre)
-            prev = "bell_3"
-            for k in range(3):
+            prev = BELL_LOW
+            for k in range(TENT_SEGS):
                 prev = rig.bone(f"tent_{stem}{tag}_{k}", pts[k], prev)
-    rig.bone("motes", (0.0, 20.0, 0.0), "bell_3")
+    rig.bone("motes", (0.0, 20.0, 0.0), BELL_LOW)
 
 
 def build_rig() -> Rig:
@@ -249,7 +256,7 @@ def part_veins(rig: Rig) -> None:
             r_in = (TIERS[n + 1][1] + 0.2) if n < len(TIERS) - 1 else 0.8
             r_out = a - 0.3 if n < len(TIERS) - 1 else a - 0.4
             bar(rig, bone, f"spoke{n}_{stem}{tag}", pt(u, r_in, y1 + 0.25), pt(u, r_out, y1 + 0.25), 0.7, 0.25, mat="vein_dark", up=(0.0, 1.0, 0.0))
-    box(rig, "bell_0", "hub", (-1.2, TIERS[3][4], -1.2), (1.2, TIERS[3][4] + 0.9, 1.2), mat="vein_slate")
+    box(rig, TIERS[-1][0], "hub", (-1.2, TIERS[-1][4], -1.2), (1.2, TIERS[-1][4] + 0.9, 1.2), mat="vein_slate")
 
 
 # ===========================================================================
@@ -274,7 +281,7 @@ def part_lappets(rig: Rig) -> None:
 # 4. 灵核 + 吊柱
 # ===========================================================================
 def part_core(rig: Rig) -> None:
-    box(rig, "bell_0", "rod", (-0.7, ROD_Y0, -0.7), (0.7, ROD_Y1, 0.7), mat="vein_slate")
+    box(rig, TIERS[-1][0], "rod", (-0.7, ROD_Y0, -0.7), (0.7, ROD_Y1, 0.7), mat="vein_slate")
     box(rig, "core", "core_main", (-3.0, CORE_Y0, -3.0), (3.0, CORE_Y1, 3.0), mat="glow_teal")
     # 四面各一枚亮点凸起（贴在面上，不嵌进去；底面被口腕管接住，不放）
     cy = (CORE_Y0 + CORE_Y1) / 2
@@ -320,17 +327,15 @@ def part_tentacles(rig: Rig) -> None:
             # 挂座：贴在伞下沿底面（y = 29）的深色小块
             box(rig, f"tent_{stem}{tag}_0", f"tent_root_{stem}{tag}",
                 (pts[0][0] - 1.2, 28.0, pts[0][2] - 1.2), (pts[0][0] + 1.2, 29.0, pts[0][2] + 1.2), mat="vein_dark")
-            for k in range(3):
+            for k in range(TENT_SEGS):
                 bone = f"tent_{stem}{tag}_{k}"
                 a, b = pts[k], pts[k + 1]
-                if k == 0:
-                    a = (a[0], a[1], a[2])
-                hw = (1.4, 1.2, 0.9)[k]
+                hw = 1.5 - 0.17 * k
                 bar(rig, bone, f"tent_seg{k}_{stem}{tag}", a, b, hw, 0.55, mat="jelly_cream" if k % 2 == 0 else "jelly_grey", up=u)
                 o = 0.75
                 bar(rig, bone, f"tent_vein{k}_{stem}{tag}", (a[0] + u[0] * o, a[1], a[2] + u[2] * o), (b[0] + u[0] * o, b[1], b[2] + u[2] * o),
                     0.4, 0.2, mat="vein_dark", up=u)
-                if k < 2:
+                if k < TENT_SEGS - 1:
                     # 关节珠：挂下一节骨，落在本节末端（贴着不嵌）
                     nb = f"tent_{stem}{tag}_{k + 1}"
                     box(rig, nb, f"tent_bead{k}_{stem}{tag}", (b[0] - 0.9, b[1] - 0.9, b[2] - 0.9), (b[0] + 0.9, b[1] + 0.9, b[2] + 0.9), mat="vein_slate")
@@ -349,12 +354,12 @@ def part_motes(rig: Rig) -> None:
 
 
 PARTS = {
-    "bell": ("1. 伞盖：四层阶梯环壁", part_bell),
+    "bell": ("1. 伞盖：六层逐级收边的穹顶环壁", part_bell),
     "veins": ("2. 脉纹：外壁竖纹 / 台面放射纹 / 顶盘花瓣", part_veins),
     "lappets": ("3. 十二片裙瓣", part_lappets),
     "core": ("4. 灵核 + 吊柱", part_core),
     "oral": ("5. 口腕管 + 四条褶边口腕", part_oral),
-    "tentacles": ("6. 六束三节触须", part_tentacles),
+    "tentacles": ("6. 六束五节蜿蜒触须", part_tentacles),
     "motes": ("7. 漂浮光点", part_motes),
 }
 
