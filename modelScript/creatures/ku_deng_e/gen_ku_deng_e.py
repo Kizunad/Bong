@@ -38,8 +38,13 @@ from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[3]
 CREATURE_DIR = Path(__file__).resolve().parent
-REVIEW_DIR = Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/ku_deng_e")
+# 审阅输出写进被 gitignore 的 modelScript/out/review；参考图是调度另存的素材，仓库里没有，缺了就不画参考栏
+REVIEW_DIR = REPO / "modelScript" / "out" / "review" / "img" / "creatures" / "ku_deng_e"
 PARTS_DIR = REVIEW_DIR / "parts"
+REFERENCE_CANDIDATES = (
+    REVIEW_DIR / "ku_deng_e.png",
+    Path("/home/serverkizuna/Code/Bong/.agent-worktrees/model-review/img/creatures/ku_deng_e/ku_deng_e.png"),
+)
 
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
 from cjk_font import load_font  # noqa: E402
@@ -622,15 +627,25 @@ def bone_tree_panel(p: Puppet, height: int) -> Image.Image:
     return panel
 
 
+def load_reference() -> "Image.Image | None":
+    for path in REFERENCE_CANDIDATES:
+        if path.exists():
+            return Image.open(path).convert("RGB")
+    return None
+
+
 def make_check(p: Puppet, model_path: Path, gate_total: int) -> None:
-    ref_p = REVIEW_DIR / f"{MODEL_ID}.png"
+    ref = load_reference()
+    if ref is None:
+        print("没有参考图，跳过 check.png（接触表与骨骼树照出）")
     font_h = load_font(18)
     six = render_six_views(model_path, f"ku_deng_e（枯灯蛾）round 3/3 · {p.total()} cubes · "
                                        f"{len(p.rig.bones)} 骨（可动 {moving_bone_count(p)}）· 门禁违例 {gate_total}")
     tree = bone_tree_panel(p, six.height)
     six.save(REVIEW_DIR / "contact_sheet.png")
     tree.save(REVIEW_DIR / "bones_tree.png")
-    ref = Image.open(ref_p).convert("RGB")
+    if ref is None:
+        return
     lw = 640
     ref_s = ref.resize((lw, round(ref.height * lw / ref.width)), Image.Resampling.LANCZOS)
     canvas = Image.new("RGB", (lw + six.width + tree.width + 50, max(six.height, tree.height) + 50), (25, 26, 29))
@@ -714,14 +729,18 @@ def render_check_tex(p: Puppet) -> None:
     tex = write_textured(p, CREATURE_DIR / "KuDengE_tex.bbmodel")
     size = 440
     views = (("3/4 FRONT-RIGHT", 150.0, 22.0), ("TOP +y（翅膜）", 180.0, 89.9), ("BACK +z（腹尖残光）", 0.0, 8.0))
-    ref = Image.open(REVIEW_DIR / f"{MODEL_ID}.png").convert("RGB")
-    ref = ref.resize((int(ref.width * size / ref.height), size), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", (ref.width + len(views) * 2 * (size + 8) + 8, size + 30), (28, 29, 33))
+    ref = load_reference()
+    ref_width = 0
+    if ref is not None:
+        ref = ref.resize((int(ref.width * size / ref.height), size), Image.Resampling.LANCZOS)
+        ref_width = ref.width
+    canvas = Image.new("RGB", (ref_width + len(views) * 2 * (size + 8) + 8, size + 30), (28, 29, 33))
     draw = ImageDraw.Draw(canvas)
     font = load_font(13)
-    canvas.paste(ref, (0, 30))
-    draw.text((4, 8), "REFERENCE", fill=(215, 205, 180), font=font)
-    x = ref.width + 8
+    if ref is not None:
+        canvas.paste(ref, (0, 30))
+        draw.text((4, 8), "REFERENCE", fill=(215, 205, 180), font=font)
+    x = ref_width + 8
     for label, yaw, pitch in views:
         for title, path in (("FLAT", flat), ("TEXTURED", tex)):
             canvas.paste(render(path, yaw=yaw, pitch=pitch, size=size, bg=BG, shading="mc")[0], (x, 30))

@@ -599,6 +599,16 @@
    "niche_house_puppet.bbmodel": "182854b8ae5dd89e2f2d98fe54d2e66877976e1db8b0afd1b40f54f325809c22"
   }
  },
+ "gen_niche_house_puppet_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "niche_house_puppet_anim/animations/niche_house_puppet.animation.json": "5cbc6fc2fcf2890de0003c192c5defb742988c543b1c789d06ec9f8b02fdf542",
+   "niche_house_puppet_anim/geo/niche_house_puppet.geo.json": "8cc76113f9fb5f59af028c4e6acae1e41459c9700cf9f26cb98b850d98126119",
+   "niche_house_puppet_anim/geo/niche_house_puppet_base.geo.json": "ad032fb073554e730b09fb1cec8cd7dbf9d0ff7fcd8ac710924295a0962221c1",
+   "niche_house_puppet_anim/textures/entity/fauna/niche_house_puppet.png": "e55b4c68f39dc21ea23d9d7982ecefb1df5bb9e3e8da1f33a97b76d22130bba2",
+   "niche_house_puppet_anim/textures/entity/fauna/niche_house_puppet_base.png": "e55b4c68f39dc21ea23d9d7982ecefb1df5bb9e3e8da1f33a97b76d22130bba2"
+  }
+ },
  "gen_niche_zhenfa_trap.py": {
   "exit": 0,
   "outputs": {
