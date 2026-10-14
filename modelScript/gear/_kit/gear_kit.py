@@ -20,6 +20,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -96,6 +97,22 @@ class Gear:
     def rod(self, bone, name, a, b, r, mat, rz=None):
         """端点精确落在 a、b 上的斜杆（骨条 / 铁条 / 斜挎带）。r 为半宽。"""
         self.rig.shaft(bone, name, a, b, r, rz, mat=mat)
+
+    def ring(self, bone, name, c, r, w, t, mat, axis="z", n=8):
+        """一圈环（n 段短杆首尾相接）。c 为圆心；r 为中心线半径；w 为环面宽；t 为环厚。
+
+        axis="z"：环在 xy 平面里，厚度沿 z（竖在背上的圈）；axis="x"：环在 yz 平面里，厚度沿 x（侧挂的绳圈）。
+        """
+        pts = []
+        for k in range(n):
+            a = 2 * math.pi * k / n
+            if axis == "z":
+                pts.append((c[0] + r * math.sin(a), c[1] + r * math.cos(a), c[2]))
+            else:
+                pts.append((c[0], c[1] + r * math.cos(a), c[2] + r * math.sin(a)))
+        for k in range(n):
+            a, b = pts[k], pts[(k + 1) % n]
+            self.rod(bone, f"{name}_{k}", a, b, w / 2, mat, rz=t / 2)
 
     def total(self) -> int:
         return len(self.rig.elements)
