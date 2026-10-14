@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """天道尸蛆动画：程序化采样 → 带动画的 bbmodel → 离线 codec → GeckoLib geo / animation.json（只落资产，不接线）。
 
-五段动画（全部从零写关键帧）：
+六段动画（全部从零写关键帧；移动方式是飞行，所有段落都在悬浮高度 HOVER 上做）：
 
-  idle    3.0s 循环  体节沿身长的呼吸蠕动（节距一松一紧）、口器缓缓开合、三层齿环慢速逆转、触须与呼吸管轻摆、脏器微胀
-  crawl   1.8s 循环  波浪蠕行：收缩波从尾传到头（节距收紧 + 小角度拱起），足垫随波依次抬落，头探路
-  attack  1.4s 一次  前段昂起后仰蓄力 → 整条身子前扑，四瓣唇翻开、三层齿环依次外翻伸出 → 唇猛合 / 齿环缩回吞咬 → 吞咽波后传
-  hurt    0.6s 一次  整条身子一缩、头甩起，唇抽动、齿环乱转，腐液滴一抖
-  death   3.0s 一次  抽搐 → 体节从头到尾依次鼓胀 → 爆浆塌陷（体节压扁摊宽、脏器与灵光碎块外溢、腐液拉长）→ 口器松垂
+  idle           3.0s 循环  悬浮：身子缓缓起伏、体节节距一松一紧，体侧膜翼慢速扇动，口器缓缓开合、三层齿环慢速逆转、触须与呼吸管轻摆
+  fly            1.6s 循环  飞行：体节做自头向尾传的波浪起伏推进，体侧膜翼逐节滞后拍动，足桩后拖，口器半张、齿环转动
+  attack         1.4s 一次  口器外翻猛扑（原版保留）：前段昂起 → 前冲、四瓣唇翻开、三层齿环依次外翻 → 唇猛合 / 齿环缩回 → 吞咽波后传
+  attack_swallow 1.9s 一次  扩口吞入：前段昂起蓄力 → 口器张到明显超过体宽（唇外翻 70°、齿环放大外翻）→ 整只前扑把目标罩进口里
+                            → 唇合拢 → 一团鼓包顺着体节往后滚（体节依次鼓起再回落）
+  hurt           0.6s 一次  整条身子一缩、头甩起，唇抽动、齿环乱转，腐液滴一抖
+  death          3.0s 一次  从悬浮处坠落 → 抽搐 → 体节从头到尾依次鼓胀 → 爆浆塌陷（压扁摊宽、脏器与灵光碎块外溢）→ 膜翼垂落、口器松垂
 
 坐标：建模稿朝 -Z（和游戏一致），骨旋转按 Blockbench 的 R = Rz·Ry·Rx 绕自身枢轴，子骨继承父骨的旋转 / 缩放 / 位移。
 符号约定（对着数值核过）：
@@ -16,7 +18,8 @@
   · 头 rot.x 为正 = 头前端抬起；唇骨 lip_top rot.x 为正 = 上唇前缘抬起（张开），lip_bot 取反，
     lip_l rot.y 为正 = 左唇前缘往 -X 外翻（张开），lip_r 取反；
   · 足：leg_i_a rot.x 为正 = 足向前（-Z）摆；leg_i_b pos.y 为正 = 足垫抬起；
-  · 子骨的 pos 是在父骨坐标系里的位移，会被父骨的累积缩放同比缩放——死亡段压扁体节时按这个反推位移。
+  · 子骨的 pos 是在父骨坐标系里的位移，会被父骨的累积缩放同比缩放——死亡段压扁体节时按这个反推位移；
+  · 膜翼 fin_N_{l,r}：右翼 rot.z 为正 = 翼尖上扬，左翼取反（统一写成 sign·角度）。
 
 用法::
 
@@ -52,6 +55,8 @@ SAMPLES = 32
 N_SEG = geo.N_SEG
 N_RING = len(geo.MOUTH_RINGS)
 LEG_SEGS = tuple(geo.LEG_SEGS)
+FIN_SEGS = tuple(geo.FIN_SEGS)
+HOVER = 22.0                        # 悬浮高度（px）：足垫离地的距离
 SIDES = (("l", -1.0), ("r", 1.0))   # (骨名后缀, 符号)：右侧在 +X
 Sampler = Callable[[float], Pose]
 
@@ -144,9 +149,27 @@ def prolegs(pose: Pose, i: int, swing: float, lift: float) -> None:
         turn(pose, f"leg_{i}_b_{side}", pos=(0, lift, 0))
 
 
-# ---------------------------------------------------------------- 五段动画
+def fins(pose: Pose, t: float, amp: float, cycles: float = 1.0, lag: float = 0.07, phase: float = 0.0, droop: float = 0.0) -> None:
+    """体侧膜翼：每节滞后 lag 个周期拍动；droop > 0 时翼尖整体向下垂（度）。"""
+    for i in FIN_SEGS:
+        for side, sign in SIDES:
+            turn(pose, f"fin_{i}_{side}", rot=(0, 0, sign * (amp * wave(t, cycles, phase - lag * i) - droop)))
+
+
+def wide_mouth(pose: Pose, amount: float) -> None:
+    """扩口：唇外翻 70°并放大、齿环放大——开口直径明显超过最粗体节的体宽。amount ∈ [-0.2, 1]。"""
+    mouth(pose, amount, lip_deg=70.0)
+    for lip in ("lip_top", "lip_bot", "lip_l", "lip_r"):
+        grow(pose, lip, (1.0 + 0.35 * max(amount, 0.0),) * 3)
+    for k in range(N_RING):
+        grow(pose, f"ring_{k}", (1.0 + 0.5 * max(amount, 0.0), 1.0 + 0.5 * max(amount, 0.0), 1.0))
+
+
+# ---------------------------------------------------------------- 六段动画
 def idle(t: float) -> Pose:
     pose = Pose()
+    turn(pose, "root", pos=(0, HOVER + 1.3 * wave(t, 1, 0.1), 0))        # 悬浮：身子缓缓上下浮
+    fins(pose, t, 11.0, cycles=2, lag=0.06)
     for i in range(N_SEG):
         # 呼吸蠕动：节距一松一紧的波沿身长往前传（相位随节号推进），体节微微俯仰蛇行
         seg_spacing(pose, i, 0.45 * wave(t, 1, 0.05 * i))
@@ -167,26 +190,26 @@ def idle(t: float) -> Pose:
     return pose
 
 
-def crawl(t: float) -> Pose:
+def fly(t: float) -> Pose:
     pose = Pose()
+    turn(pose, "root", rot=(-2.5, 0, 0), pos=(0, HOVER + 2.0 * wave(t, 1, 0.15), 0))
     for i in range(N_SEG):
-        # 收缩波从尾传到头：相位 +0.07·i（后面的节先收缩）；收缩时节距收紧、身体小角度拱起
-        phase = 0.07 * i
-        seg_spacing(pose, i, -1.1 * max(0.0, wave(t, 1, phase)) + 0.35)
-        turn(pose, f"seg_{i}", rot=(1.0 * wave(t, 1, phase), 1.2 * wave(t, 1, -0.05 * i), 0))
+        # 体节波浪起伏：波自头向尾传（相位随节号滞后），小角度逐节累加；节距随波一松一紧
+        phase = -0.07 * i
+        seg_spacing(pose, i, 0.5 * wave(t, 1, phase + 0.25))
+        turn(pose, f"seg_{i}", rot=(1.7 * wave(t, 1, phase), 1.1 * wave(t, 1, phase + 0.25), 0))
         if i in geo.WINDOW_SEGS:
-            squeeze = 0.07 * max(0.0, wave(t, 1, phase))         # 收缩时脏器被挤得略扁、略宽
-            grow(pose, f"gut_{i}", (1.0 + squeeze, 1.0 - squeeze * 0.6, 1.0))
-        grow(pose, f"ooze_{i}", (1.0, 1.0 + 0.2 * wave(t, 1, phase + 0.2), 1.0))
-    for i in LEG_SEGS:
-        u = wave(t, 1, 0.07 * i + 0.25)
-        step = max(0.0, u)
-        prolegs(pose, i, 9.0 * u, 2.6 * step * step)             # 收缩时足垫抬起前移，舒张时落地后蹬
-    turn(pose, "head", rot=(4.0 * wave(t, 1, 0.07 * N_SEG), 5.0 * wave(t, 1, -0.02), 0))      # 头探路
-    mouth(pose, 0.35 + 0.35 * wave(t, 1, 0.25))
-    rings_spin(pose, 34.0 * wave(t, 1, 0.05))
+            squeeze = 0.05 * wave(t, 1, phase)
+            grow(pose, f"gut_{i}", (1.0 + squeeze, 1.0 - squeeze, 1.0))
+        grow(pose, f"ooze_{i}", (1.0, 1.0 + 0.25 * wave(t, 1, phase + 0.2), 1.0))
+    fins(pose, t, 34.0, cycles=1, lag=0.07, phase=0.1)                  # 膜翼逐节滞后拍动，推着身子前行
+    for i in LEG_SEGS:                                                   # 足桩被气流往后拖、随波微颤
+        prolegs(pose, i, -9.0 + 4.0 * wave(t, 1, -0.07 * i), 0.4 * wave(t, 1, -0.07 * i + 0.3))
+    turn(pose, "head", rot=(3.0 * wave(t, 1, 0.05), 3.0 * wave(t, 1, 0.3), 0))
+    mouth(pose, 0.4 + 0.2 * wave(t, 1, 0.25))
+    rings_spin(pose, 45.0 * wave(t, 1, 0.05))
     palps(pose, t, 7.0)
-    tail(pose, t, 4.0, phase=0.1)
+    tail(pose, t, 5.0, phase=-0.07 * N_SEG)
     return pose
 
 
@@ -201,7 +224,8 @@ def attack(t: float) -> Pose:
     turn(pose, "seg_0", rot=(36.0 * rise, 0, 0))
     for i in range(1, 6):
         turn(pose, f"seg_{i}", rot=(-7.2 * rise, 0, 0))
-    turn(pose, "root", pos=(0, 0, 5.0 * max(0.0, rise) - 13.0 * lunge))
+    turn(pose, "root", pos=(0, HOVER, 5.0 * max(0.0, rise) - 13.0 * lunge))
+    fins(pose, t, 14.0, cycles=3, lag=0.05)
     for i in range(N_SEG):
         # 蓄力时全身节距收紧（像弹簧压缩），前扑时拉开
         seg_spacing(pose, i, -0.8 * max(0.0, rise) * smooth(t / 0.28) + 0.5 * max(0.0, lunge))
@@ -222,6 +246,41 @@ def attack(t: float) -> Pose:
     return pose
 
 
+def attack_swallow(t: float) -> Pose:
+    pose = Pose()
+    # 节奏：0–0.2 前段昂起蓄力；0.2–0.4 口器张到最大（超过体宽）；0.4–0.56 整只前扑把目标罩进口里；
+    #       0.56–0.66 唇猛合、齿环缩回；0.66–1 一团鼓包顺着体节往后滚，身体回位
+    rise = keys(t, [(0.0, 0.0), (0.2, 1.0), (0.46, 0.7), (0.62, 0.0), (1.0, 0.0)])
+    lunge = keys(t, [(0.0, 0.0), (0.22, -0.12), (0.5, 1.0), (0.6, 0.92), (0.82, 0.12), (1.0, 0.0)])
+    gape = keys(t, [(0.0, 0.0), (0.12, 0.25), (0.4, 1.0), (0.56, 1.0), (0.62, -0.2), (0.68, 0.0), (1.0, 0.0)])
+    evert = keys(t, [(0.0, 0.0), (0.3, 0.0), (0.5, 1.0), (0.57, 1.0), (0.66, 0.0), (1.0, 0.0)])
+    turn(pose, "seg_0", rot=(30.0 * rise, 0, 0))
+    for i in range(1, 6):
+        turn(pose, f"seg_{i}", rot=(-6.0 * rise, 0, 0))
+    turn(pose, "root", pos=(0, HOVER, 4.0 * max(0.0, rise) - 30.0 * lunge))
+    turn(pose, "head", rot=(-16.0 * lunge + 8.0 * rise, 0, 0))
+    wide_mouth(pose, gape)
+    rings_evert(pose, 0.85 * evert)
+    rings_spin(pose, 120.0 * smooth(t / 0.5) * (1.0 - 0.6 * smooth((t - 0.62) / 0.2)))
+    palps(pose, t, 4.0, droop=-20.0 * lunge)
+    tail(pose, t, 5.0, cycles=2, droop=-6.0 * lunge)
+    fins(pose, t, 16.0, cycles=3, lag=0.05, droop=18.0 * lunge)           # 前扑时膜翼向后收垂
+    for i in LEG_SEGS:
+        prolegs(pose, i, 8.0 * lunge, 1.2 * abs(lunge))
+    # 吞咽鼓包：0.66 起一团鼓包从 seg_0 滚到 seg_13（累积缩放 S_i，子节继承父节，所以写比值）
+    fade = 1.0 - smooth((t - 0.93) / 0.07)
+    prev = 1.0
+    for i in range(N_SEG):
+        bump = math.exp(-((t - 0.66 - 0.22 * i / (N_SEG - 1)) / 0.06) ** 2) * fade
+        s_i = 1.0 + 0.45 * bump
+        grow(pose, f"seg_{i}", (s_i / prev, s_i / prev, 1.0))
+        prev = s_i
+        if i in geo.WINDOW_SEGS:
+            grow(pose, f"gut_{i}", (1.0 + 0.2 * bump, 1.0 + 0.2 * bump, 1.0))
+        seg_spacing(pose, i, 0.6 * bump)
+    return pose
+
+
 def hurt(t: float) -> Pose:
     pose = Pose()
     kick = keys(t, [(0.0, 0.0), (0.16, 1.0), (0.5, 0.0), (1.0, 0.0)])         # 受击冲量：快进慢回
@@ -232,7 +291,7 @@ def hurt(t: float) -> Pose:
         grow(pose, f"ooze_{i}", (1.0, 1.0 + 0.6 * kick * wave(t, 3, 0.1 * i), 1.0))
         if i in geo.WINDOW_SEGS:
             grow(pose, f"gut_{i}", (1.0 + 0.1 * kick, 1.0 + 0.1 * kick, 1.0))
-    turn(pose, "root", pos=(0, 0, 3.0 * kick))
+    turn(pose, "root", pos=(0, HOVER, 3.0 * kick))
     turn(pose, "head", rot=(12.0 * kick, -8.0 * kick, 4.0 * kick))
     mouth(pose, 0.9 * kick + 0.15 * wave(t, 4, 0.0) * kick)
     rings_spin(pose, 70.0 * kick)
@@ -245,6 +304,8 @@ def hurt(t: float) -> Pose:
 
 def death(t: float) -> Pose:
     pose = Pose()
+    fall = smooth(t / 0.4)
+    turn(pose, "root", pos=(0, HOVER * (1.0 - fall), 0))                  # 从悬浮处坠落到地面
     twitch = keys(t, [(0.0, 0.0), (0.06, 1.0), (0.2, 0.7), (0.34, 0.0), (1.0, 0.0)])
     # 体节从头到尾依次：先鼓胀（0.14–0.5），再爆浆塌陷（0.42–0.9）。每节有自己的延迟，波往后传。
     sx, sy, burst = [], [], []
@@ -291,13 +352,15 @@ def death(t: float) -> Pose:
     for i in LEG_SEGS:                                  # 足垫缩进压扁的腹下，抽搐几下
         prolegs(pose, i, -10.0 * burst[i], 1.0 * twitch * wave(t, 4, 0.07 * i))
     tail(pose, t, 2.0 * twitch, cycles=3, droop=36.0 * keys(t, [(0.5, 0.0), (0.95, 1.0)]))
+    fins(pose, t, 14.0 * (1.0 - fall) * (1.0 - burst[0]), cycles=3, droop=70.0 * keys(t, [(0.15, 0.0), (0.6, 1.0)]))
     return pose
 
 
 CLIPS = {
     "idle": (3.0, True, idle),
-    "crawl": (1.8, True, crawl),
+    "fly": (1.6, True, fly),
     "attack": (1.4, False, attack),
+    "attack_swallow": (1.9, False, attack_swallow),
     "hurt": (0.6, False, hurt),
     "death": (3.0, False, death),
 }
@@ -305,7 +368,7 @@ CLIPS = {
 # 地面约束：程序化动作不知道地面在哪，哪一帧有部位压进地面就把整只（root）托起到刚好贴地。
 # 前段昂起会让后段翘起 / 沉下十几 px，所以托起上限比小型生物宽。
 GROUND_TOLERANCE = 0.6
-MAX_LIFT = 40.0
+MAX_LIFT = 40.0   # 悬浮在 HOVER 高度，一般不会入地；前段昂起蓄力时后段下沉仍可能碰地
 
 
 def grounded(rig: PoseRig, sampler: Sampler) -> Sampler:

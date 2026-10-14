@@ -79,6 +79,11 @@ HEAD_LIFT = 12.0                    # 头昂起的高度
 SEG_LIFT = {0: 8.0, 1: 5.0, 2: 3.0, 3: 1.5, 4: 0.5}
 WINDOW_SEGS = range(2, 12)          # 开透皮窗的体节
 LEG_SEGS = range(1, 13)             # 有足的体节
+FIN_SEGS = range(2, 12)             # 体侧长膜翼的体节（飞行时拍动）
+FIN_ANGLE = -45.0                   # 膜翼根部在皮环上的方位角（°，0 = +X，负 = 下侧）：落在窗与足桩之间有皮的边上
+FIN_REACH = 0.9                     # 膜翼外伸长度 = 该节半径 × 此系数
+FIN_DIR = (0.96, -0.28)             # 膜翼外伸方向（x 取 +，左侧镜像；y 略向下，像胸鳍）
+FIN_HALF_Z = 2.8                    # 膜翼 z 向半宽
 BARREL_SLICES = 5                   # 每节皮环沿 z 切的片数
 BARREL_SLICE_Z = SEG_SKIN_Z / BARREL_SLICES
 BARREL_RADIUS = 6.5                 # 皮环侧视圆弧的曲率半径（px）：越小边收得越狠
@@ -125,6 +130,9 @@ TUBE_PATH = [  # (y 相对尾心, z 相对尾塞后端) 管折点
 TUBE_R = [2.4, 2.1, 1.8, 1.8]
 
 
+Vec = tuple[float, float, float]
+
+
 def side_tag(s: float) -> str:
     return "l" if s < 0 else "r"
 
@@ -143,6 +151,13 @@ def leg_geom(i: int, s: float) -> dict[str, float]:
     return {"cx": s * 0.14 * a, "half": half, "top": seg_y(i) - a}
 
 
+def fin_root(i: int, s: float) -> Vec:
+    """第 i 节 s 侧膜翼根：皮环在 FIN_ANGLE 方位的外表面点。"""
+    a = SEG_A[i]
+    ang = math.radians(FIN_ANGLE)
+    return (s * a * math.cos(ang), seg_y(i) + a * math.sin(ang), seg_z(i))
+
+
 def define_bones(rig: Rig) -> None:
     rig.bone("root", (0.0, 0.0, 0.0), None)
     prev = "root"
@@ -156,6 +171,10 @@ def define_bones(rig: Rig) -> None:
                 g = leg_geom(i, s)
                 rig.bone(side_name(f"leg_{i}_a", s), (g["cx"], g["top"], seg_z(i)), f"seg_{i}")
                 rig.bone(side_name(f"leg_{i}_b", s), (g["cx"], g["top"] * 0.4, seg_z(i)), side_name(f"leg_{i}_a", s))
+    for i in FIN_SEGS:
+        for s in (-1.0, 1.0):
+            root = fin_root(i, s)
+            rig.bone(side_name(f"fin_{i}", s), root, f"seg_{i}")
     # 头：四瓣唇 + 三层齿环 + 咽喉 + 触须
     rig.bone("head", (0.0, HEAD_Y, HEAD_Z + HEAD_ZLEN / 2), "seg_0")
     z_back = HEAD_Z + HEAD_ZLEN / 2 - 1.0
@@ -196,9 +215,6 @@ def build_rig() -> Rig:
 # ---------------------------------------------------------------------------
 # 几何小工具
 # ---------------------------------------------------------------------------
-Vec = tuple[float, float, float]
-
-
 def bar(rig: Rig, bone: str, name: str, a: Vec, b: Vec, rx: float, rz: float, *,
         mat: str, up: Vec | None = None, extend: float = 0.0) -> None:
     """端点精确落在 a、b 的定向柱。up 给定时局部 +Z（半厚 rz）指向 up。"""
@@ -489,6 +505,27 @@ def part_tail(rig: Rig) -> None:
                  org=(0.0, yp, zp + 1.95), mat="tooth_ivory")
 
 
+# ===========================================================================
+# 8b. 体侧膜翼：飞行时拍动
+# ===========================================================================
+def part_fins(rig: Rig) -> None:
+    """每个 FIN_SEGS 体节两侧各一片小膜翼：一块薄板（肉粉）+ 一条暗红翼脉，从皮环下侧外伸，像胸鳍。
+    板厚 0.8、z 向半宽 FIN_HALF_Z；根部端面正好落在皮环外表面上，随 fin_N 骨绕根部拍动。"""
+    for i in FIN_SEGS:
+        a, z = SEG_A[i], seg_z(i)
+        length = a * FIN_REACH
+        for s in (-1.0, 1.0):
+            bone = side_name(f"fin_{i}", s)
+            p0 = fin_root(i, s)
+            p1 = (p0[0] + s * FIN_DIR[0] * length, p0[1] + FIN_DIR[1] * length, z)
+            bar(rig, bone, side_name(f"fin{i}_plate", s), p0, p1, 0.4, FIN_HALF_Z, mat="skin_pink", up=(0.0, 0.0, 1.0))
+            # 翼脉：贴在板的上面，沿板中线，略短于板
+            nx, ny = -FIN_DIR[1], FIN_DIR[0]                      # 板面法向（朝上）
+            v0 = (p0[0] + s * FIN_DIR[0] * 0.5 + s * nx * 0.65, p0[1] + FIN_DIR[1] * 0.5 + ny * 0.65, z)
+            v1 = (p0[0] + s * FIN_DIR[0] * (length * 0.9) + s * nx * 0.65, p0[1] + FIN_DIR[1] * length * 0.9 + ny * 0.65, z)
+            bar(rig, bone, side_name(f"fin{i}_vein", s), v0, v1, 0.3, 0.45, mat="organ_red", up=(0.0, 0.0, 1.0))
+
+
 PARTS = {
     "head": ("1. 头壳：四瓣厚唇 + 感觉坑", part_head),
     "mouth": ("2. 咽口：三层倒钩齿环 + 咽喉", part_mouth),
@@ -497,6 +534,7 @@ PARTS = {
     "guts": ("5. 脏器与灵光碎块", part_guts),
     "legs": ("6. 12 对肉垫短足", part_legs),
     "ooze": ("7. 腐液滴挂 + 渍斑", part_ooze),
+    "fins": ("8b. 体侧膜翼（飞行拍动）", part_fins),
     "tail": ("8. 尾环 + 呼吸管 + 气门板", part_tail),
 }
 
