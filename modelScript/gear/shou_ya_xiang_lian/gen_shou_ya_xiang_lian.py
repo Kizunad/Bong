@@ -115,6 +115,7 @@ def part_fang_center(g: Gear) -> None:
 
     # 齿根基座（宽厚微黄老骨色，厚度饱满）
     g.box(b, "fang_c_root", (-0.52, 16.65, -2.88), (0.52, 17.55, -2.28), "bone_stain")
+    g.box(b, "fang_c_crest_t", (-0.48, 17.25, -2.95), (0.48, 17.75, -2.22), "bone_lt")
     # 牙身第一节（主躯干，微向前隆起弧度）
     g.box(b, "fang_c_body1", (-0.45, 15.65, -2.62), (0.45, 16.75, -2.30), "bone")
     # 牙身第二节（微向右侧微弧弯曲，渐缩）
@@ -130,6 +131,8 @@ def part_fang_center(g: Gear) -> None:
     # 獠牙边缘粗糙侧齿与刻槽（厚度 ≥ 0.26）
     g.box(b, "fang_c_flange_l", (-0.65, 15.25, -2.58), (-0.38, 16.25, -2.32), "bone_stain")
     g.box(b, "fang_c_flange_r", (0.38, 15.25, -2.58), (0.65, 16.25, -2.32), "bone_lt")
+    g.box(b, "fang_c_flange_l2", (-0.55, 14.35, -2.56), (-0.32, 15.05, -2.34), "bone_stain")
+    g.box(b, "fang_c_flange_r2", (0.32, 14.35, -2.56), (0.55, 15.05, -2.34), "bone")
     # 齿根下部横向加固草绳圈
     g.box(b, "fang_c_cord_loop", (-0.48, 16.35, -2.72), (0.48, 16.70, -2.25), "cord_dk")
 
@@ -203,12 +206,14 @@ def part_clay_shards(g: Gear) -> None:
     g.box(b, "shard1_fracture", (-2.05, 17.15, -2.58), (-1.65, 17.75, -2.36), "clay_dk")
     # 陶片穿孔
     g.box(b, "shard1_hole", (-1.98, 18.62, -2.72), (-1.72, 18.88, -2.25), "void")
+    g.box(b, "shard1_flange", (-2.32, 17.95, -2.66), (-2.05, 18.55, -2.38), "clay")
 
     # 第二枚陶片：挂在右侧高位（x ≈ 2.55，y∈[18.4, 20.3]，z∈[-2.62, -2.30]）
     g.box(b, "shard2_cord", (2.38, 19.85, -2.52), (2.72, 20.55, -2.25), "cord")
     g.box(b, "shard2_body", (2.22, 18.75, -2.58), (2.88, 19.95, -2.28), "clay")
     g.box(b, "shard2_fracture", (2.32, 18.15, -2.55), (2.78, 18.85, -2.32), "clay_dk")
-    g.box(b, "shard2_hole", (2.35, 19.55, -2.66), (-2.61 if False else 2.61, 19.81, -2.22), "void")
+    g.box(b, "shard2_hole", (2.35, 19.55, -2.66), (2.61, 19.81, -2.22), "void")
+    g.box(b, "shard2_stripe", (2.28, 18.95, -2.62), (2.82, 19.25, -2.25), "clay_dk")
 
 
 def part_cord_ties(g: Gear) -> None:
@@ -297,8 +302,17 @@ SPEC = GearSpec(
     soft_over=SOFT_OVER,
     min_bones=10,
     wear_note="挂点：颈/胸 · 巨型异兽主獠牙+群齿骨珠+碎陶片+后颈骨栓",
-    textured=False,            # Round 1 纯几何
-    round_label="round 1/3",
+    worn_focus=((0.0, 18.5, -2.0), 18.0),
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 正右斜", 152.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    texture_overrides={
+        "strap": "gear_hide",
+        "strap_dk": "gear_hide_dk",
+    },
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
