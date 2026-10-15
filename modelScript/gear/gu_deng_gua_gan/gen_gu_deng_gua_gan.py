@@ -456,8 +456,19 @@ SPEC = GearSpec(
     soft_over=SOFT_OVER,
     min_bones=10,
     wear_note="挂点：背（高出肩） · 粗兽骨斜插挂杆+6x8x6大骨灯笼+明焰灯芯+背部兽皮背包",
-    textured=False,            # Round 1 纯几何
-    round_label="round 1/3",
+    worn_focus=((2.5, 23.5, 1.5), 26.0),
+    tex_views=(
+        ("BACK 背面（+z）", 0.0, 0.0),
+        ("3/4 背右斜", 28.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    texture_overrides={
+        "strap": "gear_hide",
+        "strap_dk": "gear_hide_dk",
+        "glow_core": "gear_glow_core",
+        "glow_flame": "gear_glow_flame",
+    },
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
