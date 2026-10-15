@@ -485,8 +485,19 @@ SPEC = GearSpec(
     soft_over=SOFT_OVER,
     min_bones=10,
     wear_note="挂点：胸前 · 横贯胸前整排五联皮囊+三挂陶瓶+X形立体背跨带+骨锥鞘",
-    textured=False,            # Round 1 纯几何
-    round_label="round 1/3",
+    worn_focus=((0.0, 16.5, -2.0), 20.0),
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 正右斜", 152.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    texture_overrides={
+        "strap": "gear_hide",
+        "strap_dk": "gear_hide_dk",
+        "cloth": "gear_linen",
+        "cloth_dk": "gear_linen_dk",
+    },
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
