@@ -340,8 +340,7 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：口鼻 / 颈 / 前胸三角巾下摆（头面部 y∈[24,28.8] + 颈胸下摆 y∈[12.6,23.95]）",
     worn_focus=((0.0, 23.0, 0.0), 24.0),
-    round_label="round 1/3",
-    textured=False,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":

@@ -1572,6 +1572,17 @@ GEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
     "gear_wearer_body": (_plain("#969698", 938), "#969698"),
     "gear_wearer_limb": (_plain("#7a7a7e", 939), "#7a7a7e"),
     "gear_wearer_face": (_plain("#464650", 940), "#464650"),
+    "gear_cord_lt": (_rope("#8c6e40", "#c2a46c", 941), "#b29868"),
+    "gear_patch_lt": (_leather("#947256", 942), "#947256"),
+    "gear_stitch": (_burlap("#bcae94", 943, grime=0.1), "#bcae94"),
+    "gear_fur": (_fur("#9e907a", "#c4b69c", 944), "#baa894"),
+    "gear_fur_dk": (_fur("#6a5e4e", "#8e806e", 945), "#887a66"),
+    "gear_straw": (_weave("#8c7244", "#baa068", 946), "#a88e60"),
+    "gear_straw_lt": (_weave("#a88e58", "#d2ba84", 947), "#c2aa76"),
+    "gear_straw_dk": (_weave("#5e4828", "#82683e", 948), "#76603e"),
+    "gear_stem": (_wood("#765a36", "#9a7e52", 949), "#8a7248"),
+    "gear_toe": (_skin("#88807a", 950, vein=0.02), "#88807a"),
+    "gear_toe_dk": (_skin("#706862", 951, vein=0.02), "#706862"),
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_MATERIALS.items()})
