@@ -164,6 +164,13 @@ def _build_single_frame(g: Gear, b: str, sx: float, side: str) -> None:
     # 镜框边沿散落的小铁铆钉（凸出于前表面）
     g.box(b, f"rim_rivet_t_{side}", (cx - 0.16, cy + 1.48, -5.28), (cx + 0.16, cy + 1.78, -4.95), "iron_lt")
     g.box(b, f"rim_rivet_b_{side}", (cx - 0.16, cy - 1.78, -5.28), (cx + 0.16, cy - 1.48, -4.95), "iron_lt")
+    # 增加手工锻打参差外缘凸起与角铁咬合（严格对称成对）
+    bx_o_min = min(sx * (EYE_X + 1.35), sx * (EYE_X + 1.68))
+    bx_o_max = max(sx * (EYE_X + 1.35), sx * (EYE_X + 1.68))
+    g.box(b, f"rim_boss_o_{side}", (bx_o_min, cy - 0.45, -5.12), (bx_o_max, cy + 0.45, -4.68), "rust")
+    nx_min = min(sx * (EYE_X - 0.45), sx * (EYE_X + 0.45))
+    nx_max = max(sx * (EYE_X - 0.45), sx * (EYE_X + 0.45))
+    g.box(b, f"rim_notch_{side}", (nx_min, cy + 1.72, -5.18), (nx_max, cy + 1.95, -4.82), "rust_dk")
 
 
 def part_frames(g: Gear) -> None:
@@ -185,6 +192,10 @@ def _build_single_lens(g: Gear, b: str, sx: float, side: str) -> None:
     # 琉璃中央凸透微拱
     cx0, cx1 = min(cx - 0.52, cx + 0.52), max(cx - 0.52, cx + 0.52)
     g.box(b, f"lens_core_{side}", (cx0, cy - 0.52, -4.92), (cx1, cy + 0.52, -4.66), "glass")
+    # 高对比度高光反光块（增强琉璃通透对比，Y 错开）
+    g.box(b, f"lens_glint_{side}", (cx - 0.22, cy + 0.15, -4.98), (cx + 0.22, cy + 0.48, -4.70), "glass")
+    # 下方深色折射阴影
+    g.box(b, f"lens_shadow_{side}", (cx - 0.62, cy - 0.82, -4.82), (cx + 0.62, cy - 0.32, -4.60), "glass_dk")
 
     # 左右不对称裂纹与暗纹加固条
     if side == "r":
@@ -282,6 +293,9 @@ def part_cloth_wrap(g: Gear) -> None:
     g.box(b, "wrap_cord_loop", (3.42, 27.42, -5.25), (3.78, 28.28, -4.85), "cord")
     g.box(b, "wrap_cord_drop1", (3.68, 26.18, -4.75), (4.02, 27.00, -4.40), "cord_dk")
     g.box(b, "wrap_cord_drop2", (3.75, 25.65, -4.68), (4.08, 26.35, -4.32), "cord")
+    # 破损下垂毛边碎麻条（错开共面）
+    g.box(b, "wrap_fray_a", (3.22, 26.25, -4.92), (3.62, 26.85, -4.45), "cloth_dk")
+    g.box(b, "wrap_fray_b", (3.82, 27.45, -4.55), (4.25, 28.05, -4.18), "cloth")
 
 
 def part_rust_patches(g: Gear) -> None:
@@ -301,6 +315,9 @@ def part_rust_patches(g: Gear) -> None:
     g.box(b, "weld_lump1", (-2.62, 28.72, -5.08), (-2.28, 29.08, -4.62), "rust_dk")
     g.box(b, "weld_lump2", (-3.88, 27.12, -4.98), (-3.52, 27.48, -4.52), "rust")
     g.box(b, "weld_lump3", (-2.18, 26.22, -5.08), (-1.82, 26.58, -4.62), "rust_dk")
+    # 增加锻打角铁扣片（错开共面）
+    g.box(b, "patch_bracket", (-3.98, 28.15, -4.85), (-3.42, 28.65, -4.22), "iron")
+    g.box(b, "patch_bracket_bolt", (-3.85, 28.25, -5.08), (-3.55, 28.55, -4.72), "iron_lt")
 
 
 def part_hang_bone(g: Gear) -> None:
@@ -371,9 +388,22 @@ SPEC = GearSpec(
     asym=ASYM_BONES,
     soft_over=SOFT_OVER,
     min_bones=10,
-    wear_note="挂点：眼/头 · 锈片护目镜+碎琉璃+皮条绑头",
-    textured=False,            # Round 1 纯几何
-    round_label="round 1/3",
+    wear_note="挂点：眼/头 · 锈片护目镜+高对比碎琉璃+皮条绑头",
+    worn_focus=((0.0, 27.5, -2.0), 18.0),
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 正右斜", 152.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    texture_overrides={
+        "glass": "gear_glass",
+        "glass_dk": "gear_glass_dk",
+        "strap": "gear_hide",
+        "strap_dk": "gear_hide_dk",
+        "cloth": "gear_linen",
+        "cloth_dk": "gear_linen_dk",
+    },
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
