@@ -404,6 +404,7 @@ SPEC = CoinBoxSpec(
     min_bones=10,
     wear_note="挂点：腰前偏右（匣身 z∈[-6.4,-2.7]，在躯干 / 腿之前）+ 前后宽皮带 + 右侧骨币串 + 腰下破布条",
     worn_focus=((0.5, 10.5, -1.0), 22.0),
+    texture_overrides={"rag_grey": "gear_linen_grey", "rag_brown": "gear_linen_brn"},
 )
 
 if __name__ == "__main__":

@@ -37,6 +37,11 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
 from cjk_font import load_font  # noqa: E402
 
+# 像素贴图的画笔库（所有手持物 / 器物 / 生物共用）
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
+sys.path.insert(0, str(REPO / "modelScript" / "generators" / "meridian_factory"))
+from handheld_texture import PAINTERS, textured_rig_doc  # noqa: E402
+
 # 仓库内的共面 (Z-fighting) 门禁：modelScript/bbmodel_maker 与已安装的同名库同名，按路径单独加载
 _spec = importlib.util.spec_from_file_location(
     "repo_coplanar", REPO / "modelScript" / "bbmodel_maker" / "gates" / "coplanar.py")
@@ -65,6 +70,13 @@ PLAYER_MATS = {
 _INSET = 0.03             # 渲染时占位人体各面内缩，免得与贴面的装备共面闪烁
 
 BG = (119, 119, 119)
+
+# 画笔库里本来就有、不用加 gear_ 前缀的材质（骨 / 暗洞），以及布并入粗麻
+TEXTURE_SHARED = {
+    "bone": "bone", "bone_lt": "bone_lit", "bone_dk": "bone_dark", "bone_stain": "bone_stain", "void": "void",
+    "cloth": "gear_linen", "cloth_dk": "gear_linen_dk",
+}
+TEXTURE_WEARER = {"wearer_body": "gear_wearer_body", "wearer_limb": "gear_wearer_limb", "wearer_face": "gear_wearer_face"}
 
 
 # ───────────────────────────────────────────────────────────── 建模辅助
@@ -178,6 +190,9 @@ class GearSpec:
     wear_note: str = ""              # 写进 check.png 标题的挂点说明
     # 穿戴渲染的固定取景 ((cx, cy, cz), 跨度 px)；小件（腰带）整个人放进画面太小，可指定只看腰部
     worn_focus: tuple | None = None
+    # 生成器材质名 → 画笔库材质名里不走默认规则（见 texture_material）的那几个
+    texture_overrides: dict = field(default_factory=dict)
+    round_label: str = "round 3/3"
     gates: WornGates = field(init=False)
 
     def __post_init__(self) -> None:
@@ -187,6 +202,18 @@ class GearSpec:
     @property
     def review_dir(self) -> Path:
         return REVIEW_ROOT / "img" / "gear" / self.gear_id
+
+    def texture_material(self) -> dict:
+        """生成器材质名 → 画笔库（handheld_texture）材质名：骨 / 暗洞沿用库里现成的，布并入粗麻，
+        其余一律是 gear_<同名>；spec 里的 texture_overrides 优先。"""
+        mapping = {}
+        for name in self.mats:
+            mapping[name] = TEXTURE_SHARED.get(name, f"gear_{name}")
+        mapping.update(self.texture_overrides)
+        missing = [lib for lib in mapping.values() if lib not in PAINTERS]
+        if missing:
+            raise KeyError(f"画笔库里没有这些材质：{sorted(set(missing))}")
+        return mapping
 
     def build(self, parts: list[Callable] | None = None) -> Gear:
         g = Gear(self.mats, self.bones)
@@ -264,8 +291,8 @@ def self_test(spec: GearSpec, g: Gear) -> None:
 
 
 # ───────────────────────────────────────────────────────────── 穿在灰色占位人体上
-def worn_doc(g: Gear, name: str) -> dict:
-    """装备 + 灰色占位玩家合成一个 bbmodel（只用于渲染看比例，不是交付物）。"""
+def worn_rig(g: Gear) -> Rig:
+    """装备 + 灰色占位玩家合成一个 Rig（只用于渲染看比例，不是交付物）。"""
     mats = {**g.rig.mats, **PLAYER_MATS}
     w = Rig(mats, tex=g.rig.tex, swatch=g.rig.swatch)
     for bone in g.rig.bone_order:
@@ -281,7 +308,16 @@ def worn_doc(g: Gear, name: str) -> dict:
     # 脸：头前面（-z）两只眼睛，让正面一眼可辨
     for sx in (-2.0, 1.0):
         w.cube("wearer", "player_eye", (sx, 27.0, -4.0 - 0.1), (sx + 1.0, 28.0, -4.0 + _INSET), mat="wearer_face")
-    return w.bbmodel(name)
+    return w
+
+
+def worn_doc(g: Gear, name: str) -> dict:
+    return worn_rig(g).bbmodel(name)
+
+
+def worn_textured_doc(spec: GearSpec, g: Gear, name: str) -> dict:
+    """贴图版的「装备 + 占位玩家」：装备按画笔库上色，占位玩家是灰色。"""
+    return textured_rig_doc(worn_rig(g), name, {**spec.texture_material(), **TEXTURE_WEARER})
 
 
 WORN_VIEWS = (
@@ -299,18 +335,22 @@ def _focus(doc_path: Path) -> tuple[tuple[float, float, float], float]:
     return centre, max(hi[i] - lo[i] for i in range(3)) * 1.08
 
 
-def render_worn(spec: GearSpec, g: Gear, tmp: Path, cell: int = 420) -> Image.Image:
-    tmp.write_text(json.dumps(worn_doc(g, "Worn"), ensure_ascii=False), encoding="utf-8")
+def render_worn(spec: GearSpec, g: Gear, tmp: Path, cell: int = 420, textured: bool = False) -> Image.Image:
+    """穿戴四面。textured=True 用画笔库贴图 + mc 光照渲染（check_tex.png 的下半），否则平涂几何版。"""
+    doc = worn_textured_doc(spec, g, "Worn") if textured else worn_doc(g, "Worn")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     focus = spec.worn_focus or _focus(tmp)
     font_h, font_l = load_font(17), load_font(12)
     sheet = Image.new("RGB", (cell * len(WORN_VIEWS) + 5 * (len(WORN_VIEWS) + 1), cell + 62), (32, 33, 36))
     d = ImageDraw.Draw(sheet)
-    d.text((8, 6), f"穿在标准玩家（灰色占位人体，身高 32px）身上 · {spec.wear_note}", fill=(235, 235, 235), font=font_h)
+    kind = "贴图版" if textured else ""
+    d.text((8, 6), f"穿在标准玩家（灰色占位人体，身高 32px）身上{kind} · {spec.wear_note}", fill=(235, 235, 235), font=font_h)
     for i, (label, yaw, pitch) in enumerate(WORN_VIEWS):
         x = 5 + i * (cell + 5)
         d.rectangle([x, 32, x + cell - 1, 53], fill=(22, 23, 26))
         d.text((x + 6, 35), label, fill=(235, 235, 235), font=font_l)
-        sheet.paste(render(tmp, yaw=yaw, pitch=pitch, size=cell, bg=BG, focus=focus)[0], (x, 56))
+        shot = render(tmp, yaw=yaw, pitch=pitch, size=cell, bg=BG, focus=focus, **({"shading": "mc"} if textured else {}))
+        sheet.paste(shot[0], (x, 56))
     return sheet
 
 
@@ -319,8 +359,16 @@ def write_model(g: Gear, path: Path, name: str) -> None:
     path.write_text(json.dumps(g.rig.bbmodel(name), ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def render_model(path: Path, yaw: float, pitch: float, size: int) -> Image.Image:
-    return render(path, yaw=yaw, pitch=pitch, size=size, bg=BG)[0]
+def write_textured(spec: GearSpec, g: Gear, path: Path, flat: bool = False) -> Path:
+    """像素贴图版（flat=True 出平色对照）：每面独立 UV、2 texel / px，骨骼层级与几何版一致。"""
+    doc = textured_rig_doc(g.rig, spec.model_name, spec.texture_material(), flat)
+    doc["textures"][0]["folder"] = "entity"
+    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def render_model(path: Path, yaw: float, pitch: float, size: int, shading: str | None = None) -> Image.Image:
+    return render(path, yaw=yaw, pitch=pitch, size=size, bg=BG, **({"shading": shading} if shading else {}))[0]
 
 
 SIX_VIEWS = (
@@ -401,7 +449,7 @@ def bone_tree_panel(g: Gear, min_bones: int, height: int) -> Image.Image:
 def make_check(spec: GearSpec, g: Gear, model_path: Path, gate_total: int) -> None:
     rd = spec.review_dir
     font_h = load_font(18)
-    six = render_six_views(model_path, f"{spec.title} round 1/3 · {g.total()} cubes · {len(g.rig.bones)} 骨"
+    six = render_six_views(model_path, f"{spec.title} {spec.round_label} · {g.total()} cubes · {len(g.rig.bones)} 骨"
                                        f"（可动 {moving_bone_count(g)}）· 门禁违例 {gate_total}")
     worn_tmp = spec.out_dir / "_tmp_worn.bbmodel"
     try:
@@ -428,7 +476,7 @@ def make_check(spec: GearSpec, g: Gear, model_path: Path, gate_total: int) -> No
             canvas.paste(im, (10, y + 30))
         y += (im.height if im else 200) + 40
     x = lw + 25
-    d.text((x, 8), "本模型（Round 1 几何：无贴图 / 动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
+    d.text((x, 8), "本模型（几何平涂版；贴图版见 check_tex.png；无动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
     canvas.paste(six, (x, 38))
     canvas.paste(worn, (x, 38 + six.height + 10))
     x += mid_w + 15
@@ -440,8 +488,47 @@ def make_check(spec: GearSpec, g: Gear, model_path: Path, gate_total: int) -> No
     print(f"✓ check.png → {out} ({canvas.width}×{canvas.height})")
 
 
+TEX_VIEWS = (
+    ("BACK 背面（+z）", 0.0, 0.0),
+    ("3/4 背右斜", 28.0, 18.0),
+    ("RIGHT 右侧（+x）", -90.0, 0.0),
+)
+
+
+def render_check_tex(spec: GearSpec, g: Gear) -> None:
+    """check_tex.png：上排 参考图 | 每个视角「平色 / 贴图」一对；下排 穿在灰色占位玩家身上的贴图版四面。"""
+    flat = write_textured(spec, g, spec.out_dir / "_tmp_flat.bbmodel", flat=True)
+    tex = write_textured(spec, g, spec.out_dir / f"{spec.model_name}_tex.bbmodel")
+    worn_tmp = spec.out_dir / "_tmp_worn.bbmodel"
+    try:
+        worn = render_worn(spec, g, worn_tmp, cell=420, textured=True)
+    finally:
+        worn_tmp.unlink(missing_ok=True)
+    size = 360
+    font_h, font_l = load_font(15), load_font(13)
+    ref_path = spec.review_dir / f"{spec.gear_id}_ref.png"
+    ref = Image.open(ref_path).convert("RGB")
+    ref = ref.resize((round(ref.width * size / ref.height), size), Image.Resampling.LANCZOS)
+    top_w = ref.width + len(TEX_VIEWS) * 2 * (size + 6) + 6
+    canvas = Image.new("RGB", (max(top_w, worn.width), size + 34 + worn.height + 8), (28, 29, 33))
+    d = ImageDraw.Draw(canvas)
+    d.text((6, 8), "REFERENCE 参考图", fill=(215, 205, 180), font=font_h)
+    canvas.paste(ref, (6, 30))
+    x = ref.width + 12
+    for label, yaw, pitch in TEX_VIEWS:
+        for title, path, shading in (("FLAT 平色", flat, None), ("TEXTURED 贴图", tex, "mc")):
+            canvas.paste(render_model(path, yaw, pitch, size, shading), (x, 30))
+            d.text((x + 4, 8), f"{title}: {label}", fill=(230, 230, 230), font=font_l)
+            x += size + 6
+    canvas.paste(worn, (0, size + 34))
+    flat.unlink()
+    out = spec.review_dir / "check_tex.png"
+    canvas.save(out)
+    print(f"✓ {tex.name}；check_tex.png → {out} ({canvas.width}×{canvas.height})")
+
+
 def full_run(spec: GearSpec) -> None:
-    """全量：自证 → 全套门禁 → 写 bbmodel → 分件预览 → check.png。"""
+    """全量：自证 → 全套门禁 → 写 bbmodel → 分件预览 → check.png → 贴图版 + check_tex.png。"""
     g = spec.build()
     self_test(spec, g)
     total = run_gates(spec, g)
@@ -457,15 +544,20 @@ def full_run(spec: GearSpec) -> None:
     finally:
         tmp.unlink(missing_ok=True)
     make_check(spec, g, model, total)
+    render_check_tex(spec, g)
 
 
 def main(spec: GearSpec) -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--tex", action="store_true", help="只出贴图版 <Model>_tex.bbmodel 与 check_tex.png")
     ap.add_argument("--part", choices=sorted(spec.parts))
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--gates", action="store_true")
     ap.add_argument("--worn", action="store_true", help="只出穿戴三面预览到 /tmp，不跑全量")
     args = ap.parse_args()
+    if args.tex:
+        render_check_tex(spec, spec.build())
+        return
     if not (args.part or args.self_test or args.gates or args.worn):
         full_run(spec)
         return
