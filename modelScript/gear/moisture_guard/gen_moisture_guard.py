@@ -353,6 +353,7 @@ SPEC = MoistureGuardSpec(
     min_bones=10,
     wear_note="挂点：左胯外侧（布卷 x∈[-8.3,-4.5]、y<12）+ 腰前后三股草绳 + 左前胯绳圈铁环",
     worn_focus=((-3.0, 9.0, 0.0), 24.0),
+    texture_overrides={"cloth_lt": "gear_linen_lt", "cloth_stain": "gear_linen_brn"},
 )
 
 if __name__ == "__main__":
