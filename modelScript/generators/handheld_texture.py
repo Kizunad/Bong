@@ -1371,9 +1371,13 @@ def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = 
     doc = copy.deepcopy(rig.bbmodel(name))
     doc["resolution"] = {"width": atlas.width, "height": atlas.height}
     doc["textures"][0]["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    # UV 内缩半个千分位（0.005 texel），防止光栅化边缘在 u=ox+w 或 v=oy+h 时
+    # 浮点截断 int(u) 越界采样到图集未使用的洋红底色区域
+    eps = 0.005
     for el, face_uvs in zip(doc["elements"], uvs):
         for face, uv in face_uvs.items():
-            el["faces"][face]["uv"] = uv
+            u1, v1, u2, v2 = uv
+            el["faces"][face]["uv"] = [u1 + eps, v1 + eps, u2 - eps, v2 - eps]
     return doc
 
 
