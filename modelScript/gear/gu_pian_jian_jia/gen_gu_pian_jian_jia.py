@@ -473,8 +473,17 @@ SPEC = GearSpec(
     soft_over=SOFT_OVER,
     min_bones=10,
     wear_note="挂点：单肩（左） · 四层宽厚叠压兽骨肩甲+加长下垂兽牙+斜挎皮带",
-    textured=False,            # Round 1 纯几何
-    round_label="round 1/3",
+    worn_focus=((-6.0, 21.5, 0.0), 22.0),
+    tex_views=(
+        ("LEFT 穿戴者左侧（-x）", 90.0, 0.0),
+        ("3/4 左前斜", -145.0, 18.0),
+        ("FRONT 正面（-z）", 180.0, 0.0),
+    ),
+    texture_overrides={
+        "strap": "gear_hide",
+        "strap_dk": "gear_hide_dk",
+    },
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
