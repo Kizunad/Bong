@@ -389,6 +389,7 @@ SPEC = OreSackSpec(
     min_bones=10,
     wear_note="挂点：臀后偏右（袋身 z∈[2.7,8.1]）+ 腰后 / 腰前三股草绳 + 提绳",
     worn_focus=((1.5, 9.0, 4.0), 24.0),
+    texture_overrides={"cloth_lt": "gear_linen_lt", "cloth_in": "gear_linen_brn", "patch_cloth": "gear_linen_grey"},
 )
 
 if __name__ == "__main__":
