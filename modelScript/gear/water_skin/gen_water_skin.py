@@ -392,6 +392,10 @@ SPEC = WaterSkinSpec(
     soft_over=SOFT_OVER,
     min_bones=10,
     wear_note="挂点：右肩顶过肩（骑手臂上沿）+ 胸前 / 背面斜带到左胯 + 左胯外侧水囊（y<12）+ 前后腰带",
+    texture_overrides={
+        "hide_pale": "gear_hide_pale", "hide_brown": "gear_hide", "hide_brown_dk": "gear_hide_dk", "patch": "gear_patch",
+        "strap": "gear_leather", "strap_dk": "gear_leather_dk", "strap_lt": "gear_leather_lt",
+    },
 )
 
 if __name__ == "__main__":
