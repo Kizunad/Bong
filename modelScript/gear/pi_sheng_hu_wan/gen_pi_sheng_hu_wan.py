@@ -298,8 +298,7 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：双前臂（双前臂 y∈[12.08, 17.5], 右臂 x∈[4,8], 左臂 x∈[-8,-4]）",
     worn_focus=((0.0, 14.5, 0.0), 20.0),
-    round_label="round 1/3",
-    textured=False,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
