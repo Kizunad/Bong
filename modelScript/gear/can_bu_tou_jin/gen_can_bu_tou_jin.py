@@ -333,8 +333,7 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：头（头盒 x∈[-4,4], y∈[24,32], z∈[-4,4]）+ 额前骨簪 + 侧后双垂布尾",
     worn_focus=((0.0, 27.5, 0.0), 20.0),
-    round_label="round 1/3",
-    textured=False,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
