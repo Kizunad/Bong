@@ -52,6 +52,12 @@
   grub_cream / grub_pink   蛆皮（半透奶白 / 肉粉）：柔和明暗、淡红血管、环向皱；rot_brown 腐缝 / organ_red 脏器 / ichor 腐液
   glint_amber / glint_core   吞进去的灵光碎块：面心亮、边缘渐暗成琥珀（只靠对比）
   bark / bark_dark / bark_light / bark_grey / bark_rust / bark_knot   枯树皮（枯枝螳）：纵裂 + 横裂切成长条鳞片、翘起亮皮屑、灰白风化斑；节疤是深褐同心环
+  gear_weave(_lt/_dk/_rim)   草编：篾条一上一下的格子 + 格缝；gear_linen(_dk/_lt/_grey/_brn) 粗麻布；gear_vine(_lt/_dk/_dry) 枯藤
+  gear_cord(_dk) 草绳；gear_hide(_dk/_lt/_grey/_pale/_stain/_spot) 拼缝兽皮；gear_patch(_dk) 补丁皮；gear_iron(_lt/_dk) / gear_rust(_lt/_dk) 锈铁件
+  gear_clay(_dk/_lt) 陶；gear_gourd(_dk/_lt) 干葫芦；gear_cork 软木塞；gear_wearer_* 灰色占位玩家（穿戴件 check_tex 用）
+  gear_herb_*(green/green_dk/pale/brown/brown_dk) 干草药叶：居中粗叶脉 + 斜侧脉 + 卷枯叶缘；gear_herb_seed 干籽穗（1px 一粒带暗缝）
+  gear_ore_*(grey/dk/rust/fleck) 矿石：三档量化切面 + 暗裂 + 亮晶点；gear_cinnabar(_dk) 丹砂粉涂；gear_moss(_dk/_lt/_ash) 灰烬苔簇
+  gear_leather(_dk/_lt) 皮；gear_stitch 针脚；gear_fur 浅毛；gear_hoof(_dk) 蹄角；gear_wood(_lt/_dk) 旧木板；gear_rag_*/gear_red_cord 破布 / 红绳；gear_hide_pale_dk 深一档浅兽皮
   skull_bone / skull_bone_old   颅骨壳：象牙骨 / 旧骨；crab_shell / crab_shell_dark 锈橙蟹甲；lichen 壳上苔；barnacle 藤壶
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
@@ -1773,6 +1779,31 @@ def flat_override(cube: dict, default: Painter) -> Optional[Painter]:
     return lambda p, axis: color
 
 
+def _bleed_face_edges(atlas, uvs):
+    """每个面的 UV 矩形向右、向下各外延一个 texel，抄边缘色（只改没用到的洋红区）。
+
+    离线渲染器按 int(u)/int(v) 取样，面边缘的像素会落在矩形外一个 texel 上（右 / 下边是 u == u2 的整数边界，
+    左 / 上边是浮点误差）；那里若是洋红底就会在边缘漏出一行 / 一列洋红点。真正的 UV 越界仍然是洋红，
+    只是不再被边缘取样冒充。
+    """
+    magenta = (255, 0, 255, 255)
+    atlas = atlas.copy()
+    px = atlas.load()
+    for face_uvs in uvs:
+        for u1, v1, u2, v2 in face_uvs.values():
+            x0, x1 = int(min(u1, u2)), int(max(u1, u2))
+            y0, y1 = int(min(v1, v2)), int(max(v1, v2))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            for y in range(max(y0 - 1, 0), min(y1 + 1, atlas.height)):
+                for x in range(max(x0 - 1, 0), min(x1 + 1, atlas.width)):
+                    if x0 <= x < x1 and y0 <= y < y1:
+                        continue
+                    if px[x, y] == magenta:
+                        px[x, y] = px[min(max(x, x0), x1 - 1), min(max(y, y0), y1 - 1)]
+    return atlas
+
+
 def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = False) -> dict:
     """生物流水线共用：在 rigkit.Rig 的绑定稿 bbmodel 上换成每面独立 UV 的像素图集（骨骼层级、几何不动）。
 
@@ -1794,6 +1825,7 @@ def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = 
             raise KeyError(f"画笔库里没有材质 {material}（立方体 {el['name']}）")
         cubes.append({"name": el["name"], "from": el["from"], "to": el["to"], "material": material})
     atlas, uvs = build_atlas(cubes, override=flat_override if flat else handheld_override)
+    atlas = _bleed_face_edges(atlas, uvs)
     buf = io.BytesIO()
     atlas.save(buf, format="PNG")
     doc = copy.deepcopy(rig.bbmodel(name))
@@ -1818,3 +1850,318 @@ FLAT_COLORS.update({
     "cave_scale": "#b0b0a8", "cave_scale_pale": "#dcdcd0", "cave_scale_dark": "#7c7e84",
     "cave_belly": "#d0c8b0", "cave_scar": "#b49490",
 })
+
+
+# ---- 末土穿戴装备（骨架背篓 / 锈框背架 / 杂皮行囊 / 粗麻斗篷 / 枯藤腰带）补充 ------------------------
+# 草编、粗麻、枯藤、陶、葫芦是新画法；骨 / 锈铁 / 皮 / 绳复用上面的工厂，只换色调。
+# 面内方向一律用 _face_plane（水平 / 竖直），不依赖立方体长轴，薄片与方块上的编纹都不会错向。
+
+
+def _weave(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """草编：篾条一上一下交织——面内 1.5px 见方的格子，奇偶格明暗交替、纹理走向相反，
+    格缝一线深色，零星翘起的亮毛刺。"""
+    a, b = hex_color(base_a), hex_color(base_b)
+    gap, fuzz = shade(a, -0.4), shade(b, 0.2)
+    cell = 1.5
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            u, v = _face_plane(p, axis)
+            over = (math.floor(u / cell) + math.floor(v / cell)) % 2 == 0
+            color = mix(a, b, 0.75 if over else 0.2)
+            stretch = (0.4, 2.4) if over else (2.4, 0.4)           # 篾条的纹理沿各自的走向拉长
+            grain = value_noise((u * stretch[0], v * stretch[1], 0.0), 1.0, seed)
+            color = shade(color, (grain - 0.5) * 0.22 + (texel_noise(p, seed + 1) - 0.5) * 0.1)
+            fu, fv = (u / cell) % 1.0, (v / cell) % 1.0
+            if min(fu, 1 - fu, fv, 1 - fv) < 0.17:
+                color = mix(color, gap, 0.65)                      # 格缝
+            if texel_noise(p, seed + 2) > 0.95:
+                color = mix(color, fuzz, 0.7)                      # 翘起的毛刺
+            return color
+
+        return paint
+
+    return factory
+
+
+def _burlap(base: str, seed: int, grime: float = 0.25) -> Callable[[dict], Painter]:
+    """粗麻布：粗经粗纬、线粗细不匀（有线结），线交叉处透暗孔，边缘毛须，一块块脏污（grime = 脏污占比）。"""
+    c = hex_color(base)
+    gap, slub, dirt = shade(c, -0.38), shade(c, 0.16), shade(c, -0.28)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            u, v = _face_plane(p, axis)
+            warp = value_noise((u * 1.9, v * 0.12, 0.0), 1.0, seed)        # 经线：竖向粗线
+            weft = value_noise((u * 0.12, v * 1.9, 0.0), 1.0, seed + 1)    # 纬线：横向粗线
+            over = (math.floor(u) + math.floor(v)) % 2 == 0
+            color = shade(c, ((warp if over else weft) - 0.5) * 0.3)
+            if (u % 1.0) < 0.2 and (v % 1.0) < 0.2:
+                color = mix(color, gap, 0.6)                               # 线交叉处的孔
+            if texel_noise(p, seed + 2) > 0.93:
+                color = mix(color, slub, 0.7)                              # 线结
+            if value_noise(p, 1.8, seed + 3) > 1.0 - grime:
+                color = mix(color, dirt, 0.55)                             # 脏污
+            if _edge_distance(cube, p, axis) < 0.5 and texel_noise(p, seed + 4) > 0.45:
+                color = shade(color, 0.14)                                 # 边缘毛须
+            return color
+
+        return paint
+
+    return factory
+
+
+def _vine(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """枯藤：斜向拧绞的藤股（比绳粗、股间缝宽），藤皮有纵向裂纹与疙瘩，零星剥落露出浅色木芯。"""
+    dark, light = hex_color(base_a), hex_color(base_b)
+    core = shade(light, 0.22)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            phase = ((along * 0.8 + across * 1.1) / 2.2) % 1.0
+            band = 0.5 + 0.5 * math.sin(phase * 2 * math.pi)
+            color = mix(dark, light, band * 0.75 + 0.25 * texel_noise(p, seed))
+            if abs(value_noise((across * 2.0, along * 0.3, 0.0), 1.0, seed + 1) - 0.5) < 0.06:
+                color = shade(color, -0.32)                                # 纵向裂纹
+            knot = value_noise(p, 1.7, seed + 2)
+            if knot > 0.84:
+                color = mix(color, shade(dark, -0.3), 0.7)                 # 疙瘩
+            elif texel_noise(p, seed + 3) > 0.94:
+                color = mix(color, core, 0.8)                              # 剥落露出木芯
+            return color
+
+        return paint
+
+    return factory
+
+
+def _clay(base: str, seed: int) -> Callable[[dict], Painter]:
+    """陶：烧成的橙褐斑驳 + 细砂粒 + 烟熏暗斑 + 细裂纹，边缘略亮。"""
+    c = hex_color(base)
+    soot, grit, crack = shade(c, -0.35), shade(c, 0.22), shade(c, -0.55)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(c, (value_noise(p, 2.2, seed) - 0.5) * 0.28)
+            if value_noise(p, 1.5, seed + 1) > 0.78:
+                color = mix(color, soot, 0.6)                              # 烟熏
+            if texel_noise(p, seed + 2) > 0.9:
+                color = mix(color, grit, 0.7)                              # 砂粒
+            if abs(value_noise(p, 2.8, seed + 3) - 0.5) < 0.025:
+                color = crack
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.08)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _gourd(base: str, seed: int) -> Callable[[dict], Painter]:
+    """干葫芦：蜡黄光面带大块深浅斑，细皱，偶有磕痕。"""
+    c = hex_color(base)
+    spot, scar = shade(c, -0.3), shade(c, -0.5)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(c, (value_noise(p, 1.3, seed) - 0.5) * 0.3)
+            if value_noise(p, 2.0, seed + 1) > 0.75:
+                color = mix(color, spot, 0.55)                             # 深斑
+            if abs(value_noise(p, 2.6, seed + 2) - 0.5) < 0.04:
+                color = mix(color, spot, 0.7)                              # 皱纹
+            if texel_noise(p, seed + 3) > 0.96:
+                color = scar
+            return color
+
+        return paint
+
+    return factory
+
+
+def _plain(base: str, seed: int) -> Callable[[dict], Painter]:
+    """纯色占位（check_tex 里穿装备的灰色占位玩家）：只带极淡的噪点，不抢装备的戏。"""
+    c = hex_color(base)
+
+    def factory(cube: dict) -> Painter:
+        return lambda p, axis: shade(c, (texel_noise(p, seed) - 0.5) * 0.04)
+
+    return factory
+
+
+# 名字 → (画笔工厂, 平色对照版的颜色)；平色取装备 Round 1 调色板的原色，方便和几何版对照
+GEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_weave": (_weave("#7c6638", "#a88e58", 901), "#a08a5c"),
+    "gear_weave_lt": (_weave("#9a8248", "#c4aa6c", 902), "#baa470"),
+    "gear_weave_dk": (_weave("#4e3e24", "#6e5834", 903), "#705e3e"),
+    "gear_weave_rim": (_weave("#3e3018", "#5c4a2a", 904), "#604e34"),
+    "gear_cord": (_rope("#6e5430", "#a88c58", 905), "#967e54"),
+    "gear_cord_dk": (_rope("#46361e", "#7a6038", 906), "#68583a"),
+    "gear_hide": (_hide("#6a4630", "#86604a", 907), "#764e38"),
+    "gear_hide_dk": (_hide("#46301f", "#5e4230", 908), "#543a2a"),
+    "gear_hide_lt": (_hide("#8a643e", "#a8805a", 909), "#966c4e"),
+    "gear_hide_grey": (_hide("#6c665e", "#8a8478", 910), "#706a62"),
+    "gear_hide_pale": (_hide("#a08a64", "#bea680", 911), "#b09670"),
+    "gear_hide_stain": (_hide("#54402e", "#6e5640", 912, crease_amount=0.8), "#5c4634"),
+    "gear_hide_spot": (_hide("#3a2c24", "#54443a", 913), "#46362c"),
+    "gear_iron": (_iron("#58504c", 0.3, 914), "#5c5450"),
+    "gear_iron_lt": (_iron("#807870", 0.15, 915, hone=True), "#807872"),
+    "gear_iron_dk": (_iron("#363230", 0.25, 916), "#3c3836"),
+    "gear_rust": (_iron("#7a4224", 0.85, 917), "#965430"),
+    "gear_rust_lt": (_iron("#8e5030", 0.9, 918), "#ba703e"),
+    "gear_rust_dk": (_iron("#4e2a1a", 0.7, 919), "#683822"),
+    "gear_clay": (_clay("#966046", 920), "#966046"),
+    "gear_clay_dk": (_clay("#684230", 921), "#684230"),
+    "gear_clay_lt": (_clay("#b27c5c", 922), "#b27e5c"),
+    "gear_linen": (_burlap("#928064", 923), "#928064"),
+    "gear_linen_dk": (_burlap("#705f4a", 924), "#70604a"),
+    "gear_linen_lt": (_burlap("#ac9a7a", 925), "#ac9a7a"),
+    "gear_linen_grey": (_burlap("#78726a", 926), "#787268"),
+    "gear_linen_brn": (_burlap("#64503e", 927, grime=0.4), "#64503e"),
+    "gear_patch": (_leather("#624436", 928), "#624436"),
+    "gear_patch_dk": (_leather("#483226", 929), "#48322a"),
+    "gear_vine": (_vine("#4e3a24", "#76593a", 930), "#745a3a"),
+    "gear_vine_lt": (_vine("#6e5434", "#96794e", 931), "#967a50"),
+    "gear_vine_dk": (_vine("#32261a", "#50402a", 932), "#503e2a"),
+    "gear_vine_dry": (_vine("#8a7048", "#a88e62", 933), "#a88e62"),
+    "gear_gourd": (_gourd("#9e6638", 934), "#9e6638"),
+    "gear_gourd_dk": (_gourd("#764a2c", 935), "#764a2c"),
+    "gear_gourd_lt": (_gourd("#bc8452", 936), "#bc8452"),
+    "gear_cork": (_wood("#8a6c48", "#a08258", 937), "#967450"),
+    "gear_wearer_body": (_plain("#969698", 938), "#969698"),
+    "gear_wearer_limb": (_plain("#7a7a7e", 939), "#7a7a7e"),
+    "gear_wearer_face": (_plain("#464650", 940), "#464650"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_MATERIALS.items()})
+
+
+# ---- 末土腰挂件（灵草囊 / 矿石袋 / 水囊 / 防潮包 / 骨币匣）补充 ----------------------------------------
+# 干草药叶 / 籽穗、矿石、丹砂粉、灰烬苔是新画法；皮 / 毛 / 角 / 木 / 绳 / 粗麻布复用上面的工厂，只换色调。
+
+
+def _herb(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """干草药叶：顺叶长的粗叶脉居中，两侧斜向细脉，叶面明暗不匀，边缘卷枯发深。"""
+    dark, light = hex_color(base_a), hex_color(base_b)
+    vein, curl = shade(light, 0.2), shade(dark, -0.3)
+
+    def factory(cube: dict) -> Painter:
+        long_axis = _long_axis(cube)
+
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            color = mix(dark, light, 0.25 + 0.6 * value_noise(p, 1.6, seed))
+            if axis != long_axis:
+                centre = (cube["from"][3 - long_axis - axis] + cube["to"][3 - long_axis - axis]) / 2
+                offset = abs(across - centre)
+                if offset < 0.3:
+                    return shade(vein, (texel_noise(p, seed + 1) - 0.5) * 0.1)         # 中脉
+                if ((along * 0.9 - offset * 1.3) / 1.7) % 1.0 < 0.14:
+                    color = mix(color, vein, 0.55)                                      # 侧脉
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = mix(color, curl, 0.5)                                           # 卷枯的叶缘
+            return shade(color, (texel_noise(p, seed + 2) - 0.5) * 0.12)
+
+        return paint
+
+    return factory
+
+
+def _seedhead(base: str, seed: int) -> Callable[[dict], Painter]:
+    """干籽穗：1px 一粒的籽，粒与粒之间一线暗缝，粒面亮暗交替，零星空壳。"""
+    c = hex_color(base)
+    gap, husk = shade(c, -0.42), shade(c, -0.18)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            u, v = _face_plane(p, axis)
+            fu, fv = u % 1.0, v % 1.0
+            cell = (math.floor(u) * 7 + math.floor(v) * 13) % 5
+            color = shade(c, (cell - 2) * 0.06 + (texel_noise(p, seed) - 0.5) * 0.1)
+            if min(fu, 1 - fu) < 0.14 or min(fv, 1 - fv) < 0.14:
+                color = mix(color, gap, 0.6)
+            if cell == 0 and texel_noise(p, seed + 1) > 0.5:
+                color = husk                                                            # 空壳
+            return color
+
+        return paint
+
+    return factory
+
+
+def _ore(base: str, fleck: str, seed: int) -> Callable[[dict], Painter]:
+    """矿石：大块切面——低频噪声量化成三档明暗（崩口的平面感），面间一道暗裂，零星亮晶点，边棱最亮。"""
+    c, spark = hex_color(base), hex_color(fleck)
+    crack = shade(c, -0.5)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            step = math.floor(value_noise(p, 2.6, seed) * 3.0) / 3.0
+            color = shade(c, (step - 0.33) * 0.55 + (texel_noise(p, seed + 1) - 0.5) * 0.08)
+            if abs(value_noise(p, 2.2, seed + 2) - 0.5) < 0.03:
+                color = mix(color, crack, 0.75)
+            if texel_noise(p, seed + 3) > 0.93:
+                color = mix(color, spark, 0.85)
+            if _edge_distance(cube, p, axis) < 0.5:
+                color = shade(color, 0.14)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _cinnabar_powder(base: str, seed: int) -> Callable[[dict], Painter]:
+    """丹砂：朱红粉涂，厚薄不匀（厚处发暗结块、薄处透出底木），零星亮橙砂粒。"""
+    c = hex_color(base)
+    thick, thin, grain = shade(c, -0.3), mix(c, hex_color("#c88a60"), 0.4), shade(c, 0.35)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            n = value_noise(p, 1.9, seed)
+            color = mix(c, thick, max(0.0, n - 0.5) * 1.6) if n > 0.5 else mix(c, thin, (0.5 - n) * 0.8)
+            if texel_noise(p, seed + 1) > 0.9:
+                color = mix(color, grain, 0.7)
+            return shade(color, (texel_noise(p, seed + 2) - 0.5) * 0.1)
+
+        return paint
+
+    return factory
+
+
+# 名字 → (画笔工厂, 平色对照版的颜色)；平色取各件 Round 1 调色板的原色
+GEAR_WAIST_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_leather": (_leather("#7c4832", 951), "#7c4832"),
+    "gear_leather_dk": (_leather("#54322a", 952), "#54322a"),
+    "gear_leather_lt": (_leather("#965c40", 953), "#965c40"),
+    "gear_stitch": (_plain("#3e3024", 954), "#3e3024"),
+    "gear_hide_pale_dk": (_hide("#8a7452", "#a89270", 955), "#a08c6c"),
+    "gear_fur": (_fur("#b8a47c", "#d8c8a0", 956), "#d6c4a0"),
+    "gear_hoof": (_horn("#3a2e28", 957), "#3a2e28"),
+    "gear_hoof_dk": (_horn("#241c1a", 958), "#261e1c"),
+    "gear_wood": (_wood("#7c5638", "#946a46", 959), "#8c6442"),
+    "gear_wood_lt": (_wood("#946c48", "#b08256", 960), "#a67c54"),
+    "gear_wood_dk": (_wood("#4e3624", "#664630", 961), "#5c4030"),
+    "gear_cinnabar": (_cinnabar_powder("#ac2c24", 962), "#ac2c24"),
+    "gear_cinnabar_dk": (_cinnabar_powder("#7e221e", 963), "#7e221e"),
+    "gear_rag_beige": (_burlap("#b8ac8c", 964), "#bcb090"),
+    "gear_rag_red": (_burlap("#94463a", 965), "#96362e"),
+    "gear_red_cord": (_rope("#6e1c18", "#a83a30", 966), "#962c26"),
+    "gear_herb_green": (_herb("#4e6234", "#7c9450", 967), "#70844e"),
+    "gear_herb_green_dk": (_herb("#34462a", "#566e3a", 968), "#4e6238"),
+    "gear_herb_pale": (_herb("#a08e64", "#c8b888", 969), "#c8b88a"),
+    "gear_herb_seed": (_seedhead("#d8c898", 970), "#e2d6aa"),
+    "gear_herb_brown": (_herb("#6e4a2c", "#94683c", 971), "#8c603a"),
+    "gear_herb_brown_dk": (_herb("#4a3020", "#6c4a2e", 972), "#664428"),
+    "gear_ore_grey": (_ore("#6a6c74", "#b8bcc8", 973), "#6a6c74"),
+    "gear_ore_dk": (_ore("#4a4c54", "#9094a0", 974), "#4a4c54"),
+    "gear_ore_rust": (_ore("#9c5e38", "#e8a860", 975), "#9c5e38"),
+    "gear_ore_fleck": (_ore("#c88246", "#fff0c0", 976), "#c88246"),
+    "gear_moss": (_moss("#46583a", "#7c9460", 977), "#70824e"),
+    "gear_moss_dk": (_moss("#2c3a26", "#4c6240", 978), "#485638"),
+    "gear_moss_lt": (_moss("#667a4c", "#a4b682", 979), "#96a064"),
+    "gear_moss_ash": (_moss("#868672", "#bcbca6", 980), "#989888"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_WAIST_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_WAIST_MATERIALS.items()})
