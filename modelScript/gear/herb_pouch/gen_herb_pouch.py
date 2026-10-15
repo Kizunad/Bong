@@ -74,6 +74,7 @@ BONES = [
     ("herb_green", "pouch_body", (5.8, 10.4, -0.7), "青叶草：往前斜探的茎 + 成对叶片"),
     ("herb_pale", "pouch_body", (6.5, 10.4, -0.5), "两根苍白籽穗草：细茎 + 籽粒"),
     ("herb_brown", "pouch_body", (6.0, 10.4, -0.2), "枯褐蕨叶：往后探的茎 + 小羽叶"),
+    ("herb_tuft", "pouch_body", (6.0, 10.0, -0.6), "袋口矮草叶丛：六片窄叶向外散开（会晃）"),
 ]
 ASYM_BONES = frozenset(b[0] for b in BONES if b[0] not in ("root", "belt_strap"))
 
@@ -331,6 +332,23 @@ def part_herb_brown(g: Gear) -> None:
     g.box(b, "tip", (CX + 0.85, 11.3, CZ + 2.05), (CX + 1.25, 11.7, CZ + 2.5), "herb_brown")
 
 
+def part_herb_tuft(g: Gear) -> None:
+    """袋口一丛矮草叶（Round 3 加）：六片窄长叶从袋口向外散开，高度都压在 y<11.8，整丛在手臂盒下沿之下。"""
+    b = "herb_tuft"
+    blades = (
+        ((-0.9, 0.55), (-1.55, 11.35, 0.45), "herb_green"),
+        ((0.9, 0.5), (1.5, 11.5, 0.3), "herb_green_dk"),
+        ((-0.35, 0.95), (-0.7, 11.65, 1.55), "herb_brown"),
+        ((0.5, 0.95), (0.95, 11.3, 1.7), "herb_brown_dk"),
+        ((-0.3, -0.85), (-0.55, 11.4, -1.5), "herb_green_dk"),
+        ((0.55, -0.8), (1.1, 11.55, -1.45), "herb_green"),
+    )
+    for k, ((dx, dz), (tx, ty, tz), mat) in enumerate(blades):
+        g.rod(b, f"blade_{k}", (CX + dx, 10.0, CZ + dz), (CX + tx, ty, CZ + tz), 0.2, mat)
+        g.box(b, f"blade_tip_{k}", (CX + tx - 0.18, ty - 0.02, CZ + tz - 0.18), (CX + tx + 0.18, ty + 0.34 + 0.011 * k, CZ + tz + 0.18),
+              "herb_pale" if k % 3 == 0 else mat)
+
+
 PART_FUNCS = {
     "belt": part_belt,
     "cord": part_cord,
@@ -344,6 +362,7 @@ PART_FUNCS = {
     "herb_green": part_herb_green,
     "herb_pale": part_herb_pale,
     "herb_brown": part_herb_brown,
+    "herb_tuft": part_herb_tuft,
 }
 
 SPEC = GearSpec(
@@ -359,6 +378,10 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：右胯外侧（袋身 x∈[4.1,7.9]、y<12）+ 躯干前面腰带片 + 草药斜探出手臂盒之前",
     worn_focus=((4.5, 9.5, -0.5), 22.0),
+    texture_overrides={
+        "cloth_lt": "gear_linen_lt", "cloth_in": "gear_linen_brn", "patch_hide": "gear_patch",
+        "patch_cloth": "gear_linen_grey", "strap": "gear_hide", "strap_dk": "gear_hide_dk",
+    },
 )
 
 if __name__ == "__main__":
