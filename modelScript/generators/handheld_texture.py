@@ -1779,6 +1779,31 @@ def flat_override(cube: dict, default: Painter) -> Optional[Painter]:
     return lambda p, axis: color
 
 
+def _bleed_face_edges(atlas, uvs):
+    """每个面的 UV 矩形向右、向下各外延一个 texel，抄边缘色（只改没用到的洋红区）。
+
+    离线渲染器按 int(u)/int(v) 取样，面边缘的像素会落在矩形外一个 texel 上（右 / 下边是 u == u2 的整数边界，
+    左 / 上边是浮点误差）；那里若是洋红底就会在边缘漏出一行 / 一列洋红点。真正的 UV 越界仍然是洋红，
+    只是不再被边缘取样冒充。
+    """
+    magenta = (255, 0, 255, 255)
+    atlas = atlas.copy()
+    px = atlas.load()
+    for face_uvs in uvs:
+        for u1, v1, u2, v2 in face_uvs.values():
+            x0, x1 = int(min(u1, u2)), int(max(u1, u2))
+            y0, y1 = int(min(v1, v2)), int(max(v1, v2))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            for y in range(max(y0 - 1, 0), min(y1 + 1, atlas.height)):
+                for x in range(max(x0 - 1, 0), min(x1 + 1, atlas.width)):
+                    if x0 <= x < x1 and y0 <= y < y1:
+                        continue
+                    if px[x, y] == magenta:
+                        px[x, y] = px[min(max(x, x0), x1 - 1), min(max(y, y0), y1 - 1)]
+    return atlas
+
+
 def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = False) -> dict:
     """生物流水线共用：在 rigkit.Rig 的绑定稿 bbmodel 上换成每面独立 UV 的像素图集（骨骼层级、几何不动）。
 
@@ -1800,6 +1825,7 @@ def textured_rig_doc(rig, name: str, material_map: Dict[str, str], flat: bool = 
             raise KeyError(f"画笔库里没有材质 {material}（立方体 {el['name']}）")
         cubes.append({"name": el["name"], "from": el["from"], "to": el["to"], "material": material})
     atlas, uvs = build_atlas(cubes, override=flat_override if flat else handheld_override)
+    atlas = _bleed_face_edges(atlas, uvs)
     buf = io.BytesIO()
     atlas.save(buf, format="PNG")
     doc = copy.deepcopy(rig.bbmodel(name))
