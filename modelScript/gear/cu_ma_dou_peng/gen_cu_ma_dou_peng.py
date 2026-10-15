@@ -108,13 +108,20 @@ def part_hood(g: Gear) -> None:
 
 
 def part_peak(g: Gear) -> None:
-    """兜帽尖顶：向后上方逐级收窄的三级台阶，最高处偏后。"""
+    """兜帽尖顶：六级薄台阶一边收窄一边向后倾（斜率一致，读作一条顺滑的弧），顶端再垂下三节软尖。"""
     b = "hood_peak"
-    steps = ((HOOD_TOP, HOOD_TOP + 0.9, 4.4, 0.4), (HOOD_TOP + 0.9, HOOD_TOP + 1.8, 3.0, 1.9), (HOOD_TOP + 1.8, HOOD_TOP + 2.7, 1.6, 3.2))
-    for k, (y0, y1, hx, z0) in enumerate(steps):
-        g.box(b, f"peak_{k}", (-hx, y0, z0), (hx, y1, HOOD_Z1), "linen" if k % 2 == 0 else "linen_lt")
-    g.box(b, "peak_tip", (-0.7, HOOD_TOP + 2.7, 4.0), (0.7, HOOD_TOP + 3.4, HOOD_Z1), "linen_dk")
-    g.box(b, "peak_seam", (-0.25, HOOD_TOP, HOOD_Z1), (0.25, HOOD_TOP + 2.7, HOOD_Z1 + 0.25), "linen_brn")
+    # (y 下, y 上, 半宽, 前缘 z, 后缘 z)：每级半宽收 0.7–0.8、前后缘各后移 1.0 左右，轮廓成一条向后上方的斜线
+    steps = ((HOOD_TOP, HOOD_TOP + 0.8, 4.6, 0.0, 5.5), (HOOD_TOP + 0.8, HOOD_TOP + 1.6, 3.9, 1.0, 5.7),
+             (HOOD_TOP + 1.6, HOOD_TOP + 2.4, 3.1, 2.0, 6.0), (HOOD_TOP + 2.4, HOOD_TOP + 3.1, 2.3, 3.0, 6.4),
+             (HOOD_TOP + 3.1, HOOD_TOP + 3.7, 1.6, 4.0, 6.9), (HOOD_TOP + 3.7, HOOD_TOP + 4.2, 1.0, 5.0, 7.5))
+    for k, (y0, y1, hx, z0, z1) in enumerate(steps):
+        g.box(b, f"peak_{k}", (-hx, y0, z0), (hx, y1, z1), "linen" if k % 2 == 0 else "linen_lt")
+        if k < len(steps) - 1:                                                              # 最后一级后面接软尖，不再加缝
+            g.box(b, f"peak_seam_{k}", (-0.25, y0, z1), (0.25, y1, z1 + 0.25), "linen_brn")     # 后缘的一道缝，随台阶错位成一条斜线
+    # 顶端下垂的软尖：三节逐渐变细，向后下方耷拉
+    g.box(b, "peak_droop_0", (-0.7, HOOD_TOP + 2.6, 7.5), (0.7, HOOD_TOP + 4.2, 8.3), "linen_dk")
+    g.box(b, "peak_droop_1", (-0.5, HOOD_TOP + 1.4, 7.9), (0.5, HOOD_TOP + 2.6, 8.6), "linen")
+    g.box(b, "peak_droop_2", (-0.3, HOOD_TOP + 0.5, 8.3), (0.3, HOOD_TOP + 1.4, 8.9), "linen_brn")
 
 
 # ───────────────────────────────────────────────────────────── 分部件：颈后 / 肩披 / 侧幅
