@@ -2242,3 +2242,20 @@ GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+
+
+# 定制 NPC 专属装备（残破腰牌 / 半截袍摆 / 兽皮披肩）材质补充
+GEAR_CUSTOM_NPC_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_bronze": (_copper_edge(961, "#826642", "#ba9866"), "#826642"),
+    "gear_sash_red": (_burlap("#8a2c26", 962), "#862a26"),
+    "gear_sash_red_dk": (_burlap("#5e1c18", 963), "#5e1c18"),
+    "gear_cloth_teal": (_burlap("#68787e", 964), "#6a7a80"),
+    "gear_cloth_teal_lt": (_burlap("#8a9a9e", 965), "#8a9a9e"),
+    "gear_cloth_teal_dk": (_burlap("#48565c", 966), "#48565c"),
+    "gear_char": (_plain("#24201e", 967), "#24201e"),
+    "gear_claw": (_horn("#2a2422", 968), "#2a2422"),
+    "gear_hide_bald": (_skin("#8a5444", 969, vein=0.04), "#885242"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_CUSTOM_NPC_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_CUSTOM_NPC_MATERIALS.items()})
+

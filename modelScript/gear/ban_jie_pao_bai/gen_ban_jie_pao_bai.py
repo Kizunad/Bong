@@ -444,8 +444,14 @@ SPEC = BanJiePaoBaiSpec(
     min_bones=10,
     wear_note="挂点：腰腹/大腿 · 前开衩撕裂袍摆+后长撕条+火灼残洞+避让左胯水囊",
     worn_focus=((0.0, 8.5, 0.0), 20.0),
-    textured=False,
-    round_label="round 1/3",
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 正右斜", 152.0, 18.0),
+        ("BACK 背面（+z）", 0.0, 0.0),
+    ),
+    texture_overrides={"cloth_lining": "gear_linen_lt"},
+    textured=True,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
