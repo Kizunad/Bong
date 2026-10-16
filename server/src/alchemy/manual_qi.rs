@@ -99,7 +99,7 @@ pub fn handle_manual_qi_injections(
                 AlchemyWorldEffect::emit(
                     world_effects.as_deref_mut(),
                     pos,
-                    Some(session),
+                    Some(session.domain_session()),
                     AlchemyWorldAction::InjectQi {
                         source: [position.0.x, position.0.y + 1.1, position.0.z],
                     },
@@ -173,7 +173,9 @@ mod tests {
             ))
             .id();
         let mut furnace = AlchemyFurnace::placed(BlockPos::new(2, 64, 1), 1);
-        furnace.session = Some(AlchemySession::new("test".into(), "offline:Azure".into()));
+        furnace
+            .start_session(AlchemySession::new("test".into(), "offline:Azure".into()))
+            .unwrap();
         let furnace = app.world_mut().spawn(furnace).id();
         (app, player, furnace)
     }
