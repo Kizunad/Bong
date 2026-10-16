@@ -193,6 +193,7 @@ class GearSpec:
     # 生成器材质名 → 画笔库材质名里不走默认规则（见 texture_material）的那几个
     texture_overrides: dict = field(default_factory=dict)
     round_label: str = "round 3/3"
+    textured: bool = True
     gates: WornGates = field(init=False)
 
     def __post_init__(self) -> None:
@@ -476,7 +477,8 @@ def make_check(spec: GearSpec, g: Gear, model_path: Path, gate_total: int) -> No
             canvas.paste(im, (10, y + 30))
         y += (im.height if im else 200) + 40
     x = lw + 25
-    d.text((x, 8), "本模型（几何平涂版；贴图版见 check_tex.png；无动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
+    note = "几何平涂版；贴图版见 check_tex.png" if spec.textured else "Round 1 几何：无贴图"
+    d.text((x, 8), f"本模型（{note}；无动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
     canvas.paste(six, (x, 38))
     canvas.paste(worn, (x, 38 + six.height + 10))
     x += mid_w + 15
@@ -544,7 +546,8 @@ def full_run(spec: GearSpec) -> None:
     finally:
         tmp.unlink(missing_ok=True)
     make_check(spec, g, model, total)
-    render_check_tex(spec, g)
+    if spec.textured:
+        render_check_tex(spec, g)
 
 
 def main(spec: GearSpec) -> None:
