@@ -427,8 +427,13 @@ SPEC = CanPoYaoPaiSpec(
     min_bones=10,
     wear_note="挂点：右前胯 · 避开手臂摆动盒 · 裂角兽骨腰牌+流云残纹+红绳流苏",
     worn_focus=((2.0, 8.5, -1.0), 18.0),
-    textured=False,
-    round_label="round 1/3",
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 正右斜", 152.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    textured=True,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
