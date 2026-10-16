@@ -75,7 +75,6 @@ BG = (119, 119, 119)
 TEXTURE_SHARED = {
     "bone": "bone", "bone_lt": "bone_lit", "bone_dk": "bone_dark", "bone_stain": "bone_stain", "void": "void",
     "cloth": "gear_linen", "cloth_dk": "gear_linen_dk",
-    "strap": "gear_hide", "strap_dk": "gear_hide_dk",
 }
 TEXTURE_WEARER = {"wearer_body": "gear_wearer_body", "wearer_limb": "gear_wearer_limb", "wearer_face": "gear_wearer_face"}
 
@@ -191,11 +190,10 @@ class GearSpec:
     wear_note: str = ""              # 写进 check.png 标题的挂点说明
     # 穿戴渲染的固定取景 ((cx, cy, cz), 跨度 px)；小件（腰带）整个人放进画面太小，可指定只看腰部
     worn_focus: tuple | None = None
-    # check_tex.png 上排模型特写视角；为 None 时默认 BACK、3/4 背右斜、RIGHT
-    tex_views: tuple | None = None
     # 生成器材质名 → 画笔库材质名里不走默认规则（见 texture_material）的那几个
     texture_overrides: dict = field(default_factory=dict)
     round_label: str = "round 3/3"
+    textured: bool = True
     gates: WornGates = field(init=False)
 
     def __post_init__(self) -> None:
@@ -479,7 +477,8 @@ def make_check(spec: GearSpec, g: Gear, model_path: Path, gate_total: int) -> No
             canvas.paste(im, (10, y + 30))
         y += (im.height if im else 200) + 40
     x = lw + 25
-    d.text((x, 8), "本模型（几何平涂版；贴图版见 check_tex.png；无动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
+    note = "几何平涂版；贴图版见 check_tex.png" if spec.textured else "Round 1 几何：无贴图"
+    d.text((x, 8), f"本模型（{note}；无动画 / 接线 / manifest）", fill=(140, 230, 180), font=font_h)
     canvas.paste(six, (x, 38))
     canvas.paste(worn, (x, 38 + six.height + 10))
     x += mid_w + 15
@@ -512,14 +511,13 @@ def render_check_tex(spec: GearSpec, g: Gear) -> None:
     ref_path = spec.review_dir / f"{spec.gear_id}_ref.png"
     ref = Image.open(ref_path).convert("RGB")
     ref = ref.resize((round(ref.width * size / ref.height), size), Image.Resampling.LANCZOS)
-    views = spec.tex_views or TEX_VIEWS
-    top_w = ref.width + len(views) * 2 * (size + 6) + 6
+    top_w = ref.width + len(TEX_VIEWS) * 2 * (size + 6) + 6
     canvas = Image.new("RGB", (max(top_w, worn.width), size + 34 + worn.height + 8), (28, 29, 33))
     d = ImageDraw.Draw(canvas)
     d.text((6, 8), "REFERENCE 参考图", fill=(215, 205, 180), font=font_h)
     canvas.paste(ref, (6, 30))
     x = ref.width + 12
-    for label, yaw, pitch in views:
+    for label, yaw, pitch in TEX_VIEWS:
         for title, path, shading in (("FLAT 平色", flat, None), ("TEXTURED 贴图", tex, "mc")):
             canvas.paste(render_model(path, yaw, pitch, size, shading), (x, 30))
             d.text((x + 4, 8), f"{title}: {label}", fill=(230, 230, 230), font=font_l)
@@ -548,7 +546,8 @@ def full_run(spec: GearSpec) -> None:
     finally:
         tmp.unlink(missing_ok=True)
     make_check(spec, g, model, total)
-    render_check_tex(spec, g)
+    if spec.textured:
+        render_check_tex(spec, g)
 
 
 def main(spec: GearSpec) -> None:
