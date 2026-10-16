@@ -2242,3 +2242,14 @@ GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+
+
+# 守夜灯客专属装备（灯油葫芦串 deng_you_hu_lu_chuan）材质补充
+GEAR_DENG_YOU_HU_LU_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_gourd_spot": (_gourd("#684a28", 991), "#684a28"),
+    "gear_wick": (_burlap("#3c342e", 992, grime=0.4), "#3c342e"),
+    "gear_wick_char": (_plain("#1c1816", 993), "#1c1816"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_DENG_YOU_HU_LU_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_DENG_YOU_HU_LU_MATERIALS.items()})
+

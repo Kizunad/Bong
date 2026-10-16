@@ -488,8 +488,13 @@ SPEC = DengYouHuLuChuanSpec(
     min_bones=10,
     wear_note="挂点：左肩至右腰斜跨 · 四只拳头大鼓肚油葫芦+焦黑备用灯芯卷+骨量油勺",
     worn_focus=((0.0, 16.5, -1.0), 22.0),
-    textured=False,
-    round_label="round 1/3",
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 前左斜", -28.0, 18.0),
+        ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ),
+    textured=True,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
