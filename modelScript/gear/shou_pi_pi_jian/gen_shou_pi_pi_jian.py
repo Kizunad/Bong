@@ -461,8 +461,20 @@ SPEC = ShouPiPiJianSpec(
     min_bones=10,
     wear_note="挂点：双肩/上背 · 枯皮狼头搭右肩+前胸垂双爪与骨扣+背部嵌肋骨撕裂披肩",
     worn_focus=((0.0, 21.5, 0.0), 22.0),
-    textured=False,
-    round_label="round 1/3",
+    tex_views=(
+        ("BACK 背面（+z）", 0.0, 0.0),
+        ("3/4 背右斜", 28.0, 18.0),
+        ("FRONT 正面（-z）", 180.0, 0.0),
+    ),
+    texture_overrides={
+        "fur": "bear_fur",
+        "fur_dk": "bear_fur_dark",
+        "fur_lt": "gear_fur_gr",
+        "hide_bald": "gear_hide_bald",
+        "claw": "gear_claw",
+    },
+    textured=True,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":
