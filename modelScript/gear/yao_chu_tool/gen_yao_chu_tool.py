@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""手持采药小锄（yao_chu_tool）Blockbench .bbmodel 程序化生成器 —— Round 1/3：分部件建模 + 门禁全绿 + 差分自证。
+"""手持采药小锄（yao_chu_tool）Blockbench .bbmodel 程序化生成器 —— Round 1/3 返工：笔直木柄 + 5x3px宽薄铁刃（小号锄/镐）。
 
 对应 NPC：采药人（cai_yao_ren）。
-挂点：手持（右手握持）。全长约 15–16px，握在右手里。
-避让：握持段贴右手掌心下沿（y <= 12.0），前段与锄头出右手掌前（z <= -2.08），Clearance 咬入深度为 0。
+挂点：右手手持。握在右手时刃朝前下方。
+避让：整根直木柄在右手掌心下沿（y <= 12.0）及右手掌前（z <= -2.15），Clearance 咬入深度为 0。
 
-造型特征：
-1. 凡器档的采药小锄：厚铁刃带刃口磨亮和两道缺口、卷刃、背脊加强肋；
-2. 锄头与柄的粗铸铁箍接合、加固木楔与横穿铁铆钉；
-3. 弯曲枯木柄有握把粗麻缠绳、防滑结、木节瘤与柄顶大木瘤兽皮包头；
-4. 柄尾编织粗麻绳挂圈、镂空辨药小骨牌与流苏。
+调度返工要点兑现：
+1. 笔直枯木柄：约 12px 长（y: 3.8 ~ 15.8）、1.6–1.8px 粗，通体笔直；
+2. 握把中段（右手紧握处）有 5 道立体螺旋麻绳紧密缠绕与防滑结；
+3. 柄顶端横着装一片宽铁刃，刃和柄接近直角（像小号的锄 / 镐）；
+4. 宽铁刃规格：刃面约 5×3px（宽5.0px、长3.0px）、0.6–0.8px 薄、前缘刃口磨亮并带两道不规则缺口崩口；
+5. 接合处粗铸铁套箍牢固套抱木柄头与木楔；
+6. 柄尾膨大圆木节瘤兽皮包头，编织粗麻挂绳、辨药小骨牌与流苏。
 
 方块数 ≥200，分骨 ≥10（带几何可动骨 ≥10，挂件单独一骨）。
 """
@@ -23,20 +25,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "modelScript" / "gear" / "_kit"))
 
 import gear_kit  # noqa: E402
-from gear_kit import Gear, GearSpec
-
-from bbmodel_maker.gates import gatekit
-from gear_kit import gate_clearance, inject_clearance
-
-
-class ToolGates(gatekit.AssetGates):
-    """手持工具门禁：纯手持物全长14-16px握在右手，无身体中线对称件，去掉 overflow 和 mirror，加上 clearance。"""
-
-    def specs(self):
-        base = tuple(s for s in super().specs() if s[0] not in ("overflow", "mirror"))
-        return base + (("clearance", "穿进玩家身体",
-                        lambda r: gate_clearance(r), inject_clearance),)
-  # noqa: E402
+from gear_kit import Gear, GearSpec  # noqa: E402
+from bbmodel_maker.gates import gatekit  # noqa: E402
+from gear_kit import gate_clearance, inject_clearance  # noqa: E402
 
 MATS = {
     "hide": (106, 70, 48),
@@ -58,19 +49,19 @@ MATS = {
 
 BONES = [
     ("root", None, (0.0, 0.0, 0.0), "世界根"),
-    ("hoe_socket", "root", (6.0, 14.5, -2.8), "粗铸铁套管与加固木楔"),
-    ("hoe_collar_iron", "hoe_socket", (6.0, 14.8, -2.8), "加厚双道铸铁套箍与横穿加固铆钉"),
-    ("blade_neck", "hoe_socket", (6.0, 14.2, -3.4), "锄头弯折粗连接颈与过渡段"),
-    ("blade_body", "blade_neck", (6.0, 12.5, -4.5), "宽厚主锄板与贯穿背脊加强肋"),
-    ("blade_edge", "blade_body", (6.0, 10.2, -5.8), "磨亮锋刃前缘与两道不规则崩口"),
-    ("blade_patches", "blade_body", (6.0, 12.2, -4.5), "翻卷护边与铁锔钉修补片"),
-    ("handle_upper", "hoe_socket", (6.0, 13.2, -2.4), "枯木柄上段斜伸木芯"),
-    ("handle_grip", "root", (6.0, 10.8, -0.5), "右手掌心正下方主握把木芯"),
-    ("handle_wraps", "handle_grip", (6.0, 10.8, -0.5), "握把多段立体粗麻绳紧密缠绕与防滑结"),
-    ("handle_lower", "handle_grip", (6.0, 8.2, 0.8), "枯木柄下段弯曲段与木节瘤"),
-    ("handle_butt", "handle_lower", (6.0, 5.5, 1.8), "粗圆大木节瘤柄尾与防脱兽皮包头"),
-    ("tally_cord", "handle_butt", (6.0, 3.8, 2.2), "柄尾编织粗麻绳挂圈与绳结"),
-    ("tally_charm", "tally_cord", (6.0, 2.5, 2.2), "辨药镂空小骨牌与下垂细流苏"),
+    ("handle_haft", "root", (6.0, 9.5, -2.85), "笔直枯木柄主体木芯（12px直柄）"),
+    ("handle_bark", "handle_haft", (6.0, 9.5, -2.85), "枯木柄表面木质纤维与木节瘤"),
+    ("handle_wrap", "handle_haft", (6.0, 10.8, -2.85), "握把5道立体螺旋麻绳紧密缠绕与绳结"),
+    ("handle_butt", "handle_haft", (6.0, 4.5, -2.85), "柄尾膨大圆木瘤与防脱兽皮包头"),
+    ("tally_loop", "handle_butt", (6.0, 2.8, -2.85), "柄尾编织粗麻绳挂圈与绳结"),
+    ("tally_tag", "tally_loop", (6.0, 1.8, -2.85), "辨药镂空小骨牌（挂件单独一骨）"),
+    ("tally_floss", "tally_tag", (6.0, 0.5, -2.85), "骨牌下垂细麻绳流苏与辟邪小骨珠"),
+    ("iron_socket", "handle_haft", (6.0, 14.8, -2.85), "顶端粗铸铁套管与固定木楔"),
+    ("iron_collar", "iron_socket", (6.0, 14.8, -2.85), "加厚铸铁套箍与横穿加固铁铆钉"),
+    ("blade_root", "iron_socket", (6.0, 14.6, -3.7), "铁刃与套管接合部粗大锻焊根部"),
+    ("blade_main", "blade_root", (6.0, 14.2, -5.2), "5x3px宽大薄铁锄板与背脊加强肋"),
+    ("blade_edge", "blade_main", (6.0, 13.6, -6.6), "磨亮锋刃前缘与两道不规则崩口"),
+    ("blade_cramps", "blade_main", (6.0, 14.1, -5.2), "锄板表面翻边与修补铁锔钉"),
 ]
 
 ASYM_BONES = frozenset([b[0] for b in BONES if b[0] != "root"])
@@ -90,403 +81,416 @@ SOFT_OVER = frozenset(frozenset((s, o)) for s, o in (
 ))
 
 
-# ── 1. 粗铸铁套管与加固木楔（圆筒套管连接木柄与锄刃）
-def part_socket(g: Gear) -> None:
-    """粗铸铁套管与加固木楔。"""
-    b = "hoe_socket"
-    # 圆筒套管主身 (x: 4.95 ~ 7.05 宽 2.1px, y: 13.55 ~ 15.55 高 2.0px, z: -3.85 ~ -1.75 粗 2.1px)
-    g.box(b, "socket_iron_core", (4.99, 13.59, -4.30), (7.03, 15.61, -2.20), "rust_dk")
-    g.box(b, "socket_iron_front", (5.05, 13.60, -4.43), (6.95, 15.37, -4.17), "iron")
-    g.box(b, "socket_iron_back", (5.05, 13.65, -2.33), (6.95, 15.45, -2.07), "rust")
-    g.box(b, "socket_iron_left", (4.82, 13.61, -4.20), (5.08, 15.53, -2.30), "rust_dk")
-    g.box(b, "socket_iron_right", (6.92, 13.62, -4.20), (7.18, 15.41, -2.30), "iron")
+class ToolGates(gatekit.AssetGates):
+    """手持工具门禁：纯手持物全长14-16px握在右手，无身体中线对称件，去掉 overflow 和 mirror，保留 clearance。"""
 
-    # 顶端固定大木楔与铁挡销
-    g.box(b, "socket_wood_wedge", (5.69, 15.45, -3.40), (6.35, 16.15, -2.70), "hide_lt")
-    g.box(b, "socket_cross_pin", (4.65, 14.29, -3.20), (7.35, 14.81, -2.94), "iron_lt")
-    g.box(b, "socket_cramp_top", (5.45, 15.10, -4.37), (6.55, 15.63, -4.07), "rust")
+    def specs(self):
+        base = tuple(s for s in super().specs() if s[0] not in ("overflow", "mirror"))
+        return base + (("clearance", "穿进玩家身体",
+                        lambda r: gate_clearance(r), inject_clearance),)
 
 
-# ── 2. 加厚双道铸铁套箍与横穿加固铆钉
-def part_collar_iron(g: Gear) -> None:
-    """加厚双道铸铁套箍与横穿加固铆钉。"""
-    b = "hoe_collar_iron"
-    # 上下双道粗铸铁凸箍 (环绕套管，外径达 2.4×2.4px)
-    g.box(b, "collar_upper_ring", (4.85, 15.05, -4.40), (7.15, 15.65, -2.10), "rust")
-    g.box(b, "collar_upper_lip", (4.78, 15.15, -4.47), (7.22, 15.55, -2.03), "iron_lt")
-    g.box(b, "collar_lower_ring", (4.87, 13.41, -4.32), (7.10, 14.05, -2.10), "rust_dk")
-    g.box(b, "collar_lower_lip", (4.78, 13.55, -4.47), (7.22, 13.95, -2.03), "iron")
-
-    # 四角加固方形铁铆钉 (4 颗)
-    g.box(b, "collar_rivet_fl", (4.95, 14.45, -4.50), (5.35, 14.85, -4.20), "iron_lt")
-    g.box(b, "collar_rivet_fr", (6.65, 14.45, -4.50), (6.99, 14.85, -4.20), "iron_lt")
-    g.box(b, "collar_rivet_bl", (4.95, 14.45, -2.30), (5.35, 14.85, -2.00), "iron_lt")
-    g.box(b, "collar_rivet_br", (6.65, 14.45, -2.30), (7.05, 14.85, -2.00), "iron_lt")
+# ── 1. 笔直枯木柄主体木芯（约 12px 长直柄，粗 1.6–1.8px）
+def part_handle_haft(g: Gear) -> None:
+    """笔直枯木柄主体木芯（12px直柄，通体笔直）。"""
+    b = "handle_haft"
+    # 笔直木芯4段连续直贯：y 从 3.8 到 15.8（全长 12.0px！），x∈[5.15, 6.85]，z∈[-3.65, -2.15]
+    # 下段 (y: 3.8 ~ 6.8)
+    g.box(b, "haft_core_lo", ((5.15, 3.85, -3.95)), ((6.85, 6.85, -2.45)), "hide")
+    # 中下段 (y: 6.8 ~ 9.8)
+    g.box(b, "haft_core_mid_lo", ((5.15, 6.85, -3.95)), ((6.85, 9.85, -2.45)), "hide")
+    # 中上握把段 (y: 9.8 ~ 12.8)
+    g.box(b, "haft_core_mid_hi", ((5.15, 9.85, -3.95)), ((6.85, 12.85, -2.45)), "hide")
+    # 上段穿套管段 (y: 12.8 ~ 15.8)
+    g.box(b, "haft_core_hi", ((5.15, 12.85, -3.95)), ((6.85, 15.88, -2.45)), "hide")
 
 
-# ── 3. 锄头弯折粗连接颈与过渡段（自套管向前下方斜探弯折）
-def part_blade_neck(g: Gear) -> None:
-    """锄头弯折粗连接颈与过渡段。"""
-    b = "blade_neck"
-    # 连接颈粗厚铁梁 (从套管向前下方探出: y从14.8降到13.5，z从-3.5向前延伸到-4.6)
-    g.box(b, "neck_main_beam", (5.12, 13.71, -5.00), (6.82, 14.95, -3.90), "rust_dk")
-    g.box(b, "neck_top_ridge", (5.35, 14.85, -4.93), (6.65, 15.17, -3.97), "iron")
-    g.box(b, "neck_bot_brace", (5.35, 13.35, -4.80), (6.65, 13.79, -4.07), "rust")
+# ── 2. 枯木柄表面木质纤维与木节瘤
+def part_handle_bark(g: Gear) -> None:
+    """枯木柄表面木质纤维与木节瘤。"""
+    b = "handle_bark"
+    # 前后侧面纵向纤维脊线（营造粗糙老木质感）
+    g.box(b, "haft_crest_front_lo", ((5.25, 4.05, -4.08)), ((6.75, 9.65, -3.78)), "hide_lt")
+    g.box(b, "haft_crest_front_hi", ((5.25, 9.65, -4.08)), ((6.75, 15.65, -3.78)), "hide_lt")
+    g.box(b, "haft_crest_back_lo", ((5.25, 4.05, -2.62)), ((6.75, 9.65, -2.32)), "hide_dk")
+    g.box(b, "haft_crest_back_hi", ((5.28, 9.65, -2.62)), ((6.72, 15.65, -2.32)), "hide_dk")
 
-    # 过渡段向两侧展宽 (宽度展至 3.2px)
-    g.box(b, "neck_flare_l", (4.45, 13.45, -5.10), (5.25, 14.65, -4.10), "rust_dk")
-    g.box(b, "neck_flare_r", (6.75, 13.45, -5.10), (7.55, 14.65, -4.07), "rust")
-    g.box(b, "neck_weld_seam", (4.85, 14.55, -4.40), (7.15, 14.87, -4.00), "iron_lt")
+    # 左右侧面深浅纤维纹
+    g.box(b, "haft_side_left_1", ((5.02, 4.27, -3.85)), ((5.28, 9.55, -2.55)), "hide_lt")
+    g.box(b, "haft_side_left_2", ((5.02, 9.55, -3.80)), ((5.28, 15.45, -2.52)), "hide_lt")
+    g.box(b, "haft_side_right_1", ((6.72, 4.23, -3.85)), ((6.98, 9.55, -2.55)), "hide_dk")
+    g.box(b, "haft_side_right_2", ((6.72, 9.55, -3.85)), ((6.98, 15.45, -2.59)), "hide_dk")
 
-
-# ── 4. 宽厚主锄板与贯穿背脊加强肋（宽达 4.2px，厚 1.5px，向前下方斜向刨出）
-def part_blade_body(g: Gear) -> None:
-    """宽厚主锄板与贯穿背脊加强肋。"""
-    b = "blade_body"
-    # 宽阔主锄板 (宽 x: 3.9 ~ 8.1 宽达 4.2px！长 z: -6.0 ~ -4.3，高度 y: 11.2 ~ 14.0)
-    g.box(b, "blade_body_plate", (3.95, 11.45, -6.30), (8.05, 13.85, -4.68), "iron")
-    g.box(b, "blade_front_bevel", (4.05, 11.50, -6.47), (7.95, 13.75, -6.17), "iron_lt")
-    g.box(b, "blade_back_bevel", (4.05, 11.55, -4.83), (7.95, 13.75, -4.53), "rust")
-
-    # 贯穿锄面中央的粗大加强背脊肋骨 (凸起厚达 1.4px)
-    g.box(b, "blade_spine_main", (5.55, 11.65, -6.56), (6.41, 14.25, -4.50), "iron_lt")
-    g.box(b, "blade_spine_crest", (5.72, 11.85, -6.73), (6.30, 14.05, -4.40), "iron_lt")
-    g.box(b, "blade_spine_anchor", (5.65, 13.65, -4.90), (6.35, 14.51, -4.20), "rust_dk")
-
-    # 锄板上段防崩折加固厚台
-    g.box(b, "blade_shoulder_l", (3.82, 12.77, -5.90), (4.45, 14.05, -4.80), "rust")
-    g.box(b, "blade_shoulder_r", (7.55, 12.89, -5.90), (8.18, 14.05, -4.80), "rust")
+    # 天然突起木节瘤 (2 处) 与干裂暗纹
+    g.box(b, "haft_knot_bump_1", ((6.85, 8.25, -3.55)), ((7.25, 9.05, -2.85)), "hide_dk")
+    g.box(b, "haft_knot_bump_2", ((4.75, 13.15, -3.55)), ((5.15, 13.95, -2.85)), "hide_dk")
+    g.box(b, "haft_crack_seam", ((5.85, 7.25, -4.05)), ((6.15, 8.65, -3.75)), "void")
 
 
-# ── 5. 磨亮锋刃前缘与两道不规则崩口（刃口磨亮，凡器刨地磨痕）
+# ── 3. 握把5道立体螺旋麻绳紧密缠绕与绳结（右手紧握位置）
+def part_handle_wrap(g: Gear) -> None:
+    """握把5道立体螺旋麻绳紧密缠绕与绳结。"""
+    b = "handle_wrap"
+    # 5 道立体螺旋麻绳圈 (外凸至 2.1×2.1px, y: 9.6 ~ 12.2)
+    g.box(b, "grip_wrap_1", (4.92, 9.62, -4.12), (7.08, 10.12, -2.24), "cord_dk")
+    g.box(b, "grip_wrap_2", (4.92, 10.14, -4.12), (7.08, 10.62, -2.24), "cord")
+    g.box(b, "grip_wrap_3", (4.92, 10.68, -4.12), (7.08, 11.12, -2.24), "cord_dk")
+    g.box(b, "grip_wrap_4", (4.92, 11.14, -4.12), (7.08, 11.62, -2.24), "cord")
+    g.box(b, "grip_wrap_5", (4.92, 11.64, -4.12), (7.08, 12.12, -2.24), "cord_dk")
+
+    # 4 枚立体斜向绳结凸块（防滑手感）
+    g.box(b, "grip_knot_ear_1", ((4.82, 9.85, -3.55)), ((5.08, 10.35, -2.95)), "cord")
+    g.box(b, "grip_knot_ear_2", ((6.92, 10.45, -3.55)), ((7.18, 10.95, -2.95)), "cord_dk")
+    g.box(b, "grip_knot_ear_3", ((4.82, 11.05, -3.55)), ((5.08, 11.55, -2.95)), "cord")
+    g.box(b, "grip_knot_ear_4", ((6.92, 11.55, -3.55)), ((7.18, 12.05, -2.95)), "cord_dk")
+
+
+# ── 4. 柄尾膨大圆木瘤与防脱兽皮包头
+def part_handle_butt(g: Gear) -> None:
+    """柄尾膨大圆木瘤与防脱兽皮包头。"""
+    b = "handle_butt"
+    # 自然膨大的柄尾圆木瘤 (直径 2.3×2.3px, y: 4.2 ~ 5.6)
+    g.box(b, "butt_bulb_core", ((4.85, 4.25, -4.25)), ((7.15, 5.65, -2.15)), "hide_dk")
+    g.box(b, "butt_bulb_front", ((4.95, 4.29, -4.44)), ((7.05, 5.50, -4.08)), "hide")
+    g.box(b, "butt_bulb_back", ((4.95, 4.32, -2.32)), ((7.05, 5.59, -2.02)), "hide_dk")
+    g.box(b, "butt_bulb_left", ((4.68, 4.35, -4.15)), ((5.04, 5.51, -2.25)), "hide_lt")
+    g.box(b, "butt_bulb_right", ((6.98, 4.35, -4.15)), ((7.23, 5.55, -2.25)), "hide_dk")
+
+    # 防脱厚兽皮包头 (y: 3.6 ~ 4.6)
+    g.box(b, "butt_leather_cap", ((4.80, 3.65, -4.30)), ((7.20, 4.65, -2.10)), "hide_lt")
+    g.box(b, "butt_leather_bottom", ((4.95, 3.33, -4.21)), ((7.05, 3.70, -2.29)), "hide")
+    g.box(b, "butt_stitch_cross_1", ((5.25, 3.25, -3.29)), ((6.75, 3.53, -3.05)), "stitch")
+    g.box(b, "butt_stitch_cross_2", ((5.85, 3.31, -3.85)), ((6.15, 3.55, -2.45)), "stitch")
+
+
+# ── 5. 柄尾编织粗麻绳挂圈与绳结
+def part_tally_loop(g: Gear) -> None:
+    """柄尾编织粗麻绳挂圈与绳结。"""
+    b = "tally_loop"
+    # 紧扎在柄尾皮套下端的粗麻绳圈 (2 圈)
+    g.box(b, "loop_neck_coil_1", ((4.75, 4.39, -4.35)), ((7.22, 4.85, -2.05)), "cord_dk")
+    g.box(b, "loop_neck_coil_2", ((4.75, 4.85, -4.35)), ((7.25, 5.25, -2.05)), "cord")
+
+    # 紧扣麻绳结
+    g.box(b, "loop_knot_ball", ((5.65, 3.29, -3.55)), ((6.35, 3.85, -2.85)), "cord_dk")
+    g.box(b, "loop_knot_wing", ((5.55, 3.35, -3.65)), ((6.45, 3.75, -2.75)), "cord")
+
+    # 下垂编织挂绳环 (闭环，y: 1.8 ~ 3.4)
+    g.box(b, "loop_strand_left", ((5.58, 1.85, -3.45)), ((5.92, 3.45, -3.15)), "cord")
+    g.box(b, "loop_strand_right", ((6.08, 1.87, -3.25)), ((6.38, 3.45, -2.95)), "cord_dk")
+    g.box(b, "loop_bottom_bend", ((5.72, 1.65, -3.39)), ((6.28, 2.05, -3.10)), "cord")
+
+
+# ── 6. 辨药镂空小骨牌（挂件单独一骨）
+def part_tally_tag(g: Gear) -> None:
+    """辨药镂空小骨牌（挂件单独一骨）。"""
+    b = "tally_tag"
+    # 悬挂小骨符细皮绳
+    g.box(b, "tag_hang_cord", ((5.79, 1.55, -3.37)), ((6.15, 1.95, -3.05)), "cord_dk")
+    # 兽骨牌主体 (长方形，长 1.4px，宽 0.9px，y: 0.85 ~ 2.25)
+    g.box(b, "tag_bone_body", ((5.55, 0.85, -3.32)), ((6.45, 2.25, -3.09)), "bone")
+    g.box(b, "tag_bone_crest", ((5.62, 2.05, -3.38)), ((6.33, 2.35, -3.02)), "bone_lt")
+    g.box(b, "tag_bone_void_hole", ((5.85, 1.81, -3.42)), ((6.17, 2.15, -2.98)), "void")
+    g.box(b, "tag_bone_carve_line", ((5.75, 1.05, -3.42)), ((6.25, 1.55, -2.98)), "bone_stain")
+
+
+# ── 7. 骨牌下垂细麻绳流苏与辟邪小骨珠
+def part_tally_floss(g: Gear) -> None:
+    """骨牌下垂细麻绳流苏与辟邪小骨珠。"""
+    b = "tally_floss"
+    # 辟邪小骨珠 (y: 0.55 ~ 0.95)
+    g.box(b, "floss_bead_sphere", ((5.82, 0.55, -3.35)), ((6.18, 0.95, -3.05)), "bone_lt")
+    g.box(b, "floss_bead_ring", ((5.87, 0.68, -3.38)), ((6.15, 0.94, -3.02)), "bone_stain")
+    # 下垂麻绳流苏 (3 股)
+    g.box(b, "floss_strand_1", ((5.75, 0.10, -3.45)), ((5.95, 0.65, -3.15)), "cord")
+    g.box(b, "floss_strand_2", ((6.05, 0.02, -3.25)), ((6.25, 0.65, -2.95)), "cord_dk")
+    g.box(b, "floss_strand_3", ((5.85, 0.00, -3.35)), ((6.15, 0.45, -3.05)), "cord_dk")
+
+
+# ── 8. 顶端粗铸铁套管与固定木楔（木柄与铁刃结合处套管）
+def part_iron_socket(g: Gear) -> None:
+    """顶端粗铸铁套管与固定木楔。"""
+    b = "iron_socket"
+    # 套管主筒 (y: 14.15 ~ 15.85, x: 4.85 ~ 7.15 宽 2.3px, z: -4.05 ~ -1.95 粗 2.1px)
+    g.box(b, "socket_tube_core", ((4.85, 14.15, -4.31)), ((7.15, 15.81, -2.25)), "rust_dk")
+    g.box(b, "socket_tube_front", ((4.95, 14.25, -4.48)), ((7.05, 15.70, -4.22)), "iron")
+    g.box(b, "socket_tube_back", ((4.95, 14.21, -2.38)), ((7.05, 15.79, -2.12)), "rust")
+    g.box(b, "socket_tube_left", ((4.72, 14.29, -4.25)), ((4.98, 15.71, -2.35)), "rust_dk")
+    g.box(b, "socket_tube_right", ((7.02, 14.27, -4.25)), ((7.28, 15.73, -2.35)), "iron")
+
+    # 顶端外露的切面木楔
+    g.box(b, "socket_top_wedge", ((5.55, 15.78, -3.45)), ((6.45, 16.35, -2.95)), "hide_lt")
+    g.box(b, "socket_wedge_flaw", ((5.87, 15.95, -3.48)), ((6.20, 16.25, -3.28)), "void")
+
+
+# ── 9. 加厚铸铁套箍与横穿加固铁铆钉
+def part_iron_collar(g: Gear) -> None:
+    """加厚铸铁套箍与横穿加固铁铆钉。"""
+    b = "iron_collar"
+    # 上下双道粗铸铁抱箍凸环 (外径达 2.5×2.3px)
+    g.box(b, "collar_ring_top", ((4.75, 15.35, -4.45)), ((7.25, 15.85, -2.15)), "rust")
+    g.box(b, "collar_ring_bot", ((4.75, 14.13, -4.45)), ((7.25, 14.68, -2.15)), "rust_dk")
+    g.box(b, "collar_rim_flange", ((4.68, 15.45, -4.52)), ((7.32, 15.75, -2.08)), "iron_lt")
+
+    # 横穿贯穿大铁铆钉（横向穿透柄头锁定套管）
+    g.box(b, "collar_cross_bolt", ((4.55, 14.88, -3.47)), ((7.45, 15.31, -3.21)), "iron_lt")
+    g.box(b, "collar_bolt_head_l", ((4.42, 14.75, -3.55)), ((4.65, 15.35, -3.05)), "iron")
+    g.box(b, "collar_bolt_nut_r", ((7.35, 14.75, -3.55)), ((7.58, 15.35, -3.05)), "iron_lt")
+
+
+# ── 10. 铁刃与套管接合部粗大锻焊根部（自套管垂直/直角向前横伸出的根部）
+def part_blade_root(g: Gear) -> None:
+    """铁刃与套管接合部粗大锻焊根部。"""
+    b = "blade_root"
+    # 粗厚锻接铁颈（自套管前表面 z=-4.0 直角向前探出至 z=-4.8，宽 3.4px，高 1.6px）
+    g.box(b, "blade_root_block", ((4.30, 14.20, -5.10)), ((7.70, 15.51, -4.15)), "rust_dk")
+    g.box(b, "blade_root_top_ridge", ((4.45, 15.40, -5.05)), ((7.55, 15.80, -4.25)), "iron")
+    g.box(b, "blade_root_bot_brace", ((4.45, 13.92, -5.05)), ((7.55, 14.30, -4.25)), "rust")
+
+    # 左右加强焊接凸肋与角撑铁
+    g.box(b, "blade_root_gusset_l", ((3.95, 14.25, -4.95)), ((4.45, 15.25, -4.25)), "rust_dk")
+    g.box(b, "blade_root_gusset_r", ((7.55, 14.25, -4.95)), ((8.05, 15.25, -4.25)), "rust")
+    g.box(b, "blade_root_weld_seam", ((4.25, 15.15, -4.40)), ((7.75, 15.45, -4.05)), "iron_lt")
+
+
+# ── 11. 5x3px宽大薄铁锄板与背脊加强肋（核心！宽5px、长3px、0.6-0.8px薄金属板）
+def part_blade_main(g: Gear) -> None:
+    """5x3px宽大薄铁锄板与背脊加强肋（调度要求的宽平薄铁刃！）。"""
+    b = "blade_main"
+    # ── 5×3px 宽大薄铁板主体：
+    # 宽度沿 x 轴展开：从 3.5 到 8.5，整整宽达 5.0px！
+    # 长度沿 z 轴向前延伸：从 -4.5 延伸至 -6.5，长达 2.0px（加上前缘磨亮刃口 1.0px，总长整整 3.0px！）
+    # 厚度：y 从 14.1 到 14.8（厚度仅 0.7px，真正薄铁刃！）
+    g.box(b, "blade_main_plate", ((3.50, 14.13, -6.80)), ((8.50, 14.84, -4.80)), "iron")
+
+    # 锄板上表面锻打微反光层与下表面粗糙暗铁层
+    g.box(b, "blade_plate_top_skin", ((3.60, 14.72, -6.70)), ((8.40, 14.95, -4.93)), "iron_lt")
+    g.box(b, "blade_plate_bot_skin", ((3.60, 14.05, -6.64)), ((8.40, 14.28, -4.84)), "rust_dk")
+
+    # 贯穿锄面中央的窄长背脊加强肋（宽 1.0px，凸起 0.35px，坚韧抗弯折）
+    g.box(b, "blade_spine_rib_main", ((5.50, 14.75, -6.90)), ((6.50, 15.15, -4.70)), "iron_lt")
+    g.box(b, "blade_spine_rib_crest", ((5.70, 15.02, -6.80)), ((6.30, 15.28, -4.80)), "iron_lt")
+    g.box(b, "blade_spine_bot_keel", ((5.65, 13.85, -6.70)), ((6.35, 14.15, -4.78)), "rust_dk")
+
+    # 锄板两侧过渡圆倒角与侧肩
+    g.box(b, "blade_shoulder_ear_l", ((3.35, 14.20, -5.80)), ((3.65, 14.75, -4.90)), "rust")
+    g.box(b, "blade_shoulder_ear_r", ((8.29, 14.20, -5.80)), ((8.65, 14.75, -4.90)), "rust")
+
+
+# ── 12. 磨亮锋刃前缘与两道不规则崩口（刃口磨亮带缺口）
 def part_blade_edge(g: Gear) -> None:
     """磨亮锋刃前缘与两道不规则崩口。"""
     b = "blade_edge"
-    # 前缘 1px 磨亮薄刃主体 (y: 9.8 ~ 11.6, z: -6.95 ~ -5.75)
-    g.box(b, "blade_cutting_edge", (3.92, 9.89, -7.30), (8.08, 11.55, -6.20), "iron_lt")
-    g.box(b, "blade_edge_shiny_lip", (4.02, 9.75, -7.43), (7.98, 10.85, -7.10), "iron_lt")
+    # 前缘 1px 磨亮薄铁刃口：宽 5.0px (x: 3.5 ~ 8.5), 沿 z 伸至 -7.50, 厚度收尖至 0.5px
+    g.box(b, "edge_cutting_body", ((3.48, 13.95, -7.75)), ((8.52, 14.60, -6.75)), "iron_lt")
+    g.box(b, "edge_hone_bevel", ((3.55, 14.28, -7.91)), ((8.45, 14.75, -7.45)), "iron_lt")
 
-    # 两道深浅不一的不规则崩齿与缺口 (使用 void 形成真实残损)
-    g.box(b, "blade_notch_void_1", (4.85, 9.68, -7.50), (5.35, 10.35, -7.00), "void")
-    g.box(b, "blade_notch_void_2", (6.65, 9.68, -7.50), (7.25, 10.51, -7.00), "void")
+    # 两道深浅不一的不规则缺口与崩齿 (用 void 抠出真实缺口)
+    # 缺口 1 (左侧 x: 4.6 ~ 5.1)
+    g.box(b, "edge_notch_void_1", ((4.55, 13.85, -7.92)), ((5.15, 14.81, -7.35)), "void")
+    # 缺口 2 (右侧 x: 6.8 ~ 7.4)
+    g.box(b, "edge_notch_void_2", ((6.75, 13.85, -7.92)), ((7.45, 14.80, -7.35)), "void")
 
-    # 缺口旁翻卷翘起的钝铁毛刺与卷刃
-    g.box(b, "blade_burr_lip_1", (4.75, 9.95, -7.53), (5.05, 10.55, -7.13), "rust")
-    g.box(b, "blade_burr_lip_2", (7.15, 9.95, -7.53), (7.45, 10.65, -7.13), "rust_dk")
-    g.box(b, "blade_burr_pad_3", (5.85, 9.72, -7.40), (6.25, 10.25, -7.04), "iron")
-
-
-# ── 6. 翻卷护边与铁锔钉修补片
-def part_blade_patches(g: Gear) -> None:
-    """翻卷护边与铁锔钉修补片。"""
-    b = "blade_patches"
-    # 锄板两侧向上翻起的 1.2px 高防漏土浅翻边
-    g.box(b, "blade_lip_wall_l", (3.78, 11.55, -6.20), (4.15, 13.55, -4.90), "rust_dk")
-    g.box(b, "blade_lip_crest_l", (3.72, 12.65, -6.10), (4.02, 13.65, -5.00), "rust")
-    g.box(b, "blade_lip_wall_r", (7.85, 11.55, -6.22), (8.22, 13.55, -4.90), "rust_dk")
-    g.box(b, "blade_lip_crest_r", (7.98, 12.65, -6.10), (8.28, 13.65, -5.00), "rust")
-
-    # 锄板裂纹加固铁锔钉 (2 枚两脚铁锔钉)
-    g.box(b, "blade_cramp_plate_1", (4.45, 12.25, -5.90), (5.15, 12.75, -5.50), "rust")
-    g.box(b, "blade_cramp_pin_1a", (4.35, 12.15, -5.93), (4.65, 12.85, -5.70), "iron_lt")
-    g.box(b, "blade_cramp_pin_1b", (4.95, 12.15, -5.70), (5.25, 12.85, -5.47), "iron_lt")
-
-    g.box(b, "blade_cramp_plate_2", (6.85, 12.25, -5.90), (7.55, 12.75, -5.50), "rust_dk")
-    g.box(b, "blade_cramp_pin_2a", (6.75, 12.15, -5.93), (7.05, 12.85, -5.70), "iron_lt")
-    g.box(b, "blade_cramp_pin_2b", (7.35, 12.15, -5.70), (7.65, 12.85, -5.47), "iron_lt")
+    # 缺口边缘翻卷受撞击的暗锈残屑与金属倒刺
+    g.box(b, "edge_notch_burr_1", ((4.42, 14.15, -7.85)), ((4.72, 14.85, -7.43)), "rust")
+    g.box(b, "edge_notch_burr_2", ((7.32, 14.20, -7.85)), ((7.62, 14.85, -7.48)), "rust_dk")
+    g.box(b, "edge_center_dinge", ((5.85, 14.05, -7.82)), ((6.15, 14.55, -7.55)), "rust")
 
 
-# ── 7. 枯木柄上段斜伸木芯（自右手前方斜向上插入套管）
-def part_handle_upper(g: Gear) -> None:
-    """枯木柄上段斜伸木芯。"""
-    b = "handle_upper"
-    # 上段木芯 (宽 1.9×1.9px，y: 11.9 ~ 15.2，z: -3.2 ~ -1.3，z <= -2.08 避开手臂)
-    g.box(b, "handle_up_wood_core", (5.02, 11.95, -3.95), (6.98, 15.15, -2.15), "hide")
-    g.box(b, "handle_up_crest_f", (5.15, 12.05, -4.08), (6.85, 15.05, -3.75), "hide_lt")
-    g.box(b, "handle_up_crest_b", (5.15, 12.05, -2.39), (6.85, 15.05, -2.13), "hide_dk")
-    g.box(b, "handle_up_side_l", (4.92, 11.99, -3.85), (5.22, 14.99, -2.25), "hide_lt")
-    g.box(b, "handle_up_side_r", (6.78, 12.01, -3.85), (7.08, 15.11, -2.25), "hide_dk")
+# ── 13. 锄板表面翻边与修补铁锔钉
+def part_blade_cramps(g: Gear) -> None:
+    """锄板表面翻边与修补铁锔钉。"""
+    b = "blade_cramps"
+    # 锄板左右两侧各立一道 0.45px 高的浅翻边（泥土防滑出侧沿）
+    g.box(b, "blade_rim_flange_l", ((3.29, 14.75, -6.75)), ((3.65, 15.25, -4.95)), "rust_dk")
+    g.box(b, "blade_rim_flange_r", ((8.35, 14.75, -6.75)), ((8.65, 15.25, -4.95)), "rust_dk")
+    g.box(b, "blade_rim_crest_l", ((3.32, 15.12, -6.65)), ((3.58, 15.38, -5.05)), "rust")
+    g.box(b, "blade_rim_crest_r", ((8.42, 15.12, -6.65)), ((8.68, 15.38, -5.05)), "rust")
 
-    # 颈部防裂粗麻绳缠扎 (2 道)
-    g.box(b, "handle_up_cord_wrap1", (4.95, 12.25, -4.02), (7.05, 12.85, -2.12), "cord_dk")
-    g.box(b, "handle_up_cord_wrap2", (4.95, 12.95, -4.02), (7.05, 13.55, -2.16), "cord")
+    # 锄板裂纹加固铁锔钉 (2 枚两脚跨板铁锔钉)
+    g.box(b, "blade_cramp_strap_1", ((4.25, 14.82, -5.95)), ((5.15, 15.19, -5.55)), "rust")
+    g.box(b, "blade_cramp_pin_1a", ((4.15, 14.76, -5.98)), ((4.45, 15.25, -5.75)), "iron_lt")
+    g.box(b, "blade_cramp_pin_1b", ((4.95, 14.77, -5.75)), ((5.25, 15.25, -5.52)), "iron_lt")
 
-
-# ── 8. 右手掌心正下方主握把木芯（主握柄段，y <= 12.0 避开右臂盒）
-def part_handle_grip(g: Gear) -> None:
-    """右手掌心正下方主握把木芯。"""
-    b = "handle_grip"
-    # 握柄主木芯 (粗 1.9×1.9px, y: 9.35 ~ 12.00, z: -1.75 ~ 0.15)
-    g.box(b, "handle_grip_wood_core", (5.05, 9.35, -1.75), (6.95, 12.00, 0.15), "hide")
-    g.box(b, "handle_grip_crest_f", (5.15, 9.43, -1.88), (6.85, 11.92, -1.58), "hide_lt")
-    g.box(b, "handle_grip_crest_b", (5.15, 9.43, -0.02), (6.85, 11.95, 0.28), "hide_dk")
-    g.box(b, "handle_grip_side_l", (4.92, 9.45, -1.65), (5.22, 11.89, 0.09), "hide_lt")
-    g.box(b, "handle_grip_side_r", (6.78, 9.45, -1.65), (7.08, 11.91, 0.05), "hide_dk")
-
-    # 手握处老木磨光面与汗渍深痕
-    g.box(b, "handle_grip_sweat_stain", (5.17, 9.85, -1.82), (6.83, 11.55, -1.59), "hide_dk")
-    g.box(b, "handle_grip_worn_shiny", (5.25, 10.05, -0.08), (6.75, 11.35, 0.22), "hide_lt")
+    g.box(b, "blade_cramp_strap_2", ((6.85, 14.82, -5.95)), ((7.75, 15.15, -5.55)), "rust_dk")
+    g.box(b, "blade_cramp_pin_2a", ((6.75, 14.69, -5.98)), ((7.05, 15.25, -5.75)), "iron_lt")
+    g.box(b, "blade_cramp_pin_2b", ((7.55, 14.67, -5.75)), ((7.85, 15.25, -5.52)), "iron_lt")
 
 
-# ── 9. 握把多段立体粗麻绳紧密缠绕与防滑结
-def part_handle_wraps(g: Gear) -> None:
-    """握把多段立体粗麻绳紧密缠绕与防滑结。"""
-    b = "handle_wraps"
-    # 4 段粗麻绳紧密螺旋缠绕 (外凸粗 2.3×2.3px)
-    g.box(b, "grip_wrap_ring_1", (4.85, 9.61, -1.89), (7.15, 10.15, 0.25), "cord_dk")
-    g.box(b, "grip_wrap_ring_2", (4.85, 10.23, -1.93), (7.09, 10.89, 0.25), "cord")
-    g.box(b, "grip_wrap_ring_3", (4.85, 10.95, -1.77), (7.15, 11.63, 0.25), "cord_dk")
-    g.box(b, "grip_wrap_ring_4", (4.88, 11.55, -1.82), (7.12, 11.98, 0.22), "cord")
-
-    # 4 枚立体斜向防滑麻绳结
-    g.box(b, "grip_knot_bulge_1", (4.75, 9.65, -1.05), (5.05, 10.05, -0.55), "cord")
-    g.box(b, "grip_knot_bulge_2", (6.95, 10.35, -1.05), (7.25, 10.75, -0.55), "cord_dk")
-    g.box(b, "grip_knot_bulge_3", (4.75, 11.05, -1.05), (5.05, 11.45, -0.55), "cord")
-    g.box(b, "grip_knot_bulge_4", (6.95, 11.65, -1.05), (7.25, 11.95, -0.55), "cord_dk")
-
-
-# ── 10. 枯木柄下段弯曲段与木节瘤（向下向后倾斜延伸）
-def part_handle_lower(g: Gear) -> None:
-    """枯木柄下段弯曲段与木节瘤。"""
-    b = "handle_lower"
-    # 下段木芯 (宽 1.9×1.9px, y: 6.85 ~ 9.55, z: -0.45 ~ 1.45)
-    g.box(b, "handle_lo_wood_core", (5.01, 6.85, -0.45), (6.98, 9.55, 1.45), "hide")
-    g.box(b, "handle_lo_crest_f", (5.15, 6.95, -0.58), (6.85, 9.50, -0.28), "hide_lt")
-    g.box(b, "handle_lo_crest_b", (5.15, 6.95, 1.28), (6.85, 9.42, 1.58), "hide_dk")
-    g.box(b, "handle_lo_side_l", (4.90, 6.89, -0.35), (5.22, 9.45, 1.35), "hide_lt")
-    g.box(b, "handle_lo_side_r", (6.78, 6.99, -0.35), (7.04, 9.45, 1.35), "hide_dk")
-
-    # 天然突起木节瘤与风化干裂凹缝
-    g.box(b, "handle_lo_wood_knot", (6.85, 7.85, 0.15), (7.35, 8.47, 0.85), "hide_dk")
-    g.box(b, "handle_lo_knot_core", (7.05, 8.05, 0.35), (7.45, 8.35, 0.65), "hide_dk")
-    g.box(b, "handle_lo_crack_void", (5.85, 7.25, 1.35), (6.15, 8.85, 1.62), "void")
-
-
-# ── 11. 粗圆大木节瘤柄尾与防脱兽皮包头（柄端大包头）
-def part_handle_butt(g: Gear) -> None:
-    """粗圆大木节瘤柄尾与防脱兽皮包头。"""
-    b = "handle_butt"
-    # 自然膨大的粗圆木节瘤 (直径达 2.4×2.4px, y: 5.25 ~ 7.05, z: 0.65 ~ 2.85)
-    g.box(b, "butt_knob_core", (4.85, 5.25, 0.65), (7.15, 7.05, 2.85), "hide_dk")
-    g.box(b, "butt_knob_flare_f", (4.95, 5.35, 0.52), (7.05, 6.95, 0.82), "hide")
-    g.box(b, "butt_knob_flare_b", (4.95, 5.35, 2.68), (7.05, 6.91, 2.98), "hide_dk")
-    g.box(b, "butt_knob_side_l", (4.72, 5.31, 0.75), (5.02, 7.00, 2.75), "hide_lt")
-    g.box(b, "butt_knob_side_r", (6.98, 5.41, 0.75), (7.28, 7.00, 2.75), "hide_dk")
-
-    # 柄尾防脱厚兽皮包裹套与封口粗缝线
-    g.box(b, "butt_leather_cap", (4.78, 4.85, 0.58), (7.22, 5.65, 2.92), "hide_lt")
-    g.box(b, "butt_leather_fold", (4.93, 4.65, 0.68), (7.10, 5.03, 2.82), "hide")
-    g.box(b, "butt_stitch_cross_1", (5.15, 4.55, 1.55), (6.85, 4.85, 1.95), "stitch")
-    g.box(b, "butt_stitch_cross_2", (5.85, 4.58, 0.85), (6.15, 4.90, 2.65), "stitch")
-
-
-# ── 12. 柄尾编织粗麻绳挂圈与绳结（挂在柄端供随手挂在腰带或树枝上）
-def part_tally_cord(g: Gear) -> None:
-    """柄尾编织粗麻绳挂圈与绳结。"""
-    b = "tally_cord"
-    # 缠绕在柄尾的加固麻绳圈 (2 圈)
-    g.box(b, "tally_neck_wrap_1", (4.75, 5.40, 0.60), (7.25, 5.87, 2.95), "cord_dk")
-    g.box(b, "tally_neck_wrap_2", (4.75, 5.95, 0.55), (7.25, 6.45, 2.95), "cord")
-
-    # 紧扎大麻绳结
-    g.box(b, "tally_cord_knot_main", (5.65, 4.50, 1.51), (6.35, 5.15, 2.15), "cord_dk")
-    g.box(b, "tally_cord_knot_ear", (5.59, 4.47, 1.39), (6.42, 5.05, 2.25), "cord")
-
-    # 下垂的闭环编织挂绳圈 (y: 2.8 ~ 4.6, z: 1.5 ~ 2.5)
-    g.box(b, "tally_loop_strand_l", (5.55, 2.85, 1.53), (5.95, 4.65, 2.03), "cord")
-    g.box(b, "tally_loop_strand_r", (6.05, 2.85, 1.75), (6.45, 4.65, 2.23), "cord_dk")
-    g.box(b, "tally_loop_bottom", (5.65, 2.67, 1.65), (6.35, 3.15, 2.05), "cord")
-
-
-# ── 13. 辨药镂空小骨牌与下垂细流苏（凡器药锄的辟邪骨牌与流苏）
-def part_tally_charm(g: Gear) -> None:
-    """辨药镂空小骨牌与下垂细流苏。"""
-    b = "tally_charm"
-    # 悬挂骨符的小挂绳与穿孔
-    g.box(b, "charm_cord_tie", (5.85, 2.55, 1.74), (6.15, 3.19, 2.00), "cord_dk")
-    # 磨光辨药兽骨小方牌 (y: 1.15 ~ 2.65, z: 1.65 ~ 2.15)
-    g.box(b, "charm_bone_tag_body", (5.65, 1.25, 1.65), (6.35, 2.65, 2.05), "bone")
-    g.box(b, "charm_bone_tag_top", (5.72, 2.45, 1.63), (6.28, 2.75, 2.06), "bone_lt")
-    g.box(b, "charm_bone_void_eye", (5.85, 2.15, 1.72), (6.15, 2.45, 1.98), "void")
-    g.box(b, "charm_bone_engrave", (5.82, 1.45, 1.62), (6.18, 1.85, 2.08), "bone_stain")
-
-    # 骨牌下端系挂的小骨珠与麻绳流苏穗头
-    g.box(b, "charm_bead_sphere", (5.81, 0.85, 1.75), (6.07, 1.25, 1.99), "bone_lt")
-    g.box(b, "charm_tassel_strand_1", (5.75, 0.15, 1.65), (6.05, 0.97, 1.95), "cord")
-    g.box(b, "charm_tassel_strand_2", (5.95, 0.02, 1.69), (6.25, 0.95, 2.05), "cord_dk")
-    g.box(b, "charm_tassel_knot", (5.82, 0.04, 1.72), (6.18, 0.35, 1.98), "cord_dk")
-
-
-# ── 14. 细节补强（加厚各部细节，扩充方块总数达 205+）
+# ── 14. 细节补强（保证各部位精致细腻，方块数达 208+）
 def part_details(g: Gear) -> None:
-    """药锄各部件几何细节与补强。"""
-    # 1. 锄面与背脊加强凸肋与残损 (14 块)
-    bb = "blade_body"
-    g.box(bb, "blade_rib_stud_1", (5.75, 12.85, -6.80), (6.25, 13.25, -6.50), "iron_lt")
-    g.box(bb, "blade_rib_stud_2", (5.75, 12.15, -6.80), (6.25, 12.55, -6.50), "iron_lt")
-    g.box(bb, "blade_spine_flange_l", (5.45, 12.45, -6.63), (5.75, 13.65, -4.70), "iron")
-    g.box(bb, "blade_spine_flange_r", (6.25, 12.45, -6.60), (6.55, 13.65, -4.70), "iron")
-    g.box(bb, "blade_rust_pit_1", (4.55, 12.85, -6.37), (4.95, 13.25, -6.00), "rust_dk")
-    g.box(bb, "blade_rust_pit_2", (7.05, 12.85, -6.37), (7.45, 13.25, -6.00), "rust_dk")
-    g.box(bb, "blade_rust_scale_1", (4.25, 12.15, -4.90), (4.85, 12.85, -4.60), "rust")
-    g.box(bb, "blade_rust_scale_2", (7.15, 12.15, -4.90), (7.75, 12.85, -4.60), "rust_dk")
-    g.box(bb, "blade_corner_bevel_l", (3.85, 11.35, -6.14), (4.25, 11.95, -5.60), "iron_lt")
-    g.box(bb, "blade_corner_bevel_r", (7.75, 11.35, -6.20), (8.15, 11.95, -5.60), "iron_lt")
-    g.box(bb, "blade_center_cramp", (5.65, 11.25, -6.40), (6.35, 11.65, -6.10), "rust_dk")
-    g.box(bb, "blade_crack_seam", (6.45, 11.85, -6.38), (6.75, 12.65, -6.07), "void")
-    g.box(bb, "blade_lip_rivet_l", (3.68, 12.85, -5.60), (3.95, 13.25, -5.30), "iron_lt")
-    g.box(bb, "blade_lip_rivet_r", (8.05, 12.85, -5.60), (8.32, 13.25, -5.30), "iron_lt")
+    """各部件微观几何细节补强。"""
+    # 1. 宽铁刃表面锻痕、凹坑与加固铆钉 (16 块)
+    bm = "blade_main"
+    g.box(bm, "blade_dimple_pit_1", ((3.95, 14.75, -5.45)), ((4.35, 14.98, -5.05)), "rust_dk")
+    g.box(bm, "blade_dimple_pit_2", ((7.65, 14.75, -5.45)), ((8.05, 14.98, -5.05)), "rust_dk")
+    g.box(bm, "blade_dimple_pit_3", ((4.85, 14.75, -6.45)), ((5.25, 14.98, -6.05)), "rust")
+    g.box(bm, "blade_dimple_pit_4", ((6.75, 14.75, -6.45)), ((7.15, 14.98, -6.05)), "rust")
+    g.box(bm, "blade_dimple_pit_5", ((4.15, 14.02, -6.15)), ((4.55, 14.25, -5.75)), "rust_dk")
+    g.box(bm, "blade_dimple_pit_6", ((7.45, 14.02, -6.15)), ((7.85, 14.25, -5.75)), "rust_dk")
+    g.box(bm, "blade_weld_rivet_l", ((4.05, 14.65, -4.75)), ((4.35, 15.05, -4.45)), "iron_lt")
+    g.box(bm, "blade_weld_rivet_r", ((7.65, 14.65, -4.75)), ((7.95, 15.05, -4.45)), "iron_lt")
+    g.box(bm, "blade_keel_bracket", ((5.75, 13.95, -5.85)), ((6.25, 14.25, -5.45)), "rust")
+    g.box(bm, "blade_spine_rivet_1", ((5.85, 15.10, -6.45)), ((6.15, 15.38, -6.15)), "iron_lt")
+    g.box(bm, "blade_spine_rivet_2", ((5.85, 15.10, -5.45)), ((6.15, 15.38, -5.15)), "iron_lt")
+    g.box(bm, "blade_wear_strip_1", ((3.75, 14.65, -6.25)), ((4.25, 14.88, -5.85)), "iron_lt")
+    g.box(bm, "blade_wear_strip_2", ((7.75, 14.65, -6.25)), ((8.25, 14.88, -5.85)), "iron_lt")
+    g.box(bm, "blade_crack_flaw_a", ((5.25, 14.45, -6.15)), ((5.55, 14.85, -5.85)), "void")
+    g.box(bm, "blade_crack_flaw_b", ((6.45, 14.45, -6.15)), ((6.75, 14.82, -5.85)), "void")
+    g.box(bm, "blade_root_flange_rib", ((5.45, 14.35, -4.95)), ((6.55, 14.72, -4.55)), "rust_dk")
 
-    # 2. 铸铁套管螺栓与木楔齿痕 (8 块)
-    hs = "hoe_socket"
-    g.box(hs, "socket_bracket_ear_l", (4.75, 14.25, -3.40), (5.05, 14.85, -2.90), "rust_dk")
-    g.box(hs, "socket_bracket_ear_r", (6.95, 14.25, -3.40), (7.25, 14.85, -2.90), "rust_dk")
-    g.box(hs, "socket_tighten_nut", (7.25, 14.35, -3.30), (7.55, 14.75, -3.00), "iron_lt")
-    g.box(hs, "socket_pin_head", (4.45, 14.35, -3.30), (4.75, 14.71, -3.00), "iron_lt")
-    g.box(hs, "socket_wedge_notch_1", (5.75, 15.65, -3.47), (6.25, 15.95, -3.27), "void")
-    g.box(hs, "socket_wedge_notch_2", (5.75, 15.65, -2.90), (6.25, 15.95, -2.63), "void")
-    g.box(hs, "socket_reinforce_band", (4.88, 14.05, -4.33), (7.12, 14.45, -2.17), "iron")
-    g.box(hs, "socket_corrosion_pit", (5.07, 14.93, -4.32), (5.55, 15.25, -4.10), "void")
+    # 2. 铸铁套管加强螺帽与固定铁片 (10 块)
+    soc = "iron_socket"
+    g.box(soc, "socket_strap_band_1", ((4.82, 14.75, -4.42)), ((7.18, 15.10, -2.18)), "iron")
+    g.box(soc, "socket_strap_band_2", ((4.80, 15.12, -4.42)), ((7.16, 15.55, -2.18)), "rust")
+    g.box(soc, "socket_iron_ear_l", ((4.65, 14.85, -3.55)), ((4.95, 15.35, -3.05)), "rust_dk")
+    g.box(soc, "socket_iron_ear_r", ((7.05, 14.85, -3.55)), ((7.35, 15.35, -3.05)), "rust_dk")
+    g.box(soc, "socket_tighten_stud", ((7.31, 14.95, -3.45)), ((7.65, 15.25, -3.15)), "iron_lt")
+    g.box(soc, "socket_rivet_stud", ((4.35, 14.95, -3.45)), ((4.62, 15.21, -3.15)), "iron_lt")
+    g.box(soc, "socket_wedge_cap", ((5.65, 16.25, -3.35)), ((6.35, 16.55, -3.05)), "hide_lt")
+    g.box(soc, "socket_corrosion_pit", ((5.15, 14.45, -4.47)), ((5.55, 14.85, -4.11)), "void")
+    g.box(soc, "socket_back_flange", ((5.25, 14.45, -2.35)), ((6.75, 15.45, -2.05)), "rust_dk")
+    g.box(soc, "socket_top_rim_lip", ((4.88, 15.77, -4.25)), ((7.12, 16.09, -2.35)), "iron_lt")
 
-    # 3. 枯木柄立体木瘤与防滑绳箍 (12 块)
-    hg = "handle_grip"
-    g.box(hg, "grip_knot_lump_1", (4.89, 10.35, -1.55), (5.15, 10.85, -1.05), "hide_dk")
-    g.box(hg, "grip_knot_lump_2", (6.85, 10.55, -0.65), (7.19, 11.02, -0.15), "hide_dk")
-    g.box(hg, "grip_wood_crest_1", (5.25, 9.55, -1.95), (6.75, 9.95, -1.65), "hide_lt")
-    g.box(hg, "grip_wood_crest_2", (5.25, 11.25, -1.95), (6.71, 11.65, -1.65), "hide_lt")
+    # 3. 握柄麻绳防滑编带与枯木节痕 (10 块)
+    hw = "handle_wrap"
+    g.box(hw, "wrap_rib_cross_1", ((4.88, 9.79, -3.82)), ((7.12, 10.40, -2.50)), "cord")
+    g.box(hw, "wrap_rib_cross_2", ((4.88, 10.61, -3.90)), ((7.12, 11.08, -2.49)), "cord_dk")
+    g.box(hw, "wrap_rib_cross_3", ((4.88, 11.25, -3.90)), ((7.12, 11.71, -2.55)), "cord")
+    g.box(hw, "wrap_strand_fluff_1", ((4.68, 10.05, -3.45)), ((5.04, 10.45, -3.05)), "cord_dk")
+    g.box(hw, "wrap_strand_fluff_2", ((7.02, 10.65, -3.45)), ((7.28, 11.05, -3.05)), "cord")
+    g.box(hw, "wrap_strand_fluff_3", ((4.66, 11.35, -3.45)), ((4.95, 11.70, -3.05)), "cord_dk")
 
-    hl = "handle_lower"
-    g.box(hl, "lower_wood_spur_1", (4.85, 8.25, 0.05), (5.15, 8.85, 0.65), "hide_dk")
-    g.box(hl, "lower_wood_spur_2", (6.85, 7.25, 0.41), (7.15, 7.85, 1.05), "hide_dk")
-    g.box(hl, "lower_cord_band_1", (4.92, 7.55, -0.15), (7.08, 8.05, 1.25), "cord_dk")
-    g.box(hl, "lower_cord_band_2", (4.92, 8.65, -0.37), (7.08, 9.15, 1.05), "cord")
-    g.box(hl, "lower_cord_knot", (7.02, 7.65, 0.45), (7.32, 8.15, 0.95), "cord_dk")
-    g.box(hl, "lower_cramp_iron", (5.75, 7.85, 1.38), (6.25, 8.35, 1.68), "rust")
+    hh = "handle_haft"
+    g.box(hh, "haft_wood_sprout_1", ((4.95, 8.45, -3.45)), ((5.25, 8.95, -2.95)), "hide_dk")
+    g.box(hh, "haft_wood_sprout_2", ((6.75, 7.65, -3.45)), ((7.05, 8.15, -2.95)), "hide_dk")
+    g.box(hh, "haft_cord_band_lo", ((5.05, 6.25, -4.02)), ((6.95, 6.75, -2.38)), "cord_dk")
+    g.box(hh, "haft_cramp_iron_lo", ((5.75, 6.35, -4.15)), ((6.25, 6.65, -3.85)), "rust")
 
-    hu = "handle_upper"
-    g.box(hu, "upper_cord_knot_f", (5.85, 12.35, -3.83), (6.15, 12.75, -3.50), "cord")
-    g.box(hu, "upper_cord_knot_b", (5.85, 13.05, -2.35), (6.15, 13.45, -2.12), "cord_dk")
-
-    # 4. 柄尾兽皮包头与铜铆钉 (8 块)
-    hb = "handle_butt"
-    g.box(hb, "butt_leather_stud_1", (4.68, 5.15, 1.55), (4.95, 5.45, 1.95), "iron_lt")
-    g.box(hb, "butt_leather_stud_2", (7.05, 5.15, 1.55), (7.32, 5.45, 1.95), "iron_lt")
-    g.box(hb, "butt_leather_stud_3", (5.85, 5.15, 0.45), (6.15, 5.45, 0.72), "iron_lt")
-    g.box(hb, "butt_leather_stud_4", (5.85, 5.15, 2.78), (6.15, 5.45, 3.05), "iron_lt")
-    g.box(hb, "butt_stitch_rim_1", (4.85, 4.75, 0.65), (5.25, 5.05, 1.05), "stitch")
-    g.box(hb, "butt_stitch_rim_2", (6.75, 4.75, 0.65), (7.18, 5.02, 1.05), "stitch")
-    g.box(hb, "butt_stitch_rim_3", (4.85, 4.75, 2.45), (5.25, 5.05, 2.85), "stitch")
-    g.box(hb, "butt_stitch_rim_4", (6.75, 4.75, 2.45), (7.15, 5.05, 2.85), "stitch")
-
-    # 5. 辨药小骨牌雕刻与挂扣 (6 块)
-    tc = "tally_charm"
-    g.box(tc, "charm_bead_spacer", (5.85, 1.02, 1.72), (6.15, 1.28, 1.98), "bone_stain")
-    g.box(tc, "charm_cord_whipping", (5.78, 2.65, 1.72), (6.22, 2.95, 1.98), "cord")
-    g.box(tc, "charm_tag_border_l", (5.52, 1.35, 1.68), (5.78, 2.55, 2.02), "bone_lt")
-    g.box(tc, "charm_tag_border_r", (6.22, 1.35, 1.68), (6.48, 2.55, 2.02), "bone_lt")
-    g.box(tc, "charm_tassel_strand_3", (5.85, 0.05, 1.55), (6.15, 0.75, 1.85), "cord_dk")
-    g.box(tc, "charm_tassel_bead_tip", (5.88, 0.25, 1.75), (6.12, 0.55, 2.06), "bone_stain")
-
-    # 6. 再追加 10 块细节使总数达 208 块
-    g.box(hs, "socket_iron_band_rim_1", (4.85, 13.95, -4.40), (7.15, 14.35, -4.13), "iron_lt")
-    g.box(hs, "socket_iron_band_rim_2", (4.85, 13.95, -2.40), (7.15, 14.35, -2.14), "iron_lt")
-    g.box(bb, "blade_rib_stud_3", (5.75, 13.45, -6.80), (6.25, 13.85, -6.50), "iron_lt")
-    g.box(bb, "blade_spine_tip_flange", (5.65, 11.45, -6.70), (6.35, 11.85, -6.40), "iron_lt")
-    g.box(hg, "grip_knot_lump_3", (5.10, 11.25, -1.63), (5.35, 11.65, -1.05), "hide_dk")
-    g.box(hg, "grip_knot_lump_4", (6.65, 11.22, -0.65), (6.99, 11.65, -0.15), "hide_dk")
-    g.box(hl, "lower_wood_spur_3", (5.05, 8.85, 0.25), (5.35, 9.25, 0.65), "hide_dk")
-    g.box(hl, "lower_cord_band_3", (4.92, 8.15, -0.25), (7.08, 8.55, 1.15), "cord_dk")
-    g.box(hb, "butt_leather_stud_5", (5.25, 5.45, 2.75), (5.55, 5.75, 3.02), "iron_lt")
-    g.box(hb, "butt_leather_stud_6", (6.45, 5.45, 2.75), (6.75, 5.75, 3.02), "iron_lt")
-    # ── 补充 46 块构件达到 206+ 方块
-    # 1. 锄面与套箍加固锔钉与锻痕 (14 块)
-    bb = "blade_body"
-    g.box(bb, "blade_flaw_chip_1", (4.15, 12.05, -6.15), (4.45, 12.45, -5.75), "rust_dk")
-    g.box(bb, "blade_flaw_chip_2", (7.45, 12.05, -6.15), (7.75, 12.45, -5.75), "rust_dk")
-    g.box(bb, "blade_bevel_ridge_l", (4.25, 13.05, -6.25), (4.65, 13.55, -5.85), "iron_lt")
-    g.box(bb, "blade_bevel_ridge_r", (7.35, 13.05, -6.25), (7.75, 13.55, -5.85), "iron_lt")
-    g.box(bb, "blade_weld_lump_1", (5.35, 13.85, -4.75), (5.75, 14.27, -4.35), "rust")
-    g.box(bb, "blade_weld_lump_2", (6.25, 13.85, -4.75), (6.65, 14.19, -4.35), "rust")
+    # 4. 柄尾防脱兽皮包头与铆钉 (8 块)
+    h_butt = "handle_butt"
+    g.box(h_butt, "butt_stud_pin_1", ((4.77, 4.15, -3.25)), ((5.02, 4.45, -2.95)), "iron_lt")
+    g.box(h_butt, "butt_stud_pin_2", ((7.04, 4.15, -3.25)), ((7.28, 4.45, -2.95)), "iron_lt")
+    g.box(h_butt, "butt_stud_pin_3", ((5.85, 4.15, -4.42)), ((6.15, 4.45, -4.12)), "iron_lt")
+    g.box(h_butt, "butt_stud_pin_4", ((5.85, 4.15, -2.28)), ((6.15, 4.45, -1.98)), "iron_lt")
+    g.box(h_butt, "butt_leather_rim_b", ((4.75, 3.83, -4.25)), ((7.25, 4.25, -2.15)), "hide_dk")
+    g.box(h_butt, "butt_stitch_rim_1", ((5.15, 3.55, -4.15)), ((5.55, 3.85, -3.85)), "stitch")
+    g.box(h_butt, "butt_stitch_rim_2", ((6.45, 3.55, -4.15)), ((6.85, 3.85, -3.85)), "stitch")
+    g.box(h_butt, "butt_stitch_rim_3", ((5.15, 3.55, -2.55)), ((5.55, 3.85, -2.25)), "stitch")
+    # ── 补充 68 个构件达到 206 cubes (>=200)
+    # 1. 5x3px 宽薄锄板扩展与强化 (20 块)
+    bm = "blade_main"
+    g.box(bm, "blade_flaw_spot_1", ((3.75, 14.25, -6.45)), ((4.15, 14.65, -6.05)), "rust_dk")
+    g.box(bm, "blade_flaw_spot_2", ((7.85, 14.25, -6.45)), ((8.25, 14.65, -6.05)), "rust_dk")
+    g.box(bm, "blade_flaw_spot_3", ((4.55, 14.25, -5.65)), ((4.95, 14.65, -5.25)), "rust")
+    g.box(bm, "blade_flaw_spot_4", ((7.05, 14.25, -5.65)), ((7.45, 14.65, -5.25)), "rust")
+    g.box(bm, "blade_weld_lump_3", ((5.25, 14.45, -5.15)), ((5.65, 14.85, -4.75)), "rust_dk")
+    g.box(bm, "blade_weld_lump_4", ((6.35, 14.45, -5.11)), ((6.75, 14.85, -4.75)), "rust_dk")
+    g.box(bm, "blade_corner_bevel_l", ((3.45, 14.15, -6.75)), ((3.85, 14.75, -6.15)), "iron_lt")
+    g.box(bm, "blade_corner_bevel_r", ((8.15, 14.15, -6.75)), ((8.55, 14.75, -6.15)), "iron_lt")
+    g.box(bm, "blade_spine_stud_a", ((5.75, 14.95, -6.05)), ((6.25, 15.25, -5.75)), "iron_lt")
+    g.box(bm, "blade_spine_stud_b", ((5.75, 14.95, -5.05)), ((6.25, 15.25, -4.75)), "iron_lt")
 
     be = "blade_edge"
-    g.box(be, "edge_hone_strip_l", (4.25, 9.85, -7.38), (4.75, 10.45, -7.05), "iron_lt")
-    g.box(be, "edge_hone_strip_m", (5.45, 9.85, -7.38), (6.55, 10.45, -7.05), "iron_lt")
-    g.box(be, "edge_hone_strip_r", (7.35, 9.85, -7.38), (7.85, 10.45, -7.05), "iron_lt")
-    g.box(be, "edge_notch_dent_1", (5.15, 10.25, -7.25), (5.38, 10.55, -6.95), "rust")
-    g.box(be, "edge_notch_dent_2", (6.75, 10.25, -7.25), (6.98, 10.55, -6.95), "rust")
+    g.box(be, "edge_hone_segment_1", ((3.65, 14.15, -7.88)), ((4.35, 14.63, -7.55)), "iron_lt")
+    g.box(be, "edge_hone_segment_2", ((5.35, 14.15, -7.88)), ((6.55, 14.65, -7.60)), "iron_lt")
+    g.box(be, "edge_hone_segment_3", ((7.55, 14.15, -7.88)), ((8.35, 14.67, -7.55)), "iron_lt")
+    g.box(be, "edge_burr_crumb_1", ((4.45, 14.25, -7.98)), ((4.75, 14.65, -7.65)), "rust_dk")
+    g.box(be, "edge_burr_crumb_2", ((7.25, 14.25, -7.98)), ((7.55, 14.65, -7.31)), "rust_dk")
 
-    bp = "blade_patches"
-    g.box(bp, "blade_lip_gusset_l", (3.85, 13.25, -5.25), (4.09, 13.75, -4.85), "rust_dk")
-    g.box(bp, "blade_lip_gusset_r", (7.89, 13.25, -5.25), (8.15, 13.75, -4.85), "rust_dk")
-    g.box(bp, "blade_patch_strap_c", (5.52, 12.35, -5.75), (6.45, 12.75, -5.45), "rust")
+    bc = "blade_cramps"
+    g.box(bc, "blade_cramp_bridge_1", ((4.35, 14.85, -5.92)), ((5.05, 15.15, -5.65)), "rust_dk")
+    g.box(bc, "blade_cramp_bridge_2", ((6.95, 14.85, -5.92)), ((7.65, 15.12, -5.65)), "rust_dk")
+    g.box(bc, "blade_rim_brace_l", ((3.38, 14.55, -5.55)), ((3.68, 15.05, -5.15)), "rust")
+    g.box(bc, "blade_rim_brace_r", ((8.32, 14.55, -5.55)), ((8.63, 15.05, -5.15)), "rust")
+    g.box(bc, "blade_scab_patch_c", ((5.65, 14.25, -6.15)), ((6.35, 14.65, -5.75)), "rust")
 
-    # 2. 铸铁套箍双耳与横栓 (8 块)
-    hci = "hoe_collar_iron"
-    g.box(hci, "collar_flange_ear_1", (4.65, 15.13, -4.15), (4.95, 15.63, -3.75), "iron")
-    g.box(hci, "collar_flange_ear_2", (7.05, 15.09, -4.15), (7.35, 15.59, -3.75), "iron")
-    g.box(hci, "collar_flange_ear_3", (4.65, 13.47, -4.15), (4.95, 13.87, -3.75), "rust")
-    g.box(hci, "collar_flange_ear_4", (7.05, 13.59, -4.15), (7.35, 14.01, -3.75), "rust")
-    g.box(hci, "collar_wedge_pin_top", (5.65, 15.85, -3.45), (6.31, 16.25, -3.15), "iron_lt")
-    g.box(hci, "collar_bracket_seam_1", (4.75, 14.55, -2.65), (7.25, 14.85, -2.35), "rust_dk")
-    g.box(hci, "collar_stud_side_l", (4.68, 14.27, -3.45), (4.95, 14.75, -3.15), "iron_lt")
-    g.box(hci, "collar_stud_side_r", (7.05, 14.27, -3.45), (7.29, 14.69, -3.15), "iron_lt")
+    # 2. 铸铁套管与加固抱箍细节 (18 块)
+    soc = "iron_socket"
+    g.box(soc, "socket_band_extra_1", ((4.82, 14.37, -4.72)), ((7.18, 14.75, -2.48)), "rust_dk")
+    g.box(soc, "socket_band_extra_2", ((4.82, 15.25, -4.72)), ((7.18, 15.62, -2.48)), "iron")
+    g.box(soc, "socket_bracket_lug_l", ((4.61, 14.45, -3.85)), ((4.85, 15.15, -3.35)), "rust_dk")
+    g.box(soc, "socket_bracket_lug_r", ((7.15, 14.45, -3.85)), ((7.47, 15.15, -3.35)), "rust_dk")
+    g.box(soc, "socket_bolt_pin_l", ((4.35, 14.65, -3.75)), ((4.61, 14.95, -3.45)), "iron_lt")
+    g.box(soc, "socket_bolt_nut_r", ((7.37, 14.65, -3.75)), ((7.65, 14.95, -3.45)), "iron_lt")
+    g.box(soc, "socket_wood_wedge_core", ((5.75, 16.27, -3.65)), ((6.25, 16.75, -3.25)), "hide_lt")
+    g.box(soc, "socket_wedge_pin_metal", ((5.85, 16.05, -3.75)), ((6.15, 16.45, -3.15)), "iron_lt")
 
-    # 3. 握柄麻绳防滑节与枯木纹理 (12 块)
-    hw = "handle_wraps"
-    g.box(hw, "wrap_cross_braid_1", (4.82, 9.85, -1.55), (7.18, 10.29, -0.01), "cord")
-    g.box(hw, "wrap_cross_braid_2", (4.82, 10.60, -1.50), (7.18, 11.05, 0.08), "cord_dk")
-    g.box(hw, "wrap_cross_braid_3", (4.82, 11.14, -1.55), (7.18, 11.75, 0.11), "cord")
-    g.box(hw, "wrap_cord_strand_a", (4.68, 10.15, -1.15), (4.95, 10.65, -0.65), "cord_dk")
-    g.box(hw, "wrap_cord_strand_b", (7.05, 10.85, -1.15), (7.32, 11.35, -0.65), "cord")
-    g.box(hw, "wrap_knot_tuft", (4.75, 11.65, -1.25), (5.05, 11.90, -0.85), "cord_dk")
+    col = "iron_collar"
+    g.box(col, "collar_flange_ear_1", ((4.65, 15.50, -4.75)), ((4.95, 15.91, -4.35)), "iron")
+    g.box(col, "collar_flange_ear_2", ((7.05, 15.42, -4.75)), ((7.35, 15.88, -4.35)), "iron")
+    g.box(col, "collar_flange_ear_3", ((4.65, 13.93, -4.75)), ((4.95, 14.35, -4.35)), "rust")
+    g.box(col, "collar_flange_ear_4", ((7.05, 13.95, -4.75)), ((7.35, 14.35, -4.35)), "rust")
+    g.box(col, "collar_lip_flange_t", ((4.72, 15.75, -4.78)), ((7.28, 16.05, -2.42)), "iron_lt")
+    g.box(col, "collar_lip_flange_b", ((4.72, 13.85, -4.78)), ((7.28, 14.15, -2.42)), "iron_lt")
+    g.box(col, "collar_rivet_stud_1", ((4.62, 15.30, -3.75)), ((4.99, 15.53, -3.45)), "iron_lt")
+    g.box(col, "collar_rivet_stud_2", ((6.99, 15.31, -3.45)), ((7.39, 15.61, -3.15)), "iron_lt")
+    g.box(col, "collar_rivet_stud_3", ((4.65, 14.35, -3.75)), ((4.95, 14.65, -3.45)), "iron_lt")
+    g.box(col, "collar_rivet_stud_4", ((7.05, 14.35, -3.75)), ((7.35, 14.61, -3.45)), "iron_lt")
 
-    hg = "handle_grip"
-    g.box(hg, "grip_seam_flaw_1", (5.10, 9.95, -1.87), (5.45, 10.75, -1.51), "void")
-    g.box(hg, "grip_seam_flaw_2", (6.55, 10.35, -1.85), (6.87, 11.15, -1.55), "void")
-    g.box(hg, "grip_wood_knot_spur", (6.95, 9.65, -0.85), (7.25, 10.11, -0.35), "hide_dk")
-    g.box(hg, "grip_sweat_ridge", (5.35, 10.25, 0.05), (6.65, 10.85, 0.35), "hide_dk")
-    g.box(hg, "grip_leather_patch_l", (4.88, 9.55, -1.25), (5.18, 10.35, -0.45), "hide_lt")
-    g.box(hg, "grip_leather_patch_r", (6.82, 9.55, -1.25), (7.12, 10.35, -0.45), "hide_lt")
+    # 3. 笔直木柄直贯纤维与握把缠绳立体细节 (18 块)
+    hh = "handle_haft"
+    g.box(hh, "haft_grain_crest_1", ((5.45, 4.45, -4.38)), ((6.55, 9.45, -4.05)), "hide_lt")
+    g.box(hh, "haft_grain_crest_2", ((5.45, 9.45, -4.35)), ((6.55, 14.45, -4.05)), "hide_lt")
+    g.box(hh, "haft_grain_trough_1", ((5.45, 4.42, -2.85)), ((6.55, 9.45, -2.55)), "hide_dk")
+    g.box(hh, "haft_grain_trough_2", ((5.45, 9.45, -2.85)), ((6.55, 14.45, -2.60)), "hide_dk")
+    g.box(hh, "haft_knot_bark_a", ((4.91, 11.21, -3.72)), ((5.15, 11.75, -3.25)), "hide_dk")
+    g.box(hh, "haft_knot_bark_b", ((6.85, 12.28, -3.75)), ((7.15, 12.75, -3.25)), "hide_dk")
 
-    # 4. 柄尾兽皮包头缝线与挂绳圈 (12 块)
+    hw = "handle_wrap"
+    g.box(hw, "wrap_cross_ridge_1", ((4.85, 9.75, -4.15)), ((7.15, 10.25, -2.85)), "cord")
+    g.box(hw, "wrap_cross_ridge_2", ((4.85, 10.25, -4.15)), ((7.15, 10.75, -2.85)), "cord_dk")
+    g.box(hw, "wrap_cross_ridge_3", ((4.85, 10.75, -4.15)), ((7.15, 11.25, -2.85)), "cord")
+    g.box(hw, "wrap_cross_ridge_4", ((4.85, 11.31, -4.15)), ((7.15, 11.69, -2.85)), "cord_dk")
+    g.box(hw, "wrap_cross_ridge_5", ((4.85, 11.75, -4.15)), ((7.15, 12.25, -2.85)), "cord")
+    g.box(hw, "wrap_knot_point_1", ((4.72, 9.95, -3.75)), ((4.98, 10.38, -3.35)), "cord_dk")
+    g.box(hw, "wrap_knot_point_2", ((7.06, 10.55, -3.75)), ((7.34, 10.89, -3.35)), "cord")
+    g.box(hw, "wrap_knot_point_3", ((4.72, 11.09, -3.79)), ((4.98, 11.49, -3.35)), "cord_dk")
+    g.box(hw, "wrap_knot_point_4", ((7.02, 11.73, -3.70)), ((7.28, 12.10, -3.35)), "cord")
+    g.box(hw, "wrap_whipping_cord_t", ((5.05, 12.25, -4.25)), ((6.95, 12.55, -2.65)), "cord_dk")
+    g.box(hw, "wrap_whipping_cord_b", ((5.05, 9.35, -4.25)), ((6.95, 9.71, -2.65)), "cord_dk")
+    g.box(hw, "wrap_end_tuck", ((5.85, 12.15, -4.38)), ((6.15, 12.60, -4.09)), "cord")
+
+    # 4. 柄尾兽皮包头与挂绳骨牌流苏 (12 块)
     hb = "handle_butt"
-    g.box(hb, "butt_leather_rim_top", (4.64, 5.55, 0.62), (7.23, 5.95, 2.88), "hide_dk")
-    g.box(hb, "butt_leather_wrap_fold", (4.82, 5.05, 0.49), (7.18, 5.53, 0.85), "hide")
-    g.box(hb, "butt_leather_stud_b1", (5.25, 5.45, 0.55), (5.55, 5.75, 0.88), "iron_lt")
-    g.box(hb, "butt_leather_stud_b2", (6.45, 5.45, 0.55), (6.75, 5.75, 0.88), "iron_lt")
-    g.box(hb, "butt_stitch_rim_5", (5.75, 4.45, 1.35), (6.17, 4.75, 1.75), "stitch")
-    g.box(hb, "butt_stitch_rim_6", (5.75, 4.45, 2.05), (6.25, 4.75, 2.45), "stitch")
+    g.box(hb, "butt_leather_cap_flare", ((4.69, 4.30, -4.65)), ((7.25, 4.59, -2.31)), "hide_lt")
+    g.box(hb, "butt_stud_brass_1", ((4.72, 4.45, -3.55)), ((4.98, 4.75, -3.25)), "iron_lt")
+    g.box(hb, "butt_stud_brass_2", ((7.02, 4.45, -3.55)), ((7.28, 4.75, -3.25)), "iron_lt")
+    g.box(hb, "butt_stitch_rim_4", ((6.45, 3.55, -2.85)), ((6.85, 3.85, -2.55)), "stitch")
 
-    tc = "tally_cord"
-    g.box(tc, "tally_loop_cross_tie", (5.65, 3.85, 1.60), (6.35, 4.25, 2.05), "cord_dk")
-    g.box(tc, "tally_cord_cinch_bone", (5.71, 4.15, 1.45), (6.25, 4.55, 1.83), "bone")
-    g.box(tc, "tally_loop_reinforce_l", (5.52, 3.25, 1.62), (5.82, 3.95, 1.98), "cord_dk")
-    g.box(tc, "tally_loop_reinforce_r", (6.18, 3.25, 1.62), (6.48, 3.95, 1.98), "cord")
+    tl = "tally_loop"
+    g.box(tl, "loop_cinch_ring_1", ((5.72, 3.75, -3.65)), ((6.28, 4.15, -3.22)), "cord_dk")
+    g.box(tl, "loop_cinch_bone_peg", ((5.75, 3.95, -3.55)), ((6.25, 4.35, -3.25)), "bone")
+    g.box(tl, "loop_strand_twist_l", ((5.55, 2.35, -3.65)), ((5.85, 3.15, -3.35)), "cord_dk")
+    g.box(tl, "loop_strand_twist_r", ((6.15, 2.35, -3.55)), ((6.45, 3.15, -3.25)), "cord")
 
-    t_ch = "tally_charm"
-    g.box(t_ch, "charm_bead_collar", (5.82, 0.70, 1.72), (6.18, 0.98, 1.98), "bone_dk")
-    g.box(t_ch, "charm_tag_peg_pin", (5.75, 1.85, 1.58), (6.25, 2.15, 1.85), "bone_lt")
+    tt = "tally_tag"
+    g.box(tt, "tag_border_flange_l", ((5.45, 0.95, -3.25)), ((5.68, 2.15, -2.85)), "bone_lt")
+    g.box(tt, "tag_border_flange_r", ((6.32, 0.95, -3.27)), ((6.55, 2.15, -2.85)), "bone_lt")
+
+    tf = "tally_floss"
+    g.box(tf, "floss_bead_spacer_metal", ((5.85, 0.92, -3.65)), ((6.11, 1.18, -3.35)), "iron_lt")
+    g.box(tf, "floss_strand_tassel_4", ((5.86, 0.05, -3.60)), ((6.14, 0.55, -3.35)), "cord")
 
 
 
 PART_FUNCS = {
-    "socket": part_socket,
-    "collar": part_collar_iron,
-    "neck": part_blade_neck,
-    "blade": part_blade_body,
-    "edge": part_blade_edge,
-    "patches": part_blade_patches,
-    "handle_upper": part_handle_upper,
-    "handle_grip": part_handle_grip,
-    "handle_wraps": part_handle_wraps,
-    "handle_lower": part_handle_lower,
+    "handle_haft": part_handle_haft,
+    "handle_bark": part_handle_bark,
+    "handle_wrap": part_handle_wrap,
     "handle_butt": part_handle_butt,
-    "tally_cord": part_tally_cord,
-    "tally_charm": part_tally_charm,
+    "tally_loop": part_tally_loop,
+    "tally_tag": part_tally_tag,
+    "tally_floss": part_tally_floss,
+    "iron_socket": part_iron_socket,
+    "iron_collar": part_iron_collar,
+    "blade_root": part_blade_root,
+    "blade_main": part_blade_main,
+    "blade_edge": part_blade_edge,
+    "blade_cramps": part_blade_cramps,
     "details": part_details,
 }
 
-# SPEC 声明
 SPEC = GearSpec(
     gear_id="yao_chu_tool",
     model_name="YaoChuTool",
@@ -498,8 +502,8 @@ SPEC = GearSpec(
     asym=ASYM_BONES,
     soft_over=SOFT_OVER,
     min_bones=10,
-    wear_note="挂点：右手手持（凡器档采药小锄，全长约15-16px，右手紧握）",
-    worn_focus=((6.0, 11.5, -1.0), 22.0),
+    wear_note="挂点：右手手持（笔直枯木柄 + 5x3px宽薄铁刃，小号锄/镐）",
+    worn_focus=((6.0, 11.5, -4.5), 24.0),
     round_label="round 1/3",
     textured=False,
 )
