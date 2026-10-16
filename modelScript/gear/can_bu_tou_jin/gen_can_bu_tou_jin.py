@@ -333,6 +333,7 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：头（头盒 x∈[-4,4], y∈[24,32], z∈[-4,4]）+ 额前骨簪 + 侧后双垂布尾",
     worn_focus=((0.0, 27.5, 0.0), 20.0),
+    texture_overrides={"stitch": "gear_stitch_lt"},  # 画笔库里 gear_stitch 已是腰挂件的深线，这里用浅粗线
     round_label="round 3/3",
 )
 

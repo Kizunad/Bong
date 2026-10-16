@@ -298,6 +298,8 @@ SPEC = GearSpec(
     min_bones=10,
     wear_note="挂点：双前臂（双前臂 y∈[12.08, 17.5], 右臂 x∈[4,8], 左臂 x∈[-8,-4]）",
     worn_focus=((0.0, 14.5, 0.0), 20.0),
+    # 画笔库里 gear_fur / gear_stitch 已被腰挂件占用（浅黄毛 / 深线），这里用灰毛与浅粗线
+    texture_overrides={"stitch": "gear_stitch_lt", "fur": "gear_fur_gr", "fur_dk": "gear_fur_gr_dk"},
     round_label="round 3/3",
 )
 

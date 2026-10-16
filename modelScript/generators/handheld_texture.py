@@ -58,6 +58,8 @@
   gear_herb_*(green/green_dk/pale/brown/brown_dk) 干草药叶：居中粗叶脉 + 斜侧脉 + 卷枯叶缘；gear_herb_seed 干籽穗（1px 一粒带暗缝）
   gear_ore_*(grey/dk/rust/fleck) 矿石：三档量化切面 + 暗裂 + 亮晶点；gear_cinnabar(_dk) 丹砂粉涂；gear_moss(_dk/_lt/_ash) 灰烬苔簇
   gear_leather(_dk/_lt) 皮；gear_stitch 针脚；gear_fur 浅毛；gear_hoof(_dk) 蹄角；gear_wood(_lt/_dk) 旧木板；gear_rag_*/gear_red_cord 破布 / 红绳；gear_hide_pale_dk 深一档浅兽皮
+  gear_glass(_dk) 浑浊碎琉璃；gear_glow_core / gear_glow_flame 灯芯 / 火舌（高对比，不做真发光）
+  gear_straw(_lt/_dk) 枯草编；gear_stem 草茎；gear_toe(_dk) 脚趾皮；gear_fur_gr(_dk) 灰毛；gear_stitch_lt 浅粗线；gear_patch_lt 浅补丁皮；gear_cord_lt 浅草绳
   skull_bone / skull_bone_old   颅骨壳：象牙骨 / 旧骨；crab_shell / crab_shell_dark 锈橙蟹甲；lichen 壳上苔；barnacle 藤壶
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
@@ -2221,3 +2223,22 @@ GEAR_BATCH2_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_MATERIALS.items()})
+
+# 第二批贴身件（绑腿 / 护腕 / 面巾 / 裹脚 / 头巾）补充：草 / 趾 / 灰毛 / 浅线 / 浅补丁 / 浅草绳。
+# 灰毛 / 浅线与上面腰挂件的 gear_fur / gear_stitch（浅黄毛 / 深线）同名异色，这里改名带后缀，
+# 对应的生成器用 texture_overrides 指过来，两边的画法都保留。
+GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_cord_lt": (_rope("#8c6e40", "#c2a46c", 941), "#b29868"),
+    "gear_patch_lt": (_leather("#947256", 942), "#947256"),
+    "gear_stitch_lt": (_burlap("#bcae94", 943, grime=0.1), "#bcae94"),
+    "gear_fur_gr": (_fur("#9e907a", "#c4b69c", 944), "#baa894"),
+    "gear_fur_gr_dk": (_fur("#6a5e4e", "#8e806e", 945), "#887a66"),
+    "gear_straw": (_weave("#8c7244", "#baa068", 946), "#a88e60"),
+    "gear_straw_lt": (_weave("#a88e58", "#d2ba84", 947), "#c2aa76"),
+    "gear_straw_dk": (_weave("#5e4828", "#82683e", 948), "#76603e"),
+    "gear_stem": (_wood("#765a36", "#9a7e52", 949), "#8a7248"),
+    "gear_toe": (_skin("#88807a", 950, vein=0.02), "#88807a"),
+    "gear_toe_dk": (_skin("#706862", 951, vein=0.02), "#706862"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
