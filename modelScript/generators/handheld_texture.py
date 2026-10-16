@@ -58,6 +58,8 @@
   gear_herb_*(green/green_dk/pale/brown/brown_dk) 干草药叶：居中粗叶脉 + 斜侧脉 + 卷枯叶缘；gear_herb_seed 干籽穗（1px 一粒带暗缝）
   gear_ore_*(grey/dk/rust/fleck) 矿石：三档量化切面 + 暗裂 + 亮晶点；gear_cinnabar(_dk) 丹砂粉涂；gear_moss(_dk/_lt/_ash) 灰烬苔簇
   gear_leather(_dk/_lt) 皮；gear_stitch 针脚；gear_fur 浅毛；gear_hoof(_dk) 蹄角；gear_wood(_lt/_dk) 旧木板；gear_rag_*/gear_red_cord 破布 / 红绳；gear_hide_pale_dk 深一档浅兽皮
+  gear_glass(_dk) 浑浊碎琉璃；gear_glow_core / gear_glow_flame 灯芯 / 火舌（高对比，不做真发光）
+  gear_straw(_lt/_dk) 枯草编；gear_stem 草茎；gear_toe(_dk) 脚趾皮；gear_fur_gr(_dk) 灰毛；gear_stitch_lt 浅粗线；gear_patch_lt 浅补丁皮；gear_cord_lt 浅草绳
   skull_bone / skull_bone_old   颅骨壳：象牙骨 / 旧骨；crab_shell / crab_shell_dark 锈橙蟹甲；lichen 壳上苔；barnacle 藤壶
 
 没有列出的材质返回 None，调用方自己处理（经脉工厂的肉、膜等走 pixel_texture 的画笔）。
@@ -2165,3 +2167,78 @@ GEAR_WAIST_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_WAIST_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_WAIST_MATERIALS.items()})
+
+
+# ---- 末土第二批装备（护目镜琉璃 / 骨灯烈焰）补充 ----------------------------------------------------
+
+
+def _glass(base_a: str, base_b: str, seed: int, crack_amount: float = 0.08) -> Callable[[dict], Painter]:
+    """浑浊碎琉璃：青灰绿矿石底，中心有透亮的高对比水光高光，间杂细小暗气泡点与裂纹。"""
+    dark, light = hex_color(base_a), hex_color(base_b)
+    sheen, crack = shade(light, 0.45), shade(dark, -0.45)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            n = value_noise(p, 2.2, seed)
+            color = mix(dark, light, n * 1.2 - 0.1)
+            roll = texel_noise(p, seed + 1)
+            if roll < crack_amount or abs(value_noise(p, 3.2, seed + 2) - 0.5) < 0.04:
+                color = mix(color, crack, 0.75)
+            elif roll > 0.93:
+                color = mix(color, sheen, 0.8)
+            if _edge_distance(cube, p, axis) < 0.4:
+                color = shade(color, -0.15)
+            return shade(color, (texel_noise(p, seed + 3) - 0.5) * 0.08)
+
+        return paint
+
+    return factory
+
+
+def _flame(base: str, core: str, seed: int) -> Callable[[dict], Painter]:
+    """跃动火舌：面心最亮、边缘渐变烈焰色，高对比度耀眼火光。"""
+    c_base, c_core = hex_color(base), hex_color(core)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            depth = min(_edge_distance(cube, p, axis), 1.8) / 1.8
+            color = mix(c_base, c_core, depth * 0.9)
+            flicker = value_noise((along * 2.0, across * 3.0, 0.0), 1.2, seed)
+            color = shade(color, (flicker - 0.5) * 0.22)
+            if texel_noise(p, seed + 1) > 0.92:
+                color = mix(color, hex_color("#ffffff"), 0.6)
+            return color
+
+        return paint
+
+    return factory
+
+
+GEAR_BATCH2_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_glass": (_glass("#6e9c8e", "#b2d8cc", 981, crack_amount=0.06), "#9cb6ac"),
+    "gear_glass_dk": (_glass("#365048", "#5a786e", 982, crack_amount=0.25), "#48645b"),
+    "gear_glow_core": (_glint("#ffe888", "#ffffff", 985), "#fff2aa"),
+    "gear_glow_flame": (_flame("#d84e14", "#ffb428", 986), "#f5af3c"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_MATERIALS.items()})
+
+# 第二批贴身件（绑腿 / 护腕 / 面巾 / 裹脚 / 头巾）补充：草 / 趾 / 灰毛 / 浅线 / 浅补丁 / 浅草绳。
+# 灰毛 / 浅线与上面腰挂件的 gear_fur / gear_stitch（浅黄毛 / 深线）同名异色，这里改名带后缀，
+# 对应的生成器用 texture_overrides 指过来，两边的画法都保留。
+GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_cord_lt": (_rope("#8c6e40", "#c2a46c", 941), "#b29868"),
+    "gear_patch_lt": (_leather("#947256", 942), "#947256"),
+    "gear_stitch_lt": (_burlap("#bcae94", 943, grime=0.1), "#bcae94"),
+    "gear_fur_gr": (_fur("#9e907a", "#c4b69c", 944), "#baa894"),
+    "gear_fur_gr_dk": (_fur("#6a5e4e", "#8e806e", 945), "#887a66"),
+    "gear_straw": (_weave("#8c7244", "#baa068", 946), "#a88e60"),
+    "gear_straw_lt": (_weave("#a88e58", "#d2ba84", 947), "#c2aa76"),
+    "gear_straw_dk": (_weave("#5e4828", "#82683e", 948), "#76603e"),
+    "gear_stem": (_wood("#765a36", "#9a7e52", 949), "#8a7248"),
+    "gear_toe": (_skin("#88807a", 950, vein=0.02), "#88807a"),
+    "gear_toe_dk": (_skin("#706862", 951, vein=0.02), "#706862"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
