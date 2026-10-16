@@ -502,8 +502,13 @@ SPEC = XiuTieTouKuiSpec(
     min_bones=10,
     wear_note="挂点：头 · 圆穹半球盔顶+外翻大帽檐+额前大矿灯座高对比反射镜+侧面凹坑铆钉",
     worn_focus=((0.0, 29.5, 0.0), 18.0),
-    textured=False,
-    round_label="round 1/3",
+    tex_views=(
+        ("FRONT 正面（-z）", 180.0, 0.0),
+        ("3/4 前右斜", 28.0, 18.0),
+        ("LEFT 左侧（-x）", 90.0, 0.0),
+    ),
+    textured=True,
+    round_label="round 3/3",
 )
 
 if __name__ == "__main__":

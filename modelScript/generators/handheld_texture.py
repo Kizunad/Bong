@@ -2242,3 +2242,13 @@ GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+
+
+# 碎矿工专属装备（锈铁头盔 xiu_tie_tou_kui）材质补充
+GEAR_XIU_TIE_TOU_KUI_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "gear_glass_hi": (_glint("#c0ede4", "#ffffff", 994), "#f8fffc"),
+    "gear_bronze": (_copper_edge(995, "#826642", "#ba9866"), "#826642"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in GEAR_XIU_TIE_TOU_KUI_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_XIU_TIE_TOU_KUI_MATERIALS.items()})
+
