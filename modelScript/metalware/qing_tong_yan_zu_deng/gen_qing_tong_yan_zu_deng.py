@@ -39,9 +39,18 @@ MATS = {
     "dead":      (54, 52, 50),      # 暗掉的聚光阵纹：更暗更灰，不发光
     "soot":      (34, 30, 28),      # 结焦黑渍 / 烧短的灯芯
     "oil":       (92, 66, 34),      # 盘底薄薄一层灯油（暗琥珀）
+    "flame":     (240, 150, 50),    # 点亮版的火舌（高对比，不做真发光；熄灭版不用）
+    "flame_core": (255, 226, 130),  # 点亮版的焰心
     "void":      (18, 16, 14),
 }
 SOFT_OVER = soft_pairs(("soot", "oil"), tuple(MATS))
+
+# 生成器材质名 → 画笔库（handheld_texture.py 的 metal_bz_* 一组，六件青铜器共用；火舌用库里现成的 gear_glow_*）
+BZ_TEXTURES = {
+    "bz": "metal_bz", "bz_relief": "metal_bz_relief", "bz_pat": "metal_bz_pat", "bz_worn": "metal_bz_worn",
+    "bz_dk": "metal_bz_dk", "dead": "metal_bz_dead", "soot": "metal_bz_soot", "oil": "metal_bz_oil",
+    "flame": "gear_glow_flame", "flame_core": "gear_glow_core",
+}
 
 # ───────────────────────────────────────────────────────────── 尺寸（px）
 # 纵向分段：参考图 y(px) → 模型 y = (1140 - y) * 16 / 1112
@@ -225,6 +234,18 @@ def part_soot(g: Gear) -> None:
     g.box(b, "crust_d", (-0.5, OIL_TOP - 0.04, -0.5), (0.5, OIL_TOP + 0.2, 0.5), "soot")
 
 
+FLAME_BONE = ("flame", "dish", (0.0, OIL_TOP + 0.5, 0.0), "点亮版的火舌（只在 Lit 模型里：焰心 + 两级火舌，高对比，不做真发光）")
+
+
+def part_flame(g: Gear) -> None:
+    """点亮版的火舌：坐在烧短的灯芯顶上，焰心（亮黄）+ 两级收窄的火舌（橙）。靠对比出光感，不是发光层。"""
+    b = "flame"
+    y0 = OIL_TOP + 0.5
+    g.box(b, "flame_core", (-0.26, y0, -0.26), (0.26, y0 + 0.32, 0.26), "flame_core")
+    g.box(b, "flame_mid", (-0.22, y0 + 0.32, -0.22), (0.22, y0 + 0.72, 0.22), "flame")
+    g.box(b, "flame_tip", (-0.14, y0 + 0.72, -0.14), (0.14, y0 + 1.08, 0.14), "flame")
+
+
 PARTS = {
     "toes": part_toes,
     "leg": part_leg,
@@ -248,7 +269,8 @@ SPEC = MetalSpec(
     asym=ASYM_BONES,
     soft_over=SOFT_OVER,
     min_bones=8,
-    round_label="round 1/3",
+    round_label="round 3/3",
+    texture_overrides=BZ_TEXTURES,
     side_yaw=90.0,
     ref_front_box=(117, 28, 574, 1140),
     ref_side_box=(775, 30, 1200, 1140),
@@ -272,5 +294,44 @@ SPEC = MetalSpec(
 )
 
 
+def write_lit() -> None:
+    """点亮的高对比版：同一套几何 + 灯芯上一簇火舌，另存 QingTongYanZuDengLit.bbmodel / _tex.bbmodel，附 check_lit.png。"""
+    import dataclasses
+    import json
+
+    import gear_kit
+    from PIL import Image
+
+    lit = dataclasses.replace(SPEC, model_name="QingTongYanZuDengLit", bones=BONES + [FLAME_BONE],
+                              parts={**PARTS, "flame": part_flame}, min_bones=9)
+    g = lit.build()
+    total = metal_review.run_gates(lit, g)
+    if total:
+        raise SystemExit(f"点亮版门禁仍有 {total} 处违例")
+    gear_kit.write_model(g, HERE / "QingTongYanZuDengLit.bbmodel", lit.model_name)
+    tex = gear_kit.write_textured(lit, g, HERE / "QingTongYanZuDengLit_tex.bbmodel")
+    lo, hi = metal_review.model_bounds(g)
+    center = tuple((lo[i] + hi[i]) / 2 for i in range(3))
+    span = max(hi[i] - lo[i] for i in range(3)) * 1.1
+    cell = 480
+    views = (("FRONT 正面", 180.0, 0.0, span), ("3/4 右前上方", -150.0, 18.0, span), ("盘口特写", -150.0, 22.0, span * 0.38))
+    sheet = Image.new("RGB", (cell * len(views) + 4 * (len(views) + 1), cell + 40), (28, 29, 33))
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(sheet)
+    d.text((8, 6), f"{lit.title} 点亮版（高对比，不做真发光）· {g.total()} cubes", fill=(235, 235, 235), font=gear_kit.load_font(16))
+    magenta = 0
+    for k, (label, yaw, pitch, sp) in enumerate(views):
+        c = center if sp == span else (0.0, 13.7, 0.0)
+        img = metal_review.render_view(tex, yaw, pitch, cell, c, sp, shading="mc")
+        magenta += metal_review.count_magenta(img)
+        sheet.paste(img, (4 + k * (cell + 4), 34))
+        d.text((10 + k * (cell + 4), 38), label, fill=(235, 235, 235), font=gear_kit.load_font(13))
+    out = lit.review_dir / "check_lit.png"
+    sheet.save(out)
+    print(f"✓ 点亮版 {g.total()} cubes → check_lit.png（洋红像素 {magenta}）")
+
+
 if __name__ == "__main__":
     metal_review.main(SPEC)
+    if len(sys.argv) == 1:
+        write_lit()
