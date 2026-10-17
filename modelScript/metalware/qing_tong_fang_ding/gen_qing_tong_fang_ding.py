@@ -44,6 +44,13 @@ MATS = {
 }
 SOFT_OVER = soft_pairs(("ash", "ash_dk", "soot"), tuple(MATS))
 
+# 生成器材质名 → 画笔库（handheld_texture.py 的 metal_bz_* 一组，六件青铜器共用）
+BZ_TEXTURES = {
+    "bz": "metal_bz", "bz_relief": "metal_bz_relief", "bz_pat": "metal_bz_pat", "bz_worn": "metal_bz_worn",
+    "bz_dk": "metal_bz_dk", "dead": "metal_bz_dead", "soot": "metal_bz_soot", "ash": "metal_bz_ash",
+    "ash_dk": "metal_bz_ash_dk",
+}
+
 # ───────────────────────────────────────────────────────────── 尺寸（px）
 # 纵向分段，数值取自参考图正视各部件占总高的比例 × 20px（见模块说明）
 LEG_TOP = 7.6           # 腿顶 = 器身底
@@ -409,7 +416,8 @@ SPEC = MetalSpec(
     asym=ASYM_BONES,
     soft_over=SOFT_OVER,
     min_bones=10,
-    round_label="round 1/3",
+    round_label="round 3/3",
+    texture_overrides=BZ_TEXTURES,
     ref_front_box=(34, 70, 826, 942),
     ref_side_box=(935, 72, 1510, 942),
     height_parts=(

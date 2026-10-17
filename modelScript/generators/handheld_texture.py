@@ -2242,3 +2242,98 @@ GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+
+
+# ---- 旧时青铜器画笔（metal_bz_*）：红褐铜底 + 成片青绿锈 + 手磨亮铜；灵纹暗、不发光 -----------------------------
+# 青铜方鼎 / 雁足灯 / 漏壶 / 镜 / 铃 / 权六件共用这一组，名字与定义六件完全一致。
+# 锈不是撒点：用世界坐标的低频噪声分出「一整片一整片」的绿斑，斑块边缘带一圈暗铜晕，同一片锈跨立方体连续；
+# 手磨处（棱边、把手、足底）锈被磨掉露出亮铜。texel 级随机只给 ±1.5% 的明度，避免碎噪点。
+
+
+def _smoothstep(x: float) -> float:
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
+
+
+def _bronze(base: str, seed: int, cover: float, worn: str = "#d39a5c", worn_width: float = 0.5,
+            patina_a: str = "#437563", patina_b: str = "#659a82") -> Callable[[dict], Painter]:
+    """青铜：红褐铜底（低频明暗 ±5%）+ 成片青绿锈（占面积 cover，两档绿、斑边一圈暗铜晕）+ 棱边手磨亮铜。"""
+    c_base, c_worn = hex_color(base), hex_color(worn)
+    c_pa, c_pb = hex_color(patina_a), hex_color(patina_b)
+    c_halo = shade(c_base, -0.28)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = shade(c_base, (value_noise(p, 3.2, seed) - 0.5) * 0.10 + (texel_noise(p, seed + 1) - 0.5) * 0.03)
+            # 成片锈：大尺度（4.5px）为主、中尺度（2.2px）修边；超过阈值的区域连成一片
+            field = 0.62 * value_noise(p, 4.5, seed + 2) + 0.38 * value_noise(p, 2.2, seed + 3)
+            threshold = 1.0 - cover
+            strength = 0.0
+            if cover > 0.0:
+                strength = _smoothstep((field - threshold) / 0.10)
+                if strength > 0.0:
+                    green = mix(c_pa, c_pb, value_noise(p, 1.7, seed + 4))
+                    color = mix(color, green, 0.92 * strength)
+                elif field > threshold - 0.035:
+                    color = mix(color, c_halo, 0.55)            # 斑块外沿一圈暗铜晕
+            # 手磨：棱边一个 texel 内露出亮铜（锈被磨掉，磨得越狠绿越少）
+            if worn_width > 0.0:
+                dist = _edge_distance(cube, p, axis)
+                if dist < worn_width:
+                    color = mix(color, c_worn, 0.80 * (1.0 - strength * 0.5))
+            return color
+
+        return paint
+
+    return factory
+
+
+def _bronze_flat(base: str, seed: int, spread: float = 0.04) -> Callable[[dict], Painter]:
+    """近乎平色的暗纹 / 暗底：只有 ±spread 的低频明暗，没有锈、没有磨亮（暗掉的灵纹、空匾底、焦渣）。"""
+    c_base = hex_color(base)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            return shade(c_base, (value_noise(p, 2.6, seed) - 0.5) * 2 * spread)
+
+        return paint
+
+    return factory
+
+
+def _bronze_face(seed: int) -> Callable[[dict], Painter]:
+    """镜面：磨得发白的银灰，低频云斑，边缘一圈青绿锈蚕食进来。"""
+    c_face, c_dull, c_green = hex_color("#cfd3ce"), hex_color("#a9aea8"), hex_color("#6e9c86")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            color = mix(c_face, c_dull, value_noise(p, 3.5, seed))
+            dist = _edge_distance(cube, p, axis)
+            if dist < 0.6:
+                color = mix(color, c_green, 0.55 * (1.0 - dist / 0.6) + 0.15)
+            return color
+
+        return paint
+
+    return factory
+
+
+BRONZE_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "metal_bz": (_bronze("#85502f", 901, 0.42), "#85502f"),                                           # 器身红褐铜
+    "metal_bz_relief": (_bronze("#9a6139", 902, 0.50), "#9a6139"),                                    # 浮雕纹带：亮一档、锈多一点
+    "metal_bz_pat": (_bronze("#5d5238", 903, 0.88, worn_width=0.0), "#4f8068"),                       # 大片青绿锈
+    "metal_bz_worn": (_bronze("#b97a45", 904, 0.06, worn="#e3b378", worn_width=0.6), "#c58a52"),      # 手磨亮铜：立耳 / 足底 / 把手
+    "metal_bz_dk": (_bronze("#4a3224", 905, 0.10, worn_width=0.0), "#4a3224"),                        # 凹处 / 空匾底 / 瞳孔
+    "metal_bz_dead": (_bronze_flat("#3a3733", 906, 0.03), "#3a3733"),                                 # 暗掉的灵纹：深灰，不发光
+    "metal_bz_soot": (_bronze_flat("#1f1b19", 907, 0.04), "#1f1b19"),                                 # 火燎黑 / 焦渣 / 烧短的灯芯
+    "metal_bz_ash": (_bronze_flat("#a3a09a", 908, 0.07), "#a3a09a"),                                  # 冷灰
+    "metal_bz_ash_dk": (_bronze_flat("#6e6b66", 909, 0.07), "#6e6b66"),                               # 炭灰深色垢层
+    "metal_bz_water": (_bronze_flat("#587283", 910, 0.05), "#587283"),                                # 容器里的水
+    "metal_bz_oil": (_bronze_flat("#573d1c", 911, 0.05), "#573d1c"),                                  # 灯油
+    "metal_bz_face": (_bronze_face(912), "#c4c8c2"),                                                  # 磨亮的镜面
+    "metal_bz_cord": (_rope("#6e5c46", "#9a8460", 913), "#84704f"),                                   # 丝绳
+    "metal_bz_iron": (_iron("#3d3733", 0.05, 914, hone=False), "#3d3733"),                            # 铁舌
+    "metal_bz_iron_lt": (_iron("#8b8379", 0.02, 915, hone=True), "#8b8379"),                          # 铁舌磨亮的锤头
+}
+PAINTERS.update({name: factory for name, (factory, _) in BRONZE_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in BRONZE_MATERIALS.items()})

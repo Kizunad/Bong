@@ -150,8 +150,10 @@ def _write_tmp(rig: Rig, path: Path, name: str) -> Path:
     return path
 
 
-def render_view(path: Path, yaw: float, pitch: float, size: int, center, span: float) -> Image.Image:
-    return render(path, yaw=yaw, pitch=pitch, size=size, bg=BG, focus=(center, span))[0]
+def render_view(path: Path, yaw: float, pitch: float, size: int, center, span: float,
+                shading: str | None = None) -> Image.Image:
+    return render(path, yaw=yaw, pitch=pitch, size=size, bg=BG, focus=(center, span),
+                  **({"shading": shading} if shading else {}))[0]
 
 
 def _screen_scale(size: int, span: float) -> float:
@@ -516,6 +518,92 @@ def make_check(spec: MetalSpec, g: Gear, model_path: Path, gate_total: int, extr
     return bad
 
 
+# ───────────────────────────────────────────────────────────── Round 3：贴图审阅图 check_tex.png
+TEX_VIEWS = (
+    ("FRONT 正面（-z）", 180.0, 0.0),
+    ("3/4 右前上方", -150.0, 18.0),
+    ("RIGHT 右侧（+x）", -90.0, 0.0),
+    ("3/4 左后上方", 40.0, 18.0),
+)
+
+
+def count_magenta(img: Image.Image) -> int:
+    """渲染图里的洋红像素数（缺贴图 / UV 越界的底色；R>200、B>200、G<80）。要求 0。"""
+    px = img.convert("RGB").load()
+    return sum(1 for y in range(img.height) for x in range(img.width)
+               if px[x, y][0] > 200 and px[x, y][2] > 200 and px[x, y][1] < 80)
+
+
+def render_check_tex(spec: MetalSpec, g: Gear, tmp: Path) -> tuple[Image.Image, int]:
+    """check_tex.png：上排 参考图 + 4 个贴图视角（mc 光照）；中排 同视角平色；下排 并排比例（贴图版）+ 贴图特写。
+
+    同时写出交付物 <Model>_tex.bbmodel（每面独立 UV、2 texel / px 的像素贴图），并统计洋红像素。
+    """
+    flat = gear_kit.write_textured(spec, g, spec.out_dir / "_tmp_flat.bbmodel", flat=True)
+    tex = gear_kit.write_textured(spec, g, spec.out_dir / f"{spec.model_name}_tex.bbmodel")
+    try:
+        lo, hi = model_bounds(g, spec.bounds_skip)
+        center = tuple((lo[i] + hi[i]) / 2 for i in range(3))
+        span = max(hi[i] - lo[i] for i in range(3)) * 1.18
+        cell = 440
+        font_h, font_s = load_font(17), load_font(13)
+        ref = Image.open(spec.review_dir / f"{spec.gear_id}_ref.png").convert("RGB")
+        ref = ref.resize((round(ref.width * cell / ref.height), cell), Image.Resampling.LANCZOS)
+        magenta = 0
+        shots = []
+        for label, yaw, pitch in TEX_VIEWS:
+            t_img = render_view(tex, yaw, pitch, cell, center, span, shading="mc")
+            f_img = render_view(flat, yaw, pitch, cell, center, span)
+            magenta += count_magenta(t_img)
+            shots.append((label, t_img, f_img))
+        # 贴图特写：正面高倍取景，看锈斑是不是「成片」、有没有碎噪点
+        close_span = span * 0.42
+        close = render_view(tex, 180.0, 0.0, 700, center, close_span, shading="mc")
+        magenta += count_magenta(close)
+        # 并排比例（贴图版）
+        half = (hi[0] - lo[0]) / 2
+        dx = spec.beside_dx if spec.beside_dx is not None else 8.0 + PLAYER_GAP_PX + half - (lo[0] + hi[0]) / 2
+        rig = player_with_item(g, (dx, 0.0, 0.0))
+        doc = gear_kit.textured_rig_doc(rig, "Beside", {**spec.texture_material(), **gear_kit.TEXTURE_WEARER})
+        beside_path = tmp
+        beside_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        x_min, x_max = -8.0, hi[0] + dx
+        bcenter = ((x_min + x_max) / 2, PLAYER_HEIGHT_PX / 2, 0.0)
+        bspan = max(x_max - x_min, PLAYER_HEIGHT_PX) * 1.08
+        beside = [render_view(beside_path, yaw, pitch, cell, bcenter, bspan, shading="mc")
+                  for yaw, pitch in ((180.0, 0.0), (-150.0, 14.0))]
+        magenta += sum(count_magenta(b) for b in beside)
+    finally:
+        (spec.out_dir / "_tmp_flat.bbmodel").unlink(missing_ok=True)
+
+    w = ref.width + 4 * (cell + 6) + 12
+    obj_h = hi[1] - lo[1]
+    canvas = Image.new("RGB", (w, cell * 2 + 140 + 700 + 40), (28, 29, 33))
+    d = ImageDraw.Draw(canvas)
+    d.text((8, 6), f"{spec.title} {spec.round_label} · 贴图版 · 洋红像素 {magenta}（要求 0）{'✓' if magenta == 0 else '✗'}",
+           fill=OK_COLOR if magenta == 0 else BAD_COLOR, font=font_h)
+    d.text((8, 34), "REFERENCE 参考图", fill=(215, 205, 180), font=font_s)
+    canvas.paste(ref, (8, 54))
+    x = ref.width + 14
+    for label, t_img, f_img in shots:
+        d.text((x, 34), f"TEXTURED 贴图 · {label}", fill=TEXT, font=font_s)
+        canvas.paste(t_img, (x, 54))
+        canvas.paste(f_img, (x, 54 + cell + 26))
+        d.text((x, 54 + cell + 8), f"FLAT 平色 · {label}", fill=(190, 190, 200), font=font_s)
+        x += cell + 6
+    y = 54 + (cell + 26) * 2
+    d.text((8, y), f"并排比例（贴图版）：器高 {obj_h:.1f}px / 人高 {PLAYER_HEIGHT_PX:.0f}px = {obj_h / PLAYER_HEIGHT_PX * 100:.0f}%，"
+                   f"与玩家间隔 {PLAYER_GAP_PX:.0f}px 不重叠", fill=TEXT, font=font_s)
+    canvas.paste(beside[0], (8, y + 20))
+    canvas.paste(beside[1], (8 + cell + 6, y + 20))
+    d.text((2 * cell + 40, y), "贴图特写（正面，约 2.4 倍）：看锈是不是成片、阵纹是不是暗灰", fill=TEXT, font=font_s)
+    canvas.paste(close, (2 * cell + 40, y + 20))
+    d_h = y + 20 + max(cell, 700) + 8
+    canvas = canvas.crop((0, 0, w, min(canvas.height, d_h)))
+    print(f"✓ {tex.name}；洋红像素 {magenta}")
+    return canvas, magenta
+
+
 def full_run(spec: MetalSpec, extra_panel_fns: tuple = ()) -> None:
     """全量（Round 1 只做几何）：自证 → 全套门禁 → 写 bbmodel → check.png。"""
     g = spec.build()
@@ -534,6 +622,17 @@ def full_run(spec: MetalSpec, extra_panel_fns: tuple = ()) -> None:
     finally:
         tmp.unlink(missing_ok=True)
     make_check(spec, g, model, total, extras)
+    if spec.texture_overrides:
+        tmp_tex = spec.out_dir / "_tmp_tex_beside.bbmodel"
+        try:
+            sheet, magenta = render_check_tex(spec, g, tmp_tex)
+        finally:
+            tmp_tex.unlink(missing_ok=True)
+        out = spec.review_dir / "check_tex.png"
+        sheet.save(out)
+        print(f"✓ check_tex.png → {out} ({sheet.width}×{sheet.height})")
+        if magenta:
+            raise SystemExit(f"贴图审阅图里有 {magenta} 个洋红像素（缺贴图 / UV 越界）")
 
 
 def main(spec: MetalSpec, extra_panel_fns: tuple = ()) -> None:
