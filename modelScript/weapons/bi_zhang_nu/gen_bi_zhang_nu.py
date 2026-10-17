@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""臂张弩 bi_zhang_nu Blockbench .bbmodel 程序化生成器 —— Round 1 几何。
+"""臂张弩 bi_zhang_nu Blockbench .bbmodel 程序化生成器 —— Round 1 几何（依审阅意见彻底返工）。
 
-任务卡核心要求：
-1. 尺寸：弩臂严格 16.0 px；
-2. 汉式手持弩：木弩臂（前窄后宽、尾部弧形抵肩），前端横装弩弓（层压木+筋，两端系弦），
-   弩臂后段嵌一只青铜弩机（郭 = 长方铜盒，上面立着带刻度的「望山」瞄准片，下面伸出「悬刀」扳机），
-   箭槽空着，弦挂在弩机的「牙」上；
-3. 末法：望山上原本有感灵的刻度纹，现在暗掉，只剩普通刻度；
-4. 比例与截面：
-   - 比例以参考图和实物为准，不设与全长冲突的最小截面；
-   - 弩弓截面扁平（层压复合弓臂），横向翼展 18.0 px；
-   - 弓弦严格 0.3 px（严禁粗方条），拉成浅 V 形挂在牙上；
-   - 箭槽和弦上空着，不做箭、弩矢、弹丸、箭囊；
-5. check.png 包含：参考图、爆炸图、六视图、骨骼树、比例对照、并排比例、持握姿势（弩双手端平抵肩）。
-   占位玩家纯灰色绝不染棕色，几何检查交叠体积严格为 0。方块数 ≥ 150。
+调度/用户返工要求严格落实：
+1. 比例对照栏对准两组视角：
+   - (A) 参考图完整的「侧视长图」对模型侧视（整弩对齐，直立）；
+   - (B) 参考图「俯视长图」对模型俯视（整弩对齐，直立）；
+   - 都抠整把弩，彻底解决局部特写视角错位问题。
+2. 弩弓宽度修正：
+   - 参考图弩弓跨度约是弩臂长的 0.75 倍：弩臂 16.0 px，弩弓翼展严格缩减为 12.0 px（原 18.0 px）；
+   - 弓弦相应缩短，浅 V 形，粗细严格 0.3 px，挂在青铜牙上，空载无矢。
+3. 弩臂与弩机重塑（形神兼备）：
+   - 弩臂后 1/4 段（y: 0.0 ~ 4.0）像枪托一样向下弯折约 25°，加厚到 2.0 px 高；
+   - 弩臂截面高大于宽：约 1.5 高 × 1.1 宽（Z 深度 1.5 px，X 宽度 1.1 px，绝非 1.0 的方条）；
+   - 青铜弩机（郭）显著放大：长约弩臂的 18%（长 2.9 px，y: 5.2 ~ 8.1），
+     顶面凸出弩臂 1.2 px，底面伸出 0.8 px；
+   - 望山瞄准片：立片高 1.5 px，正面带暗掉刻度纹；
+   - 悬刀扳机：从郭底向下伸出 1.8 px 并略向前弯，贴手；
+   - 箭槽（矢道）深 0.2 px，空槽无矢。
+4. 持握姿势与方向：
+   - 双手端平抵肩：后托抵在右肩前部，弩沿 -Z 水平向前延伸，弩弓在前端，扳机朝下；
+   - 侧视图绘制射击方向箭头「← 射击方向 (目标)」，标注自检合格；
+   - 几何相交检查严格为 0，占位玩家纯灰色。
 """
 
 from __future__ import annotations
@@ -48,11 +55,11 @@ REVIEW_DIR = Path(os.environ.get(
 )) / "img" / "weapons" / WEAPON_ID
 
 TOTAL_LEN = 16.0  # 弩臂全长 16.0 px
-GRIP_Y = 4.0      # 后段握持参考点
+GRIP_Y = 4.2      # 后段握持点
 
-# 材质定义（Round 1 平涂）
+# 材质定义
 MATS = {
-    "wood_dark": (78, 54, 38),       # 深褐硬木包浆（弩臂与弓身主体）
+    "wood_dark": (78, 54, 38),       # 深褐硬木包浆（弩身主体）
     "wood_mid": (108, 76, 52),       # 握持磨亮/导轨原木色
     "wood_light": (142, 106, 76),    # 箭槽底与木鼻雕刻
     "bronze": (158, 128, 74),        # 青铜弩机郭身、销钉与前箍
@@ -60,26 +67,26 @@ MATS = {
     "bronze_sight": (178, 148, 88),   # 望山刻度磨光面
     "iron_dark": (46, 42, 40),       # 暗铁件
     "cord": (52, 44, 36),            # 绑弓麻绳缠圈
-    "string": (188, 178, 156),       # 0.3px 米黄亚麻/牛筋弓弦
-    "bone_pale": (196, 192, 182),    # 弓梢浅色灵骨片（暗掉浅色）
+    "string": (188, 178, 156),       # 0.3px 米黄亚麻弓弦
+    "bone_pale": (196, 192, 182),    # 弓梢暗掉浅色灵骨片
     "groove": (36, 26, 20),          # 箭槽阴影底
 }
 
-# 骨骼层级树
+# 骨骼树
 BONES = [
     ("root", None, (0.0, 0.0, 0.0), "世界根"),
-    ("stock_butt", "root", (0.0, 1.2, 0.0), "弩臂尾端弧形抵肩托（长2.5px，截面1.4x1.8收拢）"),
-    ("stock_grip", "root", (0.0, 3.6, 0.0), "后段贴手木握把（长2.3px，截面1.1x1.3八角倒棱）"),
-    ("lock_case", "root", (0.0, 5.6, 0.0), "青铜弩机郭身（长1.6px长方铜盒，两侧穿固定铜销）"),
-    ("lock_sight", "lock_case", (0.0, 5.2, 0.6), "青铜望山瞄准片（向上突起1.2px，正面暗掉刻度纹）"),
-    ("lock_tooth", "lock_case", (0.0, 5.8, 0.6), "青铜牙（咬住弓弦的抱弦双叉榫）"),
-    ("lock_trigger", "lock_case", (0.0, 5.0, -0.6), "青铜悬刀扳机（向下伸出1.3px，带弧度贴手）"),
-    ("stock_mid", "root", (0.0, 10.2, 0.0), "弩臂中段（长7.6px，修长八角硬木截面1.0x1.1）"),
-    ("stock_track", "stock_mid", (0.0, 10.2, 0.55), "中央导矢箭槽（双侧导轨0.3px，中央下凹0.4px槽，空置无矢）"),
-    ("stock_nose", "root", (0.0, 15.0, 0.0), "弩臂前端（长2.0px，带穿弓木孔、前端木鼻与加固铜箍绳圈）"),
-    ("bow_prod", "root", (0.0, 14.8, 0.0), "横装层压复合弩弓（横向跨度18.0px，优雅前拱弧度）"),
-    ("bow_nocks", "bow_prod", (0.0, 14.0, 0.0), "两端弓梢硬木角垫与暗掉灵骨片"),
-    ("bowstring", "root", (0.0, 10.3, 0.55), "0.3px拉紧浅V形弓弦（两端系梢，中央挂在牙上，空载无矢）"),
+    ("stock_butt", "root", (0.0, 1.5, -0.6), "后1/4段枪托式下折弯尾托（下折25°，加厚至2.0px高）"),
+    ("stock_grip", "root", (0.0, 4.2, -0.2), "下折与中段过渡握把（截面高1.6x宽1.1）"),
+    ("lock_case", "root", (0.0, 6.6, 0.0), "大幅放大青铜弩机郭身（长2.9px占18%，顶凸1.2底伸0.8）"),
+    ("lock_sight", "lock_case", (0.0, 5.8, 1.95), "青铜望山瞄准立片（高1.5px，正面暗掉刻度纹）"),
+    ("lock_tooth", "lock_case", (0.0, 6.8, 1.95), "青铜牙（咬住0.3px弓弦的双叉卡榫）"),
+    ("lock_trigger", "lock_case", (0.0, 6.2, -1.55), "青铜悬刀扳机（向下伸出1.8px并微向前弯）"),
+    ("stock_mid", "root", (0.0, 10.5, 0.0), "弩臂中段（长6.0px，高1.5x宽1.1八角倒棱硬木截面）"),
+    ("stock_track", "stock_mid", (0.0, 10.5, 0.75), "箭槽导轨（深0.2px中央凹槽，空置无矢）"),
+    ("stock_nose", "root", (0.0, 15.0, 0.0), "弩臂前端横装座与木鼻（长2.0px，带穿弓孔与铜箍绳圈）"),
+    ("bow_prod", "root", (0.0, 14.6, 0.0), "层压复合弩弓（翼展严格缩减为12.0px，实物比例）"),
+    ("bow_nocks", "bow_prod", (0.0, 13.8, 0.0), "两端硬木弓弰与暗掉灵骨贴片"),
+    ("bowstring", "root", (0.0, 10.5, 0.75), "0.3px粗细拉紧浅V形弓弦（两端系梢，挂在牙上，空载无矢）"),
 ]
 
 def build_weapon() -> Rig:
@@ -87,232 +94,217 @@ def build_weapon() -> Rig:
     for b_name, parent, pivot, _ in BONES:
         rig.bone(b_name, pivot, parent=parent)
 
-    # 1. 弩臂尾托 stock_butt (y: 0.0 ~ 2.5)
-    # 抵肩托：前窄后宽，端部圆弧倒角抵肩，微向下倾斜
+    # 1. 枪托式下折弯尾托 stock_butt (y: 0.0 ~ 3.2)
+    # 严格落实：后 1/4 段向下弯折约 25°，加厚到 2.0 px 高 (Z: -1.75 ~ 0.25)
+    # 宽度约 1.1 px (X: -0.55 ~ 0.55)
     b = "stock_butt"
-    rig.cube(b, "butt_plate_center", (-0.5, 0.0, -0.65), (0.5, 0.35, 0.65), mat="wood_dark")
-    rig.cube(b, "butt_plate_top", (-0.42, 0.0, 0.65), (0.42, 0.35, 0.85), mat="wood_mid")
-    rig.cube(b, "butt_plate_bot", (-0.42, 0.0, -0.85), (0.42, 0.35, -0.65), mat="wood_dark")
-    rig.cube(b, "butt_plate_l", (-0.68, 0.0, -0.55), (-0.5, 0.35, 0.55), mat="wood_mid")
-    rig.cube(b, "butt_plate_r", (0.5, 0.0, -0.55), (0.68, 0.35, 0.55), mat="wood_mid")
-    rig.cube(b, "butt_plate_bevel_tl", (-0.62, 0.0, 0.55), (-0.42, 0.35, 0.78), mat="wood_mid")
-    rig.cube(b, "butt_plate_bevel_tr", (0.42, 0.0, 0.55), (0.62, 0.35, 0.78), mat="wood_mid")
-    rig.cube(b, "butt_plate_bevel_bl", (-0.62, 0.0, -0.78), (-0.42, 0.35, -0.55), mat="wood_dark")
-    rig.cube(b, "butt_plate_bevel_br", (0.42, 0.0, -0.78), (0.62, 0.35, -0.55), mat="wood_dark")
+    # 尾端抵肩面 (y: 0.0 ~ 0.45)
+    rig.cube(b, "butt_cap_core", (-0.50, 0.0, -1.65), (0.50, 0.45, 0.15), mat="wood_dark")
+    rig.cube(b, "butt_cap_top_lip", (-0.42, 0.0, 0.15), (0.42, 0.45, 0.35), mat="wood_mid")
+    rig.cube(b, "butt_cap_bot_lip", (-0.42, 0.0, -1.85), (0.42, 0.45, -1.65), mat="wood_dark")
+    rig.cube(b, "butt_cap_side_l", (-0.58, 0.0, -1.55), (-0.50, 0.45, 0.05), mat="wood_mid")
+    rig.cube(b, "butt_cap_side_r", (0.50, 0.0, -1.55), (0.58, 0.45, 0.05), mat="wood_mid")
 
-    # 托身平滑弧形过渡 (y: 0.35 ~ 1.2)
-    rig.cube(b, "butt_body_1_core", (-0.52, 0.35, -0.68), (0.52, 1.2, 0.68), mat="wood_dark")
-    rig.cube(b, "butt_body_1_l", (-0.62, 0.38, -0.52), (-0.52, 1.18, 0.52), mat="wood_mid")
-    rig.cube(b, "butt_body_1_r", (0.52, 0.38, -0.52), (0.62, 1.18, 0.52), mat="wood_mid")
-    rig.cube(b, "butt_body_1_t", (-0.42, 0.38, 0.68), (0.42, 1.18, 0.8), mat="wood_mid")
-    rig.cube(b, "butt_body_1_b", (-0.42, 0.38, -0.8), (0.42, 1.18, -0.68), mat="wood_dark")
-    rig.cube(b, "butt_body_1_chamf_tl", (-0.58, 0.38, 0.48), (-0.48, 1.18, 0.72), mat="wood_mid")
-    rig.cube(b, "butt_body_1_chamf_tr", (0.48, 0.38, 0.48), (0.58, 1.18, 0.72), mat="wood_mid")
-    rig.cube(b, "butt_body_1_chamf_bl", (-0.58, 0.38, -0.72), (-0.48, 1.18, -0.48), mat="wood_dark")
-    rig.cube(b, "butt_body_1_chamf_br", (0.48, 0.38, -0.72), (0.58, 1.18, -0.48), mat="wood_dark")
+    # 下折弯托身第 1 段 (y: 0.45 ~ 1.5, 向下倾斜 25°，高度 2.0 px)
+    # Z 范围约 -1.65 ~ 0.35
+    rig.cube(b, "butt_slope1_core", (-0.52, 0.45, -1.60), (0.52, 1.50, 0.30), mat="wood_dark")
+    rig.cube(b, "butt_slope1_t", (-0.42, 0.48, 0.30), (0.42, 1.48, 0.42), mat="wood_mid")
+    rig.cube(b, "butt_slope1_b", (-0.42, 0.48, -1.72), (0.42, 1.48, -1.60), mat="wood_dark")
+    rig.cube(b, "butt_slope1_l", (-0.56, 0.48, -1.50), (-0.52, 1.48, 0.20), mat="wood_mid")
+    rig.cube(b, "butt_slope1_r", (0.52, 0.48, -1.50), (0.56, 1.48, 0.20), mat="wood_mid")
+    rig.cube(b, "butt_slope1_chamf_tl", (-0.54, 0.48, 0.18), (-0.45, 1.48, 0.36), mat="wood_mid")
+    rig.cube(b, "butt_slope1_chamf_tr", (0.45, 0.48, 0.18), (0.54, 1.48, 0.36), mat="wood_mid")
+    rig.cube(b, "butt_slope1_chamf_bl", (-0.54, 0.48, -1.66), (-0.45, 1.48, -1.48), mat="wood_dark")
+    rig.cube(b, "butt_slope1_chamf_br", (0.45, 0.48, -1.66), (0.54, 1.48, -1.48), mat="wood_dark")
 
-    # 托身收拢过渡 (y: 1.2 ~ 1.8)
-    rig.cube(b, "butt_body_2_core", (-0.48, 1.2, -0.62), (0.48, 1.8, 0.62), mat="wood_dark")
-    rig.cube(b, "butt_body_2_l", (-0.56, 1.22, -0.46), (-0.48, 1.78, 0.46), mat="wood_mid")
-    rig.cube(b, "butt_body_2_r", (0.48, 1.22, -0.46), (0.56, 1.78, 0.46), mat="wood_mid")
-    rig.cube(b, "butt_body_2_t", (-0.38, 1.22, 0.62), (0.38, 1.78, 0.72), mat="wood_mid")
-    rig.cube(b, "butt_body_2_b", (-0.38, 1.22, -0.72), (0.38, 1.78, -0.62), mat="wood_dark")
+    # 下折弯托身第 2 段 (y: 1.5 ~ 2.6) - 弧形回升过渡至握把
+    rig.cube(b, "butt_slope2_core", (-0.50, 1.5, -1.35), (0.50, 2.6, 0.45), mat="wood_dark")
+    rig.cube(b, "butt_slope2_t", (-0.40, 1.52, 0.45), (0.40, 2.58, 0.55), mat="wood_mid")
+    rig.cube(b, "butt_slope2_b", (-0.40, 1.52, -1.45), (0.40, 2.58, -1.35), mat="wood_dark")
+    rig.cube(b, "butt_slope2_l", (-0.54, 1.52, -1.25), (-0.50, 2.58, 0.35), mat="wood_mid")
+    rig.cube(b, "butt_slope2_r", (0.50, 1.52, -1.25), (0.54, 2.58, 0.35), mat="wood_mid")
 
-    # 托与握把接颈 (y: 1.8 ~ 2.5)
-    rig.cube(b, "butt_neck_core", (-0.45, 1.8, -0.56), (0.45, 2.5, 0.56), mat="wood_dark")
-    rig.cube(b, "butt_neck_chamf_l", (-0.52, 1.82, -0.42), (-0.45, 2.48, 0.42), mat="wood_mid")
-    rig.cube(b, "butt_neck_chamf_r", (0.45, 1.82, -0.42), (0.52, 2.48, 0.42), mat="wood_mid")
-    rig.cube(b, "butt_neck_chamf_t", (-0.35, 1.82, 0.56), (0.35, 2.48, 0.64), mat="wood_mid")
-    rig.cube(b, "butt_neck_chamf_b", (-0.35, 1.82, -0.64), (0.35, 2.48, -0.56), mat="wood_dark")
+    # 托与握把过渡段加强倒角
+    rig.cube(b, "butt_slope2_chamf_tl", (-0.52, 1.52, 0.32), (-0.42, 2.58, 0.48), mat="wood_mid")
+    rig.cube(b, "butt_slope2_chamf_tr", (0.42, 1.52, 0.32), (0.52, 2.58, 0.48), mat="wood_mid")
+    rig.cube(b, "butt_slope2_chamf_bl", (-0.52, 1.52, -1.40), (-0.42, 2.58, -1.22), mat="wood_dark")
+    rig.cube(b, "butt_slope2_chamf_br", (0.42, 1.52, -1.40), (0.52, 2.58, -1.22), mat="wood_dark")
 
-    # 2. 握把段 stock_grip (y: 2.5 ~ 4.8)
-    # 人手贴合段，截面约 1.05 × 1.25 px，八角倒棱与指位贴手面
+    # 托颈过渡 (y: 2.6 ~ 3.4)
+    rig.cube(b, "butt_neck_core", (-0.48, 2.6, -1.05), (0.48, 3.4, 0.55), mat="wood_dark")
+    rig.cube(b, "butt_neck_side_l", (-0.52, 2.62, -0.95), (-0.48, 3.38, 0.45), mat="wood_mid")
+    rig.cube(b, "butt_neck_side_r", (0.48, 2.62, -0.95), (0.52, 3.38, 0.45), mat="wood_mid")
+    rig.cube(b, "butt_neck_chamf_t", (-0.38, 2.62, 0.55), (0.38, 3.38, 0.65), mat="wood_mid")
+    rig.cube(b, "butt_neck_chamf_b", (-0.38, 2.62, -1.15), (0.38, 3.38, -1.05), mat="wood_dark")
+
+    # 2. 握把段 stock_grip (y: 3.4 ~ 5.2)
+    # 截面高 1.6 × 宽 1.1 px (Z: -0.95 ~ 0.65)
     b = "stock_grip"
-    rig.cube(b, "grip_core", (-0.42, 2.5, -0.52), (0.42, 4.8, 0.52), mat="wood_mid")
-    rig.cube(b, "grip_side_l", (-0.5, 2.55, -0.4), (-0.42, 4.75, 0.4), mat="wood_dark")
-    rig.cube(b, "grip_side_r", (0.42, 2.55, -0.4), (0.5, 4.75, 0.4), mat="wood_dark")
-    rig.cube(b, "grip_top_bevel", (-0.35, 2.52, 0.52), (0.35, 4.78, 0.6), mat="wood_mid")
-    rig.cube(b, "grip_bot_belly", (-0.35, 2.52, -0.62), (0.35, 4.78, -0.52), mat="wood_dark")
-    rig.cube(b, "grip_chamf_tl", (-0.46, 2.55, 0.38), (-0.38, 4.75, 0.54), mat="wood_mid")
-    rig.cube(b, "grip_chamf_tr", (0.38, 2.55, 0.38), (0.46, 4.75, 0.54), mat="wood_mid")
-    rig.cube(b, "grip_chamf_bl", (-0.46, 2.55, -0.54), (-0.38, 4.75, -0.38), mat="wood_dark")
-    rig.cube(b, "grip_chamf_br", (0.38, 2.55, -0.54), (0.46, 4.75, -0.38), mat="wood_dark")
-    # 指位凹陷手感 (finger contours)
-    rig.cube(b, "grip_finger_groove_1", (-0.38, 2.9, -0.66), (0.38, 3.25, -0.60), mat="wood_mid")
-    rig.cube(b, "grip_finger_groove_2", (-0.38, 3.5, -0.66), (0.38, 3.85, -0.60), mat="wood_mid")
-    rig.cube(b, "grip_finger_groove_3", (-0.38, 4.1, -0.66), (0.38, 4.45, -0.60), mat="wood_mid")
+    rig.cube(b, "grip_core", (-0.45, 3.4, -0.85), (0.45, 5.2, 0.65), mat="wood_mid")
+    rig.cube(b, "grip_side_l", (-0.52, 3.42, -0.75), (-0.45, 5.18, 0.55), mat="wood_dark")
+    rig.cube(b, "grip_side_r", (0.45, 3.42, -0.75), (0.52, 5.18, 0.55), mat="wood_dark")
+    rig.cube(b, "grip_top", (-0.38, 3.42, 0.65), (0.38, 5.18, 0.75), mat="wood_mid")
+    rig.cube(b, "grip_belly", (-0.38, 3.42, -0.95), (0.38, 5.18, -0.85), mat="wood_dark")
+    # 倒角切面
+    rig.cube(b, "grip_chamf_tl", (-0.48, 3.45, 0.52), (-0.38, 5.15, 0.70), mat="wood_mid")
+    rig.cube(b, "grip_chamf_tr", (0.38, 3.45, 0.52), (0.48, 5.15, 0.70), mat="wood_mid")
+    rig.cube(b, "grip_chamf_bl", (-0.48, 3.45, -0.90), (-0.38, 5.15, -0.72), mat="wood_dark")
+    rig.cube(b, "grip_chamf_br", (0.38, 3.45, -0.90), (0.48, 5.15, -0.72), mat="wood_dark")
+    # 握把防滑指槽雕花
+    rig.cube(b, "grip_finger_groove1", (-0.40, 3.8, -0.98), (0.40, 4.15, -0.90), mat="wood_mid")
+    rig.cube(b, "grip_finger_groove2", (-0.40, 4.4, -0.98), (0.40, 4.75, -0.90), mat="wood_mid")
 
-    # 3. 青铜弩机郭身 lock_case (y: 4.8 ~ 6.4)
-    # 嵌在木质弩身中的长方青铜郭匣 (4.8 ~ 6.4, x: -0.52~0.52, z: -0.55~0.55)
+    # 3. 大幅放大青铜弩机郭身 lock_case (y: 5.2 ~ 8.1, 长 2.9 px 占全长 18%)
+    # 严格落实：顶面凸出弩臂 1.2 px (Z 到 1.95)，底面伸出 0.8 px (Z 到 -1.55)
+    # 总高度达 3.5 px (Z: -1.55 ~ 1.95)
     b = "lock_case"
-    rig.cube(b, "lock_box_outer", (-0.50, 4.8, -0.55), (0.50, 6.4, 0.55), mat="bronze")
-    rig.cube(b, "lock_box_side_l", (-0.55, 4.85, -0.45), (-0.50, 6.35, 0.45), mat="bronze_patina")
-    rig.cube(b, "lock_box_side_r", (0.50, 4.85, -0.45), (0.55, 6.35, 0.45), mat="bronze_patina")
-    rig.cube(b, "lock_box_top_rim", (-0.45, 4.82, 0.52), (0.45, 6.38, 0.58), mat="bronze_sight")
-    rig.cube(b, "lock_box_bot_rim", (-0.45, 4.82, -0.58), (0.45, 6.38, -0.52), mat="bronze_patina")
-    # 郭身边缘咬合台阶
-    rig.cube(b, "lock_rim_f", (-0.46, 6.35, -0.48), (0.46, 6.42, 0.48), mat="bronze_sight")
-    rig.cube(b, "lock_rim_b", (-0.46, 4.78, -0.48), (0.46, 4.85, 0.48), mat="bronze_sight")
-    # 横穿木身的青铜销钉 (pivot pins) 及两端圆头
-    rig.cube(b, "lock_pin_front", (-0.6, 5.8, -0.05), (0.6, 5.95, 0.1), mat="bronze_sight")
-    rig.cube(b, "lock_pin_front_cap_l", (-0.64, 5.78, -0.08), (-0.59, 5.97, 0.13), mat="bronze")
-    rig.cube(b, "lock_pin_front_cap_r", (0.59, 5.78, -0.08), (0.64, 5.97, 0.13), mat="bronze")
-    rig.cube(b, "lock_pin_rear", (-0.6, 5.1, -0.05), (0.6, 5.25, 0.1), mat="bronze_sight")
-    rig.cube(b, "lock_pin_rear_cap_l", (-0.64, 5.08, -0.08), (-0.59, 5.27, 0.13), mat="bronze")
-    rig.cube(b, "lock_pin_rear_cap_r", (0.59, 5.08, -0.08), (0.64, 5.27, 0.13), mat="bronze")
+    # 青铜郭长方铜盒
+    rig.cube(b, "lock_box_core", (-0.52, 5.2, -1.55), (0.52, 8.1, 1.95), mat="bronze")
+    rig.cube(b, "lock_box_side_l", (-0.58, 5.25, -1.45), (-0.52, 8.05, 1.85), mat="bronze_patina")
+    rig.cube(b, "lock_box_side_r", (0.52, 5.25, -1.45), (0.58, 8.05, 1.85), mat="bronze_patina")
+    rig.cube(b, "lock_box_rim_top", (-0.45, 5.22, 1.92), (0.45, 8.08, 1.98), mat="bronze_sight")
+    rig.cube(b, "lock_box_rim_bot", (-0.45, 5.22, -1.58), (0.45, 8.08, -1.52), mat="bronze_patina")
+    rig.cube(b, "lock_box_flange_f", (-0.48, 8.05, -1.48), (0.48, 8.12, 1.88), mat="bronze_sight")
+    rig.cube(b, "lock_box_flange_b", (-0.48, 5.18, -1.48), (0.48, 5.25, 1.88), mat="bronze_sight")
+    # 郭身四角耐磨加固铜唇
+    rig.cube(b, "lock_box_lip_tl", (-0.56, 5.25, 1.75), (-0.50, 8.05, 1.95), mat="bronze_sight")
+    rig.cube(b, "lock_box_lip_tr", (0.50, 5.25, 1.75), (0.56, 8.05, 1.95), mat="bronze_sight")
+    rig.cube(b, "lock_box_lip_bl", (-0.56, 5.25, -1.55), (-0.50, 8.05, -1.35), mat="bronze_patina")
+    rig.cube(b, "lock_box_lip_br", (0.50, 5.25, -1.55), (0.56, 8.05, -1.35), mat="bronze_patina")
+    # 横穿弩身的青铜键销 (双销轴)
+    rig.cube(b, "lock_pin_front", (-0.66, 7.4, 0.1), (0.66, 7.6, 0.3), mat="bronze_sight")
+    rig.cube(b, "lock_pin_front_cap_l", (-0.70, 7.38, 0.06), (-0.64, 7.62, 0.34), mat="bronze")
+    rig.cube(b, "lock_pin_front_cap_r", (0.64, 7.38, 0.06), (0.70, 7.62, 0.34), mat="bronze")
+    rig.cube(b, "lock_pin_rear", (-0.66, 5.7, 0.1), (0.66, 5.9, 0.3), mat="bronze_sight")
+    rig.cube(b, "lock_pin_rear_cap_l", (-0.70, 5.68, 0.06), (-0.64, 5.92, 0.34), mat="bronze")
+    rig.cube(b, "lock_pin_rear_cap_r", (0.64, 5.68, 0.06), (0.70, 5.92, 0.34), mat="bronze")
 
-    # 3.1 望山瞄准片 lock_sight (向上直立，立于郭后部 y: 5.0 ~ 5.4, z: 0.55 ~ 1.75)
+    # 3.1 望山立片 lock_sight (在郭顶 y: 5.4 ~ 6.2 处向上立起 1.5 px: Z 1.95 ~ 3.45)
     b = "lock_sight"
-    rig.cube(b, "sight_blade_base", (-0.24, 4.95, 0.55), (0.24, 5.45, 1.05), mat="bronze")
-    rig.cube(b, "sight_blade_stem", (-0.18, 5.02, 1.05), (0.18, 5.38, 1.75), mat="bronze_sight")
-    rig.cube(b, "sight_blade_spine", (-0.10, 5.38, 0.75), (0.10, 5.46, 1.70), mat="bronze_patina")
-    # 望山刻度（末法暗掉刻度纹）- 5道横向阴刻凹槽
-    for i, z_notch in enumerate([1.18, 1.30, 1.42, 1.54, 1.66]):
-        rig.cube(b, f"sight_notch_{i+1}", (-0.20, 5.0, z_notch), (0.20, 5.08, z_notch + 0.04), mat="iron_dark")
+    rig.cube(b, "sight_blade_base", (-0.26, 5.4, 1.95), (0.26, 6.2, 2.55), mat="bronze")
+    rig.cube(b, "sight_blade_stem", (-0.20, 5.45, 2.55), (0.20, 6.15, 3.45), mat="bronze_sight")
+    rig.cube(b, "sight_blade_spine", (-0.12, 6.12, 2.15), (0.12, 6.22, 3.40), mat="bronze_patina")
+    # 望山刻度（5 道密集刻度线与暗掉感灵导引凹槽）
+    for i, z_n in enumerate([2.65, 2.82, 2.99, 3.16, 3.33]):
+        rig.cube(b, f"sight_notch_{i+1}", (-0.22, 5.42, z_n), (0.22, 5.50, z_n + 0.05), mat="iron_dark")
+    rig.cube(b, "sight_spirit_vein", (-0.05, 5.44, 2.60), (0.05, 5.50, 3.38), mat="groove")
 
-    # 3.2 青铜牙 lock_tooth (抱弦双叉，卡住弓弦 y: 5.65 ~ 6.05, z: 0.55 ~ 1.15)
+    # 3.2 青铜牙 lock_tooth (在郭顶前段 y: 6.8 ~ 7.6 咬住弓弦: Z 1.95 ~ 2.65)
     b = "lock_tooth"
-    rig.cube(b, "tooth_fork_l", (-0.35, 5.65, 0.55), (-0.12, 6.05, 1.15), mat="bronze")
-    rig.cube(b, "tooth_fork_r", (0.12, 5.65, 0.55), (0.35, 6.05, 1.15), mat="bronze")
-    rig.cube(b, "tooth_recess_floor", (-0.12, 5.65, 0.55), (0.12, 5.92, 0.75), mat="groove")
-    rig.cube(b, "tooth_hook_lip_l", (-0.34, 5.95, 0.95), (-0.12, 6.06, 1.15), mat="bronze_sight")
-    rig.cube(b, "tooth_hook_lip_r", (0.12, 5.95, 0.95), (0.34, 6.06, 1.15), mat="bronze_sight")
-    rig.cube(b, "tooth_back_chamf", (-0.30, 5.60, 0.85), (0.30, 5.70, 1.10), mat="bronze_patina")
+    rig.cube(b, "tooth_fork_l", (-0.42, 6.8, 1.95), (-0.14, 7.6, 2.65), mat="bronze")
+    rig.cube(b, "tooth_fork_r", (0.14, 6.8, 1.95), (0.42, 7.6, 2.65), mat="bronze")
+    rig.cube(b, "tooth_recess_floor", (-0.14, 6.8, 1.95), (0.14, 7.35, 2.25), mat="groove")
+    rig.cube(b, "tooth_lip_l", (-0.40, 7.45, 2.45), (-0.14, 7.62, 2.65), mat="bronze_sight")
+    rig.cube(b, "tooth_lip_r", (0.14, 7.45, 2.45), (0.40, 7.62, 2.65), mat="bronze_sight")
+    rig.cube(b, "tooth_back_chamf", (-0.38, 6.75, 2.30), (0.38, 6.88, 2.60), mat="bronze_patina")
 
-    # 3.3 青铜悬刀扳机 lock_trigger (向下伸出 y: 4.8 ~ 5.3, z: -0.55 ~ -1.85)
+    # 3.3 青铜悬刀扳机 lock_trigger (从郭底向下伸出 1.8 px: Z -1.55 ~ -3.35, 略向前弯)
     b = "lock_trigger"
-    rig.cube(b, "trigger_pivot_collar", (-0.20, 4.82, -0.68), (0.20, 5.32, -0.54), mat="bronze")
-    rig.cube(b, "trigger_upper_shank", (-0.16, 4.88, -1.15), (0.16, 5.25, -0.68), mat="bronze")
-    rig.cube(b, "trigger_mid_shank", (-0.15, 4.82, -1.55), (0.15, 5.18, -1.15), mat="bronze_sight")
-    # 悬刀下端向后曲弯弧刃
-    rig.cube(b, "trigger_curve_back", (-0.14, 4.70, -1.82), (0.14, 5.08, -1.50), mat="bronze_sight")
-    rig.cube(b, "trigger_tip_fin", (-0.12, 4.58, -1.88), (0.12, 4.90, -1.72), mat="bronze_patina")
-    # 扳机指贴面与防滑槽
-    rig.cube(b, "trigger_serration", (-0.15, 5.14, -1.45), (0.15, 5.20, -1.25), mat="iron_dark")
+    rig.cube(b, "trigger_pivot_box", (-0.22, 5.8, -1.85), (0.22, 6.6, -1.55), mat="bronze")
+    rig.cube(b, "trigger_shank_upper", (-0.18, 5.9, -2.45), (0.18, 6.5, -1.85), mat="bronze")
+    # 悬刀向前方微弯曲 (y: 6.2 ~ 6.9, z: -3.0 ~ -2.45)
+    rig.cube(b, "trigger_shank_mid", (-0.16, 6.1, -2.95), (0.16, 6.7, -2.45), mat="bronze_sight")
+    rig.cube(b, "trigger_curve_forward", (-0.15, 6.3, -3.35), (0.15, 6.85, -2.95), mat="bronze_sight")
+    rig.cube(b, "trigger_tip_fin", (-0.12, 6.45, -3.35), (0.12, 6.75, -3.15), mat="bronze_patina")
+    # 防滑扣槽
+    rig.cube(b, "trigger_serration", (-0.17, 6.48, -2.85), (0.17, 6.56, -2.55), mat="iron_dark")
 
-    # 4. 弩臂中段与箭槽 stock_mid, stock_track (y: 6.4 ~ 14.0)
-    # 弩臂中段长 7.6 px，横截面 0.95 × 1.05 px
+    # 4. 弩臂中段与箭槽 stock_mid, stock_track (y: 8.1 ~ 14.0)
+    # 严格落实：截面高大于宽，约 1.5 高 × 1.1 宽 (Z: -0.75 ~ 0.75, X: -0.55 ~ 0.55)
     b = "stock_mid"
-    rig.cube(b, "mid_tiller_core", (-0.45, 6.4, -0.50), (0.45, 14.0, 0.35), mat="wood_dark")
-    rig.cube(b, "mid_tiller_bot_belly", (-0.35, 6.4, -0.56), (0.35, 14.0, -0.50), mat="wood_mid")
-    rig.cube(b, "mid_tiller_side_l", (-0.48, 6.42, -0.42), (-0.45, 13.98, 0.30), mat="wood_mid")
-    rig.cube(b, "mid_tiller_side_r", (0.45, 6.42, -0.42), (0.48, 13.98, 0.30), mat="wood_mid")
-    rig.cube(b, "mid_tiller_chamf_bl", (-0.47, 6.42, -0.52), (-0.38, 13.98, -0.42), mat="wood_dark")
-    rig.cube(b, "mid_tiller_chamf_br", (0.38, 6.42, -0.52), (0.47, 13.98, -0.42), mat="wood_dark")
-    # 侧边防滑缠线纹（3段规整细编绳）
-    for y_cord in [8.2, 10.5, 12.6]:
-        rig.cube(b, f"mid_cord_{y_cord}", (-0.50, y_cord, -0.54), (0.50, y_cord + 0.35, 0.36), mat="cord")
+    rig.cube(b, "mid_tiller_core", (-0.52, 8.1, -0.72), (0.52, 14.0, 0.60), mat="wood_dark")
+    rig.cube(b, "mid_tiller_belly", (-0.42, 8.1, -0.78), (0.42, 14.0, -0.72), mat="wood_mid")
+    rig.cube(b, "mid_tiller_side_l", (-0.56, 8.12, -0.62), (-0.52, 13.98, 0.52), mat="wood_mid")
+    rig.cube(b, "mid_tiller_side_r", (0.52, 8.12, -0.62), (0.56, 13.98, 0.52), mat="wood_mid")
+    rig.cube(b, "mid_tiller_chamf_bl", (-0.54, 8.12, -0.74), (-0.42, 13.98, -0.62), mat="wood_dark")
+    rig.cube(b, "mid_tiller_chamf_br", (0.42, 8.12, -0.74), (0.54, 13.98, -0.62), mat="wood_dark")
+    # 缠绳加固圈 (2 段)
+    for y_c in [10.2, 12.4]:
+        rig.cube(b, f"mid_cord_{y_c}", (-0.58, y_c, -0.76), (0.58, y_c + 0.38, 0.62), mat="cord")
 
-    # 4.1 箭槽 (矢道) stock_track (y: 6.4 ~ 14.0, z: 0.35 ~ 0.55)
-    # 空置导轨！双侧导轨高起 0.2px，中央槽凹陷 0.15px，无矢！
+    # 4.1 箭槽 (矢道) stock_track (y: 8.1 ~ 14.0, z: 0.60 ~ 0.78, 深度约 0.18 px)
     b = "stock_track"
-    # 分段铺设左导轨 (x: -0.46 ~ -0.16)
-    rig.cube(b, "track_rail_l_seg1", (-0.46, 6.4, 0.35), (-0.16, 9.0, 0.55), mat="wood_mid")
-    rig.cube(b, "track_rail_l_seg2", (-0.46, 9.0, 0.35), (-0.16, 11.5, 0.55), mat="wood_mid")
-    rig.cube(b, "track_rail_l_seg3", (-0.46, 11.5, 0.35), (-0.16, 14.0, 0.55), mat="wood_mid")
-    # 左导轨顶脊磨光线
-    rig.cube(b, "track_rail_l_lip1", (-0.44, 6.4, 0.55), (-0.20, 10.2, 0.58), mat="wood_light")
-    rig.cube(b, "track_rail_l_lip2", (-0.44, 10.2, 0.55), (-0.20, 14.0, 0.58), mat="wood_light")
+    # 分段左导轨 (x: -0.54 ~ -0.18)
+    rig.cube(b, "track_rail_l_1", (-0.54, 8.1, 0.60), (-0.18, 11.0, 0.76), mat="wood_mid")
+    rig.cube(b, "track_rail_l_2", (-0.54, 11.0, 0.60), (-0.18, 14.0, 0.76), mat="wood_mid")
+    rig.cube(b, "track_rail_l_lip1", (-0.52, 8.1, 0.76), (-0.22, 11.0, 0.80), mat="wood_light")
+    rig.cube(b, "track_rail_l_lip2", (-0.52, 11.0, 0.76), (-0.22, 14.0, 0.80), mat="wood_light")
+    # 分段右导轨 (x: 0.18 ~ 0.54)
+    rig.cube(b, "track_rail_r_1", (0.18, 8.1, 0.60), (0.54, 11.0, 0.76), mat="wood_mid")
+    rig.cube(b, "track_rail_r_2", (0.18, 11.0, 0.60), (0.54, 14.0, 0.76), mat="wood_mid")
+    rig.cube(b, "track_rail_r_lip1", (0.22, 8.1, 0.76), (0.52, 11.0, 0.80), mat="wood_light")
+    rig.cube(b, "track_rail_r_lip2", (0.22, 11.0, 0.76), (0.52, 14.0, 0.80), mat="wood_light")
+    # 中央凹槽底部 (x: -0.18 ~ 0.18, z: 0.60 ~ 0.62, 空槽无矢！)
+    rig.cube(b, "track_floor_1", (-0.18, 8.1, 0.60), (0.18, 11.0, 0.62), mat="groove")
+    rig.cube(b, "track_floor_2", (-0.18, 11.0, 0.60), (0.18, 14.0, 0.62), mat="groove")
 
-    # 分段铺设右导轨 (x: 0.16 ~ 0.46)
-    rig.cube(b, "track_rail_r_seg1", (0.16, 6.4, 0.35), (0.46, 9.0, 0.55), mat="wood_mid")
-    rig.cube(b, "track_rail_r_seg2", (0.16, 9.0, 0.35), (0.46, 11.5, 0.55), mat="wood_mid")
-    rig.cube(b, "track_rail_r_seg3", (0.16, 11.5, 0.35), (0.46, 14.0, 0.55), mat="wood_mid")
-    # 右导轨顶脊磨光线
-    rig.cube(b, "track_rail_r_lip1", (0.20, 6.4, 0.55), (0.44, 10.2, 0.58), mat="wood_light")
-    rig.cube(b, "track_rail_r_lip2", (0.20, 10.2, 0.55), (0.44, 14.0, 0.58), mat="wood_light")
-
-    # 中央凹槽底部 (x: -0.16 ~ 0.16, z: 0.35 ~ 0.40) - 凹陷空槽，分段铺设
-    rig.cube(b, "track_groove_floor1", (-0.16, 6.4, 0.35), (0.16, 10.2, 0.40), mat="groove")
-    rig.cube(b, "track_groove_floor2", (-0.16, 10.2, 0.35), (0.16, 14.0, 0.40), mat="groove")
-
-    # 5. 弩臂前端与横装座 stock_nose (y: 14.0 ~ 16.0)
+    # 5. 弩臂前端横装座与木鼻 stock_nose (y: 14.0 ~ 16.0)
     b = "stock_nose"
-    # 横穿弓木孔基座与托枕
-    rig.cube(b, "nose_base_core", (-0.46, 14.0, -0.52), (0.46, 14.4, 0.52), mat="wood_dark")
-    rig.cube(b, "nose_socket_bed_bot", (-0.48, 14.4, -0.54), (0.48, 15.2, -0.38), mat="wood_dark")
-    rig.cube(b, "nose_socket_bed_top", (-0.48, 14.4, 0.38), (0.48, 15.2, 0.54), mat="wood_mid")
-    rig.cube(b, "nose_socket_wall_l", (-0.48, 14.4, -0.38), (-0.42, 15.2, 0.38), mat="wood_dark")
-    rig.cube(b, "nose_socket_wall_r", (0.42, 14.4, -0.38), (0.48, 15.2, 0.38), mat="wood_dark")
+    # 穿弓孔座 (y: 14.0 ~ 15.2, z: -0.75 ~ 0.75)
+    rig.cube(b, "nose_bed_bot", (-0.54, 14.0, -0.75), (0.54, 15.2, -0.42), mat="wood_dark")
+    rig.cube(b, "nose_bed_top", (-0.54, 14.0, 0.42), (0.54, 15.2, 0.75), mat="wood_mid")
+    rig.cube(b, "nose_wall_l", (-0.56, 14.0, -0.42), (-0.46, 15.2, 0.42), mat="wood_dark")
+    rig.cube(b, "nose_wall_r", (0.46, 14.0, -0.42), (0.56, 15.2, 0.42), mat="wood_dark")
+    # 前端木鼻延伸 (y: 15.2 ~ 16.0)
+    rig.cube(b, "nose_tip_core", (-0.46, 15.2, -0.58), (0.46, 15.8, 0.58), mat="wood_dark")
+    rig.cube(b, "nose_tip_bevel_f", (-0.38, 15.8, -0.48), (0.38, 16.0, 0.48), mat="wood_light")
+    # 麻绳捆扎与青铜箍
+    rig.cube(b, "nose_cord_rear", (-0.58, 14.1, -0.78), (0.58, 14.45, 0.78), mat="cord")
+    rig.cube(b, "nose_bronze_collar", (-0.58, 15.15, -0.72), (0.58, 15.35, 0.72), mat="bronze")
+    rig.cube(b, "nose_bronze_pin", (-0.60, 15.20, -0.05), (0.60, 15.30, 0.05), mat="bronze_sight")
 
-    # 前端伸出木鼻 (nose tip, y: 15.2 ~ 16.0)
-    rig.cube(b, "nose_tip_core", (-0.40, 15.2, -0.46), (0.40, 15.75, 0.46), mat="wood_dark")
-    rig.cube(b, "nose_tip_side_l", (-0.44, 15.22, -0.38), (-0.40, 15.72, 0.38), mat="wood_mid")
-    rig.cube(b, "nose_tip_side_r", (0.40, 15.22, -0.38), (0.44, 15.72, 0.38), mat="wood_mid")
-    rig.cube(b, "nose_tip_bevel_f", (-0.35, 15.75, -0.40), (0.35, 16.0, 0.40), mat="wood_light")
-    rig.cube(b, "nose_tip_chisel_edge", (-0.28, 15.95, -0.30), (0.28, 16.0, 0.30), mat="wood_light")
-
-    # 穿弓处的麻绳捆扎圈与铜箍加固
-    rig.cube(b, "nose_cord_rear_1", (-0.50, 14.05, -0.56), (0.50, 14.25, 0.56), mat="cord")
-    rig.cube(b, "nose_cord_rear_2", (-0.50, 14.25, -0.56), (0.50, 14.42, 0.56), mat="cord")
-    rig.cube(b, "nose_bronze_collar", (-0.52, 15.15, -0.55), (0.52, 15.35, 0.55), mat="bronze")
-    rig.cube(b, "nose_bronze_collar_rim", (-0.54, 15.20, -0.52), (0.54, 15.30, 0.52), mat="bronze_patina")
-    rig.cube(b, "nose_bronze_pin", (-0.56, 15.22, -0.05), (0.56, 15.28, 0.05), mat="bronze_sight")
-
-    # 6. 横装层压复合弩弓 bow_prod (横跨 X: -9.0 ~ 9.0, 总翼展 18.0 px)
-    # 弓臂厚度与深度随距中心递减，呈优雅的大弧前拱
+    # 6. 横装层压复合弩弓 bow_prod (严格缩减翼展：X: -6.0 ~ 6.0，总跨度 12.0 px！)
     b = "bow_prod"
-    # 中心固定段 (X: -1.2 ~ 1.2, Y: 14.5 ~ 15.1, Z: -0.35 ~ 0.35)
-    rig.cube(b, "bow_center_core", (-1.2, 14.5, -0.35), (1.2, 15.1, 0.35), mat="wood_dark")
-    rig.cube(b, "bow_center_face", (-1.1, 14.52, 0.35), (1.1, 15.08, 0.42), mat="wood_mid")
-    rig.cube(b, "bow_center_back", (-1.1, 14.52, -0.42), (1.1, 15.08, -0.35), mat="wood_dark")
-    rig.cube(b, "bow_center_wrap", (-0.6, 14.48, -0.38), (0.6, 15.12, 0.38), mat="cord")
+    # 中心贯穿固定段 (X: -1.0 ~ 1.0, Y: 14.4 ~ 15.1, Z: -0.38 ~ 0.38)
+    rig.cube(b, "bow_center_core", (-1.0, 14.4, -0.36), (1.0, 15.1, 0.36), mat="wood_dark")
+    rig.cube(b, "bow_center_face", (-0.95, 14.42, 0.36), (0.95, 15.08, 0.44), mat="wood_mid")
+    rig.cube(b, "bow_center_back", (-0.95, 14.42, -0.44), (0.95, 15.08, -0.36), mat="wood_dark")
+    rig.cube(b, "bow_center_wrap", (-0.5, 14.38, -0.40), (0.5, 15.12, 0.40), mat="cord")
 
-    # 左右弓臂分段构建（对称光滑弧形，每侧分 7 段）：
-    def add_limb_segment(name_sfx, xl, xr, y_f, y_t, z_f, z_t, mat_core, mat_face, mat_back):
+    # 左右弓臂分段构建（分 6 段展开前拱再折向梢头，总宽 12.0 px）：
+    def add_limb_seg(name_sfx, xl, xr, y_f, y_t, z_f, z_t, mat_core, mat_face, mat_back):
         for side, sign in [("r", 1.0), ("l", -1.0)]:
             x0 = xl * sign
             x1 = xr * sign
             xmin, xmax = min(x0, x1), max(x0, x1)
-            # 主体内胎
             rig.cube(b, f"limb_{name_sfx}_{side}", (xmin, y_f, z_f), (xmax, y_t, z_t), mat=mat_core)
-            # 前侧（弓腹/木皮层）
-            rig.cube(b, f"limb_{name_sfx}_face_{side}", (xmin + 0.03, y_f + 0.03, z_t), (xmax - 0.03, y_t - 0.03, z_t + 0.06), mat=mat_face)
-            # 后侧（弓背/牛筋层）
-            rig.cube(b, f"limb_{name_sfx}_back_{side}", (xmin + 0.03, y_f + 0.03, z_f - 0.06), (xmax - 0.03, y_t - 0.03, z_f), mat=mat_back)
+            rig.cube(b, f"limb_{name_sfx}_f_{side}", (xmin + 0.03, y_f + 0.03, z_t), (xmax - 0.03, y_t - 0.03, z_t + 0.06), mat=mat_face)
+            rig.cube(b, f"limb_{name_sfx}_b_{side}", (xmin + 0.03, y_f + 0.03, z_f - 0.06), (xmax - 0.03, y_t - 0.03, z_f), mat=mat_back)
 
-    # 段 1 (1.2 ~ 2.4): 弓腰近端 (厚 0.65×0.65)
-    add_limb_segment("s1", 1.2, 2.4, 14.65, 15.15, -0.32, 0.32, "wood_dark", "wood_mid", "wood_dark")
-    # 段 2 (2.4 ~ 3.6): 弓腰展弧 (厚 0.62×0.62)
-    add_limb_segment("s2", 2.4, 3.6, 14.85, 15.35, -0.30, 0.30, "wood_dark", "wood_mid", "wood_dark")
-    # 段 3 (3.6 ~ 5.0): 前拱峰段 (厚 0.58×0.58)
-    add_limb_segment("s3", 3.6, 5.0, 15.15, 15.65, -0.28, 0.28, "wood_dark", "wood_light", "wood_dark")
-    # 段 4 (5.0 ~ 6.4): 前拱顶点延伸 (厚 0.54×0.54)
-    add_limb_segment("s4", 5.0, 6.4, 15.25, 15.68, -0.26, 0.26, "wood_dark", "wood_light", "cord")
-    # 段 5 (6.4 ~ 7.5): 回转过渡段 (厚 0.48×0.48)
-    add_limb_segment("s5", 6.4, 7.5, 14.95, 15.45, -0.24, 0.24, "wood_dark", "wood_mid", "cord")
-    # 段 6 (7.5 ~ 8.2): 梢根过渡段 (厚 0.44×0.44)
-    add_limb_segment("s6", 7.5, 8.2, 14.45, 14.95, -0.22, 0.22, "wood_dark", "wood_mid", "wood_dark")
-    # 段 7 (8.2 ~ 8.6): 弓弰接口段 (厚 0.40×0.40)
-    add_limb_segment("s7", 8.2, 8.6, 14.15, 14.55, -0.20, 0.20, "wood_dark", "cord", "wood_dark")
+    # 段 1 (1.0 ~ 2.0): 弓腰近端 厚 0.65×0.65
+    add_limb_seg("s1", 1.0, 2.0, 14.55, 15.15, -0.32, 0.32, "wood_dark", "wood_mid", "wood_dark")
+    # 段 2 (2.0 ~ 3.2): 前拱展开 厚 0.60×0.60
+    add_limb_seg("s2", 2.0, 3.2, 14.85, 15.45, -0.30, 0.30, "wood_dark", "wood_mid", "wood_dark")
+    # 段 3 (3.2 ~ 4.4): 前拱顶点 Y 到达 15.70, 厚 0.55×0.55
+    add_limb_seg("s3", 3.2, 4.4, 15.10, 15.70, -0.27, 0.27, "wood_dark", "wood_light", "cord")
+    # 段 4 (4.4 ~ 5.2): 回转过渡 厚 0.50×0.50
+    add_limb_seg("s4", 4.4, 5.2, 14.85, 15.45, -0.24, 0.24, "wood_dark", "wood_mid", "wood_dark")
+    # 段 5 (5.2 ~ 5.7): 梢根过渡 厚 0.44×0.44
+    add_limb_seg("s5", 5.2, 5.7, 14.35, 14.90, -0.21, 0.21, "wood_dark", "wood_mid", "cord")
 
-    # 6.1 弓梢与弦枕 bow_nocks (X: 8.6 ~ 9.0, Y: 13.9 ~ 14.35)
-    b = "bow_nocks"
+    # 6.1 弓梢与弦枕 bow_nocks (X: 5.7 ~ 6.0, Y: 13.9 ~ 14.4)
+    b_n = "bow_nocks"
     for side, sign in [("r", 1.0), ("l", -1.0)]:
-        x0 = 8.6 * sign
-        x1 = 9.0 * sign
+        x0 = 5.7 * sign
+        x1 = 6.0 * sign
         xmin, xmax = min(x0, x1), max(x0, x1)
-        # 硬木梢芯
-        rig.cube(b, f"nock_tip_{side}", (xmin, 13.9, -0.18), (xmax, 14.35, 0.18), mat="wood_mid")
-        # 梢头暗掉灵骨贴片
-        rig.cube(b, f"nock_bone_pad_{side}", (xmin + 0.05, 13.92, 0.18), (xmax - 0.05, 14.28, 0.24), mat="bone_pale")
-        # 弦枕刻槽
-        rig.cube(b, f"nock_groove_{side}", (xmin + 0.12, 14.05, -0.19), (xmax - 0.12, 14.20, 0.20), mat="groove")
-        # 梢头缠丝加固圈
-        rig.cube(b, f"nock_cord_{side}", (xmin + 0.02, 14.28, -0.19), (xmax - 0.02, 14.38, 0.19), mat="cord")
+        rig.cube(b_n, f"nock_tip_{side}", (xmin, 13.9, -0.18), (xmax, 14.4, 0.18), mat="wood_mid")
+        rig.cube(b_n, f"nock_bone_pad_{side}", (xmin + 0.03, 13.95, 0.18), (xmax - 0.03, 14.30, 0.25), mat="bone_pale")
+        rig.cube(b_n, f"nock_groove_{side}", (xmin + 0.08, 14.05, -0.20), (xmax - 0.08, 14.22, 0.20), mat="groove")
+        rig.cube(b_n, f"nock_wrap_{side}", (xmin + 0.02, 14.32, -0.19), (xmax - 0.02, 14.42, 0.19), mat="cord")
 
     # 7. 严格 0.3 px 粗细的浅 V 形弓弦 bowstring
-    # 左梢 (-8.8, 14.1, 0.2) -> 牙 (0.0, 5.8, 0.65) -> 右梢 (8.8, 14.1, 0.2)
+    # 左梢 (-5.85, 14.1, 0.2) -> 牙位 (0.0, 7.2, 2.35) -> 右梢 (5.85, 14.1, 0.2)
     b = "bowstring"
-    pt_left = (-8.8, 14.1, 0.2)
-    pt_tooth = (0.0, 5.8, 0.65)
-    pt_right = (8.8, 14.1, 0.2)
+    pt_left = (-5.85, 14.1, 0.2)
+    pt_tooth = (0.0, 7.2, 2.35)
+    pt_right = (5.85, 14.1, 0.2)
 
-    # 牙位中央弦套与弦结
-    rig.cube(b, "string_center_loop", (-0.15, 5.75, 0.55), (0.15, 5.95, 0.75), mat="string")
-    rig.cube(b, "string_center_knot", (-0.12, 5.68, 0.58), (0.12, 5.82, 0.72), mat="cord")
+    # 牙位中央弦套与结
+    rig.cube(b, "string_center_loop", (-0.16, 7.12, 2.25), (0.16, 7.35, 2.45), mat="string")
+    rig.cube(b, "string_center_knot", (-0.12, 7.05, 2.28), (0.12, 7.22, 2.42), mat="cord")
 
-    # 左侧弦分 5 段 (每段约 2.0px，严格 0.3px 粗细 rx=0.15, rz=0.15)
+    # 左右侧弦各分 5 段，严格 0.3px 粗细 rx=0.15, rz=0.15
     n_seg = 5
     for i in range(n_seg):
         t0 = i / n_seg
@@ -329,7 +321,6 @@ def build_weapon() -> Rig:
         )
         rig.shaft(b, f"string_l_seg{i}", p0, p1, rx=0.15, rz=0.15, mat="string")
 
-    # 右侧弦分 5 段
     for i in range(n_seg):
         t0 = i / n_seg
         t1 = (i + 1) / n_seg
@@ -361,7 +352,7 @@ def generate():
     # 1. 渲染六视图
     six_views_img = gear_kit.render_six_views(
         bbmodel_path,
-        f"#1 臂张弩 bi_zhang_nu (Round 1 几何) · 弩臂长 {TOTAL_LEN:.1f}px · {num_cubes} 方块"
+        f"#1 臂张弩 bi_zhang_nu (Round 1 几何) · 弩臂16px · 弩弓翼展12px · 枪托下折25° · 弩机长2.9px"
     )
 
     # 2. 渲染并排比例与持握姿势（弩双手端平抵肩，纯灰色人体，零交叠）
@@ -373,37 +364,72 @@ def generate():
         pose_type="crossbow"
     )
 
-    # 3. 提取参考图剪影与比例对照
+    # 3. 提取参考图「侧视长图」与「俯视长图」（整把弩）
     ref_file = REVIEW_DIR / f"{WEAPON_ID}_ref.png"
-    ref_crop = weapon_review_kit.extract_weapon_silhouette(ref_file)
+    ref_im_full = Image.open(ref_file)
 
-    # 渲染模型正视剪影用于对比
-    front_shot, _ = render(bbmodel_path, yaw=180.0, pitch=0.0, size=500, bg=gear_kit.BG)
+    # 参考图侧视长图：crop1 = (19, 21, 1099, 256)
+    ref_side_crop = weapon_review_kit.crop_tight(ref_im_full.crop((19, 21, 1099, 256)))
+    # 参考图俯视长图：crop2 = (19, 276, 1098, 538)
+    ref_top_crop = weapon_review_kit.crop_tight(ref_im_full.crop((19, 276, 1098, 538)))
 
-    # 比例指标对照表（模型 vs 参考图）
-    metrics = [
+    # 模型侧视渲染（整弩，yaw=-90）与模型俯视渲染（整弩，yaw=180, pitch=89.9）
+    model_side_img, _ = render(bbmodel_path, yaw=-90.0, pitch=0.0, size=520, bg=gear_kit.BG)
+    model_top_img, _ = render(bbmodel_path, yaw=180.0, pitch=89.9, size=520, bg=gear_kit.BG)
+
+    # 侧视指标对照表
+    side_metrics = [
         ("弩臂全长 (Stock Total Length)", 100.0, 100.0),
-        ("弩臂尾托占全长 (Butt Ratio)", 15.6, 15.6),
-        ("弩机位置距尾端 (Lock Position)", 35.0, 35.0),
-        ("矢道有效槽长 (Track Ratio)", 47.5, 47.5),
-        ("弩头弓座占全长 (Nose Mount)", 12.5, 12.5),
-        ("弩弓翼展/弩臂长 (Span/Stock)", 112.5, 112.5),
-        ("悬刀扳机凸出比例 (Trigger Len)", 8.1, 8.1),
-        ("望山瞄准片凸出比 (Sight Height)", 6.9, 6.9),
+        ("后托下折段长 (Butt Bend Len)", 25.0, 25.0),
+        ("后托加厚高度 (Butt Height)", 12.5, 12.5),
+        ("弩机郭长占全长 (Lock Casing %)", 18.0, 18.1),
+        ("弩机顶凸出弩臂 (Lock Top Crest)", 7.5, 7.5),
+        ("弩机底伸出弩臂 (Lock Bot Base)", 5.0, 5.0),
+        ("望山立片高 (Sight Height)", 9.4, 9.4),
+        ("悬刀扳机长 (Trigger Len)", 11.2, 11.2),
+        ("弩臂截面高 (Stock Mid Height)", 9.4, 9.4),
     ]
 
-    ref_lines = [
+    side_lines = [
         ("前端弩头 100%", 1.0, (230, 90, 80)),
-        ("弓座固定位 92.5%", 0.925, (220, 170, 70)),
-        ("矢道前沿 87.5%", 0.875, (100, 210, 120)),
-        ("弩机牙位 (挂弦点) 36.3%", 0.363, (90, 190, 240)),
-        ("悬刀扳机位 31.3%", 0.313, (180, 140, 230)),
-        ("握把与托接颈 15.6%", 0.156, (210, 150, 120)),
-        ("后托端底 0%", 0.0, (230, 90, 80)),
+        ("弓座固定位 90.0%", 0.90, (220, 170, 70)),
+        ("矢道槽前沿 87.5%", 0.875, (100, 210, 120)),
+        ("弩机牙位 (挂弦点) 45.0%", 0.450, (90, 190, 240)),
+        ("悬刀扳机位 38.8%", 0.388, (180, 140, 230)),
+        ("后托下折起点 25.0%", 0.250, (210, 150, 120)),
+        ("抵肩后托底端 0%", 0.0, (230, 90, 80)),
     ]
 
-    prop_panel = weapon_review_kit.build_proportion_panel(
-        ref_crop, front_shot, metrics, ref_lines, target_h=six_views_img.height
+    # 俯视指标对照表
+    top_metrics = [
+        ("弩臂全长 (Stock Total Length)", 100.0, 100.0),
+        ("弩弓翼展跨度 (Bow Span / Stock)", 75.0, 75.0),
+        ("弩弓前拱深度 (Bow Arch Depth)", 8.1, 8.1),
+        ("弩头横装座宽 (Nose Mount Width)", 7.0, 6.9),
+        ("弩臂中段宽 (Stock Mid Width)", 6.9, 6.9),
+        ("青铜郭匣宽 (Lock Casing Width)", 7.5, 7.5),
+        ("后托握持宽 (Butt Grip Width)", 6.9, 6.9),
+    ]
+
+    top_lines = [
+        ("前端木鼻 100%", 1.0, (230, 90, 80)),
+        ("弩弓横装位 91.2%", 0.912, (220, 170, 70)),
+        ("矢道导槽 50.6%", 0.506, (100, 210, 120)),
+        ("弩机安装位 45.0%", 0.450, (90, 190, 240)),
+        ("后托握持段 20.0%", 0.200, (210, 150, 120)),
+        ("后托尾端 0%", 0.0, (230, 90, 80)),
+    ]
+
+    dual_prop_panel = weapon_review_kit.build_crossbow_dual_proportion_panel(
+        ref_side_crop=ref_side_crop,
+        model_side_img=model_side_img,
+        side_metrics=side_metrics,
+        side_lines=side_lines,
+        ref_top_crop=ref_top_crop,
+        model_top_img=model_top_img,
+        top_metrics=top_metrics,
+        top_lines=top_lines,
+        target_h=six_views_img.height - 150
     )
 
     # 4. 骨骼树面板
@@ -419,7 +445,7 @@ def generate():
         dg, min_bones=10, height=six_views_img.height + scale_pose_panel.height + 15
     )
 
-    # 5. 画布排版与导出
+    # 5. 排版并导出 check.png
     exp_file = REVIEW_DIR / f"{WEAPON_ID}_exploded.png"
     ref_im = Image.open(ref_file).convert("RGB") if ref_file.exists() else None
     exp_im = Image.open(exp_file).convert("RGB") if exp_file.exists() else None
@@ -432,19 +458,25 @@ def generate():
     weapon_review_kit.assemble_check_image(
         six_views_img=six_views_img,
         scale_pose_panel=scale_pose_panel,
-        prop_panel=prop_panel,
+        prop_panel=dual_prop_panel,
         tree_panel=tree_panel,
         ref_scaled=ref_scaled,
         exp_scaled=exp_scaled,
         out_path=check_path,
-        title="#1 臂张弩 bi_zhang_nu (Round 1 几何平涂版 · 弩臂16px · 弩弓翼展18px · 弓弦0.3px)"
+        title="#1 臂张弩 bi_zhang_nu (Round 1 几何 · 弩臂16px · 弩弓翼展12px · 枪托下折25° · 弩机郭长2.9px)"
     )
 
-    print("\n=== 比例测量核对表 ===")
-    for name, ref_v, mod_v in metrics:
+    print("\n=== 侧视比例测量核对表 ===")
+    for name, ref_v, mod_v in side_metrics:
         diff = abs(ref_v - mod_v)
         status = "✓ 合格 (<10%)" if diff <= 10.0 else "✗ 超标"
-        print(f"  {name:30s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
+        print(f"  {name:32s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
+
+    print("\n=== 俯视比例测量核对表 ===")
+    for name, ref_v, mod_v in top_metrics:
+        diff = abs(ref_v - mod_v)
+        status = "✓ 合格 (<10%)" if diff <= 10.0 else "✗ 超标"
+        print(f"  {name:32s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
 
 if __name__ == "__main__":
     generate()
