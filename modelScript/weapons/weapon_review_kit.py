@@ -214,7 +214,22 @@ def check_holding_collisions(
                 R_bow @ Re @ np.array([0., 0., 1.])
             ]
         elif pose_type == "sling":
-            corners = [c + np.array([dx, dy, dz]) for c in corners]
+            p_fist = np.array([6.0, 14.6, -4.2])
+            new_corners = []
+            for c in corners:
+                y_pct = max(0.0, min(1.0, (c[1] - 0.5) / 19.0))
+                y_new = 1.5 + y_pct * (14.6 - 1.5)
+                if c[0] < -0.3:
+                    x_target = 5.8
+                    x_new = 5.6 + (c[0] + 3.5) * 0.15 + (x_target - 5.6) * y_pct
+                elif c[0] > 0.3:
+                    x_target = 6.2
+                    x_new = 6.4 + (c[0] - 3.5) * 0.15 + (x_target - 6.4) * y_pct
+                else:
+                    x_new = 6.0 + c[0]
+                z_new = p_fist[2] + c[2]
+                new_corners.append(np.array([x_new, y_new, z_new]))
+            corners = new_corners
             obb_axes = [
                 Re @ np.array([1., 0., 0.]),
                 Re @ np.array([0., 1., 0.]),
@@ -418,11 +433,50 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
             new_e.pop("rotation", None)
             new_e.pop("origin", None)
         elif pose_type == "sling":
-            new_e["from"] = [round(e["from"][0] + dx_hold, 4), round(e["from"][1] + dy_hold, 4), round(e["from"][2] + dz_hold, 4)]
-            new_e["to"] = [round(e["to"][0] + dx_hold, 4), round(e["to"][1] + dy_hold, 4), round(e["to"][2] + dz_hold, 4)]
-            if any(new_e.get("rotation", [0, 0, 0])):
-                org = new_e["origin"]
-                new_e["origin"] = [round(org[0] + dx_hold, 4), round(org[1] + dy_hold, 4), round(org[2] + dz_hold, 4)]
+            # 投石索持握姿势：
+            # 静置状态是 U 形 (指环在左 x ~ -3.5, 绳结在右 x ~ 3.5, 皮兜在底 x ~ 0.0)
+            # 持握时两绳尾都在右手拳心 (x ~ 6.0, y ~ 14.6, z ~ -4.2)
+            # 绳向下方自然收拢下垂成清晰的 V 形，皮兜悬垂于 (6.0, 1.5, -4.2)
+            f_orig = np.array(e["from"], float)
+            t_orig = np.array(e["to"], float)
+            e_rot = e.get("rotation", [0, 0, 0])
+            e_org = np.array(e.get("origin", [0, 0, 0]), float)
+            Re = rotmat(e_rot[2], 2) @ rotmat(e_rot[1], 1) @ rotmat(e_rot[0], 0) if any(e_rot) else np.eye(3)
+
+            corners = [
+                np.array([x, y, z])
+                for x in [f_orig[0], t_orig[0]]
+                for y in [f_orig[1], t_orig[1]]
+                for z in [f_orig[2], t_orig[2]]
+            ]
+            if any(e_rot):
+                corners = [Re @ (c - e_org) + e_org for c in corners]
+
+            # 变形映射：高度 y 从 0.5 到 19.5 映射到持握高度 1.5 到 14.6
+            # x 坐标在顶部收拢到右手拳心 (x ~ 6.0)，两绳留 0.5px 微隙呈现可辨的 V 形
+            p_fist = np.array([6.0, 14.6, -4.2])
+            new_corners = []
+            for c in corners:
+                y_pct = max(0.0, min(1.0, (c[1] - 0.5) / 19.0))
+                # y 映射
+                y_new = 1.5 + y_pct * (14.6 - 1.5)
+                # x 映射：皮兜主体 (y_pct < 0.25) 居中微偏；双绳向上逐渐收拢到拳心
+                if c[0] < -0.3: # 绳1（左绳）
+                    x_target = 5.8
+                    x_new = 5.6 + (c[0] + 3.5) * 0.15 + (x_target - 5.6) * y_pct
+                elif c[0] > 0.3: # 绳2（右绳）
+                    x_target = 6.2
+                    x_new = 6.4 + (c[0] - 3.5) * 0.15 + (x_target - 6.4) * y_pct
+                else: # 皮兜中心
+                    x_new = 6.0 + c[0]
+                z_new = p_fist[2] + c[2]
+                new_corners.append(np.array([x_new, y_new, z_new]))
+
+            c_arr = np.array(new_corners)
+            new_e["from"] = [round(float(c_arr[:, 0].min()), 4), round(float(c_arr[:, 1].min()), 4), round(float(c_arr[:, 2].min()), 4)]
+            new_e["to"] = [round(float(c_arr[:, 0].max()), 4), round(float(c_arr[:, 1].max()), 4), round(float(c_arr[:, 2].max()), 4)]
+            new_e.pop("rotation", None)
+            new_e.pop("origin", None)
         else:
             new_e["from"] = [round(e["from"][0] + dx_hold, 4), round(e["from"][1] + dy_hold, 4), round(e["from"][2] + dz_hold, 4)]
             new_e["to"] = [round(e["to"][0] + dx_hold, 4), round(e["to"][1] + dy_hold, 4), round(e["to"][2] + dz_hold, 4)]
