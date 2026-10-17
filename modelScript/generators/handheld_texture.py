@@ -2242,3 +2242,209 @@ GEAR_BATCH2_WEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
 }
 PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
+
+
+# ── 旧时兵器画笔与材质集（青铜 / 锻铁 / 包浆硬木 / 丝绳 / 皮兜 / 暗导灵纹） ─────────────────────
+
+def _weapon_bronze(base_hex: str, patina_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """青铜器：红褐铜底 + 青绿锈斑 + 棱边高光磨亮，古朴写实。"""
+    c_base = hex_color(base_hex)
+    c_patina = hex_color(patina_hex)
+    c_edge = hex_color("#c8a876")
+    c_dark = shade(c_base, -0.35)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            patina_noise = value_noise(p, 1.8, seed)
+            fine_noise = texel_noise(p, seed + 1)
+            edge_dist = _edge_distance(cube, p, axis)
+            
+            # 红褐底色与铸造微杂色
+            color = shade(c_base, (fine_noise - 0.5) * 0.16)
+            
+            # 局部青绿锈斑（斑驳自然散布，不铺满）
+            if patina_noise > 0.62:
+                blend = min(1.0, (patina_noise - 0.62) * 3.5)
+                color = mix(color, c_patina, blend * 0.85)
+            elif patina_noise < 0.28:
+                color = mix(color, c_dark, 0.45)
+                
+            # 边角与凸棱处经常摩擦，呈现较亮的黄铜色
+            if edge_dist < 0.35:
+                color = mix(color, c_edge, 0.75 * (1.0 - edge_dist / 0.35))
+            return color
+
+        return paint
+
+    return factory
+
+
+def _weapon_iron(base_hex: str, edge_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """锻铁：深黑褐底 + 锻打锤痕横纹 + 棱边磨亮暖铜褐/冷灰细线 + 极微量暗红旧蚀（≤10%偏暗红褐）。"""
+    c_base = hex_color(base_hex)
+    c_edge = hex_color(edge_hex)
+    c_rust = hex_color("#5e2a1c")
+    c_dark = shade(c_base, -0.4)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            hammer = value_noise((across * 2.2, along * 0.8, 0.0), 1.0, seed)
+            fine = texel_noise(p, seed + 1)
+            rust_n = value_noise(p, 2.5, seed + 2)
+            edge_dist = _edge_distance(cube, p, axis)
+
+            # 锻打锤痕明暗
+            color = shade(c_base, (hammer - 0.5) * 0.22 + (fine - 0.5) * 0.08)
+
+            # 暗部与凹陷
+            if hammer < 0.3:
+                color = mix(color, c_dark, 0.45)
+
+            # ≤10% 的极微量暗红旧蚀（深暗沉着，绝无白点碎噪）
+            if rust_n > 0.78:
+                color = mix(color, c_rust, 0.55)
+
+            # 棱边磨出的冷灰或暖铜亮线
+            if edge_dist < 0.35:
+                color = mix(color, c_edge, 0.85 * (1.0 - edge_dist / 0.35))
+            return color
+
+        return paint
+
+    return factory
+
+
+def _weapon_wood(base_hex: str, grain_hex: str, seed: int, polished: bool = False) -> Callable[[dict], Painter]:
+    """深褐包浆木质：细致木纹纤维与手磨温润感，握处磨亮。"""
+    c_base = hex_color(base_hex)
+    c_grain = hex_color(grain_hex)
+    c_polish = hex_color("#8a6442")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            grain = value_noise((across * 3.5, along * 0.3, 0.0), 1.0, seed)
+            fine = texel_noise(p, seed + 1)
+            color = mix(c_base, c_grain, grain * 0.7)
+            color = shade(color, (fine - 0.5) * 0.08)
+            if polished:
+                color = mix(color, c_polish, 0.35)
+            if _edge_distance(cube, p, axis) < 0.25:
+                color = shade(color, 0.12)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _weapon_horn(base_hex: str, dark_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """角：黑褐带纹理，微半透深邃质感。"""
+    c_base = hex_color(base_hex)
+    c_dark = hex_color(dark_hex)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            stripe = value_noise((across * 4.0, along * 0.2, 0.0), 1.0, seed)
+            fine = texel_noise(p, seed + 1)
+            color = mix(c_base, c_dark, stripe * 0.75)
+            return shade(color, (fine - 0.5) * 0.08)
+
+        return paint
+
+    return factory
+
+
+def _weapon_cord(base_hex: str, dark_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """筋 / 弦 / 绳：米黄，斜向搓纹绳股，绳缝深阴影。"""
+    c_base = hex_color(base_hex)
+    c_dark = hex_color(dark_hex)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            along, across = _grain_coords(cube, p, axis)
+            phase = ((along * 1.5 + across) / 1.2) % 1.0
+            fine = texel_noise(p, seed)
+            if phase < 0.32:
+                color = c_dark
+            else:
+                color = c_base
+            return shade(color, (fine - 0.5) * 0.12)
+
+        return paint
+
+    return factory
+
+
+def _weapon_pouch(base_hex: str, seam_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """皮兜：褐色带缝线。"""
+    c_base = hex_color(base_hex)
+    c_seam = hex_color(seam_hex)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            fine = texel_noise(p, seed)
+            color = shade(c_base, (fine - 0.5) * 0.1)
+            edge_dist = _edge_distance(cube, p, axis)
+            if 0.2 <= edge_dist <= 0.45:
+                along, across = _grain_coords(cube, p, axis)
+                stitch = (along * 1.8) % 1.0
+                if stitch < 0.4:
+                    color = mix(color, c_seam, 0.8)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _weapon_rune(dark_hex: str, seed: int) -> Callable[[dict], Painter]:
+    """阵纹 / 灵纹：暗、不发光，深暗底色沉着平实。"""
+    c_dark = hex_color(dark_hex)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            fine = texel_noise(p, seed)
+            return shade(c_dark, (fine - 0.5) * 0.06)
+
+        return paint
+
+    return factory
+
+
+WEAPON_ANCIENT_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    # 青铜：红褐铜底 + 成片青绿锈 + 磨亮亮铜
+    "weapon_bronze": (_weapon_bronze("#9c6e44", "#5a8c72", 871), "#9c6e44"),
+    "weapon_bronze_patina": (_weapon_bronze("#58886e", "#3a6852", 872), "#58886e"),
+    "weapon_bronze_honed": (_weapon_bronze("#c8a876", "#8ca892", 873), "#c8a876"),
+    "weapon_bronze_dark": (_weapon_bronze("#58422e", "#385444", 874), "#58422e"),
+
+    # 铁：深黑褐底 + 锻打锤痕 + 棱边暖铜褐细线、锈 ≤10% 偏暗红褐
+    "weapon_iron_main": (_weapon_iron("#2a2624", "#9e7852", 875), "#2a2624"),
+    "weapon_iron_edge": (_weapon_iron("#34302c", "#c4beb8", 876), "#34302c"),
+    "weapon_iron_dark": (_weapon_iron("#1c1918", "#68625e", 877), "#1c1918"),
+
+    # 木：深褐包浆、握处磨亮
+    "weapon_wood_aged": (_weapon_wood("#5e4228", "#3e2818", 878, polished=False), "#5e4228"),
+    "weapon_wood_dark": (_weapon_wood("#3e2818", "#24160c", 879, polished=False), "#3e2818"),
+    "weapon_wood_polished": (_weapon_wood("#6a4a2c", "#48301c", 880, polished=True), "#6a4a2c"),
+
+    # 角：黑褐带纹理
+    "weapon_horn_textured": (_weapon_horn("#322822", "#181412", 881), "#322822"),
+
+    # 筋 / 弦 / 绳：米黄
+    "weapon_cord_beige": (_weapon_cord("#d2c296", "#8e7c54", 882), "#d2c296"),
+    "weapon_hemp_wrap": (_weapon_cord("#c8b88a", "#7e6c48", 883), "#c8b88a"),
+    "weapon_sinew_beige": (_weapon_cord("#dfd4b0", "#9a8c66", 884), "#dfd4b0"),
+
+    # 皮兜：褐色带缝线
+    "weapon_pouch_leather": (_weapon_pouch("#62442c", "#382416", 885), "#62442c"),
+    "weapon_leather_brown": (_weapon_pouch("#543822", "#2e1c10", 886), "#543822"),
+
+    # 阵纹 / 灵纹：暗、不发光
+    "weapon_rune_dim": (_weapon_rune("#181614", 887), "#181614"),
+}
+PAINTERS.update({name: factory for name, (factory, _) in WEAPON_ANCIENT_MATERIALS.items()})
+FLAT_COLORS.update({name: flat for name, (_, flat) in WEAPON_ANCIENT_MATERIALS.items()})

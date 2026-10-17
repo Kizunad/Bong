@@ -274,5 +274,61 @@ def generate():
         status = "✓ 合格 (<10%)" if diff <= 10.0 else "✗ 超标"
         print(f"  {name:32s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
 
+    # ==========================================
+    # 6. Round 3: 贴图生成与 check_tex.png
+    # ==========================================
+    check_tex_path = REVIEW_DIR / "check_tex.png"
+    render_check_tex(rig, bbmodel_path, check_tex_path)
+
+
+TEXTURE_MAPPING = {
+    "cord_braid": "weapon_cord_beige",
+    "cord_dark": "weapon_hemp_wrap",
+    "leather_pouch": "weapon_pouch_leather",
+    "leather_light": "weapon_leather_brown",
+    "pouch_inside": "weapon_rune_dim",
+    "bronze_button": "weapon_bronze_dark",
+    "iron_rivet": "weapon_iron_main",
+}
+
+
+def render_check_tex(rig: Rig, flat_bbmodel_path: Path, out_path: Path):
+    """Round 3: 生成贴图版 bbmodel 与 check_tex.png。"""
+    import handheld_texture
+
+    tex_doc = handheld_texture.textured_rig_doc(rig, f"{MODEL_NAME}_tex", TEXTURE_MAPPING)
+    tex_path = OUT_DIR / f"{MODEL_NAME}_tex.bbmodel"
+    tex_path.write_text(json.dumps(tex_doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"✓ 贴图模型导出: {tex_path}")
+
+    scale_pose_panel_tex = weapon_review_kit.render_player_scale_and_pose_panels(
+        tex_doc,
+        grip_y=GRIP_Y,
+        weapon_len=TOTAL_LEN,
+        out_dir=OUT_DIR,
+        pose_type="sling",
+        textured=True
+    )
+
+    ref_file = REVIEW_DIR / f"{WEAPON_ID}_ref.png"
+    ref_im = Image.open(ref_file).convert("RGB")
+
+    weapon_review_kit.assemble_check_tex_image(
+        ref_im=ref_im,
+        model_flat_path=flat_bbmodel_path,
+        model_tex_path=tex_path,
+        scale_pose_panel_tex=scale_pose_panel_tex,
+        out_path=out_path,
+        title="#5 投石索 tou_shi_suo（Round 3 贴图版；米黄麻绳+深褐生牛皮兜+带缝线与暗青铜扣）"
+    )
+
+    # 扫描洋红像素
+    img = Image.open(out_path).convert("RGB")
+    arr = np.array(img)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    magenta_count = int(np.sum((r > 200) & (b > 200) & (g < 80)))
+    print(f"✓ check_tex.png 洋红像素核验 (R>200, B>200, G<80): {magenta_count} 处")
+    assert magenta_count == 0, f"洋红像素必须为0，实测 {magenta_count}"
+
 if __name__ == "__main__":
     generate()

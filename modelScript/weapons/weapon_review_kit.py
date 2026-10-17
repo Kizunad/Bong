@@ -104,23 +104,22 @@ def obb_aabb_intersect(obb_corners: List[np.ndarray], obb_axes: List[np.ndarray]
     return True
 
 def inject_grey_player_texture(doc: dict) -> Tuple[List[float], List[float]]:
-    """在贴图图集最后一行写入灰色人体与深灰眼睛 swatch，返回其 UV 坐标，确保占位玩家为纯灰色绝不染棕色。"""
-    body_uv = [49.0, 57.0, 55.0, 63.0]
-    eye_uv = [57.0, 57.0, 63.0, 63.0]
-
-    if not doc.get("textures"):
-        img = Image.new("RGBA", (64, 64), (160, 160, 165, 255))
+    """在贴图图集最后一行写入灰色人体与深灰眼睛 swatch，返回其 UV 坐标，确保占位玩家为纯灰色绝不染棕色且绝不越界。"""
+    texes = doc.get("textures", [])
+    if not texes:
+        img = Image.new("RGBA", (64, 64), (140, 140, 145, 255))
         px = img.load()
-        for y in range(56, 64):
-            for x in range(56, 64):
-                px[x, y] = (60, 60, 65, 255)
+        for y in range(48, 64):
+            for x in range(32, 48):
+                px[x, y] = (45, 45, 50, 255)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         new_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
         doc["textures"] = [{"id": 0, "name": "texture", "folder": "weapon", "source": new_b64}]
-        return body_uv, eye_uv
+        doc["resolution"] = {"width": 64, "height": 64}
+        return [2.0, 50.0, 6.0, 54.0], [34.0, 50.0, 38.0, 54.0]
 
-    tex_entry = doc["textures"][0]
+    tex_entry = copy.deepcopy(texes[0])
     src = tex_entry.get("source", "")
     if "," in src:
         raw = base64.b64decode(src.split(",", 1)[1])
@@ -130,20 +129,27 @@ def inject_grey_player_texture(doc: dict) -> Tuple[List[float], List[float]]:
     if raw:
         im = Image.open(io.BytesIO(raw)).convert("RGBA")
     else:
-        im = Image.new("RGBA", (64, 64), (160, 160, 165, 255))
+        im = Image.new("RGBA", (64, 64), (140, 140, 145, 255))
 
-    px = im.load()
-    # 写入中性灰色身体色块与暗灰眼睛色块
-    for y in range(56, 64):
-        for x in range(48, 56):
-            px[x, y] = (160, 160, 165, 255)
-        for x in range(56, 64):
-            px[x, y] = (60, 60, 65, 255)
+    tw, th = im.size
+    new_tex = Image.new("RGBA", (tw, th + 16), (0, 0, 0, 0))
+    new_tex.paste(im, (0, 0))
+    # 填充底部灰色人体与暗灰眼睛区域
+    for y in range(th, th + 16):
+        for x in range(0, min(tw, 64)):
+            if x < 16:
+                new_tex.putpixel((x, y), (140, 140, 145, 255))
+            else:
+                new_tex.putpixel((x, y), (45, 45, 50, 255))
 
     buf = io.BytesIO()
-    im.save(buf, format="PNG")
-    new_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-    tex_entry["source"] = new_b64
+    new_tex.save(buf, format="PNG")
+    tex_entry["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    doc["textures"] = [tex_entry] + copy.deepcopy(texes[1:])
+    doc["resolution"] = {"width": tw, "height": th + 16}
+
+    body_uv = [2.0, float(th + 2), 6.0, float(th + 6)]
+    eye_uv = [18.0, float(th + 2), 22.0, float(th + 6)]
     return body_uv, eye_uv
 
 
@@ -535,18 +541,23 @@ def render_player_scale_and_pose_panels(
     shot_b_side, _ = render(hold_bb, yaw=-90.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)
     shot_b_iso, _ = render(hold_bb, yaw=145.0, pitch=20.0, size=cell, bg=gear_kit.BG, shading=shading)
 
-    # 在侧视图 shot_b_side 上绘制射击方向箭头（相机 yaw=-90 视线向-X，画面左方为 -Z 前方目标）
-    if pose_type in ("bow", "crossbow"):
-        d_side = ImageDraw.Draw(shot_b_side)
-        arrow_y = 35
-        # 绘制向左的红色/黄色箭头与文字
-        d_side.line([(140, arrow_y), (40, arrow_y)], fill=(240, 210, 80), width=3)
-        d_side.polygon([(32, arrow_y), (45, arrow_y - 6), (45, arrow_y + 6)], fill=(240, 210, 80))
-        d_side.text((50, arrow_y - 18), "← 射击方向 (目标)", fill=(240, 220, 100), font=font_l)
-        if pose_type == "bow":
-            d_side.text((15, 345), "自检: 弓背朝前 / 弓弦朝射手 ✓", fill=(130, 235, 160), font=font_l)
-        elif pose_type == "crossbow":
-            d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+    # 在侧视图 shot_b_side 上绘制朝右的射击/攻击方向箭头（相机 yaw=-90 视线向-X，人脸朝右+Z，画面右方为前方目标）
+    d_side = ImageDraw.Draw(shot_b_side)
+    arrow_y = 35
+    d_side.line([(40, arrow_y), (140, arrow_y)], fill=(240, 210, 80), width=3)
+    d_side.polygon([(148, arrow_y), (135, arrow_y - 6), (135, arrow_y + 6)], fill=(240, 210, 80))
+    if pose_type == "bow":
+        d_side.text((45, arrow_y - 18), "射击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 弓背朝前 / 弓弦朝射手 ✓", fill=(130, 235, 160), font=font_l)
+    elif pose_type == "crossbow":
+        d_side.text((45, arrow_y - 18), "射击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+    elif pose_type == "sling":
+        d_side.text((45, arrow_y - 18), "投掷方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 右手握绳尾 · 双绳V形自然下垂 ✓", fill=(130, 235, 160), font=font_l)
+    else:
+        d_side.text((45, arrow_y - 18), "攻击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 右臂前抬30°握在拳心 ✓", fill=(130, 235, 160), font=font_l)
 
     stand_bb.unlink(missing_ok=True)
     hold_bb.unlink(missing_ok=True)
