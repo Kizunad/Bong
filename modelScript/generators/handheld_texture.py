@@ -2255,8 +2255,9 @@ def _weapon_patch(n: float, cover: float) -> float:
     return max(0.0, min(1.0, (n - threshold) * 7.0))
 
 
-def _weapon_cu(body: str, patina: str, seed: int, cover: float, edge: str = "#c8a068") -> Callable[[dict], Painter]:
-    """青铜：红褐铜底 + 成片青绿锈（覆盖 cover）+ 棱边磨亮；颗粒极轻，不碎。"""
+def _weapon_cu(body: str, patina: str, seed: int, cover: float, edge: str = "#c8a068",
+               edge_mix: float = 0.6) -> Callable[[dict], Painter]:
+    """青铜：红褐铜底 + 成片青绿锈（覆盖 cover）+ 棱边磨亮（edge_mix，大块拼成的片件设 0，免得拼缝显出格子）；颗粒极轻，不碎。"""
     c_body, c_edge = hex_color(body), hex_color(edge)
     tone_a, tone_b = hex_color(patina), shade(hex_color(patina), 0.16)
 
@@ -2269,7 +2270,7 @@ def _weapon_cu(body: str, patina: str, seed: int, cover: float, edge: str = "#c8
                 tone = mix(tone_a, tone_b, value_noise(p, 2.2, seed + 4))
                 color = mix(color, tone, 0.92 * t)
             if _edge_distance(cube, p, axis) < 0.5:
-                color = mix(color, c_edge, 0.6)
+                color = mix(color, c_edge, edge_mix)
             return color
 
         return paint
@@ -2355,12 +2356,14 @@ WEAPON_BATCH2_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
     "weapon_cu_dark": (_weapon_cu("#643826", "#3a6450", 932, 0.30, edge="#a8784a"), "#5a4030"),
     "weapon_cu_green": (_weapon_cu("#7a4a30", "#4a7e66", 933, 0.80), "#4c7a64"),
     "weapon_cu_edge": (_weapon_cu("#b07a48", "#5a8a70", 934, 0.12, edge="#e0b878"), "#b07a48"),
+    "weapon_cu_plate": (_weapon_cu("#94583a", "#4a7a62", 935, 0.45, edge_mix=0.0), "#7a6a50"),    # 栅格拼成的薄片：不画棱边
     # 锻铁：深黑褐 + 暖铜褐棱线
     "weapon_fe_body": (_weapon_fe("#2a2422", 941), "#2a2422"),
     "weapon_fe_mid": (_weapon_fe("#38302c", 942), "#38302c"),
     "weapon_fe_dark": (_weapon_fe("#1c1816", 943, rust=0.08), "#1c1816"),
-    "weapon_fe_edge": (_weapon_fe("#3c342e", 944, edge="#b08458", rust=0.03, edge_mix=0.85), "#5a4a3c"),
-    "weapon_fe_rust": (_weapon_fe("#4a2a1c", 945, edge="#8a5a38", rust=0.6, edge_mix=0.5), "#58301e"),
+    "weapon_fe_edge": (_weapon_fe("#6c5646", 944, rust=0.0, edge_mix=0.0), "#6c5646"),    # 刃口 / 棱线本身就是细条，整块给暖铜褐灰
+    "weapon_fe_plate": (_weapon_fe("#34302b", 946, edge_mix=0.0), "#34302b"),    # 栅格拼成的刃片：不画棱边
+    "weapon_fe_rust": (_weapon_fe("#52301e", 945, edge="#6a4026", rust=0.6, edge_mix=0.0), "#58301e"),
     # 木：深褐包浆；握处磨亮；暗部；红褐木芯
     "weapon_wd_patina": (_wood("#4a3220", "#5e4128", 951), "#52391f"),
     "weapon_wd_worn": (_wood("#6a4a30", "#7e5c3a", 952), "#70502f"),
