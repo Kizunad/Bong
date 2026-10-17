@@ -73,7 +73,7 @@ BONES = [
     ("bowstring", "root", (0.0, 12.0, 0.0), "0.3 px 弦：绳套 → 贴弰 → 拉直，中段缠丝护弦，不搭箭"),
 ]
 
-LAYERS = [("sinew", 0.64, 0.34), ("core", 0.0, 0.28), ("horn", -0.64, 0.34)]
+LAYERS = [("sinew", 0.66, 0.36), ("core", 0.0, 0.32), ("horn", -0.66, 0.36)]   # 层间略重叠，不留缝
 
 
 def half_w(half_t: float) -> float:
