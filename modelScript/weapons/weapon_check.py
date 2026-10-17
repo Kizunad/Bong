@@ -7,6 +7,9 @@
 - ``WEAPON_ID`` ``MODEL_NAME`` ``OUT_DIR`` ``TOTAL_LEN`` ``GRIP_Y`` ``BONES`` ``REF_PNG`` ``REF_PANEL_W`` ``TITLE``
 - ``POSE``：``"single_hand"`` / ``"polearm"`` / ``"bow"``
 - ``PROP_YAW``：比例对照里渲染模型的视角（要让模型和参考图朝向一致）
+- ``MEASURE_EXCLUDE_BONES``（可选）：量模型剪影前先去掉这些骨上的方块（弓弦）
+- ``REF_STRING_PX``（可选，默认 1）：参考图去弦用的横向开运算宽度（弓设 9）
+- ``REF_SHADOW_PX``（可选，默认 22）：去地面阴影的竖向开运算长度，细斜杆件的弓要设 1
 - ``measure(mask) -> dict[str, float]``：从剪影量出的各部件百分比；参考图和模型用同一个函数
 - ``METRICS``：``[(标签, 度量键), ...]``，对照表的行
 
@@ -67,10 +70,22 @@ def write_and_review(mod, rig: Rig) -> Path:
     pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
         doc, grip_y=mod.GRIP_Y, weapon_len=mod.TOTAL_LEN, out_dir=mod.OUT_DIR, **pose_kwargs)
 
-    ref_mask = kit.ref_mask(mod.REF_PNG, mod.REF_PANEL_W)
+    ref_mask = kit.ref_mask(mod.REF_PNG, mod.REF_PANEL_W, shadow_px=getattr(mod, "REF_SHADOW_PX", 22),
+                            string_px=getattr(mod, "REF_STRING_PX", 1))
     ref_crop = kit.crop_ref_view(mod.REF_PNG, ref_mask)
     model_img, _ = render(model_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
-    model_m = kit.model_mask(model_img, gear_kit.BG)
+    exclude = getattr(mod, "MEASURE_EXCLUDE_BONES", ())
+    if exclude:
+        # 参考图剪影里弓弦已经去掉了，模型这边也去掉弦再量，两边口径一致
+        drop = {uid for b in exclude for uid in rig.bones[b]["children"]}
+        measure_doc = dict(doc, elements=[e for e in doc["elements"] if e["uuid"] not in drop])
+        measure_path = mod.OUT_DIR / "_tmp_measure.bbmodel"
+        measure_path.write_text(json.dumps(measure_doc), encoding="utf-8")
+        measure_img, _ = render(measure_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
+        measure_path.unlink()
+        model_m = kit.model_mask(measure_img, gear_kit.BG)
+    else:
+        model_m = kit.model_mask(model_img, gear_kit.BG)
 
     ref_vals = mod.measure(ref_mask)
     mod_vals = mod.measure(model_m)

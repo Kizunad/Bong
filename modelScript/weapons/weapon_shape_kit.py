@@ -33,11 +33,13 @@ Vec = tuple[float, float, float]
 
 # --------------------------------------------------------------------------- 参考图剪影
 
-def ref_mask(ref_png: Path, panel_width: int, thresh: float = 28.0, small_hole: int = 400) -> np.ndarray:
+def ref_mask(ref_png: Path, panel_width: int, thresh: float = 28.0, small_hole: int = 400,
+             shadow_px: int = 22, string_px: int = 1) -> np.ndarray:
     """抠出参考图主视图（左侧大图）的兵器剪影，返回与左侧面板同尺寸的布尔矩阵。
 
     背景是带轻微渐变的灰底，所以逐行取左边缘的中位数当该行背景；
-    闭运算 + 填小孔 + 开运算，去掉弓弦之类的细线和毛刺，再取最大连通域；面积 ≥ small_hole 的孔保留（如钺的圆孔）。
+    闭运算 + 填小孔 + 开运算去毛刺，再取最大连通域；面积 ≥ small_hole 的孔保留（如钺的圆孔）。
+    ``shadow_px`` 去地面阴影，``string_px`` > 1 时用横向开运算削掉弓弦（弓用）。
     """
     im = np.array(Image.open(ref_png).convert("RGB")).astype(float)[:, :panel_width]
     row_bg = np.median(im[:, :40], axis=1)
@@ -50,6 +52,17 @@ def ref_mask(ref_png: Path, panel_width: int, thresh: float = 28.0, small_hole: 
         if size < small_hole:
             mask[holes == k] = True
     mask = ndimage.binary_opening(mask, structure=np.ones((3, 3)), iterations=2)
+    labels, count = ndimage.label(mask)
+    sizes = ndimage.sum(mask, labels, range(1, count + 1))
+    mask = labels == (1 + int(np.argmax(sizes)))
+    # 地面阴影是贴着底边的一条扁楔，竖直方向很薄；杆、镦、锥尖是竖直的。
+    # 只在底部 8% 的行里做一次竖向开运算，把扁楔去掉。
+    ys = np.where(mask.any(axis=1))[0]
+    floor_from = int(ys.max() - 0.08 * (ys.max() - ys.min()))
+    opened = ndimage.binary_opening(mask, structure=np.ones((shadow_px, 1)))
+    mask[floor_from:] = opened[floor_from:]
+    # 弓弦是竖直的细线，竖向开运算留得住它；横向开运算（宽 string_px）才削得掉
+    mask = ndimage.binary_opening(mask, structure=np.ones((1, string_px)))
     labels, count = ndimage.label(mask)
     sizes = ndimage.sum(mask, labels, range(1, count + 1))
     return labels == (1 + int(np.argmax(sizes)))
@@ -296,22 +309,148 @@ def rig_part_spans(rig: Rig, bone: str, axis: int = 1) -> tuple[float, float]:
     return lo, hi
 
 
-def silhouette_iou(ref: np.ndarray, model: np.ndarray) -> float:
-    """两个布尔剪影缩到同一尺寸后的 IoU（包围盒对包围盒，比较形状不比较绝对大小）。"""
-    def tight(m: np.ndarray) -> np.ndarray:
-        ys, xs = np.where(m)
-        return m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+def silhouette_iou(ref: np.ndarray, model: np.ndarray, height: int = 480, max_shift: int = 24) -> float:
+    """两个布尔剪影缩到同一高度（各自保持宽高比，不拉伸）后的 IoU，水平方向允许 ±max_shift 像素对位。
 
-    a, b = tight(ref), tight(model)
-    height = 480
-    width = max(8, int(round(height * (a.shape[1] / a.shape[0]))))
-    ai = np.array(Image.fromarray((a * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)) > 127
-    bi = np.array(Image.fromarray((b * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)) > 127
-    inter = np.logical_and(ai, bi).sum()
-    union = np.logical_or(ai, bi).sum()
-    return float(inter / union) if union else 0.0
+    比较的是形状：全长对齐，横向靠平移找最佳重合（弓的梢端有细小的绳套 / 弦槽，包围盒会差一点）。
+    """
+    def prep(m: np.ndarray) -> np.ndarray:
+        ys, xs = np.where(m)
+        m = m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        width = max(4, int(round(height * m.shape[1] / m.shape[0])))
+        img = Image.fromarray((m * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)
+        return np.array(img) > 127
+
+    a, b = prep(ref), prep(model)
+    canvas = max(a.shape[1], b.shape[1]) + 2 * max_shift
+    best = 0.0
+    for shift in range(-max_shift, max_shift + 1):
+        ca = np.zeros((height, canvas), bool)
+        cb = np.zeros((height, canvas), bool)
+        ca[:, max_shift:max_shift + a.shape[1]] = a
+        x0 = max_shift + shift
+        cb[:, x0:x0 + b.shape[1]] = b
+        union = np.logical_or(ca, cb).sum()
+        if union:
+            best = max(best, float(np.logical_and(ca, cb).sum() / union))
+    return best
 
 
 def model_mask(img: Image.Image, bg: tuple[int, int, int], thresh: float = 14.0) -> np.ndarray:
     arr = np.array(img.convert("RGB")).astype(float)
     return np.abs(arr - np.array(bg, float)).max(axis=2) > thresh
+
+
+# --------------------------------------------------------------------------- 弓
+
+@dataclass
+class BowProfile:
+    """弓的侧视中心线：v 向上（0 = 下梢端），z 向弓背（弦所在平面 z=0），half_t 是半厚。"""
+
+    v: list[float]
+    z: list[float]
+    half_t: list[float]
+
+    def at(self, v: float) -> tuple[float, float]:
+        return float(np.interp(v, self.v, self.z)), float(np.interp(v, self.v, self.half_t))
+
+    def point(self, i: int) -> Vec:
+        return (0.0, self.v[i], self.z[i])
+
+
+def bow_profile(mask: np.ndarray, total_len: float, string_x_px: float, step: float = 0.7,
+                smooth: int = 2, min_half_t: float = 0.14) -> BowProfile:
+    """从弓的侧视剪影取中心线与厚度（距离变换的脊线），上下对称化后按 step 重采样。
+
+    参考图里弓背朝左、弦朝右，所以 z = (弦所在像素列 - 中心线像素列) / 比例；
+    半厚取该点到轮廓的最近距离，也就是弓臂沿法向的真实半厚。
+    """
+    _, y0, _, y1 = mask_bbox(mask)
+    scale = (y1 - y0 + 1) / total_len
+    edt = ndimage.distance_transform_edt(mask)
+    n = int(round(total_len / step))
+    vs = np.linspace(0.0, total_len, n + 1)
+    zs, ts = [], []
+    for v in vs:
+        row = int(round(min(y1, max(y0, y1 - v * scale))))
+        xc = int(np.argmax(edt[row]))
+        zs.append((string_x_px - xc) / scale)
+        ts.append(max(min_half_t, float(edt[row, xc]) / scale))
+    z, t = np.array(zs), np.array(ts)
+    z, t = (z + z[::-1]) / 2.0, (t + t[::-1]) / 2.0      # 上下对称
+    if smooth:
+        # 端点附近缩小窗口，不然边缘填充会把梢端拉离真实位置
+        def blur(a: np.ndarray) -> np.ndarray:
+            out = a.copy()
+            for i in range(len(a)):
+                w = min(smooth, i, len(a) - 1 - i)
+                out[i] = a[i - w:i + w + 1].mean()
+            return out
+        z, t = blur(z), blur(t)
+    return BowProfile(vs.tolist(), z.tolist(), t.tolist())
+
+
+def profile_normals(prof: BowProfile) -> list[tuple[float, float]]:
+    """每个采样点的法向 (dv, dz)，朝弓背（+z）为正。"""
+    out = []
+    n = len(prof.v)
+    for i in range(n):
+        a, b = max(0, i - 1), min(n - 1, i + 1)
+        tv, tz = prof.v[b] - prof.v[a], prof.z[b] - prof.z[a]
+        length = math.hypot(tv, tz) or 1.0
+        out.append((-tz / length, tv / length))
+    return out
+
+
+def layered_limb(rig: Rig, bone: str, prefix: str, prof: BowProfile, i0: int, i1: int,
+                 layers: list[tuple[str, float, float]], half_w_fn: Callable[[float], float]) -> int:
+    """沿 [i0, i1] 段铺多层复合弓臂。
+
+    layers = [(材质, 层中心偏移系数, 层半厚系数)]：偏移与半厚都是「该点半厚」的倍数，
+    例如背筋 (+0.66, 0.33)、木芯 (0, 0.33)、牛角 (-0.66, 0.33)。返回方块数。
+    """
+    normals = profile_normals(prof)
+    count = 0
+    for tag, (mat, off, half) in enumerate(layers):
+        pts, hw, ht = [], [], []
+        for i in range(i0, i1 + 1):
+            dv, dz = normals[i]
+            ox = off * prof.half_t[i]
+            pts.append((0.0, prof.v[i] + dv * ox, prof.z[i] + dz * ox))
+            hw.append(half_w_fn(prof.v[i]))
+            ht.append(max(0.05, half * prof.half_t[i]))
+        count += strip_along(rig, bone, f"{prefix}_l{tag}", pts, hw, ht, mat)
+    return count
+
+
+BOW_DISP_AT = (0.60, 0.70, 0.80, 0.90, 0.97)
+
+
+def bow_measure(mask: np.ndarray) -> dict[str, float]:
+    """弓侧视剪影（弓背朝左，弦已除去）的形状度量，全部是全长的百分比。
+
+    ``disp@xx``：高度 xx（自下数，占全长）处的中心线相对握把中心的横向位移，朝弓背为正；
+    ``thick_*``：该处弓臂厚度（距离变换脊线上的两倍内切半径）；
+    ``depth``：剪影包围盒宽；``peak``：中心线最靠弓背的点离握把中心的高度差。
+    参考图和模型渲染用同一份，所以数值差就是外形差。
+    """
+    _, y0, x1, y1 = mask_bbox(mask)
+    xmin = mask_bbox(mask)[0]
+    height = y1 - y0 + 1
+    edt = ndimage.distance_transform_edt(mask)
+
+    def centre(frac: float) -> tuple[int, float]:
+        row = int(round(y1 - frac * (height - 1)))
+        xc = int(np.argmax(edt[row]))
+        return xc, float(edt[row, xc])
+
+    grip_x, grip_r = centre(0.5)
+    out: dict[str, float] = {"depth": 100.0 * (x1 - xmin + 1) / height, "thick_grip": 200.0 * grip_r / height}
+    for f in BOW_DISP_AT:
+        out[f"disp@{int(f * 100)}"] = 100.0 * (grip_x - centre(f)[0]) / height
+    fracs = np.linspace(0.5, 0.97, 48)
+    xs = [centre(float(f))[0] for f in fracs]
+    out["peak"] = 100.0 * (float(fracs[int(np.argmin(xs))]) - 0.5)
+    out["thick_mid"] = 200.0 * centre(0.70)[1] / height
+    out["thick_tip"] = 200.0 * centre(0.92)[1] / height
+    return out
