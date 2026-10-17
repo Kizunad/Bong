@@ -37,6 +37,7 @@ from cjk_font import load_font
 from bbmodel_maker.render.render_bbmodel import render
 from bbmodel_maker.rig.rigkit import Rig
 import gear_kit
+from gear_kit import textured_rig_doc
 import weapon_review_kit
 
 WEAPON_ID = "zhu_tai_chang_gong"
@@ -302,6 +303,62 @@ def generate():
         diff = abs(ref_v - mod_v)
         status = "✓ 合格 (<10%)" if diff <= 10.0 else "✗ 超标"
         print(f"  {name:30s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
+
+    # 6. 生成 Round 3 贴图版模型与 check_tex.png
+    check_tex_path = REVIEW_DIR / "check_tex.png"
+    render_check_tex(rig, check_tex_path)
+
+
+TEXTURE_MAPPING = {
+    "bamboo_belly": "weapon_bamboo",
+    "sinew_back": "weapon_sinew_beige",
+    "leather_grip": "weapon_leather",
+    "leather_light": "weapon_wood_polished",
+    "lacquer_cord": "weapon_cord_dark",
+    "hardwood_tip": "weapon_wood_dark",
+    "bone_pale": "weapon_bone_pale",
+    "string": "weapon_string_beige",
+    "groove": "weapon_rune_dim",
+}
+
+
+def render_check_tex(rig: Rig, out_path: Path):
+    """Round 3: 生成贴图版 bbmodel 与 check_tex.png。"""
+    tex_doc = textured_rig_doc(rig, MODEL_NAME, TEXTURE_MAPPING)
+    tex_path = OUT_DIR / f"{MODEL_NAME}_tex.bbmodel"
+    tex_path.write_text(json.dumps(tex_doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"✓ 贴图模型 {MODEL_NAME}_tex.bbmodel 保存成功: {tex_path}")
+
+    flat_path = OUT_DIR / f"{MODEL_NAME}.bbmodel"
+
+    scale_pose_panel_tex = weapon_review_kit.render_player_scale_and_pose_panels(
+        weapon_doc=tex_doc,
+        grip_y=GRIP_Y,
+        weapon_len=TOTAL_LEN,
+        out_dir=OUT_DIR,
+        pose_type="bow",
+        textured=True
+    )
+
+    ref_file = REVIEW_DIR / f"{WEAPON_ID}_ref.png"
+    ref_im = Image.open(ref_file).convert("RGB")
+
+    weapon_review_kit.assemble_check_tex_image(
+        ref_im=ref_im,
+        model_flat_path=flat_path,
+        model_tex_path=tex_path,
+        scale_pose_panel_tex=scale_pose_panel_tex,
+        out_path=out_path,
+        title="竹胎长弓 zhu_tai_chang_gong（Round 3 贴图版；天然竹胎+外贴牛筋+深褐缠皮握把+黑漆缠丝+米黄直弦）"
+    )
+
+    # 扫描洋红像素
+    img = Image.open(out_path).convert("RGB")
+    arr = np.array(img)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    magenta_count = int(np.sum((r > 200) & (b > 200) & (g < 80)))
+    print(f"✓ check_tex.png 洋红像素核验 (R>200, B>200, G<80): {magenta_count} 处")
+    assert magenta_count == 0, f"洋红像素必须为0，实测 {magenta_count}"
 
 if __name__ == "__main__":
     generate()
