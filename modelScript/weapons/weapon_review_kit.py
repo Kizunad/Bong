@@ -535,18 +535,20 @@ def render_player_scale_and_pose_panels(
     shot_b_side, _ = render(hold_bb, yaw=-90.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)
     shot_b_iso, _ = render(hold_bb, yaw=145.0, pitch=20.0, size=cell, bg=gear_kit.BG, shading=shading)
 
-    # 在侧视图 shot_b_side 上绘制射击方向箭头（相机 yaw=-90 视线向-X，画面左方为 -Z 前方目标）
-    if pose_type in ("bow", "crossbow"):
-        d_side = ImageDraw.Draw(shot_b_side)
-        arrow_y = 35
-        # 绘制向左的红色/黄色箭头与文字
-        d_side.line([(140, arrow_y), (40, arrow_y)], fill=(240, 210, 80), width=3)
-        d_side.polygon([(32, arrow_y), (45, arrow_y - 6), (45, arrow_y + 6)], fill=(240, 210, 80))
-        d_side.text((50, arrow_y - 18), "← 射击方向 (目标)", fill=(240, 220, 100), font=font_l)
-        if pose_type == "bow":
-            d_side.text((15, 345), "自检: 弓背朝前 / 弓弦朝射手 ✓", fill=(130, 235, 160), font=font_l)
-        elif pose_type == "crossbow":
-            d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+    # 在侧视图 shot_b_side 上绘制朝右的射击/攻击方向箭头（相机 yaw=-90 下人脸朝画面右，向右攻击）
+    d_side = ImageDraw.Draw(shot_b_side)
+    arrow_y = 35
+    d_side.line([(40, arrow_y), (140, arrow_y)], fill=(240, 210, 80), width=3)
+    d_side.polygon([(148, arrow_y), (135, arrow_y - 6), (135, arrow_y + 6)], fill=(240, 210, 80))
+    if pose_type == "bow":
+        d_side.text((45, arrow_y - 18), "射击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 弓背朝前 / 弓弦朝射手 ✓", fill=(130, 235, 160), font=font_l)
+    elif pose_type == "crossbow":
+        d_side.text((45, arrow_y - 18), "射击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+    else:
+        d_side.text((45, arrow_y - 18), "攻击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 右臂前抬30°握在拳心 ✓", fill=(130, 235, 160), font=font_l)
 
     stand_bb.unlink(missing_ok=True)
     hold_bb.unlink(missing_ok=True)
