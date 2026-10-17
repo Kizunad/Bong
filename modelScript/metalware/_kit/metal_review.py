@@ -70,6 +70,8 @@ class MetalSpec(GearSpec):
     hold: dict | None = None
     # 比例对照里模型侧视的相机朝向：-90 = 从 +x 看（默认），90 = 从 -x 看（参考图侧视脸朝左时用）
     side_yaw: float = -90.0
+    # 比例对照 / 并排比例量总尺寸时不计入的件名前缀（只在手持时才用的绳环等，参考图里没有）
+    bounds_skip: tuple = ()
     # 穿模门的咬入下限 px：整件最厚的件都薄于 0.55 时（镜 / 权的薄片）要调小，否则注入缺陷也报不出来
     interpen_bite: float = 0.55
     # 器物放在玩家旁边时的水平错开量 px（None = 按包围盒自动算）
@@ -137,8 +139,9 @@ def extent(g: Gear, prefixes: tuple[str, ...]):
     return element_bounds(els)
 
 
-def model_bounds(g: Gear):
-    return element_bounds(g.rig.elements)
+def model_bounds(g: Gear, skip: tuple = ()):
+    els = [e for e in g.rig.elements if not e["name"].startswith(skip)] if skip else g.rig.elements
+    return element_bounds(els)
 
 
 # ───────────────────────────────────────────────────────────── 渲染辅助
@@ -168,9 +171,9 @@ def _crop_ref(ref: Image.Image, box: tuple, height_px: int) -> Image.Image:
     return crop.resize((round(crop.width * height_px / crop.height), height_px), Image.Resampling.LANCZOS)
 
 
-def _model_silhouette_crop(path: Path, yaw: float, g: Gear, height_px: int, size: int = 900):
+def _model_silhouette_crop(path: Path, yaw: float, g: Gear, height_px: int, size: int = 900, skip: tuple = ()):
     """模型某视角的整件正交渲染，裁到器物外框，缩放到 height_px 高。返回 (图, 外框 lo/hi 的米制说明)。"""
-    lo, hi = model_bounds(g)
+    lo, hi = model_bounds(g, skip)
     center = ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2)
     span = max(hi[i] - lo[i] for i in range(3)) * 1.06
     img = render_view(path, yaw, 0.0, size, center, span)
@@ -205,7 +208,7 @@ def _pct_rows(spec: MetalSpec, g: Gear) -> list[tuple[str, float, float, bool]]:
     rows = []
     fx0, fy0, fx1, fy1 = spec.ref_front_box
     ref_h = fy1 - fy0
-    lo, hi = model_bounds(g)
+    lo, hi = model_bounds(g, spec.bounds_skip)
     model_h = hi[1] - lo[1]
     for label, y0, y1, prefixes in spec.height_parts:
         elo, ehi = extent(g, prefixes)
@@ -234,7 +237,7 @@ def render_proportion_panel(spec: MetalSpec, g: Gear, tmp: Path, height_px: int 
     rows_img = []
     for view, box, yaw in (("FRONT 正视", spec.ref_front_box, spec.front_yaw), ("SIDE 侧视", spec.ref_side_box, spec.side_yaw)):
         ref_img = _crop_ref(ref, box, height_px)
-        model_img = _model_silhouette_crop(model_path, yaw, g, height_px)
+        model_img = _model_silhouette_crop(model_path, yaw, g, height_px, skip=spec.bounds_skip)
         rows_img.append((view, ref_img, model_img, _overlay(ref_img, model_img)))
 
     pct = _pct_rows(spec, g)
@@ -292,7 +295,7 @@ def player_with_item(g: Gear, shift: tuple, arm_deg: float | None = None) -> Rig
 
 def render_beside_panel(spec: MetalSpec, g: Gear, tmp: Path, cell: int = 520) -> Image.Image:
     """并排比例栏：器物在玩家右手边（间隔 2px，不重叠），正面 + 3/4 两张，标器高 / 人高。"""
-    lo, hi = model_bounds(g)
+    lo, hi = model_bounds(g, spec.bounds_skip)
     half = (hi[0] - lo[0]) / 2
     dx = spec.beside_dx if spec.beside_dx is not None else 8.0 + PLAYER_GAP_PX + half - (lo[0] + hi[0]) / 2
     rig = player_with_item(g, (dx, 0.0, 0.0))
@@ -377,6 +380,12 @@ def hold_transform(spec: MetalSpec) -> tuple[tuple, np.ndarray, np.ndarray]:
     return shift, fist, axis
 
 
+def hold_elements(spec: MetalSpec, g: Gear) -> list[dict]:
+    """持握姿势里实际拿在手上的件（hold["only"] 给出时只取这些前缀的件）。"""
+    only = tuple(spec.hold.get("only", ()))
+    return [e for e in g.rig.elements if not only or e["name"].startswith(only)]
+
+
 def hold_overlaps(spec: MetalSpec, g: Gear) -> tuple[dict, dict]:
     """器物每个立方体与玩家头 / 躯干 / 左臂 / 双腿、以及抬起的右臂的交叠。
 
@@ -388,7 +397,7 @@ def hold_overlaps(spec: MetalSpec, g: Gear) -> tuple[dict, dict]:
     arm = _obb(*PLAYER_BOXES["右臂"], rot=(cfg["arm_deg"], 0.0, 0.0), org=SHOULDER)
     hits: dict[str, list] = {k: [] for k in body}
     arm_hits = []
-    for el in g.rig.elements:
+    for el in hold_elements(spec, g):
         box = _obb(el["from"], el["to"], el.get("rotation"), el.get("origin"), shift)
         for label, other in body.items():
             if obb_overlap_depth(box, other) > 0:
@@ -402,7 +411,10 @@ def render_hold_panel(spec: MetalSpec, g: Gear, tmp: Path, cell: int = 520) -> I
     """持握姿势栏：右臂整体前抬，握点在拳前；FRONT / SIDE / 3/4 三张，并写出与身体各部分的交叠体积检查。"""
     cfg = spec.hold
     shift, fist, _ = hold_transform(spec)
-    rig = player_with_item(g, shift, cfg["arm_deg"])
+    held = copy.copy(g)
+    held.rig = copy.copy(g.rig)
+    held.rig.elements = hold_elements(spec, g)
+    rig = player_with_item(held, shift, cfg["arm_deg"])
     path = _write_tmp(rig, tmp, "Hold")
     hits, arm_hits = hold_overlaps(spec, g)
     bad = sum(len(v) for v in hits.values()) + len(arm_hits["右臂"])
@@ -413,7 +425,7 @@ def render_hold_panel(spec: MetalSpec, g: Gear, tmp: Path, cell: int = 520) -> I
     d = ImageDraw.Draw(panel)
     d.text((8, 6), f"持握姿势：右臂绕肩前抬 {cfg['arm_deg']:.0f}°（整臂抬起），握点在拳心前 {cfg['lead']:.2f}px；"
                    f"拳心 ({fist[0]:.1f}, {fist[1]:.1f}, {fist[2]:.1f})", fill=TEXT, font=font_h)
-    checked = f"逐块 OBB 分离轴检查 {len(g.rig.elements)} 块 × 头 / 躯干 / 左臂 / 右腿 / 左腿 + 抬起的右臂（握在手里的 {', '.join(cfg.get('skip_arm', ()))} 不查右臂）"
+    checked = f"逐块 OBB 分离轴检查 {len(held.rig.elements)} 块 × 头 / 躯干 / 左臂 / 右腿 / 左腿 + 抬起的右臂（握在手里的 {', '.join(cfg.get('skip_arm', ()))} 不查右臂）"
     color = OK_COLOR if bad == 0 else BAD_COLOR
     verdict = "交叠体积 0 ✓" if bad == 0 else f"✗ 有 {bad} 处交叠：" + "; ".join(f"{k}:{len(v)}" for k, v in {**hits, **arm_hits}.items() if v)
     d.text((8, 30), f"{checked} → {verdict}", fill=color, font=font_s)
