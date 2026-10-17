@@ -309,20 +309,31 @@ def rig_part_spans(rig: Rig, bone: str, axis: int = 1) -> tuple[float, float]:
     return lo, hi
 
 
-def silhouette_iou(ref: np.ndarray, model: np.ndarray) -> float:
-    """两个布尔剪影缩到同一尺寸后的 IoU（包围盒对包围盒，比较形状不比较绝对大小）。"""
-    def tight(m: np.ndarray) -> np.ndarray:
-        ys, xs = np.where(m)
-        return m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+def silhouette_iou(ref: np.ndarray, model: np.ndarray, height: int = 480, max_shift: int = 24) -> float:
+    """两个布尔剪影缩到同一高度（各自保持宽高比，不拉伸）后的 IoU，水平方向允许 ±max_shift 像素对位。
 
-    a, b = tight(ref), tight(model)
-    height = 480
-    width = max(8, int(round(height * (a.shape[1] / a.shape[0]))))
-    ai = np.array(Image.fromarray((a * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)) > 127
-    bi = np.array(Image.fromarray((b * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)) > 127
-    inter = np.logical_and(ai, bi).sum()
-    union = np.logical_or(ai, bi).sum()
-    return float(inter / union) if union else 0.0
+    比较的是形状：全长对齐，横向靠平移找最佳重合（弓的梢端有细小的绳套 / 弦槽，包围盒会差一点）。
+    """
+    def prep(m: np.ndarray) -> np.ndarray:
+        ys, xs = np.where(m)
+        m = m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        width = max(4, int(round(height * m.shape[1] / m.shape[0])))
+        img = Image.fromarray((m * 255).astype(np.uint8)).resize((width, height), Image.Resampling.BILINEAR)
+        return np.array(img) > 127
+
+    a, b = prep(ref), prep(model)
+    canvas = max(a.shape[1], b.shape[1]) + 2 * max_shift
+    best = 0.0
+    for shift in range(-max_shift, max_shift + 1):
+        ca = np.zeros((height, canvas), bool)
+        cb = np.zeros((height, canvas), bool)
+        ca[:, max_shift:max_shift + a.shape[1]] = a
+        x0 = max_shift + shift
+        cb[:, x0:x0 + b.shape[1]] = b
+        union = np.logical_or(ca, cb).sum()
+        if union:
+            best = max(best, float(np.logical_and(ca, cb).sum() / union))
+    return best
 
 
 def model_mask(img: Image.Image, bg: tuple[int, int, int], thresh: float = 14.0) -> np.ndarray:
@@ -368,10 +379,14 @@ def bow_profile(mask: np.ndarray, total_len: float, string_x_px: float, step: fl
     z, t = np.array(zs), np.array(ts)
     z, t = (z + z[::-1]) / 2.0, (t + t[::-1]) / 2.0      # 上下对称
     if smooth:
-        kernel = np.ones(2 * smooth + 1) / (2 * smooth + 1)
-        pad = lambda a: np.concatenate([np.full(smooth, a[0]), a, np.full(smooth, a[-1])])  # noqa: E731
-        z = np.convolve(pad(z), kernel, mode="valid")
-        t = np.convolve(pad(t), kernel, mode="valid")
+        # 端点附近缩小窗口，不然边缘填充会把梢端拉离真实位置
+        def blur(a: np.ndarray) -> np.ndarray:
+            out = a.copy()
+            for i in range(len(a)):
+                w = min(smooth, i, len(a) - 1 - i)
+                out[i] = a[i - w:i + w + 1].mean()
+            return out
+        z, t = blur(z), blur(t)
     return BowProfile(vs.tolist(), z.tolist(), t.tolist())
 
 
