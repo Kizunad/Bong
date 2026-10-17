@@ -208,7 +208,7 @@ def measure(mask: np.ndarray) -> dict[str, float]:
 
 # Round 3：生成器材质 → handheld_texture 画笔（青铜红褐 + 成片青绿锈；杆深褐包浆，握处磨亮；麻绳）
 TEXTURE_MAPPING = {
-    "bronze": "weapon_cu_body",
+    "bronze": "weapon_cu_plate",
     "bronze_dk": "weapon_cu_dark",
     "bronze_edge": "weapon_cu_edge",
     "verdigris": "weapon_cu_green",
