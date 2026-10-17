@@ -2244,6 +2244,206 @@ PAINTERS.update({name: factory for name, (factory, _) in GEAR_BATCH2_WEAR_MATERI
 FLAT_COLORS.update({name: flat for name, (_, flat) in GEAR_BATCH2_WEAR_MATERIALS.items()})
 
 
+# ---- 旧时金属器（铁 / 铸铁 / 青铜）画笔：四件铁器各一组，名字全局唯一 -------------------------------------
+# 锻铁（铁火盆 tie_huo_pen / 铁锁与钥 tie_suo_yue 共用）：黑褐底 + 锻打锤痕横纹 + 成片橙红锈斑 + 棱边磨亮
+# 铸铁（铁炉座 tie_lu_zuo）：深黑褐、明度波动小，暗红褐小块锈 ≤ 10%，棱边 1px 暖铜褐细线
+# 老式锻铁 + 青铜 + 木托架（铁矛头 tie_mao_tou）：沿用 _iron / _copper_edge / _wood 的老画法，铁与锈三项改名 metal_forged_*
+# 各组里同名的画笔函数（_ancient_iron / _cast_iron / _soot / _ash_sediment）只在这里定义一次。
+
+
+def _ancient_iron(base: str = "#3a3230", rust_amount: float = 0.28, seed: int = 1001,
+                  hone: bool = True, bright: str = "#6a6460", hammer_scale: float = 2.4,
+                  soot_amount: float = 0.0) -> Callable[[dict], Painter]:
+    """古代铸铁/锻铁画笔（严格对齐调度要求）：
+    - 底色黑褐（#3a3230 一档）
+    - 锻面一道道明显的锻打锤痕横纹（横向明暗交替带）
+    - 凹处与底部大片成片的橙红锈斑（#8a4a2a 到 #b0603a，低频大块成片，非散点）
+    - 边角与常磨处磨亮成铁灰（#6a6460 到 #7a7470）
+    - 支持内壁烟熏黑（soot）
+    """
+    c_base = hex_color(base)
+    c_bright = hex_color(bright)
+    c_rust_a = hex_color("#8a4a2a")
+    c_rust_b = hex_color("#b0603a")
+    c_soot = hex_color("#1c1816")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            # 1. 锻面一道道锤痕横纹：沿主轴以正弦波周期起伏，带微弱扰动
+            v_coord = p[1] if axis != 1 else (p[2] if axis != 2 else p[0])
+            jitter = (value_noise(p, 1.2, seed) - 0.5) * 0.35
+            wave = math.sin((v_coord + jitter) * hammer_scale)
+            # 锤痕明暗反差：波峰亮 +0.18，波谷凹陷暗 -0.22
+            color = shade(c_base, wave * 0.20)
+
+            # 2. 局部烟熏黑（如火盆内壁）
+            if soot_amount > 0:
+                soot_mask = value_noise(p, 0.7, seed + 10)
+                if soot_mask < soot_amount:
+                    color = mix(color, c_soot, 0.85)
+
+            # 3. 大片成片橙红锈斑：用低频连贯大面展开（#8a4a2a ~ #b0603a）
+            if rust_amount > 0:
+                patch = value_noise(p, 0.55, seed + 2)
+                if patch > (1.0 - rust_amount):
+                    rust_depth = value_noise(p, 1.1, seed + 3)
+                    rust_color = mix(c_rust_a, c_rust_b, rust_depth)
+                    intensity = min(1.0, (patch - (1.0 - rust_amount)) * 3.5)
+                    color = mix(color, rust_color, intensity * 0.92)
+
+            # 4. 边角与常碰处手磨亮成铁灰（#6a6460）
+            if hone:
+                dist = _edge_distance(cube, p, axis)
+                if dist < 0.75:
+                    edge_glow = 1.0 - (dist / 0.75)
+                    color = mix(color, c_bright, edge_glow * 0.85)
+
+            return color
+
+        return paint
+
+    return factory
+
+
+def _cast_iron(
+    base: str,
+    seed: int,
+    *,
+    rust_amount: float = 0.0,
+    edge_warm: bool = False,
+    edge_color: str = "#9e7852",
+    relief_boost: float = 0.0,
+) -> Callable[[dict], Painter]:
+    """沉稳古代深黑褐铸铁：底色深沉均一、明度变化小（无大颗粒拉丝噪点与白色方块），
+    锈斑颜色偏暗红褐（深暗红褐 #56291a，绝无亮橙色），面积严格 ≤ 10%；
+    棱边与磨亮处为 1px 宽暖铜褐色细线（#9e7852，杜绝白色方块）；
+    顶面与凹线深暗死寂。
+    """
+    c_base = hex_color(base)
+    if relief_boost > 0:
+        c_base = shade(c_base, relief_boost)
+    c_edge = hex_color(edge_color)
+    r_deep = hex_color("#4a2216")
+    r_mid = hex_color("#602e1e")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            # 明度波动小（±0.06），消除粗糙白斑与杂乱拉丝
+            noise_fine = (value_noise(p, 1.8, seed) - 0.5) * 0.10
+            noise_tex = (texel_noise(p, seed + 1) - 0.5) * 0.05
+            color = shade(c_base, noise_fine + noise_tex)
+
+            # 局限在凹处与角边的小块暗红褐锈斑（面积严格受控，无亮橙）
+            if rust_amount > 0:
+                p_rust = value_noise(p, 2.2, seed + 2)
+                if p_rust > (1.0 - rust_amount):
+                    t = texel_noise(p, seed + 3)
+                    tone = r_deep if t < 0.6 else r_mid
+                    color = mix(color, tone, 0.85)
+
+            # 棱边与兽足磨亮：暖铜褐色细线（1px 宽，_edge_distance < 0.5）
+            if edge_warm and _edge_distance(cube, p, axis) < 0.5:
+                color = mix(color, c_edge, 0.82)
+
+            return color
+
+        return paint
+
+    return factory
+
+
+def _soot(base: str, seed: int) -> Callable[[dict], Painter]:
+    """炉顶烟熏黑：深黑炭黑底色（#221e1c），夹杂细微受热焦黑深斑与灰黑熏迹，边缘扩散，无光泽。"""
+    c_base = hex_color(base)
+    char_dark = hex_color("#141210")
+    char_ash = hex_color("#3e3a36")
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            n = value_noise(p, 2.5, seed)
+            color = mix(char_dark, c_base, n * 0.8 + 0.2)
+            dust = value_noise(p, 1.2, seed + 1)
+            if dust > 0.72:
+                color = mix(color, char_ash, 0.5)
+            if texel_noise(p, seed + 2) > 0.93:
+                color = shade(color, -0.2)
+            return color
+
+        return paint
+
+    return factory
+
+
+def _ash_sediment(base_a: str, base_b: str, seed: int) -> Callable[[dict], Painter]:
+    """冷灰与炭垢：浅灰与炭黑斑驳交错的粉质颗粒感。"""
+    c_a, c_b = hex_color(base_a), hex_color(base_b)
+
+    def factory(cube: dict) -> Painter:
+        def paint(p: Vec, axis: int) -> Color:
+            n = value_noise(p, 3.0, seed)
+            color = mix(c_a, c_b, n)
+            noise = texel_noise(p, seed + 1)
+            return shade(color, (noise - 0.5) * 0.18)
+
+        return paint
+
+    return factory
+
+
+METALWARE_FORGED_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "metal_iron": (_ancient_iron(base="#3a3230", rust_amount=0.30, seed=1001, hone=True, bright="#6a6460", hammer_scale=2.8), "#3a3230"),
+    "metal_iron_lt": (_ancient_iron(base="#4a423e", rust_amount=0.12, seed=1002, hone=True, bright="#78726e", hammer_scale=3.0), "#4a423e"),
+    "metal_iron_dk": (_ancient_iron(base="#221e1c", rust_amount=0.15, seed=1003, hone=False, soot_amount=0.55), "#221e1c"),
+    "metal_soot": (_plain("#1c1816", 1006), "#1c1816"),
+    "metal_rust": (_ancient_iron(base="#7a381e", rust_amount=0.88, seed=1004, hone=False), "#8a4a2a"),
+    "metal_rust_dk": (_ancient_iron(base="#4c1e12", rust_amount=0.95, seed=1005, hone=False), "#5e2616"),
+    "metal_bronze_pat": (_copper_green(1006), "#4a8a72"),
+    "metal_ash": (_burlap("#a8a69e", 1007, grime=0.15), "#a8a69e"),
+    "metal_ash_dk": (_burlap("#5c5854", 1008, grime=0.35), "#5c5854"),
+    "metal_charcoal": (_plain("#1a1816", 1009), "#1a1816"),
+    "metal_ember": (_glint("#ff4010", "#ffffff", 1010), "#ff4010"),
+    "metal_ember_glow": (_glint("#ffaa20", "#ffffff", 1011), "#ffaa20"),
+    "metal_bronze": (_copper_edge(1012, "#8a4828", "#c47844"), "#8a4828"),
+    "metal_bronze_lt": (_copper_edge(1013, "#b46838", "#e29858"), "#b46838"),
+    "metal_vine_line": (_plain("#181412", 1014), "#181412"),
+    "metal_cord": (_rope("#8c6e40", "#c2a46c", 1015), "#b29868"),
+    "metal_cord_dk": (_rope("#5c4628", "#8a6c40", 1016), "#765c36"),
+}
+
+
+METALWARE_SPEAR_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    "metal_forged_iron": (_iron("#443c36", 0.18, 811, hone=False), "#48403a"),
+    "metal_iron_edge": (_iron("#78726a", 0.05, 812, hone=True), "#847e78"),
+    "metal_forged_rust": (_iron("#6e3820", 0.75, 813, hone=False), "#763e22"),
+    "metal_forged_rust_dk": (_iron("#422416", 0.90, 814, hone=False), "#442618"),
+    "metal_copper": (_copper_edge(815, body_code="#a66e40", bright_code="#caa068"), "#ac7644"),
+    "metal_copper_lt": (_copper_edge(816, body_code="#caa068", bright_code="#e2be82"), "#d2aa70"),
+    "metal_copper_dk": (_copper_edge(817, body_code="#7a4628", bright_code="#a66e40"), "#7c482a"),
+    "metal_patina": (_copper_green(818), "#5a8a70"),
+    "metal_wood": (_wood("#6a422a", "#8c5a3a", 819), "#704830"),
+    "metal_wood_lt": (_wood("#8c5a3a", "#b27850", 820), "#946240"),
+    "metal_wood_dk": (_wood("#3a2216", "#543220", 821), "#3c2418"),
+}
+
+
+METALWARE_CAST_MATERIALS: Dict[str, Tuple[Callable[[dict], Painter], str]] = {
+    # 铁炉座（tie_lu_zuo）专用：沉稳深黑褐底 + 暖铜褐磨亮细线 + 暗红褐小块锈 ≤ 10% + 浮雕微亮
+    "metal_cast_iron": (_cast_iron("#2d2926", 830, rust_amount=0.04, edge_warm=False), "#2d2926"),
+    "metal_cast_edge": (_cast_iron("#302b28", 831, rust_amount=0.03, edge_warm=True, edge_color="#9e7852"), "#8c6846"),
+    "metal_cast_relief": (_cast_iron("#3a3430", 832, rust_amount=0.02, edge_warm=False, relief_boost=0.14), "#423b36"),
+    "metal_cast_dk": (_cast_iron("#221e1c", 833, rust_amount=0.06, edge_warm=False), "#221e1c"),
+    "metal_cast_rust": (_cast_iron("#2a2420", 834, rust_amount=0.09, edge_warm=False), "#4e2418"),
+    "metal_cast_rust_dk": (_cast_iron("#1e1a18", 835, rust_amount=0.08, edge_warm=False), "#3a1a12"),
+    "metal_cast_soot": (_soot("#161413", 836), "#161413"),
+    "metal_cast_ash": (_ash_sediment("#94908a", "#b0aca6", 837), "#9c9892"),
+    "metal_cast_ash_dk": (_ash_sediment("#4e4a46", "#64605c", 838), "#56524e"),
+}
+
+for _metal_group in (METALWARE_FORGED_MATERIALS, METALWARE_SPEAR_MATERIALS, METALWARE_CAST_MATERIALS):
+    PAINTERS.update({name: factory for name, (factory, _) in _metal_group.items()})
+    FLAT_COLORS.update({name: flat for name, (_, flat) in _metal_group.items()})
+
+
 # ---- 旧时兵器系列画笔补充（weapon_ 前缀，精制凡物铁/青铜/木/皮/绳/流苏）--------------------------------
 
 
