@@ -531,5 +531,94 @@ def generate():
         status = "✓ 合格 (<10%)" if diff <= 10.0 else "✗ 超标"
         print(f"  {name:32s} 参考: {ref_v:5.1f}% | 模型: {mod_v:5.1f}% | 差值: {diff:4.1f}% | {status}")
 
+    # ==========================================
+    # 6. Round 3: 贴图生成与 check_tex.png
+    # ==========================================
+    check_tex_path = REVIEW_DIR / "check_tex.png"
+    render_check_tex(rig, bbmodel_path, check_tex_path)
+
+
+TEXTURE_MAPPING = {
+    "wood_frame": "weapon_wood_aged",
+    "wood_dark": "weapon_wood_dark",
+    "wood_plank": "weapon_wood_aged",
+    "trough_empty": "weapon_rune_dim",
+    "bow_belly": "weapon_horn_textured",
+    "bow_back": "weapon_sinew_beige",
+    "siyah_hardwood": "weapon_wood_dark",
+    "winch_drum": "weapon_wood_aged",
+    "winch_spoke": "weapon_wood_polished",
+    "bronze_hoop": "weapon_bronze_dark",
+    "bronze_trigger": "weapon_bronze",
+    "iron_bracket": "weapon_iron_main",
+    "hemp_rope": "weapon_cord_beige",
+}
+
+
+def render_check_tex(rig: Rig, flat_bbmodel_path: Path, out_path: Path):
+    """Round 3: 生成贴图版 bbmodel 与 check_tex.png（地上摆件并排比例）。"""
+    import handheld_texture
+
+    tex_doc = handheld_texture.textured_rig_doc(rig, f"{MODEL_NAME}_tex", TEXTURE_MAPPING)
+    tex_path = OUT_DIR / f"{MODEL_NAME}_tex.bbmodel"
+    tex_path.write_text(json.dumps(tex_doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"✓ 贴图模型导出: {tex_path}")
+
+    # 下排：地上摆件专用贴图版并排比例栏
+    cell = 380
+    pad = 8
+    font_h = load_font(16)
+    font_l = load_font(12)
+
+    stand_bb = OUT_DIR / "_tmp_stand_tex.bbmodel"
+    weapon_review_kit.make_standing_bbmodel(tex_doc, stand_bb, textured=True)
+    shot_stand_front, _ = render(stand_bb, yaw=180.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading="mc")
+    shot_stand_side, _ = render(stand_bb, yaw=-90.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading="mc")
+    shot_stand_iso, _ = render(stand_bb, yaw=145.0, pitch=20.0, size=cell, bg=gear_kit.BG, shading="mc")
+    shot_stand_top, _ = render(stand_bb, yaw=0.0, pitch=89.9, size=cell, bg=gear_kit.BG, shading="mc")
+    stand_bb.unlink(missing_ok=True)
+
+    scale_w = cell * 4 + pad * 5
+    scale_h = cell + 48
+    scale_panel = Image.new("RGB", (scale_w, scale_h), (32, 33, 37))
+    d_scale = ImageDraw.Draw(scale_panel)
+    d_scale.text(
+        (pad, 6),
+        f"(A) 【贴图并排比例栏】地上摆件守城重器 · 长 {LEN_TOTAL:.1f}px (人高 112.5%) · 高 {HEIGHT_TOTAL:.1f}px · 宽 {WIDTH_TOTAL:.1f}px · 底座平置地面",
+        fill=(240, 225, 175),
+        font=font_h
+    )
+    for idx, (label, img) in enumerate([
+        ("并排: 正面 FRONT（贴图版）", shot_stand_front),
+        ("并排: 侧面 SIDE（全长对比）", shot_stand_side),
+        ("并排: 3/4 透视（重型三弓床弩）", shot_stand_iso),
+        ("并排: 俯视 TOP（三弓展宽俯瞰）", shot_stand_top),
+    ]):
+        px = pad + idx * (cell + pad)
+        py = 34
+        scale_panel.paste(img, (px, py))
+        d_scale.text((px + 8, py + 8), label, fill=(210, 220, 230), font=font_l)
+
+    # 上排：参考图 + 4视角平色/贴图对照
+    ref_file = REVIEW_DIR / f"{WEAPON_ID}_ref.png"
+    ref_im = Image.open(ref_file).convert("RGB")
+
+    weapon_review_kit.assemble_check_tex_image(
+        ref_im=ref_im,
+        model_flat_path=flat_bbmodel_path,
+        model_tex_path=tex_path,
+        scale_pose_panel_tex=scale_panel,
+        out_path=out_path,
+        title="#4 床弩 chuang_nu（Round 3 贴图版；老实木包浆+黑褐牛角弓腹+米黄麻弦+暗青铜箍与铁件）"
+    )
+
+    # 扫描洋红像素
+    img = Image.open(out_path).convert("RGB")
+    arr = np.array(img)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    magenta_count = int(np.sum((r > 200) & (b > 200) & (g < 80)))
+    print(f"✓ check_tex.png 洋红像素核验 (R>200, B>200, G<80): {magenta_count} 处")
+    assert magenta_count == 0, f"洋红像素必须为0，实测 {magenta_count}"
+
 if __name__ == "__main__":
     generate()
