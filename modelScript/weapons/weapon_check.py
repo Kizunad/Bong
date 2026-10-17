@@ -5,9 +5,16 @@
 生成器模块需提供：
 
 - ``WEAPON_ID`` ``MODEL_NAME`` ``OUT_DIR`` ``TOTAL_LEN`` ``GRIP_Y`` ``BONES`` ``REF_PNG`` ``REF_PANEL_W`` ``TITLE``
-- ``POSE``：``"single_hand"`` / ``"polearm"`` / ``"bow"``
+- ``POSE``：``"single_hand"`` / ``"polearm"`` / ``"bow"`` / ``"worn"``（挂件，另需 ``WORN_OFFSET`` ``WORN_TITLE``）
 - ``PROP_YAW``：比例对照里渲染模型的视角（要让模型和参考图朝向一致）
 - ``MEASURE_EXCLUDE_BONES``（可选）：量模型剪影前先去掉这些骨上的方块（弓弦）
+- ``REVIEW_DIR``（可选）：审阅图目录，默认 img/weapons/<id>
+- ``TEX_CLOSEUPS``（可选，Round 3）：贴图特写条 [(标题, yaw, pitch, 取景中心 (x,y,z), 取景跨度 px), ...]
+- ``custom_proportion(rig, doc) -> (参考图裁图, 模型渲染图, 对照行, iou)``（可选）：完全自定义比例对照
+- ``HELD_ARM_DEG`` / ``WORN_SKIP``（可选）：穿戴栏里右臂前抬角度、不参与相交检查的玩家部件（手持小件用）
+- ``WORN_VIEWS``（可选）：穿戴三格的 [(标题, yaw, pitch)]
+- ``SKIP_IOU``（可选）：参考图是透视图时不画 IoU 行
+- ``REF_BOX``（可选）：参考图是拼版时，主视图所在的 (x0, y0, x1, y1)
 - ``REF_STRING_PX``（可选，默认 1）：参考图去弦用的横向开运算宽度（弓设 9）
 - ``REF_SHADOW_PX``（可选，默认 22）：去地面阴影的竖向开运算长度，细斜杆件的弓要设 1
 - ``measure(mask) -> dict[str, float]``：从剪影量出的各部件百分比；参考图和模型用同一个函数
@@ -56,7 +63,7 @@ def _ref_panel_values(mod, ref_mask: np.ndarray) -> dict[str, float]:
 
 def write_and_review(mod, rig: Rig) -> Path:
     mod.OUT_DIR.mkdir(parents=True, exist_ok=True)
-    review_dir = kit.REVIEW_ROOT / mod.WEAPON_ID
+    review_dir = getattr(mod, "REVIEW_DIR", kit.REVIEW_ROOT / mod.WEAPON_ID)
     review_dir.mkdir(parents=True, exist_ok=True)
 
     doc = rig.bbmodel(mod.MODEL_NAME)
@@ -66,32 +73,41 @@ def write_and_review(mod, rig: Rig) -> Path:
 
     six = gear_kit.render_six_views(model_path, f"{mod.TITLE} · {count} 方块 · 全长 {mod.TOTAL_LEN:.1f} px")
 
-    pose_kwargs = {"pose_type": "bow"} if mod.POSE == "bow" else {"is_polearm": mod.POSE == "polearm"}
-    pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
-        doc, grip_y=mod.GRIP_Y, weapon_len=mod.TOTAL_LEN, out_dir=mod.OUT_DIR, **pose_kwargs)
-
-    ref_mask = kit.ref_mask(mod.REF_PNG, mod.REF_PANEL_W, shadow_px=getattr(mod, "REF_SHADOW_PX", 22),
-                            string_px=getattr(mod, "REF_STRING_PX", 1))
-    ref_crop = kit.crop_ref_view(mod.REF_PNG, ref_mask)
-    model_img, _ = render(model_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
-    exclude = getattr(mod, "MEASURE_EXCLUDE_BONES", ())
-    if exclude:
-        # 参考图剪影里弓弦已经去掉了，模型这边也去掉弦再量，两边口径一致
-        drop = {uid for b in exclude for uid in rig.bones[b]["children"]}
-        measure_doc = dict(doc, elements=[e for e in doc["elements"] if e["uuid"] not in drop])
-        measure_path = mod.OUT_DIR / "_tmp_measure.bbmodel"
-        measure_path.write_text(json.dumps(measure_doc), encoding="utf-8")
-        measure_img, _ = render(measure_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
-        measure_path.unlink()
-        model_m = kit.model_mask(measure_img, gear_kit.BG)
+    if mod.POSE == "worn":     # 挂件：不是手持，改画「穿戴」栏
+        pose_panel, _ = kit.worn_panel(doc, mod.WORN_OFFSET, mod.OUT_DIR, mod.TOTAL_LEN, mod.WORN_TITLE,
+                                       getattr(mod, "WORN_VIEWS", None), getattr(mod, "HELD_ARM_DEG", None),
+                                       getattr(mod, "WORN_SKIP", ()))
     else:
-        model_m = kit.model_mask(model_img, gear_kit.BG)
+        pose_kwargs = {"pose_type": "bow"} if mod.POSE == "bow" else {"is_polearm": mod.POSE == "polearm"}
+        pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
+            doc, grip_y=mod.GRIP_Y, weapon_len=mod.TOTAL_LEN, out_dir=mod.OUT_DIR, **pose_kwargs)
 
-    ref_vals = mod.measure(ref_mask)
-    mod_vals = mod.measure(model_m)
-    metrics = [(label, ref_vals[key], mod_vals[key]) for label, key in mod.METRICS]
-    iou = kit.silhouette_iou(ref_mask, model_m)
-    metrics.append(("剪影重合 IoU（同高缩放，100 = 完全重合）", 100.0, iou * 100.0))
+    if hasattr(mod, "custom_proportion"):   # 穿戴件：参考图是透视拼版，剪影度量没有意义，由生成器自己给对照
+        ref_crop, model_img, metrics, iou = mod.custom_proportion(rig, doc)
+    else:
+        ref_mask = kit.ref_mask(mod.REF_PNG, mod.REF_PANEL_W, shadow_px=getattr(mod, "REF_SHADOW_PX", 22),
+                                string_px=getattr(mod, "REF_STRING_PX", 1), box=getattr(mod, "REF_BOX", None))
+        ref_crop = kit.crop_ref_view(mod.REF_PNG, ref_mask)
+        model_img, _ = render(model_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
+        exclude = getattr(mod, "MEASURE_EXCLUDE_BONES", ())
+        if exclude:
+            # 参考图剪影里弓弦已经去掉了，模型这边也去掉弦再量，两边口径一致
+            drop = {uid for b in exclude for uid in rig.bones[b]["children"]}
+            measure_doc = dict(doc, elements=[e for e in doc["elements"] if e["uuid"] not in drop])
+            measure_path = mod.OUT_DIR / "_tmp_measure.bbmodel"
+            measure_path.write_text(json.dumps(measure_doc), encoding="utf-8")
+            measure_img, _ = render(measure_path, yaw=mod.PROP_YAW, pitch=0.0, size=900, bg=gear_kit.BG)
+            measure_path.unlink()
+            model_m = kit.model_mask(measure_img, gear_kit.BG)
+        else:
+            model_m = kit.model_mask(model_img, gear_kit.BG)
+
+        ref_vals = mod.measure(ref_mask)
+        mod_vals = mod.measure(model_m)
+        metrics = [(label, ref_vals[key], mod_vals[key]) for label, key in mod.METRICS]
+        iou = kit.silhouette_iou(ref_mask, model_m)
+        if not getattr(mod, "SKIP_IOU", False):     # 参考图是透视图（杆是斜的）时，IoU 没有意义
+            metrics.append(("剪影重合 IoU（同高缩放，100 = 完全重合）", 100.0, iou * 100.0))
 
     prop = weapon_review_kit.build_proportion_panel(
         ref_crop, model_img, metrics, [], target_h=six.height)
@@ -119,9 +135,64 @@ def write_and_review(mod, rig: Rig) -> Path:
 
     print("\n=== 比例对照（参考图 vs 模型渲染剪影，差超 10 个百分点要继续改）===")
     bad = 0
-    for label, r, m in metrics[:-1]:
+    for label, r, m in (metrics if getattr(mod, "SKIP_IOU", False) else metrics[:-1]):
         flag = "OK " if abs(r - m) <= 10 else "超标"
         bad += flag != "OK "
         print(f"  [{flag}] {label}: 参考 {r:.1f}% | 模型 {m:.1f}% | 差 {m - r:+.1f}")
     print(f"  剪影 IoU {iou * 100:.1f}%")
+    return out
+
+
+def write_tex_review(mod, rig: Rig) -> Path:
+    """Round 3：贴图版 bbmodel + check_tex.png（贴图多视图、并排比例、持握 / 穿戴栏，洋红像素必须为 0）。
+
+    生成器模块另需 ``TEXTURE_MAPPING``（生成器材质名 → handheld_texture 画笔名）。
+    """
+    import handheld_texture
+
+    review_dir = getattr(mod, "REVIEW_DIR", kit.REVIEW_ROOT / mod.WEAPON_ID)
+    review_dir.mkdir(parents=True, exist_ok=True)
+    flat_path = mod.OUT_DIR / f"{mod.MODEL_NAME}.bbmodel"
+    tex_doc = handheld_texture.textured_rig_doc(rig, mod.MODEL_NAME, mod.TEXTURE_MAPPING)
+    tex_path = mod.OUT_DIR / f"{mod.MODEL_NAME}_tex.bbmodel"
+    tex_path.write_text(json.dumps(tex_doc, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    if mod.POSE == "worn":
+        pose_panel, _ = kit.worn_panel(tex_doc, mod.WORN_OFFSET, mod.OUT_DIR, mod.TOTAL_LEN, mod.WORN_TITLE,
+                                       getattr(mod, "WORN_VIEWS", None), getattr(mod, "HELD_ARM_DEG", None),
+                                       getattr(mod, "WORN_SKIP", ()), textured=True)
+    else:
+        pose_kwargs = {"pose_type": "bow"} if mod.POSE == "bow" else {"is_polearm": mod.POSE == "polearm"}
+        pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
+            tex_doc, grip_y=mod.GRIP_Y, weapon_len=mod.TOTAL_LEN, out_dir=mod.OUT_DIR, textured=True, **pose_kwargs)
+
+    out = review_dir / "check_tex.png"
+    weapon_review_kit.assemble_check_tex_image(
+        ref_im=Image.open(mod.REF_PNG).convert("RGB"), model_flat_path=flat_path, model_tex_path=tex_path,
+        scale_pose_panel_tex=pose_panel, out_path=out,
+        title=f"{mod.TITLE.split(' (')[0]}（Round 3 贴图版；平色 / 贴图对照 + 并排比例 + 持握 / 穿戴）")
+    closeups = getattr(mod, "TEX_CLOSEUPS", ())
+    if closeups:       # 细节特写条：每项 (标题, yaw, pitch, 取景中心, 取景跨度 px)，平色 / 贴图各一格
+        from cjk_font import load_font
+        from PIL import ImageDraw
+        base = Image.open(out).convert("RGB")
+        cell, font = 400, load_font(12)
+        strip = Image.new("RGB", (max(base.width, len(closeups) * 2 * (cell + 6) + 8), cell + 30), (26, 27, 30))
+        d = ImageDraw.Draw(strip)
+        x = 8
+        for label, yaw, pitch, center, span in closeups:
+            for tag, path, shading in (("平色", flat_path, "lambert"), ("贴图", tex_path, "mc")):
+                shot, _ = render(path, yaw=yaw, pitch=pitch, size=cell, bg=gear_kit.BG, shading=shading,
+                                 focus=(center, span))
+                strip.paste(shot, (x, 26))
+                d.text((x + 2, 6), f"特写 {tag}: {label}", fill=(225, 225, 225), font=font)
+                x += cell + 6
+        sheet = Image.new("RGB", (max(base.width, strip.width), base.height + strip.height), (26, 27, 30))
+        sheet.paste(base, (0, 0))
+        sheet.paste(strip, (0, base.height))
+        sheet.save(out)
+    arr = np.array(Image.open(out).convert("RGB"))
+    magenta = int(np.sum((arr[:, :, 0] > 200) & (arr[:, :, 2] > 200) & (arr[:, :, 1] < 80)))
+    print(f"✓ check_tex.png 洋红像素核验 (R>200, B>200, G<80): {magenta} 处")
+    assert magenta == 0, f"洋红像素必须为 0，实测 {magenta}"
     return out

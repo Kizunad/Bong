@@ -34,17 +34,22 @@ Vec = tuple[float, float, float]
 # --------------------------------------------------------------------------- 参考图剪影
 
 def ref_mask(ref_png: Path, panel_width: int, thresh: float = 28.0, small_hole: int = 400,
-             shadow_px: int = 22, string_px: int = 1) -> np.ndarray:
+             shadow_px: int = 22, string_px: int = 1,
+             box: tuple[int, int, int, int] | None = None) -> np.ndarray:
     """抠出参考图主视图（左侧大图）的兵器剪影，返回与左侧面板同尺寸的布尔矩阵。
 
     背景是带轻微渐变的灰底，所以逐行取左边缘的中位数当该行背景；
     闭运算 + 填小孔 + 开运算去毛刺，再取最大连通域；面积 ≥ small_hole 的孔保留（如钺的圆孔）。
-    ``shadow_px`` 去地面阴影，``string_px`` > 1 时用横向开运算削掉弓弦（弓用）。
+    ``box`` 只取拼版里的一幅，``shadow_px`` 去地面阴影，``string_px`` > 1 时用横向开运算削掉弓弦（弓用）。
     """
     im = np.array(Image.open(ref_png).convert("RGB")).astype(float)[:, :panel_width]
     row_bg = np.median(im[:, :40], axis=1)
     diff = np.abs(im - row_bg[:, None, :]).max(axis=2)
     mask = diff > thresh
+    if box is not None:      # 参考图是多视图拼版时，只取 box=(x0, y0, x1, y1) 里的那一幅
+        keep = np.zeros_like(mask)
+        keep[box[1]:box[3], box[0]:box[2]] = True
+        mask &= keep
     # 锈斑 / 铜绿的颜色会碰巧接近灰底，先闭运算补上、填掉小孔，再开运算削掉毛刺
     mask = ndimage.binary_closing(mask, structure=np.ones((3, 3)), iterations=2)
     holes, hole_count = ndimage.label(~mask)
@@ -148,6 +153,7 @@ class PlateSpec:
     levels: int = 4
     edge_mode: str = "all"
     thick_center: float = 0.0
+    thick_fn: Callable[[float, float], float] | None = None   # (u, v) → 半厚倍率（尾部收尖等）
 
 
 def plate_from_mask(
@@ -230,6 +236,8 @@ def plate_from_mask(
         ua, ub = u0 + ia * cell, u0 + (ib + 1) * cell
         va, vb = v0 + ja * cell, v0 + (jb + 1) * cell
         ht = half(lv)
+        if spec.thick_fn is not None:
+            ht = max(0.03, ht * spec.thick_fn((ua + ub) / 2, (va + vb) / 2))
         mat = mat_edge if lv <= 2 else mat_body
         if spec.plane == "zy":
             frm, to = (c0 - ht, va, ua), (c0 + ht, vb, ub)
@@ -258,6 +266,18 @@ def octagon_prism(rig: Rig, bone: str, name: str, cx: float, cz: float, y0: floa
     for tag, ang in (("c", 45.0), ("d", -45.0)):
         rig.cube(bone, f"{name}_{tag}", (cx - r, y0, cz - c), (cx + r, y1, cz + c),
                  rot=(0.0, ang, 0.0), org=(cx, mid, cz), mat=mat)
+
+
+def octagon_prism_x(rig: Rig, bone: str, name: str, cy: float, cz: float, x0: float, x1: float,
+                    r: float, mat: str) -> None:
+    """沿 x 轴的正八角柱（内切半径 r），结构同 octagon_prism，只是轴向换成 x。"""
+    c = 0.4142 * r
+    mid = (x0 + x1) / 2
+    rig.cube(bone, f"{name}_a", (x0, cy - r, cz - c), (x1, cy + r, cz + c), mat=mat)
+    rig.cube(bone, f"{name}_b", (x0, cy - c, cz - r), (x1, cy + c, cz + r), mat=mat)
+    for tag, ang in (("c", 45.0), ("d", -45.0)):
+        rig.cube(bone, f"{name}_{tag}", (x0, cy - r, cz - c), (x1, cy + r, cz + c),
+                 rot=(ang, 0.0, 0.0), org=(mid, cy, cz), mat=mat)
 
 
 def octagon_taper(rig: Rig, bone: str, name: str, cx: float, cz: float, y0: float, y1: float,
@@ -454,3 +474,109 @@ def bow_measure(mask: np.ndarray) -> dict[str, float]:
     out["thick_mid"] = 200.0 * centre(0.70)[1] / height
     out["thick_tip"] = 200.0 * centre(0.92)[1] / height
     return out
+
+
+# --------------------------------------------------------------------------- 穿戴 / 挂件
+
+def worn_doc(weapon_doc: dict, offset: tuple[float, float, float], right_arm_deg: float | None = None,
+             skip_parts: tuple[str, ...] = ()) -> tuple[dict, int]:
+    """把挂件模型平移 offset 后和灰色占位玩家合成一份 bbmodel 文档，并对玩家六个方块做分离轴相交检查。
+
+    返回 (文档, 交叠个数)。方块带旋转时，origin 一起平移，相交检查按旋转后的角点算。
+    """
+    import copy
+
+    import weapon_review_kit as wrk
+
+    doc = {"meta": {"format_version": "4.10", "model_format": "free", "box_uv": False}, "name": "Worn",
+           "resolution": weapon_doc.get("resolution", {"width": 64, "height": 64}), "elements": [],
+           "outliner": [], "textures": copy.deepcopy(weapon_doc.get("textures", []))}
+    body_uv, eye_uv = wrk.inject_grey_player_texture(doc)
+    faces = lambda uv: {f: {"uv": list(uv), "texture": 0} for f in ("north", "south", "east", "west", "up", "down")}  # noqa: E731
+    for label, (lo, hi) in wrk.PLAYER_BOXES.items():
+        el = {"name": f"player_{label}", "box_uv": False, "from": list(lo), "to": list(hi),
+              "faces": faces(body_uv), "uuid": f"p_{label}"}
+        if right_arm_deg is not None and label == "右臂":      # 右臂前抬，握持物品
+            el["origin"] = list(wrk.SHOULDER_ORIGIN)
+            el["rotation"] = [right_arm_deg, 0.0, 0.0]
+        doc["elements"].append(el)
+    for i, sx in enumerate((-2.0, 1.0)):
+        doc["elements"].append({"name": f"eye_{i}", "box_uv": False, "from": [sx, 27.0, -4.05],
+                                "to": [sx + 1.0, 28.0, -3.95], "faces": faces(eye_uv), "uuid": f"p_eye_{i}"})
+    off = np.array(offset, float)
+    collisions = 0
+    for idx, e in enumerate(weapon_doc["elements"]):
+        n = copy.deepcopy(e)
+        n["from"] = [round(float(v), 4) for v in np.array(e["from"]) + off]
+        n["to"] = [round(float(v), 4) for v in np.array(e["to"]) + off]
+        if any(abs(r) > 1e-9 for r in e.get("rotation", [0, 0, 0])):
+            n["origin"] = [round(float(v), 4) for v in np.array(e["origin"]) + off]
+        n["uuid"] = f"w_{idx}"
+        doc["elements"].append(n)
+        f, t = np.array(n["from"]), np.array(n["to"])
+        rot = n.get("rotation", [0, 0, 0])
+        corners = [np.array([x, y, z]) for x in (f[0], t[0]) for y in (f[1], t[1]) for z in (f[2], t[2])]
+        Re = np.eye(3)
+        if any(abs(r) > 1e-9 for r in rot):
+            Re = wrk.rotmat(rot[2], 2) @ wrk.rotmat(rot[1], 1) @ wrk.rotmat(rot[0], 0)
+            org = np.array(n["origin"], float)
+            corners = [Re @ (c - org) + org for c in corners]
+        axes = [Re @ np.eye(3)[k] for k in range(3)]
+        for label, (lo, hi) in wrk.PLAYER_BOXES.items():
+            if label not in skip_parts and wrk.obb_aabb_intersect(corners, axes, lo, hi):
+                collisions += 1
+    doc["outliner"] = [{"name": "root", "origin": [0, 0, 0], "children": [e["uuid"] for e in doc["elements"]]}]
+    return doc, collisions
+
+
+def worn_panel(weapon_doc: dict, offset: tuple[float, float, float], out_dir: Path,
+               weapon_len: float, title_b: str, views_b=None, right_arm_deg: float | None = None,
+               skip_parts: tuple[str, ...] = (), textured: bool = False):
+    """挂件的「并排比例」+「穿戴」两栏（5 格，宽度与持握版一致）。
+
+    ``offset`` 是把模型原点（挂点）平移到玩家身上的位置；``views_b`` 是穿戴三格的
+    [(标题, yaw, pitch), ...]，默认背面 / 左侧 / 3/4 背左斜。
+    """
+    import json
+
+    import gear_kit
+    import weapon_review_kit as wrk
+    from bbmodel_maker.render.render_bbmodel import render
+    from cjk_font import load_font
+    from PIL import ImageDraw
+
+    font_h, font_l = load_font(16), load_font(12)
+    stand_bb, worn_bb = out_dir / "_tmp_stand.bbmodel", out_dir / "_tmp_worn.bbmodel"
+    wrk.make_standing_bbmodel(weapon_doc, stand_bb, textured=textured)
+    doc, collisions = worn_doc(weapon_doc, offset, right_arm_deg, skip_parts)
+    worn_bb.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    views_b = views_b or [("穿戴: 背面 BACK (相机 +z)", 0.0, 0.0), ("穿戴: 左侧 LEFT (相机 -x)", 90.0, 0.0),
+                          ("穿戴: 3/4 背左斜", 35.0, 20.0)]
+
+    cell, pad = 380, 8
+    shading = "mc" if textured else "lambert"
+    shots_a = [render(stand_bb, yaw=yaw, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)[0] for yaw in (180.0, -90.0)]
+    shots_b = [render(worn_bb, yaw=y, pitch=p, size=cell, bg=gear_kit.BG, shading=shading)[0] for _, y, p in views_b]
+    stand_bb.unlink(missing_ok=True)
+    worn_bb.unlink(missing_ok=True)
+
+    panel = Image.new("RGB", (cell * 5 + pad * 6, cell + 68), (28, 29, 33))
+    d = ImageDraw.Draw(panel)
+    d.text((pad, 6), f"(A) 并排比例 · 挂件全长 {weapon_len:.1f} px，玩家高 32 px · 立在玩家右侧，间隙 2 px，底端对齐脚底",
+           fill=(240, 225, 175), font=font_h)
+    col = "0 处交叠 (体积严格为 0)" if collisions == 0 else f"{collisions} 处交叠"
+    d.text((pad + cell * 2 + pad * 2, 6), f"(B) {title_b} · 几何相交: {col}" + (" ✓" if collisions == 0 else " ✗"),
+           fill=(150, 235, 180) if collisions == 0 else (240, 120, 100), font=font_h)
+    titles_a = ("并排: 正面 FRONT", "并排: 侧面 SIDE")
+    titles_b = [v[0] for v in views_b]
+    for i, (t, im) in enumerate(zip(titles_a, shots_a)):
+        x = pad + i * (cell + pad)
+        d.rectangle([x, 32, x + cell - 1, 52], fill=(20, 22, 26))
+        d.text((x + 6, 35), t, fill=(230, 230, 230), font=font_l)
+        panel.paste(im, (x, 54))
+    for i, (t, im) in enumerate(zip(titles_b, shots_b)):
+        x = pad + cell * 2 + pad * 2 + i * (cell + pad)
+        d.rectangle([x, 32, x + cell - 1, 52], fill=(20, 22, 26))
+        d.text((x + 6, 35), t, fill=(230, 230, 230), font=font_l)
+        panel.paste(im, (x, 54))
+    return panel, collisions
