@@ -48,7 +48,28 @@ GEAR_EXPLODED_STYLE = (
     "plain neutral grey studio background (#777777), soft shadow, no text, no callout labels, no watermark"
 )
 
+WEAPON_REF_STYLE = (
+    "Minecraft voxel style orthographic reference sheet of an ancient Chinese ranged weapon in a cultivation wasteland: "
+    "showing crisp orthographic views with the weapon displayed cleanly against a plain neutral grey background (#777777), "
+    "blocky chunky cuboid voxel geometry with visible texels, "
+    "dharma-ending xianxia wasteland aesthetic: weathered wood stock, dark forged iron, patinated bronze trigger lock mechanism, cord lashings, "
+    "desaturated earthy tones, weathered, no fantasy gloss, no glowing magic, "
+    "clean studio lighting, clear proportions for 3D modeling reference, "
+    "no text, no watermark"
+)
+
+WEAPON_EXPLODED_STYLE = (
+    "Minecraft voxel style technical exploded breakdown schematic (爆炸分解图) of an ancient Chinese ranged weapon "
+    "in a cultivation wasteland: the weapon disassembled into its separate components floating with clear structural "
+    "spacing in midair along the main axis (stock/tiller, bow limbs, bronze trigger mechanism lock, stirrup/cords/fittings), "
+    "each part a chunky cuboid voxel block with visible texels, "
+    "dharma-ending xianxia wasteland aesthetic: weathered wood, aged bronze, forged iron, cord wraps, "
+    "desaturated, weathered, no fantasy gloss, "
+    "plain neutral grey studio background (#777777), soft shadow, no text, no callout labels, no watermark"
+)
+
 STYLES = {"ref": GEAR_REF_STYLE, "exploded": GEAR_EXPLODED_STYLE}
+WEAPON_STYLES = {"ref": WEAPON_REF_STYLE, "exploded": WEAPON_EXPLODED_STYLE}
 
 
 def main() -> None:
@@ -56,12 +77,14 @@ def main() -> None:
     ap.add_argument("gear_id")
     ap.add_argument("--prompt", required=True, help="这件装备的外观与分件描述（英文）")
     ap.add_argument("--kind", choices=sorted(STYLES), required=True)
+    ap.add_argument("--category", default="gear", help="输出图片子目录，如 gear、weapons 或 metalware")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    out = args.out or REVIEW_ROOT / "img" / "gear" / args.gear_id
+    out = args.out or REVIEW_ROOT / "img" / args.category / args.gear_id
     out.mkdir(parents=True, exist_ok=True)
-    image = cpa_client().text_to_image(f"{STYLES[args.kind]}. Subject: {args.prompt}", size="1536x1024")
+    style_table = WEAPON_STYLES if args.category == "weapons" else STYLES
+    image = cpa_client().text_to_image(f"{style_table[args.kind]}. Subject: {args.prompt}", size="1536x1024")
     target = out / f"{args.gear_id}_{args.kind}.png"
     target.write_bytes(image)
     print(f"{args.gear_id}: {args.kind} → {target}")
