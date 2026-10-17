@@ -3,7 +3,7 @@
 
 形制（对照参考图 ``tie_pu_dao_ref.png`` 的主视图剪影，刀身轮廓直接取自剪影）：
 - 双手长柄刀，全长 40 px：刀身 16.9（占 42%）、柄 20.2（占 50%）、铁镦 2.9；柄比刀身长；
-- 刀背是直的，刀刃在前段上挑成弧：刃腹最凸点在刃长 74% 处，刀尖向后翘起，刀头最宽 3.0 px；
+- 刀背是直的，刀刃在前段上挑成弧：刃腹最凸点在刃长 74% 处，刀尖向后翘起，刀头最宽 4.5 px（比参考图剪影再宽 1.5 倍）；
   刀身厚度是刃宽的约 22%，由刀背向刃口逐级楔形减薄，刃口 0.12 px；
 - 铁盘护手（八角盘，径 3.2、厚 0.6），木柄径 1.4，两段缠绳，柄尾铁镦（八角、尾端倒棱）；
 - 末法：刀身下段原本刻的导灵阵线是暗槽，没有任何发光部件。
@@ -39,6 +39,9 @@ REF_PANEL_W = 845
 REF_AXIS_X = 429
 
 GUARD_Y0, GUARD_Y1 = 23.1, 23.75
+SPINE_U = 0.84       # 刀背（平背）的 x，参考图量得
+WIDEN = 1.5          # 刀头最宽处相对参考图剪影再加宽的倍数：3.0 px → 4.5 px
+WIDEN_FROM, WIDEN_TO = 25.5, 34.0   # 从 v=25.5 起渐宽，到 v=34 达最宽
 BUTT_TOP = 2.9
 
 MATS = {
@@ -92,13 +95,21 @@ def build_weapon() -> Rig:
     kit.octagon_prism(rig, "guard_disc", "disc_rim_hi", 0.0, 0.0, GUARD_Y1 - 0.14, GUARD_Y1, 1.62, "iron_edge")
     rig.cube("guard_disc", "disc_rust", (-1.0, GUARD_Y0 + 0.1, 1.5), (-0.4, GUARD_Y1 - 0.1, 1.68), mat="rust")
 
-    # 4. 刀身：直接取自剪影的楔形片。刀刃在 -x，刀背在 +x（平背），厚度沿 z
+    # 4. 刀身：取自剪影、前段再加宽的楔形片。刀刃在 -x，刀背在 +x（平背），厚度沿 z
     mask = kit.ref_mask(REF_PNG, REF_PANEL_W)
     frame = kit.frame_from_mask(mask, TOTAL_LEN, REF_AXIS_X)
-    cover = kit.sampler(mask, frame)
-    spec = kit.PlateSpec(plane="xy", cell=0.2, half_edge=0.06, half_max=0.34, ramp=1.9, levels=6,
+    ref_cover = kit.sampler(mask, frame)
+
+    def cover(u: float, v: float, size: float) -> float:
+        """刀身前段向刃侧加宽：以刀背（u = SPINE_U）为轴，宽度系数由刀根的 1.0 升到刀头的 WIDEN。"""
+        t = min(1.0, max(0.0, (v + size / 2 - WIDEN_FROM) / (WIDEN_TO - WIDEN_FROM)))
+        f = 1.0 + (WIDEN - 1.0) * t * t * (3 - 2 * t)
+        u_src = SPINE_U - (SPINE_U - (u + size / 2)) / f
+        return ref_cover(u_src - size / 2, v, size)
+
+    spec = kit.PlateSpec(plane="xy", cell=0.2, half_edge=0.06, half_max=0.5, ramp=2.6, levels=6,
                          edge_mode="left")
-    kit.plate_from_mask(rig, "blade", "blade", cover, (-2.6, 1.7, GUARD_Y1 - 0.15, 40.2), spec,
+    kit.plate_from_mask(rig, "blade", "blade", cover, (-4.4, 1.7, GUARD_Y1 - 0.15, 40.2), spec,
                         "iron_edge", "iron_mid", keep=lambda u, v: v >= GUARD_Y1 - 0.15)
     # 刀背压条：一条比刀身略厚的深色脊，沿平背通长
     rig.cube("blade", "spine_bar", (0.7, GUARD_Y1, -0.4), (0.9, 35.6, 0.4), mat="iron_dark")
