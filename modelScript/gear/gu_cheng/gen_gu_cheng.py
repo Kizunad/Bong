@@ -26,6 +26,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
 sys.path.insert(0, str(REPO / "modelScript" / "gear" / "_kit"))
 sys.path.insert(0, str(REPO / "modelScript" / "weapons"))
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
 
 from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
 
@@ -152,14 +153,14 @@ def build_weapon() -> Rig:
     # 5. 秤砣：铁环环着杆，短绳吊小锈铁砣（圆帽 + 方身 + 铆钉），砣底离杆顶 4.75 px
     wx = -2.5
     kit.octagon_prism_x(rig, "weight_ring", "ring", BEAM_Y, 0.0, wx - 0.17, wx + 0.17, BEAM_R + 0.28, "iron")
-    kit.octagon_prism(rig, "weight_ring", "short_cord", wx, 0.0, -3.9, BEAM_Y - BEAM_R - 0.25, 0.1, "cord")
+    kit.octagon_prism(rig, "weight_ring", "short_cord", wx, 0.0, -3.9, BEAM_Y - BEAM_R - 0.25, 0.17, "cord")
     w_top = -3.8
     kit.octagon_prism(rig, "weight", "cap", wx, 0.0, w_top - 0.45, w_top, 0.38, "iron")
     kit.octagon_prism(rig, "weight", "cap_lip", wx, 0.0, w_top - 0.55, w_top - 0.4, 0.46, "rust")
-    rig.cube("weight", "body", (wx - 0.62, -5.85, -0.5), (wx + 0.62, w_top - 0.5, 0.5), mat="iron")
+    rig.cube("weight", "body", (wx - 0.62, -5.88, -0.5), (wx + 0.62, w_top - 0.5, 0.5), mat="iron")
     rig.cube("weight", "shoulder_l", (wx - 0.7, w_top - 0.9, -0.42), (wx - 0.55, w_top - 0.5, 0.42), mat="rust")
     rig.cube("weight", "shoulder_r", (wx + 0.55, w_top - 0.9, -0.42), (wx + 0.7, w_top - 0.5, 0.42), mat="rust")
-    rig.cube("weight", "foot", (wx - 0.55, -5.9, -0.44), (wx + 0.55, -5.82, 0.44), mat="rust")
+    rig.cube("weight", "foot", (wx - 0.55, -5.88, -0.44), (wx + 0.55, -5.55, 0.44), mat="rust")   # 底座（厚 0.33，太薄的片贴图面不足 1 texel 会出洋红）
     for i, (dx, dy) in enumerate(((-0.34, -4.35), (0.34, -4.35), (-0.34, -5.4), (0.34, -5.4))):
         rig.cube("weight", f"rivet_{i}", (wx + dx - 0.1, dy - 0.1, 0.5), (wx + dx + 0.1, dy + 0.1, 0.6), mat="rust")
     rig.cube("weight", "dead_mark", (wx - 0.3, -5.05, 0.5), (wx + 0.3, -4.97, 0.54), mat="groove")
@@ -215,6 +216,24 @@ def measure(mask: np.ndarray) -> dict[str, float]:
     }
 
 
+# Round 3：生成器材质 → handheld_texture 画笔
+TEXTURE_MAPPING = {
+    "bone": "weapon_bone",
+    "bone_lt": "weapon_bone_lt",
+    "bone_dk": "weapon_bone_dk",
+    "cord": "weapon_cord_tan",
+    "cord_dk": "weapon_cord_brown",
+    "iron": "weapon_fe_body",
+    "rust": "weapon_fe_rust",
+    "groove": "weapon_dead_groove",
+}
+
+TEX_CLOSEUPS = [
+    ("秤杆与秤花", 0.0, 0.0, (-4.0, -1.5, 0), 9.5),
+    ("秤盘与三股绳", 20.0, 25.0, (-9.2, -3.8, 0), 6.0),
+    ("秤砣与铁环", 20.0, 10.0, (-2.5, -4.0, 0), 5.5),
+]
+
 def main() -> None:
     import weapon_check
 
@@ -222,6 +241,7 @@ def main() -> None:
     rig = build_weapon()
     print(f"{MODEL_NAME}: {len(rig.elements)} 个方块, {len(rig.bones)} 根骨骼")
     weapon_check.write_and_review(sys.modules[__name__], rig)
+    weapon_check.write_tex_review(sys.modules[__name__], rig)
 
 
 if __name__ == "__main__":
