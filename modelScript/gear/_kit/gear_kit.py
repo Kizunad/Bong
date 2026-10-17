@@ -169,6 +169,22 @@ class WornGates(gatekit.AssetGates):
                         lambda r: gate_clearance(r), inject_clearance),)
 
 
+class PlacedGates(gatekit.AssetGates):
+    """地上摆件门禁：无需身体 clearance，保留其余全套几何检查。"""
+
+    def specs(self):
+        base = tuple(s for s in super().specs() if s[0] != "overflow")
+        return base
+
+
+class HeldGates(gatekit.AssetGates):
+    """手持件门禁：无需身体 clearance，保留其余全套几何检查。"""
+
+    def specs(self):
+        base = tuple(s for s in super().specs() if s[0] != "overflow")
+        return base
+
+
 def soft_pairs(soft: tuple[str, ...], over: tuple[str, ...]) -> frozenset:
     """软件（绳 / 布 / 皮）允许薄压在哪些材质上：返回 gatekit 要的无序材质对集合。"""
     return frozenset(frozenset((s, o)) for s in soft for o in over if s != o)
@@ -195,16 +211,29 @@ class GearSpec:
     tex_views: tuple | None = None
     # 生成器材质名 → 画笔库材质名里不走默认规则（见 texture_material）的那几个
     texture_overrides: dict = field(default_factory=dict)
-    round_label: str = "round 3/3"
-    gates: WornGates = field(init=False)
+    textured: bool = False
+    round_label: str = "round 1/3"
+    category: str = "gear"           # "gear" 或 "metalware"
+    scale_mode: str = "worn"         # "worn" (穿戴), "placed" (地上并排), "held" (手持)
+    player_offset: tuple = (14.0, 0.0, 0.0)    # placed 模式下玩家相对原点的偏移
+    held_offset: tuple = (6.0, 12.0, -1.0)     # held 模式下模型相对原点移动到右手的偏移
+    worn_views: tuple | None = None
+    gates: gatekit.AssetGates = field(init=False)
 
     def __post_init__(self) -> None:
-        self.gates = WornGates(self.title, self.mats, asym=self.asym,
-                               soft_over=self.soft_over, free_floating=self.free_floating)
+        if self.scale_mode == "placed":
+            self.gates = PlacedGates(self.title, self.mats, asym=self.asym,
+                                     soft_over=self.soft_over, free_floating=self.free_floating)
+        elif self.scale_mode == "held":
+            self.gates = HeldGates(self.title, self.mats, asym=self.asym,
+                                   soft_over=self.soft_over, free_floating=self.free_floating)
+        else:
+            self.gates = WornGates(self.title, self.mats, asym=self.asym,
+                                   soft_over=self.soft_over, free_floating=self.free_floating)
 
     @property
     def review_dir(self) -> Path:
-        return REVIEW_ROOT / "img" / "gear" / self.gear_id
+        return REVIEW_ROOT / "img" / self.category / self.gear_id
 
     def texture_material(self) -> dict:
         """生成器材质名 → 画笔库（handheld_texture）材质名：骨 / 暗洞沿用库里现成的，布并入粗麻，
@@ -294,33 +323,43 @@ def self_test(spec: GearSpec, g: Gear) -> None:
 
 
 # ───────────────────────────────────────────────────────────── 穿在灰色占位人体上
-def worn_rig(g: Gear) -> Rig:
-    """装备 + 灰色占位玩家合成一个 Rig（只用于渲染看比例，不是交付物）。"""
+def worn_rig(g: Gear, spec: GearSpec | None = None) -> Rig:
+    """装备/摆件/手持物 + 灰色占位玩家合成一个 Rig（只用于渲染看比例，不是交付物）。"""
     mats = {**g.rig.mats, **PLAYER_MATS}
     w = Rig(mats, tex=g.rig.tex, swatch=g.rig.swatch)
     for bone in g.rig.bone_order:
         w.bones[bone] = copy.deepcopy(g.rig.bones[bone])
         w.bone_order.append(bone)
     w.elements = copy.deepcopy(g.rig.elements)
+
+    if spec and spec.scale_mode == "held":
+        dx, dy, dz = spec.held_offset
+        for el in w.elements:
+            el["from"] = [round(el["from"][0] + dx, 3), round(el["from"][1] + dy, 3), round(el["from"][2] + dz, 3)]
+            el["to"] = [round(el["to"][0] + dx, 3), round(el["to"][1] + dy, 3), round(el["to"][2] + dz, 3)]
+            el["origin"] = [round(el["origin"][0] + dx, 3), round(el["origin"][1] + dy, 3), round(el["origin"][2] + dz, 3)]
+
     w.bone("wearer", (0.0, 0.0, 0.0))
+    p_off = spec.player_offset if (spec and spec.scale_mode == "placed") else (0.0, 0.0, 0.0)
     for label, (lo, hi) in PLAYER_BOXES.items():
         mat = "wearer_body" if label in ("头", "躯干") else "wearer_limb"
-        f = tuple(v + _INSET for v in lo)
-        t = tuple(v - _INSET for v in hi)
+        f = tuple(v + _INSET + p_off[i] for i, v in enumerate(lo))
+        t = tuple(v - _INSET + p_off[i] for i, v in enumerate(hi))
         w.cube("wearer", f"player_{label}", f, t, mat=mat)
     # 脸：头前面（-z）两只眼睛，让正面一眼可辨
     for sx in (-2.0, 1.0):
-        w.cube("wearer", "player_eye", (sx, 27.0, -4.0 - 0.1), (sx + 1.0, 28.0, -4.0 + _INSET), mat="wearer_face")
+        w.cube("wearer", "player_eye", (sx + p_off[0], 27.0, -4.0 - 0.1 + p_off[2]),
+               (sx + 1.0 + p_off[0], 28.0, -4.0 + _INSET + p_off[2]), mat="wearer_face")
     return w
 
 
-def worn_doc(g: Gear, name: str) -> dict:
-    return worn_rig(g).bbmodel(name)
+def worn_doc(spec: GearSpec, g: Gear, name: str) -> dict:
+    return worn_rig(g, spec).bbmodel(name)
 
 
 def worn_textured_doc(spec: GearSpec, g: Gear, name: str) -> dict:
-    """贴图版的「装备 + 占位玩家」：装备按画笔库上色，占位玩家是灰色。"""
-    return textured_rig_doc(worn_rig(g), name, {**spec.texture_material(), **TEXTURE_WEARER})
+    """贴图版的「装备/摆件 + 占位玩家」：装备按画笔库上色，占位玩家是灰色。"""
+    return textured_rig_doc(worn_rig(g, spec), name, {**spec.texture_material(), **TEXTURE_WEARER})
 
 
 WORN_VIEWS = (
@@ -328,6 +367,20 @@ WORN_VIEWS = (
     ("RIGHT 右侧（相机在 +x）", -90.0, 0.0),
     ("BACK 背面（相机在 +z）", 0.0, 0.0),
     ("3/4 背右斜（相机在 +z / +x 上方）", 28.0, 14.0),
+)
+
+PLACED_VIEWS = (
+    ("FRONT 正面并排（-z）", 180.0, 0.0),
+    ("RIGHT 侧面并排（+x）", -90.0, 0.0),
+    ("3/4 俯斜并排", 152.0, 18.0),
+    ("TOP 顶视并排", 180.0, 75.0),
+)
+
+HELD_VIEWS = (
+    ("FRONT 正面持物（-z）", 180.0, 0.0),
+    ("RIGHT 右侧持物（+x）", -90.0, 0.0),
+    ("BACK 背面（+z）", 0.0, 0.0),
+    ("3/4 正右斜持物", 152.0, 18.0),
 )
 
 
@@ -339,16 +392,27 @@ def _focus(doc_path: Path) -> tuple[tuple[float, float, float], float]:
 
 
 def render_worn(spec: GearSpec, g: Gear, tmp: Path, cell: int = 420, textured: bool = False) -> Image.Image:
-    """穿戴四面。textured=True 用画笔库贴图 + mc 光照渲染（check_tex.png 的下半），否则平涂几何版。"""
-    doc = worn_textured_doc(spec, g, "Worn") if textured else worn_doc(g, "Worn")
+    """穿戴/并排四面。textured=True 用画笔库贴图 + mc 光照渲染（check_tex.png 的下半），否则平涂几何版。"""
+    doc = worn_textured_doc(spec, g, "Worn") if textured else worn_doc(spec, g, "Worn")
     tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     focus = spec.worn_focus or _focus(tmp)
     font_h, font_l = load_font(17), load_font(12)
-    sheet = Image.new("RGB", (cell * len(WORN_VIEWS) + 5 * (len(WORN_VIEWS) + 1), cell + 62), (32, 33, 36))
+    views = spec.worn_views or (
+        PLACED_VIEWS if spec.scale_mode == "placed" else
+        HELD_VIEWS if spec.scale_mode == "held" else
+        WORN_VIEWS
+    )
+    sheet = Image.new("RGB", (cell * len(views) + 5 * (len(views) + 1), cell + 62), (32, 33, 36))
     d = ImageDraw.Draw(sheet)
     kind = "贴图版" if textured else ""
-    d.text((8, 6), f"穿在标准玩家（灰色占位人体，身高 32px）身上{kind} · {spec.wear_note}", fill=(235, 235, 235), font=font_h)
-    for i, (label, yaw, pitch) in enumerate(WORN_VIEWS):
+    if spec.scale_mode == "placed":
+        note = f"地上摆件：与标准玩家（灰色占位人体，身高 32px）并排比例{kind} · {spec.wear_note}"
+    elif spec.scale_mode == "held":
+        note = f"手持小件：握在标准玩家（灰色占位人体）右手中四面比例图{kind} · {spec.wear_note}"
+    else:
+        note = f"穿在标准玩家（灰色占位人体，身高 32px）身上{kind} · {spec.wear_note}"
+    d.text((8, 6), note, fill=(235, 235, 235), font=font_h)
+    for i, (label, yaw, pitch) in enumerate(views):
         x = 5 + i * (cell + 5)
         d.rectangle([x, 32, x + cell - 1, 53], fill=(22, 23, 26))
         d.text((x + 6, 35), label, fill=(235, 235, 235), font=font_l)
@@ -548,7 +612,8 @@ def full_run(spec: GearSpec) -> None:
     finally:
         tmp.unlink(missing_ok=True)
     make_check(spec, g, model, total)
-    render_check_tex(spec, g)
+    if spec.textured:
+        render_check_tex(spec, g)
 
 
 def main(spec: GearSpec) -> None:
