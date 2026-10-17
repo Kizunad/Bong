@@ -161,13 +161,10 @@ def check_holding_collisions(
         Rm = rotmat(rot_w[2], 2) @ rotmat(rot_w[1], 1) @ rotmat(rot_w[0], 0)
         pivot = np.array([0.0, 0.0, 0.0])
     elif pose_type == "bow":
-        # 弓左手持弓：左臂前抬 85°，握点位于拳心 [-6.0, 21.0, -11.5]
-        fist_pos = np.array([-6.0, 21.0, -11.5])
-        dx = fist_pos[0] - 0.0
-        dy = fist_pos[1] - grip_y
-        dz = fist_pos[2] - 0.0
-        Rm = rotmat(rot_w[2], 2) @ rotmat(rot_w[1], 1) @ rotmat(rot_w[0], 0)
-        pivot = fist_pos
+        # 弓左手持弓：左臂伸直向前，拳心握在握把中心，弓绕 Y 转 180° (弓背朝前 -Z, 弓弦朝向射手 +Z)
+        p_grip = np.array([0.0, grip_y, 4.2])
+        p_fist = np.array([-6.0, 21.7, -8.5])
+        R_bow = rotmat(180.0, 1)
     else:
         fist_pos = get_fist_position()
         dx = fist_pos[0] - 0.0
@@ -195,17 +192,27 @@ def check_holding_collisions(
             corners = [Re @ (c - e_org) + e_org for c in corners]
 
         if pose_type == "crossbow":
-            # 武器绕原点经 Rm 后平移到世界
             corners = [Rm @ c + np.array([dx, dy, dz]) for c in corners]
+            obb_axes = [
+                Rm @ Re @ np.array([1., 0., 0.]),
+                Rm @ Re @ np.array([0., 1., 0.]),
+                Rm @ Re @ np.array([0., 0., 1.])
+            ]
+        elif pose_type == "bow":
+            corners = [R_bow @ (c - p_grip) + p_fist for c in corners]
+            obb_axes = [
+                R_bow @ Re @ np.array([1., 0., 0.]),
+                R_bow @ Re @ np.array([0., 1., 0.]),
+                R_bow @ Re @ np.array([0., 0., 1.])
+            ]
         else:
             corners = [c + np.array([dx, dy, dz]) for c in corners]
             corners = [Rm @ (c - pivot) + pivot for c in corners]
-
-        obb_axes = [
-            Rm @ Re @ np.array([1., 0., 0.]),
-            Rm @ Re @ np.array([0., 1., 0.]),
-            Rm @ Re @ np.array([0., 0., 1.])
-        ]
+            obb_axes = [
+                Rm @ Re @ np.array([1., 0., 0.]),
+                Rm @ Re @ np.array([0., 1., 0.]),
+                Rm @ Re @ np.array([0., 0., 1.])
+            ]
 
         for part_name, (p_min, p_max) in PLAYER_COLLISION_PARTS.items():
             if obb_aabb_intersect(corners, obb_axes, p_min, p_max):
@@ -271,7 +278,7 @@ def make_standing_bbmodel(weapon_doc: dict, out_path: Path, textured: bool = Fal
 
 def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, float, float],
                         out_path: Path, textured: bool = False, pose_type: str = "single_hand") -> None:
-    """生成持握姿势模型：支持单手兵器、长弓（左手持弓）及弩（双手端平抵肩）。"""
+    """生成持握姿势模型：支持单手兵器、长弓（左手持弓，绕Y转180°）及弩（双手端平抵肩）。"""
     doc = {
         "meta": {"format_version": "4.10", "model_format": "free", "box_uv": False},
         "name": "Holding_Pose",
@@ -290,11 +297,10 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
         dz_hold = -2.4
         fist_pos = [0.0, 0.0, 0.0]
     elif pose_type == "bow":
-        # 弓左手持弓：左手平推向前持弓把
-        fist_pos = [-6.0, 21.0, -11.5]
-        dx_hold = fist_pos[0] - 0.0
-        dy_hold = fist_pos[1] - grip_y
-        dz_hold = fist_pos[2] - 0.0
+        # 弓左手持弓：左臂伸直向前，拳心在 [-6.0, 21.7, -8.5]
+        p_grip = np.array([0.0, grip_y, 4.2])
+        p_fist = np.array([-6.0, 21.7, -8.5])
+        R_bow = rotmat(180.0, 1)
     else:
         fist_pos = list(get_fist_position())
         dx_hold = fist_pos[0] - 0.0
@@ -321,10 +327,10 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
         elif pose_type == "bow":
             if label == "左臂":
                 elem["origin"] = [-6.0, 22.0, 0.0]
-                elem["rotation"] = [85.0, -5.0, 0.0]
+                elem["rotation"] = [88.0, 0.0, 0.0]
             elif label == "右臂":
                 elem["origin"] = list(SHOULDER_ORIGIN)
-                elem["rotation"] = [45.0, 0.0, 0.0]
+                elem["rotation"] = [38.0, -10.0, 0.0]
         else:
             if label == "右臂":
                 elem["origin"] = list(SHOULDER_ORIGIN)
@@ -369,6 +375,28 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
             new_e["to"] = [round(float(c_arr[:, 0].max()), 4), round(float(c_arr[:, 1].max()), 4), round(float(c_arr[:, 2].max()), 4)]
             new_e.pop("rotation", None)
             new_e.pop("origin", None)
+        elif pose_type == "bow":
+            # 弓绕握把中心旋转 180° 后平移到左拳心 (弓背朝前 -Z, 弓弦朝身体 +Z)
+            f_orig = np.array(e["from"], float)
+            t_orig = np.array(e["to"], float)
+            e_rot = e.get("rotation", [0, 0, 0])
+            e_org = np.array(e.get("origin", [0, 0, 0]), float)
+            Re = rotmat(e_rot[2], 2) @ rotmat(e_rot[1], 1) @ rotmat(e_rot[0], 0) if any(e_rot) else np.eye(3)
+
+            corners = [
+                np.array([x, y, z])
+                for x in [f_orig[0], t_orig[0]]
+                for y in [f_orig[1], t_orig[1]]
+                for z in [f_orig[2], t_orig[2]]
+            ]
+            if any(e_rot):
+                corners = [Re @ (c - e_org) + e_org for c in corners]
+            corners = [R_bow @ (c - p_grip) + p_fist for c in corners]
+            c_arr = np.array(corners)
+            new_e["from"] = [round(float(c_arr[:, 0].min()), 4), round(float(c_arr[:, 1].min()), 4), round(float(c_arr[:, 2].min()), 4)]
+            new_e["to"] = [round(float(c_arr[:, 0].max()), 4), round(float(c_arr[:, 1].max()), 4), round(float(c_arr[:, 2].max()), 4)]
+            new_e.pop("rotation", None)
+            new_e.pop("origin", None)
         else:
             new_e["from"] = [round(e["from"][0] + dx_hold, 4), round(e["from"][1] + dy_hold, 4), round(e["from"][2] + dz_hold, 4)]
             new_e["to"] = [round(e["to"][0] + dx_hold, 4), round(e["to"][1] + dy_hold, 4), round(e["to"][2] + dz_hold, 4)]
@@ -397,10 +425,10 @@ def render_player_scale_and_pose_panels(
 
     if pose_type == "crossbow":
         rot_w = (-90.0, 0.0, 0.0)
-        pose_desc = "弩双手端平抵肩"
+        pose_desc = "弩双手端平抵肩 · 弩弓在前/扳机朝下/射击朝前"
     elif pose_type == "bow":
-        rot_w = (0.0, 0.0, 0.0)
-        pose_desc = "弓左手持弓"
+        rot_w = (0.0, 180.0, 0.0)
+        pose_desc = "弓左手持弓 · 弓背朝前 / 弓弦朝射手"
     else:
         rot_w = (-35.0, 0.0, 0.0) if is_polearm else (-45.0, 0.0, 0.0)
         pose_desc = "右臂前抬30°握在拳心"
@@ -424,6 +452,19 @@ def render_player_scale_and_pose_panels(
     shot_b_side, _ = render(hold_bb, yaw=-90.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)
     shot_b_iso, _ = render(hold_bb, yaw=145.0, pitch=20.0, size=cell, bg=gear_kit.BG, shading=shading)
 
+    # 在侧视图 shot_b_side 上绘制射击方向箭头（相机 yaw=-90 视线向-X，画面左方为 -Z 前方目标）
+    if pose_type in ("bow", "crossbow"):
+        d_side = ImageDraw.Draw(shot_b_side)
+        arrow_y = 35
+        # 绘制向左的红色/黄色箭头与文字
+        d_side.line([(140, arrow_y), (40, arrow_y)], fill=(240, 210, 80), width=3)
+        d_side.polygon([(32, arrow_y), (45, arrow_y - 6), (45, arrow_y + 6)], fill=(240, 210, 80))
+        d_side.text((50, arrow_y - 18), "← 射击方向 (目标)", fill=(240, 220, 100), font=font_l)
+        if pose_type == "bow":
+            d_side.text((15, 345), "自检: 弓背朝前 / 弓弦朝射手 ✓", fill=(130, 235, 160), font=font_l)
+        elif pose_type == "crossbow":
+            d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+
     stand_bb.unlink(missing_ok=True)
     hold_bb.unlink(missing_ok=True)
 
@@ -438,7 +479,7 @@ def render_player_scale_and_pose_panels(
     col_str = "0 处交叠 (体积严格为 0)" if col_count == 0 else f"{col_count} 处交叠"
 
     d.text((pad, 6), f"(A) 并排比例 · {pct_str} · 竖立右侧间隙2px底端对齐脚底", fill=(240, 225, 175), font=font_h)
-    d.text((pad + cell * 2 + pad * 2, 6), f"(B) 持握姿势 · {pose_desc} · 几何相交检查: {col_str} ✓",
+    d.text((pad + cell * 2 + pad * 2, 6), f"(B) 持握姿势 · {pose_desc} · 几何相交: {col_str} ✓",
            fill=(150, 235, 180), font=font_h)
 
     cards_a = [("并排: 正面 FRONT", shot_a_front), ("并排: 侧面 SIDE", shot_a_side)]
@@ -490,11 +531,127 @@ def extract_weapon_silhouette(ref_path: Path) -> Image.Image:
         crop = crop.rotate(90, expand=True)
     return crop
 
-def build_proportion_panel(ref_crop: Image.Image, model_front: Image.Image,
+def crop_tight(im: Image.Image, threshold: float = 20.0) -> Image.Image:
+    arr = np.array(im.convert("RGB"))
+    bg = np.median(arr[:10, :10], axis=(0, 1))
+    diff = np.max(np.abs(arr.astype(float) - bg), axis=2)
+    ys, xs = np.where(diff > threshold)
+    if len(ys) > 0:
+        return im.crop((xs.min(), ys.min(), xs.max(), ys.max()))
+    return im
+
+def build_crossbow_dual_proportion_panel(
+    ref_side_crop: Image.Image,
+    model_side_img: Image.Image,
+    side_metrics: List[Tuple[str, float, float]],
+    side_lines: List[Tuple[str, float, Tuple[int, int, int]]],
+    ref_top_crop: Image.Image,
+    model_top_img: Image.Image,
+    top_metrics: List[Tuple[str, float, float]],
+    top_lines: List[Tuple[str, float, Tuple[int, int, int]]],
+    target_h: int = 460
+) -> Image.Image:
+    """生成双视角比例对照面板：左侧整把弩【侧视长图对照】，右侧整把弩【俯视长图对照】。"""
+    font_h = load_font(15)
+    font_m = load_font(12)
+    font_s = load_font(11)
+
+    # 辅助函数：构建单视角的等高并排与指标表
+    def build_single_view(title: str, ref_im: Image.Image, mod_im: Image.Image,
                            metrics: List[Tuple[str, float, float]],
                            ref_lines: List[Tuple[str, float, Tuple[int, int, int]]],
-                           target_h: int = 560) -> Image.Image:
-    font_h = load_font(16)
+                           w_sub: int = 580) -> Image.Image:
+        # 保证两者均为直立（高大于宽）
+        if ref_im.width > ref_im.height * 1.2:
+            r_im = ref_im.rotate(90, expand=True)
+        else:
+            r_im = ref_im
+
+        if mod_im.width > mod_im.height * 1.2:
+            m_im = mod_im.rotate(90, expand=True)
+        else:
+            m_im = mod_im
+
+        r_im = crop_tight(r_im)
+        m_im = crop_tight(m_im)
+
+        scale_r = target_h / r_im.height
+        w_r = max(24, int(round(r_im.width * scale_r)))
+        r_scaled = r_im.resize((w_r, target_h), Image.Resampling.LANCZOS)
+
+        scale_m = target_h / m_im.height
+        w_m = max(24, int(round(m_im.width * scale_m)))
+        m_scaled = m_im.resize((w_m, target_h), Image.Resampling.LANCZOS)
+
+        pad_x = 35
+        table_h = 32 + len(metrics) * 22 + 15
+        sub_h = 40 + target_h + 20 + table_h
+        sub_panel = Image.new("RGB", (w_sub, sub_h), (30, 31, 35))
+        d_sub = ImageDraw.Draw(sub_panel)
+
+        d_sub.text((10, 8), title, fill=(240, 225, 175), font=font_h)
+
+        x_r = (w_sub // 2) - w_r - (pad_x // 2)
+        x_m = (w_sub // 2) + (pad_x // 2)
+        y_top = 38
+
+        sub_panel.paste(r_scaled, (x_r, y_top))
+        sub_panel.paste(m_scaled, (x_m, y_top))
+
+        d_sub.text((x_r + (w_r // 2) - 30, y_top - 16), "参考图整弩", fill=(190, 210, 235), font=font_s)
+        d_sub.text((x_m + (w_m // 2) - 30, y_top - 16), "模型对应视角", fill=(160, 230, 180), font=font_s)
+
+        line_x0 = x_r - 25
+        line_x1 = x_m + w_m + 25
+        for label, pct, col in ref_lines:
+            ly = y_top + int(round((1.0 - pct) * target_h))
+            for seg_x in range(line_x0, line_x1, 7):
+                d_sub.line([(seg_x, ly), (min(seg_x + 3, line_x1), ly)], fill=col, width=1)
+            d_sub.text((line_x1 + 4, ly - 5), label, fill=col, font=font_s)
+
+        # 比例指标表格
+        ty = y_top + target_h + 15
+        d_sub.rectangle([8, ty, w_sub - 8, ty + table_h - 8], outline=(65, 70, 80), width=1)
+        headers = ["对比项目", "参考图", "模型值", "差值(Δ)", "判定"]
+        col_xs = [14, 180, 280, 380, 480]
+        d_sub.rectangle([8, ty, w_sub - 8, ty + 24], fill=(22, 24, 28))
+        for i, h in enumerate(headers):
+            d_sub.text((col_xs[i], ty + 4), h, fill=(225, 225, 225), font=font_m)
+
+        row_y = ty + 26
+        for item_name, ref_val, mod_val in metrics:
+            diff = abs(ref_val - mod_val)
+            ok = diff <= 10.0
+            status_text = "✓ 合格" if ok else "✗ 超标"
+            status_color = (130, 225, 140) if ok else (240, 100, 90)
+
+            d_sub.text((col_xs[0], row_y + 2), item_name, fill=(210, 210, 210), font=font_s)
+            d_sub.text((col_xs[1], row_y + 2), f"{ref_val:.1f}%", fill=(190, 210, 235), font=font_s)
+            d_sub.text((col_xs[2], row_y + 2), f"{mod_val:.1f}%", fill=(160, 230, 180), font=font_s)
+            d_sub.text((col_xs[3], row_y + 2), f"{diff:+.1f}%", fill=(240, 210, 140), font=font_s)
+            d_sub.text((col_xs[4], row_y + 2), status_text, fill=status_color, font=font_s)
+            row_y += 22
+
+        return sub_panel
+
+    sub_side = build_single_view(
+        "【侧视长图比例对照】参考图侧视 vs 模型侧视（整弩对齐）",
+        ref_side_crop, model_side_img, side_metrics, side_lines, w_sub=590
+    )
+    sub_top = build_single_view(
+        "【俯视长图比例对照】参考图俯视 vs 模型俯视（整弩对齐）",
+        ref_top_crop, model_top_img, top_metrics, top_lines, w_sub=590
+    )
+
+    pad_mid = 15
+    total_w = sub_side.width + sub_top.width + pad_mid + 16
+    total_h = max(sub_side.height, sub_top.height) + 12
+
+    panel = Image.new("RGB", (total_w, total_h), (25, 26, 29))
+    panel.paste(sub_side, (8, 6))
+    panel.paste(sub_top, (8 + sub_side.width + pad_mid, 6))
+
+    return panel
     font_m = load_font(13)
     font_s = load_font(12)
 
