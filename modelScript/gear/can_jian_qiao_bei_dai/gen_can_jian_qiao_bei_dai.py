@@ -29,6 +29,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
 sys.path.insert(0, str(REPO / "modelScript" / "gear" / "_kit"))
 sys.path.insert(0, str(REPO / "modelScript" / "weapons"))
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
 
 from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
@@ -301,6 +302,29 @@ def custom_proportion(rig: Rig, doc: dict):
     return ref_crop, model_img, metrics, 0.0
 
 
+# Round 3：生成器材质 → handheld_texture 画笔
+TEXTURE_MAPPING = {
+    "hide": "gear_old_hide",
+    "hide_dk": "gear_old_hide_dk",
+    "hide_lt": "gear_old_hide_lt",
+    "wood": "gear_old_wood",
+    "iron": "gear_old_fe",
+    "iron_lt": "gear_old_fe_lt",
+    "rust": "gear_old_rust",
+    "cord": "gear_old_cord",
+    "cord_dk": "gear_old_cord_dk",
+    "cloth": "gear_old_cloth",
+    "cloth_dk": "gear_old_cloth_dk",
+    "steel": "gear_old_fe_lt",
+    "groove": "gear_old_groove",
+}
+
+TEX_CLOSEUPS = [
+    ("柄与铸铁护手", 0.0, 0.0, (6.4, 30.5, 5.6), 8.0),
+    ("鞘口断刃", 0.0, 0.0, (4.6, 27.0, 5.6), 8.0),
+    ("左胯麻绳结与碎布", 180.0, 10.0, (-4.75, 10.0, 0.0), 8.0),
+]
+
 def main() -> None:
     import weapon_check
 
@@ -308,6 +332,7 @@ def main() -> None:
     rig = build_weapon()
     print(f"{MODEL_NAME}: {len(rig.elements)} 个方块, {len(rig.bones)} 根骨骼")
     weapon_check.write_and_review(sys.modules[__name__], rig)
+    weapon_check.write_tex_review(sys.modules[__name__], rig)
 
 
 if __name__ == "__main__":

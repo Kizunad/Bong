@@ -9,7 +9,9 @@
 - ``PROP_YAW``：比例对照里渲染模型的视角（要让模型和参考图朝向一致）
 - ``MEASURE_EXCLUDE_BONES``（可选）：量模型剪影前先去掉这些骨上的方块（弓弦）
 - ``REVIEW_DIR``（可选）：审阅图目录，默认 img/weapons/<id>
+- ``TEX_CLOSEUPS``（可选，Round 3）：贴图特写条 [(标题, yaw, pitch, 取景中心 (x,y,z), 取景跨度 px), ...]
 - ``custom_proportion(rig, doc) -> (参考图裁图, 模型渲染图, 对照行, iou)``（可选）：完全自定义比例对照
+- ``HELD_ARM_DEG`` / ``WORN_SKIP``（可选）：穿戴栏里右臂前抬角度、不参与相交检查的玩家部件（手持小件用）
 - ``WORN_VIEWS``（可选）：穿戴三格的 [(标题, yaw, pitch)]
 - ``SKIP_IOU``（可选）：参考图是透视图时不画 IoU 行
 - ``REF_BOX``（可选）：参考图是拼版时，主视图所在的 (x0, y0, x1, y1)
@@ -73,7 +75,8 @@ def write_and_review(mod, rig: Rig) -> Path:
 
     if mod.POSE == "worn":     # 挂件：不是手持，改画「穿戴」栏
         pose_panel, _ = kit.worn_panel(doc, mod.WORN_OFFSET, mod.OUT_DIR, mod.TOTAL_LEN, mod.WORN_TITLE,
-                                       getattr(mod, "WORN_VIEWS", None))
+                                       getattr(mod, "WORN_VIEWS", None), getattr(mod, "HELD_ARM_DEG", None),
+                                       getattr(mod, "WORN_SKIP", ()))
     else:
         pose_kwargs = {"pose_type": "bow"} if mod.POSE == "bow" else {"is_polearm": mod.POSE == "polearm"}
         pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
@@ -137,4 +140,59 @@ def write_and_review(mod, rig: Rig) -> Path:
         bad += flag != "OK "
         print(f"  [{flag}] {label}: 参考 {r:.1f}% | 模型 {m:.1f}% | 差 {m - r:+.1f}")
     print(f"  剪影 IoU {iou * 100:.1f}%")
+    return out
+
+
+def write_tex_review(mod, rig: Rig) -> Path:
+    """Round 3：贴图版 bbmodel + check_tex.png（贴图多视图、并排比例、持握 / 穿戴栏，洋红像素必须为 0）。
+
+    生成器模块另需 ``TEXTURE_MAPPING``（生成器材质名 → handheld_texture 画笔名）。
+    """
+    import handheld_texture
+
+    review_dir = getattr(mod, "REVIEW_DIR", kit.REVIEW_ROOT / mod.WEAPON_ID)
+    review_dir.mkdir(parents=True, exist_ok=True)
+    flat_path = mod.OUT_DIR / f"{mod.MODEL_NAME}.bbmodel"
+    tex_doc = handheld_texture.textured_rig_doc(rig, mod.MODEL_NAME, mod.TEXTURE_MAPPING)
+    tex_path = mod.OUT_DIR / f"{mod.MODEL_NAME}_tex.bbmodel"
+    tex_path.write_text(json.dumps(tex_doc, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    if mod.POSE == "worn":
+        pose_panel, _ = kit.worn_panel(tex_doc, mod.WORN_OFFSET, mod.OUT_DIR, mod.TOTAL_LEN, mod.WORN_TITLE,
+                                       getattr(mod, "WORN_VIEWS", None), getattr(mod, "HELD_ARM_DEG", None),
+                                       getattr(mod, "WORN_SKIP", ()), textured=True)
+    else:
+        pose_kwargs = {"pose_type": "bow"} if mod.POSE == "bow" else {"is_polearm": mod.POSE == "polearm"}
+        pose_panel = weapon_review_kit.render_player_scale_and_pose_panels(
+            tex_doc, grip_y=mod.GRIP_Y, weapon_len=mod.TOTAL_LEN, out_dir=mod.OUT_DIR, textured=True, **pose_kwargs)
+
+    out = review_dir / "check_tex.png"
+    weapon_review_kit.assemble_check_tex_image(
+        ref_im=Image.open(mod.REF_PNG).convert("RGB"), model_flat_path=flat_path, model_tex_path=tex_path,
+        scale_pose_panel_tex=pose_panel, out_path=out,
+        title=f"{mod.TITLE.split(' (')[0]}（Round 3 贴图版；平色 / 贴图对照 + 并排比例 + 持握 / 穿戴）")
+    closeups = getattr(mod, "TEX_CLOSEUPS", ())
+    if closeups:       # 细节特写条：每项 (标题, yaw, pitch, 取景中心, 取景跨度 px)，平色 / 贴图各一格
+        from cjk_font import load_font
+        from PIL import ImageDraw
+        base = Image.open(out).convert("RGB")
+        cell, font = 400, load_font(12)
+        strip = Image.new("RGB", (max(base.width, len(closeups) * 2 * (cell + 6) + 8), cell + 30), (26, 27, 30))
+        d = ImageDraw.Draw(strip)
+        x = 8
+        for label, yaw, pitch, center, span in closeups:
+            for tag, path, shading in (("平色", flat_path, "lambert"), ("贴图", tex_path, "mc")):
+                shot, _ = render(path, yaw=yaw, pitch=pitch, size=cell, bg=gear_kit.BG, shading=shading,
+                                 focus=(center, span))
+                strip.paste(shot, (x, 26))
+                d.text((x + 2, 6), f"特写 {tag}: {label}", fill=(225, 225, 225), font=font)
+                x += cell + 6
+        sheet = Image.new("RGB", (max(base.width, strip.width), base.height + strip.height), (26, 27, 30))
+        sheet.paste(base, (0, 0))
+        sheet.paste(strip, (0, base.height))
+        sheet.save(out)
+    arr = np.array(Image.open(out).convert("RGB"))
+    magenta = int(np.sum((arr[:, :, 0] > 200) & (arr[:, :, 2] > 200) & (arr[:, :, 1] < 80)))
+    print(f"✓ check_tex.png 洋红像素核验 (R>200, B>200, G<80): {magenta} 处")
+    assert magenta == 0, f"洋红像素必须为 0，实测 {magenta}"
     return out
