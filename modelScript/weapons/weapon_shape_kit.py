@@ -531,7 +531,7 @@ def worn_doc(weapon_doc: dict, offset: tuple[float, float, float], right_arm_deg
 
 def worn_panel(weapon_doc: dict, offset: tuple[float, float, float], out_dir: Path,
                weapon_len: float, title_b: str, views_b=None, right_arm_deg: float | None = None,
-               skip_parts: tuple[str, ...] = ()):
+               skip_parts: tuple[str, ...] = (), textured: bool = False):
     """挂件的「并排比例」+「穿戴」两栏（5 格，宽度与持握版一致）。
 
     ``offset`` 是把模型原点（挂点）平移到玩家身上的位置；``views_b`` 是穿戴三格的
@@ -547,15 +547,16 @@ def worn_panel(weapon_doc: dict, offset: tuple[float, float, float], out_dir: Pa
 
     font_h, font_l = load_font(16), load_font(12)
     stand_bb, worn_bb = out_dir / "_tmp_stand.bbmodel", out_dir / "_tmp_worn.bbmodel"
-    wrk.make_standing_bbmodel(weapon_doc, stand_bb)
+    wrk.make_standing_bbmodel(weapon_doc, stand_bb, textured=textured)
     doc, collisions = worn_doc(weapon_doc, offset, right_arm_deg, skip_parts)
     worn_bb.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     views_b = views_b or [("穿戴: 背面 BACK (相机 +z)", 0.0, 0.0), ("穿戴: 左侧 LEFT (相机 -x)", 90.0, 0.0),
                           ("穿戴: 3/4 背左斜", 35.0, 20.0)]
 
     cell, pad = 380, 8
-    shots_a = [render(stand_bb, yaw=yaw, pitch=0.0, size=cell, bg=gear_kit.BG)[0] for yaw in (180.0, -90.0)]
-    shots_b = [render(worn_bb, yaw=y, pitch=p, size=cell, bg=gear_kit.BG)[0] for _, y, p in views_b]
+    shading = "mc" if textured else "lambert"
+    shots_a = [render(stand_bb, yaw=yaw, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)[0] for yaw in (180.0, -90.0)]
+    shots_b = [render(worn_bb, yaw=y, pitch=p, size=cell, bg=gear_kit.BG, shading=shading)[0] for _, y, p in views_b]
     stand_bb.unlink(missing_ok=True)
     worn_bb.unlink(missing_ok=True)
 

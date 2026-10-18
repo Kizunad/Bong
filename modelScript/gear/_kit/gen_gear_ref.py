@@ -56,11 +56,10 @@ def main() -> None:
     ap.add_argument("gear_id")
     ap.add_argument("--prompt", required=True, help="这件装备的外观与分件描述（英文）")
     ap.add_argument("--kind", choices=sorted(STYLES), required=True)
-    ap.add_argument("--category", default="gear", help="输出图片子目录，如 gear 或 metalware")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    out = args.out or REVIEW_ROOT / "img" / args.category / args.gear_id
+    out = args.out or REVIEW_ROOT / "img" / "gear" / args.gear_id
     out.mkdir(parents=True, exist_ok=True)
     image = cpa_client().text_to_image(f"{STYLES[args.kind]}. Subject: {args.prompt}", size="1536x1024")
     target = out / f"{args.gear_id}_{args.kind}.png"
