@@ -282,13 +282,13 @@ def generate():
 
 
 TEXTURE_MAPPING = {
-    "cord_braid": "weapon_cord_beige",
-    "cord_dark": "weapon_hemp_wrap",
-    "leather_pouch": "weapon_pouch_leather",
-    "leather_light": "weapon_leather_brown",
-    "pouch_inside": "weapon_rune_dim",
-    "bronze_button": "weapon_bronze_dark",
-    "iron_rivet": "weapon_iron_main",
+    "cord_braid": "weapon_rig_cord_beige",
+    "cord_dark": "weapon_rig_hemp_wrap",
+    "leather_pouch": "weapon_rig_pouch_leather",
+    "leather_light": "weapon_rig_leather_brown",
+    "pouch_inside": "weapon_rig_rune_dim",
+    "bronze_button": "weapon_rig_bronze_dark",
+    "iron_rivet": "weapon_rig_iron_main",
 }
 
 

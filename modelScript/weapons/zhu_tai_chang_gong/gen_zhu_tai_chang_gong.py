@@ -310,15 +310,15 @@ def generate():
 
 
 TEXTURE_MAPPING = {
-    "bamboo_belly": "weapon_bamboo",
-    "sinew_back": "weapon_sinew_beige",
-    "leather_grip": "weapon_leather",
-    "leather_light": "weapon_wood_polished",
-    "lacquer_cord": "weapon_cord_dark",
-    "hardwood_tip": "weapon_wood_dark",
-    "bone_pale": "weapon_bone_pale",
-    "string": "weapon_string_beige",
-    "groove": "weapon_rune_dim",
+    "bamboo_belly": "weapon_bow_bamboo",
+    "sinew_back": "weapon_bow_sinew_beige",
+    "leather_grip": "weapon_bow_leather",
+    "leather_light": "weapon_bow_wood_polished",
+    "lacquer_cord": "weapon_bow_cord_dark",
+    "hardwood_tip": "weapon_bow_wood_dark",
+    "bone_pale": "weapon_bow_bone_pale",
+    "string": "weapon_bow_string_beige",
+    "groove": "weapon_bow_rune_dim",
 }
 
 

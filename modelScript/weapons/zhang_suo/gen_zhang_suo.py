@@ -318,18 +318,18 @@ def generate():
 
 
 TEXTURE_MAPPING = {
-    "staff_wood": "weapon_wood_aged",
-    "staff_facet": "weapon_wood_aged",
-    "iron_dark": "weapon_iron_main",
-    "iron_rust": "weapon_iron_dark",
-    "bronze_array": "weapon_bronze_dark",
-    "leather_grip": "weapon_wood_polished",
-    "cord_braid": "weapon_cord_beige",
-    "cord_dark": "weapon_hemp_wrap",
-    "leather_pouch": "weapon_pouch_leather",
-    "leather_light": "weapon_leather_brown",
-    "pouch_inside": "weapon_rune_dim",
-    "iron_hook": "weapon_iron_main",
+    "staff_wood": "weapon_rig_wood_aged",
+    "staff_facet": "weapon_rig_wood_aged",
+    "iron_dark": "weapon_rig_iron_main",
+    "iron_rust": "weapon_rig_iron_dark",
+    "bronze_array": "weapon_rig_bronze_dark",
+    "leather_grip": "weapon_rig_wood_polished",
+    "cord_braid": "weapon_rig_cord_beige",
+    "cord_dark": "weapon_rig_hemp_wrap",
+    "leather_pouch": "weapon_rig_pouch_leather",
+    "leather_light": "weapon_rig_leather_brown",
+    "pouch_inside": "weapon_rig_rune_dim",
+    "iron_hook": "weapon_rig_iron_main",
 }
 
 

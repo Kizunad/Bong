@@ -539,19 +539,19 @@ def generate():
 
 
 TEXTURE_MAPPING = {
-    "wood_frame": "weapon_wood_aged",
-    "wood_dark": "weapon_wood_dark",
-    "wood_plank": "weapon_wood_aged",
-    "trough_empty": "weapon_rune_dim",
-    "bow_belly": "weapon_horn_textured",
-    "bow_back": "weapon_sinew_beige",
-    "siyah_hardwood": "weapon_wood_dark",
-    "winch_drum": "weapon_wood_aged",
-    "winch_spoke": "weapon_wood_polished",
-    "bronze_hoop": "weapon_bronze_dark",
-    "bronze_trigger": "weapon_bronze",
-    "iron_bracket": "weapon_iron_main",
-    "hemp_rope": "weapon_cord_beige",
+    "wood_frame": "weapon_rig_wood_aged",
+    "wood_dark": "weapon_rig_wood_dark",
+    "wood_plank": "weapon_rig_wood_aged",
+    "trough_empty": "weapon_rig_rune_dim",
+    "bow_belly": "weapon_rig_horn_textured",
+    "bow_back": "weapon_rig_sinew_beige",
+    "siyah_hardwood": "weapon_rig_wood_dark",
+    "winch_drum": "weapon_rig_wood_aged",
+    "winch_spoke": "weapon_rig_wood_polished",
+    "bronze_hoop": "weapon_rig_bronze_dark",
+    "bronze_trigger": "weapon_rig_bronze",
+    "iron_bracket": "weapon_rig_iron_main",
+    "hemp_rope": "weapon_rig_cord_beige",
 }
 
 

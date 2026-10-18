@@ -487,17 +487,17 @@ def generate():
 
 
 TEXTURE_MAPPING = {
-    "wood_dark": "weapon_wood_dark",
-    "wood_mid": "weapon_wood_polished",
-    "wood_light": "weapon_wood_polished",
-    "bronze": "weapon_bronze",
-    "bronze_patina": "weapon_bronze_patina",
-    "bronze_sight": "weapon_bronze_honed",
-    "iron_dark": "weapon_iron_main",
-    "cord": "weapon_cord_dark",
-    "string": "weapon_string_beige",
-    "bone_pale": "weapon_bone_pale",
-    "groove": "weapon_rune_dim",
+    "wood_dark": "weapon_bow_wood_dark",
+    "wood_mid": "weapon_bow_wood_polished",
+    "wood_light": "weapon_bow_wood_polished",
+    "bronze": "weapon_bow_bronze",
+    "bronze_patina": "weapon_bow_bronze_patina",
+    "bronze_sight": "weapon_bow_bronze_honed",
+    "iron_dark": "weapon_bow_iron_main",
+    "cord": "weapon_bow_cord_dark",
+    "string": "weapon_bow_string_beige",
+    "bone_pale": "weapon_bow_bone_pale",
+    "groove": "weapon_bow_rune_dim",
 }
 
 
