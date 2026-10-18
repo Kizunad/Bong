@@ -2302,15 +2302,16 @@ def _bronze_flat(base: str, seed: int, spread: float = 0.04) -> Callable[[dict],
 
 
 def _bronze_face(seed: int) -> Callable[[dict], Painter]:
-    """镜面：磨得发白的银灰，低频云斑，边缘一圈青绿锈蚕食进来。"""
-    c_face, c_dull, c_green = hex_color("#cfd3ce"), hex_color("#a9aea8"), hex_color("#6e9c86")
+    """镜面：磨得发白的银灰，只带低频云斑（锈在镜缘素边和背面，镜面本身磨亮）。
+
+    镜面由许多转角的楔形块拼成圆盘，且持握 / 并排时整件会被平移：不能按单块边缘或固定盘心算距离，
+    不画边缘锈。
+    """
+    c_face, c_dull = hex_color("#cfd3ce"), hex_color("#aeb3ad")
 
     def factory(cube: dict) -> Painter:
         def paint(p: Vec, axis: int) -> Color:
             color = mix(c_face, c_dull, value_noise(p, 3.5, seed))
-            dist = _edge_distance(cube, p, axis)
-            if dist < 0.6:
-                color = mix(color, c_green, 0.55 * (1.0 - dist / 0.6) + 0.15)
             return color
 
         return paint
