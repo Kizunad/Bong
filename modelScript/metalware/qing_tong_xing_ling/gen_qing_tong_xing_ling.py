@@ -41,6 +41,13 @@ MATS = {
     "void":      (18, 16, 14),
 }
 
+# 生成器材质名 → 画笔库（handheld_texture.py 的 metal_bz_* 一组，六件青铜器共用）
+BZ_TEXTURES = {
+    "bz": "metal_bz", "bz_relief": "metal_bz_relief", "bz_pat": "metal_bz_pat", "bz_worn": "metal_bz_worn",
+    "bz_dk": "metal_bz_dk", "iron": "metal_bz_iron", "iron_lt": "metal_bz_iron_lt", "cord": "metal_bz_cord",
+    "void": "metal_bz_soot",
+}
+
 # ───────────────────────────────────────────────────────────── 尺寸：参考图 px → 模型 px
 REF_BOTTOM = 995.0          # 铁舌尖（模型 y = 0）
 S = 7.0 / 813.0             # 环顶（ref y 82）到口角（ref y 895）= 7px
@@ -263,7 +270,8 @@ SPEC = MetalSpec(
     out_dir=HERE,
     asym=ASYM_BONES,
     min_bones=7,
-    round_label="round 1/3",
+    round_label="round 3/3",
+    texture_overrides=BZ_TEXTURES,
     interpen_bite=0.3,
     ref_front_box=(75, 20, 935, 995),
     ref_side_box=(1100, 20, 1332, 995),
