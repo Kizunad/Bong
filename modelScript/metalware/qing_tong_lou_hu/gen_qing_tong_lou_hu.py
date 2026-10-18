@@ -36,6 +36,12 @@ MATS = {
     "water":     (84, 108, 118),    # 上壶底那一小截水
     "void":      (18, 16, 14),      # 流嘴口
 }
+# 生成器材质名 → 画笔库（handheld_texture.py 的 metal_bz_* 一组，六件青铜器共用）
+BZ_TEXTURES = {
+    "bz": "metal_bz", "bz_relief": "metal_bz_relief", "bz_pat": "metal_bz_pat", "bz_worn": "metal_bz_worn",
+    "bz_dk": "metal_bz_dk", "water": "metal_bz_water", "void": "metal_bz_soot",
+}
+
 SOFT_OVER = soft_pairs(("water",), tuple(MATS))
 
 # 参考图 1057px 高 ↔ 模型 22px
@@ -281,7 +287,8 @@ SPEC = MetalSpec(
     asym=frozenset(),
     soft_over=SOFT_OVER,
     min_bones=8,
-    round_label="round 1/3",
+    round_label="round 3/3",
+    texture_overrides=BZ_TEXTURES,
     ref_front_box=(92, 58, 582, 1115),
     ref_side_box=(752, 58, 1300, 1115),
     height_parts=(
