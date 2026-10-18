@@ -37,6 +37,12 @@ MATS = {
     "cord":      (110, 92, 70),     # 丝绳
 }
 
+# 生成器材质名 → 画笔库（handheld_texture.py 的 metal_bz_* 一组，六件青铜器共用）
+BZ_TEXTURES = {
+    "bz": "metal_bz", "bz_relief": "metal_bz_relief", "bz_pat": "metal_bz_pat", "bz_worn": "metal_bz_worn",
+    "bz_dk": "metal_bz_dk", "cord": "metal_bz_cord",
+}
+
 # ───────────────────────────────────────────────────────────── 尺寸：参考图 px → 模型 px
 S = 5.0 / 600.0                    # 最大一枚：纽顶 ref y 152 到地面 752 = 600px → 5px
 BODY_H = (752 - 268) * S           # 4.03：身高（不含纽）
@@ -281,7 +287,8 @@ SPEC = MetalSpec(
     out_dir=HERE,
     asym=ASYM_BONES,
     min_bones=9,
-    round_label="round 1/3",
+    round_label="round 3/3",
+    texture_overrides=BZ_TEXTURES,
     interpen_bite=0.3,
     bounds_skip=("bigcord", "midcord", "smallcord"),
     ref_front_box=(75, 152, 1165, 752),
