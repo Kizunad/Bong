@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "modelScript" / "tools"))
 sys.path.insert(0, str(REPO / "modelScript" / "gear" / "_kit"))
 sys.path.insert(0, str(REPO / "modelScript" / "weapons"))
+sys.path.insert(0, str(REPO / "modelScript" / "generators"))
 
 from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
 
@@ -192,6 +193,24 @@ def measure(mask: np.ndarray) -> dict[str, float]:
     }
 
 
+# Round 3：生成器材质 → handheld_texture 画笔
+TEXTURE_MAPPING = {
+    "iron": "metal_forged_iron",
+    "iron_mid": "metal_forged_iron",
+    "iron_edge": "metal_iron_edge",
+    "rust": "metal_forged_rust_dk",
+    "wood": "metal_wood",
+    "wood_dk": "metal_wood_dk",
+    "pit": "metal_soot",
+    "groove": "metal_soot",
+}
+
+TEX_CLOSEUPS = [
+    ("铲刃正面", 0.0, 0.0, (0, 4.0, 0), 9.0),
+    ("铲刃 3/4 与卷边", -35.0, 20.0, (0, 3.0, 0), 8.0),
+    ("銎口与T形握把", 35.0, 15.0, (0, 20.0, 0), 12.0),
+]
+
 def main() -> None:
     import weapon_check
 
@@ -199,6 +218,7 @@ def main() -> None:
     rig = build_weapon()
     print(f"{MODEL_NAME}: {len(rig.elements)} 个方块, {len(rig.bones)} 根骨骼")
     weapon_check.write_and_review(sys.modules[__name__], rig)
+    weapon_check.write_tex_review(sys.modules[__name__], rig)
 
 
 if __name__ == "__main__":
