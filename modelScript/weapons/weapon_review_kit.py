@@ -171,6 +171,14 @@ def check_holding_collisions(
         p_grip = np.array([0.0, grip_y, 4.2])
         p_fist = np.array([-6.0, 21.7, -8.5])
         R_bow = rotmat(180.0, 1)
+    elif pose_type == "sling":
+        # 投石索右手握绳尾：右手前抬，握点在绳尾，绳与皮兜自然垂直下垂
+        fist_pos = get_fist_position()
+        dx = fist_pos[0] - 0.0
+        dy = fist_pos[1] - grip_y
+        dz = fist_pos[2] - 0.0
+        Rm = np.eye(3)
+        pivot = fist_pos
     else:
         fist_pos = get_fist_position()
         dx = fist_pos[0] - 0.0
@@ -210,6 +218,28 @@ def check_holding_collisions(
                 R_bow @ Re @ np.array([1., 0., 0.]),
                 R_bow @ Re @ np.array([0., 1., 0.]),
                 R_bow @ Re @ np.array([0., 0., 1.])
+            ]
+        elif pose_type == "sling":
+            p_fist = np.array([6.0, 14.6, -4.2])
+            new_corners = []
+            for c in corners:
+                y_pct = max(0.0, min(1.0, (c[1] - 0.5) / 19.0))
+                y_new = 1.5 + y_pct * (14.6 - 1.5)
+                if c[0] < -0.3:
+                    x_target = 5.8
+                    x_new = 5.6 + (c[0] + 3.5) * 0.15 + (x_target - 5.6) * y_pct
+                elif c[0] > 0.3:
+                    x_target = 6.2
+                    x_new = 6.4 + (c[0] - 3.5) * 0.15 + (x_target - 6.4) * y_pct
+                else:
+                    x_new = 6.0 + c[0]
+                z_new = p_fist[2] + c[2]
+                new_corners.append(np.array([x_new, y_new, z_new]))
+            corners = new_corners
+            obb_axes = [
+                Re @ np.array([1., 0., 0.]),
+                Re @ np.array([0., 1., 0.]),
+                Re @ np.array([0., 0., 1.])
             ]
         else:
             corners = [c + np.array([dx, dy, dz]) for c in corners]
@@ -307,6 +337,11 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
         p_grip = np.array([0.0, grip_y, 4.2])
         p_fist = np.array([-6.0, 21.7, -8.5])
         R_bow = rotmat(180.0, 1)
+    elif pose_type == "sling":
+        fist_pos = list(get_fist_position())
+        dx_hold = fist_pos[0] - 0.0
+        dy_hold = fist_pos[1] - grip_y
+        dz_hold = fist_pos[2] - 0.0
     else:
         fist_pos = list(get_fist_position())
         dx_hold = fist_pos[0] - 0.0
@@ -403,6 +438,51 @@ def make_holding_bbmodel(weapon_doc: dict, grip_y: float, rot_w: Tuple[float, fl
             new_e["to"] = [round(float(c_arr[:, 0].max()), 4), round(float(c_arr[:, 1].max()), 4), round(float(c_arr[:, 2].max()), 4)]
             new_e.pop("rotation", None)
             new_e.pop("origin", None)
+        elif pose_type == "sling":
+            # 投石索持握姿势：
+            # 静置状态是 U 形 (指环在左 x ~ -3.5, 绳结在右 x ~ 3.5, 皮兜在底 x ~ 0.0)
+            # 持握时两绳尾都在右手拳心 (x ~ 6.0, y ~ 14.6, z ~ -4.2)
+            # 绳向下方自然收拢下垂成清晰的 V 形，皮兜悬垂于 (6.0, 1.5, -4.2)
+            f_orig = np.array(e["from"], float)
+            t_orig = np.array(e["to"], float)
+            e_rot = e.get("rotation", [0, 0, 0])
+            e_org = np.array(e.get("origin", [0, 0, 0]), float)
+            Re = rotmat(e_rot[2], 2) @ rotmat(e_rot[1], 1) @ rotmat(e_rot[0], 0) if any(e_rot) else np.eye(3)
+
+            corners = [
+                np.array([x, y, z])
+                for x in [f_orig[0], t_orig[0]]
+                for y in [f_orig[1], t_orig[1]]
+                for z in [f_orig[2], t_orig[2]]
+            ]
+            if any(e_rot):
+                corners = [Re @ (c - e_org) + e_org for c in corners]
+
+            # 变形映射：高度 y 从 0.5 到 19.5 映射到持握高度 1.5 到 14.6
+            # x 坐标在顶部收拢到右手拳心 (x ~ 6.0)，两绳留 0.5px 微隙呈现可辨的 V 形
+            p_fist = np.array([6.0, 14.6, -4.2])
+            new_corners = []
+            for c in corners:
+                y_pct = max(0.0, min(1.0, (c[1] - 0.5) / 19.0))
+                # y 映射
+                y_new = 1.5 + y_pct * (14.6 - 1.5)
+                # x 映射：皮兜主体 (y_pct < 0.25) 居中微偏；双绳向上逐渐收拢到拳心
+                if c[0] < -0.3: # 绳1（左绳）
+                    x_target = 5.8
+                    x_new = 5.6 + (c[0] + 3.5) * 0.15 + (x_target - 5.6) * y_pct
+                elif c[0] > 0.3: # 绳2（右绳）
+                    x_target = 6.2
+                    x_new = 6.4 + (c[0] - 3.5) * 0.15 + (x_target - 6.4) * y_pct
+                else: # 皮兜中心
+                    x_new = 6.0 + c[0]
+                z_new = p_fist[2] + c[2]
+                new_corners.append(np.array([x_new, y_new, z_new]))
+
+            c_arr = np.array(new_corners)
+            new_e["from"] = [round(float(c_arr[:, 0].min()), 4), round(float(c_arr[:, 1].min()), 4), round(float(c_arr[:, 2].min()), 4)]
+            new_e["to"] = [round(float(c_arr[:, 0].max()), 4), round(float(c_arr[:, 1].max()), 4), round(float(c_arr[:, 2].max()), 4)]
+            new_e.pop("rotation", None)
+            new_e.pop("origin", None)
         else:
             new_e["from"] = [round(e["from"][0] + dx_hold, 4), round(e["from"][1] + dy_hold, 4), round(e["from"][2] + dz_hold, 4)]
             new_e["to"] = [round(e["to"][0] + dx_hold, 4), round(e["to"][1] + dy_hold, 4), round(e["to"][2] + dz_hold, 4)]
@@ -435,6 +515,9 @@ def render_player_scale_and_pose_panels(
     elif pose_type == "bow":
         rot_w = (0.0, 180.0, 0.0)
         pose_desc = "弓左手持弓 · 弓背朝前 / 弓弦朝射手"
+    elif pose_type == "sling":
+        rot_w = (0.0, 0.0, 0.0)
+        pose_desc = "右手握绳尾 · 编绳与空皮兜自然垂直下垂"
     else:
         rot_w = (-35.0, 0.0, 0.0) if is_polearm else (-45.0, 0.0, 0.0)
         pose_desc = "右臂前抬30°握在拳心"
@@ -458,7 +541,7 @@ def render_player_scale_and_pose_panels(
     shot_b_side, _ = render(hold_bb, yaw=-90.0, pitch=0.0, size=cell, bg=gear_kit.BG, shading=shading)
     shot_b_iso, _ = render(hold_bb, yaw=145.0, pitch=20.0, size=cell, bg=gear_kit.BG, shading=shading)
 
-    # 在侧视图 shot_b_side 上绘制朝右的射击/攻击方向箭头（面朝右，向右攻击）
+    # 在侧视图 shot_b_side 上绘制朝右的射击/攻击方向箭头（相机 yaw=-90 视线向-X，人脸朝右+Z，画面右方为前方目标）
     d_side = ImageDraw.Draw(shot_b_side)
     arrow_y = 35
     d_side.line([(40, arrow_y), (140, arrow_y)], fill=(240, 210, 80), width=3)
@@ -469,6 +552,12 @@ def render_player_scale_and_pose_panels(
     elif pose_type == "crossbow":
         d_side.text((45, arrow_y - 18), "射击方向 (目标) →", fill=(240, 220, 100), font=font_l)
         d_side.text((15, 345), "自检: 弩弓在前 / 扳机朝下 ✓", fill=(130, 235, 160), font=font_l)
+    elif pose_type == "sling":
+        d_side.text((45, arrow_y - 18), "投掷方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 右手握绳尾 · 双绳V形自然下垂 ✓", fill=(130, 235, 160), font=font_l)
+    elif pose_type == "staff_sling":
+        d_side.text((45, arrow_y - 18), "抛掷攻击方向 (目标) →", fill=(240, 220, 100), font=font_l)
+        d_side.text((15, 345), "自检: 右臂前抬持杖斜立 · 皮兜外露 ✓", fill=(130, 235, 160), font=font_l)
     else:
         d_side.text((45, arrow_y - 18), "攻击方向 (目标) →", fill=(240, 220, 100), font=font_l)
         d_side.text((15, 345), "自检: 右臂前抬30°握在拳心 ✓", fill=(130, 235, 160), font=font_l)
@@ -590,30 +679,30 @@ def build_proportion_panel(ref_crop: Image.Image, model_front: Image.Image,
     panel.paste(ref_scaled, (x_ref, y_top))
     panel.paste(model_scaled, (x_mod, y_top))
 
-    d.text((x_ref + (w_ref // 2) - 30, y_top - 18), "参考图剪影", fill=(190, 210, 235), font=font_s)
-    d.text((x_mod + (w_mod // 2) - 30, y_top - 18), "模型正视剪影", fill=(160, 230, 180), font=font_s)
+    d.text((x_ref + (w_ref // 2) - 30, y_top - 20), "参考图剪影", fill=(190, 210, 235), font=font_s)
+    d.text((x_mod + (w_mod // 2) - 30, y_top - 20), "本模型剪影", fill=(160, 230, 180), font=font_s)
 
-    line_x0 = x_ref - 35
-    line_x1 = x_mod + w_mod + 35
+    line_x0 = x_ref - 30
+    line_x1 = x_mod + w_mod + 30
     for label, pct, col in ref_lines:
         ly = y_top + int(round((1.0 - pct) * target_h))
         for seg_x in range(line_x0, line_x1, 8):
             d.line([(seg_x, ly), (min(seg_x + 4, line_x1), ly)], fill=col, width=1)
         d.text((line_x1 + 6, ly - 6), label, fill=col, font=font_s)
 
-    ty = y_top + target_h + 25
+    ty = y_top + target_h + 20
     d.rectangle([12, ty, panel_w - 12, ty + table_h - 10], outline=(65, 70, 80), width=1)
-    headers = ["对比项目", "参考图测量值", "模型当前值", "差值 (Δ)", "阈值判定"]
-    col_xs = [20, 200, 320, 440, 560]
-    d.rectangle([12, ty, panel_w - 12, ty + 26], fill=(22, 24, 28))
+    headers = ["对比项目", "参考图", "模型值", "差值(Δ)", "判定"]
+    col_xs = [20, 240, 360, 480, 590]
+    d.rectangle([12, ty, panel_w - 12, ty + 28], fill=(22, 24, 28))
     for i, h in enumerate(headers):
         d.text((col_xs[i], ty + 5), h, fill=(225, 225, 225), font=font_m)
 
-    row_y = ty + 28
+    row_y = ty + 32
     for item_name, ref_val, mod_val in metrics:
         diff = abs(ref_val - mod_val)
         ok = diff <= 10.0
-        status_text = f"✓ 合格 (<10%)" if ok else f"✗ 超标"
+        status_text = "✓ 合格" if ok else "✗ 超标"
         status_color = (130, 225, 140) if ok else (240, 100, 90)
 
         d.text((col_xs[0], row_y + 3), item_name, fill=(210, 210, 210), font=font_s)
