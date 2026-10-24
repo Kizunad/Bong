@@ -218,7 +218,7 @@ pub fn push_forge_start_snapshot_on_accept(
                 .get(session.blueprint.as_str())
                 .map(|bp| bp.name.as_str())
                 .unwrap_or(session.blueprint.as_str());
-            (session, bp_name)
+            (session.domain_session(), bp_name)
         });
         let learned_and_registry = learned_q
             .get(accepted.caster)
@@ -267,7 +267,7 @@ pub fn push_forge_session_snapshot_on_interaction(
             .map(|bp| bp.name.as_str())
             .unwrap_or(session.blueprint.as_str());
         let blueprint = registry.get(session.blueprint.as_str());
-        send_session_snapshot_to_player(&mut client, session, bp_name, blueprint);
+        send_session_snapshot_to_player(&mut client, session.domain_session(), bp_name, blueprint);
     }
 }
 
@@ -300,7 +300,7 @@ pub fn push_forge_session_snapshot_on_step_advance(
                 .get(session.blueprint.as_str())
                 .map(|bp| bp.name.as_str())
                 .unwrap_or(session.blueprint.as_str());
-            (session, bp_name)
+            (session.domain_session(), bp_name)
         });
         let learned_and_registry = learned_q
             .get(session.caster)

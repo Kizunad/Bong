@@ -173,7 +173,10 @@ pub fn emit_world_states(
         if let Some(pos) = furnace.pos {
             events.send(AlchemyWorldEffect::new(
                 pos,
-                furnace.session.as_ref(),
+                furnace
+                    .session
+                    .as_ref()
+                    .map(|session| session.domain_session()),
                 AlchemyWorldAction::State,
             ));
         }
@@ -368,7 +371,7 @@ mod tests {
         let mut furnace = AlchemyFurnace::placed(BlockPos::new(2, 64, 3), 1);
         let mut session = AlchemySession::new("test".into(), "offline_owner".into());
         session.temp_current = 0.75;
-        furnace.session = Some(session);
+        furnace.start_session(session).unwrap();
         let furnace = app.world_mut().spawn(furnace).id();
         for _ in 0..20 {
             app.update();

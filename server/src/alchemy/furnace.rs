@@ -7,7 +7,7 @@ use crate::world::dimension::DimensionKind;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, BlockPos, Component, DVec3, Entity};
 
-use super::session::AlchemySession;
+use super::{adapter::AlchemySessionAdapter, session::AlchemySession};
 
 /// 当前世界炉只生成在主世界；坐标请求不得跨维度或隔空控制工位。
 pub(crate) fn within_reach(
@@ -37,8 +37,9 @@ pub struct AlchemyFurnace {
     #[serde(default)]
     pub owner: Option<String>,
     pub integrity: f64,
+    /// 当前炼丹会话的唯一权威存储；域状态通过 adapter 的 `Deref` 暴露给既有算法。
     #[serde(default)]
-    pub session: Option<AlchemySession>,
+    pub session: Option<AlchemySessionAdapter>,
     /// 世界中关联的方块实体（BlockEntity），plan §1.3 离线持续性用。
     #[serde(default)]
     pub bound_entity: Option<u64>,
@@ -105,17 +106,66 @@ impl AlchemyFurnace {
         self.session.as_ref().is_some_and(|s| !s.finished)
     }
 
+    /// 兼容纯内存测试构造；生产放置炉应使用 [`Self::start_session_at`]，把当前实体
+    /// 和坐标稳定身份一起登记。无坐标的测试炉使用固定的内存身份，不把 Entity Debug
+    /// 字符串写入 checkpoint。
     pub fn start_session(&mut self, session: AlchemySession) -> Result<(), String> {
+        let placed_id = self
+            .stable_placed_id()
+            .unwrap_or_else(|| "alchemy:furnace:memory".to_string());
+        let entity = self
+            .bound_entity
+            .and_then(|bits| Entity::try_from_bits(bits).ok())
+            .unwrap_or_else(|| Entity::from_raw(0));
+        self.start_session_with_identity(session, entity, placed_id)
+    }
+
+    /// 生产起炉入口：稳定工位身份来自放置坐标，运行期 Entity 只作为可替换 locator。
+    pub fn start_session_at(
+        &mut self,
+        furnace_entity: Entity,
+        session: AlchemySession,
+    ) -> Result<(), String> {
+        let placed_id = self
+            .stable_placed_id()
+            .ok_or_else(|| "炼丹炉缺少稳定放置身份".to_string())?;
+        self.bound_entity = Some(furnace_entity.to_bits());
+        self.start_session_with_identity(session, furnace_entity, placed_id)
+    }
+
+    fn start_session_with_identity(
+        &mut self,
+        session: AlchemySession,
+        furnace_entity: Entity,
+        placed_id: String,
+    ) -> Result<(), String> {
         if self.session.is_some() {
             return Err("请先收取上一炉结果".into());
         }
-        self.session = Some(session);
+        let session_key = format!("alchemy:session:{placed_id}");
+        self.session = Some(
+            AlchemySessionAdapter::from_furnace(
+                session,
+                session_key,
+                placed_id.clone(),
+                furnace_entity,
+                placed_id,
+                DimensionKind::Overworld,
+            )
+            .map_err(|error| format!("炼丹会话身份无效：{error}"))?,
+        );
         Ok(())
     }
 
-    pub fn end_session(&mut self) -> Option<AlchemySession> {
+    pub fn end_session(&mut self) -> Option<AlchemySessionAdapter> {
         let s = self.session.take()?;
         Some(s)
+    }
+
+    /// 跨重启稳定的炉身份。坐标是放置炉的持久业务键，不使用运行期 Entity。
+    pub fn stable_placed_id(&self) -> Option<String> {
+        self.pos
+            .map(|(x, y, z)| format!("alchemy:furnace:overworld:{x}:{y}:{z}"))
     }
 
     /// plan §1.3 炸炉 — 扣 integrity；返回是否炉体损毁。
